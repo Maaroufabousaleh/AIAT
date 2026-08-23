@@ -99,12 +99,14 @@ OpenHands remains
 inactive until a deliberate run, complete evidence, and independent steward
 activation approval.
 
-The repository-local refresh at branch head
+The repository-local refresh at implementation baseline
 `7dc416baf77b0282a010f5741213bd0dddea4395` is recorded in the candidate
 [`overnight-reconciliation.json`](../../mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/overnight-reconciliation.json):
 the static ledger is 63/63, workflow validation and the offline harness pass,
 and the 20-gate matrix remains blocked only because live provider/task and
-lifecycle evidence has not been run. The clean-candidate static certificate
+lifecycle evidence has not been run. The subsequent branch commit
+`dabaa44da69a7191fc86817d2e4219c211ba115a` only reconciles these status
+documents. The clean-candidate static certificate
 remains intentionally pinned to `61f7d49b905a109a154f961e147f783016792218`
 and is validated with an explicit SHA. This refresh does not change any scope
 classification or the global `NO-RELEASE` decision.

@@ -71,10 +71,11 @@ under [`mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/`](../../mas/
 
 ### Repository-local continuation refresh — 2026-08-23
 
-The current candidate branch is `agent/fix-review-p1` at
-`7dc416baf77b0282a010f5741213bd0dddea4395`. Runtime implementation remains
-the same pinned OpenHands candidate; the latest commits are evidence/docs-only
-follow-up. The grouped continuation after
+The certification implementation baseline is `agent/fix-review-p1` at
+`7dc416baf77b0282a010f5741213bd0dddea4395`; the branch now also contains the
+docs-only status reconciliation `dabaa44da69a7191fc86817d2e4219c211ba115a`.
+Runtime implementation remains the same pinned OpenHands candidate. The
+grouped continuation after
 the prior overnight record validates exact gateway aliases and the governed
 MCP key, prevents LiteLLM/tool-service/Agent Server/model stages from running
 after a provider or gateway readiness failure, preserves narrow startup,

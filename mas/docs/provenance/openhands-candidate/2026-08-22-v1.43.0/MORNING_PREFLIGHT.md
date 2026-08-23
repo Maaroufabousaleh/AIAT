@@ -1,7 +1,8 @@
 # OpenHands v1.43.0 morning certification preparation
 
-**Repository-local refresh:** 2026-08-23, candidate preparation at
-`d5ad256f5d4931ce92b25cb67b81fec3ff61420c`.
+**Repository-local refresh:** 2026-08-23, certification implementation
+baseline at `7dc416baf77b0282a010f5741213bd0dddea4395`; the branch also
+contains docs-only status reconciliation `dabaa44da69a7191fc86817d2e4219c211ba115a`.
 
 This is a manual preparation guide for the inactive candidate. It does not
 activate OpenHands, approve the steward record, or dispatch a workflow. The
