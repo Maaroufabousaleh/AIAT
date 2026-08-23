@@ -21,6 +21,18 @@ def test_all_mandatory_gates_are_present_and_not_run_is_not_pass() -> None:
     gates = module.initial_gate_map()
     result = module.evaluate_gate_map(gates)
     assert len(module.GATE_IDS) == 20
+    assert all(
+        {
+            "pass_criteria",
+            "fail_criteria",
+            "evidence_schema",
+            "cleanup_behavior",
+            "timeout_seconds",
+            "provider_required",
+        }
+        <= set(row)
+        for row in module.GATE_DEFINITIONS
+    )
     assert result["status"] == "BLOCKED_INCOMPLETE_MANDATORY_GATES"
     assert result["not_run_gate_count"] == 20
     assert result["all_required_gates_passed"] is False
