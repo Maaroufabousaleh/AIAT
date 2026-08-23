@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-23
-**Base revision:** `334c321` (latest reviewed implementation/evidence revision for this candidate continuation; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
+**Base revision:** `64c85c3` (latest reviewed implementation/evidence revision for this candidate continuation; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -20,6 +20,13 @@ operator-owned `GROQ_API_KEY`, an exact frozen candidate SHA, live model
 execution, and independent steward activation approval. AIAT tool/session/
 internal gateway credentials remain run-scoped and are not ledger secrets.
 OpenCode remains the current default.
+
+The subsequent reviewed continuation commits `6a5b79a`, `72a0313`,
+`4708bbf`, `7d9a96d`, `7ef369e`, `d012ab9`, `88ad977`, `1154a5f`,
+`c1c6700`, `f4f261c`, and `64c85c3` reconcile candidate pins, retained
+native gVisor evidence, immutable smoke-image inputs, scalar-only failure
+evidence, and release-scope classifications. They do not alter the global
+decision or activate either coding worker.
 
 The current `check_release_ledger.py --json` static invocation reports 63/63
 passing checks. Any older 61/61 wording in historical ledger rows is retained

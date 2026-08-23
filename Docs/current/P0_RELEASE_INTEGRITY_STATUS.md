@@ -33,7 +33,9 @@ provider-preflight execution-failure classification. Follow-up hardening
 `d012ab9` rejects mutable native smoke-image inputs and binds the checked-out
 candidate SHA before probes; `1154a5f` keeps failure evidence scalar-only and
 does not retain raw container logs; the status reconciliation is recorded in
-`c1c6700`. OpenHands is
+`c1c6700`; `64c85c3` aligns the roadmap, P0 plan, and release ledger with the
+scope matrix's KMS-required, email-conditional, and self-improvement-deferred
+classifications. OpenHands is
 still `CERTIFYING`/inactive, steward approval is still separate, and global
 `NO-RELEASE` is unchanged. See the candidate gate matrix and offline evidence
 under [`mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/`](../../mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/).
