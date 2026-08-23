@@ -1,9 +1,9 @@
 {
   "schema_version": "aiat.openhands-overnight-reconciliation.v2",
   "recorded_at": "2026-08-23",
-  "previous_ending_head": "c7b84609e458cea7947bc34c44f35cd0ed66d2f0",
+  "previous_ending_head": "4b9ae29042a0655d74103fa2da25017ed11b6de6",
   "starting_head": "0b712b0b78c6b2bb38bde8f87e3f23073c5b81d3",
-  "ending_head": "4b9ae29042a0655d74103fa2da25017ed11b6de6",
+  "ending_head": "cedcee2a1efd740439b7b54d45f17610fc6c8a71",
   "candidate": {
     "release": "v1.43.0",
     "source_commit": "4c1237f391fe394e9f67505fe3a0bd2d81f84188",
@@ -34,7 +34,8 @@
     "evidence_schema_validation": "82f053e8e9858c9c70d2fad058ae154675ff9ba5",
     "host_bound_gateway_rejection": "3b264d485a3e82b8e25d040b8dda4b19d5da4667",
     "profile_cleanup_evidence": "c7b84609e458cea7947bc34c44f35cd0ed66d2f0",
-    "network_startup_failure_classification": "4b9ae29042a0655d74103fa2da25017ed11b6de6"
+    "network_startup_failure_classification": "4b9ae29042a0655d74103fa2da25017ed11b6de6",
+    "service_startup_failure_evidence": "cedcee2a1efd740439b7b54d45f17610fc6c8a71"
   },
   "dependency_map": [
     "manual workflow -> exact candidate checkout and candidate preflight",
@@ -49,7 +50,7 @@
   ],
   "repository_local_validation": {
     "checked_at": "2026-08-23T09:15:58Z",
-    "candidate_sha": "4b9ae29042a0655d74103fa2da25017ed11b6de6",
+    "candidate_sha": "cedcee2a1efd740439b7b54d45f17610fc6c8a71",
     "static_release_ledger": {
       "status": "PASS",
       "checks_passed": 63,
@@ -73,7 +74,9 @@
       "source_archive_hashes_verified": true,
       "host_bound_gateway_targets_rejected": true,
       "run_scoped_profile_cleanup_asserted": true,
-      "network_startup_failure_classified": true
+      "network_startup_failure_classified": true,
+      "service_startup_failure_classified": true,
+      "workflow_shell_syntax_validated": true
     },
     "gate_matrix": {
       "status": "BLOCKED_INCOMPLETE_MANDATORY_GATES",

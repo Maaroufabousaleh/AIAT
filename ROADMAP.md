@@ -129,6 +129,9 @@ OpenHands remains inactive, and the global `NO-RELEASE` decision is unchanged.
 `4b9ae29` additionally records disposable-network startup status, gates
 dependent stages on network readiness, and classifies a failed Docker network
 create as `FAILED_INFRASTRUCTURE`.
+`cedcee2` retains scalar startup failure classes for OmniRoute, LiteLLM,
+tool-service, and Agent Server, and adds a regression check for shell syntax in
+every workflow `run` block.
 
 The latest bounded P1 implementation slice (`60839f4`) stabilizes the
 Governance and Projects dashboard refresh callbacks and last-known-state refs.

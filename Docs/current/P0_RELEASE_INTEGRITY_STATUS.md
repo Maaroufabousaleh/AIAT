@@ -72,7 +72,7 @@ under [`mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/`](../../mas/
 ### Repository-local continuation refresh — 2026-08-23
 
 The certification implementation baseline is `agent/fix-review-p1` at
-`4b9ae29042a0655d74103fa2da25017ed11b6de6`; runtime implementation remains
+`cedcee2a1efd740439b7b54d45f17610fc6c8a71`; runtime implementation remains
 the same pinned OpenHands candidate. The latest hardening verifies exact
 LiteLLM/OmniRoute release-tag commits and source archive SHA-256 values
 (`4890aaa2bd0ddbc2ef1e5b19ba075363de58167f`), validates the complete
@@ -90,7 +90,9 @@ gateway readiness failure, preserve narrow startup/health/route failure
 classes, scan disposable workspace evidence for secret canaries using scalar
 counts/fingerprints only, and publish runtime materialization readiness to
 downstream workflow steps. The workflow remains manual-only; no workflow was
-dispatched in this refresh.
+dispatched in this refresh. `cedcee2` additionally records scalar startup
+failure classes for OmniRoute, LiteLLM, the tool-service build/run, and Agent
+Server, and adds a shell-syntax regression check for every workflow run block.
 
 Repository-local checks at this SHA report:
 

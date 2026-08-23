@@ -1,7 +1,7 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-23, current certification-path
-hardening at `4b9ae29042a0655d74103fa2da25017ed11b6de6`; the branch also
+hardening at `cedcee2a1efd740439b7b54d45f17610fc6c8a71`; the branch also
 contains the earlier candidate/evidence history. The next live run must freeze
 the exact SHA actually selected by the operator.
 
@@ -139,6 +139,9 @@ The latest repository-local hardening commits are:
 - `4b9ae29042a0655d74103fa2da25017ed11b6de6`: records disposable-network
   startup status, gates dependent stages on network readiness, and maps a
   failed Docker network create to `FAILED_INFRASTRUCTURE`.
+- `cedcee2a1efd740439b7b54d45f17610fc6c8a71`: retains scalar startup failure
+  classes for each disposable service and validates shell syntax for every
+  workflow `run` block.
 
 These changes are implementation/evidence hardening only. They do not claim a
 provider call, live lifecycle result, steward approval, worker activation, or
