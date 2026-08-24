@@ -1,7 +1,7 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-24, current certification-path
-hardening at `d447197` (including
+hardening at `a58d862` (including
 `595965d` gateway failure-origin diagnostics, `57f76b6` fail-closed web DNS
 validation, `e7a2ff5` stopped-container cleanup, and `71149db` certification
 authorization consumption after trusted construction); the branch also
@@ -187,6 +187,17 @@ baseline step also referenced a helper absent from that candidate. This is
 security evidence; tool-service, OpenHands, and all live mandatory gates were
 not run. The reviewed branch now contains the helper and a static validator
 that checks both workflow script existence and the route-probe CLI contract.
+
+Run `32691538177` (job `97325987032`) repeated the same stale-candidate
+failure after the requested older SHA was dispatched from the feature ref.
+The exact candidate still lacked `check_openhands_provider_baseline.py` and
+its route helper still rejected `--auto-routing-output`; the gateway and
+provider setup had already passed, while tool-service, OpenHands, and all live
+mandatory gates were not run. The immutable run artifact is recorded in
+[`github-run-32691538177-failure.json`](./github-run-32691538177-failure.json).
+The reviewed tip `a58d862` adds a dispatch-preflight check for both helper CLI
+contracts, so a stale candidate now fails closed before GitHub Actions is
+called. This evidence update does not dispatch a replacement run.
 
 ## Operator sequence
 
