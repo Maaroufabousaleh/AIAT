@@ -1,7 +1,7 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-24, current certification-path
-hardening through implementation tip `dbf21a3c2ae0c7fc5377076449192ed21c8f5797`
+hardening through reviewed tip `716e50087cf6b5967e3a1d7a6035cb06f980b1b7`
 (including
 `595965d` gateway failure-origin diagnostics, `57f76b6` fail-closed web DNS
 validation, `e7a2ff5` stopped-container cleanup, and `71149db` certification
@@ -12,8 +12,11 @@ filtering, `6267c9f` lifecycle grant rotation, and `16d3e6b` evidence/status
 alignment. `e472ee1` keeps transient
 OmniRoute baseline-catalog failures as scalar baseline-only evidence while
 failing closed on management-auth failures; its focused and full test suites
-pass. The next live run must freeze
-the exact SHA actually selected by the operator.
+pass. Commit `de50628` additionally handles the pinned Agent Server v1.43.0
+redacted MCP-header readback only through trusted certification-time grant
+rotation; production callers remain fail-closed. Commit `716e500` registers
+the immutable run-327539 evidence and aligns the maintained status documents.
+The next live run must freeze the exact SHA actually selected by the operator.
 
 The `35c75dc` workflow fix makes the disposable network-topology step fail
 closed: incomplete alias/IP readback emits `ready=false` and
@@ -77,10 +80,9 @@ activate OpenHands, approve the steward record, or dispatch a workflow. The
 workflow is `workflow_dispatch` only and must be dispatched once against an
 explicit frozen commit after the preflight passes.
 
-The reviewed implementation tip immediately before this documentation
-refresh was `6267c9f`; the current implementation baseline is `dbf21a3` and
-it passed the read-only dispatch preflight. This document is a docs-only
-refresh, so the
+The current reviewed implementation baseline is `716e500`; its implementation
+fix is `de50628`, and it passed the read-only dispatch preflight. This document
+refresh records that baseline, so the
 dispatch candidate must always be frozen from the actual checkout with
 `git rev-parse HEAD`, never copied from an embedded tip string. No
 certification run has been dispatched against this documentation refresh.
@@ -98,19 +100,22 @@ claimed by this document.
 The local static release ledger remains 63/63 passing with two pending
 evidence items and `NO-RELEASE`. The OpenHands gate matrix remains
 `BLOCKED_INCOMPLETE_MANDATORY_GATES` until a provider-backed run supplies live
-task and lifecycle evidence. The latest deliberate run, `32702677310`, was
-dispatched against the explicitly supplied
-`1fcaf6cb62c6583efdf0ea1396e3d52329453fc3` candidate from the feature ref; it
-failed closed on a candidate workflow/helper contract mismatch and is
-recorded below. No automatic rerun was performed. The previously prepared
+task and lifecycle evidence. The latest deliberate run, `32753965223`, was
+dispatched against candidate `4c73a56163f805db9d30a92559fea67aa5066a5a` and
+failed closed before conversation creation because the pinned Agent Server
+redacted MCP headers and the pre-fix adapter attempted to verify the marker.
+It is recorded below as `FAILED_CERTIFICATION_IMPLEMENTATION` /
+`BLOCKED_TOOL_BRIDGE`; no automatic rerun was performed. The previously
+prepared
 `1fcaf6cb62c6583efdf0ea1396e3d52329453fc3` SHA remains an ancestor of the
 reviewed branch tip; the safe preflight rejects it when the requested
-candidate tree is missing helper contracts. The reviewed history includes
+candidate tree is missing helper contracts. The earlier `32702677310` record
+remains immutable helper-contract evidence. The reviewed history includes
 `cc48cca` and
 `a2c886e` auto-route/gate-wiring hardening, `a39788a` evidence-retention
 validation, `a377dab` scalar provider attribution for successful `auto/coding`
 evidence, and `1c4a426` Agent Server health-blocker output diagnostics. The
-current reviewed implementation tip `e472ee1` additionally distinguishes unknown LiteLLM 404 responses
+earlier reviewed implementation tip `e472ee1` additionally distinguishes unknown LiteLLM 404 responses
 from the explicit no-provider auto-router condition and rejects unresolved web
 targets before any network request. The latest deliberate run also confirmed
 the configured Groq secret at
@@ -128,8 +133,8 @@ The clean-candidate static certificate was refreshed from a fresh clone at
 treats the retained candidate SHA as authoritative by default while preserving
 an explicit strict tip-match mode. It retains the same 63/63 static result,
 two pending OpenCode evidence items, and `NO-RELEASE`. The current reviewed tip
-passes the read-only dispatch preflight; no replacement certification run has
-been dispatched after `32702677310`.
+`716e500` passes the read-only dispatch preflight; no replacement certification
+run has been dispatched after `32753965223`.
 The later immutable runs `32695739623` and `32696377216` are now recorded in
 the evidence directory: both reached the provider/gateway, runsc,
 tool-service, and cleanup boundaries, then failed closed on stale v1.43.0
