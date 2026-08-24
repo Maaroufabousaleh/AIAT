@@ -1,7 +1,7 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-24, current certification-path
-hardening through implementation tip `171aed3c600acaf6a9bb8e0908264b56da572b53`
+hardening through implementation tip `35c75dcbf159fc05020d579a5e154fb43a0f05c0`
 (including
 `595965d` gateway failure-origin diagnostics, `57f76b6` fail-closed web DNS
 validation, `e7a2ff5` stopped-container cleanup, and `71149db` certification
@@ -12,13 +12,20 @@ failing closed on management-auth failures; its focused and full test suites
 pass. The next live run must freeze
 the exact SHA actually selected by the operator.
 
+The `35c75dc` workflow fix makes the disposable network-topology step fail
+closed: incomplete alias/IP readback emits `ready=false` and
+`BLOCKED_NETWORK_TOPOLOGY` instead of unlocking profile materialization. The
+workflow validator and regression suite reject the former unconditional
+success pattern. The current tip passes the complete read-only dispatch
+preflight; no workflow was dispatched for it.
+
 This is a manual preparation guide for the inactive candidate. It does not
 activate OpenHands, approve the steward record, or dispatch a workflow. The
 workflow is `workflow_dispatch` only and must be dispatched once against an
 explicit frozen commit after the preflight passes.
 
 The reviewed implementation tip immediately before this documentation
-refresh was `e472ee1`; it passed the
+refresh was `35c75dc`; it passed the
 read-only dispatch preflight. Because this document is itself committed, the
 dispatch candidate must always be frozen from the actual checkout with
 `git rev-parse HEAD`, never copied from an embedded tip string. No

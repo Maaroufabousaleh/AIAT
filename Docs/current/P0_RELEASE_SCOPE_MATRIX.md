@@ -104,7 +104,7 @@ activation approval.
 The earlier repository-local refresh at implementation baseline
 `1c4a426105fcb8a64c077d70f5bacffc45d2ec4a` remains historical. Subsequent
 OpenHands routing, provider-baseline, cleanup-readback, and workflow-helper
-hardening has been reviewed through `e472ee1` (implementation baseline
+hardening has been reviewed through `35c75dc` (implementation baseline
 `171aed3c600acaf6a9bb8e0908264b56da572b53`)
 and is reflected in the maintained candidate status documents. The historical
 [`overnight-reconciliation.json`](../../mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/overnight-reconciliation.json)
@@ -145,10 +145,12 @@ classification or the global `NO-RELEASE` decision.
 | AIAT-owned credentials boundary | Compose live certificate passes all 12 checks with zero fixture rows; provider-managed KMS remains separate. **Functional pass; external configuration still open.** | `REQUIRED_FOR_RELEASE` gate is **closed/pass** | No further identical probe is needed. Reopen only if the credentials implementation or configured external custody changes. |
 
 > **Status refresh (2026-08-24):** The current reviewed implementation tip is
-> `e472ee1`, which includes the direct/nested MCP readback hardening from
-> `171aed3c600acaf6a9bb8e0908264b56da572b53` and suppresses any dispatch
-> command when a requested candidate SHA fails preflight. The table's earlier
-> tip references are retained as implementation-history context.
+> `35c75dcbf159fc05020d579a5e154fb43a0f05c0`, which includes the direct/nested
+> MCP readback hardening from `171aed3c600acaf6a9bb8e0908264b56da572b53`,
+> suppresses any dispatch command when a requested candidate SHA fails
+> preflight, and fails closed when disposable network-topology evidence is
+> incomplete. The table's earlier tip references are retained as
+> implementation-history context.
 
 ## External input inventory
 
