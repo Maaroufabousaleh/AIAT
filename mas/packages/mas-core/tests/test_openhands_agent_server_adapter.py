@@ -163,6 +163,47 @@ async def test_preconfigured_run_scoped_bridge_is_read_back_without_recreating_i
 
 
 @pytest.mark.asyncio
+async def test_preconfigured_run_scoped_bridge_reads_v143_nested_settings_envelope(tmp_path: Path) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == "/api/settings":
+            return httpx.Response(
+                200,
+                json={
+                    "agent_settings": {
+                        "mcp_config": {
+                            "aiat-openhands-test-run": {
+                                "url": OPENHANDS_MCP_BRIDGE_URL,
+                                "transport": "streamable-http",
+                                "enabled": True,
+                                "headers": {"X-AIAT-OpenHands-Grant": "REDACTED"},
+                            }
+                        }
+                    }
+                },
+            )
+        if request.method == "DELETE" and request.url.path == "/api/settings/mcp/aiat-openhands-test-run":
+            return httpx.Response(204)
+        raise AssertionError(request)
+
+    adapter = make_adapter(tmp_path, handler, preconfigured=True)
+    run = request(workspace=tmp_path / "workspace")
+    await adapter._configure_tool_bridge(run)
+    assert adapter._mcp_by_run[run.run_id] == "aiat-openhands-test-run"
+    await adapter._cleanup_tool_bridge(run.run_id)
+    await adapter.close()
+
+
+def test_mcp_settings_config_merges_empty_direct_and_nested_maps() -> None:
+    config = OpenHandsAgentServerAdapter._mcp_settings_config(
+        {
+            "mcp_config": {},
+            "agent_settings": {"mcp_config": {"aiat-openhands-test-run": {}}},
+        }
+    )
+    assert config == {"aiat-openhands-test-run": {}}
+
+
+@pytest.mark.asyncio
 async def test_tool_bridge_rejects_grants_outside_bounded_coding_surface(tmp_path: Path) -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         raise AssertionError(f"unexpected network call: {request.method} {request.url}")

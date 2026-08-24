@@ -584,6 +584,30 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             raise RuntimeError("OpenHands MCP settings key is not a disposable AIAT key")
         return value
 
+    @staticmethod
+    def _mcp_settings_config(value: Any) -> dict[str, Any]:
+        """Merge supported Agent Server MCP settings envelopes.
+
+        Agent Server v1.43 wraps effective settings in ``agent_settings``;
+        older/compatible responses may also expose direct fields.  Merge all
+        supported maps so an empty compatibility field cannot hide a nested
+        residual entry.  The caller validates the resulting entry strictly.
+        """
+
+        if not isinstance(value, dict):
+            return {}
+        envelopes: list[dict[str, Any]] = [value]
+        agent_settings = value.get("agent_settings")
+        if isinstance(agent_settings, dict):
+            envelopes.append(agent_settings)
+        merged: dict[str, Any] = {}
+        for envelope in envelopes:
+            for config_field in ("mcp_config", "mcp_servers"):
+                config = envelope.get(config_field)
+                if isinstance(config, dict):
+                    merged.update(config)
+        return merged
+
     async def _configure_tool_bridge(self, request: WorkerRunRequest) -> None:
         """Create one fixed, run-scoped remote MCP entry in Agent Server settings.
 
@@ -609,10 +633,8 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             # a redacted readback here; posting again would either overwrite
             # the run grant or fail with a conflict.
             settings = await self._json("GET", "/api/settings")
-            config = settings.get("mcp_config") if isinstance(settings, dict) else None
-            if not isinstance(config, dict):
-                config = settings.get("mcp_servers") if isinstance(settings, dict) else None
-            entry = config.get(settings_key) if isinstance(config, dict) else None
+            config = self._mcp_settings_config(settings)
+            entry = config.get(settings_key)
             if not isinstance(entry, dict):
                 raise RuntimeError("preconfigured OpenHands MCP settings entry is absent")
             if entry.get("url") != OPENHANDS_MCP_BRIDGE_URL:
