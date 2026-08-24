@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-24
-**Base revision:** `d34548b` (OpenHands runsc network resolution uses explicit run-scoped peer IP host mappings while retaining stable service names; the workflow validator requires the mapping and probes name resolution before HTTP; disposable OmniRoute connection identifiers are redacted from retained evidence; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
+**Base revision:** `cf0511b` (OpenHands runsc network resolution uses explicit run-scoped peer IP host mappings while retaining stable service names; the workflow validator requires the mapping and probes name resolution before HTTP; scanner/SBOM evidence preserves JSON Lines and removes incomplete SBOM artifacts; disposable OmniRoute connection identifiers are redacted from retained evidence; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -13,7 +13,7 @@ The overnight OpenHands continuation (`4234d07`, `1db5b72`, `cf80dd1`,
 `1c4a426`, `ebfbe73`, `c9dba1f`, `ad511d9`, `fa19b1c`, `f3f4050`,
 `65237f3`, `595965d`, `57f76b6`, `71ce0f6`, `e7a2ff5`, `71149db`,
 `e9a8a09`, `d447197`, `a58d862`, `3cbd717`, `fba92fe`, `11bee28`, and
-`d34548b`)
+`d34548b`, and `cf0511b`)
 does not alter the release decision. OpenHands
 v1.43.0 remains an inactive `CERTIFYING` candidate; its exact image/source
 pins, run-scoped gateway/profile/MCP design, one-shot certification
@@ -74,6 +74,20 @@ follow-up `d34548b` workflow fix reads each container's actual network IP and
 injects only run-scoped host mappings into LiteLLM and the runsc Agent Server,
 while retaining the stable service names and adding a name-resolution probe.
 No replacement workflow run has been dispatched for this fix.
+
+The deliberate run `32697052939` against candidate
+`e0f18915a45268c8b5af14af7091cade4abd2c42` reached the disposable gateway,
+provider route, runsc Agent Server, run-scoped profile/MCP materialization,
+adapter wave, and cleanup. It then failed closed in scanner evidence: image
+SBOM extraction exhausted the ephemeral runner filesystem and left an
+incomplete output, while valid TruffleHog JSON Lines were treated as one JSON
+document by the evidence validator. The immutable scalar record is
+[`github-run-32697052939-failure.json`](provenance/openhands-candidate/2026-08-22-v1.43.0/github-run-32697052939-failure.json).
+This is `FAILED_CERTIFICATION_IMPLEMENTATION` / `BLOCKED_SCANNER_COVERAGE`,
+not provider, gVisor, image-provenance, or OpenHands runtime evidence. Commit
+`cf0511b` now runs image SBOM generation before the large source checkout,
+removes incomplete SBOM JSON artifacts, and validates TruffleHog JSON Lines
+explicitly. No replacement workflow run is claimed by this evidence update.
 
 `e9a8a09` closes a routing-scope gap identified from the pinned OmniRoute
 v3.8.38 source: its virtual `auto/coding` combo can add built-in no-auth

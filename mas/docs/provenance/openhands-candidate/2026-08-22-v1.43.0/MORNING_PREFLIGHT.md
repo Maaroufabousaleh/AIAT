@@ -1,7 +1,7 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-24, current certification-path
-hardening at `d34548b` (including
+hardening at `cf0511b` (including
 `595965d` gateway failure-origin diagnostics, `57f76b6` fail-closed web DNS
 validation, `e7a2ff5` stopped-container cleanup, and `71149db` certification
 authorization consumption after trusted construction); the branch also
@@ -213,6 +213,18 @@ OpenHands runtime evidence. Commit `d34548b` now injects run-scoped peer IP
 host mappings for `litellm`, `tool-service`, and `omniroute` while retaining
 the stable service names, and verifies name resolution before the HTTP probe.
 No replacement workflow run has been dispatched for that fix.
+
+Run `32697052939` (job `97341057124`) reached gateway/provider setup, native
+runsc Agent Server startup, run-scoped profile/MCP materialization, the
+adapter wave, and cleanup. It failed closed at the scanner evidence boundary:
+the pinned image SBOM extraction exhausted runner disk and left an incomplete
+JSON output, while valid TruffleHog JSON Lines were parsed as one JSON document
+by the evidence checker. The immutable scalar record is
+[`github-run-32697052939-failure.json`](./github-run-32697052939-failure.json).
+This is `FAILED_CERTIFICATION_IMPLEMENTATION` / `BLOCKED_SCANNER_COVERAGE`,
+not provider or OpenHands runtime evidence. `cf0511b` runs image SBOM
+generation before source checkout and teaches the evidence checker the
+TruffleHog JSON Lines contract; it does not dispatch a replacement run.
 
 ## Operator sequence
 
