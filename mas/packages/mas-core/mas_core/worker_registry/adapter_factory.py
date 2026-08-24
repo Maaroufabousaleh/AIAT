@@ -9,17 +9,16 @@ Creates the appropriate adapter based on a worker's integration mode:
 from __future__ import annotations
 
 import importlib
+import inspect
 import logging
-from abc import ABC, abstractmethod
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from mas_core.protocols.worker_manifest import WorkerManifest
-
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from mas_core.agent_runtime.base import AgentBase
     from mas_core.agent_runtime.config import AgentConfig
-    from mas_core.protocols.envelope import MessageEnvelope
+    from mas_core.protocols.worker_manifest import WorkerManifest
 
 logger = logging.getLogger(__name__)
 
@@ -215,7 +214,7 @@ def _derive_specialization(agent_id: str) -> str:
     return "GENERIC"
 
 
-class ExternalWorkerAdapter(ABC):
+class ExternalWorkerAdapter:
     """Wraps an external worker class, translating between MAS protocol and
     the external code's native interface.
 
@@ -244,12 +243,23 @@ class ExternalWorkerAdapter(ABC):
     async def publish(self, envelope: Any) -> str:
         """Publish a message envelope back to the MAS router.
 
-        Subclasses must implement this to route envelopes to the appropriate
-        transport (e.g., message-router service, direct WS, etc.).
+        The factory passes the governed router client through ``kwargs`` for
+        wrapper/fork workers.  Delegate to that client so the generic adapter
+        remains usable; a missing or malformed router is a configuration
+        error, not an unimplemented runtime path.
         """
-        raise NotImplementedError(
-            f"{type(self).__name__} must implement publish() to send envelopes"
-        )
+        router = self._router
+        publish = getattr(router, "publish", None)
+        if not callable(publish):
+            raise RuntimeError(
+                f"{type(self).__name__} requires a router with publish()"
+            )
+        result = publish(envelope)
+        if inspect.isawaitable(result):
+            result = await result
+        if not isinstance(result, str):
+            raise RuntimeError("worker router publish() returned a non-string entry id")
+        return result
 
     async def handle_message(self, envelope: Any) -> None:
         """Handle an incoming message envelope, execute the external worker, and reply."""
