@@ -1,7 +1,7 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-24, current certification-path
-hardening through implementation tip `4fdf4cff82bec694afa5866c386e1443ee958945`
+hardening through implementation tip `9a32bc261df5a7524499253092b0f70187ce0769`
 (including
 `595965d` gateway failure-origin diagnostics, `57f76b6` fail-closed web DNS
 validation, `e7a2ff5` stopped-container cleanup, and `71149db` certification
@@ -18,6 +18,13 @@ closed: incomplete alias/IP readback emits `ready=false` and
 workflow validator and regression suite reject the former unconditional
 success pattern. The current tip passes the complete read-only dispatch
 preflight; no workflow was dispatched for it.
+
+`9a32bc2` additionally rejects any pre-existing Agent Server LLM provider
+connection during run-scoped materialization. The pinned server readback
+exposes only `api_key_set`, so a prior connection cannot be proven to contain
+the current run's generated gateway secret; a fresh disposable Agent Server
+is required instead of reusing opaque state. Focused provisioning tests and
+the full deterministic suite pass.
 
 The workflow now also performs an in-run candidate-helper contract check before
 pulling any certification image. It records only the candidate SHA, missing
@@ -40,7 +47,7 @@ workflow is `workflow_dispatch` only and must be dispatched once against an
 explicit frozen commit after the preflight passes.
 
 The reviewed implementation tip immediately before this documentation
-refresh was `893fa78`; the current implementation baseline is `4fdf4cf` and
+refresh was `4fdf4cf`; the current implementation baseline is `9a32bc2` and
 it passed the read-only dispatch preflight. This document is a docs-only
 refresh, so the
 dispatch candidate must always be frozen from the actual checkout with
