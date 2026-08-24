@@ -215,6 +215,140 @@ def test_baseline_discovery_block_does_not_suppress_auto_route_provisioning() ->
     assert report["auto_router_scope"]["status"] == "PASS"
 
 
+def test_baseline_discovery_transport_failure_does_not_suppress_auto_route() -> None:
+    """A diagnostic catalogue failure must not hide the auto/coding wave."""
+
+    settings = {"autoRoutingEnabled": False, "blockedProviders": []}
+    provider_reads = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal provider_reads
+        if request.method == "GET" and request.url.path == "/api/settings":
+            return httpx.Response(200, json=settings)
+        if request.method == "PATCH" and request.url.path == "/api/settings":
+            settings.update(json.loads(request.content))
+            return httpx.Response(200, json=settings)
+        if request.method == "GET" and request.url.path == "/api/providers":
+            provider_reads += 1
+            if provider_reads == 1:
+                return httpx.Response(200, json={"connections": []})
+            return httpx.Response(
+                200,
+                json={
+                    "connections": [
+                        {
+                            "id": "connection-1",
+                            "provider": "groq",
+                            "name": PROVISION.PROVIDER_NAME,
+                            "defaultModel": PROVISION.PROVIDER_MODEL,
+                        }
+                    ]
+                },
+            )
+        if request.method == "POST" and request.url.path == "/api/providers":
+            return httpx.Response(
+                201,
+                json={
+                    "connection": {
+                        "id": "connection-1",
+                        "provider": "groq",
+                        "name": PROVISION.PROVIDER_NAME,
+                        "defaultModel": PROVISION.PROVIDER_MODEL,
+                    }
+                },
+            )
+        if request.method == "POST" and request.url.path == "/api/providers/connection-1/test":
+            return httpx.Response(200, json={"valid": True})
+        if request.method == "GET" and request.url.path == "/api/providers/connection-1/models":
+            # The provider catalogue is temporarily unavailable.  This is a
+            # baseline-only observation; the authenticated connection and
+            # independently governed auto/coding route remain testable.
+            return httpx.Response(502, json={"error": {"code": "upstream_error"}})
+        raise AssertionError(request)
+
+    client = httpx.Client(
+        base_url="http://omniroute.test",
+        transport=httpx.MockTransport(handler),
+    )
+    report = PROVISION.provision(
+        base_url="http://omniroute.test",
+        management_key="gateway-secret",
+        provider_key="provider-secret",
+        client=client,
+    )
+    client.close()
+
+    assert report["status"] == "PASS"
+    assert report["provider_validation"] == "PASS"
+    assert report["baseline_discovery"]["status"] == "BASELINE_DISCOVERY_FAILED"
+    assert report["baseline_discovery"]["failure_class"] == "PROVIDER_SERVER_ERROR"
+    assert report["baseline_discovery"]["failure_http_status"] == 502
+    assert report["baseline_discovery"]["raw_response_retained"] is False
+    assert report["auto_router_scope"]["status"] == "PASS"
+
+
+def test_baseline_discovery_management_auth_failure_stops_provisioning() -> None:
+    """A discovery 401 is a control-plane failure, not a baseline miss."""
+
+    settings = {"autoRoutingEnabled": False, "blockedProviders": []}
+    provider_reads = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal provider_reads
+        if request.method == "GET" and request.url.path == "/api/settings":
+            return httpx.Response(200, json=settings)
+        if request.method == "PATCH" and request.url.path == "/api/settings":
+            settings.update(json.loads(request.content))
+            return httpx.Response(200, json=settings)
+        if request.method == "GET" and request.url.path == "/api/providers":
+            provider_reads += 1
+            return httpx.Response(
+                200,
+                json={
+                    "connections": []
+                    if provider_reads == 1
+                    else [
+                        {
+                            "id": "connection-1",
+                            "provider": "groq",
+                            "name": PROVISION.PROVIDER_NAME,
+                            "defaultModel": PROVISION.PROVIDER_MODEL,
+                        }
+                    ]
+                },
+            )
+        if request.method == "POST" and request.url.path == "/api/providers":
+            return httpx.Response(
+                201,
+                json={
+                    "connection": {
+                        "id": "connection-1",
+                        "provider": "groq",
+                        "name": PROVISION.PROVIDER_NAME,
+                        "defaultModel": PROVISION.PROVIDER_MODEL,
+                    }
+                },
+            )
+        if request.method == "GET" and request.url.path == "/api/providers/connection-1/models":
+            return httpx.Response(401, json={"error": "redacted"})
+        raise AssertionError(request)
+
+    client = httpx.Client(
+        base_url="http://omniroute.test",
+        transport=httpx.MockTransport(handler),
+    )
+    with pytest.raises(PROVISION.GatewayProvisioningError) as error:
+        PROVISION.provision(
+            base_url="http://omniroute.test",
+            management_key="gateway-secret",
+            provider_key="provider-secret",
+            client=client,
+        )
+    client.close()
+    assert error.value.http_status == 401
+    assert error.value.stage == "provider"
+
+
 def test_route_probe_retains_only_scalar_usage() -> None:
     gateway_key = "gateway-secret-must-not-appear"
 

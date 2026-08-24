@@ -226,13 +226,48 @@ def _discover_baseline_model(
     live certification baseline, so only ``api``/``upstream`` discovery passes.
     """
 
-    response = _request(
-        client,
-        "GET",
-        f"/api/providers/{connection_id}/models?refresh=true",
-        stage="provider",
-    )
-    payload = _json(response, expected={200}, stage="provider")
+    try:
+        response = _request(
+            client,
+            "GET",
+            f"/api/providers/{connection_id}/models?refresh=true",
+            stage="provider",
+        )
+        payload = _json(response, expected={200}, stage="provider")
+    except GatewayProvisioningError as exc:
+        # Discovery is a diagnostic baseline gate, not the provider
+        # connection's control-plane health gate.  A transient upstream
+        # response, an unavailable model catalogue, or an invalid discovery
+        # payload must remain visible as scalar baseline evidence while still
+        # allowing the independently governed auto/coding route to run.  A
+        # management-auth failure is different: continuing after 401/403
+        # would make the subsequent route evidence unauthoritative.
+        if exc.http_status in {401, 403}:
+            raise
+        failure = classify_failure(
+            stage=exc.stage,
+            http_status=exc.http_status,
+            error_code=str(exc),
+            exception_type=exc.exception_type,
+        )
+        return {
+            "status": "BASELINE_DISCOVERY_FAILED",
+            "provider": PROVIDER,
+            "requested_model": PROVIDER_MODEL,
+            "discovery_source": "unknown",
+            "discovered_model_count": 0,
+            "model_present": False,
+            "live_discovery": False,
+            "discovery_provider": None,
+            "connection_identity_required": True,
+            "provider_identity_matches": False,
+            "connection_identity_matches": False,
+            "failure_class": failure.failure_class,
+            "failure_stage": failure.stage,
+            "failure_http_status": failure.http_status,
+            "failure_retryable": failure.retryable,
+            "raw_response_retained": False,
+        }
     result = baseline_discovery_status(
         provider=PROVIDER,
         desired_model=PROVIDER_MODEL,
