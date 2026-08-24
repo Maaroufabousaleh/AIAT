@@ -43,6 +43,21 @@ def test_live_wrapper_uses_narrow_blocker_classes() -> None:
     assert module._final_status(statuses, ["run_scoped_mcp_grant_residue"]) == "BLOCKED_CLEANUP"
 
 
+@pytest.mark.parametrize("gate", ["pause", "interrupt", "resume", "timeout"])
+def test_failed_lifecycle_gate_is_not_reported_as_generic_incomplete(gate: str) -> None:
+    module = _module()
+    statuses = module._status_map("NOT_RUN")
+    statuses[gate] = f"FAILED_{gate.upper()}"
+    assert module._final_status(statuses, []) == "BLOCKED_LIFECYCLE"
+
+
+def test_failed_non_lifecycle_gate_is_classified_as_implementation_failure() -> None:
+    module = _module()
+    statuses = module._status_map("NOT_RUN")
+    statuses["artifact_capture"] = "FAILED_ARTIFACT_CAPTURE"
+    assert module._final_status(statuses, []) == "FAILED_CERTIFICATION_IMPLEMENTATION"
+
+
 def test_task_spec_prompt_is_used_but_not_retained_in_public_definition(tmp_path: Path) -> None:
     module = _module()
     task = tmp_path / "task.json"

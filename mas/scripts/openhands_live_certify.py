@@ -504,8 +504,18 @@ def _final_status(statuses: dict[str, str], blockers: list[str]) -> str:
         return "BLOCKED_SECRET_NON_DISCLOSURE"
     if statuses.get("coding_task") == "FAILED_MODEL_EXECUTION":
         return "FAILED_MODEL_EXECUTION"
+    # Lifecycle probes record a FAILED_* gate status when the remote server
+    # returns an unexpected terminal state.  Those probes do not necessarily
+    # append a separate blocker (the status itself is the evidence), so check
+    # failed statuses before falling through to the generic incomplete-gates
+    # result.  A failed lifecycle control remains a lifecycle blocker; other
+    # failed gates are certification implementation failures.
+    if any(statuses.get(name, "").startswith("FAILED_") for name in ("pause", "interrupt", "resume", "timeout")):
+        return "BLOCKED_LIFECYCLE"
     if statuses.get("zero_residue") == "FAILED_CLEANUP":
         return "BLOCKED_CLEANUP"
+    if any(value.startswith("FAILED_") for value in statuses.values()):
+        return "FAILED_CERTIFICATION_IMPLEMENTATION"
     if all(value == "PASS" for value in statuses.values()) and not blockers:
         return "PASS"
     return "BLOCKED_INCOMPLETE_MANDATORY_GATES"
