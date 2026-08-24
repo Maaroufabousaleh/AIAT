@@ -174,10 +174,23 @@ def evaluate_static(
         blocking_reasons.append("OPENHANDS_NOT_INACTIVE")
     if not checks["local_deterministic_tests"]:
         blocking_reasons.append("LOCAL_DETERMINISTIC_VALIDATION_FAILED")
+    implementation_blockers = {
+        "WORKFLOW_STATIC_VALIDATION_FAILED",
+        "CANDIDATE_PROVENANCE_MISMATCH",
+        "CANDIDATE_HELPER_CONTRACT_MISMATCH",
+        "LOCAL_DETERMINISTIC_VALIDATION_FAILED",
+    }
+    status = (
+        "PASS"
+        if ready
+        else "FAILED_CERTIFICATION_IMPLEMENTATION"
+        if any(reason in implementation_blockers for reason in blocking_reasons)
+        else "BLOCKED_OPERATOR_CONFIGURATION"
+    )
     dispatch_ref = workflow_ref.strip() or "main"
     return {
         "schema_version": SCHEMA,
-        "status": "PASS" if ready else "BLOCKED_OPERATOR_CONFIGURATION",
+        "status": status,
         "ready_to_dispatch": ready,
         "candidate_sha": actual_sha,
         "requested_candidate_sha": requested_sha,

@@ -182,6 +182,7 @@ def test_preflight_rejects_workflow_helper_version_skew() -> None:
         local_tests_passed=True,
     )
     assert report["ready_to_dispatch"] is False
+    assert report["status"] == "FAILED_CERTIFICATION_IMPLEMENTATION"
     assert report["checks"]["candidate_gateway_probe_contract"] is False
     assert report["checks"]["candidate_provider_baseline_contract"] is False
     assert "CANDIDATE_HELPER_CONTRACT_MISMATCH" in report["blocking_reasons"]
