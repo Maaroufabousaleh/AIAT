@@ -73,6 +73,12 @@ def _evidence_blocker_status(evidence_root: Path) -> str | None:
         "live/live-certification.json",
     ):
         value = report(name)
+        if name == "live/live-certification.json" and value.get("status") == "BLOCKED_CERTIFICATION_AUTHORIZATION":
+            # Certification authorization is a trusted, run-scoped execution
+            # authority.  It is intentionally separate from activation
+            # approval, so preserve its narrow blocker when no live gate has
+            # run instead of collapsing it into incomplete mandatory gates.
+            return "BLOCKED_CERTIFICATION_AUTHORIZATION"
         failure_class = str(value.get("failure_class") or "")
         if failure_class.startswith(("MODEL_GATEWAY", "OPENHANDS_TO_GATEWAY", "LITELLM_TO_OMNIROUTE")):
             return "BLOCKED_MODEL_GATEWAY"

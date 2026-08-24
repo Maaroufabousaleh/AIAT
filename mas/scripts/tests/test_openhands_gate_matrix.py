@@ -224,6 +224,24 @@ def test_candidate_preflight_failure_is_not_reported_as_provider_failure(tmp_pat
     assert report["configuration_status"] == "BLOCKED_STATIC_CONFIGURATION"
 
 
+def test_certification_authorization_failure_keeps_its_narrow_blocker(tmp_path: Path) -> None:
+    module = _load("check_openhands_gate_matrix")
+    (tmp_path / "live").mkdir()
+    (tmp_path / "live" / "live-certification.json").write_text(
+        json.dumps(
+            {
+                "status": "BLOCKED_CERTIFICATION_AUTHORIZATION",
+                "worker_activation": "INACTIVE",
+                "gates": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    report = module.evaluate(evidence_root=tmp_path, provider_status="PASS")
+    assert report["status"] == "BLOCKED_CERTIFICATION_AUTHORIZATION"
+    assert report["evidence_blocker_status"] == "BLOCKED_CERTIFICATION_AUTHORIZATION"
+
+
 def test_incomplete_gateway_topology_is_infrastructure_failure(tmp_path: Path) -> None:
     module = _load("check_openhands_gate_matrix")
     (tmp_path / "gateway").mkdir()
