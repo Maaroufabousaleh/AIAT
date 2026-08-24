@@ -25,6 +25,7 @@ try:
     from openhands_model_routing import (
         AIAT_MODEL_ID,
         CERTIFICATION_BASELINE_MODEL,
+        CERTIFICATION_NOAUTH_PROVIDER_BLOCKLIST,
         CERTIFICATION_PROVIDER,
         baseline_discovery_status,
         provider_pool_spec,
@@ -33,6 +34,7 @@ except ImportError:  # pragma: no cover - package invocation fallback
     from scripts.openhands_model_routing import (  # type: ignore
         AIAT_MODEL_ID,
         CERTIFICATION_BASELINE_MODEL,
+        CERTIFICATION_NOAUTH_PROVIDER_BLOCKLIST,
         CERTIFICATION_PROVIDER,
         baseline_discovery_status,
         provider_pool_spec,
@@ -117,7 +119,82 @@ def _request(
 def _connections(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, dict) or not isinstance(value.get("connections"), list):
         raise GatewayProvisioningError("omniroute_provider_readback_not_a_list")
-    return [item for item in value["connections"] if isinstance(item, dict)]
+    connections = value["connections"]
+    if any(not isinstance(item, dict) for item in connections):
+        raise GatewayProvisioningError("omniroute_provider_readback_contains_invalid_entry")
+    return list(connections)
+
+
+def _settings(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise GatewayProvisioningError(
+            "omniroute_settings_readback_not_an_object", stage="gateway_auth"
+        )
+    return value
+
+
+def _configure_auto_router_scope(client: httpx.Client) -> dict[str, object]:
+    """Restrict OmniRoute auto/coding to explicitly provisioned connections.
+
+    OmniRoute v3.8.38 adds built-in no-auth providers to virtual auto-combos
+    unless their ids/aliases are blocked in settings.  The certification
+    container is disposable, so this authenticated settings update is scoped to
+    the run and is verified by a redacted readback before any model request.
+    """
+
+    current = _settings(
+        _json(
+            _request(client, "GET", "/api/settings", stage="gateway_auth"),
+            expected={200},
+            stage="gateway_auth",
+        )
+    )
+    raw_blocked = current.get("blockedProviders", [])
+    if raw_blocked is None:
+        raw_blocked = []
+    if not isinstance(raw_blocked, list) or any(not isinstance(item, str) for item in raw_blocked):
+        raise GatewayProvisioningError(
+            "omniroute_blocked_provider_settings_invalid", stage="gateway_auth"
+        )
+    blocked = sorted(
+        {item.strip() for item in raw_blocked if item.strip()}
+        | set(CERTIFICATION_NOAUTH_PROVIDER_BLOCKLIST)
+    )
+    _json(
+        _request(
+            client,
+            "PATCH",
+            "/api/settings",
+            stage="gateway_auth",
+            json={"autoRoutingEnabled": True, "blockedProviders": blocked},
+        ),
+        expected={200},
+        stage="gateway_auth",
+    )
+    readback = _settings(
+        _json(
+            _request(client, "GET", "/api/settings", stage="gateway_auth"),
+            expected={200},
+            stage="gateway_auth",
+        )
+    )
+    readback_blocked = readback.get("blockedProviders")
+    if not isinstance(readback_blocked, list) or not set(
+        CERTIFICATION_NOAUTH_PROVIDER_BLOCKLIST
+    ).issubset({item for item in readback_blocked if isinstance(item, str)}):
+        raise GatewayProvisioningError(
+            "omniroute_noauth_provider_scope_readback_mismatch", stage="gateway_auth"
+        )
+    if readback.get("autoRoutingEnabled") is False:
+        raise GatewayProvisioningError("omniroute_auto_routing_disabled", stage="gateway_auth")
+    return {
+        "status": "PASS",
+        "auto_routing_enabled": True,
+        "blocked_provider_count": len(readback_blocked),
+        "blocked_noauth_provider_ids": list(CERTIFICATION_NOAUTH_PROVIDER_BLOCKLIST),
+        "scope_basis": "pinned_omniroute_v3.8.38_noauth_catalog",
+        "credential_values_retained": False,
+    }
 
 
 def _connection(value: Any) -> dict[str, Any]:
@@ -160,6 +237,7 @@ def _discover_baseline_model(
         provider=PROVIDER,
         desired_model=PROVIDER_MODEL,
         discovery_payload=payload,
+        expected_connection_id=connection_id,
     )
     if result["status"] != "PASS":
         raise GatewayProvisioningError(
@@ -180,7 +258,9 @@ def provision(
     if not management_key:
         raise GatewayProvisioningError("omniroute_management_key_missing", stage="gateway_auth")
     if not provider_key:
-        raise GatewayProvisioningError("selected_provider_credential_missing", stage="provider_preflight")
+        raise GatewayProvisioningError(
+            "selected_provider_credential_missing", stage="provider_preflight"
+        )
     if not base_url.startswith(("http://", "https://")):
         raise GatewayProvisioningError("omniroute_base_url_must_be_http")
 
@@ -192,7 +272,12 @@ def provision(
         follow_redirects=False,
     )
     try:
-        current = _connections(_json(_request(client, "GET", "/api/providers", stage="omniroute_health"), stage="omniroute_health"))
+        current = _connections(
+            _json(
+                _request(client, "GET", "/api/providers", stage="omniroute_health"),
+                stage="omniroute_health",
+            )
+        )
         existing = next(
             (
                 item
@@ -201,6 +286,11 @@ def provision(
             ),
             None,
         )
+        if current and not (len(current) == 1 and existing is not None):
+            raise GatewayProvisioningError(
+                "omniroute_provider_state_not_empty", stage="gateway_auth"
+            )
+        auto_router_scope = _configure_auto_router_scope(client)
         payload = {
             "provider": PROVIDER,
             "apiKey": provider_key,
@@ -211,7 +301,9 @@ def provision(
         if existing is None:
             connection = _connection(
                 _json(
-                    _request(client, "POST", "/api/providers", stage="omniroute_health", json=payload),
+                    _request(
+                        client, "POST", "/api/providers", stage="omniroute_health", json=payload
+                    ),
                     expected={200, 201},
                     stage="omniroute_health",
                 )
@@ -238,14 +330,21 @@ def provision(
         baseline = _discover_baseline_model(client, connection_id)
 
         tested = _json(
-            _request(client, "POST", f"/api/providers/{connection_id}/test", stage="provider", json={}),
+            _request(
+                client, "POST", f"/api/providers/{connection_id}/test", stage="provider", json={}
+            ),
             expected={200},
             stage="provider",
         )
         if not isinstance(tested, dict) or tested.get("valid") is not True:
             raise GatewayProvisioningError("selected_provider_validation_failed")
 
-        readback = _connections(_json(_request(client, "GET", "/api/providers", stage="omniroute_health"), stage="omniroute_health"))
+        readback = _connections(
+            _json(
+                _request(client, "GET", "/api/providers", stage="omniroute_health"),
+                stage="omniroute_health",
+            )
+        )
         if len(readback) != 1:
             raise GatewayProvisioningError("omniroute_provider_count_is_not_exactly_one")
         selected = next((item for item in readback if str(item.get("id")) == connection_id), None)
@@ -261,6 +360,7 @@ def provision(
             "resolved_provider_model": EXPECTED_ROUTE,
             "baseline_discovery": baseline,
             "auto_router_model": "auto/coding",
+            "auto_router_scope": auto_router_scope,
             "management_endpoint": "http://omniroute:20128",
             "openai_compatible_endpoint": "http://omniroute:20129/v1",
             "connection_id": connection_id,
@@ -289,7 +389,9 @@ def main(argv: list[str] | None = None) -> int:
             provider_key=os.getenv("GROQ_API_KEY", "").strip(),
         )
     except (GatewayProvisioningError, httpx.HTTPError) as exc:
-        reason = str(exc) if isinstance(exc, GatewayProvisioningError) else "omniroute_transport_error"
+        reason = (
+            str(exc) if isinstance(exc, GatewayProvisioningError) else "omniroute_transport_error"
+        )
         if isinstance(exc, GatewayProvisioningError):
             failure = classify_failure(
                 stage=exc.stage,
@@ -327,7 +429,9 @@ def main(argv: list[str] | None = None) -> int:
             "response_payloads_retained": False,
         }
         args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+        args.output.write_text(
+            json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8"
+        )
         print(json.dumps({"status": "BLOCKED", "failure": report["failure"]}, sort_keys=True))
         return 2
     args.output.parent.mkdir(parents=True, exist_ok=True)

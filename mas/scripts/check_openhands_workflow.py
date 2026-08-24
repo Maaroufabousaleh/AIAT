@@ -17,6 +17,7 @@ WORKFLOW_NAME = ".github/workflows/openhands-candidate-certification.yml"
 LITELLM_CERTIFICATION_CONFIG = Path(__file__).resolve().parents[1] / "infra" / "compose" / "litellm_openhands_certification.yaml"
 GATEWAY_ROUTE_PROBE = Path(__file__).with_name("check_openhands_certification_gateway.py")
 PROVIDER_BASELINE_PROBE = Path(__file__).with_name("check_openhands_provider_baseline.py")
+PROVIDER_SCOPE_HELPER = Path(__file__).with_name("provision_openhands_certification_gateway.py")
 EXPECTED_IMAGES = (
     "ghcr.io/openhands/agent-server:1.43.0-python@sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97",
     "ghcr.io/berriai/litellm@sha256:a50b02a6056095da29308310bb608f0509e08ddcd1d105bae9c21007d82b0e95",
@@ -246,6 +247,26 @@ def _provider_baseline_probe_cli_issues() -> list[str]:
     return ["provider_baseline_probe_cli_contract_missing"] if any(item not in helper for item in required) else []
 
 
+def _provider_scope_helper_issues() -> list[str]:
+    """Ensure auto/coding cannot silently add pinned no-auth candidates."""
+
+    helper_path = PROVIDER_SCOPE_HELPER
+    try:
+        helper = helper_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ["provider_scope_helper_missing"]
+    required = (
+        "CERTIFICATION_NOAUTH_PROVIDER_BLOCKLIST",
+        "def _configure_auto_router_scope",
+        '"PATCH"',
+        '"/api/settings"',
+        '"omniroute_noauth_provider_scope_readback_mismatch"',
+        '"auto_router_scope": auto_router_scope',
+        '"omniroute_provider_state_not_empty"',
+    )
+    return ["provider_scope_helper_contract_missing"] if any(item not in helper for item in required) else []
+
+
 def _workflow_script_reference_issues(text: str) -> list[str]:
     """Reject workflow references to scripts absent from the exact candidate."""
 
@@ -296,6 +317,7 @@ def validate(text: str) -> dict[str, Any]:
     errors.extend(_omniroute_auth_helper_issues())
     errors.extend(_gateway_route_probe_cli_issues())
     errors.extend(_provider_baseline_probe_cli_issues())
+    errors.extend(_provider_scope_helper_issues())
     errors.extend(_workflow_script_reference_issues(text))
     if "--attempts 30" not in text or "--interval-seconds 1" not in text:
         errors.append("omniroute_auth_transport_retry_missing")

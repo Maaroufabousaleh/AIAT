@@ -23,6 +23,7 @@ ROUTING = _load("openhands_model_routing")
 def test_worker_alias_is_stable_and_auto_route_is_gateway_owned() -> None:
     assert ROUTING.AIAT_MODEL_ID == "omniroute-coding"
     assert ROUTING.AUTO_ROUTER_MODEL == "auto/coding"
+    assert ROUTING.LITELLM_AUTO_ROUTER_MODEL == "openai/auto/coding"
     assert ROUTING.auto_router_model_override_allowed("omniroute-coding") is True
     assert ROUTING.auto_router_model_override_allowed("auto/coding") is False
     assert ROUTING.auto_router_model_override_allowed("groq/openai/gpt-oss-120b") is False
@@ -33,9 +34,12 @@ def test_baseline_requires_live_discovery_and_never_falls_back() -> None:
         provider="groq",
         desired_model=ROUTING.CERTIFICATION_BASELINE_MODEL,
         discovery_payload={
+            "provider": "groq",
+            "connectionId": "connection-1",
             "source": "api",
             "models": [{"id": ROUTING.CERTIFICATION_BASELINE_MODEL}],
         },
+        expected_connection_id="connection-1",
     )
     assert report["status"] == "PASS"
     assert report["model_present"] is True
@@ -85,6 +89,23 @@ def test_provider_pool_is_explicit_and_never_discovers_environment_credentials()
         ROUTING.parse_governed_provider_pool("groq,unknown")
     with pytest.raises(ValueError, match="non-empty"):
         ROUTING.parse_governed_provider_pool("groq,,gemini")
+
+
+def test_certification_blocks_pinned_omniroute_noauth_candidates() -> None:
+    assert set(ROUTING.CERTIFICATION_NOAUTH_PROVIDER_BLOCKLIST) == {
+        "chipotle",
+        "ddgw",
+        "duckduckgo-web",
+        "mcode",
+        "mimocode",
+        "oc",
+        "opencode",
+        "pepper",
+        "theoldllm",
+        "tllm",
+        "veo-free",
+        "veoaifree-web",
+    }
 
 
 def _connections() -> list[dict[str, object]]:
@@ -171,3 +192,21 @@ def test_auto_router_fixture_fails_closed_without_valid_providers() -> None:
     )
     assert report["status"] == "BLOCKED_NO_VALID_PROVIDERS"
     assert report["credential_values_retained"] is False
+
+
+def test_live_discovery_rejects_wrong_provider_or_connection_identity() -> None:
+    payload = {
+        "provider": "gemini",
+        "connectionId": "other-connection",
+        "source": "api",
+        "models": [{"id": ROUTING.CERTIFICATION_BASELINE_MODEL}],
+    }
+    report = ROUTING.baseline_discovery_status(
+        provider="groq",
+        desired_model=ROUTING.CERTIFICATION_BASELINE_MODEL,
+        discovery_payload=payload,
+        expected_connection_id="connection-1",
+    )
+    assert report["status"] == "BASELINE_MODEL_UNAVAILABLE"
+    assert report["provider_identity_matches"] is False
+    assert report["connection_identity_matches"] is False

@@ -21,14 +21,18 @@ try:
         AIAT_MODEL_ID,
         AUTO_ROUTER_MODEL,
         CERTIFICATION_BASELINE_MODEL,
+        CERTIFICATION_NOAUTH_PROVIDER_BLOCKLIST,
         CERTIFICATION_PROVIDER,
+        LITELLM_AUTO_ROUTER_MODEL,
     )
 except ImportError:  # pragma: no cover - package invocation fallback
     from scripts.openhands_model_routing import (  # type: ignore
         AIAT_MODEL_ID,
         AUTO_ROUTER_MODEL,
         CERTIFICATION_BASELINE_MODEL,
+        CERTIFICATION_NOAUTH_PROVIDER_BLOCKLIST,
         CERTIFICATION_PROVIDER,
+        LITELLM_AUTO_ROUTER_MODEL,
     )
 
 SCHEMA = "aiat.openhands-certification-gateway-health.v1"
@@ -131,7 +135,9 @@ def probe(
     if not gateway_key:
         raise GatewayProbeError("model_gateway_key_missing", stage="gateway_auth")
     created_client = client is None
-    client = client or httpx.Client(timeout=httpx.Timeout(120.0, connect=10.0), follow_redirects=False)
+    client = client or httpx.Client(
+        timeout=httpx.Timeout(120.0, connect=10.0), follow_redirects=False
+    )
     try:
         if not omniroute_url or not litellm_url:
             raise GatewayProbeError("gateway_endpoint_missing", stage="gateway_response")
@@ -247,6 +253,7 @@ def probe(
             "route": {
                 "requested_aiat_model": AIAT_MODEL,
                 "resolved_route_model": AUTO_ROUTER_MODEL,
+                "litellm_upstream_model": LITELLM_AUTO_ROUTER_MODEL,
                 "routing_mode": "omniroute_auto_coding",
                 # Provider provisioning is an exact-one governed connection
                 # in this disposable certification wave.  Recording the
@@ -257,6 +264,12 @@ def probe(
                     "provider": PROVIDER,
                     "baseline_model": PROVIDER_MODEL,
                     "basis": "single_governed_certification_connection",
+                },
+                "provider_scope": {
+                    "mode": "explicit_connection_only",
+                    "noauth_provider_blocklist": list(CERTIFICATION_NOAUTH_PROVIDER_BLOCKLIST),
+                    "verification": "provider_provisioning_readback_required",
+                    "credential_values_retained": False,
                 },
                 "litellm_http_status": response.status_code,
                 "response_success": True,
@@ -330,6 +343,7 @@ def main(argv: list[str] | None = None) -> int:
             "failure_retryable": failure.retryable,
             "requested_aiat_model": AIAT_MODEL,
             "resolved_route_model": AUTO_ROUTER_MODEL,
+            "litellm_upstream_model": LITELLM_AUTO_ROUTER_MODEL,
             "routing_mode": "omniroute_auto_coding",
             "gateway_key_retained": False,
             "raw_response_retained": False,

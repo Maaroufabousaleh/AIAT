@@ -188,6 +188,24 @@ def test_auto_router_and_deterministic_baseline_are_both_required() -> None:
     assert "auto_routing_evidence_missing" in module.validate(weakened)["errors"]
 
 
+def test_auto_router_scope_helper_is_required(tmp_path: Path, monkeypatch) -> None:
+    module = _module()
+    text = _workflow()
+    report = module.validate(text)
+    assert "provider_scope_helper_contract_missing" not in report["errors"]
+    helper = Path(__file__).resolve().parents[1] / "provision_openhands_certification_gateway.py"
+    weakened_helper = helper.read_text(encoding="utf-8").replace(
+        '"omniroute_noauth_provider_scope_readback_mismatch"',
+        '"scope_readback_missing"',
+        1,
+    )
+    helper_path = tmp_path / "provision_openhands_certification_gateway.py"
+    helper_path.write_text(weakened_helper, encoding="utf-8")
+    monkeypatch.setattr(module, "PROVIDER_SCOPE_HELPER", helper_path)
+    report = module.validate(text)
+    assert "provider_scope_helper_contract_missing" in report["errors"]
+
+
 def test_gateway_route_probe_cli_contract_is_checked(tmp_path: Path, monkeypatch) -> None:
     module = _module()
     helper = Path(__file__).resolve().parents[1] / "check_openhands_certification_gateway.py"

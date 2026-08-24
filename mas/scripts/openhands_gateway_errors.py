@@ -33,6 +33,7 @@ OMNIROUTE_HEALTH_FAILURE = "OMNIROUTE_HEALTH_FAILURE"
 OMNIROUTE_HEALTH_AUTH_CONTRACT_FAILURE = "OMNIROUTE_HEALTH_AUTH_CONTRACT_FAILURE"
 OMNIROUTE_APPLICATION_HEALTH_FAILURE = "OMNIROUTE_APPLICATION_HEALTH_FAILURE"
 OMNIROUTE_HEALTH_TIMEOUT = "OMNIROUTE_HEALTH_TIMEOUT"
+OMNIROUTE_CONFIGURATION_FAILURE = "OMNIROUTE_CONFIGURATION_FAILURE"
 LITELLM_TO_OMNIROUTE_ROUTE_FAILURE = "LITELLM_TO_OMNIROUTE_ROUTE_FAILURE"
 OPENHANDS_TO_GATEWAY_NETWORK_FAILURE = "OPENHANDS_TO_GATEWAY_NETWORK_FAILURE"
 MODEL_GATEWAY_AUTH_FAILURE = "MODEL_GATEWAY_AUTH_FAILURE"
@@ -126,6 +127,15 @@ def classify_failure(
             return GatewayFailure(MODEL_GATEWAY_AUTH_FAILURE, normalized_stage, http_status)
         if http_status is not None and http_status >= 400:
             return GatewayFailure(MODEL_GATEWAY_RESPONSE_INVALID, normalized_stage, http_status)
+
+    if code in {
+        "omniroute_provider_state_not_empty",
+        "omniroute_provider_readback_contains_invalid_entry",
+        "omniroute_blocked_provider_settings_invalid",
+        "omniroute_noauth_provider_scope_readback_mismatch",
+        "omniroute_auto_routing_disabled",
+    }:
+        return GatewayFailure(OMNIROUTE_CONFIGURATION_FAILURE, normalized_stage, http_status)
 
     # Preserve harness/gateway stages before applying provider HTTP/exception
     # heuristics.  A failed health probe or an internal route transport error

@@ -37,6 +37,7 @@ def test_provider_failure_taxonomy_is_sanitized_and_distinct() -> None:
         "omni_health_auth": module.OMNIROUTE_HEALTH_AUTH_CONTRACT_FAILURE,
         "omni_health_app": module.OMNIROUTE_APPLICATION_HEALTH_FAILURE,
         "omni_health_timeout": module.OMNIROUTE_HEALTH_TIMEOUT,
+        "omni_configuration": module.OMNIROUTE_CONFIGURATION_FAILURE,
         "route": module.LITELLM_TO_OMNIROUTE_ROUTE_FAILURE,
         "openhands_network": module.OPENHANDS_TO_GATEWAY_NETWORK_FAILURE,
         "gateway_auth": module.MODEL_GATEWAY_AUTH_FAILURE,
@@ -62,6 +63,9 @@ def test_provider_failure_taxonomy_is_sanitized_and_distinct() -> None:
         "omni_health_auth": module.classify_failure(stage="omniroute_health", http_status=401),
         "omni_health_app": module.classify_failure(stage="omniroute_health", http_status=503),
         "omni_health_timeout": module.classify_failure(stage="omniroute_health", exception_type="ReadTimeout"),
+        "omni_configuration": module.classify_failure(
+            stage="gateway_auth", error_code="omniroute_noauth_provider_scope_readback_mismatch"
+        ),
         "route": module.classify_failure(stage="litellm_to_omniroute"),
         "openhands_network": module.classify_failure(stage="openhands_to_gateway"),
         "gateway_auth": module.classify_failure(stage="gateway_auth"),
@@ -126,3 +130,12 @@ def test_baseline_model_unavailability_is_a_provider_availability_class() -> Non
         error_code="baseline_model_unavailable",
     )
     assert failure.failure_class == module.PROVIDER_MODEL_UNAVAILABLE
+
+
+def test_omniroute_scope_configuration_failure_is_not_provider_failure() -> None:
+    module = _load("openhands_gateway_errors")
+    failure = module.classify_failure(
+        stage="gateway_auth", error_code="omniroute_provider_state_not_empty"
+    )
+    assert failure.failure_class == module.OMNIROUTE_CONFIGURATION_FAILURE
+    assert module.is_provider_failure(failure.failure_class) is False
