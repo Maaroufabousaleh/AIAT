@@ -133,6 +133,19 @@ create as `FAILED_INFRASTRUCTURE`.
 tool-service, and Agent Server, and adds a regression check for shell syntax in
 every workflow `run` block.
 
+The current OpenHands continuation tip is `1c4a426`. `cc48cca` keeps the
+LiteLLM/OmniRoute `auto/coding` evidence path independent of the exact
+`groq/openai/gpt-oss-120b` baseline, `a2c886e` hardens gate-status wiring,
+`a39788a` expands evidence-retention fail-closed checks, and `2d70711`
+refreshes the candidate-freeze documentation. `a377dab` records bounded
+single-provider attribution for a successful auto-route response without
+retaining credentials, connection identifiers, or model payloads. `1c4a426`
+also preserves explicit blocked outputs when Agent Server health never
+becomes ready. These are
+repository-local certification hardening changes only; OpenHands remains
+inactive, OpenCode remains the default, and the global `NO-RELEASE` decision
+is unchanged.
+
 The latest bounded P1 implementation slice (`60839f4`) stabilizes the
 Governance and Projects dashboard refresh callbacks and last-known-state refs.
 Dashboard lint, typecheck, and production build pass, and the production-server

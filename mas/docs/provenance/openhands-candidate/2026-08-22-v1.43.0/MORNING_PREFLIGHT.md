@@ -1,7 +1,7 @@
 # OpenHands v1.43.0 morning certification preparation
 
-**Repository-local refresh:** 2026-08-24, current certification-path
-hardening at `a39788a`; the branch also
+**Repository-local refresh:** 2026-08-23, current certification-path
+hardening at `1c4a426`; the branch also
 contains the earlier candidate/evidence history. The next live run must freeze
 the exact SHA actually selected by the operator.
 
@@ -18,8 +18,10 @@ The previously prepared `1fcaf6cb62c6583efdf0ea1396e3d52329453fc3` SHA is an
 ancestor of the reviewed branch tip and is not the current dispatch candidate;
 the safe preflight correctly rejects it unless the checked-out repository tip
 matches the requested SHA. The current reviewed tip includes `cc48cca` and
-`a2c886e` auto-route/gate-wiring hardening plus `a39788a` evidence-retention
-validation. Freeze and preflight that exact tip before any deliberate run.
+`a2c886e` auto-route/gate-wiring hardening, `a39788a` evidence-retention
+validation, `a377dab` scalar provider attribution for successful `auto/coding`
+evidence, and `1c4a426` Agent Server health-blocker output diagnostics. Freeze
+and preflight that exact tip before any deliberate run.
 The current workflow also verifies LiteLLM/OmniRoute source-archive hashes,
 rejects host-bound gateway targets, validates the sanitized evidence tree, and
 records run-scoped profile disposal through Agent Server container absence.
@@ -46,6 +48,14 @@ specification is recorded in `gateway-provenance.json` and implemented by
 `ecc1b48`; CI remains Groq-only (`GROQ_API_KEY`), while Gemini/Cerebras are
 documented as future explicit allowlist options and no credentials are
 discovered or added automatically.
+
+The current disposable gateway keeps two independent observations: the exact
+`groq/openai/gpt-oss-120b` baseline must pass before it can support a live
+certification decision, while the LiteLLM `omniroute-coding` request exercises
+OmniRoute `openai/auto/coding`. A successful auto-route record retains only the
+bounded single-provider attribution (`groq`, the baseline model, and route
+basis); it does not retain provider credentials, connection IDs, or response
+payloads.
 
 ### Historical workflow implementation failure
 

@@ -83,7 +83,7 @@ and strengthens validation; this evidence is not provider, image, gVisor,
 security, or OpenHands runtime evidence and does not change `NO-RELEASE`.
 
 The certification implementation baseline is `agent/fix-review-p1` at
-`cedcee2a1efd740439b7b54d45f17610fc6c8a71`; runtime implementation remains
+`1c4a426105fcb8a64c077d70f5bacffc45d2ec4a`; runtime implementation remains
 the same pinned OpenHands candidate. The latest hardening verifies exact
 LiteLLM/OmniRoute release-tag commits and source archive SHA-256 values
 (`4890aaa2bd0ddbc2ef1e5b19ba075363de58167f`), validates the complete
@@ -129,6 +129,13 @@ is intentionally pinned to the earlier exact SHA
 `61f7d49b905a109a154f961e147f783016792218`; use the explicit
 `--candidate-sha` argument when validating that certificate because the
 development checkout is still operator-dirty.
+
+The current route contract keeps the exact `groq/openai/gpt-oss-120b` baseline
+separate from the LiteLLM `omniroute-coding` request to OmniRoute
+`openai/auto/coding`. Repository-local hardening through `a377dab` records
+bounded single-provider attribution only; it does not claim a live provider
+result, steward approval, or worker activation. `1c4a426` also preserves
+explicit blocked outputs when Agent Server health never becomes ready.
 
 The [P0 release-scope and external-prerequisite matrix](P0_RELEASE_SCOPE_MATRIX.md)
 now records the frozen operator boundary. Native Linux and default gVisor are

@@ -67,8 +67,10 @@ and its manual workflow is
 
 The inactive OpenHands v1.43.0 candidate is a parallel certification effort,
 not a replacement for OpenCode. Its self-contained LiteLLM v1.90.0 and
-OmniRoute v3.8.38 route is digest-pinned to `omniroute-coding` → Groq
-`llama-3.3-70b-versatile`; the internal gateway URL is fixed to
+OmniRoute v3.8.38 route is digest-pinned to the worker-visible
+`omniroute-coding` alias. The deterministic baseline is
+`groq/openai/gpt-oss-120b`; the production-shaped LiteLLM request separately
+exercises OmniRoute `openai/auto/coding`. The internal gateway URL is fixed to
 `http://litellm:4000`. The manual workflow now preflights both the single
 operator-owned `GROQ_API_KEY` and the non-secret candidate bindings before
 starting any gateway/runtime stages, creates all internal
@@ -100,8 +102,10 @@ inactive until a deliberate run, complete evidence, and independent steward
 activation approval.
 
 The repository-local refresh at implementation baseline
-`498aba091fa4a897a6c62745527b5f33c1869d4b` is recorded in the candidate
-[`overnight-reconciliation.json`](../../mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/overnight-reconciliation.json):
+`1c4a426105fcb8a64c077d70f5bacffc45d2ec4a` is reflected in the maintained
+candidate status documents. The historical
+[`overnight-reconciliation.json`](../../mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/overnight-reconciliation.json)
+remains immutable historical evidence:
 the static ledger is 63/63, workflow validation and the offline harness pass,
 and the 20-gate matrix remains blocked only because live provider/task and
 lifecycle evidence has not been run. The subsequent documentation refresh

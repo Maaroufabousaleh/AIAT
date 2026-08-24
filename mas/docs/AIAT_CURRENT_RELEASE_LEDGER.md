@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-23
-**Base revision:** `a39788a` (latest reviewed OpenHands certification-path hardening plus evidence-retention validation; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
+**Base revision:** `1c4a426` (latest reviewed OpenHands certification-path hardening plus Agent Server health-blocker diagnostics; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -9,7 +9,8 @@ The overnight OpenHands continuation (`4234d07`, `1db5b72`, `cf80dd1`,
 `cbad706`, `6da661f`, `d8ab39b`, `a6fa383`, `5724979`, `b1c5d8e`,
 `a6b6eae`, `6da88bd`, `c3f54da`, `93b6ee8`, `d86675b`, `0c0a210`,
 `b71facc`, `04cfd23`, `fe5cef3`, `5163cc8`, `e036508`, `334c321`, `758ca59`,
-`3161ad1`, `4f51dac`, `cc48cca`, `a2c886e`, and `a39788a`)
+`3161ad1`, `4f51dac`, `cc48cca`, `a2c886e`, `a39788a`, `2d70711`, `a377dab`,
+and `1c4a426`)
 does not alter the release decision. OpenHands
 v1.43.0 remains an inactive `CERTIFYING` candidate; its exact image/source
 pins, run-scoped gateway/profile/MCP design, one-shot certification
@@ -24,6 +25,16 @@ OpenCode remains the current default. The next candidate SHA must be frozen
 from the reviewed branch after any final operator-local changes; it requires
 one new deliberate provider-backed certification run and does not inherit live
 evidence from the historical provider-boundary runs.
+
+The current gateway implementation keeps the exact
+`groq/openai/gpt-oss-120b` baseline independent from the LiteLLM
+`omniroute-coding` request, which routes through OmniRoute
+`openai/auto/coding`. `a377dab` records only scalar single-provider
+attribution for a successful auto-route response; it does not claim a live
+result and retains no connection identifiers, credentials, or model payloads.
+`1c4a426` additionally preserves explicit blocked outputs when Agent Server
+health never becomes ready, so downstream evidence can distinguish that
+runtime boundary without changing the fail-closed gate.
 
 The later OpenHands path hardening `488a593` makes the OmniRoute API-auth
 probe compatible with older frozen candidate helper interfaces through a
