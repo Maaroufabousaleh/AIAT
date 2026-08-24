@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-24
-**Base revision:** `a58d862` (OpenHands dispatch preflight now verifies that the checked-out workflow's gateway and provider-baseline helper CLI contracts exist; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
+**Base revision:** `3cbd717` (OpenHands dispatch preflight verifies checked-out helper CLI contracts and classifies implementation drift separately from operator configuration; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -12,7 +12,7 @@ The overnight OpenHands continuation (`4234d07`, `1db5b72`, `cf80dd1`,
 `3161ad1`, `4f51dac`, `cc48cca`, `a2c886e`, `a39788a`, `2d70711`, `a377dab`,
 `1c4a426`, `ebfbe73`, `c9dba1f`, `ad511d9`, `fa19b1c`, `f3f4050`,
 `65237f3`, `595965d`, `57f76b6`, `71ce0f6`, `e7a2ff5`, `71149db`,
-`e9a8a09`, `d447197`, and `a58d862`)
+`e9a8a09`, `d447197`, `a58d862`, and `3cbd717`)
 does not alter the release decision. OpenHands
 v1.43.0 remains an inactive `CERTIFYING` candidate; its exact image/source
 pins, run-scoped gateway/profile/MCP design, one-shot certification
@@ -36,7 +36,7 @@ The previously prepared `1fcaf6cb62c6583efdf0ea1396e3d52329453fc3` candidate is
 an ancestor of the reviewed branch and is retained as immutable historical
 workflow-implementation evidence in
 [`github-run-32684939718-failure.json`](provenance/openhands-candidate/2026-08-22-v1.43.0/github-run-32684939718-failure.json).
-The current reviewed tip `a58d862` remains
+The current reviewed tip `3cbd717` remains
 inactive and requires one deliberate, operator-authorized provider-backed run
 after the validator/helper fixes. The workflow validator checks both
 route-probe and provider-baseline CLI contracts, the Agent Server cleanup path
@@ -52,7 +52,7 @@ startup, and zero-residue cleanup passed; the provider baseline and governed
 route probe were not validly executed, and tool-service/OpenHands/live gates
 were not run. It is preserved as
 [`github-run-32691538177-failure.json`](provenance/openhands-candidate/2026-08-22-v1.43.0/github-run-32691538177-failure.json).
-The new `a58d862` dispatch preflight rejects this class as
+The new `3cbd717` dispatch preflight rejects this class as
 `CANDIDATE_HELPER_CONTRACT_MISMATCH` before dispatch; no replacement run is
 claimed by this evidence update.
 
