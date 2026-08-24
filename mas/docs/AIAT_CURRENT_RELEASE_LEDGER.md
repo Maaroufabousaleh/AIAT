@@ -36,6 +36,13 @@ result and retains no connection identifiers, credentials, or model payloads.
 health never becomes ready, so downstream evidence can distinguish that
 runtime boundary without changing the fail-closed gate.
 
+The active Groq model catalogue now excludes the provider-retired
+`llama-3.3-70b-versatile` entry and keeps `groq/openai/gpt-oss-120b` as the
+maintained deterministic baseline. Older 93-model catalogue reports and live
+certificates that mention the retired model remain immutable historical
+evidence; they are not current model-selection authority. The legacy LiteLLM
+alias is retained only as a compatibility route to governed `auto/coding`.
+
 The later OpenHands path hardening `488a593` makes the OmniRoute API-auth
 probe compatible with older frozen candidate helper interfaces through a
 bounded fallback while retaining scalar probe evidence. `ecc1b48` formalizes

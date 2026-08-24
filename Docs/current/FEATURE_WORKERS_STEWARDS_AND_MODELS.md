@@ -10,8 +10,10 @@ external network access. Independent-host provider operation, sandbox
 certification, outage recovery, and full worker certification remain separate.
 `f999695` adds an explicit opt-in
 worker-plane provider runner; the retained `90c3e5d` certificate proves one
-selected `llama-3.3-70b-versatile` completion through the configured
-LiteLLM/OmniRoute route. `17f6547` adds durable worker/provider/mail-edge
+selected historical `llama-3.3-70b-versatile` completion through the configured
+LiteLLM/OmniRoute route. That immutable certificate predates the provider's
+retirement; the active Groq catalogue now selects `openai/gpt-oss-120b` and
+does not expose the retired entry. `17f6547` adds durable worker/provider/mail-edge
 read-back, `def4fe9` adds bounded provider transient-retry evidence,
 `00a468d` hardens fallback routing for all transport outages, `48b32ef` adds
 the bounded provider-recovery fixture, and `5ed0a0b` adds the fail-closed
