@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-24
-**Base revision:** `cb02286` (OpenHands runsc network resolution uses explicit run-scoped peer IP host mappings while retaining stable service names; the workflow validator requires the mapping and probes name resolution before HTTP; scanner/SBOM evidence preserves JSON Lines and removes incomplete SBOM artifacts; image SBOM generation uses Syft's exact registry-digest source to avoid Docker-daemon tar exhaustion; live readiness accepts only the pinned `build_git_sha` field or an equivalent exact-commit alias; disposable OmniRoute connection identifiers are redacted from retained evidence; dispatch preflight validates every workflow script and helper contract from the requested candidate tree; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
+**Base revision:** `bc8c4b6` (OpenHands runsc network resolution uses explicit run-scoped peer IP host mappings while retaining stable service names; the workflow validator requires the mapping and probes name resolution before HTTP; scanner/SBOM evidence preserves JSON Lines and removes incomplete SBOM artifacts; image SBOM generation uses Syft's exact registry-digest source to avoid Docker-daemon tar exhaustion; live readiness accepts only the pinned `build_git_sha` field or an equivalent exact-commit alias; disposable OmniRoute connection identifiers are redacted from retained evidence; dispatch preflight validates every workflow script and helper contract from the requested candidate tree; exact run-tagged tool-service image cleanup is statically guarded; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -38,13 +38,13 @@ The previously prepared `1fcaf6cb62c6583efdf0ea1396e3d52329453fc3` candidate is
 an ancestor of the reviewed branch and is retained as immutable historical
 workflow-implementation evidence in
 [`github-run-32684939718-failure.json`](provenance/openhands-candidate/2026-08-22-v1.43.0/github-run-32684939718-failure.json).
-The current reviewed tip `cb02286` remains inactive and requires one
+The current reviewed tip `bc8c4b6` remains inactive and requires one
 deliberate, operator-authorized provider-backed run after the registry-based
 image-SBOM and build-metadata fixes. The workflow validator checks both route-probe and
 provider-baseline CLI contracts, the Agent Server cleanup path proves
 stopped-container disposal, and certification authorizations are only
 consumed after successful trusted construction. The read-only dispatch
-preflight for `cb02286` passes with the configured Groq secret and governed
+preflight for `bc8c4b6` passes with the configured Groq secret and governed
 variables; no replacement certification run has been dispatched for this tip.
 
 The deliberate run `32691538177` repeated the stale-candidate failure because

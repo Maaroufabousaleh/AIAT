@@ -1,7 +1,7 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-24, current certification-path
-hardening at `cb02286` (including
+hardening at `bc8c4b6` (including
 `595965d` gateway failure-origin diagnostics, `57f76b6` fail-closed web DNS
 validation, `e7a2ff5` stopped-container cleanup, and `71149db` certification
 authorization consumption after trusted construction); the branch also
@@ -28,13 +28,13 @@ candidate tree is missing helper contracts. The reviewed history includes
 `a2c886e` auto-route/gate-wiring hardening, `a39788a` evidence-retention
 validation, `a377dab` scalar provider attribution for successful `auto/coding`
 evidence, and `1c4a426` Agent Server health-blocker output diagnostics. The
-current reviewed tip `cb02286` additionally distinguishes unknown LiteLLM 404 responses
+current reviewed tip `bc8c4b6` additionally distinguishes unknown LiteLLM 404 responses
 from the explicit no-provider auto-router condition and rejects unresolved web
-targets before any network request. The
-the latest deliberate run also confirmed the configured Groq secret at
+targets before any network request. The latest deliberate run also confirmed
+the configured Groq secret at
 provider preflight and reached the gateway before the candidate helper
-mismatch; no live model result is claimed. Freeze
-and preflight the corrected reviewed tip before any deliberate run. The current tip also
+mismatch; no live model result is claimed. Freeze and preflight the corrected
+reviewed tip before any deliberate run. The current tip also
 contains `f3f4050`, which hardens the run-scoped skill/plugin boundary described
 below, and `65237f3` records that capability boundary in the maintained
 status surface. The flow-runtime UI coverage marker was corrected in `71ce0f6`;
@@ -48,6 +48,9 @@ an explicit strict tip-match mode. It retains the same 63/63 static result,
 two pending OpenCode evidence items, and `NO-RELEASE`. The current reviewed tip
 passes the read-only dispatch preflight; no replacement certification run has
 been dispatched after `32702677310`.
+The cleanup path now removes the exact run-tagged tool-service image reference
+it builds, and the static workflow validator rejects a colon-versus-hyphen tag
+mismatch before dispatch.
 The current workflow also verifies LiteLLM/OmniRoute source-archive hashes,
 rejects host-bound gateway targets, validates the sanitized evidence tree, and
 records run-scoped profile disposal through Agent Server container absence.
@@ -198,7 +201,7 @@ its route helper still rejected `--auto-routing-output`; the gateway and
 provider setup had already passed, while tool-service, OpenHands, and all live
 mandatory gates were not run. The immutable run artifact is recorded in
 [`github-run-32691538177-failure.json`](./github-run-32691538177-failure.json).
-The reviewed tip `cb02286` includes the dispatch-preflight check for every
+The reviewed tip `bc8c4b6` includes the dispatch-preflight check for every
 workflow script plus both helper CLI contracts, reports implementation drift
 separately from missing operator configuration, and uses the registry-based image-SBOM source for the exact
 digest-pinned image. A stale candidate still fails closed before GitHub Actions
