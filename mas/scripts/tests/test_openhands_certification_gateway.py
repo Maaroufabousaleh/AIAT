@@ -147,6 +147,11 @@ def test_route_probe_retains_only_scalar_usage() -> None:
     serialized = json.dumps(report, sort_keys=True)
     assert report["status"] == "PASS"
     assert report["route"]["usage"]["total_tokens"] == 5
+    assert report["route"]["provider_attribution"] == {
+        "provider": PROBE.PROVIDER,
+        "baseline_model": PROBE.PROVIDER_MODEL,
+        "basis": "single_governed_certification_connection",
+    }
     assert report["route"]["raw_response_retained"] is False
     assert gateway_key not in serialized
     assert "secret raw response" not in serialized

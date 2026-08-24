@@ -195,6 +195,16 @@ def probe(
                 "requested_aiat_model": AIAT_MODEL,
                 "resolved_route_model": AUTO_ROUTER_MODEL,
                 "routing_mode": "omniroute_auto_coding",
+                # Provider provisioning is an exact-one governed connection
+                # in this disposable certification wave.  Recording the
+                # bounded provider identity makes a successful auto/coding
+                # response attributable without retaining a connection ID,
+                # model payload, or credential.
+                "provider_attribution": {
+                    "provider": PROVIDER,
+                    "baseline_model": PROVIDER_MODEL,
+                    "basis": "single_governed_certification_connection",
+                },
                 "litellm_http_status": response.status_code,
                 "response_success": True,
                 "usage": usage,
