@@ -381,9 +381,13 @@ def _network_topology_contract_issues(text: str) -> list[str]:
     readback_required = (
         ".NetworkSettings.Networks",
         '"container_alias_readback": alias_readback',
+        '"attached_networks": attached_networks',
+        '"network_scope_status": "PASS" if network_scope_ok else "BLOCKED"',
+        '"expected_networks_per_container": [network_name]',
         '"alias_inspect_status": "PASS" if alias_inspect_ok else "BLOCKED"',
         '"network_aliases_expected": expected_aliases',
         'item["aliases"] = alias_readback.get(name, {}).get("aliases", [])',
+        'item["attached_networks"] = alias_readback.get(name, {}).get("attached_networks", [])',
     )
     if any(item not in topology_run for item in readback_required):
         return ["network_topology_alias_readback_missing"]
@@ -602,6 +606,9 @@ def validate(text: str) -> dict[str, Any]:
         "network-topology.json" not in text
         or 'docker network inspect "$network"' not in text
         or '"topology_status": "PASS" if complete else "BLOCKED"' not in text
+        or '"network_scope_status": "PASS" if network_scope_ok else "BLOCKED"' not in text
+        or '"attached_networks": attached_networks' not in text
+        or '"expected_networks_per_container": [network_name]' not in text
         or '"aliases": sorted' not in text
         or "expected_aliases" not in text
         or (

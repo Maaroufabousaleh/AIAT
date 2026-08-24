@@ -1058,6 +1058,7 @@ jobs:
               except (TypeError, json.JSONDecodeError):
                   networks = {}
               network_entry = networks.get(network_name) if isinstance(networks, dict) else None
+              attached_networks = sorted(str(item) for item in networks if item) if isinstance(networks, dict) else []
               aliases = (
                   sorted(str(item) for item in network_entry.get("Aliases", []) if item)
                   if isinstance(network_entry, dict)
@@ -1065,6 +1066,7 @@ jobs:
               )
               alias_readback[container_name] = {
                   "aliases": aliases,
+                  "attached_networks": attached_networks,
                   "inspect_exit_code": inspected.returncode,
               }
               if inspected.returncode != 0 or not isinstance(network_entry, dict):
@@ -1072,10 +1074,16 @@ jobs:
           for item in topology:
               name = str(item.get("name"))
               item["aliases"] = alias_readback.get(name, {}).get("aliases", [])
+              item["attached_networks"] = alias_readback.get(name, {}).get("attached_networks", [])
           observed = {str(item.get("name")) for item in topology}
+          network_scope_ok = all(
+              alias_readback.get(name, {}).get("attached_networks") == [network_name]
+              for name in expected
+          )
           complete = (
               inspect_exit_code == "0"
               and alias_inspect_ok
+              and network_scope_ok
               and observed == expected
               and all(item.get("ipv4") for item in topology)
               and all(expected_aliases.get(str(item.get("name"))) in item.get("aliases", []) for item in topology)
@@ -1087,6 +1095,8 @@ jobs:
                       "network_aliases_expected": expected_aliases,
                       "attached_containers": sorted(topology, key=lambda item: str(item.get("name"))),
                       "container_alias_readback": alias_readback,
+                      "network_scope_status": "PASS" if network_scope_ok else "BLOCKED",
+                      "expected_networks_per_container": [network_name],
                       "expected_container_count": len(expected),
                       "observed_container_count": len(observed),
                       "docker_inspect_exit_code": int(inspect_exit_code),

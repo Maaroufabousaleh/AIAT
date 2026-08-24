@@ -27,6 +27,12 @@ _SHA_RE = re.compile(r"[0-9a-fA-F]{40}\Z")
 _ALLOWED_STATUSES = {
     "PASSED",
     "BLOCKED_OPERATOR_CONFIGURATION",
+    # Certification authorization is deliberately distinct from activation
+    # approval.  A trusted certification controller may be unable to obtain a
+    # run-scoped authorization even though the candidate remains inactive; the
+    # evidence must preserve that narrow state instead of collapsing it into a
+    # generic incomplete-gates result.
+    "BLOCKED_CERTIFICATION_AUTHORIZATION",
     "BLOCKED_MISSING_OPERATOR_SECRET",
     "BLOCKED_SECURITY_TRIAGE",
     "BLOCKED_SCANNER_COVERAGE",

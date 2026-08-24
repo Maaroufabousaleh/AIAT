@@ -333,7 +333,60 @@ def test_network_topology_parser_uses_container_network_settings_aliases(tmp_pat
     report = json.loads(output.read_text(encoding="utf-8"))
     assert report["topology_status"] == "PASS"
     assert report["alias_inspect_status"] == "PASS"
+    assert report["network_scope_status"] == "PASS"
+    assert report["container_alias_readback"]["aiat-openhands-litellm-123"]["attached_networks"] == [network]
     assert report["container_alias_readback"]["aiat-openhands-litellm-123"]["aliases"] == ["litellm"]
+
+
+def test_network_topology_rejects_extra_container_network_attachment(tmp_path: Path) -> None:
+    document = yaml.safe_load(_workflow())
+    step = next(
+        step
+        for step in document["jobs"]["certify"]["steps"]
+        if step.get("name") == "Record disposable gateway network topology"
+    )
+    run = step["run"]
+    python_body = run.split("<<'PY'\n", 1)[1].split("\nPY", 1)[0]
+    script = tmp_path / "topology.py"
+    script.write_text(python_body, encoding="utf-8")
+    network = "aiat-openhands-cert-network-123"
+    run_id = "123"
+    names = {
+        "aiat-openhands-cert-123": "agent-server",
+        "aiat-openhands-tool-service-123": "tool-service",
+        "aiat-openhands-litellm-123": "litellm",
+        "aiat-openhands-omniroute-123": "omniroute",
+    }
+    topology_input = tmp_path / "network.json"
+    topology_input.write_text(
+        json.dumps([{"Containers": {name: {"Name": name, "IPv4Address": "172.30.0.2"} for name in names}}]),
+        encoding="utf-8",
+    )
+    output = tmp_path / "report.json"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, sys\n"
+        "name = sys.argv[-1]\n"
+        f"extra = {{'{network}': {{'Aliases': ['service']}}, 'unapproved-network': {{'Aliases': [name]}}}}\n"
+        "print(json.dumps(extra if name.endswith('litellm-123') else {list(extra)[0]: extra[list(extra)[0]]}))\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    env = dict(os.environ, PATH=f"{fake_bin}:{os.environ.get('PATH', '')}")
+    result = subprocess.run(
+        [sys.executable, str(script), str(output), str(topology_input), run_id, "0", network],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["network_scope_status"] == "BLOCKED"
+    assert report["topology_status"] == "BLOCKED"
 
 
 def test_auto_router_and_deterministic_baseline_are_both_required() -> None:
