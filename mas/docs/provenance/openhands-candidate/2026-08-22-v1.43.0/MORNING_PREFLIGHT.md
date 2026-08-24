@@ -1,7 +1,8 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-24, current certification-path
-hardening at `9478bb7` (including `f3f4050`); the branch also
+hardening at `57555001bbd75ef672159b1a2ac97092b21ffe8e` (including
+`5755500` and `f3f4050`); the branch also
 contains the earlier candidate/evidence history. The next live run must freeze
 the exact SHA actually selected by the operator.
 
@@ -23,7 +24,10 @@ it from the dirty main checkout unless the checked-out repository tip matches
 the requested SHA. The current reviewed tip includes `cc48cca` and
 `a2c886e` auto-route/gate-wiring hardening, `a39788a` evidence-retention
 validation, `a377dab` scalar provider attribution for successful `auto/coding`
-evidence, and `1c4a426` Agent Server health-blocker output diagnostics. Freeze
+evidence, and `1c4a426` Agent Server health-blocker output diagnostics. The
+deliberate run `32684939718` also confirmed the configured Groq secret at
+provider preflight and reached the gateway before the candidate helper
+mismatch; no live model result is claimed. Freeze
 and preflight that exact tip before any deliberate run. The current tip also
 contains `f3f4050`, which hardens the run-scoped skill/plugin boundary described
 below, and `65237f3` records that capability boundary in the maintained
