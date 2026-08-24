@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-24
-**Base revision:** `402c45d` (OpenHands runsc network resolution uses explicit run-scoped peer IP host mappings while retaining stable service names; the workflow validator requires the mapping and probes name resolution before HTTP; scanner/SBOM evidence preserves JSON Lines and removes incomplete SBOM artifacts; image SBOM generation uses Syft's exact registry-digest source to avoid Docker-daemon tar exhaustion; live readiness accepts only the pinned `build_git_sha` field or an equivalent exact-commit alias; disposable OmniRoute connection identifiers are redacted from retained evidence; dispatch preflight validates every workflow script and helper contract from the requested candidate tree; exact run-tagged tool-service image cleanup is statically guarded; diagnostic baseline discovery failures remain scalar baseline evidence while management-auth failures fail closed; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
+**Base revision:** `44cc974` (OpenHands runsc network resolution uses explicit run-scoped peer IP host mappings while retaining stable service names; the workflow validator requires the mapping and probes name resolution before HTTP; scanner/SBOM evidence preserves JSON Lines and removes incomplete SBOM artifacts; image SBOM generation uses Syft's exact registry-digest source to avoid Docker-daemon tar exhaustion; live readiness accepts only the pinned `build_git_sha` field or an equivalent exact-commit alias; disposable OmniRoute connection identifiers are redacted from retained evidence; dispatch preflight validates every workflow script and helper contract from the requested candidate tree; exact run-tagged tool-service image cleanup is statically guarded; diagnostic baseline discovery failures remain scalar baseline evidence while management-auth failures fail closed; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -38,7 +38,7 @@ The previously prepared `1fcaf6cb62c6583efdf0ea1396e3d52329453fc3` candidate is
 an ancestor of the reviewed branch and is retained as immutable historical
 workflow-implementation evidence in
 [`github-run-32684939718-failure.json`](provenance/openhands-candidate/2026-08-22-v1.43.0/github-run-32684939718-failure.json).
-The current reviewed implementation baseline `402c45d` remains inactive and requires one
+The current reviewed implementation baseline `44cc974` remains inactive and requires one
 deliberate, operator-authorized provider-backed run after the registry-based
 image-SBOM and build-metadata fixes. The workflow validator checks both route-probe and
 provider-baseline CLI contracts, the Agent Server cleanup path proves
