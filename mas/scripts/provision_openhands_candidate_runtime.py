@@ -223,7 +223,18 @@ def provision(
         )
         _json_body(llm_response, expected={200, 201})
         llm_readback = _json_body(client.get(f"/api/profiles/{LLM_PROFILE_NAME}"))
-        llm = llm_readback.get("llm") if isinstance(llm_readback, dict) else None
+        # Agent Server v1.43.0 returns the persisted LLM profile under
+        # ``config`` (the write response only contains a name/message).  Keep
+        # the older ``llm`` envelope as a compatibility read path for mocked
+        # or future server versions, but never accept a missing/ambiguous
+        # configuration.
+        llm = None
+        if isinstance(llm_readback, dict):
+            candidate = llm_readback.get("llm")
+            if not isinstance(candidate, dict):
+                candidate = llm_readback.get("config")
+            if isinstance(candidate, dict):
+                llm = candidate
         if not isinstance(llm, dict) or llm.get("model") != model_id:
             raise ProvisioningError("llm_profile_model_readback_mismatch")
         if llm.get("provider_connection_id") != connection_id:

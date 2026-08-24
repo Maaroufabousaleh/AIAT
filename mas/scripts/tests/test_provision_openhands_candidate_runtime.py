@@ -34,7 +34,8 @@ def test_run_scoped_objects_are_created_and_only_server_profile_uuid_is_retained
         if request.method == "POST" and request.url.path == "/api/profiles/aiat-openhands-omniroute-coding":
             return httpx.Response(201, json={"name": "aiat-openhands-omniroute-coding", "message": "saved"})
         if request.method == "GET" and request.url.path == "/api/profiles/aiat-openhands-omniroute-coding":
-            return httpx.Response(200, json={"name": "aiat-openhands-omniroute-coding", "llm": {"model": "omniroute-coding", "provider_connection_id": "gateway-connection"}})
+            # This is the pinned Agent Server v1.43.0 readback envelope.
+            return httpx.Response(200, json={"name": "aiat-openhands-omniroute-coding", "config": {"model": "omniroute-coding", "provider_connection_id": "gateway-connection"}})
         if request.method == "POST" and request.url.path == f"/api/settings/mcp/{mcp_key}":
             mcp_present = True
             return httpx.Response(201, json={})
