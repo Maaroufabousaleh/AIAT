@@ -1,0 +1,59 @@
+{
+    "schema_version": "aiat.openhands-certification-historical-run.v1",
+    "immutable": true,
+    "run": {
+        "run_id": "32695739623",
+        "job_id": "97337361546",
+        "candidate_sha": "172a7e99c2133358a72345eade3a5bf192a26e84",
+        "workflow_head_sha": "172a7e99c2133358a72345eade3a5bf192a26e84",
+        "artifact_id": "9508840410",
+        "artifact_digest": "sha256:2d44c7c907e2159d8954e04f7c4e459fb6cc77b3b950ddc6bb8889d2aa360592"
+    },
+    "classification": {
+        "final_status": "BLOCKED_TOOL_BRIDGE",
+        "failure_class": "FAILED_CERTIFICATION_IMPLEMENTATION",
+        "normalized_blocker_status": "BLOCKED_TOOL_BRIDGE",
+        "root_cause_status": "LLM_PROFILE_READBACK_ENVELOPE_MISMATCH",
+        "root_cause": "The pinned Agent Server returned the persisted LLM profile under its v1.43.0 config envelope, while this candidate runtime provisioner only inspected the older llm envelope. The model profile could not be verified, so run-scoped profile/MCP materialization and every later live gate were correctly skipped.",
+        "failure_stage": "run_scoped_runtime_provisioning",
+        "runtime_failure": "llm_profile_model_readback_mismatch",
+        "response_payload_retained": false
+    },
+    "evidence": {
+        "groq_provider_preflight": "PASS",
+        "candidate_preflight": "READY_FOR_CERTIFICATION_AUTHORIZATION",
+        "openhands_image_pull": "PASS",
+        "litellm_image_pull": "PASS",
+        "omniroute_image_pull": "PASS",
+        "image_platform_verification": "PASS",
+        "gateway_provenance": "PASS",
+        "network_create": "PASS",
+        "omniroute_management_health": "PASS",
+        "omniroute_api_auth_boundary": "PASS",
+        "provider_route_configuration": "PASS",
+        "provider_baseline": "PASS",
+        "litellm_start": "PASS",
+        "litellm_provider_route": "PASS",
+        "auto_routing": "PASS",
+        "tool_service": "PASS",
+        "openhands_runsc_start": "PASS",
+        "runsc_to_litellm": "PASS",
+        "profile_mcp": "BLOCKED_LLM_PROFILE_READBACK",
+        "live_gate_wave": "NOT_RUN",
+        "zero_residue": "PASS",
+        "evidence_schema": "PASS",
+        "mandatory_gate_count": 20,
+        "mandatory_gates_passed": 2,
+        "mandatory_gates_not_run": 18
+    },
+    "remediation": {
+        "repository_fix": "fc5bb44",
+        "fix": "Read the pinned v1.43.0 LLM profile config envelope while retaining the older compatibility envelope.",
+        "replacement_run_claimed": false
+    },
+    "retention": {
+        "credentials_retained": false,
+        "model_payloads_retained": false,
+        "unnecessary_logs_retained": false
+    }
+}

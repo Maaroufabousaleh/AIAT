@@ -47,6 +47,14 @@ consumed after successful trusted construction. The read-only dispatch
 preflight for that implementation baseline passes with the configured Groq secret and governed
 variables; no replacement certification run has been dispatched for this tip.
 
+The current feature-branch tip `dc1bac4925a4c4a6e9acd82d0ffa1f715f219bb5`
+also passes the complete read-only dispatch preflight: its workflow, helper
+contracts, exact pins, inactive status, GitHub configuration, and deterministic
+test suite agree. The older `1fcaf6cb62c6583efdf0ea1396e3d52329453fc3`
+candidate remains intentionally rejected because its tree predates the helper
+contracts required by the dispatch workflow. No workflow was dispatched by
+this evidence refresh.
+
 The deliberate run `32691538177` repeated the stale-candidate failure because
 the requested `1fcaf6cb62c6583efdf0ea1396e3d52329453fc3` checkout still carried
 the pre-fix workflow/helper mismatch. Its provider preflight, pinned images,
@@ -91,6 +99,29 @@ follow-up `d34548b` workflow fix reads each container's actual network IP and
 injects only run-scoped host mappings into LiteLLM and the runsc Agent Server,
 while retaining the stable service names and adding a name-resolution probe.
 No replacement workflow run has been dispatched for this fix.
+
+Run `32695739623` (job `97337361546`) is preserved as
+[`github-run-32695739623-failure.json`](provenance/openhands-candidate/2026-08-22-v1.43.0/github-run-32695739623-failure.json).
+The exact provider/gateway path, native runsc Agent Server startup,
+tool-service, runsc-to-LiteLLM connectivity, and zero-residue cleanup passed.
+Run-scoped materialization then failed closed because the pinned Agent Server
+returned its LLM profile in the v1.43.0 `config` envelope while this candidate
+only read the older `llm` envelope. The profile could not be verified, so the
+live adapter and all later mandatory gates were not run. This is
+`FAILED_CERTIFICATION_IMPLEMENTATION` / `BLOCKED_TOOL_BRIDGE`, not provider,
+gVisor, image, or model evidence. Commit `fc5bb44` adds the exact config
+readback path without weakening validation.
+
+Run `32696377216` (job `97339115481`) is preserved as
+[`github-run-32696377216-failure.json`](provenance/openhands-candidate/2026-08-22-v1.43.0/github-run-32696377216-failure.json).
+The same provider/gateway, runsc, tool-service, connectivity, and cleanup
+boundaries passed. The next candidate then failed closed because effective MCP
+settings were returned under the v1.43.0 `agent_settings` envelope, which that
+candidate did not inspect. The run-scoped MCP entry could not be verified and
+the live adapter wave was not run. This is
+`FAILED_CERTIFICATION_IMPLEMENTATION` / `BLOCKED_TOOL_BRIDGE`, not provider or
+OpenHands task evidence. Commit `e0f1891` adds the exact envelope readback;
+the historical artifact remains immutable.
 
 The deliberate run `32697052939` against candidate
 `e0f18915a45268c8b5af14af7091cade4abd2c42` reached the disposable gateway,
