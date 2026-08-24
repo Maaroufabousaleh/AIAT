@@ -28,7 +28,7 @@ candidate tree is missing helper contracts. The reviewed history includes
 `a2c886e` auto-route/gate-wiring hardening, `a39788a` evidence-retention
 validation, `a377dab` scalar provider attribution for successful `auto/coding`
 evidence, and `1c4a426` Agent Server health-blocker output diagnostics. The
-current reviewed tip `bc8c4b6` additionally distinguishes unknown LiteLLM 404 responses
+current reviewed implementation baseline `bc8c4b6` additionally distinguishes unknown LiteLLM 404 responses
 from the explicit no-provider auto-router condition and rejects unresolved web
 targets before any network request. The latest deliberate run also confirmed
 the configured Groq secret at
@@ -201,7 +201,7 @@ its route helper still rejected `--auto-routing-output`; the gateway and
 provider setup had already passed, while tool-service, OpenHands, and all live
 mandatory gates were not run. The immutable run artifact is recorded in
 [`github-run-32691538177-failure.json`](./github-run-32691538177-failure.json).
-The reviewed tip `bc8c4b6` includes the dispatch-preflight check for every
+The reviewed implementation baseline `bc8c4b6` includes the dispatch-preflight check for every
 workflow script plus both helper CLI contracts, reports implementation drift
 separately from missing operator configuration, and uses the registry-based image-SBOM source for the exact
 digest-pinned image. A stale candidate still fails closed before GitHub Actions
