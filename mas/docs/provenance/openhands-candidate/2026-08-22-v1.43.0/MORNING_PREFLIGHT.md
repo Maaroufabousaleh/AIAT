@@ -232,6 +232,21 @@ readiness, keeps dashboard/management on port 20128, uses the
 OpenAI-compatible API bridge on port 20129, and separately verifies its API-key
 boundary.
 
+Run `32753965223` (job `97517118397`) is preserved as
+[`github-run-32753965223-failure.json`](./github-run-32753965223-failure.json).
+The provider/gateway, native runsc, tool-service, Agent Server startup,
+run-scoped profile/MCP materialization, and cleanup boundaries passed. The
+adapter then failed closed before conversation creation because pinned Agent
+Server v1.43.0 redacts configured MCP header values as `**********`, while the
+pre-fix adapter attempted to HMAC-verify that redaction marker. The normalized
+classification is `FAILED_CERTIFICATION_IMPLEMENTATION` /
+`BLOCKED_TOOL_BRIDGE`, not provider, gateway, gVisor, startup, or security
+evidence. The certification-only adapter path now rotates and locally verifies
+a fresh run grant before accepting the exact redacted readback; normal
+production/preconfigured callers still reject a redacted grant readback. No
+replacement workflow run has been dispatched for this fix, and OpenHands
+remains inactive.
+
 Run `32662156390` (job `97249868393`) is preserved as
 [`github-run-32662156390-failure.json`](./github-run-32662156390-failure.json).
 It passed OmniRoute readiness/authentication, exactly-one Groq route

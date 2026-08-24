@@ -105,6 +105,18 @@ Dispatch preflight now reads helper contracts from the requested candidate
 tree, so a newer dispatch branch cannot mask this mismatch. No replacement
 run is claimed by this evidence update.
 
+Run `32753965223` (job `97517118397`) is retained as immutable
+`FAILED_CERTIFICATION_IMPLEMENTATION` evidence for candidate
+`4c73a56163f805db9d30a92559fea67aa5066a5a`. Provider/gateway, native runsc,
+tool-service, Agent Server startup, run-scoped profile/MCP materialization, and
+cleanup all passed. The pinned Agent Server v1.43.0 redacts MCP header values
+on settings readback; the pre-fix adapter attempted to verify the literal
+redaction marker and stopped before conversation creation. The narrow fix is
+certification-only grant rotation with local verification, while production
+preconfigured callers remain fail-closed. This record is `BLOCKED_TOOL_BRIDGE`
+and does not add provider, model, lifecycle, or activation evidence; OpenHands
+remains inactive and the global `NO-RELEASE` decision is unchanged.
+
 The deliberate run `32694322492` against candidate
 `61686354fc7818e6f3430e31e1012ccb80f09d11` reached the complete disposable
 provider/model path: native gVisor, pinned images/provenance, OmniRoute health
