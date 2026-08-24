@@ -124,7 +124,11 @@ def _workspace_changed_paths(*, host_workspace: Path, fixture_root: Path) -> lis
     only scalar relative paths and never file contents.
     """
 
-    ignored_names = {"__pycache__", ".pytest_cache"}
+    # The certification workflow initializes a Git repository in the disposable
+    # host workspace before handing it to OpenHands.  Repository metadata is
+    # execution bookkeeping, not an agent-produced change, and is absent from
+    # the pristine fixture used as the comparison baseline.
+    ignored_names = {".git", "__pycache__", ".pytest_cache"}
 
     def files(root: Path) -> dict[str, bytes]:
         result: dict[str, bytes] = {}
