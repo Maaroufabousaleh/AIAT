@@ -1,7 +1,7 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-24, current certification-path
-hardening through implementation tip `893fa78b47cf62f5c3e639ffde6a030801d3ea48`
+hardening through implementation tip `4fdf4cff82bec694afa5866c386e1443ee958945`
 (including
 `595965d` gateway failure-origin diagnostics, `57f76b6` fail-closed web DNS
 validation, `e7a2ff5` stopped-container cleanup, and `71149db` certification
@@ -40,7 +40,7 @@ workflow is `workflow_dispatch` only and must be dispatched once against an
 explicit frozen commit after the preflight passes.
 
 The reviewed implementation tip immediately before this documentation
-refresh was `4889dd8`; the current tip is `893fa78` and it passed the
+refresh was `893fa78`; the current tip is `4fdf4cf` and it passed the
 read-only dispatch preflight. Because this document is itself committed, the
 dispatch candidate must always be frozen from the actual checkout with
 `git rev-parse HEAD`, never copied from an embedded tip string. No
@@ -48,6 +48,13 @@ certification run has been dispatched against this documentation refresh.
 The previously requested `1fcaf6cb62c6583efdf0ea1396e3d52329453fc3` remains a
 stale ancestor and must continue to fail closed because its candidate tree does
 not contain the current workflow helper contracts.
+
+The current tip also contains `cf97147`, which makes the live interrupt probe
+wait for an observed running execution before issuing cancellation, and
+`4fdf4cf`, which classifies failed pause/interrupt/resume/timeout lifecycle
+gates as `BLOCKED_LIFECYCLE`. These changes improve diagnostic evidence without
+weakening any mandatory gate; OpenHands remains inactive and no live run is
+claimed by this document.
 
 The local static release ledger remains 63/63 passing with two pending
 evidence items and `NO-RELEASE`. The OpenHands gate matrix remains
