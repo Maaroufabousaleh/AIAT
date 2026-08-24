@@ -1095,8 +1095,10 @@ jobs:
           mcp_status="NOT_CREATED"
           mcp_verified_absent=true
           agent_existed=0
+          agent_running=false
           if [ "$docker_available" = true ] && [ -n "$(docker ps -aq --filter "name=^/${name}$" 2>/dev/null)" ]; then
             agent_existed=1
+            agent_running="$(docker inspect --format '{{if .State.Running}}true{{else}}false{{end}}' "$name" 2>/dev/null || echo false)"
           fi
           profile_status="NOT_CREATED"
           if [ "$agent_existed" = 1 ]; then
@@ -1105,7 +1107,7 @@ jobs:
             # container; retain only that scalar disposal assertion.
             profile_status="VERIFIED_BY_CONTAINER_DISPOSAL"
           fi
-          if [ -s "$RUNNER_TEMP/aiat-openhands-session-key" ] && [ -n "${OPENHANDS_MCP_SETTINGS_KEY:-}" ]; then
+          if [ "$agent_running" = true ] && [ -s "$RUNNER_TEMP/aiat-openhands-session-key" ] && [ -n "${OPENHANDS_MCP_SETTINGS_KEY:-}" ]; then
             session_key="$(cat "$RUNNER_TEMP/aiat-openhands-session-key")"
             delete_code=$(curl --silent --show-error --output /dev/null \
               --request DELETE \
@@ -1169,7 +1171,7 @@ jobs:
               mcp_status="BLOCKED"
               cleanup_ok=0
             fi
-          elif [ "$agent_existed" = 1 ]; then
+          elif [ "$agent_running" = true ]; then
             mcp_status="BLOCKED"
             mcp_verified_absent=false
             cleanup_ok=0
@@ -1185,6 +1187,34 @@ jobs:
                       "status": "BLOCKED",
                       "reason": "agent_server_existed_without_session_key_or_mcp_key",
                       "verified_absent": False,
+                      "payloads_retained": False,
+                  },
+                  sort_keys=True,
+                  indent=2,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+          elif [ "$agent_existed" = 1 ]; then
+            # A stopped/crashed Agent Server cannot service the authenticated
+            # delete/readback calls.  Its profile and run-scoped MCP state are
+            # local to the disposable container, so container disposal is the
+            # authoritative cleanup proof for this failure path.
+            mcp_status="VERIFIED_BY_CONTAINER_DISPOSAL"
+            mcp_verified_absent=true
+            python3 - "$RUNNER_TEMP/aiat-openhands-evidence/mcp-cleanup.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          Path(sys.argv[1]).write_text(
+              json.dumps(
+                  {
+                      "schema_version": "aiat.openhands-mcp-cleanup.v1",
+                      "status": "VERIFIED_BY_CONTAINER_DISPOSAL",
+                      "reason": "agent_container_not_running",
+                      "verified_absent": True,
                       "payloads_retained": False,
                   },
                   sort_keys=True,

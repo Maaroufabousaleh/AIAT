@@ -398,6 +398,15 @@ def validate(text: str) -> dict[str, Any]:
     ):
         errors.append("cleanup_absence_readback_missing")
     if (
+        "agent_running=false" not in text
+        or 'agent_running="$(docker inspect --format' not in text
+        or 'if [ "$agent_running" = true ] && [ -s "$RUNNER_TEMP/aiat-openhands-session-key" ]' not in text
+        or 'elif [ "$agent_running" = true ]; then' not in text
+        or 'elif [ "$agent_existed" = 1 ]; then' not in text
+        or '"reason": "agent_container_not_running"' not in text
+    ):
+        errors.append("stopped_agent_container_cleanup_missing")
+    if (
         "network-topology.json" not in text
         or 'docker network inspect "$network"' not in text
         or '"topology_status": "PASS" if complete else "BLOCKED"' not in text

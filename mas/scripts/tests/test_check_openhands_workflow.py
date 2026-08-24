@@ -401,6 +401,15 @@ def test_cleanup_requires_delete_status_and_absence_readback() -> None:
     assert "cleanup_absence_readback_missing" in report["errors"]
 
 
+def test_cleanup_handles_stopped_agent_container_by_disposal() -> None:
+    module = _module()
+    text = _workflow()
+    assert "stopped_agent_container_cleanup_missing" not in module.validate(text)["errors"]
+    weakened = text.replace('agent_running=false', 'agent_state_unknown=false', 1)
+    report = module.validate(weakened)
+    assert "stopped_agent_container_cleanup_missing" in report["errors"]
+
+
 def test_cleanup_requires_workspace_and_tool_image_absence() -> None:
     module = _module()
     text = _workflow()
