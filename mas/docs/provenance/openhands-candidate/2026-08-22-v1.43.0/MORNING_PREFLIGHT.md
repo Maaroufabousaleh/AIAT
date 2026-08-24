@@ -1,7 +1,7 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-24, current certification-path
-hardening through implementation tip `70b96d5b8dfcb4fb72f1dfe0465ff4bba8724640`
+hardening through implementation tip `1e273837c4f1d34620f7efbcdbbd3c6eb618b374`
 (including
 `595965d` gateway failure-origin diagnostics, `57f76b6` fail-closed web DNS
 validation, `e7a2ff5` stopped-container cleanup, and `71149db` certification
@@ -35,6 +35,13 @@ values: provider store empty, profile/MCP materialization `PASS`, zero
 resolved skills, and no retained secrets; this is contract evidence, not a
 provider-backed certification result.
 
+`1e27383` additionally verifies the signed preconfigured MCP grant before the
+adapter consumes it: worker identity, run UUID, project UUID, and the exact
+bounded coding tool set must match the current AIAT request. The run-scoped
+materializer performs the same self-verification before persisting the MCP
+entry. This remains repository-local security evidence and does not claim a
+provider-backed certification pass.
+
 The workflow now also performs an in-run candidate-helper contract check before
 pulling any certification image. It records only the candidate SHA, missing
 helper paths, and missing CLI markers in
@@ -56,7 +63,7 @@ workflow is `workflow_dispatch` only and must be dispatched once against an
 explicit frozen commit after the preflight passes.
 
 The reviewed implementation tip immediately before this documentation
-refresh was `9a32bc2`; the current implementation baseline is `70b96d5` and
+refresh was `70b96d5`; the current implementation baseline is `1e27383` and
 it passed the read-only dispatch preflight. This document is a docs-only
 refresh, so the
 dispatch candidate must always be frozen from the actual checkout with
