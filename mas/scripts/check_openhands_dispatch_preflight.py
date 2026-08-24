@@ -59,6 +59,22 @@ def _run(command: list[str], *, cwd: Path) -> tuple[int, str]:
     return result.returncode, result.stdout
 
 
+def _git_blob(repo: Path, commit: str, path: str) -> str:
+    """Read a candidate-owned file without changing the caller's worktree.
+
+    The workflow definition is selected from the dispatch ref, while the job
+    checks out ``inputs.candidate_sha``.  Reading helper files from the
+    current worktree therefore gives a false PASS when the dispatch branch is
+    newer than the candidate.  ``git show`` lets preflight validate the exact
+    tree that the certification job will execute.
+    """
+
+    if len(commit) != 40:
+        return ""
+    code, output = _run(["git", "show", f"{commit}:{path}"], cwd=repo)
+    return output if code == 0 else ""
+
+
 def _names_from_gh(output: str) -> set[str]:
     names: set[str] = set()
     for line in output.splitlines():
@@ -90,6 +106,9 @@ def evaluate_static(
     gateway_provenance_text: str = "",
     gateway_probe_text: str = "",
     provider_baseline_text: str = "",
+    candidate_gateway_probe_text: str | None = None,
+    candidate_provider_baseline_text: str | None = None,
+    candidate_source_sha: str | None = None,
     actual_sha: str,
     requested_sha: str | None,
     secret_names: set[str] | None,
@@ -121,13 +140,19 @@ def evaluate_static(
         and "sha256:ceae8d9da0acf075dbf5905b61c9ae32e749112650fcf7f4434c8d96ac6d3ebb" in workflow_text
         and (not gateway_provenance_text or "sha256:ceae8d9da0acf075dbf5905b61c9ae32e749112650fcf7f4434c8d96ac6d3ebb" in gateway_provenance_text)
     )
+    candidate_gateway_probe = gateway_probe_text if candidate_gateway_probe_text is None else candidate_gateway_probe_text
+    candidate_provider_baseline = (
+        provider_baseline_text
+        if candidate_provider_baseline_text is None
+        else candidate_provider_baseline_text
+    )
     gateway_probe_contract = (
-        'parser.add_argument(\n        "--auto-routing-output"' in gateway_probe_text
-        and "args.auto_routing_output" in gateway_probe_text
-        and "_write_report(args.auto_routing_output" in gateway_probe_text
+        'parser.add_argument(\n        "--auto-routing-output"' in candidate_gateway_probe
+        and "args.auto_routing_output" in candidate_gateway_probe
+        and "_write_report(args.auto_routing_output" in candidate_gateway_probe
     )
     provider_baseline_contract = all(
-        marker in provider_baseline_text
+        marker in candidate_provider_baseline
         for marker in (
             'parser.add_argument("--url"',
             'parser.add_argument("--output"',
@@ -209,6 +234,7 @@ def evaluate_static(
                 gateway_probe_contract and provider_baseline_contract
             ),
         },
+        "candidate_runtime_helper_source_sha": candidate_source_sha or actual_sha,
         "run_scoped_values": [
             "OPENHANDS_AGENT_PROFILE_ID",
             "OPENHANDS_CERT_RUN_ID",
@@ -245,6 +271,9 @@ def preflight(repo: Path, requested_sha: str | None, repo_slug: str | None, skip
         provider_baseline_text = (repo / PROVIDER_BASELINE_PROBE).read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         provider_baseline_text = ""
+    candidate_source_sha = requested_sha if requested_sha and len(requested_sha) == 40 else actual_sha
+    candidate_gateway_probe_text = _git_blob(repo, candidate_source_sha, GATEWAY_ROUTE_PROBE)
+    candidate_provider_baseline_text = _git_blob(repo, candidate_source_sha, PROVIDER_BASELINE_PROBE)
     secret_names: set[str] | None = None
     variable_values: dict[str, str] | None = None
     if repo_slug:
@@ -280,6 +309,9 @@ def preflight(repo: Path, requested_sha: str | None, repo_slug: str | None, skip
         gateway_provenance_text=gateway_provenance_text,
         gateway_probe_text=gateway_probe_text,
         provider_baseline_text=provider_baseline_text,
+        candidate_gateway_probe_text=candidate_gateway_probe_text,
+        candidate_provider_baseline_text=candidate_provider_baseline_text,
+        candidate_source_sha=candidate_source_sha,
         actual_sha=actual_sha,
         requested_sha=requested_sha,
         secret_names=secret_names,

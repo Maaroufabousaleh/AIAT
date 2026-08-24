@@ -186,3 +186,33 @@ def test_preflight_rejects_workflow_helper_version_skew() -> None:
     assert report["checks"]["candidate_gateway_probe_contract"] is False
     assert report["checks"]["candidate_provider_baseline_contract"] is False
     assert "CANDIDATE_HELPER_CONTRACT_MISMATCH" in report["blocking_reasons"]
+
+
+def test_preflight_checks_helpers_from_requested_candidate_tree() -> None:
+    """A newer dispatch branch must not mask helpers absent from the candidate."""
+
+    module = _module()
+    root = Path(__file__).resolve().parents[2]
+    workflow = (root.parent / ".github" / "workflows" / "openhands-candidate-certification.yml").read_text(encoding="utf-8")
+    manifest = (root / "docs/provenance/openhands-candidate/2026-08-22-v1.43.0/worker-manifest.yaml").read_text(encoding="utf-8")
+    gateway_probe, provider_baseline = _helper_texts()
+    sha = "c" * 40
+    report = module.evaluate_static(
+        workflow_text=workflow,
+        manifest_text=manifest,
+        gateway_probe_text=gateway_probe,
+        provider_baseline_text=provider_baseline,
+        candidate_gateway_probe_text="",
+        candidate_provider_baseline_text="",
+        candidate_source_sha=sha,
+        actual_sha=sha,
+        requested_sha=sha,
+        secret_names={"GROQ_API_KEY"},
+        variable_values={"OPENHANDS_MODEL_ID": module.EXPECTED_MODEL, "OPENHANDS_MCP_SETTINGS_KEY": module.EXPECTED_MCP_KEY},
+        local_tests_passed=True,
+    )
+    assert report["ready_to_dispatch"] is False
+    assert report["candidate_runtime_helper_source_sha"] == sha
+    assert report["checks"]["candidate_gateway_probe_contract"] is False
+    assert report["checks"]["candidate_provider_baseline_contract"] is False
+    assert "CANDIDATE_HELPER_CONTRACT_MISMATCH" in report["blocking_reasons"]
