@@ -130,6 +130,50 @@ def test_failed_image_sbom_does_not_leave_invalid_json_artifact(monkeypatch, tmp
     assert not (tmp_path / "image-sbom.cdx.json").exists()
 
 
+def test_image_sbom_uses_registry_source_for_digest_pinned_image(monkeypatch, tmp_path: Path) -> None:
+    certify_module = _module()
+    monkeypatch.setattr(certify_module.shutil, "which", lambda name: "/usr/bin/syft")
+    monkeypatch.setattr(certify_module, "_tool_version", lambda name, output: {"version": "1.51.0"})
+    commands: list[list[str]] = []
+
+    def fake_run(command, **_kwargs):
+        commands.append([str(value) for value in command])
+        output_argument = next(argument for argument in command if str(argument).startswith("cyclonedx-json="))
+        Path(str(output_argument).split("=", 1)[1]).write_text(
+            json.dumps({"bomFormat": "CycloneDX", "components": []}),
+            encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(certify_module.subprocess, "run", fake_run)
+    image_ref = "example/image@sha256:" + "a" * 64
+    report = certify_module._run_image_sbom(image_ref, tmp_path)
+    assert report["status"] == "pass"
+    assert report["source_mode"] == "registry"
+    assert report["image_ref"] == image_ref
+    assert commands == [[
+        "/usr/bin/syft",
+        "--from",
+        "registry",
+        image_ref,
+        "-o",
+        f"cyclonedx-json={tmp_path / 'image-sbom.cdx.json'}",
+    ]]
+
+
+def test_image_sbom_rejects_floating_image_reference(monkeypatch, tmp_path: Path) -> None:
+    certify_module = _module()
+    monkeypatch.setattr(certify_module.shutil, "which", lambda name: "/usr/bin/syft")
+    monkeypatch.setattr(
+        certify_module.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("Syft must not run for a floating image")),
+    )
+    report = certify_module._run_image_sbom("example/image:stable", tmp_path)
+    assert report["status"] == "blocked"
+    assert report["scanner_error"] == "image_not_digest_pinned"
+
+
 def test_cleanup_failure_cannot_leave_a_passed_certification(monkeypatch, tmp_path: Path) -> None:
     certify_module = _module()
 

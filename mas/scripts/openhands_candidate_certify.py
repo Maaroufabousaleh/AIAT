@@ -150,7 +150,16 @@ def _semgrep_error_category(error_type: str, paths: list[str]) -> str:
 
 
 def _run_image_sbom(image_ref: str, output_dir: Path) -> dict[str, Any]:
-    """Generate an image SBOM from the locally pulled immutable image."""
+    """Generate an SBOM from an immutable image reference via its registry.
+
+    Syft's Docker source asks the daemon to materialize a bespoke image tar
+    before cataloguing it.  On a GitHub-hosted runner that temporary tar can
+    exhaust the ephemeral filesystem even when the image pull itself passed.
+    The registry source streams the same digest-addressed layers directly and
+    avoids that daemon-side duplicate.  The image is still pulled and checked
+    locally by the workflow; this function deliberately refuses a floating
+    image reference rather than silently changing the provenance boundary.
+    """
 
     executable = shutil.which("syft")
     path = output_dir / "image-sbom.cdx.json"
@@ -159,7 +168,16 @@ def _run_image_sbom(image_ref: str, output_dir: Path) -> dict[str, Any]:
     # Avoid reusing a stale partial output when a caller reuses an evidence
     # directory after an interrupted attempt.
     path.unlink(missing_ok=True)
-    invocation = [executable or "syft", f"docker:{image_ref}", "-o", f"cyclonedx-json={path}"]
+    invocation = [executable or "syft", "--from", "registry", image_ref, "-o", f"cyclonedx-json={path}"]
+    if not re.search(r"@sha256:[0-9a-fA-F]{64}$", image_ref):
+        return {
+            "status": "blocked",
+            "available": executable is not None,
+            "failure_class": SBOM_FAILURE,
+            "scanner_error": "image_not_digest_pinned",
+            "invocation": invocation,
+            "path": path.name,
+        }
     if executable is None:
         return {
             "status": "blocked",
@@ -171,7 +189,7 @@ def _run_image_sbom(image_ref: str, output_dir: Path) -> dict[str, Any]:
         }
     try:
         result = subprocess.run(
-            [executable, f"docker:{image_ref}", "-o", f"cyclonedx-json={path}"],
+            [executable, "--from", "registry", image_ref, "-o", f"cyclonedx-json={path}"],
             capture_output=True,
             text=True,
             timeout=1800,
@@ -201,7 +219,7 @@ def _run_image_sbom(image_ref: str, output_dir: Path) -> dict[str, Any]:
             "available": True,
             "exit_status": result.returncode,
             "failure_class": SBOM_FAILURE,
-            "scanner_error": "syft_image_failed_or_missing_output",
+            "scanner_error": "syft_registry_failed_or_missing_output",
             "invocation": invocation,
             "stdout_path": stdout_path.name,
             "stderr_path": stderr_path.name,
@@ -229,6 +247,8 @@ def _run_image_sbom(image_ref: str, output_dir: Path) -> dict[str, Any]:
         "available": True,
         "exit_status": result.returncode,
         "version": _tool_version("syft", output_dir).get("version"),
+        "source_mode": "registry",
+        "image_ref": image_ref,
         "invocation": invocation,
         "stdout_path": stdout_path.name,
         "stderr_path": stderr_path.name,
