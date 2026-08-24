@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-24
-**Base revision:** `870b6d7` (OpenHands workflow/helper contract validation, provider-baseline CLI drift guard, and immutable run-failure evidence; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
+**Base revision:** `57f76b6` (OpenHands gateway failure-origin diagnostics and fail-closed web URL validation on top of workflow/helper contract validation, provider-baseline CLI drift guard, and immutable run-failure evidence; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -10,8 +10,8 @@ The overnight OpenHands continuation (`4234d07`, `1db5b72`, `cf80dd1`,
 `a6b6eae`, `6da88bd`, `c3f54da`, `93b6ee8`, `d86675b`, `0c0a210`,
 `b71facc`, `04cfd23`, `fe5cef3`, `5163cc8`, `e036508`, `334c321`, `758ca59`,
 `3161ad1`, `4f51dac`, `cc48cca`, `a2c886e`, `a39788a`, `2d70711`, `a377dab`,
-`1c4a426`, `ebfbe73`, `c9dba1f`, `ad511d9`, `fa19b1c`, `f3f4050`, and
-`65237f3`)
+`1c4a426`, `ebfbe73`, `c9dba1f`, `ad511d9`, `fa19b1c`, `f3f4050`,
+`65237f3`, `595965d`, and `57f76b6`)
 does not alter the release decision. OpenHands
 v1.43.0 remains an inactive `CERTIFYING` candidate; its exact image/source
 pins, run-scoped gateway/profile/MCP design, one-shot certification

@@ -1,10 +1,11 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-24, current certification-path
-hardening at `870b6d7d220f9f709589dc3823cd5c0904895c48` (including
-`870b6d7`, `5755500`, and `f3f4050`); the branch also
-contains the earlier candidate/evidence history. The next live run must freeze
-the exact SHA actually selected by the operator.
+hardening at `57f76b6f4349a4d2c1a5e74d03ee272a91796974` (including
+`595965d` gateway failure-origin diagnostics and `57f76b6` fail-closed web
+DNS validation); the branch also contains the earlier candidate/evidence
+history. The next live run must freeze the exact SHA actually selected by the
+operator.
 
 This is a manual preparation guide for the inactive candidate. It does not
 activate OpenHands, approve the steward record, or dispatch a workflow. The
@@ -21,10 +22,13 @@ workflow/helper contract mismatch and is recorded below. No automatic rerun
 was performed. The previously prepared `1fcaf6cb62c6583efdf0ea1396e3d52329453fc3`
 SHA remains an ancestor of the reviewed branch tip; the safe preflight rejects
 it from the dirty main checkout unless the checked-out repository tip matches
-the requested SHA. The current reviewed tip includes `cc48cca` and
+the requested SHA. The reviewed history includes `cc48cca` and
 `a2c886e` auto-route/gate-wiring hardening, `a39788a` evidence-retention
 validation, `a377dab` scalar provider attribution for successful `auto/coding`
 evidence, and `1c4a426` Agent Server health-blocker output diagnostics. The
+current reviewed tip additionally distinguishes unknown LiteLLM 404 responses
+from the explicit no-provider auto-router condition and rejects unresolved web
+targets before any network request. The
 deliberate run `32684939718` also confirmed the configured Groq secret at
 provider preflight and reached the gateway before the candidate helper
 mismatch; no live model result is claimed. Freeze
