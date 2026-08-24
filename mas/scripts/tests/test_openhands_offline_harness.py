@@ -79,6 +79,8 @@ def test_complete_offline_harness_is_fixture_only() -> None:
     assert report["workspace_isolation"] == "PASS"
     assert report["secret_isolation"] == "PASS"
     assert report["zero_residue"]["status"] == "PASS"
+    assert report["task_model_override_denial"] == "PASS"
+    assert report["task_provider_override_denial"] == "PASS"
     assert report["details"]["partial_startup_cleanup"]["status"] == "PASS"
     assert report["details"]["workspace_attacks"]["attempt_count"] == 6
     assert report["details"]["workspace_attacks"]["denied_count"] == 6

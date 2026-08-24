@@ -368,6 +368,9 @@ def run_offline_harness() -> dict[str, Any]:
             "credentials": {"provider": "attacker"},
         }
     )
+    attempted_governed_fields = set(model_denial["attempted_governed_fields"])
+    model_override_denied = "model" in attempted_governed_fields
+    provider_override_denied = "provider" in attempted_governed_fields
     completed = FakeConversation()
     completed.start()
     completed.complete()
@@ -402,6 +405,8 @@ def run_offline_harness() -> dict[str, Any]:
         "workspace_isolation": isolation["status"],
         "secret_isolation": secret_scan["status"],
         "model_override_denial": "PASS" if model_denial["denied"] else "FAIL",
+        "task_model_override_denial": "PASS" if model_override_denied else "FAIL",
+        "task_provider_override_denial": "PASS" if provider_override_denied else "FAIL",
         "mcp_override_denial": "PASS" if forbidden_tool_attempt("external_mcp.register")["denied"] else "FAIL",
         "zero_residue": cleanup_residue([]),
         "details": {
