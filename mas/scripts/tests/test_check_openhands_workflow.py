@@ -184,8 +184,17 @@ def test_network_topology_reads_aliases_from_each_container() -> None:
     text = _workflow()
     report = module.validate(text)
     assert "network_topology_alias_readback_missing" not in report["errors"]
-    weakened = text.replace(".NetworkSettings.Networks", ".NetworkSettings.LegacyNetworks", 1)
+    weakened = text.replace('"container_alias_readback": alias_readback,', '"container_alias_readback": {},', 1)
     assert "network_topology_alias_readback_missing" in module.validate(weakened)["errors"]
+
+
+def test_runsc_uses_explicit_run_scoped_name_resolution() -> None:
+    module = _module()
+    text = _workflow()
+    report = module.validate(text)
+    assert "runsc_network_name_resolution_contract_missing" not in report["errors"]
+    weakened = text.replace('--add-host "litellm:${litellm_ip}" \\\n', "", 1)
+    assert "runsc_network_name_resolution_contract_missing" in module.validate(weakened)["errors"]
 
 
 def test_network_topology_parser_uses_container_network_settings_aliases(tmp_path: Path) -> None:

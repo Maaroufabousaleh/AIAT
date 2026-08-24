@@ -280,6 +280,31 @@ def _network_topology_contract_issues(text: str) -> list[str]:
     return ["network_topology_alias_readback_missing"] if any(item not in text for item in required) else []
 
 
+def _runsc_network_name_resolution_issues(text: str) -> list[str]:
+    """Require an explicit run-scoped name-resolution path for runsc.
+
+    Docker's embedded DNS aliases were not resolvable from the pinned
+    runsc/Agent Server runtime in the failed certification wave.  The
+    disposable workflow therefore captures each container's current network
+    IP and injects only those per-run mappings into the Agent Server (and the
+    LiteLLM-to-OmniRoute hop).  Keep the stable service names in the
+    application contracts while making the resolution mechanism explicit and
+    fail closed if a mapping is missing.
+    """
+
+    required = (
+        'omniroute_ip="$(docker inspect --format',
+        'litellm_ip="$(docker inspect --format',
+        'tool_service_ip="$(docker inspect --format',
+        '--add-host "omniroute:${omniroute_ip}"',
+        '--add-host "litellm:${litellm_ip}"',
+        '--add-host "tool-service:${tool_service_ip}"',
+        '"name_resolution_strategy": "explicit_run_scoped_container_ip_hosts"',
+        'socket.gethostbyname("litellm")',
+    )
+    return ["runsc_network_name_resolution_contract_missing"] if any(item not in text for item in required) else []
+
+
 def _workflow_script_reference_issues(text: str) -> list[str]:
     """Reject workflow references to scripts absent from the exact candidate."""
 
@@ -332,6 +357,7 @@ def validate(text: str) -> dict[str, Any]:
     errors.extend(_provider_baseline_probe_cli_issues())
     errors.extend(_provider_scope_helper_issues())
     errors.extend(_network_topology_contract_issues(text))
+    errors.extend(_runsc_network_name_resolution_issues(text))
     errors.extend(_workflow_script_reference_issues(text))
     if "--attempts 30" not in text or "--interval-seconds 1" not in text:
         errors.append("omniroute_auth_transport_retry_missing")

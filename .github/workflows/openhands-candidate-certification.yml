@@ -356,6 +356,15 @@ jobs:
             "$OMNIROUTE_IMAGE" || run_exit_code=$?
           echo "omniroute_container=$name" >> "$GITHUB_ENV"
           echo "container=$name" >> "$GITHUB_OUTPUT"
+          omniroute_ip=""
+          if [ "$run_exit_code" -eq 0 ]; then
+            omniroute_ip="$(docker inspect --format '{{json .NetworkSettings.Networks}}' "$name" \
+              | python3 -c 'import json, sys; data = json.load(sys.stdin); network = sys.argv[1]; print((data.get(network) or {}).get("IPAddress", ""))' "$network" || true)"
+            if [ -z "$omniroute_ip" ]; then
+              run_exit_code=125
+            fi
+          fi
+          echo "omniroute_ip=$omniroute_ip" >> "$GITHUB_ENV"
           container_running=false
           if docker inspect "$name" >/dev/null 2>&1; then
             docker inspect --format '{{json .State}}' "$name" > "$RUNNER_TEMP/aiat-openhands-evidence/gateway/omniroute/container-state.json"
@@ -551,16 +560,30 @@ jobs:
           config="$GITHUB_WORKSPACE/mas/infra/compose/litellm_openhands_certification.yaml"
           test -s "$config"
           run_exit_code=0
-          docker run --detach --name "$name" \
-            --network "$network" --network-alias litellm \
-            --publish 127.0.0.1:4000:4000 \
-            --volume "$config:/app/config.yaml:ro" \
-            --env LITELLM_MASTER_KEY="$OPENHANDS_MODEL_GATEWAY_API_KEY" \
-            --env OMNIROUTE_API_KEY="$OPENHANDS_MODEL_GATEWAY_API_KEY" \
-            "$LITELLM_IMAGE" \
-            --config /app/config.yaml --host 0.0.0.0 --port 4000 || run_exit_code=$?
+          if [ -n "${omniroute_ip:-}" ]; then
+            docker run --detach --name "$name" \
+              --network "$network" --network-alias litellm \
+              --add-host "omniroute:${omniroute_ip}" \
+              --publish 127.0.0.1:4000:4000 \
+              --volume "$config:/app/config.yaml:ro" \
+              --env LITELLM_MASTER_KEY="$OPENHANDS_MODEL_GATEWAY_API_KEY" \
+              --env OMNIROUTE_API_KEY="$OPENHANDS_MODEL_GATEWAY_API_KEY" \
+              "$LITELLM_IMAGE" \
+              --config /app/config.yaml --host 0.0.0.0 --port 4000 || run_exit_code=$?
+          else
+            run_exit_code=125
+          fi
           echo "litellm_container=$name" >> "$GITHUB_ENV"
           echo "container=$name" >> "$GITHUB_OUTPUT"
+          litellm_ip=""
+          if [ "$run_exit_code" -eq 0 ]; then
+            litellm_ip="$(docker inspect --format '{{json .NetworkSettings.Networks}}' "$name" \
+              | python3 -c 'import json, sys; data = json.load(sys.stdin); network = sys.argv[1]; print((data.get(network) or {}).get("IPAddress", ""))' "$network" || true)"
+            if [ -z "$litellm_ip" ]; then
+              run_exit_code=125
+            fi
+          fi
+          echo "litellm_ip=$litellm_ip" >> "$GITHUB_ENV"
           healthy=0
           if [ "$run_exit_code" -eq 0 ]; then
             for _ in $(seq 1 60); do
@@ -661,6 +684,15 @@ jobs:
           echo "tool_container=$tool_name" >> "$GITHUB_OUTPUT"
           echo "network=$network" >> "$GITHUB_ENV"
           echo "tool_container=$tool_name" >> "$GITHUB_ENV"
+          tool_service_ip=""
+          if [ "$run_exit_code" -eq 0 ]; then
+            tool_service_ip="$(docker inspect --format '{{json .NetworkSettings.Networks}}' "$tool_name" \
+              | python3 -c 'import json, sys; data = json.load(sys.stdin); network = sys.argv[1]; print((data.get(network) or {}).get("IPAddress", ""))' "$network" || true)"
+            if [ -z "$tool_service_ip" ]; then
+              run_exit_code=125
+            fi
+          fi
+          echo "tool_service_ip=$tool_service_ip" >> "$GITHUB_ENV"
           healthy=0
           if [ "$run_exit_code" -eq 0 ]; then
             for _ in $(seq 1 60); do
@@ -728,16 +760,24 @@ jobs:
           echo "container=$name" >> "$GITHUB_OUTPUT"
           echo "agent_container=$name" >> "$GITHUB_ENV"
           run_exit_code=0
-          docker run --detach --name "$name" --runtime=runsc \
-            --network "$network" --network-alias agent-server \
-            --publish 127.0.0.1:18000:8000 \
-            --volume "$RUNNER_TEMP/aiat-openhands-workspace:/workspace/project:rw" \
-            --env SESSION_API_KEY="$key" \
-            --env HOME=/tmp/aiat-openhands-home \
-            --env OH_ENABLE_VSCODE=false \
-            --env OH_ENABLE_VNC=false \
-            --env OH_REGISTERED_MARKETPLACES='[]' \
-            "$OPENHANDS_IMAGE" || run_exit_code=$?
+          test -n "${omniroute_ip:-}" \
+            && test -n "${litellm_ip:-}" \
+            && test -n "${tool_service_ip:-}" || run_exit_code=125
+          if [ "$run_exit_code" -eq 0 ]; then
+            docker run --detach --name "$name" --runtime=runsc \
+              --network "$network" --network-alias agent-server \
+              --add-host "litellm:${litellm_ip}" \
+              --add-host "tool-service:${tool_service_ip}" \
+              --add-host "omniroute:${omniroute_ip}" \
+              --publish 127.0.0.1:18000:8000 \
+              --volume "$RUNNER_TEMP/aiat-openhands-workspace:/workspace/project:rw" \
+              --env SESSION_API_KEY="$key" \
+              --env HOME=/tmp/aiat-openhands-home \
+              --env OH_ENABLE_VSCODE=false \
+              --env OH_ENABLE_VNC=false \
+              --env OH_REGISTERED_MARKETPLACES='[]' \
+              "$OPENHANDS_IMAGE" || run_exit_code=$?
+          fi
           healthy=0
           if [ "$run_exit_code" -eq 0 ]; then
             for _ in $(seq 1 60); do
@@ -811,7 +851,7 @@ jobs:
           set +e
           mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/gateway"
           docker exec "$AGENT_CONTAINER" python -c \
-            'import urllib.request; response = urllib.request.urlopen("http://litellm:4000/health/readiness", timeout=10); raise SystemExit(0 if response.status == 200 else 1)'
+            'import socket, urllib.request; socket.gethostbyname("litellm"); response = urllib.request.urlopen("http://litellm:4000/health/readiness", timeout=10); raise SystemExit(0 if response.status == 200 else 1)'
           exit_code=$?
           python3 - "$exit_code" "$RUNNER_TEMP/aiat-openhands-evidence/gateway/runsc-to-litellm.json" <<'PY'
           import json
@@ -825,6 +865,9 @@ jobs:
                       "schema_version": "aiat.openhands-runsc-to-litellm.v1",
                       "endpoint": "http://litellm:4000/health/readiness",
                       "runtime": "runsc",
+                      "name_resolution_strategy": "explicit_run_scoped_container_ip_hosts",
+                      "name_resolution_target": "litellm",
+                      "name_resolution_status": "PASS" if exit_code == "0" else "BLOCKED",
                       "status": "PASS" if exit_code == "0" else "BLOCKED",
                       "response_payload_retained": False,
                   },
