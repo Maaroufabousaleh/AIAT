@@ -15,15 +15,26 @@ def _module():
     return module
 
 
+def _helper_texts() -> tuple[str, str]:
+    root = Path(__file__).resolve().parents[1]
+    return (
+        (root / "check_openhands_certification_gateway.py").read_text(encoding="utf-8"),
+        (root / "check_openhands_provider_baseline.py").read_text(encoding="utf-8"),
+    )
+
+
 def test_preflight_requires_secret_variables_and_explicit_sha() -> None:
     module = _module()
     root = Path(__file__).resolve().parents[2]
     workflow = (root.parent / ".github" / "workflows" / "openhands-candidate-certification.yml").read_text(encoding="utf-8")
     manifest = (root / "docs/provenance/openhands-candidate/2026-08-22-v1.43.0/worker-manifest.yaml").read_text(encoding="utf-8")
+    gateway_probe, provider_baseline = _helper_texts()
     sha = "a" * 40
     ready = module.evaluate_static(
         workflow_text=workflow,
         manifest_text=manifest,
+        gateway_probe_text=gateway_probe,
+        provider_baseline_text=provider_baseline,
         actual_sha=sha,
         requested_sha=sha,
         secret_names={"GROQ_API_KEY"},
@@ -34,6 +45,8 @@ def test_preflight_requires_secret_variables_and_explicit_sha() -> None:
     blocked = module.evaluate_static(
         workflow_text=workflow,
         manifest_text=manifest,
+        gateway_probe_text=gateway_probe,
+        provider_baseline_text=provider_baseline,
         actual_sha=sha,
         requested_sha=None,
         secret_names=set(),
@@ -50,10 +63,13 @@ def test_dispatch_uses_workflow_ref_and_exact_candidate_input() -> None:
     root = Path(__file__).resolve().parents[2]
     workflow = (root.parent / ".github" / "workflows" / "openhands-candidate-certification.yml").read_text(encoding="utf-8")
     manifest = (root / "docs/provenance/openhands-candidate/2026-08-22-v1.43.0/worker-manifest.yaml").read_text(encoding="utf-8")
+    gateway_probe, provider_baseline = _helper_texts()
     sha = "b" * 40
     report = module.evaluate_static(
         workflow_text=workflow,
         manifest_text=manifest,
+        gateway_probe_text=gateway_probe,
+        provider_baseline_text=provider_baseline,
         actual_sha=sha,
         requested_sha=sha,
         secret_names={"GROQ_API_KEY"},
@@ -72,9 +88,12 @@ def test_candidate_sha_mismatch_is_reported_separately_from_missing_configuratio
     root = Path(__file__).resolve().parents[2]
     workflow = (root.parent / ".github" / "workflows" / "openhands-candidate-certification.yml").read_text(encoding="utf-8")
     manifest = (root / "docs/provenance/openhands-candidate/2026-08-22-v1.43.0/worker-manifest.yaml").read_text(encoding="utf-8")
+    gateway_probe, provider_baseline = _helper_texts()
     report = module.evaluate_static(
         workflow_text=workflow,
         manifest_text=manifest,
+        gateway_probe_text=gateway_probe,
+        provider_baseline_text=provider_baseline,
         actual_sha="a" * 40,
         requested_sha="b" * 40,
         secret_names={"GROQ_API_KEY"},
@@ -93,11 +112,14 @@ def test_preflight_reconciles_candidate_pins_across_provenance() -> None:
     root = Path(__file__).resolve().parents[2]
     workflow = (root.parent / ".github" / "workflows" / "openhands-candidate-certification.yml").read_text(encoding="utf-8")
     manifest = (root / "docs/provenance/openhands-candidate/2026-08-22-v1.43.0/worker-manifest.yaml").read_text(encoding="utf-8")
+    gateway_probe, provider_baseline = _helper_texts()
     interface = (root / "docs/provenance/openhands-candidate/2026-08-22-v1.43.0/interface-verification.json").read_text(encoding="utf-8")
     provenance = (root / "docs/provenance/openhands-candidate/2026-08-22-v1.43.0/gateway-provenance.json").read_text(encoding="utf-8")
     report = module.evaluate_static(
         workflow_text=workflow,
         manifest_text=manifest,
+        gateway_probe_text=gateway_probe,
+        provider_baseline_text=provider_baseline,
         interface_text=interface.replace(module.EXPECTED_SOURCE_COMMIT, "0" * 40, 1),
         gateway_provenance_text=provenance,
         actual_sha="a" * 40,
@@ -114,10 +136,13 @@ def test_skipped_local_tests_cannot_make_dispatch_ready() -> None:
     root = Path(__file__).resolve().parents[2]
     workflow = (root.parent / ".github" / "workflows" / "openhands-candidate-certification.yml").read_text(encoding="utf-8")
     manifest = (root / "docs/provenance/openhands-candidate/2026-08-22-v1.43.0/worker-manifest.yaml").read_text(encoding="utf-8")
+    gateway_probe, provider_baseline = _helper_texts()
     sha = "a" * 40
     report = module.evaluate_static(
         workflow_text=workflow,
         manifest_text=manifest,
+        gateway_probe_text=gateway_probe,
+        provider_baseline_text=provider_baseline,
         actual_sha=sha,
         requested_sha=sha,
         secret_names={"GROQ_API_KEY"},
@@ -137,3 +162,26 @@ def test_dispatch_preflight_covers_gateway_and_evidence_regressions() -> None:
         "scripts/tests/test_check_openhands_evidence_schema.py",
     }
     assert required.issubset(set(module.LOCAL_TEST_COMMAND))
+
+
+def test_preflight_rejects_workflow_helper_version_skew() -> None:
+    module = _module()
+    root = Path(__file__).resolve().parents[2]
+    workflow = (root.parent / ".github" / "workflows" / "openhands-candidate-certification.yml").read_text(encoding="utf-8")
+    manifest = (root / "docs/provenance/openhands-candidate/2026-08-22-v1.43.0/worker-manifest.yaml").read_text(encoding="utf-8")
+    gateway_probe, provider_baseline = _helper_texts()
+    report = module.evaluate_static(
+        workflow_text=workflow,
+        manifest_text=manifest,
+        gateway_probe_text=gateway_probe.replace('"--auto-routing-output"', '"--legacy-option"', 1),
+        provider_baseline_text=provider_baseline.replace('parser.add_argument("--url"', 'parser.add_argument("--missing-url"', 1),
+        actual_sha="a" * 40,
+        requested_sha="a" * 40,
+        secret_names={"GROQ_API_KEY"},
+        variable_values={"OPENHANDS_MODEL_ID": module.EXPECTED_MODEL, "OPENHANDS_MCP_SETTINGS_KEY": module.EXPECTED_MCP_KEY},
+        local_tests_passed=True,
+    )
+    assert report["ready_to_dispatch"] is False
+    assert report["checks"]["candidate_gateway_probe_contract"] is False
+    assert report["checks"]["candidate_provider_baseline_contract"] is False
+    assert "CANDIDATE_HELPER_CONTRACT_MISMATCH" in report["blocking_reasons"]

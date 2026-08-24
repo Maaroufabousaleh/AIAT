@@ -21,6 +21,8 @@ WORKFLOW = ".github/workflows/openhands-candidate-certification.yml"
 MANIFEST = "mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/worker-manifest.yaml"
 INTERFACE_REPORT = "mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/interface-verification.json"
 GATEWAY_PROVENANCE = "mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/gateway-provenance.json"
+GATEWAY_ROUTE_PROBE = "mas/scripts/check_openhands_certification_gateway.py"
+PROVIDER_BASELINE_PROBE = "mas/scripts/check_openhands_provider_baseline.py"
 SCHEMA = "aiat.openhands-dispatch-preflight.v1"
 LOCAL_TEST_COMMAND = (
     "uv",
@@ -86,6 +88,8 @@ def evaluate_static(
     manifest_text: str,
     interface_text: str = "",
     gateway_provenance_text: str = "",
+    gateway_probe_text: str = "",
+    provider_baseline_text: str = "",
     actual_sha: str,
     requested_sha: str | None,
     secret_names: set[str] | None,
@@ -117,11 +121,30 @@ def evaluate_static(
         and "sha256:ceae8d9da0acf075dbf5905b61c9ae32e749112650fcf7f4434c8d96ac6d3ebb" in workflow_text
         and (not gateway_provenance_text or "sha256:ceae8d9da0acf075dbf5905b61c9ae32e749112650fcf7f4434c8d96ac6d3ebb" in gateway_provenance_text)
     )
+    gateway_probe_contract = (
+        'parser.add_argument(\n        "--auto-routing-output"' in gateway_probe_text
+        and "args.auto_routing_output" in gateway_probe_text
+        and "_write_report(args.auto_routing_output" in gateway_probe_text
+    )
+    provider_baseline_contract = all(
+        marker in provider_baseline_text
+        for marker in (
+            'parser.add_argument("--url"',
+            'parser.add_argument("--output"',
+            'parser.add_argument("--max-attempts"',
+            'parser.add_argument("--retry-delay-seconds"',
+            "args.max_attempts",
+            "args.retry_delay_seconds",
+            "args.output",
+        )
+    )
     inactive = "activation_status: inactive" in manifest_text.lower() or "certification_status: pending" in manifest_text.lower()
     checks = {
         "candidate_sha_frozen": sha_explicit,
         "workflow_manual_only": workflow.get("status") == "PASS" and workflow.get("manual_only") is True,
         "candidate_pins_match": pins_match,
+        "candidate_gateway_probe_contract": gateway_probe_contract,
+        "candidate_provider_baseline_contract": provider_baseline_contract,
         "github_secret_presence_known": secrets_known,
         "groq_secret_present": secret_present is True,
         "github_variables_presence_known": variables_known,
@@ -139,6 +162,8 @@ def evaluate_static(
         blocking_reasons.append("WORKFLOW_STATIC_VALIDATION_FAILED")
     if not checks["candidate_pins_match"]:
         blocking_reasons.append("CANDIDATE_PROVENANCE_MISMATCH")
+    if not checks["candidate_gateway_probe_contract"] or not checks["candidate_provider_baseline_contract"]:
+        blocking_reasons.append("CANDIDATE_HELPER_CONTRACT_MISMATCH")
     if not checks["github_secret_presence_known"] or not checks["github_variables_presence_known"]:
         blocking_reasons.append("GITHUB_CONFIGURATION_PRESENCE_UNKNOWN")
     elif not checks["groq_secret_present"] or not checks["static_variables_match"]:
@@ -163,6 +188,13 @@ def evaluate_static(
         "static_variables": {
             "OPENHANDS_MODEL_ID": EXPECTED_MODEL if variables_match is True else "UNKNOWN",
             "OPENHANDS_MCP_SETTINGS_KEY": EXPECTED_MCP_KEY if variables_match is True else "UNKNOWN",
+        },
+        "candidate_helper_contracts": {
+            "gateway_route_probe": "PASS" if gateway_probe_contract else "BLOCKED",
+            "provider_baseline_probe": "PASS" if provider_baseline_contract else "BLOCKED",
+            "workflow_arguments_are_supported_by_checked_out_helpers": (
+                gateway_probe_contract and provider_baseline_contract
+            ),
         },
         "run_scoped_values": [
             "OPENHANDS_AGENT_PROFILE_ID",
@@ -192,6 +224,14 @@ def preflight(repo: Path, requested_sha: str | None, repo_slug: str | None, skip
     manifest_text = (repo / MANIFEST).read_text(encoding="utf-8")
     interface_text = (repo / INTERFACE_REPORT).read_text(encoding="utf-8")
     gateway_provenance_text = (repo / GATEWAY_PROVENANCE).read_text(encoding="utf-8")
+    try:
+        gateway_probe_text = (repo / GATEWAY_ROUTE_PROBE).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        gateway_probe_text = ""
+    try:
+        provider_baseline_text = (repo / PROVIDER_BASELINE_PROBE).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        provider_baseline_text = ""
     secret_names: set[str] | None = None
     variable_values: dict[str, str] | None = None
     if repo_slug:
@@ -225,6 +265,8 @@ def preflight(repo: Path, requested_sha: str | None, repo_slug: str | None, skip
         manifest_text=manifest_text,
         interface_text=interface_text,
         gateway_provenance_text=gateway_provenance_text,
+        gateway_probe_text=gateway_probe_text,
+        provider_baseline_text=provider_baseline_text,
         actual_sha=actual_sha,
         requested_sha=requested_sha,
         secret_names=secret_names,
