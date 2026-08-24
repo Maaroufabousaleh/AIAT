@@ -1,7 +1,7 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-24, current certification-path
-hardening through implementation tip `9b5aa6f97bc7d12cdfee231bfb43afe8ff8a69bc`
+hardening through implementation tip `0031ff7df395ad07925dfa8202622bef3b55a770`
 (including
 `595965d` gateway failure-origin diagnostics, `57f76b6` fail-closed web DNS
 validation, `e7a2ff5` stopped-container cleanup, and `71149db` certification
@@ -19,6 +19,15 @@ workflow validator and regression suite reject the former unconditional
 success pattern. The current tip passes the complete read-only dispatch
 preflight; no workflow was dispatched for it.
 
+The workflow now also performs an in-run candidate-helper contract check before
+pulling any certification image. It records only the candidate SHA, missing
+helper paths, and missing CLI markers in
+`preflight/candidate-helper-contract.json`; a version-skew result is
+`FAILED_CERTIFICATION_IMPLEMENTATION` and gates every gateway, tool-service,
+Agent Server, and live stage while leaving cleanup and evidence evaluation
+enabled. This protects against the stale-candidate failure reproduced by run
+`32702677310`, even when the operator-side preflight was skipped.
+
 The later `dc8e26b` runtime hardening removes session, tool, gateway, provider,
 and CI credential-like environment variables before the post-run task tests;
 `9b5aa6f` makes the workflow validator require that scrub contract. This is
@@ -31,7 +40,7 @@ workflow is `workflow_dispatch` only and must be dispatched once against an
 explicit frozen commit after the preflight passes.
 
 The reviewed implementation tip immediately before this documentation
-refresh was `9b5aa6f`; it passed the
+refresh was `0031ff7`; it passed the
 read-only dispatch preflight. Because this document is itself committed, the
 dispatch candidate must always be frozen from the actual checkout with
 `git rev-parse HEAD`, never copied from an embedded tip string. No
