@@ -1,11 +1,12 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-24, current certification-path
-hardening at `57f76b6f4349a4d2c1a5e74d03ee272a91796974` (including
-`595965d` gateway failure-origin diagnostics and `57f76b6` fail-closed web
-DNS validation); the branch also contains the earlier candidate/evidence
-history. The next live run must freeze the exact SHA actually selected by the
-operator.
+hardening at `71149db9653b9b9b50cbf7bfa1a2e496dc4f1c30` (including
+`595965d` gateway failure-origin diagnostics, `57f76b6` fail-closed web DNS
+validation, `e7a2ff5` stopped-container cleanup, and `71149db` certification
+authorization consumption after trusted construction); the branch also
+contains the earlier candidate/evidence history. The next live run must freeze
+the exact SHA actually selected by the operator.
 
 This is a manual preparation guide for the inactive candidate. It does not
 activate OpenHands, approve the steward record, or dispatch a workflow. The
@@ -35,7 +36,10 @@ mismatch; no live model result is claimed. Freeze
 and preflight that exact tip before any deliberate run. The current tip also
 contains `f3f4050`, which hardens the run-scoped skill/plugin boundary described
 below, and `65237f3` records that capability boundary in the maintained
-status surface.
+status surface. The flow-runtime UI coverage marker was corrected in `71ce0f6`;
+this does not create live certification evidence. The stopped-container
+cleanup path was hardened in `e7a2ff5`, and `71149db` ensures a certification
+authorization is consumed only after trusted adapter construction succeeds.
 The clean-candidate static certificate was refreshed from a fresh clone at
 `69f5fb4`; it remains valid for reviewed descendants because the validator now
 treats the retained candidate SHA as authoritative by default while preserving
