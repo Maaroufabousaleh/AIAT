@@ -260,6 +260,18 @@ def test_incomplete_gateway_topology_is_infrastructure_failure(tmp_path: Path) -
     assert report["evidence_blocker_status"] == "FAILED_INFRASTRUCTURE"
 
 
+def test_extra_network_attachment_is_infrastructure_failure_even_if_topology_is_complete(tmp_path: Path) -> None:
+    module = _load("check_openhands_gate_matrix")
+    (tmp_path / "gateway").mkdir()
+    (tmp_path / "gateway" / "network-topology.json").write_text(
+        json.dumps({"topology_status": "PASS", "network_scope_status": "BLOCKED"}),
+        encoding="utf-8",
+    )
+    report = module.evaluate(evidence_root=tmp_path, provider_status="PASS")
+    assert report["status"] == "FAILED_INFRASTRUCTURE"
+    assert report["evidence_blocker_status"] == "FAILED_INFRASTRUCTURE"
+
+
 def test_network_creation_failure_is_infrastructure_failure(tmp_path: Path) -> None:
     module = _load("check_openhands_gate_matrix")
     (tmp_path / "gateway").mkdir()
