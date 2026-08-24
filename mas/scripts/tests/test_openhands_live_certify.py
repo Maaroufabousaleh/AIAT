@@ -58,6 +58,20 @@ def test_failed_non_lifecycle_gate_is_classified_as_implementation_failure() -> 
     assert module._final_status(statuses, []) == "FAILED_CERTIFICATION_IMPLEMENTATION"
 
 
+def test_execution_contract_failure_precedes_downstream_gate_failures() -> None:
+    module = _module()
+    statuses = module._status_map("NOT_RUN")
+    statuses["coding_task"] = "FAILED_MODEL_EXECUTION"
+    statuses["file_modifications"] = "FAILED_FILE_MODIFICATIONS"
+    statuses["test_execution"] = "FAILED_TEST_EXECUTION"
+    result = module._final_status(
+        statuses,
+        ["live_coding_task_failed", "test_execution_failed", "file_modifications_contract_failed"],
+        {"conversation_create_http_status": 422, "run_start_http_status": None},
+    )
+    assert result == "BLOCKED_OPENHANDS_LIVE_EXECUTION_CONTRACT"
+
+
 def test_task_spec_prompt_is_used_but_not_retained_in_public_definition(tmp_path: Path) -> None:
     module = _module()
     task = tmp_path / "task.json"

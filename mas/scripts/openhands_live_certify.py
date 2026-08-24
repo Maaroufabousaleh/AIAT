@@ -298,6 +298,24 @@ async def _wait_for_conversation(adapter: OpenHandsAgentServerAdapter, run_id: U
     raise TimeoutError("OpenHands conversation was not created within the lifecycle probe window")
 
 
+def _adapter_diagnostics(adapter: OpenHandsAgentServerAdapter, run_id: UUID) -> dict[str, Any]:
+    """Read only scalar protocol diagnostics retained by the adapter."""
+
+    reader = getattr(adapter, "_diagnostics", None)
+    if callable(reader):
+        value = reader(run_id)
+        if isinstance(value, dict):
+            return value
+    return {
+        "conversation_create_status": "NOT_AVAILABLE",
+        "run_start_status": "NOT_AVAILABLE",
+        "event_stream_status": "NOT_AVAILABLE",
+        "event_count": 0,
+        "event_types": [],
+        "payloads_retained": False,
+    }
+
+
 async def _wait_for_running(adapter: OpenHandsAgentServerAdapter, conversation_id: str, *, timeout: float = 30.0) -> str:
     """Wait until the server has actually begun execution before pausing."""
 
@@ -399,10 +417,15 @@ async def _exercise_live_lifecycle(
             "status_after_pause": paused_status,
             "event_count": len(events),
             "terminal_success": bool(terminal and terminal.result and terminal.result.success),
+            "execution_diagnostics": _adapter_diagnostics(adapter, pause_request.run_id),
         }
     except Exception as exc:
         blockers.append(f"lifecycle_pause_resume:{type(exc).__name__}")
-        details["probes"]["pause_resume"] = {"status": "BLOCKED_LIFECYCLE", "error": type(exc).__name__}
+        details["probes"]["pause_resume"] = {
+            "status": "BLOCKED_LIFECYCLE",
+            "error": type(exc).__name__,
+            "execution_diagnostics": _adapter_diagnostics(adapter, pause_request.run_id),
+        }
 
     interrupt_request = base_request.model_copy(
         update={
@@ -428,10 +451,15 @@ async def _exercise_live_lifecycle(
             "status_before_interrupt": interrupt_running_status,
             "event_count": len(events),
             "cancelled_event": cancelled,
+            "execution_diagnostics": _adapter_diagnostics(adapter, interrupt_request.run_id),
         }
     except Exception as exc:
         blockers.append(f"lifecycle_interrupt:{type(exc).__name__}")
-        details["probes"]["interrupt"] = {"status": "BLOCKED_LIFECYCLE", "error": type(exc).__name__}
+        details["probes"]["interrupt"] = {
+            "status": "BLOCKED_LIFECYCLE",
+            "error": type(exc).__name__,
+            "execution_diagnostics": _adapter_diagnostics(adapter, interrupt_request.run_id),
+        }
 
     timeout_request = base_request.model_copy(
         update={
@@ -449,10 +477,18 @@ async def _exercise_live_lifecycle(
         terminal = next((event for event in reversed(events) if event.error is not None or event.result is not None), None)
         timeout_error = bool(terminal and terminal.error and terminal.error.code == "TIMEOUT")
         statuses["timeout"] = "PASS" if timeout_error else "FAILED_TIMEOUT"
-        details["probes"]["timeout"] = {"event_count": len(events), "timeout_error": timeout_error}
+        details["probes"]["timeout"] = {
+            "event_count": len(events),
+            "timeout_error": timeout_error,
+            "execution_diagnostics": _adapter_diagnostics(adapter, timeout_request.run_id),
+        }
     except Exception as exc:
         blockers.append(f"lifecycle_timeout:{type(exc).__name__}")
-        details["probes"]["timeout"] = {"status": "BLOCKED_LIFECYCLE", "error": type(exc).__name__}
+        details["probes"]["timeout"] = {
+            "status": "BLOCKED_LIFECYCLE",
+            "error": type(exc).__name__,
+            "execution_diagnostics": _adapter_diagnostics(adapter, timeout_request.run_id),
+        }
     details["secret_scan"] = {
         "status": "PASS" if not secret_fingerprints else "BLOCKED_SECRET_NON_DISCLOSURE",
         "matches": len(secret_fingerprints),
@@ -485,7 +521,11 @@ def _status_map(status: str) -> dict[str, str]:
     }
 
 
-def _final_status(statuses: dict[str, str], blockers: list[str]) -> str:
+def _final_status(
+    statuses: dict[str, str],
+    blockers: list[str],
+    execution_diagnostics: dict[str, Any] | None = None,
+) -> str:
     """Return a narrow wrapper status without promoting NOT_RUN to PASS."""
 
     if any(item.startswith("operator_configuration_missing:") for item in blockers):
@@ -498,6 +538,15 @@ def _final_status(statuses: dict[str, str], blockers: list[str]) -> str:
         return "FAILED_CERTIFICATION_IMPLEMENTATION"
     if any(item.startswith("task_spec_postrun") for item in blockers):
         return "FAILED_CERTIFICATION_IMPLEMENTATION"
+    if execution_diagnostics:
+        execution_http_statuses = [
+            int(execution_diagnostics.get(field) or 0)
+            for field in ("conversation_create_http_status", "run_start_http_status")
+        ]
+        if any(status >= 400 for status in execution_http_statuses):
+            # A request-shape or endpoint mismatch is a contract defect in the
+            # pinned Agent Server integration, not a provider/model verdict.
+            return "BLOCKED_OPENHANDS_LIVE_EXECUTION_CONTRACT"
     if any(item.startswith("test_execution") for item in blockers):
         return "BLOCKED_LIFECYCLE"
     if any(item.startswith("file_modifications") for item in blockers):
@@ -684,6 +733,8 @@ async def certify(
         timeout_seconds=int(os.getenv("OPENHANDS_CERT_TIMEOUT_SECONDS", "300")),
         budget={"max_iterations": int(os.getenv("OPENHANDS_CERT_MAX_ITERATIONS", "20"))},
     )
+    event_count = 0
+    execution_diagnostics: dict[str, Any] = {}
     try:
         secret_values = [
             os.environ.get("OPENHANDS_SESSION_API_KEY", ""),
@@ -718,14 +769,21 @@ async def certify(
             }
         await adapter.start(request)
         result_event = None
-        event_count = 0
+        normalized_event_types: list[str] = []
         secret_matches: set[str] = set()
         async for event in adapter.events(request.run_id):
             event_count += 1
+            event_type = str(getattr(event.event_type, "value", event.event_type))
+            if event_type not in normalized_event_types:
+                normalized_event_types.append(event_type)
             observation = _scan_event_for_secrets(event, secret_values)
             secret_matches.update(observation["matched_fingerprints"])
             if event.result is not None or event.error is not None:
                 result_event = event
+        execution_diagnostics = _adapter_diagnostics(adapter, request.run_id)
+        execution_diagnostics["normalized_event_count"] = event_count
+        execution_diagnostics["normalized_event_types"] = normalized_event_types
+        execution_diagnostics["normalized_last_event_type"] = normalized_event_types[-1] if normalized_event_types else None
         statuses["coding_task"] = (
             "PASS"
             if result_event and result_event.result and result_event.result.success
@@ -771,6 +829,11 @@ async def certify(
             if secret_matches:
                 statuses["secret_isolation"] = "BLOCKED_SECRET_NON_DISCLOSURE"
         task_definition["postrun"] = postrun
+        if statuses["coding_task"] != "PASS":
+            # Downstream filesystem/test gates remain failed when their
+            # evidence fails, but the earliest blocking gate is explicit.
+            task_definition["causal_blocker_gate"] = "real_coding_task"
+            postrun["caused_by_gate"] = "real_coding_task"
         blockers.extend(postrun_blockers)
         if exercise_lifecycle:
             lifecycle_statuses, lifecycle_details, lifecycle_blockers = await _exercise_live_lifecycle(
@@ -791,6 +854,7 @@ async def certify(
     except Exception as exc:  # runtime errors remain evidence, never activation
         statuses["coding_task"] = "FAILED_CERTIFICATION_IMPLEMENTATION"
         blockers.append(f"runtime:{type(exc).__name__}")
+        execution_diagnostics = _adapter_diagnostics(adapter, request.run_id)
     finally:
         if exercise_lifecycle:
             # One profile-bound MCP registration is shared by the lifecycle
@@ -805,9 +869,10 @@ async def certify(
     statuses["zero_residue"] = "PASS" if not adapter._mcp_by_run else "FAILED_CLEANUP"
     if statuses["zero_residue"] != "PASS":
         blockers.append("run_scoped_mcp_grant_residue")
+    execution_diagnostics = locals().get("execution_diagnostics") or _adapter_diagnostics(adapter, request.run_id)
     return {
         "schema_version": SCHEMA,
-        "status": _final_status(statuses, blockers),
+        "status": _final_status(statuses, blockers, execution_diagnostics),
         "candidate": {"release": verification.release, "commit_sha": verification.commit_sha, "image_digest": verification.image_digest},
         "worker_activation": "INACTIVE",
         "certification_authorization": {
@@ -820,7 +885,9 @@ async def certify(
         },
         "activation_approval": {"status": "PENDING", "required": True},
         "gates": statuses,
+        "causal_blocker_gate": task_definition.get("causal_blocker_gate"),
         "events": {"count": event_count, "payloads_retained": False},
+        "execution_diagnostics": execution_diagnostics,
         "cleanup": {"status": statuses["zero_residue"], "payloads_retained": False},
         "blockers": blockers,
         "task": task_definition,

@@ -73,6 +73,8 @@ def _evidence_blocker_status(evidence_root: Path) -> str | None:
         "live/live-certification.json",
     ):
         value = report(name)
+        if name == "live/live-certification.json" and str(value.get("status") or "") == "BLOCKED_OPENHANDS_LIVE_EXECUTION_CONTRACT":
+            return "BLOCKED_OPENHANDS_LIVE_EXECUTION_CONTRACT"
         if name == "live/live-certification.json" and value.get("status") == "BLOCKED_CERTIFICATION_AUTHORIZATION":
             # Certification authorization is a trusted, run-scoped execution
             # authority.  It is intentionally separate from activation
@@ -222,6 +224,12 @@ def evaluate(
     evidence_root: Path | None = None,
 ) -> dict[str, Any]:
     gates = _load_gate_rows(gate_status_path) if gate_status_path else derive_gate_rows(evidence_root) if evidence_root else initial_gate_map()
+    causal_blocker_gate = None
+    if evidence_root is not None:
+        live = _json(evidence_root / "live" / "live-certification.json")
+        causal = live.get("causal_blocker_gate")
+        if isinstance(causal, str) and causal in gates:
+            causal_blocker_gate = causal
     effective_blocker = provider_status if provider_status and provider_status != "PASS" else None
     if effective_blocker is None and configuration_status and configuration_status not in {
         "PASS",
@@ -230,7 +238,11 @@ def evaluate(
         effective_blocker = configuration_status
     if effective_blocker is None and evidence_root is not None:
         effective_blocker = _evidence_blocker_status(evidence_root)
-    result = evaluate_gate_map(gates, blocker_status=effective_blocker)
+    result = evaluate_gate_map(
+        gates,
+        blocker_status=effective_blocker,
+        causal_blocker_gate=causal_blocker_gate,
+    )
     return {
         "schema_version": SCHEMA,
         "status": result["status"],
@@ -242,6 +254,7 @@ def evaluate(
         "provider_configuration_status": provider_status,
         "configuration_status": configuration_status,
         "evidence_blocker_status": effective_blocker,
+        "causal_blocker_gate": causal_blocker_gate,
         "evidence_root_used": bool(evidence_root),
         "payloads_retained": False,
     }

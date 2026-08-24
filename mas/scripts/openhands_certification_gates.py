@@ -78,6 +78,7 @@ def evaluate_gate_map(
     gates: Mapping[str, Mapping[str, Any]],
     *,
     blocker_status: str | None = None,
+    causal_blocker_gate: str | None = None,
 ) -> dict[str, Any]:
     """Evaluate a gate map without allowing omitted gates to pass.
 
@@ -105,6 +106,14 @@ def evaluate_gate_map(
         final_status = "FAILED_CERTIFICATION_IMPLEMENTATION"
     elif all(status == "PASS" for status in statuses.values()):
         final_status = "PASSED"
+    elif (
+        causal_blocker_gate in GATE_IDS
+        and blocker_status == "BLOCKED_OPENHANDS_LIVE_EXECUTION_CONTRACT"
+    ):
+        # Preserve failed downstream gates, but report the earliest proven
+        # execution-contract blocker instead of whichever dependent failure
+        # happens to sort first.
+        final_status = blocker_status
     elif failed:
         final_status = statuses[failed[0]]
     elif blocker_status and blocker_status != "PASS":
@@ -128,4 +137,5 @@ def evaluate_gate_map(
         "missing_gates": missing,
         "unknown_gates": unknown,
         "invalid_gates": invalid,
+        "causal_blocker_gate": causal_blocker_gate,
     }

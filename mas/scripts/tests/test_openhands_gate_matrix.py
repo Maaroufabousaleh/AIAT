@@ -122,6 +122,29 @@ def test_scalar_gateway_failure_gets_a_narrow_blocker_class(tmp_path: Path) -> N
     assert report["evaluation"]["all_required_gates_passed"] is False
 
 
+def test_live_execution_contract_failure_is_not_hidden_by_downstream_gates(tmp_path: Path) -> None:
+    module = _load("check_openhands_gate_matrix")
+    (tmp_path / "live").mkdir()
+    (tmp_path / "live" / "live-certification.json").write_text(
+        json.dumps(
+            {
+                "status": "BLOCKED_OPENHANDS_LIVE_EXECUTION_CONTRACT",
+                "causal_blocker_gate": "real_coding_task",
+                "gates": {
+                    "coding_task": "FAILED_MODEL_EXECUTION",
+                    "file_modifications": "FAILED_FILE_MODIFICATIONS",
+                    "test_execution": "FAILED_TEST_EXECUTION",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    report = module.evaluate(evidence_root=tmp_path, provider_status="PASS")
+    assert report["status"] == "BLOCKED_OPENHANDS_LIVE_EXECUTION_CONTRACT"
+    assert report["causal_blocker_gate"] == "real_coding_task"
+    assert report["evaluation"]["causal_blocker_gate"] == "real_coding_task"
+
+
 def test_gateway_auth_boundary_failure_gets_model_gateway_blocker(tmp_path: Path) -> None:
     module = _load("check_openhands_gate_matrix")
     (tmp_path / "gateway" / "omniroute").mkdir(parents=True)

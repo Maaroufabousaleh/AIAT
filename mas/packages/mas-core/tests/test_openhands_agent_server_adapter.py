@@ -1061,6 +1061,43 @@ async def test_start_payload_contains_only_controlled_profile_workspace_and_prom
 
 
 @pytest.mark.asyncio
+async def test_start_payload_uses_v143_alphanumeric_conversation_tag_keys(tmp_path: Path) -> None:
+    """The pinned SDK rejects underscores in ConversationTags with HTTP 422."""
+
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={})
+
+    adapter = make_adapter(tmp_path, handler)
+    payload = adapter._start_payload(request(workspace=tmp_path / "workspace"))
+    assert set(payload["tags"]) == {"aiatworkerid", "aiatrunid", "aiatidempotencykey"}
+    assert all(key.isalnum() and key.islower() for key in payload["tags"])
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_conversation_create_422_is_retained_as_scalar_contract_diagnostic(tmp_path: Path) -> None:
+    run = request(workspace=tmp_path / "workspace")
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path == "/api/settings/mcp/aiat-openhands-test-run":
+            return httpx.Response(201, json={})
+        if request.method == "POST" and request.url.path == "/api/conversations":
+            return httpx.Response(422, json={"detail": [{"loc": ["body", "tags"], "type": "value_error"}]})
+        raise AssertionError(request)
+
+    adapter = make_adapter(tmp_path, handler)
+    with pytest.raises(httpx.HTTPStatusError):
+        await adapter._create_conversation(run)
+    diagnostics = adapter._diagnostics(run.run_id)
+    assert diagnostics["conversation_create_status"] == "FAILED"
+    assert diagnostics["conversation_create_http_status"] == 422
+    assert diagnostics["conversation_id_present"] is False
+    assert diagnostics["model_error_class"] == "CONVERSATION_CREATE_HTTP_422"
+    assert diagnostics["request_errors"] == ["CONVERSATION_CREATE_HTTP_422"]
+    await adapter.close()
+
+
+@pytest.mark.asyncio
 async def test_task_cannot_override_model_gateway_profile_or_budget(tmp_path: Path) -> None:
     async def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={})

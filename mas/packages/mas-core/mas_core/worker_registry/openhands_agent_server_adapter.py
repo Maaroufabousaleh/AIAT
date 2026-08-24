@@ -384,6 +384,88 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
         self._cancelled: set[UUID] = set()
         self._mcp_by_run: dict[UUID, str] = {}
         self._mcp_grant_expires_at: dict[UUID, float] = {}
+        # Keep only bounded scalar protocol diagnostics.  The Agent Server can
+        # return prompts, tool arguments, and model responses in HTTP/event
+        # payloads; none of those values belong in AIAT evidence.
+        self._diagnostics_by_run: dict[UUID, dict[str, Any]] = {}
+
+    @staticmethod
+    def _new_diagnostics() -> dict[str, Any]:
+        return {
+            "conversation_create_status": "NOT_RUN",
+            "conversation_create_http_status": None,
+            "conversation_id_present": False,
+            "run_start_status": "NOT_RUN",
+            "run_start_http_status": None,
+            "run_endpoint": None,
+            "run_identifier_present": False,
+            "run_identifier_status": "NOT_APPLICABLE_SERVER_BACKGROUND_RUN",
+            "event_stream_status": "NOT_RUN",
+            "event_count": 0,
+            "event_types": [],
+            "last_event_type": None,
+            "last_conversation_status": None,
+            "terminal_state_observed": False,
+            "terminal_state_value": None,
+            "final_response_present": False,
+            "final_response_size": 0,
+            "model_error_observed": False,
+            "model_error_class": None,
+            "model_error_http_status": None,
+            "request_errors": [],
+        }
+
+    def _diagnostics(self, run_id: UUID) -> dict[str, Any]:
+        """Return a copy of sanitized protocol diagnostics for one run."""
+
+        value = self._diagnostics_by_run.get(run_id) or self._new_diagnostics()
+        return {
+            key: list(item) if isinstance(item, list) else item
+            for key, item in value.items()
+        }
+
+    def _diagnostic_for(self, run_id: UUID) -> dict[str, Any]:
+        return self._diagnostics_by_run.setdefault(run_id, self._new_diagnostics())
+
+    def _record_http_diagnostic(
+        self,
+        run_id: UUID | None,
+        *,
+        operation: str,
+        path: str,
+        status_code: int,
+    ) -> None:
+        if run_id is None:
+            return
+        diagnostic = self._diagnostic_for(run_id)
+        status_name = {
+            "conversation_create": "conversation_create_status",
+            "conversation_run": "run_start_status",
+        }.get(operation)
+        status_field = {
+            "conversation_create": "conversation_create_http_status",
+            "conversation_run": "run_start_http_status",
+        }.get(operation)
+        if status_name:
+            diagnostic[status_name] = "PASS" if 200 <= status_code < 300 else "FAILED"
+        if status_field:
+            diagnostic[status_field] = status_code
+        if operation == "conversation_run":
+            diagnostic["run_endpoint"] = path
+        if status_code >= 400:
+            error_class = f"{operation.upper()}_HTTP_{status_code}"
+            if operation in {
+                "conversation_create",
+                "conversation_run",
+                "conversation_get",
+                "agent_final_response",
+            }:
+                diagnostic["model_error_observed"] = True
+                diagnostic["model_error_class"] = error_class
+                diagnostic["model_error_http_status"] = status_code
+            errors = diagnostic.setdefault("request_errors", [])
+            if error_class not in errors:
+                errors.append(error_class)
 
     @classmethod
     def for_certification(
@@ -451,9 +533,24 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             )
         return self._owned_client
 
-    async def _json(self, method: str, path: str, **kwargs: Any) -> Any:
+    async def _json(
+        self,
+        method: str,
+        path: str,
+        *,
+        diagnostic_run_id: UUID | None = None,
+        diagnostic_operation: str | None = None,
+        **kwargs: Any,
+    ) -> Any:
         client = await self._get_client()
         response = await client.request(method, path, **kwargs)
+        if diagnostic_operation:
+            self._record_http_diagnostic(
+                diagnostic_run_id,
+                operation=diagnostic_operation,
+                path=path,
+                status_code=response.status_code,
+            )
         response.raise_for_status()
         if not response.content:
             return {}
@@ -883,15 +980,39 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             },
             "max_iterations": max_iterations,
             "stuck_detection": True,
+            # OpenHands SDK v1.43.0 validates ConversationTags with the
+            # exact ``^[a-z0-9]+$`` key contract.  Underscored AIAT metadata
+            # names are rejected by the server as HTTP 422 before a
+            # conversation is created, so keep the values but use bounded
+            # alphanumeric keys.  These tags are correlation metadata only;
+            # they never carry authority or secrets.
             "tags": {
-                "aiat_worker_id": self.worker_id,
-                "aiat_run_id": str(request.run_id),
-                "aiat_idempotency_key": request.idempotency_key[:128],
+                "aiatworkerid": self.worker_id,
+                "aiatrunid": str(request.run_id),
+                "aiatidempotencykey": request.idempotency_key[:128],
             },
         }
 
-    async def _conversation(self, conversation_id: str) -> dict[str, Any]:
-        data = await self._json("GET", self.verification.endpoint("conversation_get", conversation_id=conversation_id))
+    async def _conversation(
+        self,
+        conversation_id: str,
+        *,
+        diagnostic_run_id: UUID | None = None,
+    ) -> dict[str, Any]:
+        data = await self._json(
+            "GET",
+            self.verification.endpoint("conversation_get", conversation_id=conversation_id),
+            diagnostic_run_id=diagnostic_run_id,
+            diagnostic_operation="conversation_get" if diagnostic_run_id else None,
+        )
+        if diagnostic_run_id and isinstance(data, dict):
+            status = str(data.get("execution_status") or "").lower()
+            diagnostic = self._diagnostic_for(diagnostic_run_id)
+            if status:
+                diagnostic["last_conversation_status"] = status
+            if status in TERMINAL_STATUSES:
+                diagnostic["terminal_state_observed"] = True
+                diagnostic["terminal_state_value"] = status
         return data if isinstance(data, dict) else {}
 
     async def _create_conversation(self, request: WorkerRunRequest) -> str:
@@ -901,12 +1022,19 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             self._conversation_by_run[request.run_id] = existing
             return existing
         payload = self._start_payload(request)
-        data = await self._json("POST", self.verification.endpoint("conversation_create"), json=payload)
+        data = await self._json(
+            "POST",
+            self.verification.endpoint("conversation_create"),
+            json=payload,
+            diagnostic_run_id=request.run_id,
+            diagnostic_operation="conversation_create",
+        )
         conversation_id = str(data.get("id") or "") if isinstance(data, dict) else ""
         try:
             UUID(conversation_id)
         except ValueError as exc:
             raise RuntimeError("OpenHands conversation creation returned no valid ID") from exc
+        self._diagnostic_for(request.run_id)["conversation_id_present"] = True
         info = await self._conversation(conversation_id)
         agent = info.get("agent") if isinstance(info, dict) else None
         llm = agent.get("llm") if isinstance(agent, dict) else None
@@ -923,6 +1051,11 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             return
         kind = str(raw.get("kind") or raw.get("type") or "openhands.event")
         event_id = raw.get("id") or raw.get("event_id")
+        diagnostic = self._diagnostic_for(request.run_id)
+        diagnostic["event_count"] += 1
+        if kind not in diagnostic["event_types"]:
+            diagnostic["event_types"].append(kind[:128])
+        diagnostic["last_event_type"] = kind[:128]
         # Only scalar identifiers/status are retained in AIAT evidence. Event
         # payloads can contain prompts, tool arguments, or file contents.
         extensions = {
@@ -947,6 +1080,7 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
         ws_url = f"{scheme}://{parsed.netloc}{base_path}{socket_path}"
         try:
             async with websockets.connect(ws_url) as socket:
+                self._diagnostic_for(request.run_id)["event_stream_status"] = "CONNECTED"
                 await socket.send(json.dumps({"type": "auth", "session_api_key": self._session_key}))
                 async for message in socket:
                     if request.run_id in self._stop_events:
@@ -959,12 +1093,32 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            diagnostic = self._diagnostic_for(request.run_id)
+            if diagnostic["event_stream_status"] == "NOT_RUN":
+                diagnostic["event_stream_status"] = "FAILED"
+            elif diagnostic["event_stream_status"] == "CONNECTED":
+                diagnostic["event_stream_status"] = "CLOSED"
             if request.run_id not in self._stop_events:
                 await self.emit_audit(request.run_id, "openhands.websocket_error", details={"error": type(exc).__name__})
 
-    async def _final_response(self, conversation_id: str) -> str:
-        data = await self._json("GET", self.verification.endpoint("agent_final_response", conversation_id=conversation_id))
-        return str(data.get("response") or "") if isinstance(data, dict) else ""
+    async def _final_response(
+        self,
+        conversation_id: str,
+        *,
+        diagnostic_run_id: UUID | None = None,
+    ) -> str:
+        data = await self._json(
+            "GET",
+            self.verification.endpoint("agent_final_response", conversation_id=conversation_id),
+            diagnostic_run_id=diagnostic_run_id,
+            diagnostic_operation="agent_final_response" if diagnostic_run_id else None,
+        )
+        response = str(data.get("response") or "") if isinstance(data, dict) else ""
+        if diagnostic_run_id:
+            diagnostic = self._diagnostic_for(diagnostic_run_id)
+            diagnostic["final_response_present"] = bool(response)
+            diagnostic["final_response_size"] = len(response)
+        return response
 
     @staticmethod
     def _usage(info: dict[str, Any], request: WorkerRunRequest, duration_ms: float) -> WorkerUsage:
@@ -1036,6 +1190,7 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
 
     async def _execute(self, request: WorkerRunRequest) -> WorkerResult:
         conversation_id: str | None = None
+        self._diagnostic_for(request.run_id)
         try:
             conversation_id = self._conversation_by_run.get(request.run_id) or await self._create_conversation(request)
             self._stop_events.discard(request.run_id)
@@ -1043,7 +1198,12 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             self._event_tasks[request.run_id] = event_task
             started = time.monotonic()
             try:
-                await self._json("POST", self.verification.endpoint("conversation_run", conversation_id=conversation_id))
+                await self._json(
+                    "POST",
+                    self.verification.endpoint("conversation_run", conversation_id=conversation_id),
+                    diagnostic_run_id=request.run_id,
+                    diagnostic_operation="conversation_run",
+                )
                 while True:
                     if request.run_id in self._cancelled or request.run_id in self._cancel_requested:
                         return WorkerResult(
@@ -1053,7 +1213,7 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
                             error=WorkerError(code="CANCELLED", message="OpenHands conversation interrupted by AIAT", terminal=True, category="cancellation"),
                             replay_metadata={"openhands_conversation_id": conversation_id},
                         )
-                    info = await self._conversation(conversation_id)
+                    info = await self._conversation(conversation_id, diagnostic_run_id=request.run_id)
                     status = str(info.get("execution_status") or "").lower()
                     if status in TERMINAL_STATUSES:
                         if status != "finished":
@@ -1068,7 +1228,7 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
                             run_id=request.run_id,
                             worker_id=self.worker_id,
                             success=True,
-                            output=await self._final_response(conversation_id),
+                            output=await self._final_response(conversation_id, diagnostic_run_id=request.run_id),
                             artifacts=await self._artifacts(conversation_id),
                             usage=self._usage(info, request, (time.monotonic() - started) * 1000),
                             replay_metadata={
@@ -1124,6 +1284,12 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             response = await (await self._get_client()).post(
                 self.verification.endpoint("conversation_interrupt", conversation_id=conversation_id)
             )
+            self._record_http_diagnostic(
+                request.run_id,
+                operation="conversation_interrupt",
+                path=self.verification.endpoint("conversation_interrupt", conversation_id=conversation_id),
+                status_code=response.status_code,
+            )
             if response.status_code not in {200, 404, 409}:
                 response.raise_for_status()
             await self.emit_audit(
@@ -1141,14 +1307,24 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
     async def pause(self, request: WorkerPause) -> None:
         conversation_id = self._conversation_by_run.get(request.run_id)
         if conversation_id:
-            await self._json("POST", self.verification.endpoint("conversation_pause", conversation_id=conversation_id))
+            await self._json(
+                "POST",
+                self.verification.endpoint("conversation_pause", conversation_id=conversation_id),
+                diagnostic_run_id=request.run_id,
+                diagnostic_operation="conversation_pause",
+            )
         await super().pause(request)
 
     async def resume(self, request: WorkerResume) -> None:
         conversation_id = self._conversation_by_run.get(request.run_id)
         if not conversation_id:
             raise RuntimeError("OpenHands resume requires a known conversation ID")
-        await self._json("POST", self.verification.endpoint("conversation_run", conversation_id=conversation_id))
+        await self._json(
+            "POST",
+            self.verification.endpoint("conversation_run", conversation_id=conversation_id),
+            diagnostic_run_id=request.run_id,
+            diagnostic_operation="conversation_run",
+        )
         await super().resume(request)
 
     async def cancel(self, request: WorkerCancellation) -> None:
@@ -1156,6 +1332,12 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
         if conversation_id:
             endpoint = "conversation_interrupt" if request.force else "conversation_pause"
             response = await (await self._get_client()).post(self.verification.endpoint(endpoint, conversation_id=conversation_id))
+            self._record_http_diagnostic(
+                request.run_id,
+                operation=endpoint,
+                path=self.verification.endpoint(endpoint, conversation_id=conversation_id),
+                status_code=response.status_code,
+            )
             if response.status_code >= 400 and not request.force:
                 response.raise_for_status()
         self._cancelled.add(request.run_id)
