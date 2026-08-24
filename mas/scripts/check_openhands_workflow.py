@@ -373,9 +373,19 @@ def validate(text: str) -> dict[str, Any]:
         or "provider-baseline.json" not in text
         or "--max-attempts 2" not in text
         or "--retry-delay-seconds 1" not in text
-        or "steps.baseline.outputs.ready == 'true'" not in text
     ):
         errors.append("provider_baseline_gate_missing")
+    # The deterministic baseline is intentionally independent from the
+    # production auto/coding route.  A baseline/provider failure must remain a
+    # blocker in the gate matrix, but it must not suppress the LiteLLM startup
+    # and auto-router evidence that can diagnose the separate production path.
+    for step_name in ("Start disposable LiteLLM model gateway", "Verify governed OmniRoute auto/coding route through LiteLLM"):
+        marker = f"- name: {step_name}"
+        if marker in text:
+            block = text.split(marker, 1)[1].split("\n      - name:", 1)[0]
+            if "steps.baseline.outputs.ready == 'true'" in block:
+                errors.append("baseline_blocks_auto_router_evidence")
+                break
     if "--auto-routing-output" not in text or "auto-routing.json" not in text:
         errors.append("auto_routing_evidence_missing")
     if "--host-workspace \"$RUNNER_TEMP/aiat-openhands-workspace\"" not in text or "--fixture-root \"$GITHUB_WORKSPACE/mas/scripts/fixtures/openhands-coding-task\"" not in text:

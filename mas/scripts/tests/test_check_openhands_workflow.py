@@ -180,6 +180,21 @@ def test_auto_router_and_deterministic_baseline_are_both_required() -> None:
     assert "auto_routing_evidence_missing" in module.validate(weakened)["errors"]
 
 
+def test_baseline_failure_does_not_suppress_independent_auto_router_evidence() -> None:
+    module = _module()
+    text = _workflow()
+    report = module.validate(text)
+    assert "baseline_blocks_auto_router_evidence" not in report["errors"]
+    marker = "        id: litellm\n"
+    weakened = text.replace(
+        marker,
+        marker + "        if: steps.baseline.outputs.ready == 'true'\n",
+        1,
+    )
+    report = module.validate(weakened)
+    assert "baseline_blocks_auto_router_evidence" in report["errors"]
+
+
 def test_provider_baseline_requires_bounded_retry_contract() -> None:
     module = _module()
     text = _workflow()

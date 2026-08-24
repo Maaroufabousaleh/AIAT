@@ -538,7 +538,11 @@ jobs:
 
       - name: Start disposable LiteLLM model gateway
         id: litellm
-        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true' && steps.network.outputs.ready == 'true' && steps.provider.outputs.ready == 'true' && steps.baseline.outputs.ready == 'true'
+        # The deterministic baseline is an independent diagnostic gate.  Do
+        # not suppress the production auto/coding path when that baseline is
+        # blocked; the gate matrix still retains the baseline blocker and
+        # remains fail-closed.
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true' && steps.network.outputs.ready == 'true' && steps.provider.outputs.ready == 'true'
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -607,7 +611,7 @@ jobs:
 
       - name: Verify governed OmniRoute auto/coding route through LiteLLM
         id: gateway
-        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true' && steps.network.outputs.ready == 'true' && steps.provider.outputs.ready == 'true' && steps.baseline.outputs.ready == 'true' && steps.litellm.outputs.ready == 'true'
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true' && steps.network.outputs.ready == 'true' && steps.provider.outputs.ready == 'true' && steps.litellm.outputs.ready == 'true'
         continue-on-error: true
         run: |
           set +e
