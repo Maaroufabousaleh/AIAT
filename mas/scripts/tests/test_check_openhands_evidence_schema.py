@@ -67,6 +67,29 @@ def test_true_sensitive_retention_flag_fails_closed(tmp_path: Path) -> None:
     assert any(item.startswith("sensitive_retention_flag:") for item in report["errors"])
 
 
+def test_openhands_secret_and_payload_retention_aliases_fail_closed(tmp_path: Path) -> None:
+    root = _write_tree(tmp_path, _gate_report())
+    (root / "provider" / "unsafe-aliases.json").write_text(
+        json.dumps(
+            {
+                "credentials_retained": True,
+                "gateway_key_retained": True,
+                "raw_logs_retained": True,
+                "response_payloads_retained": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    report = MODULE.validate(root)
+    assert report["status"] == "FAILED_CERTIFICATION_IMPLEMENTATION"
+    assert {
+        "sensitive_retention_flag:provider/unsafe-aliases.json:credentials_retained",
+        "sensitive_retention_flag:provider/unsafe-aliases.json:gateway_key_retained",
+        "sensitive_retention_flag:provider/unsafe-aliases.json:raw_logs_retained",
+        "sensitive_retention_flag:provider/unsafe-aliases.json:response_payloads_retained",
+    }.issubset(set(report["errors"]))
+
+
 def test_passed_status_requires_all_gates_passed(tmp_path: Path) -> None:
     report = MODULE.validate(_write_tree(tmp_path, _gate_report("PASSED")))
     assert report["status"] == "FAILED_CERTIFICATION_IMPLEMENTATION"
