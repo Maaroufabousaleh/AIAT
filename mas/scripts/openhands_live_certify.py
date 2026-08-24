@@ -43,6 +43,32 @@ _REQUIRED_ENV = (
     "OPENHANDS_MODEL_ID",
 )
 _CERTIFICATION_CONTROLLER = "aiat-github-actions"
+_TASK_TEST_SENSITIVE_ENV_MARKERS = (
+    "SECRET",
+    "TOKEN",
+    "PASSWORD",
+    "CREDENTIAL",
+    "API_KEY",
+    "ACCESS_KEY",
+    "PRIVATE_KEY",
+)
+
+
+def _task_test_environment() -> dict[str, str]:
+    """Return a subprocess environment without credential-bearing variables.
+
+    The disposable coding repository's tests are not allowed to inherit the
+    certification controller's session, tool, gateway, provider, or CI tokens.
+    Keep ordinary runtime variables (PATH, HOME, locale, Python settings) so
+    the governed test command remains deterministic without exposing secrets.
+    """
+
+    environment = dict(os.environ)
+    for name in tuple(environment):
+        if any(marker in name.upper() for marker in _TASK_TEST_SENSITIVE_ENV_MARKERS):
+            environment.pop(name, None)
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    return environment
 
 
 def _load_task_definition(task_spec: Path | None) -> tuple[str | None, dict[str, Any], list[str]]:
@@ -169,6 +195,7 @@ def _verify_host_task(
         "changed_paths": [],
         "test_exit_code": None,
         "test_timeout": False,
+        "test_environment_secret_scrubbed": True,
         "raw_test_output_retained": False,
         "workspace_secret_scan": {
             "status": "NOT_RUN",
@@ -206,7 +233,7 @@ def _verify_host_task(
         completed = subprocess.run(
             [sys.executable, "-m", "pytest", "-q"],
             cwd=host_workspace,
-            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+            env=_task_test_environment(),
             capture_output=True,
             text=True,
             timeout=120,

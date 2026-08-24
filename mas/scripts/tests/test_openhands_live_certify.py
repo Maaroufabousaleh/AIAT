@@ -95,6 +95,53 @@ def test_host_task_verification_requires_real_test_and_exact_workspace_change(tm
     assert blockers == []
 
 
+def test_host_task_tests_do_not_inherit_certification_secrets(tmp_path: Path, monkeypatch) -> None:
+    module = _module()
+    fixture = tmp_path / "fixture"
+    workspace = tmp_path / "workspace"
+    (fixture / "slugger").mkdir(parents=True)
+    (fixture / "tests").mkdir()
+    (fixture / "slugger" / "core.py").write_text("before\n", encoding="utf-8")
+    (fixture / "tests" / "test_slugger.py").write_text("def test_ok(): pass\n", encoding="utf-8")
+    import shutil
+
+    shutil.copytree(fixture, workspace)
+    (workspace / "slugger" / "core.py").write_text("after\n", encoding="utf-8")
+    monkeypatch.setenv("AIAT_TOOL_SECRET", "tool-secret")
+    monkeypatch.setenv("OPENHANDS_SESSION_API_KEY", "session-secret")
+    monkeypatch.setenv("OPENHANDS_MODEL_GATEWAY_API_KEY", "gateway-secret")
+    monkeypatch.setenv("GROQ_API_KEY", "provider-secret")
+    observed: dict[str, object] = {}
+
+    def fake_run(*args, **kwargs):
+        observed["env"] = kwargs["env"]
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    details, blockers = module._verify_host_task(
+        task_definition={
+            "test_command": "python -m pytest -q",
+            "expected_changed_paths": ["slugger/core.py"],
+            "forbidden_changed_paths": [],
+        },
+        host_workspace=workspace,
+        fixture_root=fixture,
+    )
+    environment = observed["env"]
+    assert isinstance(environment, dict)
+    assert all(
+        name not in environment
+        for name in (
+            "AIAT_TOOL_SECRET",
+            "OPENHANDS_SESSION_API_KEY",
+            "OPENHANDS_MODEL_GATEWAY_API_KEY",
+            "GROQ_API_KEY",
+        )
+    )
+    assert details["test_environment_secret_scrubbed"] is True
+    assert blockers == []
+
+
 def test_host_task_verification_does_not_infer_pass_without_workspace(tmp_path: Path) -> None:
     module = _module()
     details, blockers = module._verify_host_task(
