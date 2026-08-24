@@ -1,7 +1,7 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-24, current certification-path
-hardening at `fba92fe` (including
+hardening at `11bee28` (including
 `595965d` gateway failure-origin diagnostics, `57f76b6` fail-closed web DNS
 validation, `e7a2ff5` stopped-container cleanup, and `71149db` certification
 authorization consumption after trusted construction); the branch also
@@ -195,7 +195,7 @@ its route helper still rejected `--auto-routing-output`; the gateway and
 provider setup had already passed, while tool-service, OpenHands, and all live
 mandatory gates were not run. The immutable run artifact is recorded in
 [`github-run-32691538177-failure.json`](./github-run-32691538177-failure.json).
-The reviewed tip `fba92fe` adds a dispatch-preflight check for both helper CLI
+The reviewed tip `11bee28` adds a dispatch-preflight check for both helper CLI
 contracts and reports implementation drift separately from missing operator
 configuration, so a stale candidate now fails closed before GitHub Actions is
 called. This evidence update does not dispatch a replacement run.
