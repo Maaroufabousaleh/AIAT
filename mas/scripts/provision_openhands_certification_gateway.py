@@ -239,12 +239,11 @@ def _discover_baseline_model(
         discovery_payload=payload,
         expected_connection_id=connection_id,
     )
-    if result["status"] != "PASS":
-        raise GatewayProvisioningError(
-            "baseline_model_unavailable",
-            stage="provider",
-            http_status=response.status_code,
-        )
+    # Baseline discovery is deliberately diagnostic and independent from
+    # provider-connection provisioning.  A missing/retired baseline must block
+    # only the deterministic baseline gate; aborting here would prevent the
+    # separate governed auto/coding route from being exercised.  The caller
+    # retains the scalar result and the baseline probe remains fail-closed.
     return result
 
 
@@ -359,6 +358,8 @@ def provision(
             "requested_aiat_model": AIAT_MODEL_ID,
             "resolved_provider_model": EXPECTED_ROUTE,
             "baseline_discovery": baseline,
+            "baseline_gate_independent": True,
+            "auto_router_provisioning_status": "PASS",
             "auto_router_model": "auto/coding",
             "auto_router_scope": auto_router_scope,
             "management_endpoint": "http://omniroute:20128",

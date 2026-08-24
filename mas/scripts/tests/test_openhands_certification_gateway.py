@@ -119,6 +119,8 @@ def test_provider_route_is_single_exact_and_never_retains_credentials() -> None:
     assert report["connection_identity_verified"] is True
     assert "connection-1" not in serialized
     assert report["baseline_discovery"]["status"] == "PASS"
+    assert report["baseline_gate_independent"] is True
+    assert report["auto_router_provisioning_status"] == "PASS"
     assert report["management_endpoint"] == "http://omniroute:20128"
     assert report["openai_compatible_endpoint"] == "http://omniroute:20129/v1"
     assert report["provider_pool"]["providers"] == ["groq"]
@@ -134,6 +136,83 @@ def test_provider_route_is_single_exact_and_never_retains_credentials() -> None:
     assert provider_key not in serialized
     assert management_key not in serialized
     client.close()
+
+
+def test_baseline_discovery_block_does_not_suppress_auto_route_provisioning() -> None:
+    """Keep the diagnostic baseline independent from auto/coding setup."""
+
+    settings = {"autoRoutingEnabled": False, "blockedProviders": []}
+    provider_reads = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal provider_reads
+        if request.method == "GET" and request.url.path == "/api/settings":
+            return httpx.Response(200, json=settings)
+        if request.method == "PATCH" and request.url.path == "/api/settings":
+            settings.update(json.loads(request.content))
+            return httpx.Response(200, json=settings)
+        if request.method == "GET" and request.url.path == "/api/providers":
+            provider_reads += 1
+            if provider_reads == 1:
+                return httpx.Response(200, json={"connections": []})
+            return httpx.Response(
+                200,
+                json={
+                    "connections": [
+                        {
+                            "id": "connection-1",
+                            "provider": "groq",
+                            "name": PROVISION.PROVIDER_NAME,
+                            "defaultModel": PROVISION.PROVIDER_MODEL,
+                        }
+                    ]
+                },
+            )
+        if request.method == "POST" and request.url.path == "/api/providers":
+            return httpx.Response(
+                201,
+                json={
+                    "connection": {
+                        "id": "connection-1",
+                        "provider": "groq",
+                        "name": PROVISION.PROVIDER_NAME,
+                        "defaultModel": PROVISION.PROVIDER_MODEL,
+                    }
+                },
+            )
+        if request.method == "POST" and request.url.path == "/api/providers/connection-1/test":
+            return httpx.Response(200, json={"valid": True})
+        if request.method == "GET" and request.url.path == "/api/providers/connection-1/models":
+            # The live provider does not advertise the frozen baseline.  This
+            # must remain a baseline-only block, not a provisioning failure.
+            return httpx.Response(
+                200,
+                json={
+                    "provider": "groq",
+                    "connectionId": "connection-1",
+                    "source": "api",
+                    "models": [{"id": "openai/gpt-oss-20b"}],
+                },
+            )
+        raise AssertionError(request)
+
+    client = httpx.Client(
+        base_url="http://omniroute.test",
+        transport=httpx.MockTransport(handler),
+    )
+    report = PROVISION.provision(
+        base_url="http://omniroute.test",
+        management_key="gateway-secret",
+        provider_key="provider-secret",
+        client=client,
+    )
+    client.close()
+
+    assert report["status"] == "PASS"
+    assert report["provider_validation"] == "PASS"
+    assert report["baseline_discovery"]["status"] == "BASELINE_MODEL_UNAVAILABLE"
+    assert report["baseline_discovery"]["model_present"] is False
+    assert report["auto_router_scope"]["status"] == "PASS"
 
 
 def test_route_probe_retains_only_scalar_usage() -> None:
