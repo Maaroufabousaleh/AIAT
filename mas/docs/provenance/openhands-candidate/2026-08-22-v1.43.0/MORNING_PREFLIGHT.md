@@ -1,7 +1,7 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-24, current certification-path
-hardening through implementation tip `9a32bc261df5a7524499253092b0f70187ce0769`
+hardening through implementation tip `70b96d5b8dfcb4fb72f1dfe0465ff4bba8724640`
 (including
 `595965d` gateway failure-origin diagnostics, `57f76b6` fail-closed web DNS
 validation, `e7a2ff5` stopped-container cleanup, and `71149db` certification
@@ -26,6 +26,15 @@ the current run's generated gateway secret; a fresh disposable Agent Server
 is required instead of reusing opaque state. Focused provisioning tests and
 the full deterministic suite pass.
 
+`70b96d5` additionally validates the created provider connection's redacted
+readback (`provider`, display name, internal gateway URL, and `api_key_set`)
+both in the create response and in the authoritative list response before the
+LLM profile is bound. A mismatch fails closed without retaining the credential.
+The exact pinned Agent Server image was exercised locally with synthetic
+values: provider store empty, profile/MCP materialization `PASS`, zero
+resolved skills, and no retained secrets; this is contract evidence, not a
+provider-backed certification result.
+
 The workflow now also performs an in-run candidate-helper contract check before
 pulling any certification image. It records only the candidate SHA, missing
 helper paths, and missing CLI markers in
@@ -47,7 +56,7 @@ workflow is `workflow_dispatch` only and must be dispatched once against an
 explicit frozen commit after the preflight passes.
 
 The reviewed implementation tip immediately before this documentation
-refresh was `4fdf4cf`; the current implementation baseline is `9a32bc2` and
+refresh was `9a32bc2`; the current implementation baseline is `70b96d5` and
 it passed the read-only dispatch preflight. This document is a docs-only
 refresh, so the
 dispatch candidate must always be frozen from the actual checkout with
