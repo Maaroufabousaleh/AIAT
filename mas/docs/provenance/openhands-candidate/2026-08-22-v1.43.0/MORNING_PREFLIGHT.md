@@ -42,6 +42,13 @@ materializer performs the same self-verification before persisting the MCP
 entry. This remains repository-local security evidence and does not claim a
 provider-backed certification pass.
 
+`6267c9f` closes the lifecycle-wave grant-binding gap: pause, interrupt, and
+timeout probes use distinct AIAT run IDs, so the trusted certification-only
+adapter rotates the disposable bridge grant between probes (delete/readback
+absence, recreate, authenticated readback) while ordinary preconfigured
+callers continue to reject any mismatched grant. Final cleanup still deletes
+the shared settings key and verifies it is absent.
+
 The workflow now also performs an in-run candidate-helper contract check before
 pulling any certification image. It records only the candidate SHA, missing
 helper paths, and missing CLI markers in
@@ -63,7 +70,7 @@ workflow is `workflow_dispatch` only and must be dispatched once against an
 explicit frozen commit after the preflight passes.
 
 The reviewed implementation tip immediately before this documentation
-refresh was `70b96d5`; the current implementation baseline is `1e27383` and
+refresh was `1e27383`; the current implementation baseline is `6267c9f` and
 it passed the read-only dispatch preflight. This document is a docs-only
 refresh, so the
 dispatch candidate must always be frozen from the actual checkout with
