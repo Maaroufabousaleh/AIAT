@@ -1,7 +1,7 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-24, current certification-path
-hardening at `fa19b1c`; the branch also
+hardening at `f3f4050`; the branch also
 contains the earlier candidate/evidence history. The next live run must freeze
 the exact SHA actually selected by the operator.
 
@@ -21,7 +21,9 @@ matches the requested SHA. The current reviewed tip includes `cc48cca` and
 `a2c886e` auto-route/gate-wiring hardening, `a39788a` evidence-retention
 validation, `a377dab` scalar provider attribution for successful `auto/coding`
 evidence, and `1c4a426` Agent Server health-blocker output diagnostics. Freeze
-and preflight that exact tip before any deliberate run.
+and preflight that exact tip before any deliberate run. The current tip also
+contains `f3f4050`, which hardens the run-scoped skill/plugin boundary described
+below.
 The clean-candidate static certificate was refreshed from a fresh clone at
 `69f5fb4`; it remains valid for reviewed descendants because the validator now
 treats the retained candidate SHA as authoritative by default while preserving
@@ -61,6 +63,15 @@ OmniRoute `openai/auto/coding`. A successful auto-route record retains only the
 bounded single-provider attribution (`groq`, the baseline model, and route
 basis); it does not retain provider credentials, connection IDs, or response
 payloads.
+
+The pinned Agent Server profile now handles v1.43.0's skill deny-list semantics
+explicitly: it materializes the server-discovered public/user catalog, persists
+those names as disabled, and verifies a second materialization resolves zero
+skills. The certification container uses an isolated home, disables VS Code,
+VNC, and registered marketplaces, and rejects project workspaces containing
+OpenHands skill/plugin sources before the coding wave. This is certification
+scoping around the immutable upstream image; it does not modify or weaken the
+candidate runtime.
 
 ### Historical workflow implementation failure
 
