@@ -233,6 +233,18 @@ def test_network_topology_failure_cannot_unlock_live_stages() -> None:
     assert "network_topology_assertion_missing" in report["errors"]
 
 
+def test_live_task_test_environment_scrubs_controller_secrets(tmp_path: Path, monkeypatch) -> None:
+    module = _module()
+    text = _workflow()
+    assert "live_task_environment_secret_scrub_missing" not in module.validate(text)["errors"]
+    helper = module.LIVE_CERTIFICATION_HELPER.read_text(encoding="utf-8")
+    weakened = helper.replace("env=_task_test_environment()", "env=dict(os.environ)", 1)
+    helper_path = tmp_path / "openhands_live_certify.py"
+    helper_path.write_text(weakened, encoding="utf-8")
+    monkeypatch.setattr(module, "LIVE_CERTIFICATION_HELPER", helper_path)
+    assert "live_task_environment_secret_scrub_missing" in module.validate(text)["errors"]
+
+
 def test_runsc_uses_explicit_run_scoped_name_resolution() -> None:
     module = _module()
     text = _workflow()

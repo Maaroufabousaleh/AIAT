@@ -18,6 +18,7 @@ LITELLM_CERTIFICATION_CONFIG = Path(__file__).resolve().parents[1] / "infra" / "
 GATEWAY_ROUTE_PROBE = Path(__file__).with_name("check_openhands_certification_gateway.py")
 PROVIDER_BASELINE_PROBE = Path(__file__).with_name("check_openhands_provider_baseline.py")
 PROVIDER_SCOPE_HELPER = Path(__file__).with_name("provision_openhands_certification_gateway.py")
+LIVE_CERTIFICATION_HELPER = Path(__file__).with_name("openhands_live_certify.py")
 EXPECTED_IMAGES = (
     "ghcr.io/openhands/agent-server:1.43.0-python@sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97",
     "ghcr.io/berriai/litellm@sha256:a50b02a6056095da29308310bb608f0509e08ddcd1d105bae9c21007d82b0e95",
@@ -269,6 +270,22 @@ def _provider_scope_helper_issues() -> list[str]:
     return ["provider_scope_helper_contract_missing"] if any(item not in helper for item in required) else []
 
 
+def _live_task_environment_contract_issues() -> list[str]:
+    """Require certification task tests to execute without controller secrets."""
+
+    try:
+        helper = LIVE_CERTIFICATION_HELPER.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ["live_certification_helper_missing"]
+    required = (
+        "_TASK_TEST_SENSITIVE_ENV_MARKERS",
+        "def _task_test_environment()",
+        "env=_task_test_environment()",
+        '"test_environment_secret_scrubbed": True',
+    )
+    return ["live_task_environment_secret_scrub_missing"] if any(item not in helper for item in required) else []
+
+
 def _network_topology_contract_issues(text: str) -> list[str]:
     """Require authoritative per-container alias readback for topology evidence."""
 
@@ -397,6 +414,7 @@ def validate(text: str) -> dict[str, Any]:
     errors.extend(_provider_baseline_probe_cli_issues())
     errors.extend(_provider_scope_helper_issues())
     errors.extend(_network_topology_contract_issues(text))
+    errors.extend(_live_task_environment_contract_issues())
     errors.extend(_runsc_network_name_resolution_issues(text))
     errors.extend(_workflow_script_reference_issues(text))
     if "--attempts 30" not in text or "--interval-seconds 1" not in text:
