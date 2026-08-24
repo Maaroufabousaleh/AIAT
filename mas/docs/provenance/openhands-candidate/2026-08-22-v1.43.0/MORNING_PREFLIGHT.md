@@ -1,12 +1,12 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-24, current certification-path
-hardening through reviewed tip `171aed3c600acaf6a9bb8e0908264b56da572b53`
+hardening through implementation tip `171aed3c600acaf6a9bb8e0908264b56da572b53`
 (including
 `595965d` gateway failure-origin diagnostics, `57f76b6` fail-closed web DNS
 validation, `e7a2ff5` stopped-container cleanup, and `71149db` certification
 authorization consumption after trusted construction); the branch also
-contains the earlier candidate/evidence history. `44cc974` keeps transient
+contains the earlier candidate/evidence history. `e472ee1` keeps transient
 OmniRoute baseline-catalog failures as scalar baseline-only evidence while
 failing closed on management-auth failures; its focused and full test suites
 pass. The next live run must freeze
@@ -18,7 +18,7 @@ workflow is `workflow_dispatch` only and must be dispatched once against an
 explicit frozen commit after the preflight passes.
 
 The reviewed implementation tip immediately before this documentation
-refresh was `171aed3c600acaf6a9bb8e0908264b56da572b53`; it passed the
+refresh was `e472ee1`; it passed the
 read-only dispatch preflight. Because this document is itself committed, the
 dispatch candidate must always be frozen from the actual checkout with
 `git rev-parse HEAD`, never copied from an embedded tip string. No
@@ -42,7 +42,7 @@ candidate tree is missing helper contracts. The reviewed history includes
 `a2c886e` auto-route/gate-wiring hardening, `a39788a` evidence-retention
 validation, `a377dab` scalar provider attribution for successful `auto/coding`
 evidence, and `1c4a426` Agent Server health-blocker output diagnostics. The
-current reviewed implementation baseline `44cc974` additionally distinguishes unknown LiteLLM 404 responses
+current reviewed implementation tip `e472ee1` additionally distinguishes unknown LiteLLM 404 responses
 from the explicit no-provider auto-router condition and rejects unresolved web
 targets before any network request. The latest deliberate run also confirmed
 the configured Groq secret at

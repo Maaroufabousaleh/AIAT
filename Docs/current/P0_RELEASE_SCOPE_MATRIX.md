@@ -104,7 +104,8 @@ activation approval.
 The earlier repository-local refresh at implementation baseline
 `1c4a426105fcb8a64c077d70f5bacffc45d2ec4a` remains historical. Subsequent
 OpenHands routing, provider-baseline, cleanup-readback, and workflow-helper
-hardening has been reviewed through `171aed3c600acaf6a9bb8e0908264b56da572b53`
+hardening has been reviewed through `e472ee1` (implementation baseline
+`171aed3c600acaf6a9bb8e0908264b56da572b53`)
 and is reflected in the maintained candidate status documents. The historical
 [`overnight-reconciliation.json`](../../mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/overnight-reconciliation.json)
 remains immutable historical evidence:
@@ -142,6 +143,12 @@ classification or the global `NO-RELEASE` decision.
 | Clean-host/bootstrap and disaster-recovery restore | Local encrypted/fresh-process and disposable-provider prerequisites pass; clean native-host bootstrap, external endpoint recovery, and disaster-recovery evidence remain absent. **Infrastructure/external configuration.** | `REQUIRED_FOR_RELEASE` | After the scope decisions and native host are available, run clean-host bootstrap and restore with only scalar evidence and verified zero residue. |
 | MinIO/SeaweedFS resource and provider-functional wave | Both providers pass the identical bounded resource, multipart, checksum/read-back, abort, outage/read-back, and cleanup assertions; the invalid alias run is excluded. **No retained provider failure.** | `REQUIRED_FOR_RELEASE` gate is **closed/pass** | Preserve only the structured scalar evidence. Do not rerun the wave unless the provider fixture, workload, or external environment materially changes. |
 | AIAT-owned credentials boundary | Compose live certificate passes all 12 checks with zero fixture rows; provider-managed KMS remains separate. **Functional pass; external configuration still open.** | `REQUIRED_FOR_RELEASE` gate is **closed/pass** | No further identical probe is needed. Reopen only if the credentials implementation or configured external custody changes. |
+
+> **Status refresh (2026-08-24):** The current reviewed implementation tip is
+> `e472ee1`, which includes the direct/nested MCP readback hardening from
+> `171aed3c600acaf6a9bb8e0908264b56da572b53` and suppresses any dispatch
+> command when a requested candidate SHA fails preflight. The table's earlier
+> tip references are retained as implementation-history context.
 
 ## External input inventory
 
