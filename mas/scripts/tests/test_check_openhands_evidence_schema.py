@@ -105,6 +105,29 @@ def test_invalid_json_is_reported_without_retaining_contents(tmp_path: Path) -> 
     assert "not-json" not in json.dumps(report, sort_keys=True)
 
 
+def test_trufflehog_json_lines_are_valid_scanner_evidence(tmp_path: Path) -> None:
+    root = _write_tree(tmp_path, _gate_report())
+    (root / "certification" / "trufflehog.json").write_text(
+        '{"Verified":false}\n{"Verified":false}\n',
+        encoding="utf-8",
+    )
+    report = MODULE.validate(root)
+    assert report["status"] == "PASS", report["errors"]
+
+
+def test_malformed_trufflehog_json_line_fails_closed_without_echoing_payload(tmp_path: Path) -> None:
+    root = _write_tree(tmp_path, _gate_report())
+    sentinel = "not-a-secret-payload"
+    (root / "certification" / "trufflehog.json").write_text(
+        '{"Verified":false}\n' + sentinel + "\n",
+        encoding="utf-8",
+    )
+    report = MODULE.validate(root)
+    assert report["status"] == "FAILED_CERTIFICATION_IMPLEMENTATION"
+    assert any(item.startswith("jsonl_invalid:certification/trufflehog.json") for item in report["errors"])
+    assert sentinel not in json.dumps(report, sort_keys=True)
+
+
 def test_historical_workflow_failure_record_is_scalar_and_fail_closed() -> None:
     path = (
         Path(__file__).resolve().parents[3]

@@ -156,6 +156,9 @@ def _run_image_sbom(image_ref: str, output_dir: Path) -> dict[str, Any]:
     path = output_dir / "image-sbom.cdx.json"
     stdout_path = output_dir / "syft-image.stdout.log"
     stderr_path = output_dir / "syft-image.stderr.log"
+    # Avoid reusing a stale partial output when a caller reuses an evidence
+    # directory after an interrupted attempt.
+    path.unlink(missing_ok=True)
     invocation = [executable or "syft", f"docker:{image_ref}", "-o", f"cyclonedx-json={path}"]
     if executable is None:
         return {
@@ -186,6 +189,13 @@ def _run_image_sbom(image_ref: str, output_dir: Path) -> dict[str, Any]:
     stdout_path.write_text(_redacted_text(result.stdout or ""), encoding="utf-8")
     stderr_path.write_text(_redacted_text(result.stderr or ""), encoding="utf-8")
     if result.returncode != 0 or not path.is_file():
+        # Syft may create the destination before Docker image extraction
+        # fails (for example when the runner runs out of space). Do not leave
+        # a zero-byte/partial ``*.json`` artifact for the evidence-schema
+        # validator to misinterpret as a malformed retained report. The
+        # scalar failure is retained in candidate-certification.json and the
+        # sanitized stderr log remains available for diagnosis.
+        path.unlink(missing_ok=True)
         return {
             "status": "blocked",
             "available": True,
@@ -202,6 +212,7 @@ def _run_image_sbom(image_ref: str, output_dir: Path) -> dict[str, Any]:
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         payload = None
     if not isinstance(payload, dict):
+        path.unlink(missing_ok=True)
         return {
             "status": "blocked",
             "available": True,
@@ -245,6 +256,16 @@ def _image_probe(image_ref: str) -> dict[str, Any]:
         "expected_digest": expected,
         "repo_digests": normalized,
     }
+
+
+def _remove_failed_sbom_artifact(report: dict[str, Any], output_dir: Path) -> None:
+    """Remove an incomplete shared-Syft output while retaining scalar status."""
+
+    if report.get("status") == "pass":
+        return
+    name = report.get("path")
+    if isinstance(name, str) and name and Path(name).name == name:
+        (output_dir / name).unlink(missing_ok=True)
 
 
 def _agent_server_probe(
@@ -629,6 +650,13 @@ def certify(
     elif expected_aiat_candidate and aiat_candidate_commit != expected_aiat_candidate:
         blockers.append("aiat_candidate_commit_mismatch")
 
+    # Image SBOM generation is deliberately performed before cloning and
+    # extracting the large upstream source tree. Syft's Docker source adapter
+    # may materialize a temporary image archive; doing that after the source
+    # scanners have populated the runner can exhaust the ephemeral filesystem
+    # even though the pinned image itself pulled successfully.
+    image_sbom = _run_image_sbom(image_ref, output_dir)
+
     with tempfile.TemporaryDirectory(prefix="aiat-openhands-candidate-") as temporary:
         try:
             source_metadata, source = _prepare_source(repository, version, Path(temporary))
@@ -649,7 +677,7 @@ def certify(
             scanner_rows = [_normalize_scanner_row(row, output_dir) for row in scanner_rows]
             scanner_rows = [_normalize_finding_applicability(row, output_dir) for row in scanner_rows]
             source_sbom = _run_sbom(source, output_dir)
-            image_sbom = _run_image_sbom(image_ref, output_dir)
+            _remove_failed_sbom_artifact(source_sbom, output_dir)
             boundary = _run_boundary(boundary_command, output_dir)
         else:
             blockers.append("source_not_available")

@@ -114,6 +114,22 @@ def test_image_cross_check_retains_only_path_classification(monkeypatch) -> None
     assert result["payloads_retained"] is False
 
 
+def test_failed_image_sbom_does_not_leave_invalid_json_artifact(monkeypatch, tmp_path: Path) -> None:
+    certify_module = _module()
+    monkeypatch.setattr(certify_module.shutil, "which", lambda name: "/usr/bin/syft")
+
+    def fake_run(command, **_kwargs):
+        output_argument = next(argument for argument in command if str(argument).startswith("cyclonedx-json="))
+        Path(str(output_argument).split("=", 1)[1]).write_text("", encoding="utf-8")
+        return SimpleNamespace(returncode=1, stdout="", stderr="no space left on device")
+
+    monkeypatch.setattr(certify_module.subprocess, "run", fake_run)
+    report = certify_module._run_image_sbom("example/image@sha256:" + "a" * 64, tmp_path)
+    assert report["status"] == "blocked"
+    assert report["failure_class"] == certify_module.SBOM_FAILURE
+    assert not (tmp_path / "image-sbom.cdx.json").exists()
+
+
 def test_cleanup_failure_cannot_leave_a_passed_certification(monkeypatch, tmp_path: Path) -> None:
     certify_module = _module()
 

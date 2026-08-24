@@ -84,6 +84,30 @@ def _load(path: Path) -> tuple[Any, str | None]:
         return None, type(exc).__name__
 
 
+def _load_json_lines(path: Path) -> tuple[Any, str | None]:
+    """Load a deliberately retained JSON Lines scanner output.
+
+    TruffleHog's ``--json`` contract is one JSON finding per line rather than
+    one JSON document.  Treating that output as a single JSON document makes
+    a valid scanner result look like corrupted evidence.  Keep the format
+    explicit and fail closed if any individual line is malformed; do not
+    include line contents in the diagnostic.
+    """
+
+    try:
+        rows: list[Any] = []
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if not line.strip():
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                return None, f"JSONLineDecodeError:{line_number}"
+        return rows, None
+    except (OSError, UnicodeDecodeError) as exc:
+        return None, type(exc).__name__
+
+
 def _sensitive_true_flags(value: Any, *, path: str = "") -> list[str]:
     findings: list[str] = []
     if isinstance(value, dict):
@@ -151,10 +175,12 @@ def validate(root: Path) -> dict[str, Any]:
     gate_path = root / "certification" / "gate-evaluation.json"
     gate_evaluation: Any = None
     for path in json_files:
-        value, parse_error = _load(path)
         relative = path.relative_to(root).as_posix()
+        loader = _load_json_lines if relative == "certification/trufflehog.json" else _load
+        value, parse_error = loader(path)
         if parse_error:
-            errors.append(f"json_invalid:{relative}:{parse_error}")
+            error_kind = "jsonl_invalid" if loader is _load_json_lines else "json_invalid"
+            errors.append(f"{error_kind}:{relative}:{parse_error}")
             continue
         flags = _sensitive_true_flags(value)
         errors.extend(f"sensitive_retention_flag:{relative}:{flag}" for flag in flags)
