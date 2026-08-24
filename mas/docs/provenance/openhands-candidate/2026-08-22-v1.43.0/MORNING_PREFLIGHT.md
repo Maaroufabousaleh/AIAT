@@ -40,8 +40,9 @@ workflow is `workflow_dispatch` only and must be dispatched once against an
 explicit frozen commit after the preflight passes.
 
 The reviewed implementation tip immediately before this documentation
-refresh was `893fa78`; the current tip is `4fdf4cf` and it passed the
-read-only dispatch preflight. Because this document is itself committed, the
+refresh was `893fa78`; the current implementation baseline is `4fdf4cf` and
+it passed the read-only dispatch preflight. This document is a docs-only
+refresh, so the
 dispatch candidate must always be frozen from the actual checkout with
 `git rev-parse HEAD`, never copied from an embedded tip string. No
 certification run has been dispatched against this documentation refresh.
