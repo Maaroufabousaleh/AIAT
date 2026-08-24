@@ -105,3 +105,14 @@ def test_skipped_local_tests_cannot_make_dispatch_ready() -> None:
     )
     assert report["ready_to_dispatch"] is False
     assert report["checks"]["local_deterministic_tests"] is False
+
+
+def test_dispatch_preflight_covers_gateway_and_evidence_regressions() -> None:
+    module = _module()
+    required = {
+        "scripts/tests/test_openhands_gateway_provenance.py",
+        "scripts/tests/test_openhands_omniroute_auth.py",
+        "scripts/tests/test_openhands_omniroute_readiness.py",
+        "scripts/tests/test_check_openhands_evidence_schema.py",
+    }
+    assert required.issubset(set(module.LOCAL_TEST_COMMAND))

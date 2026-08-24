@@ -239,8 +239,8 @@ None of these local checks is live provider evidence.
 The latest repository-local hardening commits are:
 
 - `4890aaa2bd0ddbc2ef1e5b19ba075363de58167f`: verifies exact LiteLLM and
-  OmniRoute release-tag dereferences and source archive SHA-256 values in the
-  workflow;
+  OmniRoute release-tag targets (annotated-tag peeling or lightweight direct
+  refs) and source archive SHA-256 values in the workflow;
 - `82f053e8e9858c9c70d2fad058ae154675ff9ba5`: validates the retained JSON
   evidence tree and rejects sensitive-retention flags or an incomplete gate
   set;
