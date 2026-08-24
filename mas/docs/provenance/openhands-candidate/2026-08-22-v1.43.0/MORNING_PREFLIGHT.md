@@ -1,7 +1,7 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-24, current certification-path
-hardening through implementation tip `1e273837c4f1d34620f7efbcdbbd3c6eb618b374`
+hardening through implementation tip `6267c9fbd9b288b3d8f7eb05cf23e6e5ac5982b5`
 (including
 `595965d` gateway failure-origin diagnostics, `57f76b6` fail-closed web DNS
 validation, `e7a2ff5` stopped-container cleanup, and `71149db` certification
@@ -48,6 +48,11 @@ adapter rotates the disposable bridge grant between probes (delete/readback
 absence, recreate, authenticated readback) while ordinary preconfigured
 callers continue to reject any mismatched grant. Final cleanup still deletes
 the shared settings key and verifies it is absent.
+
+`eff28b8` also excludes the disposable workspace's `.git` bookkeeping from
+fixture-vs-workspace change evidence; the live workflow initializes that
+repository before the agent starts, so metadata must not appear as an
+unauthorized agent modification.
 
 The workflow now also performs an in-run candidate-helper contract check before
 pulling any certification image. It records only the candidate SHA, missing
