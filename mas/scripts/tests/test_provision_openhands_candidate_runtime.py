@@ -147,6 +147,40 @@ def test_provisioning_fails_closed_for_noncanonical_mcp_key() -> None:
         )
 
 
+def test_provisioning_rejects_preexisting_provider_connection_without_secret_readback() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == "/api/llm/provider-connections":
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "id": "stale-gateway-connection",
+                        "provider": "aiat-gateway",
+                        "base_url": "http://litellm:4000",
+                        "api_key_set": True,
+                    }
+                ],
+            )
+        raise AssertionError(request)
+
+    client = httpx.Client(
+        base_url="http://openhands.test",
+        transport=httpx.MockTransport(handler),
+    )
+    with pytest.raises(MODULE.ProvisioningError, match="provider_connection_store_not_empty"):
+        MODULE.provision(
+            base_url="http://openhands.test",
+            session_api_key="session",
+            aiat_tool_secret="tool-secret",
+            model_id="omniroute-coding",
+            gateway_url="http://litellm:4000",
+            gateway_api_key="gateway-secret",
+            mcp_key=MODULE.EXPECTED_MCP_KEY,
+            client=client,
+        )
+    client.close()
+
+
 def test_mcp_readback_rejects_unapproved_entries() -> None:
     with pytest.raises(MODULE.ProvisioningError, match="unapproved_entries"):
         MODULE._validate_mcp_entry(

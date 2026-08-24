@@ -192,30 +192,27 @@ def provision(
         connections = _json_body(client.get("/api/llm/provider-connections"))
         if not isinstance(connections, list):
             raise ProvisioningError("provider_connection_readback_not_a_list")
-        connection = next(
-            (
-                item
-                for item in connections
-                if isinstance(item, dict)
-                and item.get("provider") == "aiat-gateway"
-                and item.get("base_url") == gateway_url
-                and item.get("api_key_set") is True
+        # The Agent Server readback deliberately exposes only ``api_key_set``;
+        # it cannot prove that an existing connection contains this run's
+        # freshly generated gateway secret.  Reusing one would therefore make
+        # the profile's authentication boundary unauthoritative (and could
+        # silently bind a disposable run to stale/operator state).  CI starts
+        # a fresh Agent Server, so any persisted connection is a hard failure
+        # rather than a reason to fall back to an unverifiable credential.
+        if connections:
+            raise ProvisioningError("agent_server_provider_connection_store_not_empty")
+        connection = _json_body(
+            client.post(
+                "/api/llm/provider-connections",
+                json={
+                    "display_name": "AIAT governed model gateway (OpenHands certification)",
+                    "provider": "aiat-gateway",
+                    "api_key": gateway_api_key,
+                    "base_url": gateway_url,
+                },
             ),
-            None,
+            expected={201},
         )
-        if connection is None:
-            connection = _json_body(
-                client.post(
-                    "/api/llm/provider-connections",
-                    json={
-                        "display_name": "AIAT governed model gateway (OpenHands certification)",
-                        "provider": "aiat-gateway",
-                        "api_key": gateway_api_key,
-                        "base_url": gateway_url,
-                    },
-                ),
-                expected={201},
-            )
         connection_id = str(connection.get("id") or "") if isinstance(connection, dict) else ""
         if not connection_id:
             raise ProvisioningError("provider_connection_id_missing")
