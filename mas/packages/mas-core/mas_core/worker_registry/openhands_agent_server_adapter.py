@@ -658,13 +658,92 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
                 )
             except (OpenHandsToolGrantError, TypeError, ValueError) as exc:
                 raise RuntimeError("preconfigured OpenHands MCP grant is invalid") from exc
-            if (
-                grant.worker_id != self.worker_id
-                or grant.run_id != request.run_id
-                or grant.project_id != request.project_id
-                or grant.tool_names != requested_tools
-            ):
-                raise RuntimeError("preconfigured OpenHands MCP grant is not bound to this run")
+            bound_to_request = (
+                grant.worker_id == self.worker_id
+                and grant.run_id == request.run_id
+                and grant.project_id == request.project_id
+                and grant.tool_names == requested_tools
+            )
+            if not bound_to_request:
+                # The trusted certification lifecycle wave uses independent
+                # AIAT run IDs for pause, interrupt, and timeout probes while
+                # reusing one profile-bound MCP key. Rotate the short-lived
+                # grant only in that isolated, deferred-cleanup context so
+                # each probe retains a cryptographic run binding. Ordinary
+                # preconfigured callers still fail closed on any mismatch.
+                if not (self.certification_mode and self.context.metadata.get("openhands_defer_mcp_cleanup") is True):
+                    raise RuntimeError("preconfigured OpenHands MCP grant is not bound to this run")
+                if not signing_secret:
+                    raise RuntimeError("OpenHands tool bridge signing secret is not configured")
+                issued_at = int(time.time())
+                rotated_grant = issue_openhands_tool_grant(
+                    signing_secret,
+                    worker_id=self.worker_id,
+                    run_id=request.run_id,
+                    project_id=request.project_id,
+                    tool_names=requested_tools,
+                    ttl_seconds=_OPENHANDS_MCP_GRANT_TTL_SECONDS,
+                    now=issued_at,
+                )
+                delete_response = await (await self._get_client()).delete(
+                    self.verification.endpoint("settings_mcp", settings_key=settings_key)
+                )
+                if delete_response.status_code not in {200, 204, 404}:
+                    delete_response.raise_for_status()
+                absent_settings = await self._json("GET", "/api/settings")
+                absent_config = self._mcp_settings_config(absent_settings)
+                if settings_key in absent_config:
+                    raise RuntimeError("OpenHands MCP settings key remained after lifecycle rotation delete")
+                response = await (await self._get_client()).post(
+                    self.verification.endpoint("settings_mcp", settings_key=settings_key),
+                    json={
+                        "url": OPENHANDS_MCP_BRIDGE_URL,
+                        "transport": "streamable-http",
+                        "headers": {"X-AIAT-OpenHands-Grant": rotated_grant},
+                        "enabled": True,
+                        "timeout": 60.0,
+                    },
+                )
+                if response.status_code == 409:
+                    raise RuntimeError("OpenHands MCP settings key already exists during lifecycle rotation")
+                response.raise_for_status()
+                settings = await self._json("GET", "/api/settings")
+                config = self._mcp_settings_config(settings)
+                entry = config.get(settings_key)
+                if not isinstance(entry, dict):
+                    raise RuntimeError("rotated OpenHands MCP settings entry is absent")
+                rotated_headers = entry.get("headers")
+                if (
+                    entry.get("url") != OPENHANDS_MCP_BRIDGE_URL
+                    or entry.get("transport") != "streamable-http"
+                    or entry.get("enabled") is not True
+                    or not isinstance(rotated_headers, dict)
+                    or "X-AIAT-OpenHands-Grant" not in rotated_headers
+                ):
+                    raise RuntimeError("rotated OpenHands MCP settings readback is invalid")
+                try:
+                    rotated = verify_openhands_tool_grant(
+                        str(rotated_headers["X-AIAT-OpenHands-Grant"]),
+                        signing_secret,
+                        now=int(time.time()),
+                    )
+                except (OpenHandsToolGrantError, TypeError, ValueError) as exc:
+                    raise RuntimeError("rotated OpenHands MCP grant is invalid") from exc
+                if (
+                    rotated.worker_id != self.worker_id
+                    or rotated.run_id != request.run_id
+                    or rotated.project_id != request.project_id
+                    or rotated.tool_names != requested_tools
+                ):
+                    raise RuntimeError("rotated OpenHands MCP grant is not bound to this run")
+                self._mcp_by_run[request.run_id] = settings_key
+                self._mcp_grant_expires_at[request.run_id] = float(issued_at + _OPENHANDS_MCP_GRANT_TTL_SECONDS)
+                await self.emit_audit(
+                    request.run_id,
+                    "openhands.mcp_bridge_rotated",
+                    details={"settings_key": settings_key, "bridge": "aiat.openhands.mcp.v1", "run_scoped": True},
+                )
+                return
             self._mcp_by_run[request.run_id] = settings_key
             self._mcp_grant_expires_at[request.run_id] = float(time.time() + _OPENHANDS_MCP_GRANT_TTL_SECONDS)
             await self.emit_audit(

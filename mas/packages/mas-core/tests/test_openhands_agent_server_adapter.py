@@ -244,6 +244,93 @@ async def test_preconfigured_run_scoped_bridge_rejects_grant_bound_to_another_ru
     await adapter.close()
 
 
+@pytest.mark.asyncio
+async def test_certification_lifecycle_rotates_preconfigured_grant_per_run(tmp_path: Path) -> None:
+    calls: list[str] = []
+    original_run = request(workspace=tmp_path / "workspace")
+    next_run = request(workspace=tmp_path / "workspace", run_id=uuid4())
+    original_grant = issue_openhands_tool_grant(
+        "tool-secret-test",
+        worker_id="coding-worker-openhands-candidate",
+        run_id=original_run.run_id,
+        project_id=original_run.project_id,
+        tool_names=original_run.tool_grants,
+    )
+    current_grant: str | None = original_grant
+
+    async def handler(http_request: httpx.Request) -> httpx.Response:
+        nonlocal current_grant
+        calls.append(f"{http_request.method} {http_request.url.path}")
+        if http_request.method == "GET" and http_request.url.path == "/api/settings":
+            config = {}
+            if current_grant is not None:
+                config = {
+                    "aiat-openhands-test-run": {
+                        "url": OPENHANDS_MCP_BRIDGE_URL,
+                        "transport": "streamable-http",
+                        "enabled": True,
+                        "headers": {"X-AIAT-OpenHands-Grant": current_grant},
+                    }
+                }
+            return httpx.Response(
+                200,
+                json={"mcp_config": config},
+            )
+        if http_request.method == "DELETE" and http_request.url.path == "/api/settings/mcp/aiat-openhands-test-run":
+            current_grant = None
+            return httpx.Response(204)
+        if http_request.method == "POST" and http_request.url.path == "/api/settings/mcp/aiat-openhands-test-run":
+            current_grant = json.loads(http_request.content.decode())["headers"]["X-AIAT-OpenHands-Grant"]
+            return httpx.Response(201, json={})
+        raise AssertionError(f"unexpected network call: {http_request.method} {http_request.url}")
+
+    pending = verification(approved=False)
+    authorization = issue_openhands_certification_authorization(
+        pending,
+        controller="aiat-github-actions",
+        controller_run_id="32594885180",
+        sandbox_profile="gvisor",
+        sandbox_runtime="runsc",
+    )
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    adapter = OpenHandsAgentServerAdapter.for_certification(
+        pending,
+        authorization=authorization,
+        base_url="http://openhands.test",
+        worker_id="coding-worker-openhands-candidate",
+        client=httpx.AsyncClient(
+            base_url="http://openhands.test",
+            transport=httpx.MockTransport(handler),
+        ),
+        context=AdapterContext(
+            workspace_path=str(workspace),
+            secrets={"openhands_session_api_key": "session-secret-test", "tool_secret": "tool-secret-test"},
+            metadata={
+                "openhands_agent_profile_id": PROFILE_ID,
+                "openhands_mcp_profile_ref": "aiat-mcp-profile-test",
+                "openhands_mcp_settings_key": "aiat-openhands-test-run",
+                "openhands_mcp_preconfigured": True,
+                "openhands_mcp_bridge_url": OPENHANDS_MCP_BRIDGE_URL,
+                "openhands_image_digest": IMAGE_DIGEST,
+                "openhands_model_id": "omniroute-coding",
+                "openhands_certification_controller": "aiat-github-actions",
+                "openhands_certification_controller_run_id": "32594885180",
+                "openhands_certification_sandbox_profile": "gvisor",
+                "openhands_certification_sandbox_runtime": "runsc",
+                "openhands_defer_mcp_cleanup": True,
+            },
+        ),
+    )
+    await adapter._configure_tool_bridge(original_run)
+    await adapter._configure_tool_bridge(next_run)
+    assert adapter._mcp_by_run[original_run.run_id] == "aiat-openhands-test-run"
+    assert adapter._mcp_by_run[next_run.run_id] == "aiat-openhands-test-run"
+    assert "DELETE /api/settings/mcp/aiat-openhands-test-run" in calls
+    assert "POST /api/settings/mcp/aiat-openhands-test-run" in calls
+    await adapter.close()
+
+
 def test_mcp_settings_config_merges_empty_direct_and_nested_maps() -> None:
     config = OpenHandsAgentServerAdapter._mcp_settings_config(
         {
