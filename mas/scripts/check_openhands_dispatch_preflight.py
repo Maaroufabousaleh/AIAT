@@ -132,14 +132,33 @@ def evaluate_static(
         "local_deterministic_tests": local_tests_passed,
     }
     ready = all(checks.values())
+    blocking_reasons: list[str] = []
+    if not checks["candidate_sha_frozen"]:
+        blocking_reasons.append("CANDIDATE_SHA_MISMATCH")
+    if not checks["workflow_manual_only"]:
+        blocking_reasons.append("WORKFLOW_STATIC_VALIDATION_FAILED")
+    if not checks["candidate_pins_match"]:
+        blocking_reasons.append("CANDIDATE_PROVENANCE_MISMATCH")
+    if not checks["github_secret_presence_known"] or not checks["github_variables_presence_known"]:
+        blocking_reasons.append("GITHUB_CONFIGURATION_PRESENCE_UNKNOWN")
+    elif not checks["groq_secret_present"] or not checks["static_variables_match"]:
+        blocking_reasons.append("GITHUB_CONFIGURATION_INCOMPLETE")
+    if not checks["no_static_profile_uuid"] or not checks["no_persistent_internal_secrets"]:
+        blocking_reasons.append("PERSISTENT_INTERNAL_RUNTIME_INPUT_PRESENT")
+    if not checks["openhands_inactive"]:
+        blocking_reasons.append("OPENHANDS_NOT_INACTIVE")
+    if not checks["local_deterministic_tests"]:
+        blocking_reasons.append("LOCAL_DETERMINISTIC_VALIDATION_FAILED")
     dispatch_ref = workflow_ref.strip() or "main"
     return {
         "schema_version": SCHEMA,
         "status": "PASS" if ready else "BLOCKED_OPERATOR_CONFIGURATION",
         "ready_to_dispatch": ready,
         "candidate_sha": actual_sha,
+        "requested_candidate_sha": requested_sha,
         "requested_sha_supplied": bool(requested_sha),
         "checks": checks,
+        "blocking_reasons": blocking_reasons,
         "github_secret_presence": "YES" if secret_present is True else "NO" if secret_present is False else "UNKNOWN",
         "static_variables": {
             "OPENHANDS_MODEL_ID": EXPECTED_MODEL if variables_match is True else "UNKNOWN",
@@ -233,7 +252,18 @@ def main(argv: list[str] | None = None) -> int:
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(serialized, encoding="utf-8")
-    print(json.dumps({"status": report["status"], "ready_to_dispatch": report["ready_to_dispatch"], "candidate_sha": report["candidate_sha"], "groq_secret_present": report["github_secret_presence"]}, sort_keys=True))
+    print(
+        json.dumps(
+            {
+                "status": report["status"],
+                "ready_to_dispatch": report["ready_to_dispatch"],
+                "candidate_sha": report["candidate_sha"],
+                "groq_secret_present": report["github_secret_presence"],
+                "blocking_reasons": report.get("blocking_reasons", []),
+            },
+            sort_keys=True,
+        )
+    )
     return 0 if report["ready_to_dispatch"] else 2
 
 

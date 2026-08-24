@@ -67,6 +67,27 @@ def test_dispatch_uses_workflow_ref_and_exact_candidate_input() -> None:
     assert f"--ref {sha}" not in report["dispatch_command"]
 
 
+def test_candidate_sha_mismatch_is_reported_separately_from_missing_configuration() -> None:
+    module = _module()
+    root = Path(__file__).resolve().parents[2]
+    workflow = (root.parent / ".github" / "workflows" / "openhands-candidate-certification.yml").read_text(encoding="utf-8")
+    manifest = (root / "docs/provenance/openhands-candidate/2026-08-22-v1.43.0/worker-manifest.yaml").read_text(encoding="utf-8")
+    report = module.evaluate_static(
+        workflow_text=workflow,
+        manifest_text=manifest,
+        actual_sha="a" * 40,
+        requested_sha="b" * 40,
+        secret_names={"GROQ_API_KEY"},
+        variable_values={"OPENHANDS_MODEL_ID": module.EXPECTED_MODEL, "OPENHANDS_MCP_SETTINGS_KEY": module.EXPECTED_MCP_KEY},
+        local_tests_passed=True,
+    )
+    assert report["ready_to_dispatch"] is False
+    assert report["checks"]["candidate_sha_frozen"] is False
+    assert report["requested_candidate_sha"] == "b" * 40
+    assert report["candidate_sha"] == "a" * 40
+    assert report["blocking_reasons"] == ["CANDIDATE_SHA_MISMATCH"]
+
+
 def test_preflight_reconciles_candidate_pins_across_provenance() -> None:
     module = _module()
     root = Path(__file__).resolve().parents[2]
