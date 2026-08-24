@@ -705,6 +705,24 @@ async def test_readiness_checks_server_and_governed_profile(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
+async def test_readiness_accepts_pinned_build_git_sha_field(tmp_path: Path) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            return httpx.Response(200, json={"status": "ok"})
+        if request.url.path == "/ready":
+            return httpx.Response(200, json={"status": "ready"})
+        if request.url.path == "/server_info":
+            return httpx.Response(200, json={"versions": {"openhands-agent-server": "1.43.0"}, "build_git_sha": COMMIT})
+        raise AssertionError(request.url)
+
+    adapter = make_adapter(tmp_path, handler)
+    result = await adapter.readiness(request=request(workspace=tmp_path / "workspace"))
+    assert result.ready is True
+    assert result.checks["build_pinned"] is True
+    await adapter.close()
+
+
+@pytest.mark.asyncio
 async def test_readiness_rejects_caller_selected_model(tmp_path: Path) -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/health":

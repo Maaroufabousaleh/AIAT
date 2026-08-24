@@ -557,7 +557,12 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             else:
                 checks["server_version_pinned"] = False
                 blockers.append("Agent Server server_info omitted package versions")
-            build_sha = info.get("build_sha") or info.get("git_sha") or info.get("commit_sha")
+            # The pinned Agent Server exposes its immutable source revision as
+            # ``build_git_sha``.  Keep the older aliases for compatible
+            # servers, but require the resulting value to equal the exact
+            # candidate commit; this is a field-shape adaptation, not a
+            # provenance relaxation.
+            build_sha = info.get("build_git_sha") or info.get("build_sha") or info.get("git_sha") or info.get("commit_sha")
             checks["build_pinned"] = bool(build_sha) and str(build_sha) == self.verification.commit_sha
             if not checks["build_pinned"]:
                 blockers.append("Agent Server server_info omitted or mismatched the pinned source commit")
