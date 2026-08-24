@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-24
-**Base revision:** `9de7092` (OpenHands runsc network resolution uses explicit run-scoped peer IP host mappings while retaining stable service names; the workflow validator requires the mapping and probes name resolution before HTTP; scanner/SBOM evidence preserves JSON Lines and removes incomplete SBOM artifacts; image SBOM generation uses Syft's exact registry-digest source to avoid Docker-daemon tar exhaustion; live readiness accepts only the pinned `build_git_sha` field or an equivalent exact-commit alias; disposable OmniRoute connection identifiers are redacted from retained evidence; dispatch preflight validates helper contracts from the requested candidate tree; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
+**Base revision:** `ef0a6db` (OpenHands runsc network resolution uses explicit run-scoped peer IP host mappings while retaining stable service names; the workflow validator requires the mapping and probes name resolution before HTTP; scanner/SBOM evidence preserves JSON Lines and removes incomplete SBOM artifacts; image SBOM generation uses Syft's exact registry-digest source to avoid Docker-daemon tar exhaustion; live readiness accepts only the pinned `build_git_sha` field or an equivalent exact-commit alias; disposable OmniRoute connection identifiers are redacted from retained evidence; dispatch preflight validates every workflow script and helper contract from the requested candidate tree; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -14,7 +14,7 @@ The overnight OpenHands continuation (`4234d07`, `1db5b72`, `cf80dd1`,
 `65237f3`, `595965d`, `57f76b6`, `71ce0f6`, `e7a2ff5`, `71149db`,
 `e9a8a09`, `d447197`, `a58d862`, `3cbd717`, `fba92fe`, `11bee28`, and
 `d34548b`, `cf0511b`, `55507e1`, `006ce97`, `8c2eb7c`, `eb74ad1`,
-`1595708`, `0dd1728`, and `9de7092`)
+`1595708`, `0dd1728`, `9de7092`, and `ef0a6db`)
 does not alter the release decision. OpenHands
 v1.43.0 remains an inactive `CERTIFYING` candidate; its exact image/source
 pins, run-scoped gateway/profile/MCP design, one-shot certification
@@ -38,13 +38,13 @@ The previously prepared `1fcaf6cb62c6583efdf0ea1396e3d52329453fc3` candidate is
 an ancestor of the reviewed branch and is retained as immutable historical
 workflow-implementation evidence in
 [`github-run-32684939718-failure.json`](provenance/openhands-candidate/2026-08-22-v1.43.0/github-run-32684939718-failure.json).
-The current reviewed tip `9de7092` remains inactive and requires one
+The current reviewed tip `ef0a6db` remains inactive and requires one
 deliberate, operator-authorized provider-backed run after the registry-based
 image-SBOM and build-metadata fixes. The workflow validator checks both route-probe and
 provider-baseline CLI contracts, the Agent Server cleanup path proves
 stopped-container disposal, and certification authorizations are only
 consumed after successful trusted construction. The read-only dispatch
-preflight for `9de7092` passes with the configured Groq secret and governed
+preflight for `ef0a6db` passes with the configured Groq secret and governed
 variables; no replacement certification run has been dispatched for this tip.
 
 The deliberate run `32691538177` repeated the stale-candidate failure because
