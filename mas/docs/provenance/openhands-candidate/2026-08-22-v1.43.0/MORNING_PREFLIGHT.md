@@ -1,7 +1,7 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-24, current certification-path
-hardening at `f47f1ea` (including
+hardening at `cb02286` (including
 `595965d` gateway failure-origin diagnostics, `57f76b6` fail-closed web DNS
 validation, `e7a2ff5` stopped-container cleanup, and `71149db` certification
 authorization consumption after trusted construction); the branch also
@@ -16,24 +16,25 @@ explicit frozen commit after the preflight passes.
 The local static release ledger remains 63/63 passing with two pending
 evidence items and `NO-RELEASE`. The OpenHands gate matrix remains
 `BLOCKED_INCOMPLETE_MANDATORY_GATES` until a provider-backed run supplies live
-task and lifecycle evidence. One deliberate run, `32684939718`, was dispatched
-against the explicitly supplied `1fcaf6cb62c6583efdf0ea1396e3d52329453fc3`
-candidate from a clean detached worktree; it failed closed on a candidate
-workflow/helper contract mismatch and is recorded below. No automatic rerun
-was performed. The previously prepared `1fcaf6cb62c6583efdf0ea1396e3d52329453fc3`
-SHA remains an ancestor of the reviewed branch tip; the safe preflight rejects
-it from the dirty main checkout unless the checked-out repository tip matches
-the requested SHA. The reviewed history includes `cc48cca` and
+task and lifecycle evidence. The latest deliberate run, `32702677310`, was
+dispatched against the explicitly supplied
+`1fcaf6cb62c6583efdf0ea1396e3d52329453fc3` candidate from the feature ref; it
+failed closed on a candidate workflow/helper contract mismatch and is
+recorded below. No automatic rerun was performed. The previously prepared
+`1fcaf6cb62c6583efdf0ea1396e3d52329453fc3` SHA remains an ancestor of the
+reviewed branch tip; the safe preflight rejects it when the requested
+candidate tree is missing helper contracts. The reviewed history includes
+`cc48cca` and
 `a2c886e` auto-route/gate-wiring hardening, `a39788a` evidence-retention
 validation, `a377dab` scalar provider attribution for successful `auto/coding`
 evidence, and `1c4a426` Agent Server health-blocker output diagnostics. The
-current reviewed tip additionally distinguishes unknown LiteLLM 404 responses
+current reviewed tip `cb02286` additionally distinguishes unknown LiteLLM 404 responses
 from the explicit no-provider auto-router condition and rejects unresolved web
 targets before any network request. The
-deliberate run `32684939718` also confirmed the configured Groq secret at
+the latest deliberate run also confirmed the configured Groq secret at
 provider preflight and reached the gateway before the candidate helper
 mismatch; no live model result is claimed. Freeze
-and preflight that exact tip before any deliberate run. The current tip also
+and preflight the corrected reviewed tip before any deliberate run. The current tip also
 contains `f3f4050`, which hardens the run-scoped skill/plugin boundary described
 below, and `65237f3` records that capability boundary in the maintained
 status surface. The flow-runtime UI coverage marker was corrected in `71ce0f6`;
@@ -44,7 +45,9 @@ The clean-candidate static certificate was refreshed from a fresh clone at
 `69f5fb4`; it remains valid for reviewed descendants because the validator now
 treats the retained candidate SHA as authoritative by default while preserving
 an explicit strict tip-match mode. It retains the same 63/63 static result,
-two pending OpenCode evidence items, and `NO-RELEASE`.
+two pending OpenCode evidence items, and `NO-RELEASE`. The current reviewed tip
+passes the read-only dispatch preflight; no replacement certification run has
+been dispatched after `32702677310`.
 The current workflow also verifies LiteLLM/OmniRoute source-archive hashes,
 rejects host-bound gateway targets, validates the sanitized evidence tree, and
 records run-scoped profile disposal through Agent Server container absence.
@@ -195,7 +198,7 @@ its route helper still rejected `--auto-routing-output`; the gateway and
 provider setup had already passed, while tool-service, OpenHands, and all live
 mandatory gates were not run. The immutable run artifact is recorded in
 [`github-run-32691538177-failure.json`](./github-run-32691538177-failure.json).
-The reviewed tip `f47f1ea` includes the dispatch-preflight check for every
+The reviewed tip `cb02286` includes the dispatch-preflight check for every
 workflow script plus both helper CLI contracts, reports implementation drift
 separately from missing operator configuration, and uses the registry-based image-SBOM source for the exact
 digest-pinned image. A stale candidate still fails closed before GitHub Actions
