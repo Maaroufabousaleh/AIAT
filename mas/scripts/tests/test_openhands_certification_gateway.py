@@ -116,6 +116,8 @@ def test_provider_route_is_single_exact_and_never_retains_credentials() -> None:
     assert report["status"] == "PASS"
     assert report["provider_count"] == 1
     assert report["resolved_provider_model"] == f"groq/{PROVISION.PROVIDER_MODEL}"
+    assert report["connection_identity_verified"] is True
+    assert "connection-1" not in serialized
     assert report["baseline_discovery"]["status"] == "PASS"
     assert report["management_endpoint"] == "http://omniroute:20128"
     assert report["openai_compatible_endpoint"] == "http://omniroute:20129/v1"

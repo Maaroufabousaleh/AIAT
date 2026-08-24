@@ -43,6 +43,8 @@ def test_baseline_requires_live_discovery_and_never_falls_back() -> None:
     )
     assert report["status"] == "PASS"
     assert report["model_present"] is True
+    assert report["connection_identity_required"] is True
+    assert "connection-1" not in str(report)
 
     absent = ROUTING.baseline_discovery_status(
         provider="groq",
@@ -210,3 +212,4 @@ def test_live_discovery_rejects_wrong_provider_or_connection_identity() -> None:
     assert report["status"] == "BASELINE_MODEL_UNAVAILABLE"
     assert report["provider_identity_matches"] is False
     assert report["connection_identity_matches"] is False
+    assert "connection-1" not in str(report)

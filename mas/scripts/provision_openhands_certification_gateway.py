@@ -363,7 +363,10 @@ def provision(
             "auto_router_scope": auto_router_scope,
             "management_endpoint": "http://omniroute:20128",
             "openai_compatible_endpoint": "http://omniroute:20129/v1",
-            "connection_id": connection_id,
+            # The disposable connection id is required for control-plane
+            # requests, but it is not needed to attribute the release result
+            # and must not leak into retained evidence.
+            "connection_identity_verified": True,
             "action": action,
             "provider_validation": "PASS",
             "provider_count": len(readback),

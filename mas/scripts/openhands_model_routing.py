@@ -147,10 +147,11 @@ def baseline_discovery_status(
         "model_present": present,
         "live_discovery": source_is_live,
         "discovery_provider": payload_provider if isinstance(payload_provider, str) else None,
-        "expected_connection_id": expected_connection_id,
-        "discovery_connection_id": (
-            str(payload_connection_id) if payload_connection_id is not None else None
-        ),
+        # The connection identifier is used internally to bind the refresh and
+        # read-back, but it is disposable service metadata rather than release
+        # evidence.  Retain only whether identity was required and matched;
+        # never serialize the identifier itself.
+        "connection_identity_required": expected_connection_id is not None,
         "provider_identity_matches": provider_matches,
         "connection_identity_matches": connection_matches,
     }
