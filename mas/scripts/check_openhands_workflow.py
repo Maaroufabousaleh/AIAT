@@ -15,6 +15,7 @@ import yaml
 SCHEMA = "aiat.openhands-certification-workflow-validation.v1"
 WORKFLOW_NAME = ".github/workflows/openhands-candidate-certification.yml"
 LITELLM_CERTIFICATION_CONFIG = Path(__file__).resolve().parents[1] / "infra" / "compose" / "litellm_openhands_certification.yaml"
+GATEWAY_ROUTE_PROBE = Path(__file__).with_name("check_openhands_certification_gateway.py")
 EXPECTED_IMAGES = (
     "ghcr.io/openhands/agent-server:1.43.0-python@sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97",
     "ghcr.io/berriai/litellm@sha256:a50b02a6056095da29308310bb608f0509e08ddcd1d105bae9c21007d82b0e95",
@@ -196,6 +197,40 @@ def _litellm_omniroute_port_issues() -> list[str]:
     return []
 
 
+def _gateway_route_probe_cli_issues() -> list[str]:
+    """Ensure the exact checked-out route probe accepts workflow arguments.
+
+    The workflow and helper are checked out from the same candidate commit.
+    Checking only that an option appears in YAML can therefore miss a
+    candidate where the helper predates that option; argparse then fails before
+    producing route evidence.  Keep this check source-local and deterministic
+    so candidate preflight catches that drift before a live run.
+    """
+
+    try:
+        helper = GATEWAY_ROUTE_PROBE.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ["gateway_route_probe_helper_missing"]
+    required = (
+        'parser.add_argument(\n        "--auto-routing-output"',
+        "args.auto_routing_output",
+        "_write_report(args.auto_routing_output",
+    )
+    return ["gateway_route_probe_cli_contract_missing"] if any(item not in helper for item in required) else []
+
+
+def _workflow_script_reference_issues(text: str) -> list[str]:
+    """Reject workflow references to scripts absent from the exact candidate."""
+
+    script_root = Path(__file__).resolve().parents[1]
+    references = sorted(set(re.findall(r"scripts/[A-Za-z0-9_./-]+\.py", text)))
+    return [
+        f"workflow_script_missing:{reference}"
+        for reference in references
+        if not (script_root / reference).is_file()
+    ]
+
+
 def validate(text: str) -> dict[str, Any]:
     errors: list[str] = []
     run_block_issues = _workflow_run_block_issues(text)
@@ -232,6 +267,8 @@ def validate(text: str) -> dict[str, Any]:
     errors.extend(_gateway_provenance_helper_issues())
     errors.extend(_omniroute_readiness_helper_issues())
     errors.extend(_omniroute_auth_helper_issues())
+    errors.extend(_gateway_route_probe_cli_issues())
+    errors.extend(_workflow_script_reference_issues(text))
     if "--attempts 30" not in text or "--interval-seconds 1" not in text:
         errors.append("omniroute_auth_transport_retry_missing")
     # The workflow checks out the exact candidate SHA before invoking helper

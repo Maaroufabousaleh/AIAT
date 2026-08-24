@@ -188,6 +188,32 @@ def test_auto_router_and_deterministic_baseline_are_both_required() -> None:
     assert "auto_routing_evidence_missing" in module.validate(weakened)["errors"]
 
 
+def test_gateway_route_probe_cli_contract_is_checked(tmp_path: Path, monkeypatch) -> None:
+    module = _module()
+    helper = Path(__file__).resolve().parents[1] / "check_openhands_certification_gateway.py"
+    weakened_helper = helper.read_text(encoding="utf-8").replace(
+        '    parser.add_argument(\n        "--auto-routing-output",\n        type=Path,\n        help="Optional second path for the governed auto/coding scalar evidence.",\n    )\n',
+        "",
+        1,
+    )
+    helper_path = tmp_path / "check_openhands_certification_gateway.py"
+    helper_path.write_text(weakened_helper, encoding="utf-8")
+    monkeypatch.setattr(module, "GATEWAY_ROUTE_PROBE", helper_path)
+    report = module.validate(_workflow())
+    assert "gateway_route_probe_cli_contract_missing" in report["errors"]
+
+
+def test_workflow_script_references_must_exist_in_candidate() -> None:
+    module = _module()
+    text = _workflow().replace(
+        "scripts/check_openhands_provider_baseline.py",
+        "scripts/missing_provider_baseline.py",
+        1,
+    )
+    report = module.validate(text)
+    assert "workflow_script_missing:scripts/missing_provider_baseline.py" in report["errors"]
+
+
 def test_baseline_failure_does_not_suppress_independent_auto_router_evidence() -> None:
     module = _module()
     text = _workflow()
