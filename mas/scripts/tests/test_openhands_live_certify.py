@@ -188,6 +188,63 @@ async def test_preconfigured_mcp_cleanup_accepts_empty_204_and_verifies_absence(
 
 
 @pytest.mark.asyncio
+async def test_preconfigured_mcp_cleanup_reads_v143_nested_settings_envelope() -> None:
+    module = _module()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "DELETE":
+            return httpx.Response(204)
+        if request.method == "GET" and request.url.path == "/api/settings":
+            return httpx.Response(200, json={"agent_settings": {"mcp_config": {}}})
+        raise AssertionError(request)
+
+    client = httpx.AsyncClient(
+        base_url="http://openhands.test",
+        transport=httpx.MockTransport(handler),
+        headers={"X-Session-API-Key": "session-secret"},
+    )
+    report = await module._cleanup_preconfigured_mcp(
+        base_url="http://openhands.test",
+        settings_key="aiat-openhands-test-run",
+        session_key="session-secret",
+        client=client,
+    )
+    await client.aclose()
+
+    assert report == {"status": "PASS", "delete": "deleted", "verified_absent": True}
+
+
+@pytest.mark.asyncio
+async def test_preconfigured_mcp_cleanup_blocks_nested_residual_entry() -> None:
+    module = _module()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "DELETE":
+            return httpx.Response(204)
+        if request.method == "GET" and request.url.path == "/api/settings":
+            return httpx.Response(
+                200,
+                json={"agent_settings": {"mcp_config": {"aiat-openhands-test-run": {}}}},
+            )
+        raise AssertionError(request)
+
+    client = httpx.AsyncClient(
+        base_url="http://openhands.test",
+        transport=httpx.MockTransport(handler),
+        headers={"X-Session-API-Key": "session-secret"},
+    )
+    report = await module._cleanup_preconfigured_mcp(
+        base_url="http://openhands.test",
+        settings_key="aiat-openhands-test-run",
+        session_key="session-secret",
+        client=client,
+    )
+    await client.aclose()
+
+    assert report == {"status": "BLOCKED_CLEANUP", "delete": "deleted", "verified_absent": False}
+
+
+@pytest.mark.asyncio
 async def test_live_lifecycle_wave_requires_remote_control_states() -> None:
     module = _module()
 

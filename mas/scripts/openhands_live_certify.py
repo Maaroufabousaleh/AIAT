@@ -813,9 +813,7 @@ async def _cleanup_preconfigured_mcp(
         if readback.status_code >= 400:
             return {"status": "BLOCKED_CLEANUP", "reason": f"readback_http_{readback.status_code}"}
         payload = readback.json() if readback.content else {}
-        config = payload.get("mcp_config") if isinstance(payload, dict) else None
-        if not isinstance(config, dict):
-            config = payload.get("mcp_servers") if isinstance(payload, dict) else None
+        config = _extract_mcp_config(payload)
         present = isinstance(config, dict) and settings_key in config
         return {
             "status": "BLOCKED_CLEANUP" if present else "PASS",
@@ -825,6 +823,29 @@ async def _cleanup_preconfigured_mcp(
     finally:
         if created_client:
             await client.aclose()
+
+
+def _extract_mcp_config(value: Any) -> dict[str, Any] | None:
+    """Return MCP settings from supported Agent Server settings envelopes.
+
+    Agent Server releases may expose the effective settings directly or wrap
+    them in ``agent_settings``.  v1.43.0 uses the latter envelope.  Cleanup
+    must inspect the same shapes as provisioning; treating a nested config as
+    absent would produce false zero-residue evidence.
+    """
+
+    if not isinstance(value, dict):
+        return None
+    envelopes: list[dict[str, Any]] = [value]
+    agent_settings = value.get("agent_settings")
+    if isinstance(agent_settings, dict):
+        envelopes.append(agent_settings)
+    for envelope in envelopes:
+        for field in ("mcp_config", "mcp_servers"):
+            config = envelope.get(field)
+            if isinstance(config, dict):
+                return config
+    return None
 
 
 def main(argv: list[str] | None = None) -> int:

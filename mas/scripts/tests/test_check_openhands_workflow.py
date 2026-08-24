@@ -436,6 +436,15 @@ def test_missing_provider_gate_or_cleanup_readback_is_rejected() -> None:
     assert "raw_container_logs_retained" in report["errors"]
 
 
+def test_cleanup_readback_covers_v143_nested_agent_settings_envelope() -> None:
+    module = _module()
+    text = _workflow()
+    assert "cleanup_absence_readback_missing" not in module.validate(text)["errors"]
+    assert "cleanup_absence_readback_missing" in module.validate(
+        text.replace('          agent_settings = settings.get("agent_settings") if isinstance(settings, dict) else None\n', "", 1)
+    )["errors"]
+
+
 def test_evidence_schema_validation_is_required_before_workflow_pass() -> None:
     module = _module()
     text = _workflow()
