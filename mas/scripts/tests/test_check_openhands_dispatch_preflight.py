@@ -205,6 +205,7 @@ def test_preflight_checks_helpers_from_requested_candidate_tree() -> None:
         candidate_gateway_probe_text="",
         candidate_provider_baseline_text="",
         candidate_source_sha=sha,
+        candidate_workflow_script_gaps=["scripts/check_openhands_provider_baseline.py"],
         actual_sha=sha,
         requested_sha=sha,
         secret_names={"GROQ_API_KEY"},
@@ -215,4 +216,8 @@ def test_preflight_checks_helpers_from_requested_candidate_tree() -> None:
     assert report["candidate_runtime_helper_source_sha"] == sha
     assert report["checks"]["candidate_gateway_probe_contract"] is False
     assert report["checks"]["candidate_provider_baseline_contract"] is False
+    assert report["checks"]["candidate_workflow_scripts_available"] is False
+    assert report["candidate_workflow_script_gaps"] == ["scripts/check_openhands_provider_baseline.py"]
     assert "CANDIDATE_HELPER_CONTRACT_MISMATCH" in report["blocking_reasons"]
+    assert "CANDIDATE_WORKFLOW_SCRIPT_MISSING" in report["blocking_reasons"]
+    assert report["status"] == "FAILED_CERTIFICATION_IMPLEMENTATION"

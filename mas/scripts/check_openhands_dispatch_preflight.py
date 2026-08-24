@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -75,6 +76,13 @@ def _git_blob(repo: Path, commit: str, path: str) -> str:
     return output if code == 0 else ""
 
 
+def _candidate_workflow_script_gaps(repo: Path, commit: str, workflow_text: str) -> list[str]:
+    """Return workflow Python scripts missing from the exact candidate tree."""
+
+    references = sorted(set(re.findall(r"scripts/[A-Za-z0-9_./-]+\.py", workflow_text)))
+    return [reference for reference in references if not _git_blob(repo, commit, f"mas/{reference}")]
+
+
 def _names_from_gh(output: str) -> set[str]:
     names: set[str] = set()
     for line in output.splitlines():
@@ -109,6 +117,7 @@ def evaluate_static(
     candidate_gateway_probe_text: str | None = None,
     candidate_provider_baseline_text: str | None = None,
     candidate_source_sha: str | None = None,
+    candidate_workflow_script_gaps: list[str] | None = None,
     actual_sha: str,
     requested_sha: str | None,
     secret_names: set[str] | None,
@@ -163,6 +172,7 @@ def evaluate_static(
             "args.output",
         )
     )
+    candidate_workflow_script_gaps = candidate_workflow_script_gaps or []
     inactive = "activation_status: inactive" in manifest_text.lower() or "certification_status: pending" in manifest_text.lower()
     checks = {
         "candidate_sha_frozen": sha_explicit,
@@ -170,6 +180,7 @@ def evaluate_static(
         "candidate_pins_match": pins_match,
         "candidate_gateway_probe_contract": gateway_probe_contract,
         "candidate_provider_baseline_contract": provider_baseline_contract,
+        "candidate_workflow_scripts_available": not candidate_workflow_script_gaps,
         "github_secret_presence_known": secrets_known,
         "groq_secret_present": secret_present is True,
         "github_variables_presence_known": variables_known,
@@ -189,6 +200,8 @@ def evaluate_static(
         blocking_reasons.append("CANDIDATE_PROVENANCE_MISMATCH")
     if not checks["candidate_gateway_probe_contract"] or not checks["candidate_provider_baseline_contract"]:
         blocking_reasons.append("CANDIDATE_HELPER_CONTRACT_MISMATCH")
+    if not checks["candidate_workflow_scripts_available"]:
+        blocking_reasons.append("CANDIDATE_WORKFLOW_SCRIPT_MISSING")
     if not checks["github_secret_presence_known"] or not checks["github_variables_presence_known"]:
         blocking_reasons.append("GITHUB_CONFIGURATION_PRESENCE_UNKNOWN")
     elif not checks["groq_secret_present"] or not checks["static_variables_match"]:
@@ -203,6 +216,7 @@ def evaluate_static(
         "WORKFLOW_STATIC_VALIDATION_FAILED",
         "CANDIDATE_PROVENANCE_MISMATCH",
         "CANDIDATE_HELPER_CONTRACT_MISMATCH",
+        "CANDIDATE_WORKFLOW_SCRIPT_MISSING",
         "LOCAL_DETERMINISTIC_VALIDATION_FAILED",
     }
     status = (
@@ -235,6 +249,7 @@ def evaluate_static(
             ),
         },
         "candidate_runtime_helper_source_sha": candidate_source_sha or actual_sha,
+        "candidate_workflow_script_gaps": candidate_workflow_script_gaps,
         "run_scoped_values": [
             "OPENHANDS_AGENT_PROFILE_ID",
             "OPENHANDS_CERT_RUN_ID",
@@ -274,6 +289,7 @@ def preflight(repo: Path, requested_sha: str | None, repo_slug: str | None, skip
     candidate_source_sha = requested_sha if requested_sha and len(requested_sha) == 40 else actual_sha
     candidate_gateway_probe_text = _git_blob(repo, candidate_source_sha, GATEWAY_ROUTE_PROBE)
     candidate_provider_baseline_text = _git_blob(repo, candidate_source_sha, PROVIDER_BASELINE_PROBE)
+    candidate_workflow_script_gaps = _candidate_workflow_script_gaps(repo, candidate_source_sha, workflow_text)
     secret_names: set[str] | None = None
     variable_values: dict[str, str] | None = None
     if repo_slug:
@@ -312,6 +328,7 @@ def preflight(repo: Path, requested_sha: str | None, repo_slug: str | None, skip
         candidate_gateway_probe_text=candidate_gateway_probe_text,
         candidate_provider_baseline_text=candidate_provider_baseline_text,
         candidate_source_sha=candidate_source_sha,
+        candidate_workflow_script_gaps=candidate_workflow_script_gaps,
         actual_sha=actual_sha,
         requested_sha=requested_sha,
         secret_names=secret_names,
