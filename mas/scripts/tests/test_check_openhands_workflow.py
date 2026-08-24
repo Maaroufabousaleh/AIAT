@@ -523,6 +523,14 @@ def test_cleanup_requires_workspace_and_tool_image_absence() -> None:
     report = module.validate(weakened)
     assert "workspace_profile_or_tool_image_cleanup_missing" in report["errors"]
 
+    weakened = text.replace(
+        'tool_image="aiat-openhands-tool-service-cert:${GITHUB_RUN_ID}"',
+        'tool_image="aiat-openhands-tool-service-cert-${GITHUB_RUN_ID}"',
+        1,
+    )
+    report = module.validate(weakened)
+    assert "workspace_profile_or_tool_image_cleanup_missing" in report["errors"]
+
 
 def test_cleanup_requires_run_scoped_profile_disposal_evidence() -> None:
     module = _module()

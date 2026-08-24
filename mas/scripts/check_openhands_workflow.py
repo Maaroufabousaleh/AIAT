@@ -483,6 +483,8 @@ def validate(text: str) -> dict[str, Any]:
         errors.append("cleanup_zero_residue_not_fail_closed")
     if (
         'docker image rm "$tool_image"' not in text
+        or 'image="aiat-openhands-tool-service-cert:${GITHUB_RUN_ID}"' not in text
+        or 'tool_image="aiat-openhands-tool-service-cert:${GITHUB_RUN_ID}"' not in text
         or 'rm -rf -- "$RUNNER_TEMP/aiat-openhands-workspace"' not in text
         or '"tool_image_absent": image_absent == "true"' not in text
         or '"workspace_absent": workspace_absent == "true"' not in text

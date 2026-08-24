@@ -1334,7 +1334,11 @@ jobs:
           docker rm --force "$tool_name" >/dev/null 2>&1 || true
           docker rm --force "$litellm_name" >/dev/null 2>&1 || true
           docker rm --force "$omniroute_name" >/dev/null 2>&1 || true
-          tool_image="aiat-openhands-tool-service-cert-${GITHUB_RUN_ID}"
+          # The build step uses the run id as an image tag.  Reuse the exact
+          # tagged reference here so a failed/partial run cannot leave a
+          # disposable image behind while the residue check reports a false
+          # PASS.
+          tool_image="aiat-openhands-tool-service-cert:${GITHUB_RUN_ID}"
           docker image rm "$tool_image" >/dev/null 2>&1 || true
           containers_absent=true
           image_absent=true
