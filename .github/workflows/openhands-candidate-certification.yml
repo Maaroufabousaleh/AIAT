@@ -236,6 +236,7 @@ jobs:
           mkdir -p "$(dirname "$output")"
           python3 - "$output" <<'PY'
           import json
+          import os
           import sys
           from pathlib import Path
 
@@ -271,7 +272,7 @@ jobs:
               "schema_version": "aiat.openhands-candidate-helper-contract.v1",
               "status": status,
               "failure_class": None if status == "PASS" else "WORKFLOW_CANDIDATE_HELPER_VERSION_SKEW",
-              "candidate_sha": __import__("os").environ.get("AIAT_CANDIDATE_SHA", ""),
+              "candidate_sha": os.environ.get("AIAT_CANDIDATE_SHA", ""),
               "required_helpers": sorted(requirements),
               "missing_files": sorted(missing_files),
               "missing_markers": missing_markers,
@@ -281,15 +282,34 @@ jobs:
           print(status)
           PY
           contract_exit=$?
-          contract_status="$(python3 - "$output" <<'PY'
+          contract_status="$(python3 - "$output" "$contract_exit" <<'PY'
           import json
+          import os
           import sys
           from pathlib import Path
 
+          path = Path(sys.argv[1])
+          exit_code = int(sys.argv[2])
           try:
-              report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+              report = json.loads(path.read_text(encoding="utf-8"))
           except (OSError, UnicodeDecodeError, json.JSONDecodeError):
               report = {}
+          if not isinstance(report, dict) or report.get("status") not in {
+              "PASS",
+              "FAILED_CERTIFICATION_IMPLEMENTATION",
+          }:
+              report = {
+                  "schema_version": "aiat.openhands-candidate-helper-contract.v1",
+                  "status": "FAILED_CERTIFICATION_IMPLEMENTATION",
+                  "failure_class": "WORKFLOW_CANDIDATE_HELPER_VERSION_SKEW",
+                  "candidate_sha": os.environ.get("AIAT_CANDIDATE_SHA", ""),
+                  "required_helpers": [],
+                  "missing_files": [],
+                  "missing_markers": {},
+                  "checker_exit_code": exit_code,
+                  "payloads_retained": False,
+              }
+              path.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")
           print(report.get("status", "FAILED_CERTIFICATION_IMPLEMENTATION"))
           PY
           )"
