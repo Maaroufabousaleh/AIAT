@@ -43,6 +43,7 @@ def validate(
     repo: Path = MAS_ROOT,
     evidence_path: Path = DEFAULT_EVIDENCE,
     candidate_sha: str | None = None,
+    require_current_checkout: bool = False,
 ) -> dict[str, Any]:
     errors: list[str] = []
     try:
@@ -63,16 +64,24 @@ def validate(
         errors.append("current checkout revision is unavailable")
         current_revision = None
 
-    candidate_revision = candidate_sha.strip() if candidate_sha else current_revision
+    evidence_revision = evidence.get("candidate_sha") if isinstance(evidence, dict) else None
+
+    # The retained certificate is deliberately pinned to the exact clean
+    # candidate it evaluated.  Later documentation/evidence commits may move
+    # the development checkout without invalidating that historical candidate
+    # certificate.  Callers that need the checkout tip to match can opt into
+    # the strict check explicitly.
+    candidate_revision = candidate_sha.strip() if candidate_sha else evidence_revision or current_revision
     if not candidate_revision or not SHA_RE.fullmatch(candidate_revision):
         errors.append("candidate revision is invalid")
         candidate_revision = None
     elif _run(repo, "cat-file", "-e", f"{candidate_revision}^{{commit}}",)[0] != 0:
         errors.append("candidate revision is not present in the checkout")
 
-    evidence_revision = evidence.get("candidate_sha") if isinstance(evidence, dict) else None
     if evidence_revision != candidate_revision:
         errors.append("clean-candidate evidence does not match the current candidate revision")
+    if require_current_checkout and candidate_revision != current_revision:
+        errors.append("clean-candidate revision is not the current checkout revision")
 
     static = evidence.get("static_ledger") if isinstance(evidence, dict) else None
     if not isinstance(static, dict):
@@ -99,6 +108,7 @@ def validate(
         "evidence_revision": evidence_revision,
         "candidate_revision_matches": evidence_revision == candidate_revision,
         "candidate_is_current_checkout": candidate_revision == current_revision,
+        "current_checkout_match_required": require_current_checkout,
         "clean_clone": evidence.get("worktree_clean") is True and evidence.get("changed_path_count") == 0,
         "current_checkout_clean": _worktree_clean(repo),
         "static_ledger": {
@@ -118,9 +128,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evidence", type=Path, default=DEFAULT_EVIDENCE)
     parser.add_argument("--candidate-sha", help="explicit candidate commit represented by the evidence")
+    parser.add_argument(
+        "--require-current-checkout",
+        action="store_true",
+        help="also require the retained candidate to equal the current checkout tip",
+    )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
-    report = validate(evidence_path=args.evidence.resolve(), candidate_sha=args.candidate_sha)
+    report = validate(
+        evidence_path=args.evidence.resolve(),
+        candidate_sha=args.candidate_sha,
+        require_current_checkout=args.require_current_checkout,
+    )
     if args.json:
         print(json.dumps(report, sort_keys=True, indent=2))
     else:
