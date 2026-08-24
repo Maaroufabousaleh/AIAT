@@ -135,6 +135,11 @@ result and retains no disposable connection identifiers, credentials, or model
 payloads. `11bee28` also makes the provisioning/readback report retain only a
 boolean connection-identity verification result, never the server-generated
 connection ID.
+`8c2eb7c` makes baseline discovery diagnostic rather than a prerequisite for
+provider-connection provisioning: a missing frozen baseline remains a
+fail-closed `BASELINE_MODEL_UNAVAILABLE` baseline gate, while the separately
+governed `auto/coding` route can still produce its own evidence. No fallback
+model is used to satisfy the deterministic baseline.
 `1c4a426` additionally preserves explicit blocked outputs when Agent Server
 health never becomes ready, so downstream evidence can distinguish that
 runtime boundary without changing the fail-closed gate.
