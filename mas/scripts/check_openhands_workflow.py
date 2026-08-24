@@ -16,6 +16,7 @@ SCHEMA = "aiat.openhands-certification-workflow-validation.v1"
 WORKFLOW_NAME = ".github/workflows/openhands-candidate-certification.yml"
 LITELLM_CERTIFICATION_CONFIG = Path(__file__).resolve().parents[1] / "infra" / "compose" / "litellm_openhands_certification.yaml"
 GATEWAY_ROUTE_PROBE = Path(__file__).with_name("check_openhands_certification_gateway.py")
+PROVIDER_BASELINE_PROBE = Path(__file__).with_name("check_openhands_provider_baseline.py")
 EXPECTED_IMAGES = (
     "ghcr.io/openhands/agent-server:1.43.0-python@sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97",
     "ghcr.io/berriai/litellm@sha256:a50b02a6056095da29308310bb608f0509e08ddcd1d105bae9c21007d82b0e95",
@@ -219,6 +220,32 @@ def _gateway_route_probe_cli_issues() -> list[str]:
     return ["gateway_route_probe_cli_contract_missing"] if any(item not in helper for item in required) else []
 
 
+def _provider_baseline_probe_cli_issues() -> list[str]:
+    """Ensure the exact candidate baseline helper accepts workflow arguments.
+
+    The baseline is intentionally an independent diagnostic gate, but an
+    argparse/interface drift must still be reported as a certification
+    implementation defect before a live run.  Checking the helper from the
+    candidate checkout prevents a stale workflow from swallowing its first
+    useful provider evidence.
+    """
+
+    try:
+        helper = PROVIDER_BASELINE_PROBE.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ["provider_baseline_probe_helper_missing"]
+    required = (
+        'parser.add_argument("--url"',
+        'parser.add_argument("--output"',
+        'parser.add_argument("--max-attempts"',
+        'parser.add_argument("--retry-delay-seconds"',
+        "args.max_attempts",
+        "args.retry_delay_seconds",
+        "args.output",
+    )
+    return ["provider_baseline_probe_cli_contract_missing"] if any(item not in helper for item in required) else []
+
+
 def _workflow_script_reference_issues(text: str) -> list[str]:
     """Reject workflow references to scripts absent from the exact candidate."""
 
@@ -268,6 +295,7 @@ def validate(text: str) -> dict[str, Any]:
     errors.extend(_omniroute_readiness_helper_issues())
     errors.extend(_omniroute_auth_helper_issues())
     errors.extend(_gateway_route_probe_cli_issues())
+    errors.extend(_provider_baseline_probe_cli_issues())
     errors.extend(_workflow_script_reference_issues(text))
     if "--attempts 30" not in text or "--interval-seconds 1" not in text:
         errors.append("omniroute_auth_transport_retry_missing")
