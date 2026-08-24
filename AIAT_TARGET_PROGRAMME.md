@@ -410,7 +410,7 @@ This closes local retry-boundary evidence only; external callback/delivery
 confirmation, provider outage/restore, independent hosts/processes, and
 sandbox evidence remain separate gates.
 
-The read-only model gateway catalogue evidence ([`model_profile_catalogue_live.json`](mas/docs/provenance/model_profile_catalogue_live.json), refreshed 2026-08-18) confirms the local `/v1/models` route exposes all five AIAT aliases and the API-owned profile catalogue passes complete 93/93 approved coverage with no findings after exact unreferenced smoke-fixture cleanup. The repeatable [`check_model_gateway_readiness.py`](mas/scripts/check_model_gateway_readiness.py) and [`model_gateway_readiness_live.json`](mas/docs/provenance/model_gateway_readiness_live.json) retain the route-only certificate. They deliberately record no completion request, provider call, routing mutation, or activation decision.
+The retained read-only model gateway catalogue evidence ([`model_profile_catalogue_live.json`](mas/docs/provenance/model_profile_catalogue_live.json), refreshed 2026-08-18) confirms the local `/v1/models` route exposes all five AIAT aliases and the API-owned profile catalogue then passed complete 93/93 approved coverage with no findings after exact unreferenced smoke-fixture cleanup. The active registry now has 92 entries after retired Groq `llama-3.3-70b-versatile` was removed. The repeatable [`check_model_gateway_readiness.py`](mas/scripts/check_model_gateway_readiness.py) and [`model_gateway_readiness_live.json`](mas/docs/provenance/model_gateway_readiness_live.json) retain the route-only certificate. They deliberately record no completion request, provider call, routing mutation, or activation decision.
 
 ### 6.4 Dedicated External Worker Steward
 

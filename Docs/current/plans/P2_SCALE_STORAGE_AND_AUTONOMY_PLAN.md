@@ -366,9 +366,11 @@
 - [x] Refresh the local read-only model gateway/profile evidence (`68e0b03`,
   route checker `f6ed16f`)
   after the worker-host certificate. The API-owned catalogue still reports
-  complete 93/93 approved covered profile versions with no findings after the
-  exact unreferenced local smoke fixture was removed, and `/v1/models` exposes
-  all five AIAT aliases; no completion request, provider call, routing
+  retained 2026-08-18 evidence of complete 93/93 approved covered profile
+  versions with no findings after the exact unreferenced local smoke fixture
+  was removed, and `/v1/models` exposes all five AIAT aliases. The active
+  catalogue now has 92 entries after retired Groq `llama-3.3-70b-versatile`
+  was removed; no completion request, provider call, routing
   mutation, or activation decision is included. Evidence is
   [`model_profile_catalogue_live.json`](../../../mas/docs/provenance/model_profile_catalogue_live.json)
   and [`model_gateway_readiness_live.json`](../../../mas/docs/provenance/model_gateway_readiness_live.json).

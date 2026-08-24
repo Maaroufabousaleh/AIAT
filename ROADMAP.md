@@ -468,8 +468,10 @@ resource and multipart wave, `d92b3dc`/`407a4f9` retain the corrected actual
 provider-process outage/recovery wave, `12ba7c7`/`1808a15`/`1c1df03` retain the
 live AIAT credentials-manager boundary certificate, and the refreshed configured
 aggregate at `2026-08-18T23:57:08Z` records 76 pass, 0 fail, 5 blocked, and
-4 pending across 81 checks at revision `296d89b`; the model-profile catalogue
-now has complete 93/93 coverage after bounded stale-fixture cleanup. It remains `NO-RELEASE`
+4 pending across 81 checks at revision `296d89b`; the retained model-profile
+snapshot has complete 93/93 coverage after bounded stale-fixture cleanup, while
+the active catalogue now has 92 entries after retired Groq
+`llama-3.3-70b-versatile` was removed. It remains `NO-RELEASE`
 because native host/image/sandbox/Firecracker, outbound mail, self-improvement,
 security review, external KMS, clean-host, disaster-recovery, and clean-worktree
 gates remain open.
@@ -1173,7 +1175,7 @@ executive-form, and confirmation controls (`f4ae7eb`).
 | Gateway worker host-executor composition | [Worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md), [Trace Evidence and Retention](Docs/current/FEATURE_TRACE_EVIDENCE_AND_RETENTION.md), [P2 scale plan](Docs/current/plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md), [`check_gateway_worker_host_fixture.py`](mas/scripts/check_gateway_worker_host_fixture.py), [`test_check_gateway_worker_host_fixture.py`](mas/scripts/tests/test_check_gateway_worker_host_fixture.py), [evidence](mas/docs/provenance/gateway_worker_host_fixture.json); commit `38c99f4` certifies bounded in-memory host admission/claim/controller/gateway settlement/release and payload-free scalar trace coverage; durable host, external provider, independent-host, sandbox, and live recovery evidence remain open |
 | Gateway worker host failure settlement | [Worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md), [Trace Evidence and Retention](Docs/current/FEATURE_TRACE_EVIDENCE_AND_RETENTION.md), [P2 scale plan](Docs/current/plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md), [`check_gateway_worker_host_failure_fixture.py`](mas/scripts/check_gateway_worker_host_failure_fixture.py), [`test_check_gateway_worker_host_failure_fixture.py`](mas/scripts/tests/test_check_gateway_worker_host_failure_fixture.py), [evidence](mas/docs/provenance/gateway_worker_host_failure_fixture.json); commit `2abc02a` certifies bounded transient/permanent gateway settlement, binding release, and secret-safe status/cause metadata; automatic live retry, external provider recovery, durable host, and sandbox evidence remain open |
 | Durable worker-host fencing and expired-host recovery | [Worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md), [P2 scale plan](Docs/current/plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md), [`host_recovery.py`](mas/packages/mas-core/mas_core/worker_registry/host_recovery.py), [`0039_worker_host_fencing.py`](mas/migrations/versions/0039_worker_host_fencing.py), [`check_worker_host_recovery_postgres.py`](mas/scripts/check_worker_host_recovery_postgres.py), [local evidence](mas/docs/provenance/worker_host_recovery_postgres_evidence.json) |
-| Model-profile catalogue and read-only gateway route | [`/model-profiles/catalogue`](mas/apps/orchestrator-api/orchestrator_api/main.py), [Governance proxy](mas/apps/mas-dashboard/app/api/governance/model-profiles/catalogue/route.ts), [`test_model_profile_catalogue.py`](mas/apps/orchestrator-api/tests/test_model_profile_catalogue.py), [`check_model_gateway_readiness.py`](mas/scripts/check_model_gateway_readiness.py), and refreshed [`model_profile_catalogue_live.json`](mas/docs/provenance/model_profile_catalogue_live.json) plus [`model_gateway_readiness_live.json`](mas/docs/provenance/model_gateway_readiness_live.json) (`381dbcc`/`04521e7`/`f6ed16f`: complete 93/93 approved coverage after exact unreferenced smoke-fixture cleanup, nine `/v1/models` entries, all five AIAT aliases; no dispatch/provider call) |
+| Model-profile catalogue and read-only gateway route | [`/model-profiles/catalogue`](mas/apps/orchestrator-api/orchestrator_api/main.py), [Governance proxy](mas/apps/mas-dashboard/app/api/governance/model-profiles/catalogue/route.ts), [`test_model_profile_catalogue.py`](mas/apps/orchestrator-api/tests/test_model_profile_catalogue.py), [`check_model_gateway_readiness.py`](mas/scripts/check_model_gateway_readiness.py), and refreshed [`model_profile_catalogue_live.json`](mas/docs/provenance/model_profile_catalogue_live.json) plus [`model_gateway_readiness_live.json`](mas/docs/provenance/model_gateway_readiness_live.json) (`381dbcc`/`04521e7`/`f6ed16f`: retained historical 93/93 approved coverage after exact unreferenced smoke-fixture cleanup; active catalogue now has 92 entries after retired Groq model removal, with nine `/v1/models` entries and all five AIAT aliases; no dispatch/provider call) |
 | Default worker implementation binding matrix | [`check_default_worker_bindings.py`](mas/scripts/check_default_worker_bindings.py), [`test_default_worker_bindings.py`](mas/packages/mas-core/tests/test_default_worker_bindings.py), [worker feature specification](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md) |
 | Default runtime packaging contract | [`check_runtime_install_profile.py`](mas/scripts/check_runtime_install_profile.py), [`pyproject.toml`](mas/apps/orchestrator-api/pyproject.toml), [`uv.lock`](mas/uv.lock), and [orchestrator Dockerfile](mas/infra/docker/Dockerfile.orchestrator-api) |
 | Optional Microsoft Agent Framework/MCP compatibility and isolated certification | [`runtime_compatibility.yaml`](mas/docs/provenance/runtime_compatibility.yaml), [`maf_compatibility.py`](mas/packages/mas-core/mas_core/worker_registry/maf_compatibility.py), [`check_runtime_compatibility.py`](mas/scripts/check_runtime_compatibility.py), [`check_maf_runtime.py`](mas/scripts/check_maf_runtime.py), [`maf_runtime_certification.json`](mas/docs/provenance/maf_runtime_certification.json), and the [optional profile](mas/infra/runtime/maf/README.md) |
@@ -1783,16 +1785,17 @@ Required outcomes:
 dispatch, and CEO privileged-action requests now use the canonical write
 services behind the secret-safe `aiat.executive-action.v1` envelope. The
 dashboard exposes operator-authenticated proxies and a typed confirmation panel
-for each route. Local live catalogue evidence observes 93 approved covered
-profile versions out of 93 persisted versions after the exact unreferenced
-smoke fixture was removed, with the explicit
+for each route. Retained local live catalogue evidence observes 93 approved
+covered profile versions out of 93 persisted versions after the exact
+unreferenced smoke fixture was removed; the active registry now has 92 entries
+after retired Groq `llama-3.3-70b-versatile` was removed, with the explicit
 `aiat/omniroute-coding` identity reconciled to the canonical
 `litellm/omniroute-coding` registry entry; provider-specific live recovery,
 broader governance forms, and broader chaos/live evidence remain open.
 The checked-in `opencode-phase0b-coding` profile now has an idempotent,
 conflict-preserving startup/default-seed bootstrap bound to the current
-`omniroute-coding` LiteLLM alias, and the same declaration path covers all 93
-registered model identities (`09bdd19`); the current environment has bounded live database
+`omniroute-coding` LiteLLM alias, and the same historical declaration path
+covered all 93 registered model identities (`09bdd19`); the current environment has bounded live database
 profile evidence with the findings recorded above. `scripts/check_executive_reconciliation.py --live
 --json` now provides a secret-safe canonical DB/API reconciliation probe with
 optional finding-free enforcement. The authenticated local dashboard suite now
@@ -1934,7 +1937,7 @@ Required outcomes:
   explicit stripped `AIAT_EVIDENCE` markers and labels those citations
   `unverified` (`f1801bb`); complete governed-flow coverage, broader detail
   loading, and recovery states remain;
-- model profile, routing, cost, and budget records reconcile (model-override expiry and terminal-settlement replay hardening `63b2db5`, explicit LLM transient-status classification, persisted model/provider cooldown filtering, deterministic runtime/profile catalogue export/reconciliation, fail-closed `--live` catalogue and executive reconciliation verifiers with explicit approval/finding gates, the idempotent conflict-preserving bootstrap `09bdd19` for the shipped `opencode-phase0b-coding` profile and all 93 registered model identities, the `omniroute-coding` alias, explicit `aiat/omniroute-coding` identity reconciliation `381dbcc`, bounded `aiat.executive-reconciliation.v1` reporting, `aiat.executive-views.v1` role projections, dedicated read-only `/executive/views/{role}` endpoints, and reservation/settlement invariant auditing now pass); local live evidence now covers 93 approved profile versions out of 93 persisted versions with complete catalogue coverage after the exact unreferenced `live-governance-smoke-20260719` residue was removed and read back; role-scoped `aiat.executive-action.v1` CFO/CTO/CEO write routes, dashboard proxies, and the typed confirmation panel are implemented, while provider-specific live recovery, broader governance forms, and broader chaos/live evidence remain;
+- model profile, routing, cost, and budget records reconcile (model-override expiry and terminal-settlement replay hardening `63b2db5`, explicit LLM transient-status classification, persisted model/provider cooldown filtering, deterministic runtime/profile catalogue export/reconciliation, fail-closed `--live` catalogue and executive reconciliation verifiers with explicit approval/finding gates, the idempotent conflict-preserving bootstrap `09bdd19` for the shipped `opencode-phase0b-coding` profile and all 93 registered model identities, the `omniroute-coding` alias, explicit `aiat/omniroute-coding` identity reconciliation `381dbcc`, bounded `aiat.executive-reconciliation.v1` reporting, `aiat.executive-views.v1` role projections, dedicated read-only `/executive/views/{role}` endpoints, and reservation/settlement invariant auditing now pass); retained local live evidence covers 93 approved profile versions out of 93 persisted versions with complete historical catalogue coverage after the exact unreferenced `live-governance-smoke-20260719` residue was removed and read back; the active registry now has 92 entries after retired Groq model removal. Role-scoped `aiat.executive-action.v1` CFO/CTO/CEO write routes, dashboard proxies, and the typed confirmation panel are implemented, while provider-specific live recovery, broader governance forms, and broader chaos/live evidence remain;
 - mobile, themes, WCAG 2.2 AA, stale/conflict/rollback states, and evidence deep links complete;
 - native-Linux Playwright golden paths pass.
 
@@ -2538,7 +2541,7 @@ an explicit open gate.
  read-only `/executive/views/{role}` endpoints, reservation/settlement
    invariant auditing, role-scoped `aiat.executive-action.v1` CFO/CTO/CEO writes,
    and the typed dashboard confirmation panel now pass. Local persisted profile
-   coverage is complete at 93/93 approved covered versions with no pending registered model after exact unreferenced smoke-fixture cleanup;
+   retained historical coverage is complete at 93/93 approved covered versions with no pending registered model after exact unreferenced smoke-fixture cleanup; the active registry now has 92 entries after retired Groq model removal;
    the explicit OpenCode/LiteLLM identity alias is reconciled and one
    no catalogue finding remains; provider-specific live recovery,
    broader governance forms, and broader chaos/live evidence remain. CEO API-owned action/read citations,

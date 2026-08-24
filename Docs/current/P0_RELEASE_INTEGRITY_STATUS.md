@@ -793,10 +793,12 @@ single frozen commit before production claims are made.
 - The same commit adds deterministic `aiat.model-profile-catalogue.v1`
   reconciliation, a fail-closed `--live` verifier, an idempotent conflict-
   preserving profile bootstrap, and the internal `omniroute-coding` LiteLLM
-  alias. Current 2026-08-18 local evidence retains 93 registered models, 93
-  persisted versions, 93 approved covered entries, and no pending registered
-  model or reconciliation finding after the exact unreferenced local smoke
-  fixture was removed following a zero-reference preflight. The explicit
+  alias. The retained 2026-08-18 local evidence records 93 registered models,
+  93 persisted versions, and 93 approved covered entries after the exact
+  unreferenced local smoke fixture was removed following a zero-reference
+  preflight. The active catalogue now has 92 entries because retired Groq
+  `llama-3.3-70b-versatile` is no longer registered; the maintained
+  `openai/gpt-oss-120b` baseline remains available. The explicit
   `aiat/omniroute-coding` profile identity now reconciles to the canonical
   `litellm/omniroute-coding` registry entry. The same read-only run sees nine `/v1/models`
   entries and all five AIAT aliases; the repeatable route-only checker is

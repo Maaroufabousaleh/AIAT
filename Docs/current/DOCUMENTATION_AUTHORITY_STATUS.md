@@ -178,9 +178,11 @@ not a live-provider or release approval claim.
 
 The 2026-08-18 model-route refresh (`68e0b03`, repeatable checker `f6ed16f`)
 is indexed as read-only evidence: the local `/v1/models` route exposes all
-five AIAT aliases, while the API-owned catalogue now reports complete 93/93
+five AIAT aliases, while the API-owned catalogue then reported complete 93/93
 approved covered profile versions with no findings after the exact
-unreferenced local smoke fixture was removed. It records no provider call,
+unreferenced local smoke fixture was removed. The active catalogue now has 92
+entries after the retired Groq `llama-3.3-70b-versatile` registration was
+removed; the retained 93/93 report remains immutable historical evidence. It records no provider call,
 completion, routing mutation, or activation decision; external provider
 execution and recovery remain open.
 
