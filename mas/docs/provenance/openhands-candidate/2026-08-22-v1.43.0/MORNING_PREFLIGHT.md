@@ -18,6 +18,19 @@ rotation; production callers remain fail-closed. Commit `716e500` registers
 the immutable run-327539 evidence and aligns the maintained status documents.
 The next live run must freeze the exact SHA actually selected by the operator.
 
+Run `32759419116` is preserved as immutable evidence in
+[`github-run-32759419116-failure.json`](./github-run-32759419116-failure.json).
+Its gateway, provider, gVisor, tool-service, profile/MCP, and cleanup stages
+passed, but the first conversation POST returned HTTP 422 before an Agent
+Server conversation existed. The pinned v1.43.0 SDK requires ConversationTag
+keys to be lowercase alphanumeric (`^[a-z0-9]+$`); the adapter had sent
+underscored correlation keys. The adapter now uses bounded alphanumeric keys
+and retains scalar create/run/event diagnostics for future failures. The
+pause, interrupt, and timeout `TimeoutError` results were downstream waits for
+that missing conversation, not independent provider or lifecycle evidence.
+The scanner coverage blocker remains independent and is neither waived nor
+converted to a pass.
+
 The `35c75dc` workflow fix makes the disposable network-topology step fail
 closed: incomplete alias/IP readback emits `ready=false` and
 `BLOCKED_NETWORK_TOPOLOGY` instead of unlocking profile materialization. The

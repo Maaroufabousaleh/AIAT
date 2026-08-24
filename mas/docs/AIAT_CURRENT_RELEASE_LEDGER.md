@@ -5,6 +5,17 @@
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
+The immutable live run `32759419116` is registered as failed certification
+implementation evidence. Its infrastructure, provider baseline, gVisor,
+tool-service, profile/MCP, and cleanup stages passed, but the exact pinned
+OpenHands v1.43.0 conversation-create request returned HTTP 422 because AIAT
+sent underscore-containing correlation-tag keys that the release's
+`^[a-z0-9]+$` tag validator rejects. No conversation or model execution was
+created; the reported lifecycle timeouts were downstream waits. The adapter
+now uses the release-compatible alphanumeric keys and records bounded scalar
+diagnostics. The scanner-coverage blocker remains independent, OpenHands stays
+inactive, and no activation or release decision follows from this fix.
+
 The overnight OpenHands continuation (`4234d07`, `1db5b72`, `cf80dd1`,
 `cbad706`, `6da661f`, `d8ab39b`, `a6fa383`, `5724979`, `b1c5d8e`,
 `a6b6eae`, `6da88bd`, `c3f54da`, `93b6ee8`, `d86675b`, `0c0a210`,
