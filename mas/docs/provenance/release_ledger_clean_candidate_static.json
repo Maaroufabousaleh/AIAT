@@ -1,7 +1,7 @@
 {
   "schema_version": "aiat.release-ledger-clean-candidate.v1",
-  "observed_at": "2026-08-23T08:30:15Z",
-  "candidate_sha": "61f7d49b905a109a154f961e147f783016792218",
+  "observed_at": "2026-08-24T01:37:18Z",
+  "candidate_sha": "69f5fb4309189ff7e7cbe62ea756364dff03109f",
   "candidate_branch": "agent/fix-review-p1",
   "clone_method": "fresh local git clone from the candidate commit",
   "worktree_clean": true,

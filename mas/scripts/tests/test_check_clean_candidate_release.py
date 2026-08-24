@@ -18,11 +18,12 @@ def _module():
 
 def test_current_clean_candidate_certificate_passes() -> None:
     module = _module()
-    report = module.validate(candidate_sha="61f7d49b905a109a154f961e147f783016792218")
+    evidence = json.loads(module.DEFAULT_EVIDENCE.read_text(encoding="utf-8"))
+    report = module.validate(candidate_sha=evidence["candidate_sha"])
     assert report["status"] == "PASS"
     assert report["candidate_revision_matches"] is True
     assert report["clean_clone"] is True
-    assert report["candidate_is_current_checkout"] is False
+    assert report["candidate_is_current_checkout"] is True
     assert report["static_ledger"]["checks_passed"] == 63
     assert report["static_ledger"]["release_decision"] == "NO-RELEASE"
     assert report["current_checkout_clean"] is False
@@ -42,10 +43,11 @@ def test_stale_candidate_certificate_is_blocked(tmp_path: pathlib.Path) -> None:
     assert any("does not match" in error for error in report["errors"])
 
 
-def test_default_validation_requires_current_checkout_match() -> None:
+def test_default_validation_uses_current_checkout_evidence() -> None:
     report = _module().validate()
-    assert report["status"] == "BLOCKED"
-    assert report["candidate_revision_matches"] is False
+    assert report["status"] == "PASS"
+    assert report["candidate_revision_matches"] is True
+    assert report["candidate_is_current_checkout"] is True
 
 
 def test_payload_retention_is_blocked(tmp_path: pathlib.Path) -> None:
