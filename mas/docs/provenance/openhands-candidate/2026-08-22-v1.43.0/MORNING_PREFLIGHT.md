@@ -1,7 +1,7 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-24, current certification-path
-hardening at `55507e1` (including
+hardening at `006ce97` (including
 `595965d` gateway failure-origin diagnostics, `57f76b6` fail-closed web DNS
 validation, `e7a2ff5` stopped-container cleanup, and `71149db` certification
 authorization consumption after trusted construction); the branch also
@@ -195,7 +195,7 @@ its route helper still rejected `--auto-routing-output`; the gateway and
 provider setup had already passed, while tool-service, OpenHands, and all live
 mandatory gates were not run. The immutable run artifact is recorded in
 [`github-run-32691538177-failure.json`](./github-run-32691538177-failure.json).
-The reviewed tip `45de2bf` includes the dispatch-preflight check for both helper
+The reviewed tip `006ce97` includes the dispatch-preflight check for both helper
 CLI contracts, reports implementation drift separately from missing operator
 configuration, and uses the registry-based image-SBOM source for the exact
 digest-pinned image. A stale candidate still fails closed before GitHub Actions
@@ -228,17 +228,21 @@ generation before source checkout and teaches the evidence checker the
 TruffleHog JSON Lines contract; it does not dispatch a replacement run.
 
 Run `32698436670` (job `97344976337`) confirmed those evidence-schema fixes
-and reached the gateway/provider path, native runsc Agent Server, run-scoped
-profile/MCP materialization, adapter wave, and cleanup. It failed closed only
-because Syft's Docker source exhausted runner disk while materializing a
+and reached the gateway/provider path, native runsc Agent Server, and
+run-scoped profile/MCP provisioning. Its live adapter readiness separately
+blocked because the pinned Agent Server reported its source revision as
+`build_git_sha`, which the adapter did not yet accept. The run also failed
+closed because Syft's Docker source exhausted runner disk while materializing a
 daemon image tar for the pinned Agent Server image SBOM. The immutable scalar
 record is [`github-run-32698436670-failure.json`](./github-run-32698436670-failure.json).
 This is `FAILED_CERTIFICATION_IMPLEMENTATION` /
-`BLOCKED_SCANNER_COVERAGE` / `SBOM_FAILURE_RUNNER_DISK_EXHAUSTED`, not a
-provider, gVisor, provenance, or OpenHands runtime verdict. Commit `55507e1`
-switches only the image SBOM scan to Syft's direct `--from registry` source
-for the exact digest-pinned image; local image pull/inspect provenance remains
-required. No replacement run is dispatched by this status update.
+`BLOCKED_SCANNER_COVERAGE` / `SBOM_FAILURE_RUNNER_DISK_EXHAUSTED`, with a
+separate `BLOCKED_RUNTIME_STARTUP` readiness observation; it is not a provider
+verdict. Commit `55507e1` switches only the image SBOM scan to Syft's direct
+`--from registry` source for the exact digest-pinned image, while commit
+`006ce97` accepts `build_git_sha` only when it equals the exact pinned commit.
+Local image pull/inspect provenance remains required. No replacement run is
+dispatched by this status update.
 
 ## Operator sequence
 

@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-24
-**Base revision:** `55507e1` (OpenHands runsc network resolution uses explicit run-scoped peer IP host mappings while retaining stable service names; the workflow validator requires the mapping and probes name resolution before HTTP; scanner/SBOM evidence preserves JSON Lines and removes incomplete SBOM artifacts; image SBOM generation uses Syft's exact registry-digest source to avoid Docker-daemon tar exhaustion; disposable OmniRoute connection identifiers are redacted from retained evidence; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
+**Base revision:** `006ce97` (OpenHands runsc network resolution uses explicit run-scoped peer IP host mappings while retaining stable service names; the workflow validator requires the mapping and probes name resolution before HTTP; scanner/SBOM evidence preserves JSON Lines and removes incomplete SBOM artifacts; image SBOM generation uses Syft's exact registry-digest source to avoid Docker-daemon tar exhaustion; live readiness accepts only the pinned `build_git_sha` field or an equivalent exact-commit alias; disposable OmniRoute connection identifiers are redacted from retained evidence; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -13,7 +13,7 @@ The overnight OpenHands continuation (`4234d07`, `1db5b72`, `cf80dd1`,
 `1c4a426`, `ebfbe73`, `c9dba1f`, `ad511d9`, `fa19b1c`, `f3f4050`,
 `65237f3`, `595965d`, `57f76b6`, `71ce0f6`, `e7a2ff5`, `71149db`,
 `e9a8a09`, `d447197`, `a58d862`, `3cbd717`, `fba92fe`, `11bee28`, and
-`d34548b`, `cf0511b`, and `55507e1`)
+`d34548b`, `cf0511b`, `55507e1`, and `006ce97`)
 does not alter the release decision. OpenHands
 v1.43.0 remains an inactive `CERTIFYING` candidate; its exact image/source
 pins, run-scoped gateway/profile/MCP design, one-shot certification
@@ -37,13 +37,13 @@ The previously prepared `1fcaf6cb62c6583efdf0ea1396e3d52329453fc3` candidate is
 an ancestor of the reviewed branch and is retained as immutable historical
 workflow-implementation evidence in
 [`github-run-32684939718-failure.json`](provenance/openhands-candidate/2026-08-22-v1.43.0/github-run-32684939718-failure.json).
-The current reviewed tip `45de2bf` remains inactive and requires one
+The current reviewed tip `006ce97` remains inactive and requires one
 deliberate, operator-authorized provider-backed run after the registry-based
-image-SBOM fix. The workflow validator checks both route-probe and
+image-SBOM and build-metadata fixes. The workflow validator checks both route-probe and
 provider-baseline CLI contracts, the Agent Server cleanup path proves
 stopped-container disposal, and certification authorizations are only
 consumed after successful trusted construction. The read-only dispatch
-preflight for `45de2bf` passes with the configured Groq secret and governed
+preflight for `006ce97` passes with the configured Groq secret and governed
 variables; no replacement certification run has been dispatched for this tip.
 
 The deliberate run `32691538177` repeated the stale-candidate failure because
@@ -92,9 +92,12 @@ explicitly. No replacement workflow run is claimed by this evidence update.
 The deliberate run `32698436670` against candidate
 `2fbbcd6d3f20f96f85fdcc6cb246f0f87130cf11` confirmed that the JSON Lines and
 incomplete-artifact fixes were effective: evidence-schema validation, gateway,
-provider, runsc, profile/MCP, adapter, and cleanup evidence all passed. It
-still failed closed at image SBOM generation because Syft's Docker source
-materialized a daemon tar and exhausted the hosted runner filesystem. The
+provider, runsc, and run-scoped profile/MCP provisioning passed. Its live
+adapter readiness then separately reported `BLOCKED_RUNTIME_STARTUP` because
+the Agent Server exposed its pinned source under `build_git_sha`, while the
+adapter accepted only older field aliases. It also failed closed at image SBOM
+generation because Syft's Docker source materialized a daemon tar and exhausted
+the hosted runner filesystem. The
 immutable scalar record is
 [`github-run-32698436670-failure.json`](provenance/openhands-candidate/2026-08-22-v1.43.0/github-run-32698436670-failure.json).
 This remains `FAILED_CERTIFICATION_IMPLEMENTATION` /
@@ -102,8 +105,10 @@ This remains `FAILED_CERTIFICATION_IMPLEMENTATION` /
 the provider and runtime verdicts are not evaluated and the live gate wave was
 not run. Commit `55507e1` changes only the image-SBOM source to Syft
 `--from registry` against the exact digest-pinned image, while retaining the
-workflow's local pull/inspect provenance. No replacement workflow run is
-claimed by this evidence update.
+workflow's local pull/inspect provenance. Commit `006ce97` accepts the
+documented `build_git_sha` field only when it equals the exact pinned commit;
+it does not weaken provenance. No replacement workflow run is claimed by this
+evidence update.
 
 `e9a8a09` closes a routing-scope gap identified from the pinned OmniRoute
 v3.8.38 source: its virtual `auto/coding` combo can add built-in no-auth

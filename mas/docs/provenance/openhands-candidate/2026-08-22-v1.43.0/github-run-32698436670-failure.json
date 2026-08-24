@@ -17,14 +17,15 @@
     "provider_route": "PASS",
     "runsc_agent_server": "PASS",
     "profile_and_mcp": "PASS",
-    "adapter_wave": "PASS",
+    "adapter_wave": "BLOCKED_RUNTIME_STARTUP",
+    "live_adapter_readiness": "BLOCKED_RUNTIME_STARTUP",
     "cleanup": "PASS",
     "evidence_schema": "PASS",
     "image_sbom": "BLOCKED",
     "source_sbom": "PASS",
     "live_gate_wave": "NOT_RUN",
     "provider_verdict": "NOT_EVALUATED",
-    "runtime_verdict": "NOT_EVALUATED"
+    "runtime_verdict": "BLOCKED_RUNTIME_STARTUP"
   },
   "scanner_semantics": {
     "trufflehog_json_lines_validation": "PASS",
