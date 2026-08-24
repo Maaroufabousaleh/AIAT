@@ -1,0 +1,65 @@
+{
+  "schema_version": "aiat.openhands.github-certification-failure.v1",
+  "historical": true,
+  "immutable": true,
+  "run": {
+    "run_id": "32702677310",
+    "job_id": "97357269192",
+    "workflow_ref": "agent/fix-review-p1",
+    "workflow_head_sha": "6f85808b2ad76dc511f7f5e0cfa647c7c5e3cbc2",
+    "candidate_sha": "1fcaf6cb62c6583efdf0ea1396e3d52329453fc3",
+    "artifact_id": "9511173309",
+    "artifact_digest": "sha256:2bac73dd63309ab1a1e378b5259579603539bfee728e13c94ed34cfba8eb0aa5"
+  },
+  "classification": {
+    "final_status": "BLOCKED_INCOMPLETE_MANDATORY_GATES",
+    "failure_class": "FAILED_CERTIFICATION_IMPLEMENTATION",
+    "failure_subclass": "WORKFLOW_CANDIDATE_HELPER_VERSION_SKEW",
+    "root_cause": "The dispatch branch workflow invoked certification helpers that were newer than the exact candidate checkout: check_openhands_provider_baseline.py was absent from the candidate tree, and check_openhands_certification_gateway.py did not support --auto-routing-output.",
+    "provider_failure": false,
+    "image_provenance_failure": false,
+    "runtime_failure": false,
+    "security_finding": false,
+    "gvisor_failure": false,
+    "raw_failure_payload_retained": false
+  },
+  "evidence": {
+    "groq_provider_preflight": "PASS",
+    "candidate_preflight": "READY_FOR_CERTIFICATION_AUTHORIZATION",
+    "openhands_image_pull": "PASS",
+    "litellm_image_pull": "PASS",
+    "omniroute_image_pull": "PASS",
+    "image_platform_verification": "PASS",
+    "gateway_pin_verification": "PASS",
+    "omniroute_application_readiness": "PASS",
+    "omniroute_auth_boundary": "PASS",
+    "provider_route_configuration": "PASS",
+    "litellm_start": "PASS",
+    "provider_baseline": "FAILED_CERTIFICATION_IMPLEMENTATION",
+    "auto_router_route_probe": "FAILED_CERTIFICATION_IMPLEMENTATION",
+    "tool_service": "NOT_RUN",
+    "openhands_runsc_start": "NOT_RUN",
+    "profile_and_mcp": "NOT_RUN",
+    "live_gate_wave": "NOT_RUN",
+    "zero_residue": "PASS",
+    "evidence_schema": "PASS"
+  },
+  "failure_details": {
+    "baseline_helper": "mas/scripts/check_openhands_provider_baseline.py was not present after checkout of candidate 1fcaf6cb62c6583efdf0ea1396e3d52329453fc3",
+    "auto_router_helper": "candidate check_openhands_certification_gateway.py rejected --auto-routing-output before producing route evidence",
+    "shell_failure_payload_retained": false,
+    "credentials_retained": false,
+    "model_payloads_retained": false
+  },
+  "cleanup": {
+    "containers_absent": true,
+    "network_absent": true,
+    "run_scoped_secrets_absent": true,
+    "zero_residue": true
+  },
+  "remediation": {
+    "preflight_change": "Dispatch preflight now reads helper contracts from the requested candidate git tree instead of the newer dispatch checkout.",
+    "next_candidate_requirement": "The candidate must contain every helper and CLI contract referenced by the manual workflow before dispatch.",
+    "automatic_rerun": false
+  }
+}

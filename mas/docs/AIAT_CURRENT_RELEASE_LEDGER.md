@@ -58,6 +58,22 @@ The new `11bee28` dispatch preflight rejects this class as
 `CANDIDATE_HELPER_CONTRACT_MISMATCH` before dispatch; no replacement run is
 claimed by this evidence update.
 
+The deliberate run `32702677310` repeated the same class against candidate
+`1fcaf6cb62c6583efdf0ea1396e3d52329453fc3`, this time proving the exact
+failure boundary: the newer dispatch workflow invoked a provider-baseline
+helper absent from the candidate checkout, and its route probe requested an
+unsupported `--auto-routing-output` option. Images, provenance, OmniRoute
+readiness/authentication, provider configuration, LiteLLM startup, and cleanup
+passed; the provider baseline/auto route evidence was not validly produced and
+no tool-service, Agent Server, profile/MCP, or live gates ran. This is
+`FAILED_CERTIFICATION_IMPLEMENTATION` /
+`WORKFLOW_CANDIDATE_HELPER_VERSION_SKEW`, not provider or runtime evidence.
+The immutable scalar record is
+[`github-run-32702677310-failure.json`](provenance/openhands-candidate/2026-08-22-v1.43.0/github-run-32702677310-failure.json).
+Dispatch preflight now reads helper contracts from the requested candidate
+tree, so a newer dispatch branch cannot mask this mismatch. No replacement
+run is claimed by this evidence update.
+
 The deliberate run `32694322492` against candidate
 `61686354fc7818e6f3430e31e1012ccb80f09d11` reached the complete disposable
 provider/model path: native gVisor, pinned images/provenance, OmniRoute health
