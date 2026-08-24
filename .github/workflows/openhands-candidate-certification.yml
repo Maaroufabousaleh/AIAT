@@ -1217,7 +1217,7 @@ jobs:
               settings = json.loads(os.environ.get("SETTINGS_JSON", "{}"))
           except json.JSONDecodeError:
               settings = {}
-          config = None
+          config = {}
           envelopes = [settings] if isinstance(settings, dict) else []
           agent_settings = settings.get("agent_settings") if isinstance(settings, dict) else None
           if isinstance(agent_settings, dict):
@@ -1226,12 +1226,9 @@ jobs:
               for field in ("mcp_config", "mcp_servers"):
                   candidate = envelope.get(field)
                   if isinstance(candidate, dict):
-                      config = candidate
-                      break
-              if isinstance(config, dict):
-                  break
+                      config.update(candidate)
           readback_ok = os.environ.get("SETTINGS_CODE", "") == "200"
-          present = isinstance(config, dict) and os.environ.get("MCP_KEY", "") in config
+          present = os.environ.get("MCP_KEY", "") in config
           Path(sys.argv[1]).write_text(
               json.dumps(
                   {

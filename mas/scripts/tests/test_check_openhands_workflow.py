@@ -445,6 +445,43 @@ def test_cleanup_readback_covers_v143_nested_agent_settings_envelope() -> None:
     )["errors"]
 
 
+def test_cleanup_readback_merges_direct_and_nested_mcp_maps(tmp_path: Path) -> None:
+    module = _module()
+    text = _workflow()
+    document = yaml.safe_load(text)
+    step = next(
+        step
+        for step in document["jobs"]["certify"]["steps"]
+        if step.get("name") == "Verify disposable cleanup"
+    )
+    run = step["run"]
+    python_body = run.split("<<'PY'\n", 1)[1].split("\nPY", 1)[0]
+    script = tmp_path / "cleanup.py"
+    script.write_text(python_body, encoding="utf-8")
+    output = tmp_path / "mcp-cleanup.json"
+    env = dict(
+        os.environ,
+        DELETE_CODE="204",
+        SETTINGS_CODE="200",
+        SETTINGS_JSON=json.dumps(
+            {
+                "mcp_config": {},
+                "agent_settings": {
+                    "mcp_config": {"aiat-openhands-test-run": {"url": "redacted"}}
+                },
+            }
+        ),
+        MCP_KEY="aiat-openhands-test-run",
+    )
+    result = subprocess.run([sys.executable, str(script), str(output)], env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["verified_absent"] is False
+
+    weakened = text.replace("config.update(candidate)", "config = candidate", 1)
+    assert "cleanup_absence_readback_missing" in module.validate(weakened)["errors"]
+
+
 def test_evidence_schema_validation_is_required_before_workflow_pass() -> None:
     module = _module()
     text = _workflow()

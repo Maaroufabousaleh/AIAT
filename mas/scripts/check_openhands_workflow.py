@@ -457,6 +457,7 @@ def validate(text: str) -> dict[str, Any]:
         or '"verified_absent"' not in text
         or 'settings.get("agent_settings")' not in text
         or 'for field in ("mcp_config", "mcp_servers")' not in text
+        or "config.update(candidate)" not in text
         or 'delete_ok=false' not in text
         or 'case "$delete_code"' not in text
         or 'if [ "$delete_ok" != true ]' not in text
