@@ -195,10 +195,11 @@ its route helper still rejected `--auto-routing-output`; the gateway and
 provider setup had already passed, while tool-service, OpenHands, and all live
 mandatory gates were not run. The immutable run artifact is recorded in
 [`github-run-32691538177-failure.json`](./github-run-32691538177-failure.json).
-The reviewed tip `d34548b` includes the dispatch-preflight check for both helper CLI
-contracts and reports implementation drift separately from missing operator
-configuration, so a stale candidate now fails closed before GitHub Actions is
-called. This evidence update does not dispatch a replacement run.
+The reviewed tip `45de2bf` includes the dispatch-preflight check for both helper
+CLI contracts, reports implementation drift separately from missing operator
+configuration, and uses the registry-based image-SBOM source for the exact
+digest-pinned image. A stale candidate still fails closed before GitHub Actions
+is called. This evidence update does not dispatch a replacement run.
 
 Run `32694322492` (job `97333516942`) reached the provider/model path and
 passed native gVisor startup, pinned gateway provenance, OmniRoute health/API

@@ -37,14 +37,14 @@ The previously prepared `1fcaf6cb62c6583efdf0ea1396e3d52329453fc3` candidate is
 an ancestor of the reviewed branch and is retained as immutable historical
 workflow-implementation evidence in
 [`github-run-32684939718-failure.json`](provenance/openhands-candidate/2026-08-22-v1.43.0/github-run-32684939718-failure.json).
-The current reviewed tip `d34548b` remains
-inactive and requires one deliberate, operator-authorized provider-backed run
-after the validator/helper fixes. The workflow validator checks both
-route-probe and provider-baseline CLI contracts, the Agent Server cleanup path
-proves stopped-container disposal, and certification authorizations are only
+The current reviewed tip `45de2bf` remains inactive and requires one
+deliberate, operator-authorized provider-backed run after the registry-based
+image-SBOM fix. The workflow validator checks both route-probe and
+provider-baseline CLI contracts, the Agent Server cleanup path proves
+stopped-container disposal, and certification authorizations are only
 consumed after successful trusted construction. The read-only dispatch
-preflight for `d34548b` passes with the configured Groq secret and governed
-variables; no new certification run has been dispatched for this tip.
+preflight for `45de2bf` passes with the configured Groq secret and governed
+variables; no replacement certification run has been dispatched for this tip.
 
 The deliberate run `32691538177` repeated the stale-candidate failure because
 the requested `1fcaf6cb62c6583efdf0ea1396e3d52329453fc3` checkout still carried
