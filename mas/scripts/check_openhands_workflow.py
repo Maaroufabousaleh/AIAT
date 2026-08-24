@@ -248,6 +248,74 @@ def _provider_baseline_probe_cli_issues() -> list[str]:
     return ["provider_baseline_probe_cli_contract_missing"] if any(item not in helper for item in required) else []
 
 
+def _candidate_helper_contract_gate_issues(text: str) -> list[str]:
+    """Require stale candidate helper interfaces to fail before image pulls."""
+
+    try:
+        document = yaml.safe_load(text)
+    except yaml.YAMLError:
+        return ["candidate_helper_contract_gate_missing"]
+    jobs = document.get("jobs") if isinstance(document, dict) else None
+    steps = []
+    if isinstance(jobs, dict):
+        for job in jobs.values():
+            if isinstance(job, dict) and isinstance(job.get("steps"), list):
+                steps.extend(step for step in job["steps"] if isinstance(step, dict))
+    candidate_step = next((step for step in steps if step.get("id") == "candidate_contract"), None)
+    if not isinstance(candidate_step, dict):
+        return ["candidate_helper_contract_gate_missing"]
+    candidate_if = str(candidate_step.get("if") or "")
+    if "steps.candidate_contract" in candidate_if:
+        return ["candidate_helper_contract_self_reference"]
+    run = str(candidate_step.get("run") or "")
+    required_markers = (
+        'aiat.openhands-candidate-helper-contract.v1',
+        'WORKFLOW_CANDIDATE_HELPER_VERSION_SKEW',
+        'missing_files',
+        'missing_markers',
+        'echo "ready=false" >> "$GITHUB_OUTPUT"',
+    )
+    if any(marker not in run for marker in required_markers):
+        return ["candidate_helper_contract_gate_semantics_missing"]
+
+    try:
+        candidate_index = steps.index(candidate_step)
+        image_index = next(
+            index
+            for index, step in enumerate(steps)
+            if step.get("name") == "Pull pinned certification images and verify gateway provenance"
+        )
+    except StopIteration:
+        return ["candidate_helper_contract_gate_order_missing"]
+    if candidate_index > image_index:
+        return ["candidate_helper_contract_gate_after_image_pull"]
+
+    gated_names = {
+        "Pull pinned certification images and verify gateway provenance",
+        "Create disposable model-gateway network",
+        "Start disposable OmniRoute provider gateway",
+        "Verify OmniRoute OpenAI API authentication boundary",
+        "Configure exactly one disposable OmniRoute provider route",
+        "Verify deterministic provider baseline through OmniRoute",
+        "Start disposable LiteLLM model gateway",
+        "Verify governed OmniRoute auto/coding route through LiteLLM",
+        "Start disposable AIAT tool-service bridge",
+        "Start Agent Server under runsc",
+        "Prove runsc Agent Server can reach the internal LiteLLM target",
+        "Record disposable gateway network topology",
+        "Materialize run-scoped OpenHands profile and MCP entry",
+        "Run governed OpenHands live adapter wave",
+        "Run OpenHands supply-chain and runtime evidence",
+    }
+    missing = [
+        str(step.get("name"))
+        for step in steps
+        if step.get("name") in gated_names
+        and "steps.candidate_contract.outputs.ready == 'true'" not in str(step.get("if") or "")
+    ]
+    return ["candidate_helper_contract_gate_not_propagated:" + ",".join(sorted(missing))] if missing else []
+
+
 def _provider_scope_helper_issues() -> list[str]:
     """Ensure auto/coding cannot silently add pinned no-auth candidates."""
 
@@ -412,6 +480,7 @@ def validate(text: str) -> dict[str, Any]:
     errors.extend(_omniroute_auth_helper_issues())
     errors.extend(_gateway_route_probe_cli_issues())
     errors.extend(_provider_baseline_probe_cli_issues())
+    errors.extend(_candidate_helper_contract_gate_issues(text))
     errors.extend(_provider_scope_helper_issues())
     errors.extend(_network_topology_contract_issues(text))
     errors.extend(_live_task_environment_contract_issues())
@@ -588,7 +657,7 @@ def validate(text: str) -> dict[str, Any]:
     if "check_openhands_omniroute_auth.py" not in text or "http://127.0.0.1:20129/v1/models" not in text:
         errors.append("omniroute_auth_evidence_missing")
     if (
-        "check_openhands_provider_baseline.py" not in text
+        "uv run python scripts/check_openhands_provider_baseline.py" not in text
         or "provider-baseline.json" not in text
         or "--max-attempts 2" not in text
         or "--retry-delay-seconds 1" not in text
@@ -605,13 +674,17 @@ def validate(text: str) -> dict[str, Any]:
             if "steps.baseline.outputs.ready == 'true'" in block:
                 errors.append("baseline_blocks_auto_router_evidence")
                 break
-    if "--auto-routing-output" not in text or "auto-routing.json" not in text:
+    if (
+        '--auto-routing-output "$RUNNER_TEMP/aiat-openhands-evidence/gateway/auto-routing.json"' not in text
+        or "auto-routing.json" not in text
+    ):
         errors.append("auto_routing_evidence_missing")
     if (
         "PROVIDER_STATUS: ${{ steps.provider_preflight.outputs.status }}" not in text
         or "CONFIGURATION_STATUS: ${{ steps.preflight.outputs.status }}" not in text
+        or "CANDIDATE_CONTRACT_STATUS: ${{ steps.candidate_contract.outputs.status }}" not in text
         or 'provider_status="${PROVIDER_STATUS:-BLOCKED_MISSING_OPERATOR_SECRET}"' not in text
-        or 'configuration_status="${CONFIGURATION_STATUS:-FAILED_CERTIFICATION_IMPLEMENTATION}"' not in text
+        or 'configuration_status="${CANDIDATE_CONTRACT_STATUS:-${CONFIGURATION_STATUS:-FAILED_CERTIFICATION_IMPLEMENTATION}}"' not in text
     ):
         errors.append("gate_matrix_status_wiring_missing")
     if "--host-workspace \"$RUNNER_TEMP/aiat-openhands-workspace\"" not in text or "--fixture-root \"$GITHUB_WORKSPACE/mas/scripts/fixtures/openhands-coding-task\"" not in text:

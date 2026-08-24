@@ -39,6 +39,31 @@ def test_current_workflow_is_manual_pinned_and_fail_closed() -> None:
     assert "docker logs" not in _workflow()
 
 
+def test_candidate_helper_contract_gate_blocks_stale_checkouts_before_expensive_stages() -> None:
+    module = _module()
+    text = _workflow()
+    report = module.validate(text)
+    assert "candidate_helper_contract_gate_missing" not in report["errors"]
+    assert "candidate_helper_contract_gate_not_propagated" not in report["errors"]
+
+    weakened = text.replace(
+        " && steps.candidate_contract.outputs.ready == 'true'\n        run: |\n          set -euo pipefail\n          docker pull",
+        "\n        run: |\n          set -euo pipefail\n          docker pull",
+        1,
+    )
+    assert any(
+        item.startswith("candidate_helper_contract_gate_not_propagated")
+        for item in module.validate(weakened)["errors"]
+    )
+
+    self_referencing = text.replace(
+        "if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true'\n        continue-on-error: true\n        run: |\n          set +e\n          output=",
+        "if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true' && steps.candidate_contract.outputs.ready == 'true'\n        continue-on-error: true\n        run: |\n          set +e\n          output=",
+        1,
+    )
+    assert "candidate_helper_contract_self_reference" in module.validate(self_referencing)["errors"]
+
+
 def test_agent_server_capability_controls_are_explicit_and_scoped() -> None:
     module = _module()
     text = _workflow()
@@ -317,9 +342,17 @@ def test_auto_router_and_deterministic_baseline_are_both_required() -> None:
     report = module.validate(text)
     assert "provider_baseline_gate_missing" not in report["errors"]
     assert "litellm_auto_coding_route_missing" not in report["errors"]
-    weakened = text.replace("scripts/check_openhands_provider_baseline.py", "scripts/missing.py", 1)
+    weakened = text.replace(
+        "          uv run python scripts/check_openhands_provider_baseline.py \\\n",
+        "          uv run python scripts/missing.py \\\n",
+        1,
+    )
     assert "provider_baseline_gate_missing" in module.validate(weakened)["errors"]
-    weakened = text.replace("--auto-routing-output", "--missing-auto-routing-output", 1)
+    weakened = text.replace(
+        '--auto-routing-output "$RUNNER_TEMP/aiat-openhands-evidence/gateway/auto-routing.json"',
+        '--missing-auto-routing-output "$RUNNER_TEMP/aiat-openhands-evidence/gateway/auto-routing.json"',
+        1,
+    )
     assert "auto_routing_evidence_missing" in module.validate(weakened)["errors"]
 
 
