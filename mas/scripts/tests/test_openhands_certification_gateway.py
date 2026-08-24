@@ -399,7 +399,7 @@ def test_route_probe_preserves_litellm_health_failure_stage() -> None:
     assert error.value.http_status == 503
 
 
-def test_auto_route_404_is_not_reported_as_fixed_provider_model_not_found() -> None:
+def test_auto_route_404_without_bounded_code_stays_a_route_failure() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "GET" and request.url.path == "/api/monitoring/health":
             return httpx.Response(200, json={"status": "ok"})
@@ -418,8 +418,69 @@ def test_auto_route_404_is_not_reported_as_fixed_provider_model_not_found() -> N
             client=client,
         )
     client.close()
+    assert str(error.value) == "litellm_route_not_found"
+    assert error.value.stage == "litellm_to_omniroute"
+    assert error.value.response_error_code is None
+
+
+def test_auto_route_404_with_explicit_no_provider_code_is_provider_failure() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == "/api/monitoring/health":
+            return httpx.Response(200, json={"status": "ok"})
+        if request.method == "GET" and request.url.path == "/health/readiness":
+            return httpx.Response(200, json={"status": "ok"})
+        if request.method == "POST" and request.url.path == "/v1/chat/completions":
+            return httpx.Response(404, json={"error": {"code": "no_valid_providers"}})
+        raise AssertionError(request)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    with pytest.raises(PROBE.GatewayProbeError) as error:
+        PROBE.probe(
+            litellm_url="http://litellm.test",
+            omniroute_url="http://omniroute.test",
+            gateway_key="gateway-secret",
+            client=client,
+        )
+    client.close()
     assert str(error.value) == "auto_no_valid_providers"
     assert error.value.stage == "provider"
+    assert error.value.response_error_code == "no_valid_providers"
+
+
+def test_route_failure_evidence_retains_only_bounded_error_code(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "route-probe.json"
+    secret = "gateway-secret-must-not-appear"
+    monkeypatch.setenv("OPENHANDS_MODEL_GATEWAY_API_KEY", secret)
+
+    def failed_probe(**_kwargs):
+        raise PROBE.GatewayProbeError(
+            "litellm_route_not_found",
+            stage="litellm_to_omniroute",
+            http_status=404,
+            response_error_code="model_not_found",
+        )
+
+    monkeypatch.setattr(PROBE, "probe", failed_probe)
+    assert PROBE.main(
+        [
+            "--litellm-url",
+            "http://litellm.test",
+            "--omniroute-url",
+            "http://omniroute.test",
+            "--output",
+            str(output),
+        ]
+    ) == 2
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["failure"] == "litellm_route_not_found"
+    assert report["failure_class"] == "LITELLM_TO_OMNIROUTE_ROUTE_FAILURE"
+    assert report["failure_http_status"] == 404
+    assert report["response_error_code"] == "model_not_found"
+    assert report["raw_response_retained"] is False
+    assert secret not in output.read_text(encoding="utf-8")
 
 
 def test_route_probe_rejects_missing_internal_endpoint_before_network() -> None:

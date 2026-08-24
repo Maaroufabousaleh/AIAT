@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -47,11 +48,39 @@ class GatewayProbeError(RuntimeError):
         stage: str = "gateway_response",
         http_status: int | None = None,
         exception_type: str | None = None,
+        response_error_code: str | None = None,
     ) -> None:
         super().__init__(reason)
         self.stage = stage
         self.http_status = http_status
         self.exception_type = exception_type
+        self.response_error_code = response_error_code
+
+
+_SAFE_ERROR_CODE = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
+
+
+def _response_error_code(response: httpx.Response) -> str | None:
+    """Extract one bounded error code without retaining a response payload."""
+
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    if not isinstance(body, dict):
+        return None
+    error = body.get("error")
+    candidates: tuple[object, ...]
+    if isinstance(error, dict):
+        candidates = (error.get("code"), error.get("type"), body.get("code"))
+    else:
+        candidates = (body.get("code"), body.get("type"))
+    for candidate in candidates:
+        if isinstance(candidate, str):
+            value = candidate.strip()
+            if _SAFE_ERROR_CODE.fullmatch(value):
+                return value
+    return None
 
 
 def _write_report(path: Path, report: dict[str, Any]) -> None:
@@ -161,20 +190,44 @@ def probe(
                 exception_type="ConnectError",
             ) from exc
         if response.status_code != 200:
+            error_code = _response_error_code(response)
             if response.status_code in {401, 403}:
                 raise GatewayProbeError(
                     "model_gateway_auth_failed",
                     stage="gateway_auth",
                     http_status=response.status_code,
+                    response_error_code=error_code,
                 )
             if response.status_code == 429:
-                raise GatewayProbeError("provider_rate_limit", stage="provider", http_status=429)
+                raise GatewayProbeError(
+                    "provider_rate_limit",
+                    stage="provider",
+                    http_status=429,
+                    response_error_code=error_code,
+                )
             if response.status_code == 404:
-                raise GatewayProbeError("auto_no_valid_providers", stage="provider", http_status=404)
+                # A 404 is not sufficient to identify an auto-router failure:
+                # LiteLLM can also return it for an unknown alias or malformed
+                # upstream route.  Only a bounded, explicit gateway code may
+                # claim that no auto-router candidates were available.
+                if error_code in {"auto_no_valid_providers", "no_valid_providers"}:
+                    raise GatewayProbeError(
+                        "auto_no_valid_providers",
+                        stage="provider",
+                        http_status=404,
+                        response_error_code=error_code,
+                    )
+                raise GatewayProbeError(
+                    "litellm_route_not_found",
+                    stage="litellm_to_omniroute",
+                    http_status=404,
+                    response_error_code=error_code,
+                )
             raise GatewayProbeError(
                 "litellm_route_probe_failed",
                 stage="litellm_to_omniroute",
                 http_status=response.status_code,
+                response_error_code=error_code,
             )
         try:
             body = response.json()
@@ -281,6 +334,8 @@ def main(argv: list[str] | None = None) -> int:
             "gateway_key_retained": False,
             "raw_response_retained": False,
         }
+        if isinstance(exc, GatewayProbeError) and exc.response_error_code:
+            report["response_error_code"] = exc.response_error_code
         _write_report(args.output, report)
         if args.auto_routing_output:
             _write_report(args.auto_routing_output, report)
