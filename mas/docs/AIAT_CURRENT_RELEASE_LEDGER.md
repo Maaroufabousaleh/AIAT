@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-24
-**Base revision:** `5755500` (OpenHands workflow/helper contract validation plus immutable run-failure evidence; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
+**Base revision:** `870b6d7` (OpenHands workflow/helper contract validation, provider-baseline CLI drift guard, and immutable run-failure evidence; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -36,8 +36,10 @@ an ancestor of the reviewed branch and is retained as immutable historical
 workflow-implementation evidence in
 [`github-run-32684939718-failure.json`](provenance/openhands-candidate/2026-08-22-v1.43.0/github-run-32684939718-failure.json).
 The current reviewed tip remains inactive and requires one deliberate,
-operator-authorized provider-backed run after the validator/helper fixes; its
-safe dispatch preflight is passing, but no rerun has been dispatched.
+operator-authorized provider-backed run after the validator/helper fixes; the
+workflow validator now checks both route-probe and provider-baseline CLI
+contracts, its safe dispatch preflight is passing, and no rerun has been
+dispatched.
 
 The latest capability-boundary hardening (`f3f4050` and `65237f3`) keeps the
 v1.43.0 certification Agent Server in an isolated home with VS Code/VNC and

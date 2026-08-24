@@ -1,8 +1,8 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-24, current certification-path
-hardening at `57555001bbd75ef672159b1a2ac97092b21ffe8e` (including
-`5755500` and `f3f4050`); the branch also
+hardening at `870b6d7d220f9f709589dc3823cd5c0904895c48` (including
+`870b6d7`, `5755500`, and `f3f4050`); the branch also
 contains the earlier candidate/evidence history. The next live run must freeze
 the exact SHA actually selected by the operator.
 
@@ -40,6 +40,8 @@ two pending OpenCode evidence items, and `NO-RELEASE`.
 The current workflow also verifies LiteLLM/OmniRoute source-archive hashes,
 rejects host-bound gateway targets, validates the sanitized evidence tree, and
 records run-scoped profile disposal through Agent Server container absence.
+The static validator checks the exact route-probe and provider-baseline helper
+CLI contracts in the candidate checkout before dispatch.
 Cleanup additionally removes generated AIAT/tool/gateway secret entries from
 the runner's `GITHUB_ENV` file and records that scalar absence assertion. The
 normal OpenHands transport factory now refuses inline approval mappings and
