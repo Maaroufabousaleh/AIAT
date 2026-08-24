@@ -1,7 +1,7 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-24, current certification-path
-hardening at `006ce97` (including
+hardening at `f47f1ea` (including
 `595965d` gateway failure-origin diagnostics, `57f76b6` fail-closed web DNS
 validation, `e7a2ff5` stopped-container cleanup, and `71149db` certification
 authorization consumption after trusted construction); the branch also
@@ -195,11 +195,25 @@ its route helper still rejected `--auto-routing-output`; the gateway and
 provider setup had already passed, while tool-service, OpenHands, and all live
 mandatory gates were not run. The immutable run artifact is recorded in
 [`github-run-32691538177-failure.json`](./github-run-32691538177-failure.json).
-The reviewed tip `006ce97` includes the dispatch-preflight check for both helper
-CLI contracts, reports implementation drift separately from missing operator
-configuration, and uses the registry-based image-SBOM source for the exact
+The reviewed tip `f47f1ea` includes the dispatch-preflight check for every
+workflow script plus both helper CLI contracts, reports implementation drift
+separately from missing operator configuration, and uses the registry-based image-SBOM source for the exact
 digest-pinned image. A stale candidate still fails closed before GitHub Actions
 is called. This evidence update does not dispatch a replacement run.
+
+Run `32702677310` (job `97357269192`) is preserved as
+[`github-run-32702677310-failure.json`](./github-run-32702677310-failure.json).
+It reproduced the stale-candidate boundary with precise scalar evidence: the
+dispatch workflow's provider-baseline helper was absent from the requested
+`1fcaf6cb62c6583efdf0ea1396e3d52329453fc3` tree, and the candidate route probe
+rejected `--auto-routing-output`. Provider preflight, exact image pulls and
+provenance, OmniRoute readiness/authentication, provider configuration, LiteLLM
+startup, and zero-residue cleanup passed; provider baseline/auto-route evidence
+was not validly produced and no tool-service, Agent Server, profile/MCP, or live
+mandatory gate ran. This is `FAILED_CERTIFICATION_IMPLEMENTATION` /
+`WORKFLOW_CANDIDATE_HELPER_VERSION_SKEW`, not provider or runtime evidence. The
+new preflight reads the requested candidate git tree and reports missing
+workflow scripts before dispatch; no replacement run is claimed here.
 
 Run `32694322492` (job `97333516942`) reached the provider/model path and
 passed native gVisor startup, pinned gateway provenance, OmniRoute health/API
