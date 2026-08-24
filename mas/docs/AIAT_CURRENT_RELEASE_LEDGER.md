@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-24
-**Base revision:** `71149db` (OpenHands gateway failure-origin diagnostics, fail-closed web URL validation, crash-safe cleanup, and certification-authorization replay hardening on top of workflow/helper contract validation and immutable run-failure evidence; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
+**Base revision:** `e9a8a09` (OpenHands gateway failure-origin diagnostics, fail-closed web URL validation, crash-safe cleanup, certification-authorization replay hardening, and run-scoped OmniRoute auto-router scope enforcement on top of workflow/helper contract validation and immutable run-failure evidence; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -11,7 +11,8 @@ The overnight OpenHands continuation (`4234d07`, `1db5b72`, `cf80dd1`,
 `b71facc`, `04cfd23`, `fe5cef3`, `5163cc8`, `e036508`, `334c321`, `758ca59`,
 `3161ad1`, `4f51dac`, `cc48cca`, `a2c886e`, `a39788a`, `2d70711`, `a377dab`,
 `1c4a426`, `ebfbe73`, `c9dba1f`, `ad511d9`, `fa19b1c`, `f3f4050`,
-`65237f3`, `595965d`, `57f76b6`, `71ce0f6`, `e7a2ff5`, and `71149db`)
+`65237f3`, `595965d`, `57f76b6`, `71ce0f6`, `e7a2ff5`, `71149db`, and
+`e9a8a09`)
 does not alter the release decision. OpenHands
 v1.43.0 remains an inactive `CERTIFYING` candidate; its exact image/source
 pins, run-scoped gateway/profile/MCP design, one-shot certification
@@ -35,13 +36,21 @@ The previously prepared `1fcaf6cb62c6583efdf0ea1396e3d52329453fc3` candidate is
 an ancestor of the reviewed branch and is retained as immutable historical
 workflow-implementation evidence in
 [`github-run-32684939718-failure.json`](provenance/openhands-candidate/2026-08-22-v1.43.0/github-run-32684939718-failure.json).
-The current reviewed tip `71149db9653b9b9b50cbf7bfa1a2e496dc4f1c30` remains
+The current reviewed tip `e9a8a09` remains
 inactive and requires one deliberate, operator-authorized provider-backed run
 after the validator/helper fixes. The workflow validator checks both
 route-probe and provider-baseline CLI contracts, the Agent Server cleanup path
 proves stopped-container disposal, and certification authorizations are only
 consumed after successful trusted construction. No new certification run has
 been dispatched for this tip.
+
+`e9a8a09` closes a routing-scope gap identified from the pinned OmniRoute
+v3.8.38 source: its virtual `auto/coding` combo can add built-in no-auth
+providers unless settings block them. Disposable provisioning now rejects
+unrelated pre-existing connections, enables auto-routing only through the
+authenticated settings path, blocks the exact pinned no-auth ids/aliases, and
+requires a redacted settings readback before route evidence is accepted. This
+is repository-local hardening; it is not live provider or OpenHands evidence.
 
 The latest capability-boundary hardening (`f3f4050` and `65237f3`) keeps the
 v1.43.0 certification Agent Server in an isolated home with VS Code/VNC and

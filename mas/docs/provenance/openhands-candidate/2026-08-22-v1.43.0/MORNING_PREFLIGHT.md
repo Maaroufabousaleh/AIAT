@@ -1,7 +1,7 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-24, current certification-path
-hardening at `71149db9653b9b9b50cbf7bfa1a2e496dc4f1c30` (including
+hardening at `e9a8a09` (including
 `595965d` gateway failure-origin diagnostics, `57f76b6` fail-closed web DNS
 validation, `e7a2ff5` stopped-container cleanup, and `71149db` certification
 authorization consumption after trusted construction); the branch also
@@ -72,7 +72,11 @@ retaining only scalar probe mode/count evidence. The governed provider-pool
 specification is recorded in `gateway-provenance.json` and implemented by
 `ecc1b48`; CI remains Groq-only (`GROQ_API_KEY`), while Gemini/Cerebras are
 documented as future explicit allowlist options and no credentials are
-discovered or added automatically.
+discovered or added automatically. `e9a8a09` additionally blocks the exact
+no-auth provider ids and aliases shipped in pinned OmniRoute v3.8.38 during
+run-scoped settings provisioning, verifies the redacted settings readback, and
+rejects unrelated pre-existing provider connections before mutating the
+disposable gateway.
 
 The current disposable gateway keeps two independent observations: the exact
 `groq/openai/gpt-oss-120b` baseline must pass before it can support a live

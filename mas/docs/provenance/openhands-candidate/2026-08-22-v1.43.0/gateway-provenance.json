@@ -27,6 +27,24 @@
       "fallbacks": false,
       "provider_count": 1,
       "provider_pool": ["groq"],
+      "provider_scope": {
+        "mode": "explicit_connection_only",
+        "noauth_provider_blocklist": [
+          "chipotle",
+          "ddgw",
+          "duckduckgo-web",
+          "mcode",
+          "mimocode",
+          "oc",
+          "opencode",
+          "pepper",
+          "theoldllm",
+          "tllm",
+          "veo-free",
+          "veoaifree-web"
+        ],
+        "basis": "pinned OmniRoute v3.8.38 no-auth catalog; verified by run-scoped settings readback"
+      },
       "evidence_files": [
         "gateway/provider-baseline.json",
         "gateway/auto-routing.json",
@@ -38,6 +56,7 @@
       "model_id": "auto/coding",
       "zero_config_virtual_combo": true,
       "active_connection_credential_filter": true,
+      "noauth_candidates_blocked_in_certification": true,
       "candidate_selection": "pinned OmniRoute v3.8.38 auto-combo scoring",
       "source_refs": [
         "OmniRoute v3.8.38/open-sse/services/autoCombo/virtualFactory.ts",
