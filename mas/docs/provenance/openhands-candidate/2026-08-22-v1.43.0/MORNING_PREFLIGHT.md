@@ -16,6 +16,14 @@ activate OpenHands, approve the steward record, or dispatch a workflow. The
 workflow is `workflow_dispatch` only and must be dispatched once against an
 explicit frozen commit after the preflight passes.
 
+The branch currently ends at `ca1aa084510b2b5492885f2fc5117890f50899a9`.
+That tip contains documentation-only ledger reconciliation after the reviewed
+code baseline and passes the read-only dispatch preflight. It is recorded here
+for SHA clarity only; no certification run has been dispatched against it.
+The previously requested `1fcaf6cb62c6583efdf0ea1396e3d52329453fc3` remains a
+stale ancestor and must continue to fail closed because its candidate tree does
+not contain the current workflow helper contracts.
+
 The local static release ledger remains 63/63 passing with two pending
 evidence items and `NO-RELEASE`. The OpenHands gate matrix remains
 `BLOCKED_INCOMPLETE_MANDATORY_GATES` until a provider-backed run supplies live
