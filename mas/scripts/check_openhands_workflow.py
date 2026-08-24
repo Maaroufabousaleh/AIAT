@@ -297,6 +297,11 @@ def validate(text: str) -> dict[str, Any]:
         )
     ):
         errors.append("startup_failure_classification_missing")
+    if not re.search(
+        r'(?s)if \[ "\$healthy" != 1 \]; then\s+.*?echo "ready=false" >> "\$GITHUB_OUTPUT"\s+echo "status=BLOCKED_GVISOR" >> "\$GITHUB_OUTPUT"\s+exit 1',
+        text,
+    ):
+        errors.append("agent_server_health_output_missing")
     if "steps.gateway.outputs.ready == 'true'" not in text:
         errors.append("gateway_route_gate_missing_before_worker_stages")
     if "runtime-provisioning.json" not in text or "runtime_status" not in text or 'echo "ready=true" >> "$GITHUB_OUTPUT"' not in text:

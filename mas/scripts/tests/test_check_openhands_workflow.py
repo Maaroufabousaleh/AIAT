@@ -311,6 +311,19 @@ def test_service_startup_failures_have_scalar_failure_classes() -> None:
     assert "startup_failure_classification_missing" in module.validate(weakened)["errors"]
 
 
+def test_agent_server_health_failure_publishes_blocked_output() -> None:
+    module = _module()
+    text = _workflow()
+    assert "agent_server_health_output_missing" not in module.validate(text)["errors"]
+    weakened = text.replace(
+        '            echo "status=BLOCKED_GVISOR" >> "$GITHUB_OUTPUT"\n            exit 1',
+        "            exit 1",
+        1,
+    )
+    report = module.validate(weakened)
+    assert "agent_server_health_output_missing" in report["errors"]
+
+
 def test_gateway_network_topology_must_be_explicitly_asserted() -> None:
     module = _module()
     text = _workflow()

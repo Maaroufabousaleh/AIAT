@@ -782,6 +782,8 @@ jobs:
           fi
           if [ "$healthy" != 1 ]; then
             echo "OpenHands Agent Server did not become healthy under runsc" >&2
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "status=BLOCKED_GVISOR" >> "$GITHUB_OUTPUT"
             exit 1
           fi
           echo "ready=true" >> "$GITHUB_OUTPUT"
