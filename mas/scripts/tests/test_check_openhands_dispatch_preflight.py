@@ -105,6 +105,7 @@ def test_candidate_sha_mismatch_is_reported_separately_from_missing_configuratio
     assert report["requested_candidate_sha"] == "b" * 40
     assert report["candidate_sha"] == "a" * 40
     assert report["blocking_reasons"] == ["CANDIDATE_SHA_MISMATCH"]
+    assert report["dispatch_command"] == ""
 
 
 def test_preflight_reconciles_candidate_pins_across_provenance() -> None:

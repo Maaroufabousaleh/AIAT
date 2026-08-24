@@ -263,9 +263,14 @@ def evaluate_static(
         # and is verified again after checkout. Passing a raw SHA as --ref is
         # not portable across GitHub workflow-dispatch implementations.
         "workflow_ref": dispatch_ref,
+        # Never emit a runnable command for a candidate that failed preflight.
+        # In particular, a requested SHA mismatch must not turn the checked
+        # out HEAD into an implicit substitute candidate in operator tooling.
         "dispatch_command": (
             "gh workflow run openhands-candidate-certification.yml "
             f"--ref {dispatch_ref} -f candidate_sha={actual_sha}"
+            if ready
+            else ""
         ),
         "secrets_or_payloads_retained": False,
     }
