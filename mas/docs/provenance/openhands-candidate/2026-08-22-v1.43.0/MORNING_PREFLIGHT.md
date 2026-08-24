@@ -1,7 +1,7 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-24, current certification-path
-hardening at `f3f4050`; the branch also
+hardening at `65237f3` (including `f3f4050`); the branch also
 contains the earlier candidate/evidence history. The next live run must freeze
 the exact SHA actually selected by the operator.
 
@@ -23,7 +23,8 @@ validation, `a377dab` scalar provider attribution for successful `auto/coding`
 evidence, and `1c4a426` Agent Server health-blocker output diagnostics. Freeze
 and preflight that exact tip before any deliberate run. The current tip also
 contains `f3f4050`, which hardens the run-scoped skill/plugin boundary described
-below.
+below, and `65237f3` records that capability boundary in the maintained
+status surface.
 The clean-candidate static certificate was refreshed from a fresh clone at
 `69f5fb4`; it remains valid for reviewed descendants because the validator now
 treats the retained candidate SHA as authoritative by default while preserving

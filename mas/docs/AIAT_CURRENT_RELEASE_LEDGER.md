@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-24
-**Base revision:** `fa19b1c` (latest reviewed OpenHands dispatch-preflight and clean-candidate evidence hardening; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
+**Base revision:** `65237f3` (latest reviewed OpenHands capability-boundary hardening; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -10,7 +10,8 @@ The overnight OpenHands continuation (`4234d07`, `1db5b72`, `cf80dd1`,
 `a6b6eae`, `6da88bd`, `c3f54da`, `93b6ee8`, `d86675b`, `0c0a210`,
 `b71facc`, `04cfd23`, `fe5cef3`, `5163cc8`, `e036508`, `334c321`, `758ca59`,
 `3161ad1`, `4f51dac`, `cc48cca`, `a2c886e`, `a39788a`, `2d70711`, `a377dab`,
-`1c4a426`, `ebfbe73`, `c9dba1f`, `ad511d9`, and `fa19b1c`)
+`1c4a426`, `ebfbe73`, `c9dba1f`, `ad511d9`, `fa19b1c`, `f3f4050`, and
+`65237f3`)
 does not alter the release decision. OpenHands
 v1.43.0 remains an inactive `CERTIFYING` candidate; its exact image/source
 pins, run-scoped gateway/profile/MCP design, one-shot certification
@@ -32,6 +33,14 @@ provider-boundary evidence. The read-only dispatch preflight reports that
 candidate mismatch explicitly; it does not silently substitute the current tip
 or dispatch a workflow. The current tip remains inactive and requires one
 deliberate, operator-authorized provider-backed run.
+
+The latest capability-boundary hardening (`f3f4050` and `65237f3`) keeps the
+v1.43.0 certification Agent Server in an isolated home with VS Code/VNC and
+registered marketplaces disabled, materializes the upstream public/user skill
+deny-list from the disposable server catalog, and rejects project skill/plugin
+sources in the certification workspace. These controls are repository-local
+certification evidence only; they do not activate OpenHands or change the
+production fail-closed boundary.
 
 The current gateway implementation keeps the exact
 `groq/openai/gpt-oss-120b` baseline independent from the LiteLLM
