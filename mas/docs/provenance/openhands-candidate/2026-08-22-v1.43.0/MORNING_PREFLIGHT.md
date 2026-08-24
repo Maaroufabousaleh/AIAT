@@ -1,7 +1,7 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-24, current certification-path
-hardening at `cf0511b` (including
+hardening at `55507e1` (including
 `595965d` gateway failure-origin diagnostics, `57f76b6` fail-closed web DNS
 validation, `e7a2ff5` stopped-container cleanup, and `71149db` certification
 authorization consumption after trusted construction); the branch also
@@ -225,6 +225,19 @@ This is `FAILED_CERTIFICATION_IMPLEMENTATION` / `BLOCKED_SCANNER_COVERAGE`,
 not provider or OpenHands runtime evidence. `cf0511b` runs image SBOM
 generation before source checkout and teaches the evidence checker the
 TruffleHog JSON Lines contract; it does not dispatch a replacement run.
+
+Run `32698436670` (job `97344976337`) confirmed those evidence-schema fixes
+and reached the gateway/provider path, native runsc Agent Server, run-scoped
+profile/MCP materialization, adapter wave, and cleanup. It failed closed only
+because Syft's Docker source exhausted runner disk while materializing a
+daemon image tar for the pinned Agent Server image SBOM. The immutable scalar
+record is [`github-run-32698436670-failure.json`](./github-run-32698436670-failure.json).
+This is `FAILED_CERTIFICATION_IMPLEMENTATION` /
+`BLOCKED_SCANNER_COVERAGE` / `SBOM_FAILURE_RUNNER_DISK_EXHAUSTED`, not a
+provider, gVisor, provenance, or OpenHands runtime verdict. Commit `55507e1`
+switches only the image SBOM scan to Syft's direct `--from registry` source
+for the exact digest-pinned image; local image pull/inspect provenance remains
+required. No replacement run is dispatched by this status update.
 
 ## Operator sequence
 

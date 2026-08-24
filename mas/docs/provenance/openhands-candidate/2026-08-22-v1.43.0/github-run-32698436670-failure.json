@@ -1,0 +1,39 @@
+{
+  "schema_version": "aiat.openhands.github-certification-failure.v1",
+  "run_id": "32698436670",
+  "job_id": "97344976337",
+  "artifact_id": "9509855438",
+  "artifact_digest": "sha256:4adfb7574c8f4baaeef0a9b4496d40c719c5faed340951c209cd07903b1e72a2",
+  "candidate_sha": "2fbbcd6d3f20f96f85fdcc6cb246f0f87130cf11",
+  "final_status": "BLOCKED_SCANNER_COVERAGE",
+  "failure_class": "FAILED_CERTIFICATION_IMPLEMENTATION",
+  "failure_subclass": "SBOM_FAILURE_RUNNER_DISK_EXHAUSTED",
+  "failure_reason": "Syft Docker-daemon image materialization exhausted the GitHub-hosted runner filesystem before image SBOM output was produced.",
+  "evidence_boundary": {
+    "provider_preflight": "PASS",
+    "candidate_preflight": "PASS",
+    "gateway_provenance": "PASS",
+    "gateway_network": "PASS",
+    "provider_route": "PASS",
+    "runsc_agent_server": "PASS",
+    "profile_and_mcp": "PASS",
+    "adapter_wave": "PASS",
+    "cleanup": "PASS",
+    "evidence_schema": "PASS",
+    "image_sbom": "BLOCKED",
+    "source_sbom": "PASS",
+    "live_gate_wave": "NOT_RUN",
+    "provider_verdict": "NOT_EVALUATED",
+    "runtime_verdict": "NOT_EVALUATED"
+  },
+  "scanner_semantics": {
+    "trufflehog_json_lines_validation": "PASS",
+    "raw_payloads_retained": false,
+    "security_findings_interpretable": false,
+    "review_only_findings_waived": false
+  },
+  "zero_residue": "PASS",
+  "historical": true,
+  "replacement_strategy": "Use Syft --from registry against the exact digest-pinned image reference; retain Docker pull/inspect provenance separately.",
+  "secrets_retained": false
+}
