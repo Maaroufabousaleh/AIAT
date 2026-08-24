@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-24
-**Base revision:** `65237f3` (latest reviewed OpenHands capability-boundary hardening; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
+**Base revision:** `5995ccc` (OpenHands workflow/helper contract validation; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -22,17 +22,19 @@ repository-local evidence only. A future manual run still requires the
 operator-owned `GROQ_API_KEY`, an exact frozen candidate SHA, live model
 execution, and independent steward activation approval. AIAT tool/session/
 internal gateway credentials remain run-scoped and are not ledger secrets.
-OpenCode remains the current default. The next candidate SHA must be frozen
-from the reviewed branch after any final operator-local changes; it requires
-one new deliberate provider-backed certification run and does not inherit live
-evidence from the historical provider-boundary runs.
+OpenCode remains the current default. The deliberately dispatched run
+`32684939718` against the older `1fcaf6cb62c6583efdf0ea1396e3d52329453fc3`
+candidate failed closed on workflow/helper contract defects; it produced no
+live worker evidence. The next candidate SHA must be frozen from the reviewed
+branch after these fixes and requires one new deliberate provider-backed
+certification run; it does not inherit live evidence from historical runs.
 
 The previously prepared `1fcaf6cb62c6583efdf0ea1396e3d52329453fc3` candidate is
-an ancestor of the reviewed branch and is retained only as immutable historical
-provider-boundary evidence. The read-only dispatch preflight reports that
-candidate mismatch explicitly; it does not silently substitute the current tip
-or dispatch a workflow. The current tip remains inactive and requires one
-deliberate, operator-authorized provider-backed run.
+an ancestor of the reviewed branch and is retained as immutable historical
+workflow-implementation evidence in
+[`github-run-32684939718-failure.json`](provenance/openhands-candidate/2026-08-22-v1.43.0/github-run-32684939718-failure.json).
+The current tip remains inactive and requires one deliberate,
+operator-authorized provider-backed run after the validator/helper fixes.
 
 The latest capability-boundary hardening (`f3f4050` and `65237f3`) keeps the
 v1.43.0 certification Agent Server in an isolated home with VS Code/VNC and

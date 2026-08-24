@@ -1,7 +1,7 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-24, current certification-path
-hardening at `65237f3` (including `f3f4050`); the branch also
+hardening at `9478bb7` (including `f3f4050`); the branch also
 contains the earlier candidate/evidence history. The next live run must freeze
 the exact SHA actually selected by the operator.
 
@@ -13,11 +13,14 @@ explicit frozen commit after the preflight passes.
 The local static release ledger remains 63/63 passing with two pending
 evidence items and `NO-RELEASE`. The OpenHands gate matrix remains
 `BLOCKED_INCOMPLETE_MANDATORY_GATES` until a provider-backed run supplies live
-task and lifecycle evidence. No workflow was dispatched during this refresh.
-The previously prepared `1fcaf6cb62c6583efdf0ea1396e3d52329453fc3` SHA is an
-ancestor of the reviewed branch tip and is not the current dispatch candidate;
-the safe preflight correctly rejects it unless the checked-out repository tip
-matches the requested SHA. The current reviewed tip includes `cc48cca` and
+task and lifecycle evidence. One deliberate run, `32684939718`, was dispatched
+against the explicitly supplied `1fcaf6cb62c6583efdf0ea1396e3d52329453fc3`
+candidate from a clean detached worktree; it failed closed on a candidate
+workflow/helper contract mismatch and is recorded below. No automatic rerun
+was performed. The previously prepared `1fcaf6cb62c6583efdf0ea1396e3d52329453fc3`
+SHA remains an ancestor of the reviewed branch tip; the safe preflight rejects
+it from the dirty main checkout unless the checked-out repository tip matches
+the requested SHA. The current reviewed tip includes `cc48cca` and
 `a2c886e` auto-route/gate-wiring hardening, `a39788a` evidence-retention
 validation, `a377dab` scalar provider attribution for successful `auto/coding`
 evidence, and `1c4a426` Agent Server health-blocker output diagnostics. Freeze
@@ -151,6 +154,20 @@ allows at most one retry for a transient server/transport boundary, and
 retains only scalar attempt status plus bounded provider error code/type fields.
 Persistent 5xx, authentication, rate-limit, model, or response-shape failures
 still block closed; no live result is claimed by this change.
+
+Run `32684939718` (job `97308204041`) is preserved as
+[`github-run-32684939718-failure.json`](./github-run-32684939718-failure.json).
+The exact candidate checkout, provider preflight, pinned image pulls and
+platform/provenance checks, network, OmniRoute readiness/authentication, route
+configuration, LiteLLM startup, and zero-residue cleanup passed. The candidate
+workflow then invoked `check_openhands_certification_gateway.py` with
+`--auto-routing-output`, but that older candidate helper did not accept the
+option; argparse failed before route evidence was written. The bounded
+baseline step also referenced a helper absent from that candidate. This is
+`FAILED_CERTIFICATION_IMPLEMENTATION`, not Groq, image, gVisor, runtime, or
+security evidence; tool-service, OpenHands, and all live mandatory gates were
+not run. The reviewed branch now contains the helper and a static validator
+that checks both workflow script existence and the route-probe CLI contract.
 
 ## Operator sequence
 

@@ -1,0 +1,49 @@
+{
+    "schema_version": "aiat.openhands-certification-historical-run.v1",
+    "immutable": true,
+    "run": {
+        "run_id": "32684939718",
+        "job_id": "97308204041",
+        "candidate_sha": "1fcaf6cb62c6583efdf0ea1396e3d52329453fc3",
+        "workflow_head_sha": "9478bb7f0462974bee1ea6d298eb4848feed399d",
+        "artifact_id": "9505411106",
+        "artifact_digest": "sha256:46a7efee3f8db0d886db064ea8ea635507dac4ffd09e3cd593cc11558020d870"
+    },
+    "classification": {
+        "final_status": "BLOCKED_INCOMPLETE_MANDATORY_GATES",
+        "failure_class": "FAILED_CERTIFICATION_IMPLEMENTATION",
+        "root_cause_status": "GATEWAY_ROUTE_PROBE_CLI_ARGUMENT_MISMATCH",
+        "root_cause": "The exact candidate workflow passed --auto-routing-output to check_openhands_certification_gateway.py, but that candidate helper did not define the option. Argparse exited before route evidence was produced. The same candidate also referenced check_openhands_provider_baseline.py, which was absent; that earlier bounded baseline step was therefore not run.",
+        "failure_stage": "gateway_route_probe",
+        "response_payload_retained": false
+    },
+    "evidence": {
+        "groq_provider_preflight": "PASS",
+        "candidate_preflight": "READY_FOR_CERTIFICATION_AUTHORIZATION",
+        "openhands_image_pull": "PASS",
+        "litellm_image_pull": "PASS",
+        "omniroute_image_pull": "PASS",
+        "image_platform_verification": "PASS",
+        "gateway_provenance": "PASS",
+        "network_create": "PASS",
+        "omniroute_container_start": "PASS",
+        "omniroute_management_health": "PASS",
+        "omniroute_api_auth_boundary": "PASS",
+        "provider_route_configuration": "PASS",
+        "provider_baseline": "FAILED_CERTIFICATION_IMPLEMENTATION",
+        "provider_baseline_failure_reason": "MISSING_CANDIDATE_HELPER",
+        "litellm_start": "PASS",
+        "litellm_provider_route": "FAILED_CERTIFICATION_IMPLEMENTATION",
+        "litellm_provider_route_failure_reason": "UNSUPPORTED_ROUTE_PROBE_CLI_OPTION",
+        "tool_service": "NOT_RUN",
+        "openhands": "NOT_RUN",
+        "live_gate_wave": "NOT_RUN",
+        "zero_residue": "PASS",
+        "evidence_schema": "PASS"
+    },
+    "retention": {
+        "credentials_retained": false,
+        "model_payloads_retained": false,
+        "unnecessary_logs_retained": false
+    }
+}
