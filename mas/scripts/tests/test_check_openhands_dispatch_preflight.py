@@ -222,3 +222,37 @@ def test_preflight_checks_helpers_from_requested_candidate_tree() -> None:
     assert "CANDIDATE_HELPER_CONTRACT_MISMATCH" in report["blocking_reasons"]
     assert "CANDIDATE_WORKFLOW_SCRIPT_MISSING" in report["blocking_reasons"]
     assert report["status"] == "FAILED_CERTIFICATION_IMPLEMENTATION"
+
+
+def test_preflight_rejects_missing_candidate_provenance_instead_of_using_worktree() -> None:
+    """Newer dispatch-branch evidence must not mask missing candidate files."""
+
+    module = _module()
+    root = Path(__file__).resolve().parents[2]
+    workflow = (root.parent / ".github" / "workflows" / "openhands-candidate-certification.yml").read_text(encoding="utf-8")
+    manifest = (root / "docs/provenance/openhands-candidate/2026-08-22-v1.43.0/worker-manifest.yaml").read_text(encoding="utf-8")
+    gateway_probe, provider_baseline = _helper_texts()
+    sha = "d" * 40
+    report = module.evaluate_static(
+        workflow_text=workflow,
+        manifest_text=manifest,
+        gateway_probe_text=gateway_probe,
+        provider_baseline_text=provider_baseline,
+        candidate_gateway_probe_text=gateway_probe,
+        candidate_provider_baseline_text=provider_baseline,
+        candidate_source_sha=sha,
+        candidate_provenance_gaps=[module.INTERFACE_REPORT],
+        actual_sha=sha,
+        requested_sha=sha,
+        secret_names={"GROQ_API_KEY"},
+        variable_values={
+            "OPENHANDS_MODEL_ID": module.EXPECTED_MODEL,
+            "OPENHANDS_MCP_SETTINGS_KEY": module.EXPECTED_MCP_KEY,
+        },
+        local_tests_passed=True,
+    )
+    assert report["ready_to_dispatch"] is False
+    assert report["checks"]["candidate_provenance_files_available"] is False
+    assert report["candidate_provenance_gaps"] == [module.INTERFACE_REPORT]
+    assert "CANDIDATE_PROVENANCE_FILE_MISSING" in report["blocking_reasons"]
+    assert report["status"] == "FAILED_CERTIFICATION_IMPLEMENTATION"

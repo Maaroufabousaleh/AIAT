@@ -76,6 +76,19 @@ def _git_blob(repo: Path, commit: str, path: str) -> str:
     return output if code == 0 else ""
 
 
+def _candidate_blob_or_empty(repo: Path, commit: str, path: str) -> str:
+    """Read a candidate-owned file without falling back to the worktree.
+
+    Dispatch preflight runs from a possibly newer branch than the candidate
+    SHA that will be checked out by Actions.  Falling back to a newer local
+    file would allow provenance/configuration drift to be certified against
+    the wrong tree.  An empty result is intentional evidence of a missing
+    candidate file and is handled as a preflight blocker by the caller.
+    """
+
+    return _git_blob(repo, commit, path)
+
+
 def _candidate_workflow_script_gaps(repo: Path, commit: str, workflow_text: str) -> list[str]:
     """Return workflow Python scripts missing from the exact candidate tree."""
 
@@ -118,6 +131,7 @@ def evaluate_static(
     candidate_provider_baseline_text: str | None = None,
     candidate_source_sha: str | None = None,
     candidate_workflow_script_gaps: list[str] | None = None,
+    candidate_provenance_gaps: list[str] | None = None,
     actual_sha: str,
     requested_sha: str | None,
     secret_names: set[str] | None,
@@ -173,6 +187,7 @@ def evaluate_static(
         )
     )
     candidate_workflow_script_gaps = candidate_workflow_script_gaps or []
+    candidate_provenance_gaps = candidate_provenance_gaps or []
     inactive = "activation_status: inactive" in manifest_text.lower() or "certification_status: pending" in manifest_text.lower()
     checks = {
         "candidate_sha_frozen": sha_explicit,
@@ -181,6 +196,7 @@ def evaluate_static(
         "candidate_gateway_probe_contract": gateway_probe_contract,
         "candidate_provider_baseline_contract": provider_baseline_contract,
         "candidate_workflow_scripts_available": not candidate_workflow_script_gaps,
+        "candidate_provenance_files_available": not candidate_provenance_gaps,
         "github_secret_presence_known": secrets_known,
         "groq_secret_present": secret_present is True,
         "github_variables_presence_known": variables_known,
@@ -202,6 +218,8 @@ def evaluate_static(
         blocking_reasons.append("CANDIDATE_HELPER_CONTRACT_MISMATCH")
     if not checks["candidate_workflow_scripts_available"]:
         blocking_reasons.append("CANDIDATE_WORKFLOW_SCRIPT_MISSING")
+    if not checks["candidate_provenance_files_available"]:
+        blocking_reasons.append("CANDIDATE_PROVENANCE_FILE_MISSING")
     if not checks["github_secret_presence_known"] or not checks["github_variables_presence_known"]:
         blocking_reasons.append("GITHUB_CONFIGURATION_PRESENCE_UNKNOWN")
     elif not checks["groq_secret_present"] or not checks["static_variables_match"]:
@@ -215,6 +233,7 @@ def evaluate_static(
     implementation_blockers = {
         "WORKFLOW_STATIC_VALIDATION_FAILED",
         "CANDIDATE_PROVENANCE_MISMATCH",
+        "CANDIDATE_PROVENANCE_FILE_MISSING",
         "CANDIDATE_HELPER_CONTRACT_MISMATCH",
         "CANDIDATE_WORKFLOW_SCRIPT_MISSING",
         "LOCAL_DETERMINISTIC_VALIDATION_FAILED",
@@ -250,6 +269,7 @@ def evaluate_static(
         },
         "candidate_runtime_helper_source_sha": candidate_source_sha or actual_sha,
         "candidate_workflow_script_gaps": candidate_workflow_script_gaps,
+        "candidate_provenance_gaps": candidate_provenance_gaps,
         "run_scoped_values": [
             "OPENHANDS_AGENT_PROFILE_ID",
             "OPENHANDS_CERT_RUN_ID",
@@ -280,9 +300,18 @@ def preflight(repo: Path, requested_sha: str | None, repo_slug: str | None, skip
     _, actual_sha_output = _run(["git", "rev-parse", "HEAD"], cwd=repo)
     actual_sha = actual_sha_output.strip()
     workflow_text = (repo / WORKFLOW).read_text(encoding="utf-8")
-    manifest_text = (repo / MANIFEST).read_text(encoding="utf-8")
-    interface_text = (repo / INTERFACE_REPORT).read_text(encoding="utf-8")
-    gateway_provenance_text = (repo / GATEWAY_PROVENANCE).read_text(encoding="utf-8")
+    candidate_source_sha = requested_sha if requested_sha and len(requested_sha) == 40 else actual_sha
+    candidate_provenance_paths = (MANIFEST, INTERFACE_REPORT, GATEWAY_PROVENANCE)
+    candidate_provenance_gaps = [
+        path
+        for path in candidate_provenance_paths
+        if not _candidate_blob_or_empty(repo, candidate_source_sha, path)
+    ]
+    # These files are part of the candidate evidence boundary.  Read them
+    # from the exact frozen tree, never from a newer dispatch worktree.
+    manifest_text = _candidate_blob_or_empty(repo, candidate_source_sha, MANIFEST)
+    interface_text = _candidate_blob_or_empty(repo, candidate_source_sha, INTERFACE_REPORT)
+    gateway_provenance_text = _candidate_blob_or_empty(repo, candidate_source_sha, GATEWAY_PROVENANCE)
     try:
         gateway_probe_text = (repo / GATEWAY_ROUTE_PROBE).read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
@@ -291,7 +320,6 @@ def preflight(repo: Path, requested_sha: str | None, repo_slug: str | None, skip
         provider_baseline_text = (repo / PROVIDER_BASELINE_PROBE).read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         provider_baseline_text = ""
-    candidate_source_sha = requested_sha if requested_sha and len(requested_sha) == 40 else actual_sha
     candidate_gateway_probe_text = _git_blob(repo, candidate_source_sha, GATEWAY_ROUTE_PROBE)
     candidate_provider_baseline_text = _git_blob(repo, candidate_source_sha, PROVIDER_BASELINE_PROBE)
     candidate_workflow_script_gaps = _candidate_workflow_script_gaps(repo, candidate_source_sha, workflow_text)
@@ -334,6 +362,7 @@ def preflight(repo: Path, requested_sha: str | None, repo_slug: str | None, skip
         candidate_provider_baseline_text=candidate_provider_baseline_text,
         candidate_source_sha=candidate_source_sha,
         candidate_workflow_script_gaps=candidate_workflow_script_gaps,
+        candidate_provenance_gaps=candidate_provenance_gaps,
         actual_sha=actual_sha,
         requested_sha=requested_sha,
         secret_names=secret_names,
