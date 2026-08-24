@@ -257,6 +257,18 @@ def validate(text: str) -> dict[str, Any]:
         errors.append("floating_or_unpinned_image_reference")
     if "--runtime=runsc" not in text or "sudo runsc install" not in text:
         errors.append("runsc_proof_missing")
+    if not all(
+        marker in text
+        for marker in (
+            "--env HOME=/tmp/aiat-openhands-home",
+            "--env OH_ENABLE_VSCODE=false",
+            "--env OH_ENABLE_VNC=false",
+            "--env OH_REGISTERED_MARKETPLACES='[]'",
+            '"public_and_user_skills": "profile_deny_list_verified"',
+            '"project_skills": "certification_workspace_must_be_skill_free"',
+        )
+    ):
+        errors.append("openhands_server_capability_controls_missing")
     if re.search(r"--publish\s+(?!127\.0\.0\.1:)", text):
         errors.append("non_loopback_port_exposure")
     if "host.docker.internal" in text or "OPENHANDS_MODEL_GATEWAY_URL: http://127.0.0.1" in text:
@@ -402,6 +414,12 @@ def validate(text: str) -> dict[str, Any]:
         errors.append("gate_matrix_status_wiring_missing")
     if "--host-workspace \"$RUNNER_TEMP/aiat-openhands-workspace\"" not in text or "--fixture-root \"$GITHUB_WORKSPACE/mas/scripts/fixtures/openhands-coding-task\"" not in text:
         errors.append("postrun_task_verification_missing")
+    if (
+        "workspace-skill-sources.json" not in text
+        or "workspace_skill_or_plugin_source_present" not in text
+        or '"project_skill_loading": "upstream_default_true_but_fixture_sources_absent"' not in text
+    ):
+        errors.append("certification_workspace_skill_boundary_missing")
     if (
         'git -C "$RUNNER_TEMP/aiat-openhands-workspace" init --quiet' not in text
         or 'git -C "$RUNNER_TEMP/aiat-openhands-workspace" commit --quiet -m "certification baseline"' not in text

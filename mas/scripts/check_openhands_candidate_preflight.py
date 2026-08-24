@@ -48,8 +48,12 @@ REQUIRED_ENV = (
 )
 REQUIRED_DISABLED_CONTROLS = (
     "public_skills_disabled",
+    "user_skills_disabled",
+    "project_skills_disabled_by_certification_workspace",
     "plugins_disabled",
     "browser_disabled",
+    "desktop_disabled",
+    "vscode_disabled",
     "subagents_disabled",
     "direct_credentials_disabled",
     "model_switching_disabled",
@@ -204,6 +208,10 @@ def evaluate(
         static_errors.append("sandbox_or_network_policy_mismatch")
     if any(controls.get(name) is not True for name in REQUIRED_DISABLED_CONTROLS):
         static_errors.append("required_profile_control_is_not_explicitly_disabled")
+    if controls.get("public_skills_control") != "profile_deny_list_materialized_from_server_catalog":
+        static_errors.append("public_skill_deny_list_control_missing")
+    if controls.get("plugins_control") != "empty_server_home_and_no_plugin_request":
+        static_errors.append("plugin_surface_control_missing")
     if profile_spec.get("status") != "run_scoped_provision_required":
         static_errors.append("profile_spec_status_must_remain_run_scoped_provision_required")
     spec_candidate = profile_spec.get("candidate") if isinstance(profile_spec.get("candidate"), Mapping) else {}

@@ -98,6 +98,40 @@ def _validate_mcp_entry(config: dict[str, Any], key: str) -> None:
         raise ProvisioningError("run_scoped_mcp_grant_header_missing")
 
 
+def _agent_profile_payload(*, mcp_key: str, disabled_skills: list[str]) -> dict[str, Any]:
+    """Return the only profile shape the certification path may persist.
+
+    OpenHands v1.43.0 exposes skill selection as a deny-list.  We therefore
+    materialize once, read the server's discovered catalog, and persist that
+    exact catalog as ``disabled_skills`` before the live conversation starts.
+    This keeps the profile compatible with the pinned upstream schema while
+    failing closed if the server reports a skill that was not denied.
+    """
+
+    return {
+        "agent_kind": "openhands",
+        "agent": "CodeActAgent",
+        "llm_profile_ref": LLM_PROFILE_NAME,
+        "mcp_server_refs": [mcp_key],
+        "tools": [
+            {"name": "TerminalTool", "params": {}},
+            {"name": "FileEditorTool", "params": {}},
+        ],
+        "enable_sub_agents": False,
+        "enable_switch_llm_tool": False,
+        "disabled_skills": disabled_skills,
+        "tool_concurrency_limit": 1,
+    }
+
+
+def _validate_skill_readback(profile: dict[str, Any], expected: list[str]) -> None:
+    disabled = profile.get("disabled_skills")
+    if not isinstance(disabled, list) or any(not isinstance(item, str) or not item for item in disabled):
+        raise ProvisioningError("agent_profile_disabled_skills_readback_invalid")
+    if sorted(set(disabled)) != sorted(set(expected)):
+        raise ProvisioningError("agent_profile_disabled_skills_readback_mismatch")
+
+
 def provision(
     *,
     base_url: str,
@@ -234,22 +268,10 @@ def provision(
         config = _mcp_config(settings)
         _validate_mcp_entry(config, mcp_key)
 
+        disabled_skills: list[str] = []
         agent_response = client.post(
             f"/api/agent-profiles/{AGENT_PROFILE_NAME}",
-            json={
-                "agent_kind": "openhands",
-                "agent": "CodeActAgent",
-                "llm_profile_ref": LLM_PROFILE_NAME,
-                "mcp_server_refs": [mcp_key],
-                "tools": [
-                    {"name": "TerminalTool", "params": {}},
-                    {"name": "FileEditorTool", "params": {}},
-                ],
-                "enable_sub_agents": False,
-                "enable_switch_llm_tool": False,
-                "disabled_skills": [],
-                "tool_concurrency_limit": 1,
-            },
+            json=_agent_profile_payload(mcp_key=mcp_key, disabled_skills=disabled_skills),
         )
         _json_body(agent_response, expected={201})
         agent_readback = _json_body(client.get(f"/api/agent-profiles/{AGENT_PROFILE_NAME}"))
@@ -269,6 +291,7 @@ def provision(
             raise ProvisioningError("agent_profile_tool_surface_readback_mismatch")
         if profile.get("enable_sub_agents") is not False or profile.get("enable_switch_llm_tool") is not False:
             raise ProvisioningError("agent_profile_disabled_controls_readback_mismatch")
+        _validate_skill_readback(profile, disabled_skills)
 
         materialized = _json_body(client.post(f"/api/agent-profiles/{AGENT_PROFILE_NAME}/materialize"))
         if not isinstance(materialized, dict) or materialized.get("valid") is not True:
@@ -278,6 +301,36 @@ def provision(
         resolved_keys = materialized.get("resolved_mcp_config_keys") or []
         if resolved_keys != [mcp_key] or materialized.get("dangling_mcp_server_refs"):
             raise ProvisioningError("agent_profile_materialize_mcp_unresolved")
+
+        # v1.43.0 discovers public/user skills independently of the profile
+        # payload and uses a deny-list rather than an allow-list.  Deny the
+        # complete discovered catalog, then read back/materialize again.  This
+        # is intentionally fail-closed: a missing or malformed catalog cannot
+        # silently become an enabled skill surface.
+        discovered_skills = materialized.get("resolved_skills")
+        if not isinstance(discovered_skills, list) or any(
+            not isinstance(item, str) or not item for item in discovered_skills
+        ):
+            raise ProvisioningError("agent_profile_skill_catalog_readback_invalid")
+        disabled_skills = sorted(set(discovered_skills))
+        if disabled_skills:
+            agent_response = client.post(
+                f"/api/agent-profiles/{AGENT_PROFILE_NAME}",
+                json=_agent_profile_payload(
+                    mcp_key=mcp_key,
+                    disabled_skills=disabled_skills,
+                ),
+            )
+            _json_body(agent_response, expected={201})
+            agent_readback = _json_body(client.get(f"/api/agent-profiles/{AGENT_PROFILE_NAME}"))
+            profile = _profile_object(agent_readback)
+            _validate_skill_readback(profile, disabled_skills)
+            materialized = _json_body(client.post(f"/api/agent-profiles/{AGENT_PROFILE_NAME}/materialize"))
+            if not isinstance(materialized, dict) or materialized.get("valid") is not True:
+                raise ProvisioningError("agent_profile_materialize_after_skill_deny_invalid")
+        final_resolved_skills = materialized.get("resolved_skills")
+        if not isinstance(final_resolved_skills, list) or final_resolved_skills:
+            raise ProvisioningError("agent_profile_skill_surface_readback_mismatch")
 
         result = {
             "schema_version": SCHEMA,
@@ -304,6 +357,8 @@ def provision(
                 "tools": sorted(EXPECTED_AGENT_TOOLS),
                 "subagents": False,
                 "llm_switching": False,
+                "disabled_skills_count": len(disabled_skills),
+                "resolved_skills_count": len(final_resolved_skills),
             },
             "mcp": {
                 "logical_key": mcp_key,
@@ -322,6 +377,8 @@ def provision(
                 "model_id": model_id,
                 "resolved_mcp_config_keys": [mcp_key],
                 "dangling_mcp_server_refs": [],
+                "disabled_skills_count": len(disabled_skills),
+                "resolved_skills_count": len(final_resolved_skills),
             },
             "governance": {
                 "authority": "AIAT control plane",

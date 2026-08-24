@@ -178,3 +178,17 @@ def test_generic_http_transport_is_rejected_for_openhands_candidate() -> None:
     )
     assert "openhands_transport_binding_mismatch" in report["static_errors"]
     assert report["status"] == "BLOCKED_STATIC_CONFIGURATION"
+
+
+def test_skill_and_plugin_controls_require_the_pinned_runtime_boundary() -> None:
+    manifest, profile_spec, interface_report, model_evidence = _inputs()
+    manifest["runtime"]["adapter_config"]["profile_controls"]["public_skills_control"] = "allow_all"
+    report = MODULE.evaluate(
+        manifest=manifest,
+        profile_spec=profile_spec,
+        interface_report=interface_report,
+        model_evidence=model_evidence,
+        env={},
+    )
+    assert "public_skill_deny_list_control_missing" in report["static_errors"]
+    assert report["status"] == "BLOCKED_STATIC_CONFIGURATION"

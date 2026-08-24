@@ -733,6 +733,10 @@ jobs:
             --publish 127.0.0.1:18000:8000 \
             --volume "$RUNNER_TEMP/aiat-openhands-workspace:/workspace/project:rw" \
             --env SESSION_API_KEY="$key" \
+            --env HOME=/tmp/aiat-openhands-home \
+            --env OH_ENABLE_VSCODE=false \
+            --env OH_ENABLE_VNC=false \
+            --env OH_REGISTERED_MARKETPLACES='[]' \
             "$OPENHANDS_IMAGE" || run_exit_code=$?
           healthy=0
           if [ "$run_exit_code" -eq 0 ]; then
@@ -765,6 +769,14 @@ jobs:
                       "failure_class": None if healthy == "1" else "OPENHANDS_AGENT_SERVER_STARTUP_FAILURE" if startup_failed else "OPENHANDS_AGENT_SERVER_HEALTH_FAILURE",
                       "run_exit_code": int(run_exit_code),
                       "runtime_expected": "runsc",
+                      "server_controls": {
+                          "home_isolated": True,
+                          "vscode_enabled": False,
+                          "vnc_enabled": False,
+                          "registered_marketplaces": 0,
+                          "public_and_user_skills": "profile_deny_list_verified",
+                          "project_skills": "certification_workspace_must_be_skill_free",
+                      },
                       "payloads_retained": False,
                       "container_logs_retained": False,
                   },
@@ -986,6 +998,43 @@ jobs:
           mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/live" "$RUNNER_TEMP/aiat-openhands-workspace"
           cp -R "$GITHUB_WORKSPACE/mas/scripts/fixtures/openhands-coding-task/." \
             "$RUNNER_TEMP/aiat-openhands-workspace/"
+          workspace_policy_status=PASS
+          forbidden_sources=()
+          for relative_path in \
+            .openhands .agents .claude .cursor .cursorrules .clinerules \
+            AGENTS.md agents.md; do
+            if [ -e "$RUNNER_TEMP/aiat-openhands-workspace/$relative_path" ]; then
+              forbidden_sources+=("$relative_path")
+              workspace_policy_status=BLOCKED
+            fi
+          done
+          python3 - "$RUNNER_TEMP/aiat-openhands-evidence/live/workspace-skill-sources.json" \
+            "$workspace_policy_status" "${forbidden_sources[*]-}" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          output, status, sources = sys.argv[1:]
+          Path(output).write_text(
+              json.dumps(
+                  {
+                      "schema_version": "aiat.openhands-certification-workspace-policy.v1",
+                      "status": status,
+                      "forbidden_skill_or_plugin_sources": [item for item in sources.split() if item],
+                      "project_skill_loading": "upstream_default_true_but_fixture_sources_absent",
+                      "raw_workspace_payloads_retained": False,
+                  },
+                  sort_keys=True,
+                  indent=2,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+          if [ "$workspace_policy_status" != PASS ]; then
+            echo "workspace_skill_or_plugin_source_present" >&2
+            exit 1
+          fi
           git -C "$RUNNER_TEMP/aiat-openhands-workspace" init --quiet
           git -C "$RUNNER_TEMP/aiat-openhands-workspace" config user.email aiat-certification@localhost
           git -C "$RUNNER_TEMP/aiat-openhands-workspace" config user.name aiat-certification

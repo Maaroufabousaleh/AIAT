@@ -59,11 +59,18 @@ agent_server_profile:
     - name: file_editor
   enable_sub_agents: false
   enable_switch_llm_tool: false
-  # OpenHands v1.43.0 exposes discovered skills through a deny-list. The
-  # operator must verify the server's skill-loading policy disables public,
-  # marketplace, and project skill loading; no wildcard assumption is made.
-  public_skill_loading: disabled_by_operator_server_policy
-  plugins: disabled
+  # OpenHands v1.43.0 exposes discovered skills through a deny-list rather than
+  # an allow-list. The certification provisioner first reads the server's
+  # discovered public/user catalog, persists every discovered name in
+  # ``disabled_skills``, and verifies a second materialization resolves zero
+  # skills. Project skills are resolved lazily by the upstream runtime, so the
+  # disposable certification workspace is separately required to contain no
+  # project-skill or plugin sources. This is an evidence-backed certification
+  # boundary, not a claim that the upstream image was modified.
+  public_skill_loading: profile_deny_list_materialized_from_server_catalog
+  user_skill_loading: profile_deny_list_materialized_from_server_catalog
+  project_skill_loading: certification_workspace_must_be_skill_free
+  plugins: disabled_by_empty_server_home_and_request_surface
   browser: disabled
   desktop: disabled
   vscode: disabled

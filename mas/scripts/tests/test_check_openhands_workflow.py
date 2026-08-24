@@ -36,6 +36,14 @@ def test_current_workflow_is_manual_pinned_and_fail_closed() -> None:
     assert "docker logs" not in _workflow()
 
 
+def test_agent_server_capability_controls_are_explicit_and_scoped() -> None:
+    module = _module()
+    text = _workflow()
+    assert "openhands_server_capability_controls_missing" not in module.validate(text)["errors"]
+    weakened = text.replace("--env OH_ENABLE_VSCODE=false \\\n", "", 1)
+    assert "openhands_server_capability_controls_missing" in module.validate(weakened)["errors"]
+
+
 def test_all_workflow_run_blocks_have_valid_shell_syntax() -> None:
     document = yaml.safe_load(_workflow())
     assert isinstance(document, dict)
@@ -231,6 +239,14 @@ def test_live_task_requires_host_test_and_workspace_verification() -> None:
     assert "postrun_task_verification_missing" not in module.validate(text)["errors"]
     weakened = text.replace('            --host-workspace "$RUNNER_TEMP/aiat-openhands-workspace" \\\n', "", 1)
     assert "postrun_task_verification_missing" in module.validate(weakened)["errors"]
+
+
+def test_live_task_requires_a_skill_and_plugin_free_certification_workspace() -> None:
+    module = _module()
+    text = _workflow()
+    assert "certification_workspace_skill_boundary_missing" not in module.validate(text)["errors"]
+    weakened = text.replace("workspace-skill-sources.json", "workspace-policy.json", 1)
+    assert "certification_workspace_skill_boundary_missing" in module.validate(weakened)["errors"]
 
 
 def test_live_task_requires_a_disposable_git_baseline_for_real_diff() -> None:

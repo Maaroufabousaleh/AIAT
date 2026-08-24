@@ -54,8 +54,14 @@ runtime:
         payload_retention: scalar_only
     profile_controls:
       public_skills_disabled: true
+      public_skills_control: profile_deny_list_materialized_from_server_catalog
+      user_skills_disabled: true
+      project_skills_disabled_by_certification_workspace: true
       plugins_disabled: true
+      plugins_control: empty_server_home_and_no_plugin_request
       browser_disabled: true
+      vscode_disabled: true
+      desktop_disabled: true
       subagents_disabled: true
       direct_credentials_disabled: true
       model_switching_disabled: true

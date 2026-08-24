@@ -21,6 +21,7 @@ def test_run_scoped_objects_are_created_and_only_server_profile_uuid_is_retained
     profile_id = "5e8f2b8a-9d9c-4a7f-9c82-14d8ccf9dd31"
     calls: list[tuple[str, str]] = []
     mcp_present = False
+    profile_disabled_skills: list[str] = []
     mcp_key = MODULE.EXPECTED_MCP_KEY
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -56,6 +57,9 @@ def test_run_scoped_objects_are_created_and_only_server_profile_uuid_is_retained
                 json={"mcp_config": config},
             )
         if request.method == "POST" and request.url.path == "/api/agent-profiles/aiat-openhands-v1-43-0-coding":
+            nonlocal profile_disabled_skills
+            payload = json.loads(request.content.decode())
+            profile_disabled_skills = list(payload.get("disabled_skills") or [])
             return httpx.Response(201, json={"name": "aiat-openhands-v1-43-0-coding", "message": "saved"})
         if request.method == "GET" and request.url.path == "/api/agent-profiles/aiat-openhands-v1-43-0-coding":
             return httpx.Response(
@@ -69,10 +73,12 @@ def test_run_scoped_objects_are_created_and_only_server_profile_uuid_is_retained
                         "tools": [{"name": "TerminalTool"}, {"name": "FileEditorTool"}],
                         "enable_sub_agents": False,
                         "enable_switch_llm_tool": False,
+                        "disabled_skills": profile_disabled_skills,
                     },
                 },
             )
         if request.method == "POST" and request.url.path == "/api/agent-profiles/aiat-openhands-v1-43-0-coding/materialize":
+            resolved_skills = [] if profile_disabled_skills else ["synthetic-public-skill"]
             return httpx.Response(
                 200,
                 json={
@@ -81,6 +87,7 @@ def test_run_scoped_objects_are_created_and_only_server_profile_uuid_is_retained
                     "llm_profile_resolved": True,
                     "resolved_mcp_config_keys": [mcp_key],
                     "dangling_mcp_server_refs": [],
+                    "resolved_skills": resolved_skills,
                 },
             )
         raise AssertionError(request)
@@ -102,6 +109,8 @@ def test_run_scoped_objects_are_created_and_only_server_profile_uuid_is_retained
     assert "tool-secret-that-is-not-retained" not in json.dumps(report)
     assert "gateway-secret-that-is-not-retained" not in json.dumps(report)
     assert report["mcp"]["preclean"] == "PASS"
+    assert report["agent_profile"]["disabled_skills_count"] == 1
+    assert report["agent_profile"]["resolved_skills_count"] == 0
     assert ("DELETE", f"/api/settings/mcp/{mcp_key}") in calls
     assert ("POST", f"/api/settings/mcp/{mcp_key}") in calls
     assert ("POST", "/api/agent-profiles/aiat-openhands-v1-43-0-coding") in calls
@@ -150,3 +159,20 @@ def test_mcp_readback_rejects_unapproved_entries() -> None:
             },
             MODULE.EXPECTED_MCP_KEY,
         )
+
+
+def test_agent_profile_payload_uses_deny_list_for_server_discovered_skills() -> None:
+    payload = MODULE._agent_profile_payload(
+        mcp_key=MODULE.EXPECTED_MCP_KEY,
+        disabled_skills=["public-skill", "project-skill"],
+    )
+    assert payload["disabled_skills"] == ["public-skill", "project-skill"]
+    assert payload["mcp_server_refs"] == [MODULE.EXPECTED_MCP_KEY]
+    assert {item["name"] for item in payload["tools"]} == MODULE.EXPECTED_AGENT_TOOLS
+
+
+def test_skill_readback_rejects_malformed_or_unresolved_catalog() -> None:
+    with pytest.raises(MODULE.ProvisioningError, match="disabled_skills_readback_invalid"):
+        MODULE._validate_skill_readback({"disabled_skills": [None]}, [])
+    with pytest.raises(MODULE.ProvisioningError, match="disabled_skills_readback_mismatch"):
+        MODULE._validate_skill_readback({"disabled_skills": []}, ["public-skill"])
