@@ -29,6 +29,8 @@ EXPECTED_GATEWAY_URL = "http://litellm:4000"
 EXPECTED_MCP_KEY = "aiat-openhands-v1-43-0-coding"
 LLM_PROFILE_NAME = "aiat-openhands-omniroute-coding"
 AGENT_PROFILE_NAME = "aiat-openhands-v1-43-0-coding"
+GATEWAY_PROVIDER = "aiat-gateway"
+GATEWAY_DISPLAY_NAME = "AIAT governed model gateway (OpenHands certification)"
 MCP_KEY_PREFIX = "aiat-openhands-"
 BRIDGE_URL = "http://tool-service:8002/openhands/mcp"
 WORKER_ID = "coding-worker-openhands-candidate"
@@ -85,6 +87,32 @@ def _mcp_config(value: Any) -> dict[str, Any]:
     if found:
         return merged
     raise ProvisioningError("agent_settings_readback_has_no_mcp_configuration")
+
+
+def _provider_connection_object(value: Any) -> dict[str, Any]:
+    """Extract one redacted Agent Server provider-connection readback."""
+
+    if not isinstance(value, dict):
+        raise ProvisioningError("provider_connection_readback_not_an_object")
+    connection = value.get("connection", value)
+    if not isinstance(connection, dict):
+        raise ProvisioningError("provider_connection_readback_not_an_object")
+    return connection
+
+
+def _validate_gateway_connection(connection: dict[str, Any], *, gateway_url: str) -> None:
+    """Prove the profile's connection points at this run's internal gateway."""
+
+    if connection.get("provider") != GATEWAY_PROVIDER:
+        raise ProvisioningError("provider_connection_provider_readback_mismatch")
+    if connection.get("display_name") != GATEWAY_DISPLAY_NAME:
+        raise ProvisioningError("provider_connection_display_name_readback_mismatch")
+    if connection.get("base_url") != gateway_url:
+        raise ProvisioningError("provider_connection_base_url_readback_mismatch")
+    if connection.get("api_key_set") is not True:
+        raise ProvisioningError("provider_connection_secret_readback_missing")
+    if not connection.get("id"):
+        raise ProvisioningError("provider_connection_id_missing")
 
 
 def _write_github_output(path: Path | None, values: dict[str, str]) -> None:
@@ -205,17 +233,31 @@ def provision(
             client.post(
                 "/api/llm/provider-connections",
                 json={
-                    "display_name": "AIAT governed model gateway (OpenHands certification)",
-                    "provider": "aiat-gateway",
+                    "display_name": GATEWAY_DISPLAY_NAME,
+                    "provider": GATEWAY_PROVIDER,
                     "api_key": gateway_api_key,
                     "base_url": gateway_url,
                 },
             ),
             expected={201},
         )
-        connection_id = str(connection.get("id") or "") if isinstance(connection, dict) else ""
-        if not connection_id:
-            raise ProvisioningError("provider_connection_id_missing")
+        connection = _provider_connection_object(connection)
+        _validate_gateway_connection(connection, gateway_url=gateway_url)
+        connection_id = str(connection["id"])
+        connection_readback = _json_body(client.get("/api/llm/provider-connections"))
+        if not isinstance(connection_readback, list):
+            raise ProvisioningError("provider_connection_readback_not_a_list")
+        selected_connection = next(
+            (
+                item
+                for item in connection_readback
+                if isinstance(item, dict) and str(item.get("id")) == connection_id
+            ),
+            None,
+        )
+        if selected_connection is None:
+            raise ProvisioningError("provider_connection_missing_after_create_readback")
+        _validate_gateway_connection(selected_connection, gateway_url=gateway_url)
 
         llm_response = client.post(
             f"/api/profiles/{LLM_PROFILE_NAME}",

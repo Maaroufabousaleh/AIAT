@@ -21,16 +21,38 @@ def test_run_scoped_objects_are_created_and_only_server_profile_uuid_is_retained
     profile_id = "5e8f2b8a-9d9c-4a7f-9c82-14d8ccf9dd31"
     calls: list[tuple[str, str]] = []
     mcp_present = False
+    provider_connection_present = False
     profile_disabled_skills: list[str] = []
     mcp_key = MODULE.EXPECTED_MCP_KEY
 
     def handler(request: httpx.Request) -> httpx.Response:
-        nonlocal mcp_present
+        nonlocal mcp_present, provider_connection_present
         calls.append((request.method, request.url.path))
         if request.method == "GET" and request.url.path == "/api/llm/provider-connections":
-            return httpx.Response(200, json=[])
+            connections = []
+            if provider_connection_present:
+                connections.append(
+                    {
+                        "id": "gateway-connection",
+                        "provider": MODULE.GATEWAY_PROVIDER,
+                        "display_name": MODULE.GATEWAY_DISPLAY_NAME,
+                        "base_url": "http://litellm:4000",
+                        "api_key_set": True,
+                    }
+                )
+            return httpx.Response(200, json=connections)
         if request.method == "POST" and request.url.path == "/api/llm/provider-connections":
-            return httpx.Response(201, json={"id": "gateway-connection", "api_key_set": True})
+            provider_connection_present = True
+            return httpx.Response(
+                201,
+                json={
+                    "id": "gateway-connection",
+                    "provider": MODULE.GATEWAY_PROVIDER,
+                    "display_name": MODULE.GATEWAY_DISPLAY_NAME,
+                    "base_url": "http://litellm:4000",
+                    "api_key_set": True,
+                },
+            )
         if request.method == "POST" and request.url.path == "/api/profiles/aiat-openhands-omniroute-coding":
             return httpx.Response(201, json={"name": "aiat-openhands-omniroute-coding", "message": "saved"})
         if request.method == "GET" and request.url.path == "/api/profiles/aiat-openhands-omniroute-coding":
@@ -116,6 +138,58 @@ def test_run_scoped_objects_are_created_and_only_server_profile_uuid_is_retained
     assert ("DELETE", f"/api/settings/mcp/{mcp_key}") in calls
     assert ("POST", f"/api/settings/mcp/{mcp_key}") in calls
     assert ("POST", "/api/agent-profiles/aiat-openhands-v1-43-0-coding") in calls
+    client.close()
+
+
+def test_provisioning_rejects_gateway_connection_readback_mismatch() -> None:
+    provider_connection_present = False
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal provider_connection_present
+        if request.method == "GET" and request.url.path == "/api/llm/provider-connections":
+            if not provider_connection_present:
+                return httpx.Response(200, json=[])
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "id": "gateway-connection",
+                        "provider": MODULE.GATEWAY_PROVIDER,
+                        "display_name": MODULE.GATEWAY_DISPLAY_NAME,
+                        "base_url": "http://operator-host.invalid:4000",
+                        "api_key_set": True,
+                    }
+                ],
+            )
+        if request.method == "POST" and request.url.path == "/api/llm/provider-connections":
+            provider_connection_present = True
+            return httpx.Response(
+                201,
+                json={
+                    "id": "gateway-connection",
+                    "provider": MODULE.GATEWAY_PROVIDER,
+                    "display_name": MODULE.GATEWAY_DISPLAY_NAME,
+                    "base_url": "http://litellm:4000",
+                    "api_key_set": True,
+                },
+            )
+        raise AssertionError(request)
+
+    client = httpx.Client(
+        base_url="http://openhands.test",
+        transport=httpx.MockTransport(handler),
+    )
+    with pytest.raises(MODULE.ProvisioningError, match="base_url_readback_mismatch"):
+        MODULE.provision(
+            base_url="http://openhands.test",
+            session_api_key="session",
+            aiat_tool_secret="tool-secret",
+            model_id="omniroute-coding",
+            gateway_url="http://litellm:4000",
+            gateway_api_key="gateway-secret",
+            mcp_key=MODULE.EXPECTED_MCP_KEY,
+            client=client,
+        )
     client.close()
 
 
