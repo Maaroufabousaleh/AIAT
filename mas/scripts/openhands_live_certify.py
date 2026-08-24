@@ -840,12 +840,13 @@ def _extract_mcp_config(value: Any) -> dict[str, Any] | None:
     agent_settings = value.get("agent_settings")
     if isinstance(agent_settings, dict):
         envelopes.append(agent_settings)
+    merged: dict[str, Any] = {}
     for envelope in envelopes:
         for field in ("mcp_config", "mcp_servers"):
             config = envelope.get(field)
             if isinstance(config, dict):
-                return config
-    return None
+                merged.update(config)
+    return merged or None
 
 
 def main(argv: list[str] | None = None) -> int:

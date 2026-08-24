@@ -244,6 +244,17 @@ async def test_preconfigured_mcp_cleanup_blocks_nested_residual_entry() -> None:
     assert report == {"status": "BLOCKED_CLEANUP", "delete": "deleted", "verified_absent": False}
 
 
+def test_mcp_cleanup_readback_does_not_let_empty_compatibility_field_hide_nested_entry() -> None:
+    module = _module()
+    config = module._extract_mcp_config(
+        {
+            "mcp_config": {},
+            "agent_settings": {"mcp_config": {"aiat-openhands-test-run": {}}},
+        }
+    )
+    assert config == {"aiat-openhands-test-run": {}}
+
+
 @pytest.mark.asyncio
 async def test_live_lifecycle_wave_requires_remote_control_states() -> None:
     module = _module()

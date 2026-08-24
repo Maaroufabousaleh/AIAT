@@ -163,6 +163,16 @@ def test_mcp_readback_rejects_unapproved_entries() -> None:
         )
 
 
+def test_mcp_readback_merges_direct_and_v143_nested_envelopes() -> None:
+    key = MODULE.EXPECTED_MCP_KEY
+    assert MODULE._mcp_config(
+        {
+            "mcp_config": {},
+            "agent_settings": {"mcp_config": {key: {"url": MODULE.BRIDGE_URL}}},
+        }
+    ) == {key: {"url": MODULE.BRIDGE_URL}}
+
+
 def test_agent_profile_payload_uses_deny_list_for_server_discovered_skills() -> None:
     payload = MODULE._agent_profile_payload(
         mcp_key=MODULE.EXPECTED_MCP_KEY,

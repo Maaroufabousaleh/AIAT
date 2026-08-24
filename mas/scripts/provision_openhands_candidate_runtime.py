@@ -65,24 +65,25 @@ def _profile_object(value: Any) -> dict[str, Any]:
 def _mcp_config(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ProvisioningError("agent_settings_readback_not_an_object")
-    config = value.get("mcp_config")
-    if isinstance(config, dict):
-        return config
-    config = value.get("mcp_servers")
-    if isinstance(config, dict):
-        return config
-    # Agent Server v1.43.0 wraps the effective settings in
-    # ``agent_settings``.  Read only that documented envelope; an absent or
-    # differently shaped configuration remains a fail-closed provisioning
-    # error rather than an implicit empty allowlist.
+    # Agent Server releases may expose a direct envelope alongside the v1.43
+    # ``agent_settings`` envelope.  Merge every supported mapping so an empty
+    # compatibility field cannot hide a nested residual entry.  Any unexpected
+    # extra entry is then rejected by ``_validate_mcp_entry`` rather than being
+    # silently ignored.
+    envelopes: list[dict[str, Any]] = [value]
     agent_settings = value.get("agent_settings")
     if isinstance(agent_settings, dict):
-        config = agent_settings.get("mcp_config")
-        if isinstance(config, dict):
-            return config
-        config = agent_settings.get("mcp_servers")
-        if isinstance(config, dict):
-            return config
+        envelopes.append(agent_settings)
+    merged: dict[str, Any] = {}
+    found = False
+    for envelope in envelopes:
+        for field in ("mcp_config", "mcp_servers"):
+            config = envelope.get(field)
+            if isinstance(config, dict):
+                merged.update(config)
+                found = True
+    if found:
+        return merged
     raise ProvisioningError("agent_settings_readback_has_no_mcp_configuration")
 
 
