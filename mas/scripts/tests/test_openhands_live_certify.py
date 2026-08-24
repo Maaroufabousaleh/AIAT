@@ -320,7 +320,7 @@ async def test_live_lifecycle_wave_requires_remote_control_states() -> None:
                 event = SimpleNamespace(result=SimpleNamespace(success=True), error=None)
             elif "interrupt" in prompt:
                 kind = "interrupt"
-                self._statuses[kind] = iter(())
+                self._statuses[kind] = iter(("running",))
                 event = SimpleNamespace(result=None, error=SimpleNamespace(code="CANCELLED"))
             else:
                 kind = "timeout"
@@ -363,5 +363,6 @@ async def test_live_lifecycle_wave_requires_remote_control_states() -> None:
     assert statuses == {"pause": "PASS", "interrupt": "PASS", "resume": "PASS", "timeout": "PASS"}
     assert details["probes"]["pause_resume"]["status_before_pause"] == "running"
     assert details["probes"]["pause_resume"]["status_after_pause"] == "paused"
+    assert details["probes"]["interrupt"]["status_before_interrupt"] == "running"
     assert details["secret_scan"]["status"] == "PASS"
     assert blockers == []

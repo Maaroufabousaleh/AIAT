@@ -411,6 +411,7 @@ async def _exercise_live_lifecycle(
     try:
         await adapter.start(interrupt_request)
         interrupt_conversation = await _wait_for_conversation(adapter, interrupt_request.run_id)
+        interrupt_running_status = await _wait_for_running(adapter, interrupt_conversation)
         await adapter.cancel(
             WorkerCancellation(run_id=interrupt_request.run_id, reason="certification interrupt", requested_by="certification", force=True)
         )
@@ -420,6 +421,7 @@ async def _exercise_live_lifecycle(
         statuses["interrupt"] = "PASS" if cancelled else "FAILED_INTERRUPT"
         details["probes"]["interrupt"] = {
             "conversation_id_present": bool(interrupt_conversation),
+            "status_before_interrupt": interrupt_running_status,
             "event_count": len(events),
             "cancelled_event": cancelled,
         }
