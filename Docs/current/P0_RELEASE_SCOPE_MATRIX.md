@@ -1,6 +1,6 @@
 # P0 Release-Scope and External-Prerequisite Matrix
 
-**Updated:** 2026-08-23
+**Updated:** 2026-08-24
 **Decision owner:** personal operator
 **Authority:** [AIAT target programme](../../AIAT_TARGET_PROGRAMME.md), [roadmap](../../ROADMAP.md), [P0 status](P0_RELEASE_INTEGRITY_STATUS.md), and [P0 plan](plans/P0_RELEASE_INTEGRITY_PLAN.md)
 
@@ -101,9 +101,11 @@ OpenHands remains
 inactive until a deliberate run, complete evidence, and independent steward
 activation approval.
 
-The repository-local refresh at implementation baseline
-`1c4a426105fcb8a64c077d70f5bacffc45d2ec4a` is reflected in the maintained
-candidate status documents. The historical
+The earlier repository-local refresh at implementation baseline
+`1c4a426105fcb8a64c077d70f5bacffc45d2ec4a` remains historical. Subsequent
+OpenHands routing, provider-baseline, cleanup-readback, and workflow-helper
+hardening has been reviewed through `171aed3c600acaf6a9bb8e0908264b56da572b53`
+and is reflected in the maintained candidate status documents. The historical
 [`overnight-reconciliation.json`](../../mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/overnight-reconciliation.json)
 remains immutable historical evidence:
 the static ledger is 63/63, workflow validation and the offline harness pass,
