@@ -76,7 +76,6 @@ logger = logging.getLogger(__name__)
 #: Default ordered list of free models for general tasks.
 #: Listed roughly from highest to lowest quality.
 FREE_MODELS_GENERAL: list[str] = [
-    "groq/llama-3.3-70b-versatile",
     "groq/openai/gpt-oss-120b",
     "gemma-4-31b-it",
     "openrouter/meta-llama/llama-3.3-70b-instruct:free",
@@ -88,7 +87,6 @@ FREE_MODELS_GENERAL: list[str] = [
 
 #: Free models with confirmed tool-calling support.
 FREE_MODELS_TOOLS: list[str] = [
-    "groq/llama-3.3-70b-versatile",
     "groq/openai/gpt-oss-120b",
     "groq/openai/gpt-oss-20b",
     "openrouter/qwen/qwen3-coder:free",
@@ -111,7 +109,6 @@ FREE_MODELS_VISION: list[str] = [
 FREE_MODELS_CODE: list[str] = [
     "openrouter/qwen/qwen3-coder:free",
     "groq/openai/gpt-oss-120b",
-    "groq/llama-3.3-70b-versatile",
     "groq/qwen/qwen3-32b",
     "gemma-4-31b-it",
     "openrouter/nvidia/nemotron-3-nano-30b-a3b:free",

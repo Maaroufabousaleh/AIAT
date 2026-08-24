@@ -15,7 +15,6 @@ Free-tier rate limits (as of early 2026):
 - Cached tokens do not count towards rate limits.
 
 Production models available on free tier:
-- llama-3.3-70b-versatile     — 280 tps, 131 k ctx, general-purpose
 - llama-3.1-8b-instant        — 560 tps, 131 k ctx, ultra-fast lightweight
 - openai/gpt-oss-120b         — 500 tps, 131 k ctx, strong reasoning
 - openai/gpt-oss-20b          — 1000 tps, 131 k ctx, fast reasoning
@@ -103,54 +102,6 @@ MODEL_REGISTRY.register(
             "free-tier",
         ],
         extra={"api_model_name": "llama-3.1-8b-instant"},
-    )
-)
-
-# ---- Meta Llama 3.3 70B (general-purpose workhorse) ---------------------
-
-MODEL_REGISTRY.register(
-    ModelEntry(
-        model_id="groq/llama-3.3-70b-versatile",
-        provider="groq",
-        api_style=ApiStyle.CHAT_COMPLETIONS,
-        endpoint=_CC,
-        description=(
-            "Meta Llama 3.3 70B Versatile on Groq LPU (~280 tps). "
-            "Strong general-purpose model. Free tier: 30 RPM, 12k TPM. "
-            "131 k context (32 k max output). Great for agent work."
-        ),
-        max_context_tokens=131_072,
-        supports_tools=True,
-        supports_streaming=True,
-        cost_per_1m_input=0.59,
-        cost_per_1m_output=0.79,
-        default_temperature=0.7,
-        capabilities=ModelCapabilities(
-            supports_images=False,
-            supports_pdf=False,
-            supports_video=False,
-            supports_reasoning=False,
-            image_how="not supported — text-only model",
-            pdf_how="extract text and send as message content",
-        ),
-        best_for=[
-            "general-purpose",
-            "code-generation",
-            "analysis",
-            "tool-calling",
-            "agent-advisory",
-            "structured-output",
-        ],
-        limits=[
-            "free-tier-rate-limited (30 RPM, 12k TPM)",
-            "32k max output tokens",
-        ],
-        compliance=[
-            "groq-tos",
-            "api-key-required",
-            "free-tier",
-        ],
-        extra={"api_model_name": "llama-3.3-70b-versatile"},
     )
 )
 

@@ -47,7 +47,9 @@ async def test_default_profile_bootstrap_is_idempotent_and_evidence_referenced()
     assert first["schema_version"] == "aiat.model-profile-bootstrap.v1"
     assert first["status"] == "pass"
     expected_count = len(build_registry_model_profile_specs(MODEL_REGISTRY))
-    assert expected_count == 93
+    # The active catalogue excludes Groq's retired llama-3.3-70b-versatile;
+    # the maintained replacement remains registered as groq/openai/gpt-oss-120b.
+    assert expected_count == 92
     assert first["created_profiles"] == expected_count
     assert first["created_versions"] == expected_count
     assert second["status"] == "pass"

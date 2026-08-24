@@ -281,6 +281,15 @@ class TestGlobalRegistry:
         assert "minimax-2.7" not in MODEL_REGISTRY
         assert MODEL_REGISTRY.get_provider("minimax") is None
 
+    def test_retired_groq_model_is_not_selectable(self):
+        """Retired Groq models must not remain in active routing catalogs."""
+        retired = "groq/llama-3.3-70b-versatile"
+        assert retired not in MODEL_REGISTRY
+        assert retired not in model_selector.FREE_MODELS_GENERAL
+        assert retired not in model_selector.FREE_MODELS_TOOLS
+        assert retired not in model_selector.FREE_MODELS_CODE
+        assert "groq/openai/gpt-oss-120b" in MODEL_REGISTRY
+
     def test_gemini25_is_chat_completions(self):
         entry = MODEL_REGISTRY.get("gemini-2.5-flash")
         assert entry is not None
