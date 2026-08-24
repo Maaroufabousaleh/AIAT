@@ -1020,9 +1020,16 @@ jobs:
           print(report.get("topology_status", "BLOCKED"))
           PY
           )
-          test "$topology_status" = PASS
-          echo "ready=true" >> "$GITHUB_OUTPUT"
-          echo "status=PASS" >> "$GITHUB_OUTPUT"
+          if [ "$topology_status" = PASS ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "status=PASS" >> "$GITHUB_OUTPUT"
+          else
+            # This step intentionally stays on the evidence/cleanup path, but
+            # a failed alias/IP readback must never unlock profile materializa-
+            # tion or the live adapter wave.
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "status=BLOCKED_NETWORK_TOPOLOGY" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Materialize run-scoped OpenHands profile and MCP entry
         id: runtime

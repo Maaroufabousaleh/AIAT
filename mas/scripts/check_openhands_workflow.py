@@ -272,14 +272,52 @@ def _provider_scope_helper_issues() -> list[str]:
 def _network_topology_contract_issues(text: str) -> list[str]:
     """Require authoritative per-container alias readback for topology evidence."""
 
-    required = (
+    try:
+        document = yaml.safe_load(text)
+    except yaml.YAMLError:
+        return ["network_topology_alias_readback_missing"]
+    topology_run = ""
+    jobs = document.get("jobs") if isinstance(document, dict) else None
+    if isinstance(jobs, dict):
+        for job in jobs.values():
+            steps = job.get("steps") if isinstance(job, dict) else None
+            if not isinstance(steps, list):
+                continue
+            for step in steps:
+                if (
+                    isinstance(step, dict)
+                    and step.get("name") == "Record disposable gateway network topology"
+                ):
+                    topology_run = step.get("run") if isinstance(step.get("run"), str) else ""
+                    break
+            if topology_run:
+                break
+
+    readback_required = (
         ".NetworkSettings.Networks",
         '"container_alias_readback": alias_readback',
         '"alias_inspect_status": "PASS" if alias_inspect_ok else "BLOCKED"',
         '"network_aliases_expected": expected_aliases',
         'item["aliases"] = alias_readback.get(name, {}).get("aliases", [])',
     )
-    return ["network_topology_alias_readback_missing"] if any(item not in text for item in required) else []
+    if any(item not in topology_run for item in readback_required):
+        return ["network_topology_alias_readback_missing"]
+
+    fail_closed_required = (
+        'echo "ready=false" >> "$GITHUB_OUTPUT"',
+        'echo "status=BLOCKED_NETWORK_TOPOLOGY" >> "$GITHUB_OUTPUT"',
+        'if [ "$topology_status" = PASS ]; then',
+    )
+    if any(item not in topology_run for item in fail_closed_required):
+        return ["network_topology_assertion_missing"]
+    if re.search(
+        r'(?ms)(?:test\s+"\$topology_status"\s*=\s*PASS|\bfi)\s*\n'
+        r'\s*echo "ready=true" >> "\$GITHUB_OUTPUT"\s*\n'
+        r'\s*echo "status=PASS" >> "\$GITHUB_OUTPUT"',
+        topology_run,
+    ):
+        return ["network_topology_assertion_missing"]
+    return []
 
 
 def _runsc_network_name_resolution_issues(text: str) -> list[str]:
@@ -479,7 +517,10 @@ def validate(text: str) -> dict[str, Any]:
         or '"topology_status": "PASS" if complete else "BLOCKED"' not in text
         or '"aliases": sorted' not in text
         or "expected_aliases" not in text
-        or 'test "$topology_status" = PASS' not in text
+        or (
+            'test "$topology_status" = PASS' not in text
+            and 'if [ "$topology_status" = PASS ]; then' not in text
+        )
     ):
         errors.append("network_topology_assertion_missing")
     if '"zero_residue": cleanup_ok == "1"' not in text:

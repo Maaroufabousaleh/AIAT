@@ -188,6 +188,51 @@ def test_network_topology_reads_aliases_from_each_container() -> None:
     assert "network_topology_alias_readback_missing" in module.validate(weakened)["errors"]
 
 
+def test_network_topology_failure_cannot_unlock_live_stages() -> None:
+    module = _module()
+    text = _workflow()
+    report = module.validate(text)
+    assert "network_topology_assertion_missing" not in report["errors"]
+
+    weakened = text.replace(
+        '            echo "status=BLOCKED_NETWORK_TOPOLOGY" >> "$GITHUB_OUTPUT"\n',
+        "",
+        1,
+    )
+    report = module.validate(weakened)
+    assert "network_topology_assertion_missing" in report["errors"]
+
+    broken = text.replace(
+        '''          if [ "$topology_status" = PASS ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "status=PASS" >> "$GITHUB_OUTPUT"
+          else
+            # This step intentionally stays on the evidence/cleanup path, but
+            # a failed alias/IP readback must never unlock profile materializa-
+            # tion or the live adapter wave.
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "status=BLOCKED_NETWORK_TOPOLOGY" >> "$GITHUB_OUTPUT"
+          fi
+''',
+        '''          test "$topology_status" = PASS
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+          echo "status=PASS" >> "$GITHUB_OUTPUT"
+''',
+        1,
+    )
+    report = module.validate(broken)
+    assert "network_topology_assertion_missing" in report["errors"]
+
+    weakened = text.replace(
+        '            echo "ready=false" >> "$GITHUB_OUTPUT"\n'
+        '            echo "status=BLOCKED_NETWORK_TOPOLOGY" >> "$GITHUB_OUTPUT"\n',
+        '            echo "status=BLOCKED_NETWORK_TOPOLOGY" >> "$GITHUB_OUTPUT"\n',
+        1,
+    )
+    report = module.validate(weakened)
+    assert "network_topology_assertion_missing" in report["errors"]
+
+
 def test_runsc_uses_explicit_run_scoped_name_resolution() -> None:
     module = _module()
     text = _workflow()
@@ -536,7 +581,7 @@ def test_gateway_network_topology_must_be_explicitly_asserted() -> None:
     module = _module()
     text = _workflow()
     assert "network_topology_assertion_missing" not in module.validate(text)["errors"]
-    weakened = text.replace('test "$topology_status" = PASS', 'echo "$topology_status"')
+    weakened = text.replace('if [ "$topology_status" = PASS ]; then', 'echo "$topology_status"', 1)
     assert "network_topology_assertion_missing" in module.validate(weakened)["errors"]
 
     weakened = text.replace('"aliases": sorted(str(item) for item in (value.get("Aliases") or []) if item),', '"aliases": [],', 1)
