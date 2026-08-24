@@ -1,7 +1,7 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-24, current certification-path
-hardening through reviewed tip `4ecbdcf530e9d63da7fc812e152f7edbce8c736f`
+hardening through reviewed tip `5e843a70c36156cf0bc2991d5fe007d46d2ac0bf`
 (including
 `595965d` gateway failure-origin diagnostics, `57f76b6` fail-closed web DNS
 validation, `e7a2ff5` stopped-container cleanup, and `71149db` certification
@@ -18,7 +18,7 @@ workflow is `workflow_dispatch` only and must be dispatched once against an
 explicit frozen commit after the preflight passes.
 
 The reviewed implementation tip immediately before this documentation
-refresh was `4ecbdcf530e9d63da7fc812e152f7edbce8c736f`; it passed the
+refresh was `5e843a70c36156cf0bc2991d5fe007d46d2ac0bf`; it passed the
 read-only dispatch preflight. Because this document is itself committed, the
 dispatch candidate must always be frozen from the actual checkout with
 `git rev-parse HEAD`, never copied from an embedded tip string. No
@@ -79,6 +79,10 @@ rejects host-bound gateway targets, validates the sanitized evidence tree, and
 records run-scoped profile disposal through Agent Server container absence.
 The static validator checks the exact route-probe and provider-baseline helper
 CLI contracts in the candidate checkout before dispatch.
+Cleanup readback now accepts the pinned v1.43 `agent_settings` envelope and
+merges direct and nested MCP maps before proving absence; an empty compatibility
+field cannot hide a residual run-scoped grant. Focused tests and the workflow
+validator cover both empty and residual nested configurations.
 Cleanup additionally removes generated AIAT/tool/gateway secret entries from
 the runner's `GITHUB_ENV` file and records that scalar absence assertion. The
 normal OpenHands transport factory now refuses inline approval mappings and
