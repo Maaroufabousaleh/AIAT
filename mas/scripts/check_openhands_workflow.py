@@ -262,6 +262,8 @@ def _provider_scope_helper_issues() -> list[str]:
         '"/api/settings"',
         '"omniroute_noauth_provider_scope_readback_mismatch"',
         '"auto_router_scope": auto_router_scope',
+        '"baseline_gate_independent": True',
+        '"auto_router_provisioning_status": "PASS"',
         '"omniroute_provider_state_not_empty"',
     )
     return ["provider_scope_helper_contract_missing"] if any(item not in helper for item in required) else []

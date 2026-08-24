@@ -283,6 +283,15 @@ def test_auto_router_scope_helper_is_required(tmp_path: Path, monkeypatch) -> No
     report = module.validate(text)
     assert "provider_scope_helper_contract_missing" in report["errors"]
 
+    independent_helper = helper.read_text(encoding="utf-8").replace(
+        '            "baseline_gate_independent": True,\n',
+        "",
+        1,
+    )
+    helper_path.write_text(independent_helper, encoding="utf-8")
+    report = module.validate(text)
+    assert "provider_scope_helper_contract_missing" in report["errors"]
+
 
 def test_gateway_route_probe_cli_contract_is_checked(tmp_path: Path, monkeypatch) -> None:
     module = _module()
