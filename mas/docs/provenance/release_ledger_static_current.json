@@ -1,5 +1,5 @@
 {
-  "checked_at": "2026-08-23T08:33:40.009141+00:00",
+  "checked_at": "2026-08-24T01:52:13.543923+00:00",
   "checks": [
     {
       "base_id": "provenance",
@@ -40,11 +40,11 @@
         "errors": [],
         "git": {
           "branch": "agent/fix-review-p1",
-          "changed_path_count": 13,
-          "revision": "61f7d49b905a109a154f961e147f783016792218",
+          "changed_path_count": 6,
+          "revision": "92964a090f5608d45846f3b865e9000fdcc8ccc5",
           "working_tree_clean": false
         },
-        "manifest_digest": "3491d147163584cdc544365f1cd726eb12ababcf288b1d812b241cf2b62be7c4",
+        "manifest_digest": "e50eb2e4b225fae852a29f94c4a0f903d852cb4101f0f435ec3c7557f2623ced",
         "status": "pass",
         "tracked_input_count": 15
       }
@@ -1402,9 +1402,9 @@
   },
   "git": {
     "branch": "agent/fix-review-p1",
-    "changed_path_count": 13,
+    "changed_path_count": 6,
     "clean": false,
-    "revision": "61f7d49b905a109a154f961e147f783016792218"
+    "revision": "92964a090f5608d45846f3b865e9000fdcc8ccc5"
   },
   "pending_evidence_count": 2,
   "policy": {
