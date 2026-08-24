@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-24
-**Base revision:** `9b5aa6f` (OpenHands runsc network resolution uses explicit run-scoped peer IP host mappings while retaining stable service names; the workflow validator requires the mapping and probes name resolution before HTTP; scanner/SBOM evidence preserves JSON Lines and removes incomplete SBOM artifacts; image SBOM generation uses Syft's exact registry-digest source to avoid Docker-daemon tar exhaustion; live readiness accepts only the pinned `build_git_sha` field or an equivalent exact-commit alias; disposable OmniRoute connection identifiers are redacted from retained evidence; dispatch preflight validates every workflow script and helper contract from the requested candidate tree; exact run-tagged tool-service image cleanup is statically guarded; diagnostic baseline discovery failures remain scalar baseline evidence while management-auth failures fail closed; Agent Server v1.43 nested MCP settings envelopes are merged for provisioning and cleanup readback, including production-adapter preconfigured readback; cleanup readback now merges direct and nested MCP maps before proving absence; incomplete disposable network-topology evidence emits `ready=false`/`BLOCKED_NETWORK_TOPOLOGY`; task-test subprocesses scrub credential-like environment variables and the workflow validator requires that contract; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`). The reviewed safety fix `e472ee1` suppresses any dispatch command when the requested candidate fails preflight, preventing implicit SHA substitution.
+**Base revision:** `893fa78` (the reviewed OpenHands certification tip; it retains the runsc network, gateway/provenance, nested MCP cleanup, secret-scrubbing, exact-candidate preflight, and stale-helper contract gates, with scalar evidence on every failure path). Commits `a75c72b` and `4889dd8` make candidate helper drift fail closed before image pulls while preserving cleanup/evidence evaluation; `893fa78` refreshes the maintained tip reference. The reviewed safety fix `e472ee1` suppresses any dispatch command when the requested candidate fails preflight, preventing implicit SHA substitution.
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -21,7 +21,8 @@ pins, run-scoped gateway/profile/MCP design, one-shot certification
 authorization (controller-attested, single-use, 900-second TTL), provider
 preflight, narrow gateway/provider failure classes, fail-closed 20-gate
 evaluator, coding-task fixture, and offline lifecycle/security harness are
-repository-local evidence only. The deliberate run `32684939718` confirmed
+repository-local evidence only. The deliberate runs `32684939718` and
+`32702677310` confirmed
 the operator-owned `GROQ_API_KEY` configuration and reached the gateway, but
 failed before live model execution on candidate workflow/helper drift. A
 future manual run still requires an exact frozen corrected candidate SHA, live
@@ -38,7 +39,7 @@ The previously prepared `1fcaf6cb62c6583efdf0ea1396e3d52329453fc3` candidate is
 an ancestor of the reviewed branch and is retained as immutable historical
 workflow-implementation evidence in
 [`github-run-32684939718-failure.json`](provenance/openhands-candidate/2026-08-22-v1.43.0/github-run-32684939718-failure.json).
-The current reviewed implementation tip `9b5aa6f` remains inactive and requires one
+The current reviewed implementation tip `893fa78` remains inactive and requires one
 deliberate, operator-authorized provider-backed run after the registry-based
 image-SBOM and build-metadata fixes. The workflow validator checks both route-probe and
 provider-baseline CLI contracts, the Agent Server cleanup path proves
@@ -56,7 +57,7 @@ rejected because its tree predates the helper contracts required by the
 dispatch workflow. Freeze the actual checkout SHA for any future run; no
 workflow was dispatched by this evidence refresh.
 
-The latest reviewed implementation tip is `9b5aa6f` (descendant of
+The latest reviewed implementation tip is `893fa78` (descendant of
 `171aed3c600acaf6a9bb8e0908264b56da572b53`).
 Commits `9c30214` and `cc3a5d5` harden OpenHands v1.43 cleanup readback for
 the pinned Agent Server `agent_settings` envelope; `5e843a7` additionally

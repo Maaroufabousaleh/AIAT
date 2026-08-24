@@ -1,7 +1,7 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-24, current certification-path
-hardening through implementation tip `4889dd8f193d724f30b07ba3ef4a2c752454e81b`
+hardening through implementation tip `893fa78b47cf62f5c3e639ffde6a030801d3ea48`
 (including
 `595965d` gateway failure-origin diagnostics, `57f76b6` fail-closed web DNS
 validation, `e7a2ff5` stopped-container cleanup, and `71149db` certification
@@ -40,7 +40,7 @@ workflow is `workflow_dispatch` only and must be dispatched once against an
 explicit frozen commit after the preflight passes.
 
 The reviewed implementation tip immediately before this documentation
-refresh was `4889dd8`; it passed the
+refresh was `4889dd8`; the current tip is `893fa78` and it passed the
 read-only dispatch preflight. Because this document is itself committed, the
 dispatch candidate must always be frozen from the actual checkout with
 `git rev-parse HEAD`, never copied from an embedded tip string. No
