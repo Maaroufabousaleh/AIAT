@@ -1,7 +1,8 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-24, current certification-path
-hardening at `44cc974` (including
+hardening through reviewed tip `4ecbdcf530e9d63da7fc812e152f7edbce8c736f`
+(including
 `595965d` gateway failure-origin diagnostics, `57f76b6` fail-closed web DNS
 validation, `e7a2ff5` stopped-container cleanup, and `71149db` certification
 authorization consumption after trusted construction); the branch also
@@ -16,10 +17,11 @@ activate OpenHands, approve the steward record, or dispatch a workflow. The
 workflow is `workflow_dispatch` only and must be dispatched once against an
 explicit frozen commit after the preflight passes.
 
-The branch currently ends at `ca1aa084510b2b5492885f2fc5117890f50899a9`.
-That tip contains documentation-only ledger reconciliation after the reviewed
-code baseline and passes the read-only dispatch preflight. It is recorded here
-for SHA clarity only; no certification run has been dispatched against it.
+The branch currently ends at
+`4ecbdcf530e9d63da7fc812e152f7edbce8c736f`. This reviewed tip contains only
+candidate-path documentation reconciliation after the implementation baseline
+and passes the read-only dispatch preflight. It is recorded here for SHA
+clarity only; no certification run has been dispatched against it.
 The previously requested `1fcaf6cb62c6583efdf0ea1396e3d52329453fc3` remains a
 stale ancestor and must continue to fail closed because its candidate tree does
 not contain the current workflow helper contracts.
