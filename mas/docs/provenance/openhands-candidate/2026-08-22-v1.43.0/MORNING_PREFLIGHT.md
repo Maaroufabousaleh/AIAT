@@ -1,11 +1,14 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-24, current certification-path
-hardening at `bc8c4b6` (including
+hardening at `402c45d` (including
 `595965d` gateway failure-origin diagnostics, `57f76b6` fail-closed web DNS
 validation, `e7a2ff5` stopped-container cleanup, and `71149db` certification
 authorization consumption after trusted construction); the branch also
-contains the earlier candidate/evidence history. The next live run must freeze
+contains the earlier candidate/evidence history. `402c45d` keeps transient
+OmniRoute baseline-catalog failures as scalar baseline-only evidence while
+failing closed on management-auth failures; its focused and full test suites
+pass. The next live run must freeze
 the exact SHA actually selected by the operator.
 
 This is a manual preparation guide for the inactive candidate. It does not
@@ -28,7 +31,7 @@ candidate tree is missing helper contracts. The reviewed history includes
 `a2c886e` auto-route/gate-wiring hardening, `a39788a` evidence-retention
 validation, `a377dab` scalar provider attribution for successful `auto/coding`
 evidence, and `1c4a426` Agent Server health-blocker output diagnostics. The
-current reviewed implementation baseline `bc8c4b6` additionally distinguishes unknown LiteLLM 404 responses
+current reviewed implementation baseline `402c45d` additionally distinguishes unknown LiteLLM 404 responses
 from the explicit no-provider auto-router condition and rejects unresolved web
 targets before any network request. The latest deliberate run also confirmed
 the configured Groq secret at
