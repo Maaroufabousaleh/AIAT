@@ -267,6 +267,19 @@ def _provider_scope_helper_issues() -> list[str]:
     return ["provider_scope_helper_contract_missing"] if any(item not in helper for item in required) else []
 
 
+def _network_topology_contract_issues(text: str) -> list[str]:
+    """Require authoritative per-container alias readback for topology evidence."""
+
+    required = (
+        ".NetworkSettings.Networks",
+        '"container_alias_readback": alias_readback',
+        '"alias_inspect_status": "PASS" if alias_inspect_ok else "BLOCKED"',
+        '"network_aliases_expected": expected_aliases',
+        'item["aliases"] = alias_readback.get(name, {}).get("aliases", [])',
+    )
+    return ["network_topology_alias_readback_missing"] if any(item not in text for item in required) else []
+
+
 def _workflow_script_reference_issues(text: str) -> list[str]:
     """Reject workflow references to scripts absent from the exact candidate."""
 
@@ -318,6 +331,7 @@ def validate(text: str) -> dict[str, Any]:
     errors.extend(_gateway_route_probe_cli_issues())
     errors.extend(_provider_baseline_probe_cli_issues())
     errors.extend(_provider_scope_helper_issues())
+    errors.extend(_network_topology_contract_issues(text))
     errors.extend(_workflow_script_reference_issues(text))
     if "--attempts 30" not in text or "--interval-seconds 1" not in text:
         errors.append("omniroute_auth_transport_retry_missing")

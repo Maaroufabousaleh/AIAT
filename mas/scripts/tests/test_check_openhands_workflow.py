@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import os
 import subprocess
+import sys
 from pathlib import Path
 
 import yaml
@@ -174,6 +177,72 @@ def test_omniroute_auth_probe_is_compatible_with_frozen_candidate_helpers() -> N
     assert "omniroute_auth_candidate_compatibility_missing" not in report["errors"]
     weakened = text.replace('auth_probe_mode="compatibility_outer_retry"', 'auth_probe_mode="missing"', 1)
     assert "omniroute_auth_candidate_compatibility_missing" in module.validate(weakened)["errors"]
+
+
+def test_network_topology_reads_aliases_from_each_container() -> None:
+    module = _module()
+    text = _workflow()
+    report = module.validate(text)
+    assert "network_topology_alias_readback_missing" not in report["errors"]
+    weakened = text.replace(".NetworkSettings.Networks", ".NetworkSettings.LegacyNetworks", 1)
+    assert "network_topology_alias_readback_missing" in module.validate(weakened)["errors"]
+
+
+def test_network_topology_parser_uses_container_network_settings_aliases(tmp_path: Path) -> None:
+    document = yaml.safe_load(_workflow())
+    step = next(
+        step
+        for step in document["jobs"]["certify"]["steps"]
+        if step.get("name") == "Record disposable gateway network topology"
+    )
+    run = step["run"]
+    python_body = run.split("<<'PY'\n", 1)[1].split("\nPY", 1)[0]
+    script = tmp_path / "topology.py"
+    script.write_text(python_body, encoding="utf-8")
+    network = "aiat-openhands-cert-network-123"
+    run_id = "123"
+    names = {
+        "aiat-openhands-cert-123": "agent-server",
+        "aiat-openhands-tool-service-123": "tool-service",
+        "aiat-openhands-litellm-123": "litellm",
+        "aiat-openhands-omniroute-123": "omniroute",
+    }
+    topology = [
+        {
+            "Containers": {
+                name: {"Name": name, "IPv4Address": f"172.30.0.{index + 2}"}
+                for index, name in enumerate(names)
+            }
+        }
+    ]
+    topology_input = tmp_path / "network.json"
+    topology_input.write_text(json.dumps(topology), encoding="utf-8")
+    output = tmp_path / "report.json"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, sys\n"
+        "name = sys.argv[-1]\n"
+        f"aliases = {names!r}\n"
+        f"print(json.dumps({{\"{network}\": {{\"Aliases\": [aliases[name]]}}}}))\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    env = dict(os.environ, PATH=f"{fake_bin}:{os.environ.get('PATH', '')}")
+    result = subprocess.run(
+        [sys.executable, str(script), str(output), str(topology_input), run_id, "0", network],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["topology_status"] == "PASS"
+    assert report["alias_inspect_status"] == "PASS"
+    assert report["container_alias_readback"]["aiat-openhands-litellm-123"]["aliases"] == ["litellm"]
 
 
 def test_auto_router_and_deterministic_baseline_are_both_required() -> None:

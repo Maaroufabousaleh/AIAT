@@ -859,14 +859,17 @@ jobs:
             "$RUNNER_TEMP/aiat-openhands-evidence/gateway/network-topology.json" \
             "$topology_input" \
             "$GITHUB_RUN_ID" \
-            "$inspect_exit_code" <<'PY'
+            "$inspect_exit_code" \
+            "$network" <<'PY'
           import json
+          import subprocess
           import sys
           from pathlib import Path
 
           output = Path(sys.argv[1])
           run_id = sys.argv[3]
           inspect_exit_code = sys.argv[4]
+          network_name = sys.argv[5]
           try:
               raw = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
           except (OSError, UnicodeDecodeError, json.JSONDecodeError):
@@ -897,9 +900,44 @@ jobs:
               f"aiat-openhands-litellm-{run_id}",
               f"aiat-openhands-omniroute-{run_id}",
           }
+          alias_readback = {}
+          alias_inspect_ok = True
+          for container_name in sorted(expected):
+              inspected = subprocess.run(
+                  [
+                      "docker",
+                      "inspect",
+                      "--format",
+                      "{{json .NetworkSettings.Networks}}",
+                      container_name,
+                  ],
+                  capture_output=True,
+                  text=True,
+                  check=False,
+              )
+              try:
+                  networks = json.loads(inspected.stdout)
+              except (TypeError, json.JSONDecodeError):
+                  networks = {}
+              network_entry = networks.get(network_name) if isinstance(networks, dict) else None
+              aliases = (
+                  sorted(str(item) for item in network_entry.get("Aliases", []) if item)
+                  if isinstance(network_entry, dict)
+                  else []
+              )
+              alias_readback[container_name] = {
+                  "aliases": aliases,
+                  "inspect_exit_code": inspected.returncode,
+              }
+              if inspected.returncode != 0 or not isinstance(network_entry, dict):
+                  alias_inspect_ok = False
+          for item in topology:
+              name = str(item.get("name"))
+              item["aliases"] = alias_readback.get(name, {}).get("aliases", [])
           observed = {str(item.get("name")) for item in topology}
           complete = (
               inspect_exit_code == "0"
+              and alias_inspect_ok
               and observed == expected
               and all(item.get("ipv4") for item in topology)
               and all(expected_aliases.get(str(item.get("name"))) in item.get("aliases", []) for item in topology)
@@ -910,9 +948,11 @@ jobs:
                       "schema_version": "aiat.openhands-certification-network-topology.v1",
                       "network_aliases_expected": expected_aliases,
                       "attached_containers": sorted(topology, key=lambda item: str(item.get("name"))),
+                      "container_alias_readback": alias_readback,
                       "expected_container_count": len(expected),
                       "observed_container_count": len(observed),
                       "docker_inspect_exit_code": int(inspect_exit_code),
+                      "alias_inspect_status": "PASS" if alias_inspect_ok else "BLOCKED",
                       "topology_status": "PASS" if complete else "BLOCKED",
                       "credentials_or_payloads_retained": False,
                   },
