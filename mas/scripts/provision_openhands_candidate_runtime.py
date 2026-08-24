@@ -71,6 +71,18 @@ def _mcp_config(value: Any) -> dict[str, Any]:
     config = value.get("mcp_servers")
     if isinstance(config, dict):
         return config
+    # Agent Server v1.43.0 wraps the effective settings in
+    # ``agent_settings``.  Read only that documented envelope; an absent or
+    # differently shaped configuration remains a fail-closed provisioning
+    # error rather than an implicit empty allowlist.
+    agent_settings = value.get("agent_settings")
+    if isinstance(agent_settings, dict):
+        config = agent_settings.get("mcp_config")
+        if isinstance(config, dict):
+            return config
+        config = agent_settings.get("mcp_servers")
+        if isinstance(config, dict):
+            return config
     raise ProvisioningError("agent_settings_readback_has_no_mcp_configuration")
 
 

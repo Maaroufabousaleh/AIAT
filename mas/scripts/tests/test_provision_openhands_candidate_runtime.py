@@ -55,7 +55,8 @@ def test_run_scoped_objects_are_created_and_only_server_profile_uuid_is_retained
             } if mcp_present else {}
             return httpx.Response(
                 200,
-                json={"mcp_config": config},
+                # This is the pinned Agent Server v1.43.0 settings envelope.
+                json={"agent_settings": {"mcp_config": config}},
             )
         if request.method == "POST" and request.url.path == "/api/agent-profiles/aiat-openhands-v1-43-0-coding":
             nonlocal profile_disabled_skills
