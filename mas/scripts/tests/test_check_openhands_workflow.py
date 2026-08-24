@@ -195,6 +195,19 @@ def test_baseline_failure_does_not_suppress_independent_auto_router_evidence() -
     assert "baseline_blocks_auto_router_evidence" in report["errors"]
 
 
+def test_gate_matrix_receives_provider_and_candidate_status_outputs() -> None:
+    module = _module()
+    text = _workflow()
+    assert "gate_matrix_status_wiring_missing" not in module.validate(text)["errors"]
+    weakened = text.replace(
+        "PROVIDER_STATUS: ${{ steps.provider_preflight.outputs.status }}",
+        "PROVIDER_STATUS: ${{ steps.other.outputs.status }}",
+        1,
+    )
+    report = module.validate(weakened)
+    assert "gate_matrix_status_wiring_missing" in report["errors"]
+
+
 def test_provider_baseline_requires_bounded_retry_contract() -> None:
     module = _module()
     text = _workflow()

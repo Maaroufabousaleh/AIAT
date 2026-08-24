@@ -159,6 +159,30 @@ def test_gateway_provenance_failure_gets_a_distinct_blocker_class(tmp_path: Path
     assert report["evidence_blocker_status"] == "BLOCKED_GATEWAY_PROVENANCE"
 
 
+def test_baseline_failure_remains_blocking_when_auto_route_evidence_passes(tmp_path: Path) -> None:
+    module = _load("check_openhands_gate_matrix")
+    (tmp_path / "gateway").mkdir()
+    (tmp_path / "gateway" / "provider-baseline.json").write_text(
+        json.dumps(
+            {
+                "status": "BLOCKED",
+                "failure_class": "PROVIDER_SERVER_ERROR",
+                "failure_http_status": 502,
+                "raw_response_retained": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "gateway" / "auto-routing.json").write_text(
+        json.dumps({"status": "PASS", "route": {"routing_mode": "omniroute_auto_coding"}}),
+        encoding="utf-8",
+    )
+    report = module.evaluate(evidence_root=tmp_path, provider_status="PASS")
+    assert report["status"] == "BLOCKED_PROVIDER"
+    assert report["evidence_blocker_status"] == "BLOCKED_PROVIDER"
+    assert report["evaluation"]["all_required_gates_passed"] is False
+
+
 def test_omniroute_startup_failure_gets_runtime_blocker_class(tmp_path: Path) -> None:
     module = _load("check_openhands_gate_matrix")
     (tmp_path / "gateway").mkdir()

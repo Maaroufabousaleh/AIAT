@@ -388,6 +388,13 @@ def validate(text: str) -> dict[str, Any]:
                 break
     if "--auto-routing-output" not in text or "auto-routing.json" not in text:
         errors.append("auto_routing_evidence_missing")
+    if (
+        "PROVIDER_STATUS: ${{ steps.provider_preflight.outputs.status }}" not in text
+        or "CONFIGURATION_STATUS: ${{ steps.preflight.outputs.status }}" not in text
+        or 'provider_status="${PROVIDER_STATUS:-BLOCKED_MISSING_OPERATOR_SECRET}"' not in text
+        or 'configuration_status="${CONFIGURATION_STATUS:-FAILED_CERTIFICATION_IMPLEMENTATION}"' not in text
+    ):
+        errors.append("gate_matrix_status_wiring_missing")
     if "--host-workspace \"$RUNNER_TEMP/aiat-openhands-workspace\"" not in text or "--fixture-root \"$GITHUB_WORKSPACE/mas/scripts/fixtures/openhands-coding-task\"" not in text:
         errors.append("postrun_task_verification_missing")
     if (
