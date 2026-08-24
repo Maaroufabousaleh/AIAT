@@ -385,6 +385,39 @@ def test_certification_authorization_is_factory_only_single_use_and_time_bounded
         )
 
 
+def test_invalid_factory_context_does_not_burn_certification_authorization(tmp_path: Path) -> None:
+    pending = verification(approved=False)
+    authorization = issue_openhands_certification_authorization(
+        pending,
+        controller="aiat-github-actions",
+        controller_run_id="32594885185",
+        sandbox_profile="gvisor",
+        sandbox_runtime="runsc",
+    )
+    invalid_context = _certification_context(tmp_path)
+    invalid_context.metadata["openhands_certification_controller_run_id"] = "32594885185"
+    invalid_context.secrets.pop("openhands_session_api_key")
+    with pytest.raises(ValueError, match="session API key"):
+        OpenHandsAgentServerAdapter.for_certification(
+            pending,
+            authorization=authorization,
+            base_url="http://openhands.test",
+            worker_id="coding-worker-openhands-candidate",
+            context=invalid_context,
+        )
+
+    valid_context = _certification_context(tmp_path)
+    valid_context.metadata["openhands_certification_controller_run_id"] = "32594885185"
+    adapter = OpenHandsAgentServerAdapter.for_certification(
+        pending,
+        authorization=authorization,
+        base_url="http://openhands.test",
+        worker_id="coding-worker-openhands-candidate",
+        context=valid_context,
+    )
+    assert adapter.certification_mode is True
+
+
 def test_certification_authorization_requires_gvisor_and_runsc() -> None:
     pending = verification(approved=False)
     with pytest.raises(ValueError, match="gVisor"):

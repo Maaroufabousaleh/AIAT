@@ -400,8 +400,7 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             raise ValueError("OpenHands certification authorization has already been used")
         if not _valid_certification_authorization(authorization, verification, expected_worker_id=worker_id):
             raise ValueError("OpenHands certification authorization is invalid or does not match the pinned candidate")
-        _CONSUMED_CERTIFICATION_AUTHORIZATIONS.add(authorization)
-        return cls(
+        adapter = cls(
             verification,
             base_url=base_url,
             worker_id=worker_id,
@@ -411,6 +410,11 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             certification_authorization=authorization,
             _certification_factory_token=_CERTIFICATION_FACTORY_TOKEN,
         )
+        # Consume only after the constructor has validated the controller
+        # attestation, session boundary, and all other context requirements.
+        # A malformed local context must not burn a valid run authorization.
+        _CONSUMED_CERTIFICATION_AUTHORIZATIONS.add(authorization)
+        return adapter
 
     @property
     def certification_mode(self) -> bool:
