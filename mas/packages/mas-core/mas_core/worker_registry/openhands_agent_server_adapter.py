@@ -69,6 +69,11 @@ DEFAULT_ENDPOINTS: dict[str, str] = {
 }
 
 OPENHANDS_MCP_BRIDGE_URL = "http://tool-service:8002/openhands/mcp"
+# Agent Server v1.43.0 redacts configured MCP header values on the
+# authenticated settings readback.  Keep this exact marker narrow: a
+# certification controller may rotate a grant it just issued, while ordinary
+# callers must never treat an arbitrary unreadable value as valid authority.
+_OPENHANDS_REDACTED_MCP_GRANT = "**********"
 _OPENHANDS_MODEL_ID = "omniroute-coding"
 _OPENHANDS_MCP_SERVER_KEY_PREFIX = "aiat-openhands-"
 _OPENHANDS_MCP_GRANT_TTL_SECONDS = 300
@@ -650,16 +655,25 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
                 raise RuntimeError("preconfigured OpenHands MCP settings does not contain the AIAT grant header")
             raw_grant = headers["X-AIAT-OpenHands-Grant"]
             signing_secret = str(self.context.secrets.get("tool_secret") or "")
-            try:
-                grant = verify_openhands_tool_grant(
-                    str(raw_grant),
-                    signing_secret,
-                    now=int(time.time()),
-                )
-            except (OpenHandsToolGrantError, TypeError, ValueError) as exc:
-                raise RuntimeError("preconfigured OpenHands MCP grant is invalid") from exc
+            grant = None
+            # The pinned Agent Server intentionally masks secret-bearing
+            # headers in GET /api/settings.  The certification controller has
+            # already pre-cleaned and created this exact entry, so it may
+            # rotate the value it issued rather than attempting to verify the
+            # ten-star readback marker.  Production/preconfigured callers do
+            # not have this trusted path and continue to fail closed.
+            if str(raw_grant) != _OPENHANDS_REDACTED_MCP_GRANT:
+                try:
+                    grant = verify_openhands_tool_grant(
+                        str(raw_grant),
+                        signing_secret,
+                        now=int(time.time()),
+                    )
+                except (OpenHandsToolGrantError, TypeError, ValueError) as exc:
+                    raise RuntimeError("preconfigured OpenHands MCP grant is invalid") from exc
             bound_to_request = (
-                grant.worker_id == self.worker_id
+                grant is not None
+                and grant.worker_id == self.worker_id
                 and grant.run_id == request.run_id
                 and grant.project_id == request.project_id
                 and grant.tool_names == requested_tools
@@ -668,10 +682,14 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
                 # The trusted certification lifecycle wave uses independent
                 # AIAT run IDs for pause, interrupt, and timeout probes while
                 # reusing one profile-bound MCP key. Rotate the short-lived
-                # grant only in that isolated, deferred-cleanup context so
-                # each probe retains a cryptographic run binding. Ordinary
-                # preconfigured callers still fail closed on any mismatch.
+                # grant only in that isolated, deferred-cleanup context. This
+                # also handles the pinned server's redacted readback marker;
+                # each probe still receives a fresh cryptographic run binding.
+                # Ordinary preconfigured callers still fail closed on any
+                # mismatch or redaction.
                 if not (self.certification_mode and self.context.metadata.get("openhands_defer_mcp_cleanup") is True):
+                    if str(raw_grant) == _OPENHANDS_REDACTED_MCP_GRANT:
+                        raise RuntimeError("preconfigured OpenHands MCP grant readback is redacted")
                     raise RuntimeError("preconfigured OpenHands MCP grant is not bound to this run")
                 if not signing_secret:
                     raise RuntimeError("OpenHands tool bridge signing secret is not configured")
@@ -721,15 +739,24 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
                     or "X-AIAT-OpenHands-Grant" not in rotated_headers
                 ):
                     raise RuntimeError("rotated OpenHands MCP settings readback is invalid")
-                try:
-                    rotated = verify_openhands_tool_grant(
-                        str(rotated_headers["X-AIAT-OpenHands-Grant"]),
-                        signing_secret,
-                        now=int(time.time()),
-                    )
-                except (OpenHandsToolGrantError, TypeError, ValueError) as exc:
-                    raise RuntimeError("rotated OpenHands MCP grant is invalid") from exc
-                if (
+                readback_grant = rotated_headers["X-AIAT-OpenHands-Grant"]
+                if str(readback_grant) == _OPENHANDS_REDACTED_MCP_GRANT:
+                    # The value sent in the authenticated POST is the value
+                    # we issued and verified locally.  v1.43.0 cannot return
+                    # it, so the scalar readback proves only presence and
+                    # shape; the cryptographic binding was already proven
+                    # before the POST.
+                    rotated = None
+                else:
+                    try:
+                        rotated = verify_openhands_tool_grant(
+                            str(readback_grant),
+                            signing_secret,
+                            now=int(time.time()),
+                        )
+                    except (OpenHandsToolGrantError, TypeError, ValueError) as exc:
+                        raise RuntimeError("rotated OpenHands MCP grant is invalid") from exc
+                if rotated is not None and (
                     rotated.worker_id != self.worker_id
                     or rotated.run_id != request.run_id
                     or rotated.project_id != request.project_id

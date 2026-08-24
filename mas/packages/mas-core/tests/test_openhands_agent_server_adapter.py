@@ -21,7 +21,10 @@ from mas_core.worker_contract import (
     WorkerResume,
     WorkerRunRequest,
 )
-from mas_core.worker_contract.openhands_bridge import issue_openhands_tool_grant
+from mas_core.worker_contract.openhands_bridge import (
+    issue_openhands_tool_grant,
+    verify_openhands_tool_grant,
+)
 from mas_core.worker_registry.openhands_agent_server_adapter import (
     OPENHANDS_MCP_BRIDGE_URL,
     OpenHandsAgentServerAdapter,
@@ -206,6 +209,118 @@ async def test_preconfigured_run_scoped_bridge_reads_v143_nested_settings_envelo
     await adapter._configure_tool_bridge(run)
     assert adapter._mcp_by_run[run.run_id] == "aiat-openhands-test-run"
     await adapter._cleanup_tool_bridge(run.run_id)
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_certification_rotates_pinned_server_redacted_grant_readback(tmp_path: Path) -> None:
+    """v1.43 masks MCP headers, so certification must rotate its own grant."""
+
+    calls: list[str] = []
+    current_grant = "**********"
+    run = request(workspace=tmp_path / "workspace")
+
+    async def handler(http_request: httpx.Request) -> httpx.Response:
+        nonlocal current_grant
+        calls.append(f"{http_request.method} {http_request.url.path}")
+        if http_request.method == "GET" and http_request.url.path == "/api/settings":
+            config = {}
+            if current_grant is not None:
+                config = {
+                    "aiat-openhands-test-run": {
+                        "url": OPENHANDS_MCP_BRIDGE_URL,
+                        "transport": "streamable-http",
+                        "enabled": True,
+                        # Pinned Agent Server v1.43.0 response redaction.
+                        "headers": {"X-AIAT-OpenHands-Grant": current_grant},
+                    }
+                }
+            return httpx.Response(200, json={"mcp_config": config})
+        if http_request.method == "DELETE" and http_request.url.path == "/api/settings/mcp/aiat-openhands-test-run":
+            current_grant = None
+            return httpx.Response(204)
+        if http_request.method == "POST" and http_request.url.path == "/api/settings/mcp/aiat-openhands-test-run":
+            current_grant = json.loads(http_request.content.decode())["headers"]["X-AIAT-OpenHands-Grant"]
+            verified = verify_openhands_tool_grant(current_grant, "tool-secret-test")
+            assert verified.worker_id == "coding-worker-openhands-candidate"
+            assert verified.run_id == run.run_id
+            assert verified.tool_names == frozenset(run.tool_grants)
+            return httpx.Response(201, json={})
+        raise AssertionError(f"unexpected network call: {http_request.method} {http_request.url}")
+
+    pending = verification(approved=False)
+    authorization = issue_openhands_certification_authorization(
+        pending,
+        controller="aiat-github-actions",
+        controller_run_id="32594885180",
+        sandbox_profile="gvisor",
+        sandbox_runtime="runsc",
+    )
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    context = AdapterContext(
+        workspace_path=str(workspace),
+        secrets={"openhands_session_api_key": "session-secret-test", "tool_secret": "tool-secret-test"},
+        metadata={
+            "openhands_agent_profile_id": PROFILE_ID,
+            "openhands_mcp_profile_ref": "aiat-mcp-profile-test",
+            "openhands_mcp_settings_key": "aiat-openhands-test-run",
+            "openhands_mcp_preconfigured": True,
+            "openhands_mcp_bridge_url": OPENHANDS_MCP_BRIDGE_URL,
+            "openhands_image_digest": IMAGE_DIGEST,
+            "openhands_model_id": "omniroute-coding",
+            "openhands_certification_controller": "aiat-github-actions",
+            "openhands_certification_controller_run_id": "32594885180",
+            "openhands_certification_sandbox_profile": "gvisor",
+            "openhands_certification_sandbox_runtime": "runsc",
+            "openhands_defer_mcp_cleanup": True,
+        },
+    )
+    adapter = OpenHandsAgentServerAdapter.for_certification(
+        pending,
+        authorization=authorization,
+        base_url="http://openhands.test",
+        worker_id="coding-worker-openhands-candidate",
+        client=httpx.AsyncClient(
+            base_url="http://openhands.test",
+            transport=httpx.MockTransport(handler),
+        ),
+        context=context,
+    )
+    await adapter._configure_tool_bridge(run)
+    assert adapter._mcp_by_run[run.run_id] == "aiat-openhands-test-run"
+    assert "POST /api/settings/mcp/aiat-openhands-test-run" in calls
+    # Switch only cleanup behavior after the trusted rotation; the final
+    # workflow cleanup owns deletion of the shared profile-bound key.
+    context.metadata["openhands_defer_mcp_cleanup"] = False
+    await adapter._cleanup_tool_bridge(run.run_id)
+    assert "DELETE /api/settings/mcp/aiat-openhands-test-run" in calls
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_production_preconfigured_redacted_grant_fails_closed(tmp_path: Path) -> None:
+    async def handler(http_request: httpx.Request) -> httpx.Response:
+        if http_request.method == "GET" and http_request.url.path == "/api/settings":
+            return httpx.Response(
+                200,
+                json={
+                    "mcp_config": {
+                        "aiat-openhands-test-run": {
+                            "url": OPENHANDS_MCP_BRIDGE_URL,
+                            "transport": "streamable-http",
+                            "enabled": True,
+                            "headers": {"X-AIAT-OpenHands-Grant": "**********"},
+                        }
+                    }
+                },
+            )
+        raise AssertionError(f"unexpected network call: {http_request.method} {http_request.url}")
+
+    adapter = make_adapter(tmp_path, handler, preconfigured=True)
+    run = request(workspace=tmp_path / "workspace")
+    with pytest.raises(RuntimeError, match="readback is redacted"):
+        await adapter._configure_tool_bridge(run)
     await adapter.close()
 
 

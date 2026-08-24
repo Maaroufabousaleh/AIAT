@@ -41,6 +41,7 @@ BRIDGE_URL = "http://tool-service:8002/openhands/mcp"
 WORKER_ID = "coding-worker-openhands-candidate"
 TOOL_GRANTS = ("aiat.repository.read", "aiat.repository.write", "aiat.tests.execute")
 EXPECTED_AGENT_TOOLS = {"TerminalTool", "FileEditorTool"}
+AGENT_SERVER_REDACTED_MCP_GRANT = "**********"
 
 
 class ProvisioningError(RuntimeError):
@@ -350,6 +351,11 @@ def provision(
         settings = _json_body(client.get("/api/settings"))
         config = _mcp_config(settings)
         _validate_mcp_entry(config, mcp_key)
+        mcp_grant_readback = (
+            "REDACTED_BY_AGENT_SERVER"
+            if config[mcp_key]["headers"]["X-AIAT-OpenHands-Grant"] == AGENT_SERVER_REDACTED_MCP_GRANT
+            else "PRESENT_UNVERIFIED"
+        )
 
         disabled_skills: list[str] = []
         agent_response = client.post(
@@ -450,6 +456,7 @@ def provision(
                 "url": BRIDGE_URL,
                 "transport": "streamable-http",
                 "grant_header": "X-AIAT-OpenHands-Grant",
+                "grant_readback": mcp_grant_readback,
                 "grant_value_retained": False,
                 "arbitrary_external_servers": False,
                 "cleanup_owner": "workflow-always-cleanup",

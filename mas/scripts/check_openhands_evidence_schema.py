@@ -136,7 +136,11 @@ def _validate_gate_evaluation(value: Any) -> list[str]:
     if value.get("schema_version") != GATE_SCHEMA:
         errors.append("gate_evaluation_schema_mismatch")
     status = str(value.get("status") or "")
-    if status not in _ALLOWED_STATUSES:
+    # Gate rows retain precise statuses such as FAILED_FILE_MODIFICATIONS and
+    # FAILED_TEST_EXECUTION.  The gate evaluator deliberately accepts the
+    # same explicit BLOCKED_/FAILED_ families; rejecting them here would turn
+    # valid fail-closed evidence into a secondary schema failure.
+    if status not in _ALLOWED_STATUSES and not status.startswith(("BLOCKED_", "FAILED_")):
         errors.append("gate_evaluation_status_unknown")
     candidate_sha = str(value.get("candidate_sha") or "")
     if not _SHA_RE.fullmatch(candidate_sha):

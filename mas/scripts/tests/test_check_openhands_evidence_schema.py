@@ -67,6 +67,12 @@ def test_certification_authorization_block_is_an_explicit_allowed_status() -> No
     assert report["final_certification_status"] == "BLOCKED_CERTIFICATION_AUTHORIZATION"
 
 
+def test_precise_failed_gate_status_is_valid_fail_closed_evidence() -> None:
+    report = MODULE.validate(_write_tree(Path(tempfile.mkdtemp()), _gate_report("FAILED_FILE_MODIFICATIONS")))
+    assert report["status"] == "PASS", report["errors"]
+    assert report["final_certification_status"] == "FAILED_FILE_MODIFICATIONS"
+
+
 def test_true_sensitive_retention_flag_fails_closed(tmp_path: Path) -> None:
     root = _write_tree(tmp_path, _gate_report())
     (root / "provider" / "unsafe.json").write_text(json.dumps({"raw_response_retained": True}), encoding="utf-8")

@@ -74,7 +74,11 @@ def test_run_scoped_objects_are_created_and_only_server_profile_uuid_is_retained
                     "url": MODULE.BRIDGE_URL,
                     "transport": "streamable-http",
                     "enabled": True,
-                    "headers": {"X-AIAT-OpenHands-Grant": mcp_grant},
+                    # Agent Server v1.43.0 masks secret-bearing headers on
+                    # settings readback; provisioning may prove presence and
+                    # shape, while the trusted certification adapter rotates
+                    # the grant before use.
+                    "headers": {"X-AIAT-OpenHands-Grant": "**********"},
                 }
             } if mcp_present else {}
             return httpx.Response(
@@ -132,6 +136,7 @@ def test_run_scoped_objects_are_created_and_only_server_profile_uuid_is_retained
     assert report["status"] == "PASS"
     assert UUID(report["agent_profile"]["id"])
     assert report["mcp"]["grant_value_retained"] is False
+    assert report["mcp"]["grant_readback"] == "REDACTED_BY_AGENT_SERVER"
     assert "tool-secret-that-is-not-retained" not in json.dumps(report)
     assert "gateway-secret-that-is-not-retained" not in json.dumps(report)
     assert report["mcp"]["preclean"] == "PASS"
