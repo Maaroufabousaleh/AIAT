@@ -1,7 +1,7 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-24, current certification-path
-hardening at `ebfbe73`; the branch also
+hardening at `fa19b1c`; the branch also
 contains the earlier candidate/evidence history. The next live run must freeze
 the exact SHA actually selected by the operator.
 
@@ -23,8 +23,10 @@ validation, `a377dab` scalar provider attribution for successful `auto/coding`
 evidence, and `1c4a426` Agent Server health-blocker output diagnostics. Freeze
 and preflight that exact tip before any deliberate run.
 The clean-candidate static certificate was refreshed from a fresh clone at
-`ebfbe73`; it now matches the reviewed branch tip while retaining the same
-63/63 static result, two pending OpenCode evidence items, and `NO-RELEASE`.
+`69f5fb4`; it remains valid for reviewed descendants because the validator now
+treats the retained candidate SHA as authoritative by default while preserving
+an explicit strict tip-match mode. It retains the same 63/63 static result,
+two pending OpenCode evidence items, and `NO-RELEASE`.
 The current workflow also verifies LiteLLM/OmniRoute source-archive hashes,
 rejects host-bound gateway targets, validates the sanitized evidence tree, and
 records run-scoped profile disposal through Agent Server container absence.
@@ -288,9 +290,9 @@ release evidence; a new candidate SHA must still be frozen and pass the
 read-only preflight before one deliberate workflow dispatch.
 
 The latest scalar provider-attribution and preflight-regression hardening is
-`a377dab` plus `69f5fb4`; the current reviewed tip also includes the clean
-candidate evidence refresh `ebfbe73`. These commits do not dispatch a workflow
-or activate OpenHands.
+`a377dab` plus `69f5fb4`; `ad511d9` makes stale-candidate blockers explicit and
+`fa19b1c` keeps clean-candidate evidence pinned to its evaluated revision.
+These commits do not dispatch a workflow or activate OpenHands.
 
 After a future run is genuinely `PASSED`, validate the downloaded gate
 artifact before any steward submission (this is read-only and does not approve

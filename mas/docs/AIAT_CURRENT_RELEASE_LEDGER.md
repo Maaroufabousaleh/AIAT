@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
-**Run date:** 2026-08-23
-**Base revision:** `1c4a426` (latest reviewed OpenHands certification-path hardening plus Agent Server health-blocker diagnostics; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
+**Run date:** 2026-08-24
+**Base revision:** `fa19b1c` (latest reviewed OpenHands dispatch-preflight and clean-candidate evidence hardening; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -10,7 +10,7 @@ The overnight OpenHands continuation (`4234d07`, `1db5b72`, `cf80dd1`,
 `a6b6eae`, `6da88bd`, `c3f54da`, `93b6ee8`, `d86675b`, `0c0a210`,
 `b71facc`, `04cfd23`, `fe5cef3`, `5163cc8`, `e036508`, `334c321`, `758ca59`,
 `3161ad1`, `4f51dac`, `cc48cca`, `a2c886e`, `a39788a`, `2d70711`, `a377dab`,
-and `1c4a426`)
+`1c4a426`, `ebfbe73`, `c9dba1f`, `ad511d9`, and `fa19b1c`)
 does not alter the release decision. OpenHands
 v1.43.0 remains an inactive `CERTIFYING` candidate; its exact image/source
 pins, run-scoped gateway/profile/MCP design, one-shot certification
@@ -25,6 +25,13 @@ OpenCode remains the current default. The next candidate SHA must be frozen
 from the reviewed branch after any final operator-local changes; it requires
 one new deliberate provider-backed certification run and does not inherit live
 evidence from the historical provider-boundary runs.
+
+The previously prepared `1fcaf6cb62c6583efdf0ea1396e3d52329453fc3` candidate is
+an ancestor of the reviewed branch and is retained only as immutable historical
+provider-boundary evidence. The read-only dispatch preflight reports that
+candidate mismatch explicitly; it does not silently substitute the current tip
+or dispatch a workflow. The current tip remains inactive and requires one
+deliberate, operator-authorized provider-backed run.
 
 The current gateway implementation keeps the exact
 `groq/openai/gpt-oss-120b` baseline independent from the LiteLLM
