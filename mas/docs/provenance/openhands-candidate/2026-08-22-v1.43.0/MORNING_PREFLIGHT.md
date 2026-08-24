@@ -1,12 +1,15 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-24, current certification-path
-hardening through implementation tip `6267c9fbd9b288b3d8f7eb05cf23e6e5ac5982b5`
+hardening through implementation tip `55e146bf5c65a2beecce59cf85e950c862ec9a63`
 (including
 `595965d` gateway failure-origin diagnostics, `57f76b6` fail-closed web DNS
 validation, `e7a2ff5` stopped-container cleanup, and `71149db` certification
 authorization consumption after trusted construction); the branch also
-contains the earlier candidate/evidence history. `e472ee1` keeps transient
+contains the earlier candidate/evidence history. The latest hardening includes
+`1e27383` strict run-bound MCP grant binding, `eff28b8` workspace metadata
+filtering, `6267c9f` lifecycle grant rotation, and `16d3e6b` evidence/status
+alignment. `e472ee1` keeps transient
 OmniRoute baseline-catalog failures as scalar baseline-only evidence while
 failing closed on management-auth failures; its focused and full test suites
 pass. The next live run must freeze
@@ -75,7 +78,7 @@ workflow is `workflow_dispatch` only and must be dispatched once against an
 explicit frozen commit after the preflight passes.
 
 The reviewed implementation tip immediately before this documentation
-refresh was `1e27383`; the current implementation baseline is `6267c9f` and
+refresh was `6267c9f`; the current implementation baseline is `55e146b` and
 it passed the read-only dispatch preflight. This document is a docs-only
 refresh, so the
 dispatch candidate must always be frozen from the actual checkout with
