@@ -1,7 +1,7 @@
 # OpenHands v1.43.0 morning certification preparation
 
-**Repository-local refresh:** 2026-08-23, current certification-path
-hardening at `4f51dac`; the branch also
+**Repository-local refresh:** 2026-08-24, current certification-path
+hardening at `a39788a`; the branch also
 contains the earlier candidate/evidence history. The next live run must freeze
 the exact SHA actually selected by the operator.
 
@@ -14,6 +14,12 @@ The local static release ledger remains 63/63 passing with two pending
 evidence items and `NO-RELEASE`. The OpenHands gate matrix remains
 `BLOCKED_INCOMPLETE_MANDATORY_GATES` until a provider-backed run supplies live
 task and lifecycle evidence. No workflow was dispatched during this refresh.
+The previously prepared `1fcaf6cb62c6583efdf0ea1396e3d52329453fc3` SHA is an
+ancestor of the reviewed branch tip and is not the current dispatch candidate;
+the safe preflight correctly rejects it unless the checked-out repository tip
+matches the requested SHA. The current reviewed tip includes `cc48cca` and
+`a2c886e` auto-route/gate-wiring hardening plus `a39788a` evidence-retention
+validation. Freeze and preflight that exact tip before any deliberate run.
 The current workflow also verifies LiteLLM/OmniRoute source-archive hashes,
 rejects host-bound gateway targets, validates the sanitized evidence tree, and
 records run-scoped profile disposal through Agent Server container absence.
