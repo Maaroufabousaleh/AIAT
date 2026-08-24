@@ -44,7 +44,11 @@ from mas_core.worker_contract import (
     WorkerRunRequest,
     WorkerUsage,
 )
-from mas_core.worker_contract.openhands_bridge import issue_openhands_tool_grant
+from mas_core.worker_contract.openhands_bridge import (
+    OpenHandsToolGrantError,
+    issue_openhands_tool_grant,
+    verify_openhands_tool_grant,
+)
 
 DEFAULT_ENDPOINTS: dict[str, str] = {
     "health": "/health",
@@ -644,6 +648,23 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             headers = entry.get("headers")
             if not isinstance(headers, dict) or "X-AIAT-OpenHands-Grant" not in headers:
                 raise RuntimeError("preconfigured OpenHands MCP settings does not contain the AIAT grant header")
+            raw_grant = headers["X-AIAT-OpenHands-Grant"]
+            signing_secret = str(self.context.secrets.get("tool_secret") or "")
+            try:
+                grant = verify_openhands_tool_grant(
+                    str(raw_grant),
+                    signing_secret,
+                    now=int(time.time()),
+                )
+            except (OpenHandsToolGrantError, TypeError, ValueError) as exc:
+                raise RuntimeError("preconfigured OpenHands MCP grant is invalid") from exc
+            if (
+                grant.worker_id != self.worker_id
+                or grant.run_id != request.run_id
+                or grant.project_id != request.project_id
+                or grant.tool_names != requested_tools
+            ):
+                raise RuntimeError("preconfigured OpenHands MCP grant is not bound to this run")
             self._mcp_by_run[request.run_id] = settings_key
             self._mcp_grant_expires_at[request.run_id] = float(time.time() + _OPENHANDS_MCP_GRANT_TTL_SECONDS)
             await self.emit_audit(

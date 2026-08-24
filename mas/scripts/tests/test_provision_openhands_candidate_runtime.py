@@ -23,10 +23,11 @@ def test_run_scoped_objects_are_created_and_only_server_profile_uuid_is_retained
     mcp_present = False
     provider_connection_present = False
     profile_disabled_skills: list[str] = []
+    mcp_grant = ""
     mcp_key = MODULE.EXPECTED_MCP_KEY
 
     def handler(request: httpx.Request) -> httpx.Response:
-        nonlocal mcp_present, provider_connection_present
+        nonlocal mcp_present, provider_connection_present, mcp_grant
         calls.append((request.method, request.url.path))
         if request.method == "GET" and request.url.path == "/api/llm/provider-connections":
             connections = []
@@ -60,6 +61,7 @@ def test_run_scoped_objects_are_created_and_only_server_profile_uuid_is_retained
             return httpx.Response(200, json={"name": "aiat-openhands-omniroute-coding", "config": {"model": "omniroute-coding", "provider_connection_id": "gateway-connection"}})
         if request.method == "POST" and request.url.path == f"/api/settings/mcp/{mcp_key}":
             mcp_present = True
+            mcp_grant = json.loads(request.content.decode())["headers"]["X-AIAT-OpenHands-Grant"]
             return httpx.Response(201, json={})
         if request.method == "DELETE" and request.url.path == f"/api/settings/mcp/{mcp_key}":
             mcp_present = False
@@ -72,7 +74,7 @@ def test_run_scoped_objects_are_created_and_only_server_profile_uuid_is_retained
                     "url": MODULE.BRIDGE_URL,
                     "transport": "streamable-http",
                     "enabled": True,
-                    "headers": {"X-AIAT-OpenHands-Grant": "REDACTED"},
+                    "headers": {"X-AIAT-OpenHands-Grant": mcp_grant},
                 }
             } if mcp_present else {}
             return httpx.Response(

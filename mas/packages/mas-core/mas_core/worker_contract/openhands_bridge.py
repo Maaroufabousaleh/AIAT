@@ -102,7 +102,12 @@ def verify_openhands_tool_grant(
         worker_id = str(payload["worker_id"]).strip()
         run_id = UUID(str(payload["run_id"]))
         project_id = UUID(str(payload["project_id"])) if payload.get("project_id") else None
-        tool_names = frozenset(str(name).strip() for name in payload["tool_names"] if str(name).strip())
+        raw_tool_names = payload["tool_names"]
+        if not isinstance(raw_tool_names, list) or any(
+            not isinstance(name, str) for name in raw_tool_names
+        ):
+            raise OpenHandsToolGrantError("invalid OpenHands tool bridge grant")
+        tool_names = frozenset(name.strip() for name in raw_tool_names if name.strip())
         expires_at = int(payload["exp"])
         grant_id = str(payload["jti"])
     except (KeyError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:

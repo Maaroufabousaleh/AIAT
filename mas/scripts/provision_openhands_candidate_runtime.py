@@ -12,13 +12,18 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
 import httpx
 
-from mas_core.worker_contract.openhands_bridge import issue_openhands_tool_grant
+from mas_core.worker_contract.openhands_bridge import (
+    OpenHandsToolGrantError,
+    issue_openhands_tool_grant,
+    verify_openhands_tool_grant,
+)
 
 SCHEMA = "aiat.openhands-run-scoped-runtime-provisioning.v1"
 CANDIDATE_RELEASE = "v1.43.0"
@@ -300,6 +305,21 @@ def provision(
             tool_names=TOOL_GRANTS,
             ttl_seconds=300,
         )
+        try:
+            verified_grant = verify_openhands_tool_grant(
+                grant,
+                aiat_tool_secret,
+                now=int(time.time()),
+            )
+        except (OpenHandsToolGrantError, TypeError, ValueError) as exc:
+            raise ProvisioningError("run_scoped_mcp_grant_self_verification_failed") from exc
+        if (
+            verified_grant.worker_id != WORKER_ID
+            or verified_grant.run_id != run_id
+            or verified_grant.project_id != project_id
+            or verified_grant.tool_names != frozenset(TOOL_GRANTS)
+        ):
+            raise ProvisioningError("run_scoped_mcp_grant_binding_mismatch")
         # Certification MCP settings are disposable and must never silently
         # overwrite an existing operator entry.  Delete the run-scoped key
         # through the authenticated Agent Server API, then prove it is absent

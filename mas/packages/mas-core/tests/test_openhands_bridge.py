@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
+import json
 from uuid import uuid4
 
 import pytest
@@ -57,3 +61,25 @@ def test_grant_rejects_wrong_bridge_secret() -> None:
     )
     with pytest.raises(OpenHandsToolGrantError):
         verify_openhands_tool_grant(token, "another-secret", now=110)
+
+
+def test_grant_rejects_non_list_tool_names_payload() -> None:
+    token = issue_openhands_tool_grant(
+        "bridge-secret",
+        worker_id="worker-openhands",
+        run_id=uuid4(),
+        project_id=None,
+        tool_names=["repository.read"],
+        now=100,
+    )
+    encoded, _ = token.split(".", 1)
+    payload = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
+    payload["tool_names"] = "repository.read"
+    replaced = base64.urlsafe_b64encode(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).decode().rstrip("=")
+    signature = hmac.new(
+        b"bridge-secret", replaced.encode(), hashlib.sha256
+    ).hexdigest()
+    with pytest.raises(OpenHandsToolGrantError, match="invalid"):
+        verify_openhands_tool_grant(f"{replaced}.{signature}", "bridge-secret", now=110)

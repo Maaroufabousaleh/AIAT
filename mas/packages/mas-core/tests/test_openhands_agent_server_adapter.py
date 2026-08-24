@@ -21,6 +21,7 @@ from mas_core.worker_contract import (
     WorkerResume,
     WorkerRunRequest,
 )
+from mas_core.worker_contract.openhands_bridge import issue_openhands_tool_grant
 from mas_core.worker_registry.openhands_agent_server_adapter import (
     OPENHANDS_MCP_BRIDGE_URL,
     OpenHandsAgentServerAdapter,
@@ -129,6 +130,14 @@ def make_adapter(
 @pytest.mark.asyncio
 async def test_preconfigured_run_scoped_bridge_is_read_back_without_recreating_it(tmp_path: Path) -> None:
     calls: list[str] = []
+    run = request(workspace=tmp_path / "workspace")
+    grant = issue_openhands_tool_grant(
+        "tool-secret-test",
+        worker_id="coding-worker-openhands-candidate",
+        run_id=run.run_id,
+        project_id=run.project_id,
+        tool_names=run.tool_grants,
+    )
 
     async def handler(request: httpx.Request) -> httpx.Response:
         calls.append(f"{request.method} {request.url.path}")
@@ -141,7 +150,7 @@ async def test_preconfigured_run_scoped_bridge_is_read_back_without_recreating_i
                             "url": OPENHANDS_MCP_BRIDGE_URL,
                             "transport": "streamable-http",
                             "enabled": True,
-                            "headers": {"X-AIAT-OpenHands-Grant": "REDACTED"},
+                            "headers": {"X-AIAT-OpenHands-Grant": grant},
                         }
                     }
                 },
@@ -153,7 +162,6 @@ async def test_preconfigured_run_scoped_bridge_is_read_back_without_recreating_i
         raise AssertionError(request)
 
     adapter = make_adapter(tmp_path, handler, preconfigured=True)
-    run = request(workspace=tmp_path / "workspace")
     await adapter._configure_tool_bridge(run)
     assert adapter._mcp_by_run[run.run_id] == "aiat-openhands-test-run"
     assert not any(call.startswith("POST /api/settings/mcp/") for call in calls)
@@ -164,6 +172,15 @@ async def test_preconfigured_run_scoped_bridge_is_read_back_without_recreating_i
 
 @pytest.mark.asyncio
 async def test_preconfigured_run_scoped_bridge_reads_v143_nested_settings_envelope(tmp_path: Path) -> None:
+    run = request(workspace=tmp_path / "workspace")
+    grant = issue_openhands_tool_grant(
+        "tool-secret-test",
+        worker_id="coding-worker-openhands-candidate",
+        run_id=run.run_id,
+        project_id=run.project_id,
+        tool_names=run.tool_grants,
+    )
+
     async def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "GET" and request.url.path == "/api/settings":
             return httpx.Response(
@@ -175,7 +192,7 @@ async def test_preconfigured_run_scoped_bridge_reads_v143_nested_settings_envelo
                                 "url": OPENHANDS_MCP_BRIDGE_URL,
                                 "transport": "streamable-http",
                                 "enabled": True,
-                                "headers": {"X-AIAT-OpenHands-Grant": "REDACTED"},
+                                "headers": {"X-AIAT-OpenHands-Grant": grant},
                             }
                         }
                     }
@@ -186,10 +203,44 @@ async def test_preconfigured_run_scoped_bridge_reads_v143_nested_settings_envelo
         raise AssertionError(request)
 
     adapter = make_adapter(tmp_path, handler, preconfigured=True)
-    run = request(workspace=tmp_path / "workspace")
     await adapter._configure_tool_bridge(run)
     assert adapter._mcp_by_run[run.run_id] == "aiat-openhands-test-run"
     await adapter._cleanup_tool_bridge(run.run_id)
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_preconfigured_run_scoped_bridge_rejects_grant_bound_to_another_run(tmp_path: Path) -> None:
+    other_run = request(workspace=tmp_path / "workspace")
+    grant = issue_openhands_tool_grant(
+        "tool-secret-test",
+        worker_id="coding-worker-openhands-candidate",
+        run_id=other_run.run_id,
+        project_id=other_run.project_id,
+        tool_names=other_run.tool_grants,
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == "/api/settings":
+            return httpx.Response(
+                200,
+                json={
+                    "mcp_config": {
+                        "aiat-openhands-test-run": {
+                            "url": OPENHANDS_MCP_BRIDGE_URL,
+                            "transport": "streamable-http",
+                            "enabled": True,
+                            "headers": {"X-AIAT-OpenHands-Grant": grant},
+                        }
+                    }
+                },
+            )
+        raise AssertionError(f"unexpected network call: {request.method} {request.url}")
+
+    adapter = make_adapter(tmp_path, handler, preconfigured=True)
+    run = request(workspace=tmp_path / "workspace")
+    with pytest.raises(RuntimeError, match="not bound to this run"):
+        await adapter._configure_tool_bridge(run)
     await adapter.close()
 
 
