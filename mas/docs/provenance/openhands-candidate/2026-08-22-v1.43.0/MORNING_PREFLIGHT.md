@@ -67,8 +67,9 @@ the evidence directory: both reached the provider/gateway, runsc,
 tool-service, and cleanup boundaries, then failed closed on stale v1.43.0
 Agent Server readback envelopes before the live adapter wave. Their fixes are
 `fc5bb44` (LLM `config` envelope) and `e0f1891` (`agent_settings` MCP
-envelope). The current feature-branch tip `dc1bac4` passes the full local
-dispatch preflight; use the actual frozen SHA rather than the historical
+envelope). The reviewed branch passed the full local dispatch preflight after
+the independent generic external-worker router fix `2962da5`; use the actual
+frozen SHA rather than the historical
 `1fcaf6cb62c6583efdf0ea1396e3d52329453fc3` ancestor.
 The cleanup path now removes the exact run-tagged tool-service image reference
 it builds, and the static workflow validator rejects a colon-versus-hyphen tag

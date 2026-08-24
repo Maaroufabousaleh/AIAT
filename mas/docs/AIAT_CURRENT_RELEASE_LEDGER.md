@@ -47,13 +47,14 @@ consumed after successful trusted construction. The read-only dispatch
 preflight for that implementation baseline passes with the configured Groq secret and governed
 variables; no replacement certification run has been dispatched for this tip.
 
-The current feature-branch tip `dc1bac4925a4c4a6e9acd82d0ffa1f715f219bb5`
-also passes the complete read-only dispatch preflight: its workflow, helper
-contracts, exact pins, inactive status, GitHub configuration, and deterministic
-test suite agree. The older `1fcaf6cb62c6583efdf0ea1396e3d52329453fc3`
-candidate remains intentionally rejected because its tree predates the helper
-contracts required by the dispatch workflow. No workflow was dispatched by
-this evidence refresh.
+The reviewed feature branch passed the complete read-only dispatch preflight
+after the independent generic external-worker router fix `2962da5`: its
+workflow, helper contracts, exact pins, inactive status, GitHub configuration,
+and deterministic test suite agree. The older
+`1fcaf6cb62c6583efdf0ea1396e3d52329453fc3` candidate remains intentionally
+rejected because its tree predates the helper contracts required by the
+dispatch workflow. Freeze the actual checkout SHA for any future run; no
+workflow was dispatched by this evidence refresh.
 
 The deliberate run `32691538177` repeated the stale-candidate failure because
 the requested `1fcaf6cb62c6583efdf0ea1396e3d52329453fc3` checkout still carried
