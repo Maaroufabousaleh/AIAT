@@ -1,7 +1,7 @@
 # AIAT Current Release Ledger
 
 **Run date:** 2026-08-24
-**Base revision:** `5e843a7` (OpenHands runsc network resolution uses explicit run-scoped peer IP host mappings while retaining stable service names; the workflow validator requires the mapping and probes name resolution before HTTP; scanner/SBOM evidence preserves JSON Lines and removes incomplete SBOM artifacts; image SBOM generation uses Syft's exact registry-digest source to avoid Docker-daemon tar exhaustion; live readiness accepts only the pinned `build_git_sha` field or an equivalent exact-commit alias; disposable OmniRoute connection identifiers are redacted from retained evidence; dispatch preflight validates every workflow script and helper contract from the requested candidate tree; exact run-tagged tool-service image cleanup is statically guarded; diagnostic baseline discovery failures remain scalar baseline evidence while management-auth failures fail closed; Agent Server v1.43 nested MCP settings envelopes are merged for provisioning and cleanup readback; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
+**Base revision:** `b042401` (OpenHands runsc network resolution uses explicit run-scoped peer IP host mappings while retaining stable service names; the workflow validator requires the mapping and probes name resolution before HTTP; scanner/SBOM evidence preserves JSON Lines and removes incomplete SBOM artifacts; image SBOM generation uses Syft's exact registry-digest source to avoid Docker-daemon tar exhaustion; live readiness accepts only the pinned `build_git_sha` field or an equivalent exact-commit alias; disposable OmniRoute connection identifiers are redacted from retained evidence; dispatch preflight validates every workflow script and helper contract from the requested candidate tree; exact run-tagged tool-service image cleanup is statically guarded; diagnostic baseline discovery failures remain scalar baseline evidence while management-auth failures fail closed; Agent Server v1.43 nested MCP settings envelopes are merged for provisioning and cleanup readback, including production-adapter preconfigured readback; static ledger 63/63; unconfigured aggregate refresh `2026-08-19T04:47:35Z`; configured aggregate refresh `f6063e0`)
 **Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -56,11 +56,13 @@ rejected because its tree predates the helper contracts required by the
 dispatch workflow. Freeze the actual checkout SHA for any future run; no
 workflow was dispatched by this evidence refresh.
 
-The latest reviewed branch tip is `5e843a70c36156cf0bc2991d5fe007d46d2ac0bf`.
+The latest reviewed branch tip is `b0424010e5784bf726ecc7c71b16e9b3707a5e01`.
 Commits `9c30214` and `cc3a5d5` harden OpenHands v1.43 cleanup readback for
 the pinned Agent Server `agent_settings` envelope; `5e843a7` additionally
 merges direct and nested MCP maps so a compatibility field cannot hide a
-residual grant. Focused OpenHands tests, workflow validation, Ruff, and the
+residual grant. `b042401` additionally makes the production adapter merge the
+same direct/nested settings envelopes before validating a preconfigured
+run-scoped bridge. Focused OpenHands tests, workflow validation, Ruff, and the
 read-only dispatch preflight pass at this tip. No workflow was dispatched and
 no live worker evidence is claimed.
 
