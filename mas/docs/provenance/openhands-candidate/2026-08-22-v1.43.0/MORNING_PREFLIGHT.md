@@ -1,7 +1,7 @@
 # OpenHands v1.43.0 morning certification preparation
 
 **Repository-local refresh:** 2026-08-24, current certification-path
-hardening through implementation tip `35c75dcbf159fc05020d579a5e154fb43a0f05c0`
+hardening through implementation tip `9b5aa6f97bc7d12cdfee231bfb43afe8ff8a69bc`
 (including
 `595965d` gateway failure-origin diagnostics, `57f76b6` fail-closed web DNS
 validation, `e7a2ff5` stopped-container cleanup, and `71149db` certification
@@ -19,13 +19,19 @@ workflow validator and regression suite reject the former unconditional
 success pattern. The current tip passes the complete read-only dispatch
 preflight; no workflow was dispatched for it.
 
+The later `dc8e26b` runtime hardening removes session, tool, gateway, provider,
+and CI credential-like environment variables before the post-run task tests;
+`9b5aa6f` makes the workflow validator require that scrub contract. This is
+repository-local security evidence only and does not constitute live
+certification.
+
 This is a manual preparation guide for the inactive candidate. It does not
 activate OpenHands, approve the steward record, or dispatch a workflow. The
 workflow is `workflow_dispatch` only and must be dispatched once against an
 explicit frozen commit after the preflight passes.
 
 The reviewed implementation tip immediately before this documentation
-refresh was `35c75dc`; it passed the
+refresh was `9b5aa6f`; it passed the
 read-only dispatch preflight. Because this document is itself committed, the
 dispatch candidate must always be frozen from the actual checkout with
 `git rev-parse HEAD`, never copied from an embedded tip string. No
