@@ -1236,6 +1236,42 @@ jobs:
           git -C "$RUNNER_TEMP/aiat-openhands-workspace" add -- \
             pyproject.toml README.md slugger tests
           git -C "$RUNNER_TEMP/aiat-openhands-workspace" commit --quiet -m "certification baseline"
+          # The pinned Agent Server image runs as UID/GID 10001.  A hosted
+          # runner creates this disposable workspace as its own user, which
+          # otherwise causes v1.43.0 conversation creation to fail while the
+          # server initializes the workspace.  Verify the immutable image
+          # identity before changing ownership; never assume a runtime user.
+          image_user="$(docker image inspect --format '{{.Config.User}}' "$OPENHANDS_IMAGE")"
+          image_uid="$(docker run --rm --network none --entrypoint sh "$OPENHANDS_IMAGE" -c 'id -u')"
+          image_gid="$(docker run --rm --network none --entrypoint sh "$OPENHANDS_IMAGE" -c 'id -g')"
+          test "$image_user" = "openhands"
+          test "$image_uid:$image_gid" = "10001:10001"
+          sudo chown -R 10001:10001 "$RUNNER_TEMP/aiat-openhands-workspace"
+          python3 - "$RUNNER_TEMP/aiat-openhands-evidence/live/workspace-ownership.json" "$image_user" "$image_uid" "$image_gid" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          output, image_user, image_uid, image_gid = sys.argv[1:]
+          Path(output).write_text(
+              json.dumps(
+                  {
+                      "schema_version": "aiat.openhands-workspace-ownership.v1",
+                      "status": "PASS",
+                      "image_user": image_user,
+                      "image_uid": int(image_uid),
+                      "image_gid": int(image_gid),
+                      "workspace_owner": "10001:10001",
+                      "workspace_scope": "disposable-certification-workspace",
+                      "raw_paths_retained": False,
+                  },
+                  sort_keys=True,
+                  indent=2,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
           test -s "$RUNNER_TEMP/aiat-openhands-session-key"
           export OPENHANDS_SESSION_API_KEY="$(cat "$RUNNER_TEMP/aiat-openhands-session-key")"
           uv run python scripts/openhands_live_certify.py \
@@ -1488,7 +1524,10 @@ jobs:
             secret_files_absent=false
             cleanup_ok=0
           fi
-          rm -rf -- "$RUNNER_TEMP/aiat-openhands-workspace"
+          # The exact pinned Agent Server UID owns files created during the
+          # run; use sudo only for this known disposable path so cleanup can
+          # still prove zero residue after partial/failed execution.
+          sudo rm -rf -- "$RUNNER_TEMP/aiat-openhands-workspace"
           workspace_absent=true
           if [ -e "$RUNNER_TEMP/aiat-openhands-workspace" ]; then
             workspace_absent=false

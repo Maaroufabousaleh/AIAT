@@ -623,13 +623,23 @@ def validate(text: str) -> dict[str, Any]:
         'docker image rm "$tool_image"' not in text
         or 'image="aiat-openhands-tool-service-cert:${GITHUB_RUN_ID}"' not in text
         or 'tool_image="aiat-openhands-tool-service-cert:${GITHUB_RUN_ID}"' not in text
-        or 'rm -rf -- "$RUNNER_TEMP/aiat-openhands-workspace"' not in text
+        or 'sudo rm -rf -- "$RUNNER_TEMP/aiat-openhands-workspace"' not in text
         or '"tool_image_absent": image_absent == "true"' not in text
         or '"workspace_absent": workspace_absent == "true"' not in text
         or '"profile": {' not in text
         or '"verified_by_agent_container_absence"' not in text
     ):
         errors.append("workspace_profile_or_tool_image_cleanup_missing")
+    if (
+        'image_user="$(docker image inspect --format \'{{.Config.User}}\' "$OPENHANDS_IMAGE")"' not in text
+        or 'image_uid="$(docker run --rm --network none --entrypoint sh "$OPENHANDS_IMAGE" -c \'id -u\')"' not in text
+        or 'image_gid="$(docker run --rm --network none --entrypoint sh "$OPENHANDS_IMAGE" -c \'id -g\')"' not in text
+        or 'test "$image_user" = "openhands"' not in text
+        or 'test "$image_uid:$image_gid" = "10001:10001"' not in text
+        or 'sudo chown -R 10001:10001 "$RUNNER_TEMP/aiat-openhands-workspace"' not in text
+        or 'workspace-ownership.json' not in text
+    ):
+        errors.append("workspace_container_user_binding_missing")
     if (
         "secret_environment_entries_absent" not in text
         or "^AIAT_TOOL_SECRET=/d" not in text

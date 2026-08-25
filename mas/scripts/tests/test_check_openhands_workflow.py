@@ -708,9 +708,17 @@ def test_cleanup_requires_workspace_and_tool_image_absence() -> None:
     module = _module()
     text = _workflow()
     assert "workspace_profile_or_tool_image_cleanup_missing" not in module.validate(text)["errors"]
-    weakened = text.replace('rm -rf -- "$RUNNER_TEMP/aiat-openhands-workspace"', "true", 1)
+    weakened = text.replace('sudo rm -rf -- "$RUNNER_TEMP/aiat-openhands-workspace"', "true", 1)
     report = module.validate(weakened)
     assert "workspace_profile_or_tool_image_cleanup_missing" in report["errors"]
+
+
+def test_live_workspace_is_bound_to_the_pinned_agent_uid() -> None:
+    module = _module()
+    text = _workflow()
+    assert "workspace_container_user_binding_missing" not in module.validate(text)["errors"]
+    weakened = text.replace('test "$image_uid:$image_gid" = "10001:10001"', "true", 1)
+    assert "workspace_container_user_binding_missing" in module.validate(weakened)["errors"]
 
     weakened = text.replace(
         'tool_image="aiat-openhands-tool-service-cert:${GITHUB_RUN_ID}"',
