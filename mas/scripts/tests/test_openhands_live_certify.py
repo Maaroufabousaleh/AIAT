@@ -72,6 +72,41 @@ def test_execution_contract_failure_precedes_downstream_gate_failures() -> None:
     assert result == "BLOCKED_OPENHANDS_LIVE_EXECUTION_CONTRACT"
 
 
+def test_lifecycle_polling_is_skipped_when_conversation_creation_failed() -> None:
+    module = _module()
+    status = module._lifecycle_upstream_block(
+        {
+            "conversation_create_status": "FAILED",
+            "conversation_create_http_status": 500,
+            "conversation_id_present": False,
+        }
+    )
+    assert status == "NOT_RUN_UPSTREAM_CONVERSATION_CREATE_FAILURE"
+    assert module._lifecycle_upstream_block(
+        {"conversation_create_status": "PASS", "conversation_id_present": True}
+    ) is None
+
+
+def test_conversation_create_evidence_is_scalar_and_fail_closed() -> None:
+    module = _module()
+    evidence = module._conversation_create_evidence(
+        {
+            "execution_diagnostics": {
+                "conversation_create_status": "FAILED",
+                "conversation_create_http_status": 500,
+                "conversation_id_present": False,
+                "conversation_create_exception_class": "KeyError",
+                "conversation_create_exception_message_sanitized": "ToolDefinition 'TerminalTool' is not registered",
+                "conversation_create_request_shape_sha256": "a" * 64,
+            }
+        }
+    )
+    assert evidence["status"] == "FAIL"
+    assert evidence["conversation_create_http_status"] == 500
+    assert evidence["raw_request_retained"] is False
+    assert evidence["secret_values_retained"] is False
+
+
 def test_task_spec_prompt_is_used_but_not_retained_in_public_definition(tmp_path: Path) -> None:
     module = _module()
     task = tmp_path / "task.json"

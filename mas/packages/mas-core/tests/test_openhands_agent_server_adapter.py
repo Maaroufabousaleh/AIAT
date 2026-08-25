@@ -1098,6 +1098,42 @@ async def test_conversation_create_422_is_retained_as_scalar_contract_diagnostic
 
 
 @pytest.mark.asyncio
+async def test_conversation_create_500_retains_sanitized_upstream_exception_and_shape(tmp_path: Path) -> None:
+    run = request(workspace=tmp_path / "workspace")
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path == "/api/settings/mcp/aiat-openhands-test-run":
+            return httpx.Response(201, json={})
+        if request.method == "POST" and request.url.path == "/api/conversations":
+            return httpx.Response(
+                500,
+                json={
+                    "exception": "ToolDefinition 'TerminalTool' is not registered",
+                    "error_id": "request-correlation-value",
+                },
+            )
+        raise AssertionError(request)
+
+    adapter = make_adapter(tmp_path, handler)
+    with pytest.raises(httpx.HTTPStatusError):
+        await adapter._create_conversation(run)
+    diagnostics = adapter._diagnostics(run.run_id)
+    assert diagnostics["conversation_create_http_status"] == 500
+    assert diagnostics["conversation_create_request_schema_valid"] is True
+    assert diagnostics["conversation_create_request_shape_sha256"]
+    assert diagnostics["conversation_create_profile_id_present"] is True
+    assert diagnostics["conversation_create_workspace_path_present"] is True
+    assert diagnostics["conversation_create_exception_class"] == "KeyError"
+    assert diagnostics["conversation_create_exception_message_sanitized"] == (
+        "ToolDefinition 'TerminalTool' is not registered"
+    )
+    assert diagnostics["conversation_create_failure_stage"] == "agent_initialization"
+    assert diagnostics["conversation_create_error_fingerprint"]
+    assert "request-correlation-value" not in json.dumps(diagnostics)
+    await adapter.close()
+
+
+@pytest.mark.asyncio
 async def test_task_cannot_override_model_gateway_profile_or_budget(tmp_path: Path) -> None:
     async def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={})

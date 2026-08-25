@@ -395,6 +395,23 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             "conversation_create_status": "NOT_RUN",
             "conversation_create_http_status": None,
             "conversation_id_present": False,
+            "conversation_create_request_schema_valid": None,
+            "conversation_create_request_shape_sha256": None,
+            "conversation_create_request_field_names": [],
+            "conversation_create_request_top_level_types": {},
+            "conversation_create_tag_keys": [],
+            "conversation_create_tag_value_types": {},
+            "conversation_create_mcp_server_count": 0,
+            "conversation_create_mcp_header_names": [],
+            "conversation_create_profile_id_present": False,
+            "conversation_create_model_field_present": False,
+            "conversation_create_workspace_field_present": False,
+            "conversation_create_workspace_path_present": False,
+            "conversation_create_other_optional_fields": [],
+            "conversation_create_failure_stage": None,
+            "conversation_create_exception_class": None,
+            "conversation_create_exception_message_sanitized": None,
+            "conversation_create_error_fingerprint": None,
             "run_start_status": "NOT_RUN",
             "run_start_http_status": None,
             "run_endpoint": None,
@@ -434,6 +451,7 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
         operation: str,
         path: str,
         status_code: int,
+        response_content: bytes | None = None,
     ) -> None:
         if run_id is None:
             return
@@ -466,6 +484,125 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             errors = diagnostic.setdefault("request_errors", [])
             if error_class not in errors:
                 errors.append(error_class)
+            if operation == "conversation_create":
+                safe_class, safe_message, fingerprint, stage = self._safe_create_error(
+                    status_code,
+                    response_content,
+                )
+                diagnostic.update(
+                    {
+                        "conversation_create_failure_stage": stage,
+                        "conversation_create_exception_class": safe_class,
+                        "conversation_create_exception_message_sanitized": safe_message,
+                        "conversation_create_error_fingerprint": fingerprint,
+                    }
+                )
+
+    @staticmethod
+    def _safe_create_error(
+        status_code: int,
+        response_content: bytes | None,
+    ) -> tuple[str, str, str, str]:
+        """Classify a create error without retaining the upstream payload.
+
+        Agent Server v1.43 returns a small JSON error envelope for uncaught
+        exceptions.  The envelope can contain paths, IDs, prompts, or other
+        runtime values, so only a narrow known category and a one-way digest
+        are retained in certification diagnostics.
+        """
+
+        raw = response_content or b""
+        fingerprint = hashlib.sha256(raw).hexdigest() if raw else ""
+        try:
+            value = json.loads(raw.decode("utf-8")) if raw else {}
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            value = {}
+        pieces: list[str] = []
+        if isinstance(value, dict):
+            for key in ("exception", "detail", "error"):
+                item = value.get(key)
+                if isinstance(item, str):
+                    pieces.append(item)
+                elif isinstance(item, list):
+                    pieces.extend(str(entry) for entry in item if isinstance(entry, str))
+        message = " ".join(pieces)
+        if "ToolDefinition" in message and "not registered" in message:
+            match = re.search(r"ToolDefinition ['\"]([A-Za-z0-9_.-]{1,96})['\"] is not registered", message)
+            name = match.group(1) if match else "unknown"
+            return (
+                "KeyError",
+                f"ToolDefinition '{name}' is not registered",
+                fingerprint,
+                "agent_initialization",
+            )
+        if "PermissionError" in message or "Permission denied" in message:
+            return "PermissionError", "workspace permission denied", fingerprint, "workspace_initialization"
+        if status_code >= 500:
+            return f"HTTP_{status_code}", "upstream error response (payload omitted)", fingerprint, "conversation_create"
+        return f"HTTP_{status_code}", "request rejected (payload omitted)", fingerprint, "request_validation"
+
+    @staticmethod
+    def _request_shape(payload: dict[str, Any]) -> dict[str, Any]:
+        """Return a deterministic, value-free shape for a create request."""
+
+        def describe(value: Any) -> dict[str, Any]:
+            if isinstance(value, dict):
+                return {
+                    "type": "object",
+                    "keys": sorted(str(key) for key in value),
+                    "fields": {str(key): describe(item) for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))},
+                }
+            if isinstance(value, list):
+                item_types = sorted({describe(item)["type"] for item in value})
+                return {"type": "array", "length": len(value), "item_types": item_types}
+            if isinstance(value, str):
+                return {"type": "string", "length": len(value)}
+            if isinstance(value, bool):
+                return {"type": "boolean"}
+            if value is None:
+                return {"type": "null"}
+            if isinstance(value, (int, float)):
+                return {"type": "number"}
+            return {"type": type(value).__name__}
+
+        return describe(payload)
+
+    def _record_create_request_shape(self, run_id: UUID, payload: dict[str, Any]) -> None:
+        shape = self._request_shape(payload)
+        tags = payload.get("tags") if isinstance(payload.get("tags"), dict) else {}
+        workspace = payload.get("workspace") if isinstance(payload.get("workspace"), dict) else {}
+        mcp_servers = payload.get("mcp_servers")
+        mcp_headers: list[str] = []
+        if isinstance(mcp_servers, list):
+            for server in mcp_servers:
+                if isinstance(server, dict) and isinstance(server.get("headers"), dict):
+                    mcp_headers.extend(str(key) for key in server["headers"])
+        shape_json = json.dumps(shape, sort_keys=True, separators=(",", ":"))
+        diagnostic = self._diagnostic_for(run_id)
+        diagnostic.update(
+            {
+                "conversation_create_request_schema_valid": True,
+                "conversation_create_request_shape_sha256": hashlib.sha256(shape_json.encode("utf-8")).hexdigest(),
+                "conversation_create_request_field_names": sorted(str(key) for key in payload),
+                "conversation_create_request_top_level_types": {
+                    str(key): value["type"] for key, value in shape.get("fields", {}).items()
+                },
+                "conversation_create_tag_keys": sorted(str(key) for key in tags),
+                "conversation_create_tag_value_types": {
+                    str(key): describe["type"]
+                    for key, describe in ((str(key), self._request_shape({"value": value})["fields"]["value"]) for key, value in tags.items())
+                },
+                "conversation_create_mcp_server_count": len(mcp_servers) if isinstance(mcp_servers, list) else 0,
+                "conversation_create_mcp_header_names": sorted(set(mcp_headers)),
+                "conversation_create_profile_id_present": bool(payload.get("agent_profile_id")),
+                "conversation_create_model_field_present": "model" in payload or "model_id" in payload,
+                "conversation_create_workspace_field_present": bool(workspace),
+                "conversation_create_workspace_path_present": bool(workspace.get("working_dir")),
+                "conversation_create_other_optional_fields": sorted(
+                    str(key) for key in payload if key not in {"agent_profile_id", "workspace", "tags", "initial_message"}
+                ),
+            }
+        )
 
     @classmethod
     def for_certification(
@@ -550,6 +687,7 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
                 operation=diagnostic_operation,
                 path=path,
                 status_code=response.status_code,
+                response_content=response.content,
             )
         response.raise_for_status()
         if not response.content:
@@ -1022,6 +1160,7 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             self._conversation_by_run[request.run_id] = existing
             return existing
         payload = self._start_payload(request)
+        self._record_create_request_shape(request.run_id, payload)
         data = await self._json(
             "POST",
             self.verification.endpoint("conversation_create"),

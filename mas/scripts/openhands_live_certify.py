@@ -368,6 +368,25 @@ def _lifecycle_prompt(kind: str) -> str:
     )
 
 
+def _lifecycle_upstream_block(execution_diagnostics: dict[str, Any]) -> str | None:
+    """Return a causal status when no conversation exists to control.
+
+    Lifecycle probes must not poll for a conversation that the create request
+    never produced.  The mandatory lifecycle gates remain non-passing; this
+    status only records their dependency on the earliest failed gate.
+    """
+
+    if execution_diagnostics.get("conversation_id_present") is True:
+        return None
+    create_status = str(execution_diagnostics.get("conversation_create_status") or "NOT_RUN")
+    create_http_status = execution_diagnostics.get("conversation_create_http_status")
+    if create_status != "PASS" or not execution_diagnostics.get("conversation_id_present"):
+        if create_http_status:
+            return "NOT_RUN_UPSTREAM_CONVERSATION_CREATE_FAILURE"
+        return "NOT_RUN_UPSTREAM_CONVERSATION_CREATE_UNAVAILABLE"
+    return None
+
+
 async def _exercise_live_lifecycle(
     adapter: OpenHandsAgentServerAdapter,
     base_request: WorkerRunRequest,
@@ -836,11 +855,32 @@ async def certify(
             postrun["caused_by_gate"] = "real_coding_task"
         blockers.extend(postrun_blockers)
         if exercise_lifecycle:
-            lifecycle_statuses, lifecycle_details, lifecycle_blockers = await _exercise_live_lifecycle(
-                adapter,
-                request,
-                secret_values,
-            )
+            upstream_lifecycle_status = _lifecycle_upstream_block(execution_diagnostics)
+            if upstream_lifecycle_status is not None:
+                lifecycle_statuses = {
+                    # Keep the canonical gate status ``NOT_RUN``; the
+                    # dependency reason is carried in the scalar details so
+                    # the gate evaluator remains backwards-compatible.
+                    "pause": "NOT_RUN",
+                    "interrupt": "NOT_RUN",
+                    "resume": "NOT_RUN",
+                    "timeout": "NOT_RUN",
+                }
+                lifecycle_details = {
+                    "status": "NOT_RUN",
+                    "not_run_reason": upstream_lifecycle_status,
+                    "caused_by_gate": "real_coding_task",
+                    "conversation_id_present": False,
+                    "polling_skipped": True,
+                    "raw_payloads_retained": False,
+                }
+                lifecycle_blockers = ["lifecycle_upstream_conversation_create_failure"]
+            else:
+                lifecycle_statuses, lifecycle_details, lifecycle_blockers = await _exercise_live_lifecycle(
+                    adapter,
+                    request,
+                    secret_values,
+                )
             statuses.update(lifecycle_statuses)
             task_definition["lifecycle"] = lifecycle_details
             lifecycle_scan = lifecycle_details.get("secret_scan")
@@ -959,6 +999,45 @@ def _extract_mcp_config(value: Any) -> dict[str, Any] | None:
     return merged or None
 
 
+def _conversation_create_evidence(report: dict[str, Any]) -> dict[str, Any]:
+    """Project adapter create diagnostics into a bounded standalone record."""
+
+    diagnostics = report.get("execution_diagnostics") if isinstance(report.get("execution_diagnostics"), dict) else {}
+    fields = (
+        "conversation_create_status",
+        "conversation_create_http_status",
+        "conversation_id_present",
+        "conversation_create_request_schema_valid",
+        "conversation_create_request_shape_sha256",
+        "conversation_create_request_field_names",
+        "conversation_create_request_top_level_types",
+        "conversation_create_tag_keys",
+        "conversation_create_tag_value_types",
+        "conversation_create_mcp_server_count",
+        "conversation_create_mcp_header_names",
+        "conversation_create_profile_id_present",
+        "conversation_create_model_field_present",
+        "conversation_create_workspace_field_present",
+        "conversation_create_workspace_path_present",
+        "conversation_create_other_optional_fields",
+        "conversation_create_failure_stage",
+        "conversation_create_exception_class",
+        "conversation_create_exception_message_sanitized",
+        "conversation_create_error_fingerprint",
+    )
+    evidence = {field: diagnostics.get(field) for field in fields}
+    evidence.update(
+        {
+            "schema_version": "aiat.openhands-conversation-create.v1",
+            "status": "PASS" if diagnostics.get("conversation_id_present") is True else "FAIL",
+            "raw_request_retained": False,
+            "raw_response_retained": False,
+            "secret_values_retained": False,
+        }
+    )
+    return evidence
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", default=os.getenv("OPENHANDS_AGENT_SERVER_URL", ""))
@@ -1003,6 +1082,10 @@ def main(argv: list[str] | None = None) -> int:
             report["status"] = "BLOCKED_CLEANUP"
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    (args.output.parent / "conversation-create.json").write_text(
+        json.dumps(_conversation_create_evidence(report), sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
     print(json.dumps({"status": report.get("status"), "blockers": report.get("blockers", [])}, sort_keys=True))
     return 0 if report.get("status") == "PASS" else 2
 

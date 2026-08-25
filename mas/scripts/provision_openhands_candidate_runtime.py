@@ -40,7 +40,13 @@ MCP_KEY_PREFIX = "aiat-openhands-"
 BRIDGE_URL = "http://tool-service:8002/openhands/mcp"
 WORKER_ID = "coding-worker-openhands-candidate"
 TOOL_GRANTS = ("aiat.repository.read", "aiat.repository.write", "aiat.tests.execute")
-EXPECTED_AGENT_TOOLS = {"TerminalTool", "FileEditorTool"}
+# OpenHands SDK v1.43.0 registers the built-in tool definitions under their
+# wire names (``terminal`` and ``file_editor``).  Python implementation class
+# names are not valid profile references: the Agent Server resolves explicit
+# profile entries through its tool registry while creating the conversation.
+# Keeping the canonical wire names here prevents a server-side 500 during
+# initial agent setup.
+EXPECTED_AGENT_TOOLS = {"terminal", "file_editor"}
 AGENT_SERVER_REDACTED_MCP_GRANT = "**********"
 
 
@@ -161,8 +167,8 @@ def _agent_profile_payload(*, mcp_key: str, disabled_skills: list[str]) -> dict[
         "llm_profile_ref": LLM_PROFILE_NAME,
         "mcp_server_refs": [mcp_key],
         "tools": [
-            {"name": "TerminalTool", "params": {}},
-            {"name": "FileEditorTool", "params": {}},
+            {"name": "terminal", "params": {}},
+            {"name": "file_editor", "params": {}},
         ],
         "enable_sub_agents": False,
         "enable_switch_llm_tool": False,

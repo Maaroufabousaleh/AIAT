@@ -100,7 +100,7 @@ def test_run_scoped_objects_are_created_and_only_server_profile_uuid_is_retained
                         "id": profile_id,
                         "llm_profile_ref": "aiat-openhands-omniroute-coding",
                         "mcp_server_refs": [mcp_key],
-                        "tools": [{"name": "TerminalTool"}, {"name": "FileEditorTool"}],
+                        "tools": [{"name": "terminal"}, {"name": "file_editor"}],
                         "enable_sub_agents": False,
                         "enable_switch_llm_tool": False,
                         "disabled_skills": profile_disabled_skills,
@@ -296,6 +296,13 @@ def test_agent_profile_payload_uses_deny_list_for_server_discovered_skills() -> 
     assert payload["disabled_skills"] == ["public-skill", "project-skill"]
     assert payload["mcp_server_refs"] == [MODULE.EXPECTED_MCP_KEY]
     assert {item["name"] for item in payload["tools"]} == MODULE.EXPECTED_AGENT_TOOLS
+
+
+def test_agent_profile_uses_v143_registered_tool_wire_names() -> None:
+    payload = MODULE._agent_profile_payload(mcp_key=MODULE.EXPECTED_MCP_KEY, disabled_skills=[])
+    assert [item["name"] for item in payload["tools"]] == ["terminal", "file_editor"]
+    assert "TerminalTool" not in {item["name"] for item in payload["tools"]}
+    assert "FileEditorTool" not in {item["name"] for item in payload["tools"]}
 
 
 def test_skill_readback_rejects_malformed_or_unresolved_catalog() -> None:
