@@ -29,6 +29,12 @@ runtime:
     aiat_mcp_bridge_url: http://tool-service:8002/openhands/mcp
     governed_profile_spec_ref: mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/agent-profile-spec.yaml
     model_profile_ref: opencode-phase0b-coding
+    # AIAT retains the provider-agnostic model alias.  The v1.43 Agent Server
+    # profile uses this fixed OpenAI wire form so LiteLLM can resolve the
+    # custom OpenAI-compatible gateway; callers cannot override the mapping.
+    model_logical_id: omniroute-coding
+    openhands_wire_model_id: openai/omniroute-coding
+    model_name_translation: governed_aiat_alias_to_v143_openai_wire_model
     governance:
       authority: aiat_control_plane
       workspace_policy: isolated_run_scoped

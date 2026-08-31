@@ -16,6 +16,12 @@ aiat_bindings:
   model_profile_id: opencode-phase0b-coding
   model_profile_version: "1"
   exact_model_id: omniroute-coding
+  # AIAT's model registry keeps the provider-agnostic alias above. OpenHands
+  # v1.43 routes custom OpenAI-compatible endpoints through LiteLLM, whose
+  # provider resolver requires this fixed wire prefix. The adapter owns this
+  # translation; task input cannot select or replace it.
+  openhands_wire_model_id: openai/omniroute-coding
+  model_name_translation: governed_aiat_alias_to_v143_openai_wire_model
   model_route_authority: aiat_gateway
   model_gateway_url: http://litellm:4000
   model_gateway_auth_scope: workflow_run_generated
@@ -47,8 +53,9 @@ agent_server_profile:
   name: aiat-openhands-v1-43-0-coding
   agent_kind: openhands
   # This must be an existing Agent Server LLM-profile name whose resolved
-  # configuration uses the AIAT gateway and exact_model_id above. It is not a
-  # direct provider credential or an arbitrary OpenHands model selection.
+  # configuration uses the AIAT gateway and the fixed wire model corresponding
+  # to exact_model_id above. It is not a direct provider credential or an
+  # arbitrary OpenHands model selection.
   llm_profile_ref: aiat-openhands-omniroute-coding
   # The operator must set this to the one disposable key supplied as
   # OPENHANDS_MCP_SETTINGS_KEY. A null value at runtime would expose all
@@ -95,7 +102,11 @@ provisioning:
   required_postconditions:
     - returned_profile_id_is_recorded_without_fabrication
     - materialize_is_valid
-    - resolved_llm_profile_matches_aiat_exact_model
+    # The AIAT exact_model_id is the logical alias.  The resolved v1.43 LLM
+    # profile is valid only when its fixed OpenAI wire model is
+    # ``openai/omniroute-coding``; this compatibility detail is not caller
+    # selectable and does not change the AIAT model-route authority.
+    - resolved_llm_profile_matches_aiat_model_contract
     - mcp_refs_contain_only_the_operator_key
     - disabled_controls_are_verified_from_server_readback
   aiat_storage:
