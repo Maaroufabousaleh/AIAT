@@ -31,12 +31,25 @@ Official interface references:
 - [SDK remote conversation client](https://github.com/OpenHands/software-agent-sdk/blob/v1.43.0/openhands-sdk/openhands/sdk/conversation/impl/remote_conversation.py)
 - [v1.43.0 release](https://github.com/OpenHands/software-agent-sdk/releases/tag/v1.43.0)
 
+### v1.43 execution-start compatibility
+
+The pinned Agent Server implementation unconditionally calls
+`event_service.send_message(..., True)` when a conversation-create request
+contains `initial_message`; its nested `run` flag is not consulted.  AIAT
+therefore omits `initial_message`, queues the governed prompt through
+`POST /api/conversations/{id}/events` with `run=false`, and then invokes the
+explicit `/run` endpoint once.  This preserves a single execution transition
+and avoids the HTTP 409 returned when `/run` races the create-triggered
+background run.  The behavior is pinned-release compatibility evidence, not a
+change to the provider or model routing authority.
+
 ## Exact OpenCode to OpenHands substitution map
 
 | AIAT contract | Existing OpenCode shape | OpenHands v1.43.0 shape | Candidate adapter decision |
 | --- | --- | --- | --- |
-| Start task | OpenCode session create | `POST /api/conversations` with `agent_profile_id`, `LocalWorkspace`, and `initial_message` | AIAT supplies the profile and workspace; task input supplies only bounded prompt text |
-| Execute | OpenCode prompt/session loop | `POST /api/conversations/{id}/run` | Start after conversation creation; poll status for terminal state |
+| Start task | OpenCode session create | `POST /api/conversations` with `agent_profile_id` and `LocalWorkspace` (no `initial_message`) | AIAT supplies the profile and workspace; task input supplies only bounded prompt text |
+| Queue task | OpenCode prompt/session loop | `POST /api/conversations/{id}/events` with `run=false` | Queue the task before the explicit run so the v1.43 server cannot start a duplicate background run |
+| Execute | OpenCode prompt/session loop | `POST /api/conversations/{id}/run` | Start once after the queued message; poll status for terminal state |
 | Status | OpenCode session/status API | `GET /api/conversations/{id}` and `execution_status` | Normalize only scalar status and metrics |
 | Graceful cancellation | OpenCode abort/session control | `POST /api/conversations/{id}/pause` | Preserve resumable conversation; AIAT owns resulting run transition |
 | Immediate cancellation | OpenCode abort | `POST /api/conversations/{id}/interrupt` | Interrupt in-flight LLM call; server leaves conversation paused/resumable |

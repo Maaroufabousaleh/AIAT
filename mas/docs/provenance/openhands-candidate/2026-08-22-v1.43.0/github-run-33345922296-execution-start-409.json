@@ -1,0 +1,73 @@
+{
+  "schema_version": "aiat.openhands-historical-execution-start-diagnosis.v1",
+  "immutable_historical_record": true,
+  "run": {
+    "run_id": "33345922296",
+    "job_id": "99349910491",
+    "candidate_sha": "d58881547ab499b4b200be1d0bd70750862bfd98",
+    "artifact_id": "9742137536",
+    "artifact_digest": "sha256:165119751c34de3a6aee70dde0b6e9d1f7d031a2ff25f2681c0c5256bc76b979"
+  },
+  "candidate": {
+    "release": "v1.43.0",
+    "source_commit": "4c1237f391fe394e9f67505fe3a0bd2d81f84188",
+    "image_digest": "sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97"
+  },
+  "infrastructure": {
+    "gateway_and_provider_baseline": "PASS",
+    "tool_service": "PASS",
+    "runsc_agent_server_start": "PASS",
+    "profile_and_mcp": "PASS",
+    "zero_residue": "PASS"
+  },
+  "historical_observation": {
+    "conversation_create_http_status": 201,
+    "conversation_id_present": true,
+    "model_resolution_status": "PASS",
+    "run_start_http_status": 409,
+    "run_start_status": "FAILED",
+    "run_request_conflict": "conversation already running",
+    "normalized_event_count": 3,
+    "agent_server_event_count": 0,
+    "final_response_present": false,
+    "causal_blocker_gate": "real_coding_task",
+    "live_status": "BLOCKED_OPENHANDS_LIVE_EXECUTION_CONTRACT",
+    "scanner_blocker": "BLOCKED_SCANNER_COVERAGE"
+  },
+  "root_cause": {
+    "failure_class": "FAILED_CERTIFICATION_IMPLEMENTATION",
+    "compatibility_issue": "Agent Server v1.43 starts a background run whenever initial_message is present on conversation creation; its nested run=false value is ignored.",
+    "aiat_request_shape": "conversation creation included initial_message followed by an explicit /run",
+    "observed_effect": "the explicit /run returned HTTP 409 because the create-triggered background run was already active",
+    "provider_invocation": "NOT_REACHED",
+    "source_evidence": [
+      {
+        "path": "openhands-agent-server/openhands/agent_server/conversation_service.py",
+        "function": "_start_conversation",
+        "lines": "1636-1641",
+        "fact": "initial_message is forwarded to send_message(..., True)"
+      },
+      {
+        "path": "openhands-agent-server/openhands/agent_server/event_router.py",
+        "function": "send_message",
+        "lines": "206-214",
+        "fact": "the events route forwards the request.run flag"
+      },
+      {
+        "path": "openhands-agent-server/openhands/agent_server/conversation_router.py",
+        "function": "run_conversation",
+        "lines": "284-310",
+        "fact": "explicit /run invokes the conversation run operation"
+      }
+    ]
+  },
+  "compatibility_fix": {
+    "conversation_create": "omit initial_message",
+    "message_queue": "POST /api/conversations/{conversation_id}/events with run=false",
+    "execution_start": "POST /api/conversations/{conversation_id}/run exactly once after message queue",
+    "provider_and_model_routing_changed": false,
+    "production_fail_closed_changed": false,
+    "raw_payloads_retained": false,
+    "secret_values_retained": false
+  }
+}

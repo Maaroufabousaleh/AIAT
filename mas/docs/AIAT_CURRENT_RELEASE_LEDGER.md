@@ -16,6 +16,21 @@ now uses the release-compatible alphanumeric keys and records bounded scalar
 diagnostics. The scanner-coverage blocker remains independent, OpenHands stays
 inactive, and no activation or release decision follows from this fix.
 
+The deliberate provider-backed run `33345922296` (candidate
+`d58881547ab499b4b200be1d0bd70750862bfd98`) is retained as immutable
+execution-contract evidence. Gateway/provider, runsc, tool-service,
+profile/MCP, and cleanup stages passed; conversation creation and model
+resolution passed, but the adapter sent `initial_message` during v1.43.0
+conversation creation and then issued an explicit `/run`. The pinned server
+starts a background run for that create field regardless of its nested `run`
+flag, so `/run` returned HTTP 409 before the live coding task. The repository
+compatibility fix now creates an idle conversation, queues the prompt through
+`POST /api/conversations/{id}/events` with `run=false`, and invokes `/run`
+once. This is a compatibility implementation change only; no replacement
+certification run is claimed, OpenHands remains inactive, scanner coverage
+remains blocked, and the global `NO-RELEASE` decision is unchanged. Evidence
+is [`github-run-33345922296-execution-start-409.json`](provenance/openhands-candidate/2026-08-22-v1.43.0/github-run-33345922296-execution-start-409.json).
+
 The overnight OpenHands continuation (`4234d07`, `1db5b72`, `cf80dd1`,
 `cbad706`, `6da661f`, `d8ab39b`, `a6fa383`, `5724979`, `b1c5d8e`,
 `a6b6eae`, `6da88bd`, `c3f54da`, `93b6ee8`, `d86675b`, `0c0a210`,
