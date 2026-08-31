@@ -37,9 +37,16 @@
       "profile_model": "openai/omniroute-coding",
       "conversation_create_http_status": 201,
       "conversation_id_present": true,
-      "background_run_started": true,
-      "duplicate_run_http_status": 409,
-      "duplicate_run_classification": "ALREADY_RUNNING_BACKGROUND_RUN",
+      "run_http_status": 200,
+      "run_accepted": true,
+      "run_identifier_present": false,
+      "execution_identity": "conversation_id",
+      "event_count": 6,
+      "event_types": [
+        "ConversationStateUpdateEvent",
+        "MessageEvent",
+        "StreamingDeltaEvent"
+      ],
       "terminal_state": "finished",
       "model_resolution_status": "PASS",
       "gateway_request_observed": true,
@@ -48,7 +55,7 @@
         "path": "/chat/completions",
         "model": "omniroute-coding",
         "auth_header_present": true,
-        "request_body_sha256": "d588a4436c779c6d738e2e42b9a9ca6ea3b77223cf9c48e310e083cd5129fe1c"
+        "request_body_sha256": "7123a9e715b4d3f82314317fcb86d93a8aad8631f0d226f6a3ba1d942e4b9715"
       },
       "synthetic_response_accepted": true,
       "raw_payload_retained": false
