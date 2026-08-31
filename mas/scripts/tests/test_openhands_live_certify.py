@@ -98,11 +98,18 @@ def test_conversation_create_evidence_is_scalar_and_fail_closed() -> None:
                 "conversation_create_exception_class": "KeyError",
                 "conversation_create_exception_message_sanitized": "ToolDefinition 'TerminalTool' is not registered",
                 "conversation_create_request_shape_sha256": "a" * 64,
+                "model_resolution_status": "FAILED",
+                "model_resolution_logical_model_id": "omniroute-coding",
+                "model_resolution_wire_model_id": "openai/omniroute-coding",
+                "model_resolution_gateway_base_url_class": "internal_litellm",
             }
         }
     )
     assert evidence["status"] == "FAIL"
     assert evidence["conversation_create_http_status"] == 500
+    assert evidence["model_resolution_status"] == "FAILED"
+    assert evidence["model_resolution_wire_model_id"] == "openai/omniroute-coding"
+    assert evidence["model_resolution_gateway_base_url_class"] == "internal_litellm"
     assert evidence["raw_request_retained"] is False
     assert evidence["secret_values_retained"] is False
 

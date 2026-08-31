@@ -22,6 +22,8 @@ from uuid import UUID
 
 import yaml
 
+from mas_core.worker_contract.openhands_model import OPENHANDS_WIRE_MODEL_ID
+
 CHECK_SCHEMA = "aiat.openhands-candidate-preflight.v1"
 MAS_ROOT = Path(__file__).resolve().parents[1]
 CANDIDATE_ROOT = MAS_ROOT / "docs/provenance/openhands-candidate/2026-08-22-v1.43.0"
@@ -33,6 +35,7 @@ DEFAULT_MODEL_EVIDENCE = MAS_ROOT / "docs/provenance/model_profile_catalogue_liv
 EXPECTED_PROFILE_ID = "opencode-phase0b-coding"
 EXPECTED_PROFILE_VERSION = "1"
 EXPECTED_MODEL_ID = "omniroute-coding"
+EXPECTED_OPENHANDS_WIRE_MODEL_ID = OPENHANDS_WIRE_MODEL_ID
 EXPECTED_COMMIT = "4c1237f391fe394e9f67505fe3a0bd2d81f84188"
 EXPECTED_IMAGE_DIGEST = "sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97"
 EXPECTED_MCP_URL = "http://tool-service:8002/openhands/mcp"
@@ -196,6 +199,8 @@ def evaluate(
         static_errors.append("manifest_mcp_bridge_url_mismatch")
     if not str(adapter_config.get("model_gateway_url_ref") or "").startswith("OPENHANDS_MODEL_GATEWAY_URL"):
         static_errors.append("manifest_model_gateway_url_binding_mismatch")
+    if adapter_config.get("openhands_wire_model_id") != EXPECTED_OPENHANDS_WIRE_MODEL_ID:
+        static_errors.append("manifest_openhands_wire_model_binding_mismatch")
     if adapter_config.get("model_gateway_api_key_ref") != "OPENHANDS_MODEL_GATEWAY_API_KEY (workflow-run-generated AIAT gateway secret boundary)":
         static_errors.append("manifest_model_gateway_secret_binding_mismatch")
     if bridge.get("url") != EXPECTED_MCP_URL:
@@ -218,7 +223,11 @@ def evaluate(
     if spec_candidate.get("source_commit") != EXPECTED_COMMIT or spec_candidate.get("image_digest") != EXPECTED_IMAGE_DIGEST:
         static_errors.append("profile_spec_candidate_pin_mismatch")
     spec_model = profile_spec.get("aiat_bindings") if isinstance(profile_spec.get("aiat_bindings"), Mapping) else {}
-    if spec_model.get("model_profile_id") != EXPECTED_PROFILE_ID or spec_model.get("exact_model_id") != EXPECTED_MODEL_ID:
+    if (
+        spec_model.get("model_profile_id") != EXPECTED_PROFILE_ID
+        or spec_model.get("exact_model_id") != EXPECTED_MODEL_ID
+        or spec_model.get("openhands_wire_model_id") != EXPECTED_OPENHANDS_WIRE_MODEL_ID
+    ):
         static_errors.append("profile_spec_model_binding_mismatch")
     agent_profile_spec = profile_spec.get("agent_server_profile") if isinstance(profile_spec.get("agent_server_profile"), Mapping) else {}
     if agent_profile_spec.get("id") is not None:
@@ -313,6 +322,7 @@ def evaluate(
             "profile_id": EXPECTED_PROFILE_ID,
             "profile_version": EXPECTED_PROFILE_VERSION,
             "exact_model_id": EXPECTED_MODEL_ID,
+            "openhands_wire_model_id": EXPECTED_OPENHANDS_WIRE_MODEL_ID,
             "approved_catalogue_evidence": model_details,
             "catalogue_binding_valid": model_ok,
             "workflow_variable_matches": model_env_matches,

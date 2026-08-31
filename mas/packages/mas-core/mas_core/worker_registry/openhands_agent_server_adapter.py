@@ -49,6 +49,11 @@ from mas_core.worker_contract.openhands_bridge import (
     issue_openhands_tool_grant,
     verify_openhands_tool_grant,
 )
+from mas_core.worker_contract.openhands_model import (
+    AIAT_OPENHANDS_MODEL_ID,
+    OPENHANDS_WIRE_MODEL_ID,
+    is_expected_wire_model,
+)
 
 DEFAULT_ENDPOINTS: dict[str, str] = {
     "health": "/health",
@@ -74,7 +79,8 @@ OPENHANDS_MCP_BRIDGE_URL = "http://tool-service:8002/openhands/mcp"
 # certification controller may rotate a grant it just issued, while ordinary
 # callers must never treat an arbitrary unreadable value as valid authority.
 _OPENHANDS_REDACTED_MCP_GRANT = "**********"
-_OPENHANDS_MODEL_ID = "omniroute-coding"
+_OPENHANDS_MODEL_ID = AIAT_OPENHANDS_MODEL_ID
+_OPENHANDS_WIRE_MODEL_ID = OPENHANDS_WIRE_MODEL_ID
 _OPENHANDS_MCP_SERVER_KEY_PREFIX = "aiat-openhands-"
 _OPENHANDS_MCP_GRANT_TTL_SECONDS = 300
 _OPENHANDS_MAX_ITERATIONS = 20
@@ -412,6 +418,10 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             "conversation_create_exception_class": None,
             "conversation_create_exception_message_sanitized": None,
             "conversation_create_error_fingerprint": None,
+            "model_resolution_status": "NOT_RUN",
+            "model_resolution_logical_model_id": None,
+            "model_resolution_wire_model_id": None,
+            "model_resolution_gateway_base_url_class": "internal_litellm",
             "run_start_status": "NOT_RUN",
             "run_start_http_status": None,
             "run_endpoint": None,
@@ -1179,8 +1189,15 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
         llm = agent.get("llm") if isinstance(agent, dict) else None
         expected = str(self.context.metadata.get("openhands_model_id") or _OPENHANDS_MODEL_ID)
         actual = llm.get("model") if isinstance(llm, dict) else None
-        if not actual or str(actual) != expected:
-            raise RuntimeError("OpenHands agent profile resolved a model different from AIAT's model snapshot")
+        diagnostic = self._diagnostic_for(request.run_id)
+        diagnostic["model_resolution_logical_model_id"] = expected
+        diagnostic["model_resolution_wire_model_id"] = str(actual) if actual else None
+        if not actual or not is_expected_wire_model(actual):
+            diagnostic["model_resolution_status"] = "FAILED"
+            raise RuntimeError(
+                "OpenHands agent profile resolved a model different from the governed v1.43 wire model"
+            )
+        diagnostic["model_resolution_status"] = "PASS"
         self._conversation_by_key[request.idempotency_key] = conversation_id
         self._conversation_by_run[request.run_id] = conversation_id
         return conversation_id

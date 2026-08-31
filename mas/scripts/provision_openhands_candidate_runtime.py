@@ -24,12 +24,18 @@ from mas_core.worker_contract.openhands_bridge import (
     issue_openhands_tool_grant,
     verify_openhands_tool_grant,
 )
+from mas_core.worker_contract.openhands_model import (
+    AIAT_OPENHANDS_MODEL_ID,
+    OPENHANDS_WIRE_MODEL_ID,
+    wire_model_id_for,
+)
 
 SCHEMA = "aiat.openhands-run-scoped-runtime-provisioning.v1"
 CANDIDATE_RELEASE = "v1.43.0"
 CANDIDATE_COMMIT = "4c1237f391fe394e9f67505fe3a0bd2d81f84188"
 CANDIDATE_IMAGE_DIGEST = "sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97"
-EXPECTED_MODEL_ID = "omniroute-coding"
+EXPECTED_MODEL_ID = AIAT_OPENHANDS_MODEL_ID
+EXPECTED_OPENHANDS_WIRE_MODEL_ID = OPENHANDS_WIRE_MODEL_ID
 EXPECTED_GATEWAY_URL = "http://litellm:4000"
 EXPECTED_MCP_KEY = "aiat-openhands-v1-43-0-coding"
 LLM_PROFILE_NAME = "aiat-openhands-omniroute-coding"
@@ -206,6 +212,7 @@ def provision(
         raise ProvisioningError("session_api_key_missing")
     if model_id != EXPECTED_MODEL_ID:
         raise ProvisioningError("model_id_is_not_the_approved_omniroute_coding_alias")
+    wire_model_id = wire_model_id_for(model_id)
     if gateway_url != EXPECTED_GATEWAY_URL:
         raise ProvisioningError("model_gateway_url_must_equal_http://litellm:4000")
     if not gateway_api_key:
@@ -275,7 +282,12 @@ def provision(
             f"/api/profiles/{LLM_PROFILE_NAME}",
             json={
                 "llm": {
-                    "model": model_id,
+                    # AIAT keeps the provider-agnostic logical alias, while
+                    # OpenHands v1.43/LiteLLM requires an explicit OpenAI
+                    # provider prefix to resolve a custom OpenAI-compatible
+                    # gateway.  This is a fixed compatibility mapping, not
+                    # provider selection authority for the worker.
+                    "model": wire_model_id,
                     "provider_connection_id": connection_id,
                     "auth_type": "api_key",
                     "timeout": 300,
@@ -299,7 +311,7 @@ def provision(
                 candidate = llm_readback.get("config")
             if isinstance(candidate, dict):
                 llm = candidate
-        if not isinstance(llm, dict) or llm.get("model") != model_id:
+        if not isinstance(llm, dict) or llm.get("model") != wire_model_id:
             raise ProvisioningError("llm_profile_model_readback_mismatch")
         if llm.get("provider_connection_id") != connection_id:
             raise ProvisioningError("llm_profile_provider_connection_readback_mismatch")
@@ -448,6 +460,7 @@ def provision(
                 "id": profile_id,
                 "llm_profile_ref": LLM_PROFILE_NAME,
                 "model_id": model_id,
+                "wire_model_id": wire_model_id,
                 "mcp_settings_key": mcp_key,
                 "tools": sorted(EXPECTED_AGENT_TOOLS),
                 "subagents": False,
@@ -471,6 +484,7 @@ def provision(
                 "valid": True,
                 "llm_profile_resolved": True,
                 "model_id": model_id,
+                "wire_model_id": wire_model_id,
                 "resolved_mcp_config_keys": [mcp_key],
                 "dangling_mcp_server_refs": [],
                 "disabled_skills_count": len(disabled_skills),
@@ -479,6 +493,8 @@ def provision(
             "governance": {
                 "authority": "AIAT control plane",
                 "model_id": model_id,
+                "openhands_wire_model_id": wire_model_id,
+                "wire_provider_prefix": "openai",
                 "workspace_policy": "assigned isolated workspace only",
                 "sandbox_profile": "gvisor",
                 "network_policy": "AIAT egress allowlist",

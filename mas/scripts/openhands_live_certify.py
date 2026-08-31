@@ -1024,6 +1024,10 @@ def _conversation_create_evidence(report: dict[str, Any]) -> dict[str, Any]:
         "conversation_create_exception_class",
         "conversation_create_exception_message_sanitized",
         "conversation_create_error_fingerprint",
+        "model_resolution_status",
+        "model_resolution_logical_model_id",
+        "model_resolution_wire_model_id",
+        "model_resolution_gateway_base_url_class",
     )
     evidence = {field: diagnostics.get(field) for field in fields}
     evidence.update(

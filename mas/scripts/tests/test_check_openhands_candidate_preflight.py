@@ -166,6 +166,21 @@ def test_gateway_loopback_is_rejected_as_a_nonportable_ci_endpoint() -> None:
     assert report["status"] == "BLOCKED_STATIC_CONFIGURATION"
 
 
+def test_v143_wire_model_binding_is_required_in_current_manifest() -> None:
+    manifest, profile_spec, interface_report, model_evidence = _inputs()
+    manifest["runtime"]["adapter_config"].pop("openhands_wire_model_id", None)
+    report = MODULE.evaluate(
+        manifest=manifest,
+        profile_spec=profile_spec,
+        interface_report=interface_report,
+        model_evidence=model_evidence,
+        env={},
+    )
+
+    assert "manifest_openhands_wire_model_binding_mismatch" in report["static_errors"]
+    assert report["status"] == "BLOCKED_STATIC_CONFIGURATION"
+
+
 def test_generic_http_transport_is_rejected_for_openhands_candidate() -> None:
     manifest, profile_spec, interface_report, model_evidence = _inputs()
     manifest["runtime"]["transport"] = "http"

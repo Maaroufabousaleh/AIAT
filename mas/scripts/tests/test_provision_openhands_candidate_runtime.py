@@ -58,7 +58,7 @@ def test_run_scoped_objects_are_created_and_only_server_profile_uuid_is_retained
             return httpx.Response(201, json={"name": "aiat-openhands-omniroute-coding", "message": "saved"})
         if request.method == "GET" and request.url.path == "/api/profiles/aiat-openhands-omniroute-coding":
             # This is the pinned Agent Server v1.43.0 readback envelope.
-            return httpx.Response(200, json={"name": "aiat-openhands-omniroute-coding", "config": {"model": "omniroute-coding", "provider_connection_id": "gateway-connection"}})
+            return httpx.Response(200, json={"name": "aiat-openhands-omniroute-coding", "config": {"model": MODULE.EXPECTED_OPENHANDS_WIRE_MODEL_ID, "provider_connection_id": "gateway-connection"}})
         if request.method == "POST" and request.url.path == f"/api/settings/mcp/{mcp_key}":
             mcp_present = True
             mcp_grant = json.loads(request.content.decode())["headers"]["X-AIAT-OpenHands-Grant"]
@@ -142,6 +142,8 @@ def test_run_scoped_objects_are_created_and_only_server_profile_uuid_is_retained
     assert report["mcp"]["preclean"] == "PASS"
     assert report["agent_profile"]["disabled_skills_count"] == 1
     assert report["agent_profile"]["resolved_skills_count"] == 0
+    assert report["agent_profile"]["model_id"] == MODULE.EXPECTED_MODEL_ID
+    assert report["agent_profile"]["wire_model_id"] == MODULE.EXPECTED_OPENHANDS_WIRE_MODEL_ID
     assert ("DELETE", f"/api/settings/mcp/{mcp_key}") in calls
     assert ("POST", f"/api/settings/mcp/{mcp_key}") in calls
     assert ("POST", "/api/agent-profiles/aiat-openhands-v1-43-0-coding") in calls
@@ -260,6 +262,13 @@ def test_provisioning_rejects_preexisting_provider_connection_without_secret_rea
             client=client,
         )
     client.close()
+
+
+def test_governed_model_uses_v143_openai_wire_prefix() -> None:
+    assert MODULE.EXPECTED_MODEL_ID == "omniroute-coding"
+    assert MODULE.wire_model_id_for(MODULE.EXPECTED_MODEL_ID) == "openai/omniroute-coding"
+    with pytest.raises(ValueError, match="governed omniroute-coding"):
+        MODULE.wire_model_id_for("openai/attacker-model")
 
 
 def test_mcp_readback_rejects_unapproved_entries() -> None:

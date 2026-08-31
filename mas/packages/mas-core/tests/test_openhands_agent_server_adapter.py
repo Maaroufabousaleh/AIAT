@@ -25,6 +25,7 @@ from mas_core.worker_contract.openhands_bridge import (
     issue_openhands_tool_grant,
     verify_openhands_tool_grant,
 )
+from mas_core.worker_contract.openhands_model import OPENHANDS_WIRE_MODEL_ID
 from mas_core.worker_registry.openhands_agent_server_adapter import (
     OPENHANDS_MCP_BRIDGE_URL,
     OpenHandsAgentServerAdapter,
@@ -1134,6 +1135,43 @@ async def test_conversation_create_500_retains_sanitized_upstream_exception_and_
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("server_model", "expected_status"),
+    [(OPENHANDS_WIRE_MODEL_ID, "PASS"), ("omniroute-coding", "FAILED")],
+)
+async def test_conversation_create_requires_v143_wire_model_prefix(
+    tmp_path: Path,
+    server_model: str,
+    expected_status: str,
+) -> None:
+    """The logical alias is retained by AIAT, but v1.43 readback must be provider-qualified."""
+
+    conversation_id = str(uuid4())
+    run = request(workspace=tmp_path / "workspace")
+
+    async def handler(http_request: httpx.Request) -> httpx.Response:
+        if http_request.method == "POST" and http_request.url.path == "/api/settings/mcp/aiat-openhands-test-run":
+            return httpx.Response(201, json={})
+        if http_request.method == "POST" and http_request.url.path == "/api/conversations":
+            return httpx.Response(201, json={"id": conversation_id})
+        if http_request.method == "GET" and http_request.url.path == f"/api/conversations/{conversation_id}":
+            return httpx.Response(200, json={"execution_status": "idle", "agent": {"llm": {"model": server_model}}})
+        raise AssertionError(http_request)
+
+    adapter = make_adapter(tmp_path, handler)
+    if expected_status == "PASS":
+        assert await adapter._create_conversation(run) == conversation_id
+    else:
+        with pytest.raises(RuntimeError, match="governed v1.43 wire model"):
+            await adapter._create_conversation(run)
+    diagnostics = adapter._diagnostics(run.run_id)
+    assert diagnostics["model_resolution_status"] == expected_status
+    assert diagnostics["model_resolution_logical_model_id"] == "omniroute-coding"
+    assert diagnostics["model_resolution_wire_model_id"] == server_model
+    await adapter.close()
+
+
+@pytest.mark.asyncio
 async def test_task_cannot_override_model_gateway_profile_or_budget(tmp_path: Path) -> None:
     async def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={})
@@ -1242,7 +1280,7 @@ async def test_execute_maps_conversation_result_and_scalar_usage(tmp_path: Path)
             if status_reads == 1:
                 return httpx.Response(
                     200,
-                    json={"execution_status": "idle", "agent": {"llm": {"model": "omniroute-coding"}}},
+                    json={"execution_status": "idle", "agent": {"llm": {"model": OPENHANDS_WIRE_MODEL_ID}}},
                 )
             return httpx.Response(
                 200,
@@ -1290,7 +1328,7 @@ async def test_execute_timeout_interrupts_remote_and_returns_terminal_timeout(tm
             if calls.count(f"GET /api/conversations/{conversation_id}") == 1:
                 return httpx.Response(
                     200,
-                    json={"execution_status": "idle", "agent": {"llm": {"model": "omniroute-coding"}}},
+                    json={"execution_status": "idle", "agent": {"llm": {"model": OPENHANDS_WIRE_MODEL_ID}}},
                 )
             return httpx.Response(200, json={"execution_status": "running"})
         if request.method == "POST" and request.url.path == f"/api/conversations/{conversation_id}/run":
