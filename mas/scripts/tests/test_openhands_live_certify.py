@@ -72,6 +72,21 @@ def test_execution_contract_failure_precedes_downstream_gate_failures() -> None:
     assert result == "BLOCKED_OPENHANDS_LIVE_EXECUTION_CONTRACT"
 
 
+def test_message_submission_failure_is_an_execution_contract_failure() -> None:
+    module = _module()
+    statuses = module._status_map("NOT_RUN")
+    statuses["coding_task"] = "FAILED_MODEL_EXECUTION"
+    assert module._final_status(
+        statuses,
+        ["live_coding_task_failed"],
+        {
+            "conversation_create_http_status": 201,
+            "conversation_message_http_status": 500,
+            "run_start_http_status": None,
+        },
+    ) == "BLOCKED_OPENHANDS_LIVE_EXECUTION_CONTRACT"
+
+
 def test_lifecycle_polling_is_skipped_when_conversation_creation_failed() -> None:
     module = _module()
     status = module._lifecycle_upstream_block(
@@ -102,6 +117,12 @@ def test_conversation_create_evidence_is_scalar_and_fail_closed() -> None:
                 "model_resolution_logical_model_id": "omniroute-coding",
                 "model_resolution_wire_model_id": "openai/omniroute-coding",
                 "model_resolution_gateway_base_url_class": "internal_litellm",
+                "conversation_message_status": "PASS",
+                "conversation_message_http_status": 200,
+                "conversation_message_endpoint": "/api/conversations/abc/events",
+                "run_start_status": "PASS",
+                "run_start_http_status": 200,
+                "run_endpoint": "/api/conversations/abc/run",
             }
         }
     )
@@ -110,6 +131,9 @@ def test_conversation_create_evidence_is_scalar_and_fail_closed() -> None:
     assert evidence["model_resolution_status"] == "FAILED"
     assert evidence["model_resolution_wire_model_id"] == "openai/omniroute-coding"
     assert evidence["model_resolution_gateway_base_url_class"] == "internal_litellm"
+    assert evidence["conversation_message_status"] == "PASS"
+    assert evidence["conversation_message_http_status"] == 200
+    assert evidence["run_start_status"] == "PASS"
     assert evidence["raw_request_retained"] is False
     assert evidence["secret_values_retained"] is False
 

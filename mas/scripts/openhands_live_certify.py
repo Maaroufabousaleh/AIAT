@@ -560,7 +560,11 @@ def _final_status(
     if execution_diagnostics:
         execution_http_statuses = [
             int(execution_diagnostics.get(field) or 0)
-            for field in ("conversation_create_http_status", "run_start_http_status")
+            for field in (
+                "conversation_create_http_status",
+                "conversation_message_http_status",
+                "run_start_http_status",
+            )
         ]
         if any(status >= 400 for status in execution_http_statuses):
             # A request-shape or endpoint mismatch is a contract defect in the
@@ -1028,6 +1032,12 @@ def _conversation_create_evidence(report: dict[str, Any]) -> dict[str, Any]:
         "model_resolution_logical_model_id",
         "model_resolution_wire_model_id",
         "model_resolution_gateway_base_url_class",
+        "conversation_message_status",
+        "conversation_message_http_status",
+        "conversation_message_endpoint",
+        "run_start_status",
+        "run_start_http_status",
+        "run_endpoint",
     )
     evidence = {field: diagnostics.get(field) for field in fields}
     evidence.update(

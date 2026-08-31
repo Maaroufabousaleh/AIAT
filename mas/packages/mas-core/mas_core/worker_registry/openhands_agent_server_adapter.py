@@ -61,6 +61,11 @@ DEFAULT_ENDPOINTS: dict[str, str] = {
     "server_info": "/server_info",
     "conversation_create": "/api/conversations",
     "conversation_get": "/api/conversations/{conversation_id}",
+    # Agent Server v1.43 queues a user message through the events route.  Its
+    # create endpoint always starts a background run when ``initial_message``
+    # is present, so the adapter intentionally creates an idle conversation,
+    # queues the message, and then invokes the explicit /run contract.
+    "conversation_message": "/api/conversations/{conversation_id}/events",
     "conversation_run": "/api/conversations/{conversation_id}/run",
     "conversation_pause": "/api/conversations/{conversation_id}/pause",
     "conversation_interrupt": "/api/conversations/{conversation_id}/interrupt",
@@ -385,6 +390,10 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
         self._owned_client: httpx.AsyncClient | None = None
         self._conversation_by_key: dict[str, str] = {}
         self._conversation_by_run: dict[UUID, str] = {}
+        # Keep message submission idempotent when a retry reuses a conversation
+        # selected by the AIAT idempotency key.  v1.43 queues the task through
+        # /events and the subsequent /run is a separate operation.
+        self._conversation_message_submitted: set[str] = set()
         self._event_tasks: dict[UUID, asyncio.Task[Any]] = {}
         self._stop_events: set[UUID] = set()
         self._cancelled: set[UUID] = set()
@@ -425,6 +434,9 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             "run_start_status": "NOT_RUN",
             "run_start_http_status": None,
             "run_endpoint": None,
+            "conversation_message_status": "NOT_RUN",
+            "conversation_message_http_status": None,
+            "conversation_message_endpoint": None,
             "run_identifier_present": False,
             "run_identifier_status": "NOT_APPLICABLE_SERVER_BACKGROUND_RUN",
             "event_stream_status": "NOT_RUN",
@@ -468,22 +480,27 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
         diagnostic = self._diagnostic_for(run_id)
         status_name = {
             "conversation_create": "conversation_create_status",
+            "conversation_message": "conversation_message_status",
             "conversation_run": "run_start_status",
         }.get(operation)
         status_field = {
             "conversation_create": "conversation_create_http_status",
+            "conversation_message": "conversation_message_http_status",
             "conversation_run": "run_start_http_status",
         }.get(operation)
         if status_name:
             diagnostic[status_name] = "PASS" if 200 <= status_code < 300 else "FAILED"
         if status_field:
             diagnostic[status_field] = status_code
+        if operation == "conversation_message":
+            diagnostic["conversation_message_endpoint"] = path
         if operation == "conversation_run":
             diagnostic["run_endpoint"] = path
         if status_code >= 400:
             error_class = f"{operation.upper()}_HTTP_{status_code}"
             if operation in {
                 "conversation_create",
+                "conversation_message",
                 "conversation_run",
                 "conversation_get",
                 "agent_final_response",
@@ -1121,11 +1138,6 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             "agent_profile_id": str(profile_id),
             "workspace": {"kind": "LocalWorkspace", "working_dir": str(workspace)},
             "worktree": False,
-            "initial_message": {
-                "role": "user",
-                "content": [{"type": "text", "text": self._prompt(request)}],
-                "run": False,
-            },
             "max_iterations": max_iterations,
             "stuck_detection": True,
             # OpenHands SDK v1.43.0 validates ConversationTags with the
@@ -1139,6 +1151,23 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
                 "aiatrunid": str(request.run_id),
                 "aiatidempotencykey": request.idempotency_key[:128],
             },
+        }
+
+    def _message_payload(self, request: WorkerRunRequest) -> dict[str, Any]:
+        """Build the v1.43 message envelope used to queue the task.
+
+        OpenHands Agent Server v1.43.0 ignores ``initial_message.run`` and
+        unconditionally starts a background run when ``initial_message`` is
+        supplied to ``POST /api/conversations``.  Sending the message through
+        the documented events endpoint with ``run=false`` keeps creation idle;
+        the adapter can then invoke the explicit ``/run`` endpoint exactly
+        once after the event stream is attached.
+        """
+
+        return {
+            "role": "user",
+            "content": [{"type": "text", "text": self._prompt(request)}],
+            "run": False,
         }
 
     async def _conversation(
@@ -1257,6 +1286,27 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             if request.run_id not in self._stop_events:
                 await self.emit_audit(request.run_id, "openhands.websocket_error", details={"error": type(exc).__name__})
 
+    async def _queue_initial_message(self, request: WorkerRunRequest, conversation_id: str) -> None:
+        """Queue the task without starting a second background execution.
+
+        The pinned Agent Server release starts a fire-and-forget run from
+        ``POST /api/conversations`` whenever ``initial_message`` is present,
+        even if its nested ``run`` flag is false.  AIAT therefore omits that
+        field from creation and uses the v1.43 events route with ``run=false``
+        before invoking the explicit conversation ``/run`` endpoint.
+        """
+
+        if conversation_id in self._conversation_message_submitted:
+            return
+        await self._json(
+            "POST",
+            self.verification.endpoint("conversation_message", conversation_id=conversation_id),
+            json=self._message_payload(request),
+            diagnostic_run_id=request.run_id,
+            diagnostic_operation="conversation_message",
+        )
+        self._conversation_message_submitted.add(conversation_id)
+
     async def _final_response(
         self,
         conversation_id: str,
@@ -1354,6 +1404,7 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             self._event_tasks[request.run_id] = event_task
             started = time.monotonic()
             try:
+                await self._queue_initial_message(request, conversation_id)
                 await self._json(
                     "POST",
                     self.verification.endpoint("conversation_run", conversation_id=conversation_id),

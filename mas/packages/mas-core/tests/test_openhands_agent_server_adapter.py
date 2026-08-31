@@ -55,6 +55,7 @@ def verification(*, approved: bool = True) -> OpenHandsInterfaceVerification:
             "server_info": "/server_info",
             "conversation_create": "/api/conversations",
             "conversation_get": "/api/conversations/{conversation_id}",
+            "conversation_message": "/api/conversations/{conversation_id}/events",
             "conversation_run": "/api/conversations/{conversation_id}/run",
             "conversation_pause": "/api/conversations/{conversation_id}/pause",
             "conversation_interrupt": "/api/conversations/{conversation_id}/interrupt",
@@ -836,6 +837,7 @@ def test_report_loader_requires_full_provenance_and_pinned_digest() -> None:
     loaded = OpenHandsInterfaceVerification.from_report(report)
     assert loaded.release == "v1.43.0"
     assert loaded.commit_sha == COMMIT
+    assert loaded.endpoint("conversation_message", conversation_id="abc") == "/api/conversations/abc/events"
     assert loaded.endpoint("conversation_run", conversation_id="abc") == "/api/conversations/abc/run"
     assert loaded.approved is False
 
@@ -1046,7 +1048,7 @@ async def test_readiness_rejects_caller_selected_model(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_start_payload_contains_only_controlled_profile_workspace_and_prompt(tmp_path: Path) -> None:
+async def test_start_payload_and_message_contain_only_controlled_inputs(tmp_path: Path) -> None:
     async def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={})
 
@@ -1056,6 +1058,13 @@ async def test_start_payload_contains_only_controlled_profile_workspace_and_prom
     assert payload["agent_profile_id"] == PROFILE_ID
     assert payload["workspace"]["working_dir"] == str((tmp_path / "workspace").resolve())
     assert payload["max_iterations"] == 4
+    assert "initial_message" not in payload
+    message = adapter._message_payload(request(workspace=tmp_path / "workspace"))
+    assert message == {
+        "role": "user",
+        "content": [{"type": "text", "text": "Add the smallest possible test."}],
+        "run": False,
+    }
     assert "session-secret-test" not in serialized
     assert "api_key" not in serialized
     await adapter.close()
@@ -1263,9 +1272,11 @@ async def test_artifacts_hash_remote_files_and_reject_path_escape(tmp_path: Path
 async def test_execute_maps_conversation_result_and_scalar_usage(tmp_path: Path) -> None:
     conversation_id = str(uuid4())
     status_reads = 0
+    calls: list[str] = []
 
     async def handler(request: httpx.Request) -> httpx.Response:
         nonlocal status_reads
+        calls.append(f"{request.method} {request.url.path}")
         if request.method == "POST" and request.url.path == "/api/settings/mcp/aiat-openhands-test-run":
             payload = json.loads(request.content)
             assert payload["url"] == OPENHANDS_MCP_BRIDGE_URL
@@ -1274,6 +1285,8 @@ async def test_execute_maps_conversation_result_and_scalar_usage(tmp_path: Path)
         if request.method == "DELETE" and request.url.path == "/api/settings/mcp/aiat-openhands-test-run":
             return httpx.Response(200, json={})
         if request.method == "POST" and request.url.path == "/api/conversations":
+            payload = json.loads(request.content)
+            assert "initial_message" not in payload
             return httpx.Response(201, json={"id": conversation_id})
         if request.method == "GET" and request.url.path == f"/api/conversations/{conversation_id}":
             status_reads += 1
@@ -1292,7 +1305,17 @@ async def test_execute_maps_conversation_result_and_scalar_usage(tmp_path: Path)
                     },
                 },
             )
+        if request.method == "POST" and request.url.path == f"/api/conversations/{conversation_id}/events":
+            payload = json.loads(request.content)
+            assert payload["role"] == "user"
+            assert payload["run"] is False
+            return httpx.Response(200, json={"success": True})
         if request.method == "POST" and request.url.path == f"/api/conversations/{conversation_id}/run":
+            if f"POST /api/conversations/{conversation_id}/events" not in calls:
+                # v1.43 would return this conflict when the create payload
+                # accidentally contained initial_message and the adapter then
+                # attempted an explicit /run.
+                return httpx.Response(409, json={"detail": "conversation already running"})
             return httpx.Response(200, json={"success": True})
         if request.method == "GET" and request.url.path == f"/api/conversations/{conversation_id}/agent_final_response":
             return httpx.Response(200, json={"response": "implemented"})
@@ -1301,12 +1324,23 @@ async def test_execute_maps_conversation_result_and_scalar_usage(tmp_path: Path)
         raise AssertionError(request.url)
 
     adapter = make_adapter(tmp_path, handler)
-    result = await adapter._execute(request(workspace=tmp_path / "workspace"))
+    run_request = request(workspace=tmp_path / "workspace")
+    result = await adapter._execute(run_request)
     assert result.success is True
     assert result.output == "implemented"
     assert result.usage.total_tokens == 12
     assert result.usage.cost_usd == 0.12
     assert result.replay_metadata["openhands_conversation_id"] == conversation_id
+    assert calls.count(f"POST /api/conversations/{conversation_id}/events") == 1
+    assert calls.count(f"POST /api/conversations/{conversation_id}/run") == 1
+    assert calls.index(f"POST /api/conversations/{conversation_id}/events") < calls.index(
+        f"POST /api/conversations/{conversation_id}/run"
+    )
+    diagnostics = adapter._diagnostics(run_request.run_id)
+    assert diagnostics["conversation_message_status"] == "PASS"
+    assert diagnostics["conversation_message_http_status"] == 200
+    assert diagnostics["conversation_message_endpoint"] == f"/api/conversations/{conversation_id}/events"
+    assert diagnostics["run_start_status"] == "PASS"
     assert not adapter._event_tasks
     await adapter.close()
 
@@ -1323,6 +1357,7 @@ async def test_execute_timeout_interrupts_remote_and_returns_terminal_timeout(tm
         if request.method == "DELETE" and request.url.path == "/api/settings/mcp/aiat-openhands-test-run":
             return httpx.Response(200, json={})
         if request.method == "POST" and request.url.path == "/api/conversations":
+            assert "initial_message" not in json.loads(request.content)
             return httpx.Response(201, json={"id": conversation_id})
         if request.method == "GET" and request.url.path == f"/api/conversations/{conversation_id}":
             if calls.count(f"GET /api/conversations/{conversation_id}") == 1:
@@ -1331,6 +1366,10 @@ async def test_execute_timeout_interrupts_remote_and_returns_terminal_timeout(tm
                     json={"execution_status": "idle", "agent": {"llm": {"model": OPENHANDS_WIRE_MODEL_ID}}},
                 )
             return httpx.Response(200, json={"execution_status": "running"})
+        if request.method == "POST" and request.url.path == f"/api/conversations/{conversation_id}/events":
+            payload = json.loads(request.content)
+            assert payload["run"] is False
+            return httpx.Response(200, json={"success": True})
         if request.method == "POST" and request.url.path == f"/api/conversations/{conversation_id}/run":
             return httpx.Response(200, json={"success": True})
         if request.method == "POST" and request.url.path == f"/api/conversations/{conversation_id}/interrupt":
