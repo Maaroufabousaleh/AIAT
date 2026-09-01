@@ -145,6 +145,29 @@ def test_live_execution_contract_failure_is_not_hidden_by_downstream_gates(tmp_p
     assert report["evaluation"]["causal_blocker_gate"] == "real_coding_task"
 
 
+def test_precise_execution_completion_status_is_preserved(tmp_path: Path) -> None:
+    module = _load("check_openhands_gate_matrix")
+    (tmp_path / "live").mkdir()
+    (tmp_path / "live" / "live-certification.json").write_text(
+        json.dumps(
+            {
+                "status": "BLOCKED_TERMINAL_RECONCILIATION",
+                "causal_blocker_gate": "real_coding_task",
+                "gates": {
+                    "coding_task": "FAILED_MODEL_EXECUTION",
+                    "file_modifications": "PASS",
+                    "test_execution": "PASS",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    report = module.evaluate(evidence_root=tmp_path, provider_status="PASS")
+    assert report["status"] == "BLOCKED_TERMINAL_RECONCILIATION"
+    assert report["evidence_blocker_status"] == "BLOCKED_TERMINAL_RECONCILIATION"
+    assert report["evaluation"]["all_required_gates_passed"] is False
+
+
 def test_gateway_auth_boundary_failure_gets_model_gateway_blocker(tmp_path: Path) -> None:
     module = _load("check_openhands_gate_matrix")
     (tmp_path / "gateway" / "omniroute").mkdir(parents=True)

@@ -322,6 +322,15 @@ async def _wait_for_running(adapter: OpenHandsAgentServerAdapter, conversation_i
     deadline = asyncio.get_running_loop().time() + timeout
     while asyncio.get_running_loop().time() < deadline:
         status = str((await adapter._conversation(conversation_id)).get("execution_status") or "").lower()
+        observed = getattr(adapter, "observed_execution_status_for_conversation", lambda _conversation_id: None)(
+            conversation_id
+        )
+        # The v1.43 WebSocket sends an initial ``idle`` snapshot before the
+        # explicit /run is armed.  REST may already report ``running`` by the
+        # time this probe executes; do not let that pre-run snapshot mask the
+        # authoritative running state.
+        if observed and not (observed == "idle" and status == "running"):
+            status = observed
         if status == "running":
             return status
         if status in {"finished", "error", "stuck"}:
@@ -336,6 +345,15 @@ async def _wait_for_not_running(adapter: OpenHandsAgentServerAdapter, conversati
     deadline = asyncio.get_running_loop().time() + timeout
     while asyncio.get_running_loop().time() < deadline:
         status = str((await adapter._conversation(conversation_id)).get("execution_status") or "").lower()
+        observed = getattr(adapter, "observed_execution_status_for_conversation", lambda _conversation_id: None)(
+            conversation_id
+        )
+        # ``idle`` is only the pre-run subscription snapshot.  Prefer the
+        # REST value when it is the first post-control observation (for
+        # example, REST may already be ``paused`` while the stale snapshot is
+        # still the newest event seen locally).
+        if observed and observed not in {"idle", "running"}:
+            status = observed
         if status != "running":
             if status in {"finished", "error", "stuck"}:
                 raise RuntimeError("pause_probe_reached_terminal_state")
@@ -553,11 +571,18 @@ def _final_status(
         return "BLOCKED_RUNTIME_STARTUP"
     if any(item.startswith("certification_authorization:") for item in blockers):
         return "BLOCKED_CERTIFICATION_AUTHORIZATION"
-    if any(item.startswith("runtime:") for item in blockers):
-        return "FAILED_CERTIFICATION_IMPLEMENTATION"
-    if any(item.startswith("task_spec_postrun") for item in blockers):
-        return "FAILED_CERTIFICATION_IMPLEMENTATION"
     if execution_diagnostics:
+        completion_status = str(execution_diagnostics.get("execution_failure_class") or "")
+        if completion_status in {
+            "BLOCKED_EXECUTION_COMPLETION",
+            "BLOCKED_TERMINAL_RECONCILIATION",
+            "FAILED_FINAL_RESPONSE",
+            "FAILED_AGENT_RUN_LOOP",
+        }:
+            # Preserve the earliest precise completion failure rather than
+            # mislabeling a run with no observed model error as a provider
+            # failure.  Mandatory downstream gates remain fail-closed.
+            return completion_status
         execution_http_statuses = [
             int(execution_diagnostics.get(field) or 0)
             for field in (
@@ -570,6 +595,10 @@ def _final_status(
             # A request-shape or endpoint mismatch is a contract defect in the
             # pinned Agent Server integration, not a provider/model verdict.
             return "BLOCKED_OPENHANDS_LIVE_EXECUTION_CONTRACT"
+    if any(item.startswith("runtime:") for item in blockers):
+        return "FAILED_CERTIFICATION_IMPLEMENTATION"
+    if any(item.startswith("task_spec_postrun") for item in blockers):
+        return "FAILED_CERTIFICATION_IMPLEMENTATION"
     if any(item.startswith("test_execution") for item in blockers):
         return "BLOCKED_LIFECYCLE"
     if any(item.startswith("file_modifications") for item in blockers):
@@ -579,6 +608,11 @@ def _final_status(
     if any(item.startswith("secret_disclosure") for item in blockers):
         return "BLOCKED_SECRET_NON_DISCLOSURE"
     if statuses.get("coding_task") == "FAILED_MODEL_EXECUTION":
+        if execution_diagnostics and not execution_diagnostics.get("model_error_observed"):
+            if not execution_diagnostics.get("terminal_state_observed"):
+                return "BLOCKED_EXECUTION_COMPLETION"
+            if not execution_diagnostics.get("final_response_present"):
+                return "BLOCKED_TERMINAL_RECONCILIATION"
         return "FAILED_MODEL_EXECUTION"
     # Lifecycle probes record a FAILED_* gate status when the remote server
     # returns an unexpected terminal state.  Those probes do not necessarily
@@ -1052,6 +1086,94 @@ def _conversation_create_evidence(report: dict[str, Any]) -> dict[str, Any]:
     return evidence
 
 
+def _execution_completion_evidence(report: dict[str, Any]) -> dict[str, Any]:
+    """Project bounded execution/reconciliation diagnostics for certification.
+
+    Agent Server events can contain prompts, tool arguments, source contents,
+    and model responses.  This report deliberately retains only counts,
+    identifiers as one-way fingerprints, statuses, and bounded metadata tails.
+    """
+
+    diagnostics = report.get("execution_diagnostics") if isinstance(report.get("execution_diagnostics"), dict) else {}
+    raw_count = int(diagnostics.get("event_count") or 0)
+    normalized_count = int(
+        report.get("events", {}).get("count")
+        if isinstance(report.get("events"), dict) and report.get("events", {}).get("count") is not None
+        else diagnostics.get("normalized_event_count") or 0
+    )
+    normalized_from_server = int(diagnostics.get("normalized_from_server_event_count") or 0)
+    if normalized_from_server == 0 and raw_count:
+        # _emit_runtime_event emits exactly one progress and one audit event
+        # per accepted server event.  Keep this fallback explicit for older
+        # adapters whose diagnostics predate the scalar counter.
+        normalized_from_server = raw_count * 2
+    controller_count = max(normalized_count - normalized_from_server, 0)
+    event_types = diagnostics.get("event_type_counts")
+    if not isinstance(event_types, dict):
+        event_types = {str(item): None for item in diagnostics.get("event_types", []) if item}
+    terminal = bool(diagnostics.get("terminal_state_observed"))
+    final_called = bool(diagnostics.get("final_response_endpoint_called"))
+    final_http = diagnostics.get("final_response_http_status")
+    return {
+        "schema_version": "aiat.openhands-execution-completion.v1",
+        "raw_agent_event_count": raw_count,
+        "normalized_event_count": normalized_count,
+        "normalized_from_server_event_count": normalized_from_server,
+        "controller_internal_event_count": controller_count,
+        "event_type_counts": event_types,
+        "duplicate_event_count": int(diagnostics.get("duplicate_event_count") or 0),
+        "replay_event_count": int(diagnostics.get("replay_event_count") or 0),
+        "event_id_count": int(diagnostics.get("event_id_count") or 0),
+        "event_stream_status": diagnostics.get("event_stream_status"),
+        "last_event_type": diagnostics.get("last_event_type"),
+        "last_event_id_fingerprint": diagnostics.get("last_event_id_fingerprint"),
+        "last_event_status": diagnostics.get("last_event_status"),
+        "last_event_status_source": diagnostics.get("last_event_status_source"),
+        "last_conversation_status": diagnostics.get("last_conversation_status"),
+        "status_transition_tail": diagnostics.get("status_transition_tail", [])[-100:],
+        "event_tail": diagnostics.get("event_tail", [])[-100:],
+        "status_poll_count": int(diagnostics.get("status_poll_count") or 0),
+        "status_poll_transition_tail": diagnostics.get("status_poll_transition_tail", [])[-100:],
+        "last_status_poll_value": diagnostics.get("last_status_poll_value"),
+        "rest_terminal_poll_count": int(diagnostics.get("rest_terminal_poll_count") or 0),
+        "rest_terminal_fallback_used": bool(diagnostics.get("rest_terminal_fallback_used")),
+        "terminal_state_observed": terminal,
+        "terminal_state_value": diagnostics.get("terminal_state_value"),
+        "terminal_state_source": diagnostics.get("terminal_state_source"),
+        "terminal_event_type": diagnostics.get("terminal_event_type"),
+        "terminal_event_id_fingerprint": diagnostics.get("terminal_event_id_fingerprint"),
+        "model_request_count": "NOT_OBSERVED",
+        "model_response_count": "NOT_OBSERVED",
+        "model_error_count": int(
+            diagnostics.get("model_error_count")
+            if diagnostics.get("model_error_count") is not None
+            else (1 if diagnostics.get("model_error_observed") else 0)
+        ),
+        "model_error_observed": bool(diagnostics.get("model_error_observed")),
+        "model_error_class": diagnostics.get("model_error_class"),
+        "event_error_observed": bool(diagnostics.get("event_error_observed")),
+        "event_error_class": diagnostics.get("event_error_class"),
+        "tool_call_count": int(diagnostics.get("tool_call_count") or 0),
+        "tool_success_count": int(diagnostics.get("tool_success_count") or 0),
+        "tool_error_count": int(diagnostics.get("tool_error_count") or 0),
+        "iteration_count": diagnostics.get("iteration_count") if diagnostics.get("iteration_count") is not None else "NOT_OBSERVED",
+        "max_iterations": diagnostics.get("max_iterations"),
+        "stuck_detection_enabled": diagnostics.get("stuck_detection_enabled"),
+        "stuck_detection_triggered": bool(diagnostics.get("stuck_detection_triggered")),
+        "execution_failure_class": diagnostics.get("execution_failure_class"),
+        "final_response_endpoint_called": final_called,
+        "final_response_http_status": final_http,
+        "final_response_response_class": diagnostics.get("final_response_response_class"),
+        "final_response_present": bool(diagnostics.get("final_response_present")),
+        "post_test_activity_classification": diagnostics.get(
+            "post_test_activity_classification", "NOT_OBSERVED"
+        ),
+        "raw_event_payloads_retained": False,
+        "raw_model_payloads_retained": False,
+        "secret_values_retained": False,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", default=os.getenv("OPENHANDS_AGENT_SERVER_URL", ""))
@@ -1098,6 +1220,10 @@ def main(argv: list[str] | None = None) -> int:
     args.output.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     (args.output.parent / "conversation-create.json").write_text(
         json.dumps(_conversation_create_evidence(report), sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (args.output.parent / "execution-completion.json").write_text(
+        json.dumps(_execution_completion_evidence(report), sort_keys=True, indent=2) + "\n",
         encoding="utf-8",
     )
     print(json.dumps({"status": report.get("status"), "blockers": report.get("blockers", [])}, sort_keys=True))

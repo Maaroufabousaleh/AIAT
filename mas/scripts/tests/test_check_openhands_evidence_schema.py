@@ -7,6 +7,8 @@ import json
 import tempfile
 from pathlib import Path
 
+import pytest
+
 SCRIPT = Path(__file__).resolve().parents[1] / "check_openhands_evidence_schema.py"
 SPEC = importlib.util.spec_from_file_location("check_openhands_evidence_schema", SCRIPT)
 assert SPEC and SPEC.loader
@@ -65,6 +67,21 @@ def test_certification_authorization_block_is_an_explicit_allowed_status() -> No
     )
     assert report["status"] == "PASS", report["errors"]
     assert report["final_certification_status"] == "BLOCKED_CERTIFICATION_AUTHORIZATION"
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        "BLOCKED_EXECUTION_COMPLETION",
+        "BLOCKED_TERMINAL_RECONCILIATION",
+        "FAILED_FINAL_RESPONSE",
+        "FAILED_AGENT_RUN_LOOP",
+    ],
+)
+def test_execution_completion_statuses_are_valid_fail_closed_evidence(status: str) -> None:
+    report = MODULE.validate(_write_tree(Path(tempfile.mkdtemp()), _gate_report(status)))
+    assert report["status"] == "PASS", report["errors"]
+    assert report["final_certification_status"] == status
 
 
 def test_precise_failed_gate_status_is_valid_fail_closed_evidence() -> None:
@@ -185,3 +202,20 @@ def test_second_historical_gateway_provenance_failure_is_scalar_and_precise() ->
     assert record["artifact"]["payloads_retained"] is False
     assert record["evidence_boundary"]["provider_failure"] is False
     assert record["evidence_boundary"]["zero_residue"] is True
+
+
+def test_execution_completion_historical_record_preserves_uncertainty_and_counts() -> None:
+    path = (
+        Path(__file__).resolve().parents[3]
+        / "mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/github-run-33427999941-execution-completion-diagnosis.json"
+    )
+    record = json.loads(path.read_text(encoding="utf-8"))
+    assert record["immutable_historical_record"] is True
+    assert record["run"]["run_id"] == "33427999941"
+    assert record["historical_observation"]["agent_server_event_count"] == 840
+    assert record["historical_observation"]["normalized_event_count"] == 1684
+    assert record["classification"]["model_error_observed"] is False
+    assert record["classification"]["server_genuinely_running_after_work"].startswith("UNKNOWN_")
+    assert record["event_accounting"]["unexplained_event_count"] == 0
+    assert record["terminal_reconciliation"]["mapping_fix_status"] == "IMPLEMENTED_LOCAL_FIXTURES_NOT_LIVE_RERUN"
+    assert record["retention"]["raw_event_payloads_retained"] is False

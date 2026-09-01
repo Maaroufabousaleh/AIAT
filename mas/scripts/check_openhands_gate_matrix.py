@@ -73,6 +73,17 @@ def _evidence_blocker_status(evidence_root: Path) -> str | None:
         "live/live-certification.json",
     ):
         value = report(name)
+        if name == "live/live-certification.json" and str(value.get("status") or "") in {
+            "BLOCKED_EXECUTION_COMPLETION",
+            "BLOCKED_TERMINAL_RECONCILIATION",
+            "FAILED_FINAL_RESPONSE",
+            "FAILED_AGENT_RUN_LOOP",
+        }:
+            # The live wrapper's precise completion diagnosis takes
+            # precedence over dependent gate failures.  It is still
+            # fail-closed: no gate is promoted and the evidence retains every
+            # NOT_RUN/FAILED row.
+            return str(value["status"])
         if name == "live/live-certification.json" and str(value.get("status") or "") == "BLOCKED_OPENHANDS_LIVE_EXECUTION_CONTRACT":
             return "BLOCKED_OPENHANDS_LIVE_EXECUTION_CONTRACT"
         if name == "live/live-certification.json" and value.get("status") == "BLOCKED_CERTIFICATION_AUTHORIZATION":

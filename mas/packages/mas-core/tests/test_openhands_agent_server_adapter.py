@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import time
@@ -12,6 +13,7 @@ from uuid import UUID, uuid4
 import httpx
 import pytest
 
+import mas_core.worker_registry.openhands_agent_server_adapter as adapter_module
 from mas_core.worker_contract import (
     AdapterContext,
     ModelProfileReference,
@@ -1269,7 +1271,12 @@ async def test_artifacts_hash_remote_files_and_reject_path_escape(tmp_path: Path
 
 
 @pytest.mark.asyncio
-async def test_execute_maps_conversation_result_and_scalar_usage(tmp_path: Path) -> None:
+async def test_execute_maps_conversation_result_and_scalar_usage(tmp_path: Path, monkeypatch) -> None:
+    # This fixture intentionally exercises the pinned SDK-compatible REST
+    # fallback.  Production keeps the bounded v1.43 fallback enabled; the
+    # test avoids waiting 30 seconds for a synthetic server that emits no WS
+    # terminal snapshot.
+    monkeypatch.setattr(adapter_module, "_TERMINAL_REST_FALLBACK_SECONDS", 0.0)
     conversation_id = str(uuid4())
     status_reads = 0
     calls: list[str] = []
@@ -1341,6 +1348,8 @@ async def test_execute_maps_conversation_result_and_scalar_usage(tmp_path: Path)
     assert diagnostics["conversation_message_http_status"] == 200
     assert diagnostics["conversation_message_endpoint"] == f"/api/conversations/{conversation_id}/events"
     assert diagnostics["run_start_status"] == "PASS"
+    assert diagnostics["rest_terminal_fallback_used"] is True
+    assert diagnostics["terminal_state_source"] == "rest_fallback"
     assert not adapter._event_tasks
     await adapter.close()
 
@@ -1389,4 +1398,212 @@ async def test_execute_timeout_interrupts_remote_and_returns_terminal_timeout(tm
     assert result.error.terminal is True
     assert f"POST /api/conversations/{conversation_id}/interrupt" in calls
     assert f"DELETE /api/conversations/{conversation_id}" in calls
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_v143_state_update_terminal_mapping_ignores_initial_and_field_finished(tmp_path: Path) -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={})
+
+    adapter = make_adapter(tmp_path, handler)
+    run = request(workspace=tmp_path / "workspace")
+
+    # The WebSocket subscription sends an initial snapshot before /run.  It
+    # must never complete the newly requested execution.
+    await adapter._emit_runtime_event(
+        run,
+        {
+            "id": "initial-state",
+            "kind": "ConversationStateUpdateEvent",
+            "key": "full_state",
+            "value": {"execution_status": "idle"},
+        },
+    )
+    assert adapter._diagnostics(run.run_id)["terminal_state_observed"] is False
+    # The advisory per-field FINISHED hint must not replace the effective
+    # running state used by lifecycle polling.
+    assert adapter.observed_execution_status(run.run_id) == "idle"
+
+    adapter._run_started.add(run.run_id)
+    # v1.43 treats a per-field FINISHED update as advisory; only the
+    # post-run full-state snapshot is a successful terminal signal.
+    await adapter._emit_runtime_event(
+        run,
+        {
+            "id": "field-finished",
+            "kind": "ConversationStateUpdateEvent",
+            "key": "execution_status",
+            "value": "finished",
+        },
+    )
+    assert adapter._diagnostics(run.run_id)["terminal_state_observed"] is False
+
+    await adapter._emit_runtime_event(
+        run,
+        {
+            "id": "full-finished",
+            "kind": "ConversationStateUpdateEvent",
+            "key": "full_state",
+            "value": {"execution_status": "finished"},
+        },
+    )
+    diagnostics = adapter._diagnostics(run.run_id)
+    assert diagnostics["terminal_state_observed"] is True
+    assert diagnostics["terminal_state_value"] == "finished"
+    assert diagnostics["terminal_state_source"] == "websocket"
+    assert diagnostics["terminal_event_type"] == "ConversationStateUpdateEvent"
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_v143_rest_finished_is_advisory_until_execute_fallback(tmp_path: Path) -> None:
+    conversation_id = str(uuid4())
+
+    async def handler(http_request: httpx.Request) -> httpx.Response:
+        if http_request.method == "GET" and http_request.url.path == f"/api/conversations/{conversation_id}":
+            return httpx.Response(200, json={"execution_status": "finished"})
+        raise AssertionError(http_request)
+
+    adapter = make_adapter(tmp_path, handler)
+    run = request(workspace=tmp_path / "workspace")
+    info = await adapter._conversation(conversation_id, diagnostic_run_id=run.run_id)
+    assert info["execution_status"] == "finished"
+    diagnostics = adapter._diagnostics(run.run_id)
+    assert diagnostics["terminal_state_observed"] is False
+    assert diagnostics["terminal_state_source"] is None
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_v143_error_field_is_immediate_terminal_and_event_ids_are_counted(tmp_path: Path) -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={})
+
+    adapter = make_adapter(tmp_path, handler)
+    run = request(workspace=tmp_path / "workspace")
+    adapter._run_started.add(run.run_id)
+    event = {
+        "id": "same-event",
+        "kind": "ConversationStateUpdateEvent",
+        "key": "execution_status",
+        "value": "error",
+    }
+    await adapter._emit_runtime_event(run, event)
+    await adapter._emit_runtime_event(run, event)
+    diagnostics = adapter._diagnostics(run.run_id)
+    assert diagnostics["terminal_state_value"] == "error"
+    assert diagnostics["terminal_state_source"] == "websocket"
+    assert diagnostics["duplicate_event_count"] == 1
+    assert diagnostics["event_id_count"] == 2
+    assert diagnostics["model_error_observed"] is False
+    assert diagnostics["model_error_count"] == 0
+    assert all("value" not in item for item in diagnostics["event_tail"])
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_conversation_error_is_not_assumed_to_be_model_error(tmp_path: Path) -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={})
+
+    adapter = make_adapter(tmp_path, handler)
+    run = request(workspace=tmp_path / "workspace")
+    adapter._run_started.add(run.run_id)
+    await adapter._emit_runtime_event(
+        run,
+        {
+            "id": "internal-error",
+            "kind": "ConversationErrorEvent",
+            "code": "KeyError",
+            "detail": "internal runtime failure",
+        },
+    )
+    diagnostics = adapter._diagnostics(run.run_id)
+    assert diagnostics["event_error_observed"] is True
+    assert diagnostics["model_error_observed"] is False
+    assert diagnostics["model_error_count"] == 0
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_execute_uses_authoritative_websocket_terminal_state_when_rest_lags(tmp_path: Path) -> None:
+    conversation_id = str(uuid4())
+    calls: list[str] = []
+
+    async def handler(http_request: httpx.Request) -> httpx.Response:
+        calls.append(f"{http_request.method} {http_request.url.path}")
+        if http_request.method == "POST" and http_request.url.path == "/api/settings/mcp/aiat-openhands-test-run":
+            return httpx.Response(201, json={})
+        if http_request.method == "DELETE" and http_request.url.path == "/api/settings/mcp/aiat-openhands-test-run":
+            return httpx.Response(204)
+        if http_request.method == "POST" and http_request.url.path == "/api/conversations":
+            return httpx.Response(201, json={"id": conversation_id})
+        if http_request.method == "GET" and http_request.url.path == f"/api/conversations/{conversation_id}":
+            return httpx.Response(
+                200,
+                json={
+                    "execution_status": "running",
+                    "agent": {"llm": {"model": OPENHANDS_WIRE_MODEL_ID}},
+                    "metrics": {"accumulated_token_usage": {"prompt_tokens": 2, "completion_tokens": 3}},
+                },
+            )
+        if http_request.method == "POST" and http_request.url.path == f"/api/conversations/{conversation_id}/events":
+            return httpx.Response(200, json={"success": True})
+        if http_request.method == "POST" and http_request.url.path == f"/api/conversations/{conversation_id}/run":
+            return httpx.Response(200, json={"success": True})
+        if http_request.method == "GET" and http_request.url.path == f"/api/conversations/{conversation_id}/agent_final_response":
+            return httpx.Response(200, json={"response": "done"})
+        if http_request.method == "GET" and http_request.url.path == "/api/git/changes":
+            return httpx.Response(200, json=[])
+        raise AssertionError(http_request)
+
+    adapter = make_adapter(tmp_path, handler)
+
+    async def emit_terminal(request: WorkerRunRequest, _: str) -> None:
+        while request.run_id not in adapter._run_started:
+            await asyncio.sleep(0)
+        await adapter._emit_runtime_event(
+            request,
+            {
+                "id": "post-run-full-state",
+                "kind": "ConversationStateUpdateEvent",
+                "key": "full_state",
+                "value": {"execution_status": "finished"},
+            },
+        )
+
+    adapter._consume_events = emit_terminal  # type: ignore[method-assign]
+    run = request(workspace=tmp_path / "workspace")
+    result = await adapter._execute(run)
+    assert result.success is True
+    assert result.output == "done"
+    diagnostics = adapter._diagnostics(run.run_id)
+    assert diagnostics["terminal_state_source"] == "websocket"
+    assert diagnostics["terminal_state_value"] == "finished"
+    assert diagnostics["last_status_poll_value"] == "running"
+    assert diagnostics["rest_terminal_fallback_used"] is False
+    assert calls.count(f"POST /api/conversations/{conversation_id}/run") == 1
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_finished_without_final_response_remains_fail_closed(tmp_path: Path) -> None:
+    conversation_id = str(uuid4())
+
+    async def handler(http_request: httpx.Request) -> httpx.Response:
+        if http_request.method == "GET" and http_request.url.path == f"/api/conversations/{conversation_id}/agent_final_response":
+            return httpx.Response(200, json={"response": ""})
+        raise AssertionError(http_request)
+
+    adapter = make_adapter(tmp_path, handler)
+    run = request(workspace=tmp_path / "workspace")
+    result = await adapter._terminal_result(run, conversation_id, "finished", {}, time.monotonic())
+    assert result.success is False
+    assert result.error is not None
+    assert result.error.code == "OPENHANDS_FINAL_RESPONSE_MISSING"
+    diagnostics = adapter._diagnostics(run.run_id)
+    assert diagnostics["execution_failure_class"] == "FAILED_FINAL_RESPONSE"
+    assert diagnostics["final_response_endpoint_called"] is True
+    assert diagnostics["final_response_response_class"] == "empty"
     await adapter.close()

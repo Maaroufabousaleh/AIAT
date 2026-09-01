@@ -56,6 +56,14 @@ GATE_DEFINITIONS: tuple[dict[str, Any], ...] = (
 
 GATE_IDS = tuple(item["gate_id"] for item in GATE_DEFINITIONS)
 _KNOWN_STATUSES = {"PASS", "NOT_RUN"}
+_EXECUTION_COMPLETION_BLOCKERS = frozenset(
+    {
+        "BLOCKED_EXECUTION_COMPLETION",
+        "BLOCKED_TERMINAL_RECONCILIATION",
+        "FAILED_FINAL_RESPONSE",
+        "FAILED_AGENT_RUN_LOOP",
+    }
+)
 
 
 def initial_gate_map() -> dict[str, dict[str, Any]]:
@@ -106,10 +114,10 @@ def evaluate_gate_map(
         final_status = "FAILED_CERTIFICATION_IMPLEMENTATION"
     elif all(status == "PASS" for status in statuses.values()):
         final_status = "PASSED"
-    elif (
-        causal_blocker_gate in GATE_IDS
-        and blocker_status == "BLOCKED_OPENHANDS_LIVE_EXECUTION_CONTRACT"
-    ):
+    elif causal_blocker_gate in GATE_IDS and blocker_status in {
+        "BLOCKED_OPENHANDS_LIVE_EXECUTION_CONTRACT",
+        *_EXECUTION_COMPLETION_BLOCKERS,
+    }:
         # Preserve failed downstream gates, but report the earliest proven
         # execution-contract blocker instead of whichever dependent failure
         # happens to sort first.

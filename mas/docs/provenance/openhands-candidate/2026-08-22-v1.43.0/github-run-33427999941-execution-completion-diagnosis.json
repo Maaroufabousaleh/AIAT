@@ -1,0 +1,130 @@
+{
+  "schema_version": "aiat.openhands-historical-execution-completion-diagnosis.v1",
+  "immutable_historical_record": true,
+  "run": {
+    "run_id": "33427999941",
+    "job_id": "99606210812",
+    "workflow_ref": "agent/fix-review-p1",
+    "candidate_sha": "d0397b2721f3a325526f4cc78913762a5f2f8f8f",
+    "artifact_id": "9772013626",
+    "artifact_digest": "sha256:e542728504c1b7ef3bbe97a5070debe6360727d47f35a66a4280d889f95e3238"
+  },
+  "candidate": {
+    "release": "v1.43.0",
+    "source_commit": "4c1237f391fe394e9f67505fe3a0bd2d81f84188",
+    "image_digest": "sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97",
+    "activation": "inactive"
+  },
+  "historical_observation": {
+    "workflow_status": "FAILED_MODEL_EXECUTION",
+    "mandatory_pass_count": 9,
+    "mandatory_failed_count": 1,
+    "mandatory_not_run_count": 10,
+    "causal_blocker_gate": "real_coding_task",
+    "agent_server_event_count": 840,
+    "normalized_event_count": 1684,
+    "last_conversation_status": "running",
+    "terminal_state_observed": false,
+    "final_response_present": false,
+    "workspace_change_confirmed": true,
+    "test_result_confirmed": true,
+    "pause_resume": "TimeoutError",
+    "interrupt": "PASS",
+    "timeout": "PASS",
+    "zero_residue": "PASS",
+    "scanner_blocker": "BLOCKED_SCANNER_COVERAGE"
+  },
+  "classification": {
+    "failure_class": "FAILED_CERTIFICATION_IMPLEMENTATION",
+    "retrospective_status": "BLOCKED_EXECUTION_COMPLETION",
+    "model_error_observed": false,
+    "server_genuinely_running_after_work": "UNKNOWN_HISTORICAL_PAYLOADS_NOT_RETAINED",
+    "root_cause_status": "AIAT_TERMINAL_RECONCILIATION_GAP_IDENTIFIED_HISTORICAL_CAUSALITY_UNPROVEN",
+    "root_cause_confidence": "LIMITED_BY_MISSING_EVENT_PAYLOADS",
+    "root_cause": "The pre-fix AIAT adapter counted and normalized Agent Server events but did not consume the exact v1.43 ConversationStateUpdateEvent execution_status/full_state values as authoritative post-run state. It therefore relied on a REST status snapshot that remained running. This is a concrete adapter compatibility gap addressed by local fixtures, but historical evidence retained no state-update payloads, so it cannot prove whether the server was genuinely still running or had reached a terminal state the adapter failed to recognize.",
+    "provider_failure": false,
+    "gateway_failure": false,
+    "gvisor_failure": false,
+    "runtime_startup_failure": false,
+    "security_finding": false
+  },
+  "event_accounting": {
+    "raw_event_count": 840,
+    "normalized_event_count": 1684,
+    "normalized_from_server_event_count": 1680,
+    "controller_internal_event_count": 4,
+    "duplicate_event_count": "NOT_OBSERVED_HISTORICAL_EVENT_IDS_NOT_RETAINED",
+    "replay_event_count": "NOT_OBSERVED_HISTORICAL_RECONNECT_METADATA_NOT_RETAINED",
+    "unexplained_event_count": 0,
+    "explanation": "The current adapter emits one progress and one audit event for each accepted Agent Server event, accounting for 840 * 2 = 1680 normalized server-derived events. Four additional controller events are accepted, bridge-configured, failed-result, and cleanup audit events. This explains the count without evidence of replay; historical IDs and reconnect metadata were not retained, so duplicate/replay absence cannot be proven from this run."
+  },
+  "event_types": {
+    "observed": [
+      "ConversationStateUpdateEvent",
+      "SystemPromptEvent",
+      "MessageEvent",
+      "StreamingDeltaEvent",
+      "ActionEvent",
+      "ObservationEvent",
+      "InterruptEvent"
+    ],
+    "last_event_type": "ConversationStateUpdateEvent",
+    "last_event_id": "NOT_RETAINED",
+    "last_event_status": "NOT_RETAINED",
+    "status_transition_tail": "NOT_RETAINED",
+    "last_100_pattern": "NOT_DETERMINABLE_FROM_SANITIZED_HISTORICAL_EVIDENCE"
+  },
+  "execution_metrics": {
+    "model_request_count": "NOT_OBSERVED_HISTORICAL",
+    "model_response_count": "NOT_OBSERVED_HISTORICAL",
+    "model_error_count": 0,
+    "tool_call_count": "NOT_OBSERVED_HISTORICAL",
+    "tool_success_count": "NOT_OBSERVED_HISTORICAL",
+    "tool_error_count": "NOT_OBSERVED_HISTORICAL",
+    "iteration_count": "NOT_OBSERVED_HISTORICAL",
+    "max_iterations": 20,
+    "stuck_detection_enabled": true,
+    "stuck_detection_triggered": "NOT_OBSERVED_HISTORICAL",
+    "post_test_activity_classification": "UNKNOWN_HISTORICAL_PAYLOADS_NOT_RETAINED"
+  },
+  "terminal_reconciliation": {
+    "v143_terminal_states": ["finished", "error", "stuck"],
+    "v143_running_states": ["idle", "running", "paused", "waiting_for_confirmation", "deleting"],
+    "v143_success_state": "finished",
+    "v143_error_states": ["error", "stuck"],
+    "v143_paused_state": "paused",
+    "v143_interrupted_state": "paused",
+    "historical_aiat_mapping": "INCOMPLETE_REST_ONLY",
+    "current_aiat_mapping": "WEBSOCKET_FULL_STATE_AUTHORITATIVE; ERROR/STUCK PER_FIELD_IMMEDIATE; REST_FINISHED_BOUNDED_FALLBACK",
+    "mapping_fix_status": "IMPLEMENTED_LOCAL_FIXTURES_NOT_LIVE_RERUN"
+  },
+  "final_response": {
+    "endpoint_called": false,
+    "http_status": null,
+    "response_class": "NOT_ELIGIBLE_WITHOUT_TERMINAL_STATE",
+    "root_cause": "No terminal state was observed by the pre-fix adapter, so the final-response endpoint was not eligible to be called. A successful workspace change and passing tests do not substitute for a terminal worker result."
+  },
+  "postrun": {
+    "worker_result_created": false,
+    "worker_result_block_reason": "NO_SUCCESSFUL_TERMINAL_RESULT",
+    "artifact_created": false,
+    "artifact_block_reason": "ARTIFACT_REGISTRATION_REQUIRES_SUCCESSFUL_TERMINAL_RESULT"
+  },
+  "lifecycle": {
+    "pause_resume_root_cause": "UNKNOWN_HISTORICAL_PAUSE_HTTP_AND_STATE_DETAILS_NOT_RETAINED; probe was downstream of unresolved completion",
+    "interrupt": "PASS",
+    "timeout": "PASS"
+  },
+  "retention": {
+    "raw_event_payloads_retained": false,
+    "raw_model_payloads_retained": false,
+    "raw_prompts_retained": false,
+    "credentials_retained": false,
+    "event_ids_retained": false,
+    "status_tail_retained": false
+  },
+  "independent_blockers": {
+    "security_scanner_blocker": "BLOCKED_SCANNER_COVERAGE",
+    "scanner_gate_independent_of_live_task": true
+  }
+}

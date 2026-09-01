@@ -87,6 +87,91 @@ def test_message_submission_failure_is_an_execution_contract_failure() -> None:
     ) == "BLOCKED_OPENHANDS_LIVE_EXECUTION_CONTRACT"
 
 
+@pytest.mark.parametrize(
+    ("failure_class", "expected_status"),
+    [
+        ("BLOCKED_EXECUTION_COMPLETION", "BLOCKED_EXECUTION_COMPLETION"),
+        ("BLOCKED_TERMINAL_RECONCILIATION", "BLOCKED_TERMINAL_RECONCILIATION"),
+        ("FAILED_FINAL_RESPONSE", "FAILED_FINAL_RESPONSE"),
+        ("FAILED_AGENT_RUN_LOOP", "FAILED_AGENT_RUN_LOOP"),
+    ],
+)
+def test_precise_completion_failure_precedes_dependent_gate_failures(
+    failure_class: str, expected_status: str
+) -> None:
+    module = _module()
+    statuses = module._status_map("NOT_RUN")
+    statuses.update(
+        {
+            "coding_task": "FAILED_MODEL_EXECUTION",
+            "file_modifications": "FAILED_FILE_MODIFICATIONS",
+            "test_execution": "FAILED_TEST_EXECUTION",
+        }
+    )
+    assert (
+        module._final_status(
+            statuses,
+            [
+                "live_coding_task_failed",
+                "file_modifications_contract_failed",
+                "task_spec_postrun:dependent_gate",
+            ],
+            {"execution_failure_class": failure_class, "model_error_observed": False},
+        )
+        == expected_status
+    )
+
+
+def test_execution_completion_evidence_is_bounded_and_explains_event_accounting() -> None:
+    module = _module()
+    report = {
+        "events": {"count": 12},
+        "execution_diagnostics": {
+            "event_count": 5,
+            "normalized_from_server_event_count": 10,
+            "event_type_counts": {"ConversationStateUpdateEvent": 2, "MessageEvent": 3},
+            "duplicate_event_count": 1,
+            "replay_event_count": 0,
+            "last_event_type": "ConversationStateUpdateEvent",
+            "last_event_id_fingerprint": "a" * 64,
+            "last_event_status": "finished",
+            "last_conversation_status": "running",
+            "status_transition_tail": [{"status": "running", "source": "full_state"}],
+            "event_tail": [{"event_type": "ConversationStateUpdateEvent", "terminal": True}],
+            "terminal_state_observed": True,
+            "terminal_state_value": "finished",
+            "terminal_state_source": "websocket",
+            "final_response_endpoint_called": True,
+            "final_response_http_status": 200,
+            "final_response_response_class": "present",
+            "final_response_present": True,
+            "model_error_observed": False,
+            "tool_call_count": 2,
+            "tool_success_count": 2,
+            "tool_error_count": 0,
+            "iteration_count": 3,
+            "max_iterations": 20,
+            "stuck_detection_enabled": True,
+            "stuck_detection_triggered": False,
+            "execution_failure_class": None,
+        },
+    }
+    evidence = module._execution_completion_evidence(report)
+    assert evidence["raw_agent_event_count"] == 5
+    assert evidence["normalized_event_count"] == 12
+    assert evidence["normalized_from_server_event_count"] == 10
+    assert evidence["controller_internal_event_count"] == 2
+    assert evidence["duplicate_event_count"] == 1
+    assert evidence["terminal_state_source"] == "websocket"
+    assert evidence["final_response_present"] is True
+    serialized = json.dumps(evidence, sort_keys=True)
+    assert "prompt" not in serialized
+    assert '"value"' not in serialized
+    assert evidence["raw_event_payloads_retained"] is False
+    assert evidence["raw_model_payloads_retained"] is False
+    assert evidence["secret_values_retained"] is False
+
+
 def test_lifecycle_polling_is_skipped_when_conversation_creation_failed() -> None:
     module = _module()
     status = module._lifecycle_upstream_block(
@@ -489,3 +574,33 @@ async def test_live_lifecycle_wave_requires_remote_control_states() -> None:
     assert details["probes"]["interrupt"]["status_before_interrupt"] == "running"
     assert details["secret_scan"]["status"] == "PASS"
     assert blockers == []
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_running_probe_ignores_pre_run_idle_event_snapshot() -> None:
+    module = _module()
+
+    class FakeAdapter:
+        async def _conversation(self, _conversation_id: str) -> dict[str, str]:
+            return {"execution_status": "running"}
+
+        def observed_execution_status_for_conversation(self, _conversation_id: str) -> str:
+            # Agent Server v1.43 sends this subscription snapshot before the
+            # explicit /run is armed.  It must not mask REST's running state.
+            return "idle"
+
+    assert await module._wait_for_running(FakeAdapter(), "conversation", timeout=0.1) == "running"
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_pause_probe_does_not_replace_rest_paused_with_stale_idle() -> None:
+    module = _module()
+
+    class FakeAdapter:
+        async def _conversation(self, _conversation_id: str) -> dict[str, str]:
+            return {"execution_status": "paused"}
+
+        def observed_execution_status_for_conversation(self, _conversation_id: str) -> str:
+            return "idle"
+
+    assert await module._wait_for_not_running(FakeAdapter(), "conversation", timeout=0.1) == "paused"

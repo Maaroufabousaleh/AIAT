@@ -14,6 +14,7 @@ import hashlib
 import json
 import re
 import time
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -90,6 +91,7 @@ _OPENHANDS_MCP_SERVER_KEY_PREFIX = "aiat-openhands-"
 _OPENHANDS_MCP_GRANT_TTL_SECONDS = 300
 _OPENHANDS_MAX_ITERATIONS = 20
 _OPENHANDS_TIMEOUT_SECONDS = 300
+_TERMINAL_REST_FALLBACK_SECONDS = 30.0
 # Keep the candidate's AIAT bridge surface bounded even when a caller builds a
 # WorkerRunRequest directly.  The profile/preflight carries the same contract,
 # but the adapter must not mint a broader signed grant from untrusted input.
@@ -102,6 +104,8 @@ _OPENHANDS_ALLOWED_TOOL_GRANTS = frozenset(
 )
 
 TERMINAL_STATUSES = frozenset({"finished", "error", "stuck"})
+_EVENT_TAIL_LIMIT = 100
+_STATUS_TAIL_LIMIT = 100
 
 # This sentinel is intentionally module-private.  A metadata flag, request
 # extension, or caller-selected boolean is not sufficient to enter the
@@ -399,6 +403,15 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
         self._cancelled: set[UUID] = set()
         self._mcp_by_run: dict[UUID, str] = {}
         self._mcp_grant_expires_at: dict[UUID, float] = {}
+        # Agent Server v1.43 publishes the authoritative post-run status via
+        # ConversationStateUpdateEvent.  Keep that state separate from REST
+        # conversation-listing snapshots, which can lag while the server is
+        # flushing the run.  The run guard prevents the initial subscription
+        # snapshot (normally ``idle``) from being mistaken for completion.
+        self._run_started: set[UUID] = set()
+        self._latest_event_status: dict[UUID, str] = {}
+        self._terminal_event_status: dict[UUID, str] = {}
+        self._event_id_fingerprints: dict[UUID, set[str]] = {}
         # Keep only bounded scalar protocol diagnostics.  The Agent Server can
         # return prompts, tool arguments, and model responses in HTTP/event
         # payloads; none of those values belong in AIAT evidence.
@@ -442,15 +455,48 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             "event_stream_status": "NOT_RUN",
             "event_count": 0,
             "event_types": [],
+            "event_type_counts": {},
+            "normalized_from_server_event_count": 0,
+            "duplicate_event_count": 0,
+            "replay_event_count": 0,
+            "event_id_count": 0,
+            "last_event_id_fingerprint": None,
+            "event_tail": [],
+            "status_transition_tail": [],
+            "last_event_status": None,
+            "last_event_status_source": None,
+            "terminal_state_source": None,
+            "terminal_event_type": None,
+            "terminal_event_id_fingerprint": None,
             "last_event_type": None,
             "last_conversation_status": None,
             "terminal_state_observed": False,
             "terminal_state_value": None,
+            "execution_failure_class": None,
+            "status_poll_count": 0,
+            "status_poll_transition_tail": [],
+            "last_status_poll": None,
+            "last_status_poll_value": None,
+            "rest_terminal_poll_count": 0,
+            "rest_terminal_fallback_used": False,
+            "final_response_endpoint_called": False,
+            "final_response_http_status": None,
+            "final_response_response_class": None,
             "final_response_present": False,
             "final_response_size": 0,
             "model_error_observed": False,
             "model_error_class": None,
             "model_error_http_status": None,
+            "model_error_count": 0,
+            "event_error_observed": False,
+            "event_error_class": None,
+            "tool_call_count": 0,
+            "tool_success_count": 0,
+            "tool_error_count": 0,
+            "iteration_count": None,
+            "max_iterations": None,
+            "stuck_detection_enabled": None,
+            "stuck_detection_triggered": False,
             "request_errors": [],
         }
 
@@ -458,13 +504,107 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
         """Return a copy of sanitized protocol diagnostics for one run."""
 
         value = self._diagnostics_by_run.get(run_id) or self._new_diagnostics()
-        return {
-            key: list(item) if isinstance(item, list) else item
-            for key, item in value.items()
-        }
+        return deepcopy(value)
 
     def _diagnostic_for(self, run_id: UUID) -> dict[str, Any]:
         return self._diagnostics_by_run.setdefault(run_id, self._new_diagnostics())
+
+    @staticmethod
+    def _safe_fingerprint(value: Any) -> str | None:
+        """Return a one-way fingerprint for a scalar runtime identifier."""
+
+        if value is None:
+            return None
+        text = str(value)
+        if not text:
+            return None
+        return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()
+
+    @staticmethod
+    def _append_bounded(items: list[dict[str, Any]], value: dict[str, Any], *, limit: int) -> None:
+        items.append(value)
+        if len(items) > limit:
+            del items[: len(items) - limit]
+
+    @staticmethod
+    def _event_execution_status(raw: dict[str, Any]) -> tuple[str | None, str | None]:
+        """Extract the v1.43 status carried by a state-update event.
+
+        v1.43 emits both per-field updates (``key=execution_status``) and a
+        post-run full-state snapshot (``key=full_state``).  The latter is the
+        authoritative success signal; the former is still authoritative for
+        immediate ERROR/STUCK failures.
+        """
+
+        kind = str(raw.get("kind") or raw.get("type") or raw.get("event_type") or "")
+        if kind != "ConversationStateUpdateEvent":
+            return None, None
+        key = raw.get("key")
+        value = raw.get("value")
+        if key == "execution_status":
+            status = str(value or "").lower()
+            return (status or None), "execution_status"
+        if key == "full_state" and isinstance(value, dict):
+            status = str(value.get("execution_status") or "").lower()
+            return (status or None), "full_state"
+        return None, None
+
+    @staticmethod
+    def _event_error_class(raw: dict[str, Any], kind: str) -> str | None:
+        """Extract only a bounded error class/code from an event."""
+
+        if "error" not in kind.lower() and kind not in {"AgentErrorEvent", "ServerErrorEvent"}:
+            return None
+        for key in ("code", "error_code", "type"):
+            value = raw.get(key)
+            if isinstance(value, str) and value:
+                return value[:128]
+        error = raw.get("error")
+        if isinstance(error, dict):
+            for key in ("code", "type", "class"):
+                value = error.get(key)
+                if isinstance(value, str) and value:
+                    return value[:128]
+        return kind[:128]
+
+    @staticmethod
+    def _is_model_error_event(raw: dict[str, Any], kind: str) -> bool:
+        """Return whether an error event identifies an LLM/provider failure.
+
+        ``ConversationErrorEvent`` is a conversation-level envelope and may
+        represent workspace, tool, persistence, or internal failures.  Its
+        event type alone is therefore not evidence of a model failure.  Only
+        an explicit model/provider code (or a dedicated model error event)
+        sets the model-error diagnostic used by certification classification.
+        """
+
+        if kind in {"LLMErrorEvent", "ModelErrorEvent"}:
+            return True
+        if kind not in {"ConversationErrorEvent", "AgentErrorEvent"}:
+            return False
+        candidates: list[Any] = [raw.get("code"), raw.get("error_code"), raw.get("type")]
+        nested = raw.get("error")
+        if isinstance(nested, dict):
+            candidates.extend(nested.get(key) for key in ("code", "type", "class"))
+        for candidate in candidates:
+            if not isinstance(candidate, str):
+                continue
+            value = candidate.casefold()
+            if any(
+                marker in value
+                for marker in (
+                    "llm",
+                    "model",
+                    "openai",
+                    "litellm",
+                    "provider",
+                    "anthropic",
+                    "openrouter",
+                    "ollama",
+                )
+            ):
+                return True
+        return False
 
     def _record_http_diagnostic(
         self,
@@ -496,6 +636,16 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             diagnostic["conversation_message_endpoint"] = path
         if operation == "conversation_run":
             diagnostic["run_endpoint"] = path
+        if operation == "conversation_get":
+            diagnostic["status_poll_count"] = int(diagnostic.get("status_poll_count") or 0) + 1
+            diagnostic["last_status_poll"] = operation
+            diagnostic["last_status_poll_value"] = status_code
+        if operation == "agent_final_response":
+            diagnostic["final_response_endpoint_called"] = True
+            diagnostic["final_response_http_status"] = status_code
+            diagnostic["final_response_response_class"] = (
+                "http_error" if status_code >= 400 else "response_received"
+            )
         if status_code >= 400:
             error_class = f"{operation.upper()}_HTTP_{status_code}"
             if operation in {
@@ -1187,10 +1337,44 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             diagnostic = self._diagnostic_for(diagnostic_run_id)
             if status:
                 diagnostic["last_conversation_status"] = status
-            if status in TERMINAL_STATUSES:
+                diagnostic["last_status_poll_value"] = status
+                if status == "stuck":
+                    diagnostic["stuck_detection_triggered"] = True
+                poll_tail = diagnostic.setdefault("status_poll_transition_tail", [])
+                previous = poll_tail[-1].get("status") if poll_tail else None
+                if previous != status:
+                    self._append_bounded(
+                        poll_tail,
+                        {
+                            "ordinal": int(diagnostic.get("status_poll_count") or 0),
+                            "status": status,
+                            "source": "rest",
+                        },
+                        limit=_STATUS_TAIL_LIMIT,
+                    )
+            # v1.43 treats REST ``finished`` as advisory until the server's
+            # post-run WebSocket full-state snapshot arrives.  ERROR/STUCK
+            # are immediate terminal observations; ``finished`` is promoted
+            # by ``_execute`` only after the bounded compatibility fallback.
+            if status in {"error", "stuck"}:
                 diagnostic["terminal_state_observed"] = True
                 diagnostic["terminal_state_value"] = status
+                if not diagnostic.get("terminal_state_source"):
+                    diagnostic["terminal_state_source"] = "rest"
         return data if isinstance(data, dict) else {}
+
+    def observed_execution_status(self, run_id: UUID) -> str | None:
+        """Return the newest scalar status observed on the v1.43 event stream."""
+
+        return self._latest_event_status.get(run_id)
+
+    def observed_execution_status_for_conversation(self, conversation_id: str) -> str | None:
+        """Return the newest event status associated with a conversation ID."""
+
+        for run_id, bound_conversation_id in reversed(tuple(self._conversation_by_run.items())):
+            if bound_conversation_id == conversation_id:
+                return self.observed_execution_status(run_id)
+        return None
 
     async def _create_conversation(self, request: WorkerRunRequest) -> str:
         await self._configure_tool_bridge(request)
@@ -1234,19 +1418,116 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
     async def _emit_runtime_event(self, request: WorkerRunRequest, raw: Any) -> None:
         if not isinstance(raw, dict):
             return
-        kind = str(raw.get("kind") or raw.get("type") or "openhands.event")
+        kind = str(raw.get("kind") or raw.get("type") or raw.get("event_type") or "openhands.event")
         event_id = raw.get("id") or raw.get("event_id")
         diagnostic = self._diagnostic_for(request.run_id)
         diagnostic["event_count"] += 1
         if kind not in diagnostic["event_types"]:
             diagnostic["event_types"].append(kind[:128])
         diagnostic["last_event_type"] = kind[:128]
+        event_type_counts = diagnostic.setdefault("event_type_counts", {})
+        event_type_counts[kind[:128]] = int(event_type_counts.get(kind[:128]) or 0) + 1
+        diagnostic["normalized_from_server_event_count"] = int(
+            diagnostic.get("normalized_from_server_event_count") or 0
+        ) + 2
+
+        event_id_fingerprint = self._safe_fingerprint(event_id)
+        if event_id_fingerprint:
+            diagnostic["event_id_count"] = int(diagnostic.get("event_id_count") or 0) + 1
+            diagnostic["last_event_id_fingerprint"] = event_id_fingerprint
+            seen = self._event_id_fingerprints.setdefault(request.run_id, set())
+            if event_id_fingerprint in seen:
+                diagnostic["duplicate_event_count"] = int(diagnostic.get("duplicate_event_count") or 0) + 1
+            else:
+                seen.add(event_id_fingerprint)
+
+        status, status_source = self._event_execution_status(raw)
+        terminal = False
+        if status:
+            # v1.43 marks per-field FINISHED as an advisory hint because a
+            # stop hook can revert it before the final full-state snapshot.
+            # Keep it in the diagnostic tail, but do not let it replace the
+            # effective status exposed to lifecycle polling.
+            if status_source == "full_state" or status != "finished":
+                self._latest_event_status[request.run_id] = status
+            diagnostic["last_event_status"] = status
+            diagnostic["last_event_status_source"] = status_source
+            if status == "stuck":
+                diagnostic["stuck_detection_triggered"] = True
+            status_tail = diagnostic.setdefault("status_transition_tail", [])
+            previous_status = status_tail[-1].get("status") if status_tail else None
+            if previous_status != status:
+                self._append_bounded(
+                    status_tail,
+                    {
+                        "ordinal": diagnostic["event_count"],
+                        "status": status,
+                        "source": status_source,
+                    },
+                    limit=_STATUS_TAIL_LIMIT,
+                )
+            # The initial subscription snapshot may be ``idle`` (or a prior
+            # terminal state when an idempotent conversation is reattached).
+            # Match v1.43 RemoteConversation: per-field ERROR/STUCK are
+            # immediate, while FINISHED is accepted only from the post-run
+            # full-state snapshot after the run has been armed.
+            terminal = status in TERMINAL_STATUSES and (
+                status_source == "full_state" or status in {"error", "stuck"}
+            )
+            if terminal and request.run_id in self._run_started:
+                self._terminal_event_status[request.run_id] = status
+                diagnostic["terminal_state_observed"] = True
+                diagnostic["terminal_state_value"] = status
+                diagnostic["terminal_state_source"] = "websocket"
+                diagnostic["terminal_event_type"] = kind[:128]
+                diagnostic["terminal_event_id_fingerprint"] = event_id_fingerprint
+
+        error_class = self._event_error_class(raw, kind)
+        if error_class:
+            diagnostic["event_error_observed"] = True
+            diagnostic["event_error_class"] = error_class
+            if self._is_model_error_event(raw, kind):
+                diagnostic["model_error_observed"] = True
+                diagnostic["model_error_class"] = error_class
+                diagnostic["model_error_count"] = int(diagnostic.get("model_error_count") or 0) + 1
+
+        if kind == "ActionEvent":
+            diagnostic["tool_call_count"] = int(diagnostic.get("tool_call_count") or 0) + 1
+        elif kind == "ObservationEvent":
+            observation = raw.get("observation")
+            is_error = isinstance(observation, dict) and bool(
+                observation.get("is_error") or observation.get("error")
+            )
+            counter = "tool_error_count" if is_error else "tool_success_count"
+            diagnostic[counter] = int(diagnostic.get(counter) or 0) + 1
+
+        for field_name in ("iteration", "iteration_count"):
+            value = raw.get(field_name)
+            if isinstance(value, int) and value >= 0:
+                diagnostic["iteration_count"] = value
+                break
+
+        self._append_bounded(
+            diagnostic.setdefault("event_tail", []),
+            {
+                "ordinal": diagnostic["event_count"],
+                "event_id_fingerprint": event_id_fingerprint,
+                "event_type": kind[:128],
+                "source": str(raw.get("source") or "")[:64] or None,
+                "status": status,
+                "terminal": terminal and request.run_id in self._run_started,
+                "error_class": error_class,
+            },
+            limit=_EVENT_TAIL_LIMIT,
+        )
         # Only scalar identifiers/status are retained in AIAT evidence. Event
         # payloads can contain prompts, tool arguments, or file contents.
         extensions = {
             "namespace": "openhands",
             "event_kind": kind[:128],
-            "runtime_event_id": str(event_id)[:128] if event_id else None,
+            "runtime_event_id_fingerprint": event_id_fingerprint,
+            "execution_status": status,
+            "execution_status_source": status_source,
         }
         await self.emit_progress(request.run_id, f"OpenHands event: {kind}", phase="runtime")
         # Preserve only bounded scalar metadata on the normalized event.
@@ -1324,6 +1605,7 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             diagnostic = self._diagnostic_for(diagnostic_run_id)
             diagnostic["final_response_present"] = bool(response)
             diagnostic["final_response_size"] = len(response)
+            diagnostic["final_response_response_class"] = "present" if response else "empty"
         return response
 
     @staticmethod
@@ -1394,15 +1676,93 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
                 await self.context.artifact_registrar(artifact)
         return artifacts
 
+    async def _terminal_result(
+        self,
+        request: WorkerRunRequest,
+        conversation_id: str,
+        status: str,
+        info: dict[str, Any],
+        started: float,
+    ) -> WorkerResult:
+        """Reconcile one authoritative terminal state into a worker result.
+
+        v1.43's final full-state WebSocket snapshot is authoritative for a
+        completed run; REST conversation listings can remain ``running`` while
+        the server flushes its state.  Both sources still use the same strict
+        result contract: a ``finished`` state without a non-empty final
+        response is not a successful worker result.
+        """
+
+        diagnostic = self._diagnostic_for(request.run_id)
+        diagnostic["terminal_state_observed"] = True
+        diagnostic["terminal_state_value"] = status
+        if not diagnostic.get("terminal_state_source"):
+            diagnostic["terminal_state_source"] = "rest"
+        if status != "finished":
+            diagnostic["execution_failure_class"] = "FAILED_AGENT_RUN_LOOP"
+            return WorkerResult(
+                run_id=request.run_id,
+                worker_id=self.worker_id,
+                success=False,
+                error=WorkerError(
+                    code="OPENHANDS_CONVERSATION_ERROR",
+                    message=f"OpenHands conversation ended in {status}",
+                    retryable=status == "error",
+                    category="runtime",
+                ),
+                replay_metadata={
+                    "openhands_conversation_id": conversation_id,
+                    "execution_status": status,
+                },
+            )
+        output = await self._final_response(conversation_id, diagnostic_run_id=request.run_id)
+        if not output:
+            diagnostic["execution_failure_class"] = "FAILED_FINAL_RESPONSE"
+            diagnostic["final_response_response_class"] = "empty"
+            return WorkerResult(
+                run_id=request.run_id,
+                worker_id=self.worker_id,
+                success=False,
+                error=WorkerError(
+                    code="OPENHANDS_FINAL_RESPONSE_MISSING",
+                    message="OpenHands reported finished without a final assistant response",
+                    terminal=True,
+                    category="runtime",
+                ),
+                replay_metadata={
+                    "openhands_conversation_id": conversation_id,
+                    "execution_status": status,
+                },
+            )
+        diagnostic["execution_failure_class"] = None
+        return WorkerResult(
+            run_id=request.run_id,
+            worker_id=self.worker_id,
+            success=True,
+            output=output,
+            artifacts=await self._artifacts(conversation_id),
+            usage=self._usage(info, request, (time.monotonic() - started) * 1000),
+            replay_metadata={
+                "openhands_conversation_id": conversation_id,
+                "openhands_release": self.verification.release,
+                "openhands_commit_sha": self.verification.commit_sha,
+                "image_digest": self.verification.image_digest,
+                "execution_status": status,
+            },
+        )
+
     async def _execute(self, request: WorkerRunRequest) -> WorkerResult:
         conversation_id: str | None = None
-        self._diagnostic_for(request.run_id)
+        diagnostic = self._diagnostic_for(request.run_id)
+        diagnostic["max_iterations"] = int(request.budget.get("max_iterations", _OPENHANDS_MAX_ITERATIONS))
+        diagnostic["stuck_detection_enabled"] = True
         try:
             conversation_id = self._conversation_by_run.get(request.run_id) or await self._create_conversation(request)
             self._stop_events.discard(request.run_id)
             event_task = asyncio.create_task(self._consume_events(request, conversation_id), name=f"openhands-events-{request.run_id}")
             self._event_tasks[request.run_id] = event_task
             started = time.monotonic()
+            rest_terminal_seen_at: float | None = None
             try:
                 await self._queue_initial_message(request, conversation_id)
                 await self._json(
@@ -1411,6 +1771,7 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
                     diagnostic_run_id=request.run_id,
                     diagnostic_operation="conversation_run",
                 )
+                self._run_started.add(request.run_id)
                 while True:
                     if request.run_id in self._cancelled or request.run_id in self._cancel_requested:
                         return WorkerResult(
@@ -1420,34 +1781,60 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
                             error=WorkerError(code="CANCELLED", message="OpenHands conversation interrupted by AIAT", terminal=True, category="cancellation"),
                             replay_metadata={"openhands_conversation_id": conversation_id},
                         )
+                    event_status = self._terminal_event_status.get(request.run_id)
+                    if event_status in TERMINAL_STATUSES:
+                        try:
+                            info = await self._conversation(conversation_id, diagnostic_run_id=request.run_id)
+                        except Exception:
+                            # The WebSocket terminal snapshot is authoritative;
+                            # a stale/disappeared REST listing must not erase it.
+                            info = {"execution_status": event_status}
+                        diagnostic["terminal_state_source"] = "websocket"
+                        return await self._terminal_result(
+                            request,
+                            conversation_id,
+                            event_status,
+                            info,
+                            started,
+                        )
                     info = await self._conversation(conversation_id, diagnostic_run_id=request.run_id)
                     status = str(info.get("execution_status") or "").lower()
-                    if status in TERMINAL_STATUSES:
-                        if status != "finished":
-                            return WorkerResult(
-                                run_id=request.run_id,
-                                worker_id=self.worker_id,
-                                success=False,
-                                error=WorkerError(code="OPENHANDS_CONVERSATION_ERROR", message=f"OpenHands conversation ended in {status}", retryable=status == "error", category="runtime"),
-                                replay_metadata={"openhands_conversation_id": conversation_id, "execution_status": status},
-                            )
-                        return WorkerResult(
-                            run_id=request.run_id,
-                            worker_id=self.worker_id,
-                            success=True,
-                            output=await self._final_response(conversation_id, diagnostic_run_id=request.run_id),
-                            artifacts=await self._artifacts(conversation_id),
-                            usage=self._usage(info, request, (time.monotonic() - started) * 1000),
-                            replay_metadata={
-                                "openhands_conversation_id": conversation_id,
-                                "openhands_release": self.verification.release,
-                                "openhands_commit_sha": self.verification.commit_sha,
-                                "image_digest": self.verification.image_digest,
-                                "execution_status": status,
-                            },
+                    if status in {"error", "stuck"}:
+                        return await self._terminal_result(
+                            request,
+                            conversation_id,
+                            status,
+                            info,
+                            started,
                         )
+                    if status == "finished":
+                        # v1.43 treats a REST FINISHED snapshot as advisory:
+                        # stop hooks can still move the conversation back to
+                        # RUNNING before the run task exits.  Prefer the
+                        # post-run full-state WebSocket event and accept the
+                        # REST value only after the bounded compatibility
+                        # fallback used by the pinned SDK.
+                        diagnostic["rest_terminal_poll_count"] = int(
+                            diagnostic.get("rest_terminal_poll_count") or 0
+                        ) + 1
+                        if rest_terminal_seen_at is None:
+                            rest_terminal_seen_at = time.monotonic()
+                        if time.monotonic() - rest_terminal_seen_at >= _TERMINAL_REST_FALLBACK_SECONDS:
+                            diagnostic["rest_terminal_fallback_used"] = True
+                            diagnostic["terminal_state_source"] = "rest_fallback"
+                            return await self._terminal_result(
+                                request,
+                                conversation_id,
+                                status,
+                                info,
+                                started,
+                            )
+                    else:
+                        rest_terminal_seen_at = None
                     if request.timeout_seconds and time.monotonic() - started > request.timeout_seconds:
                         await self._interrupt_for_timeout(request, conversation_id)
+                        if not diagnostic.get("terminal_state_observed"):
+                            diagnostic["execution_failure_class"] = "BLOCKED_EXECUTION_COMPLETION"
                         return WorkerResult(
                             run_id=request.run_id,
                             worker_id=self.worker_id,
@@ -1462,6 +1849,10 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
                         )
                     await asyncio.sleep(0.25)
             finally:
+                self._run_started.discard(request.run_id)
+                self._terminal_event_status.pop(request.run_id, None)
+                self._latest_event_status.pop(request.run_id, None)
+                self._event_id_fingerprints.pop(request.run_id, None)
                 self._stop_events.add(request.run_id)
                 task = self._event_tasks.pop(request.run_id, None)
                 if task is not None:
