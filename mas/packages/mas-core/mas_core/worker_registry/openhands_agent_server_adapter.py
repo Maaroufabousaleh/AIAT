@@ -1699,7 +1699,15 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
         if not diagnostic.get("terminal_state_source"):
             diagnostic["terminal_state_source"] = "rest"
         if status != "finished":
-            diagnostic["execution_failure_class"] = "FAILED_AGENT_RUN_LOOP"
+            # A conversation-level ERROR is not inherently an LLM failure.
+            # Preserve an explicit model/provider error classification when
+            # one was observed; otherwise keep the failure at the run-loop
+            # boundary rather than attributing it to the model.
+            diagnostic["execution_failure_class"] = (
+                "FAILED_MODEL_EXECUTION"
+                if diagnostic.get("model_error_observed")
+                else "FAILED_AGENT_RUN_LOOP"
+            )
             return WorkerResult(
                 run_id=request.run_id,
                 worker_id=self.worker_id,

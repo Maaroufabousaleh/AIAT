@@ -1607,3 +1607,23 @@ async def test_finished_without_final_response_remains_fail_closed(tmp_path: Pat
     assert diagnostics["final_response_endpoint_called"] is True
     assert diagnostics["final_response_response_class"] == "empty"
     await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_terminal_conversation_error_preserves_explicit_model_error_class(tmp_path: Path) -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={})
+
+    adapter = make_adapter(tmp_path, handler)
+    run = request(workspace=tmp_path / "workspace")
+    adapter._diagnostic_for(run.run_id).update(
+        {
+            "model_error_observed": True,
+            "model_error_class": "LLMErrorEvent",
+        }
+    )
+    result = await adapter._terminal_result(run, str(uuid4()), "error", {}, time.monotonic())
+    assert result.success is False
+    diagnostics = adapter._diagnostics(run.run_id)
+    assert diagnostics["execution_failure_class"] == "FAILED_MODEL_EXECUTION"
+    await adapter.close()
