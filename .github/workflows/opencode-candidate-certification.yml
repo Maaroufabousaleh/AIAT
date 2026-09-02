@@ -1,0 +1,86 @@
+name: OpenCode Candidate Certification
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: "Exact AIAT candidate commit to certify"
+        required: true
+        type: string
+      opencode_version:
+        description: "Exact OpenCode release tag/version"
+        required: false
+        default: "1.18.21"
+        type: string
+      opencode_image_ref:
+        description: "Linux amd64 OpenCode image with an immutable digest"
+        required: false
+        default: "ghcr.io/anomalyco/opencode:1.18.21@sha256:56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out exact AIAT candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 0
+
+      - name: Provision pinned scanner and SBOM tooling
+        id: provision-tools
+        working-directory: mas
+        continue-on-error: true
+        run: |
+          set +e
+          mkdir -p ../artifacts/opencode-candidate
+          python3 scripts/provision_opencode_certification_tools.py \
+            --output ../artifacts/opencode-candidate \
+            --install-dir "$RUNNER_TEMP/aiat-opencode-tools" \
+            --python python3
+          status=$?
+          if [ -f ../artifacts/opencode-candidate/tooling-paths.txt ]; then
+            cat ../artifacts/opencode-candidate/tooling-paths.txt >> "$GITHUB_PATH"
+          fi
+          echo "exit_status=$status" >> "$GITHUB_OUTPUT"
+          exit "$status"
+
+      - name: Install AIAT test environment
+        working-directory: mas
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check uv==0.4.30
+          uv sync --locked --dev
+
+      - name: Run fresh reproducible candidate certification
+        working-directory: mas
+        env:
+          CANDIDATE_VERSION: ${{ inputs.opencode_version }}
+          CANDIDATE_IMAGE: ${{ inputs.opencode_image_ref }}
+        run: |
+          set -euo pipefail
+          mkdir -p ../artifacts/opencode-candidate
+          set +e
+          uv run --isolated python scripts/opencode_candidate_certify.py \
+            --version "$CANDIDATE_VERSION" \
+            --image-ref "$CANDIDATE_IMAGE" \
+            --output ../artifacts/opencode-candidate \
+            --tooling-manifest ../artifacts/opencode-candidate/tooling-provisioning.json \
+            --boundary-command "uv run --isolated pytest packages/mas-core/tests/test_worker_governance.py packages/mas-core/tests/test_sandbox_runtime_readiness.py apps/tool-service/tests/test_opencode_workspace.py -q"
+          status=$?
+          set -e
+          test "$status" -eq 0 || test "$status" -eq 1 || test "$status" -eq 2
+          exit "$status"
+
+      - name: Upload reproducible candidate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: opencode-candidate-${{ github.run_id }}
+          path: artifacts/opencode-candidate/
+          if-no-files-found: error
+          retention-days: 30
