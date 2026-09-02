@@ -1,0 +1,36 @@
+schema_version: "1"
+programme_scope: personal-internal-only
+contract_policy: deterministic-export-and-compatibility-check
+
+# These hashes describe the checked-in contract artifacts, not a release
+# approval.  Regenerate the OpenAPI artifact deliberately with
+# `uv run python scripts/check_api_contract.py --write`, review the diff, and
+# update this metadata in the same change.
+openapi:
+  service: orchestrator-api
+  artifact: schemas/http/orchestrator.openapi.json
+  openapi_version: "3.1.0"
+  path_count: 238
+  sha256: 9e57c46151096908ae14e0f522f833ea87fe55e852dbf1c6c39d386277cbcae1
+
+protocol:
+  artifact: mas/packages/mas-core/schemas/protocol/aiat.v1.schema.json
+  protocol_version: aiat.v1
+  sha256: 03412f2347bb5396f260d9d75fa4d494d228af7703ccd42e7bd473ccaf8c4263
+
+typescript:
+  artifact: apps/mas-dashboard/lib/generated/orchestrator-api.ts
+  generator: scripts/generate_typescript_api.py
+  model_count: 135
+  operation_count: 271
+  sha256: a10893c6f253ffb760623cb34482c3caa86de1402d664a456b450857a9fd8e94
+
+python_sdk:
+  artifact: packages/mas-api-sdk/mas_api_sdk/generated.py
+  generator: scripts/generate_python_api.py
+  model_count: 135
+  operation_count: 271
+  sha256: dcc6c3f2dbc9a1b382192e7b111b76c48b8a66d46868f4f6f98f903141411c0e
+
+# Licence/notices and stated restrictions remain metadata elsewhere; they are
+# not part of API/protocol compatibility or activation predicates.

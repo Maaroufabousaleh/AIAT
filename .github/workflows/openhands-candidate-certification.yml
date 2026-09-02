@@ -13,6 +13,9 @@ permissions:
 
 env:
   OPENHANDS_IMAGE: ghcr.io/openhands/agent-server:1.43.0-python@sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97
+  LITELLM_IMAGE: ghcr.io/berriai/litellm@sha256:a50b02a6056095da29308310bb608f0509e08ddcd1d105bae9c21007d82b0e95
+  OMNIROUTE_IMAGE: diegosouzapw/omniroute@sha256:ceae8d9da0acf075dbf5905b61c9ae32e749112650fcf7f4434c8d96ac6d3ebb
+  OPENHANDS_MODEL_GATEWAY_URL: http://litellm:4000
 
 jobs:
   certify:
@@ -74,44 +77,1225 @@ jobs:
             echo "$entry" >> "$GITHUB_PATH"
           done < "$RUNNER_TEMP/aiat-openhands-evidence/tooling/tooling-paths.txt"
 
-      - name: Pull the pinned Agent Server image
+      - name: Run deterministic OpenHands offline harnesses
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/offline"
+          uv run python scripts/check_openhands_coding_task_fixture.py \
+            --output "$RUNNER_TEMP/aiat-openhands-evidence/offline/coding-task-fixture.json"
+          uv run python scripts/check_openhands_offline_harness.py \
+            --output "$RUNNER_TEMP/aiat-openhands-evidence/offline/lifecycle-security-harness.json"
+
+      - name: Generate disposable AIAT tool-service secret
+        run: |
+          set -euo pipefail
+          tool_secret="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"
+          test "${#tool_secret}" -ge 32
+          echo "::add-mask::$tool_secret"
+          {
+            echo "AIAT_TOOL_SECRET=$tool_secret"
+            echo "AIAT_TOOL_SECRET_SCOPE=github-run"
+          } >> "$GITHUB_ENV"
+
+      - name: Generate disposable AIAT model-gateway secret
+        run: |
+          set -euo pipefail
+          gateway_key="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"
+          test "${#gateway_key}" -ge 32
+          echo "::add-mask::$gateway_key"
+          {
+            echo "OPENHANDS_MODEL_GATEWAY_API_KEY=$gateway_key"
+            echo "OPENHANDS_MODEL_GATEWAY_API_KEY_SCOPE=github-run"
+            echo "MODEL_GATEWAY_SECRET_SCOPE=github-run"
+            echo "OPENHANDS_MODEL_GATEWAY_URL=http://litellm:4000"
+          } >> "$GITHUB_ENV"
+
+      - name: Check required external provider configuration
+        id: provider_preflight
+        continue-on-error: true
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/provider" \
+            "$RUNNER_TEMP/aiat-openhands-evidence/certification"
+          uv run python scripts/check_openhands_provider_configuration.py \
+            --output "$RUNNER_TEMP/aiat-openhands-evidence/provider/preflight.json" \
+            > /dev/null 2> /dev/null
+          exit_code=$?
+          provider_status=$(python3 - \
+            "$RUNNER_TEMP/aiat-openhands-evidence/provider/preflight.json" \
+            "$exit_code" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          path = Path(sys.argv[1])
+          exit_code = int(sys.argv[2])
+          try:
+              report = json.loads(path.read_text(encoding="utf-8"))
+          except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+              report = {}
+          status = report.get("status") if isinstance(report, dict) else None
+          if exit_code == 0 and status == "PASS":
+              print("PASS")
+          elif status == "BLOCKED_MISSING_OPERATOR_SECRET":
+              print("BLOCKED_MISSING_OPERATOR_SECRET")
+          else:
+              # A malformed report or an unexpected checker/tool failure is
+              # not evidence that the operator omitted the provider secret.
+              print("FAILED_CERTIFICATION_IMPLEMENTATION")
+          PY
+          )
+          if [ "$provider_status" = "PASS" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "status=PASS" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "status=$provider_status" >> "$GITHUB_OUTPUT"
+          fi
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          PROVIDER_STATUS="$provider_status" EXIT_CODE="$exit_code" \
+            python3 - "$RUNNER_TEMP/aiat-openhands-evidence/provider/preflight-wrapper.json" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          Path(sys.argv[1]).write_text(
+              json.dumps(
+                  {
+                      "schema_version": "aiat.openhands-provider-preflight-wrapper.v1",
+                      "status": os.environ["PROVIDER_STATUS"],
+                      "checker_exit_code": int(os.environ["EXIT_CODE"]),
+                      "secret_name": "GROQ_API_KEY",
+                      "secret_value_retained": False,
+                      "stdout_or_stderr_retained": False,
+                  },
+                  sort_keys=True,
+                  indent=2,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+          # A missing provider secret is a bounded operator block.  Any other
+          # checker/tool failure remains a certification implementation failure;
+          # both stay on the evidence/cleanup path without starting model stages.
+          exit 0
+
+      - name: Run non-secret OpenHands portability preflight
+        id: preflight
+        continue-on-error: true
+        env:
+          OPENHANDS_MODEL_ID: ${{ vars.OPENHANDS_MODEL_ID }}
+          OPENHANDS_MCP_SETTINGS_KEY: ${{ vars.OPENHANDS_MCP_SETTINGS_KEY }}
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/preflight"
+          uv run python scripts/check_openhands_candidate_preflight.py \
+            --output "$RUNNER_TEMP/aiat-openhands-evidence/preflight/preflight.json"
+          exit_code=$?
+          preflight_status=$(python3 - \
+            "$RUNNER_TEMP/aiat-openhands-evidence/preflight/preflight.json" \
+            "$exit_code" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          path = Path(sys.argv[1])
+          exit_code = int(sys.argv[2])
+          try:
+              report = json.loads(path.read_text(encoding="utf-8"))
+          except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+              report = {}
+          status = report.get("status") if isinstance(report, dict) else None
+          if exit_code == 0 and status == "READY_FOR_CERTIFICATION_AUTHORIZATION":
+              print(status)
+          elif status in {"BLOCKED_OPERATOR_CONFIGURATION", "BLOCKED_STATIC_CONFIGURATION"}:
+              print(status)
+          else:
+              print("FAILED_CERTIFICATION_IMPLEMENTATION")
+          PY
+          )
+          if [ "$preflight_status" = "READY_FOR_CERTIFICATION_AUTHORIZATION" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "status=$preflight_status" >> "$GITHUB_OUTPUT"
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+
+      - name: Verify exact candidate helper contracts before image pulls
+        id: candidate_contract
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true'
+        continue-on-error: true
+        run: |
+          set +e
+          output="$RUNNER_TEMP/aiat-openhands-evidence/preflight/candidate-helper-contract.json"
+          mkdir -p "$(dirname "$output")"
+          python3 - "$output" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          requirements = {
+              "scripts/check_openhands_certification_gateway.py": (
+                  'parser.add_argument(\n        "--auto-routing-output"',
+                  "args.auto_routing_output",
+                  "_write_report(args.auto_routing_output",
+              ),
+              "scripts/check_openhands_provider_baseline.py": (
+                  'parser.add_argument("--url"',
+                  'parser.add_argument("--output"',
+                  'parser.add_argument("--max-attempts"',
+                  'parser.add_argument("--retry-delay-seconds"',
+                  "args.max_attempts",
+                  "args.retry_delay_seconds",
+                  "args.output",
+              ),
+          }
+          missing_files = []
+          missing_markers = {}
+          for relative, markers in requirements.items():
+              path = Path(relative)
+              if not path.is_file():
+                  missing_files.append(relative)
+                  continue
+              text = path.read_text(encoding="utf-8")
+              absent = [marker for marker in markers if marker not in text]
+              if absent:
+                  missing_markers[relative] = absent
+          status = "PASS" if not missing_files and not missing_markers else "FAILED_CERTIFICATION_IMPLEMENTATION"
+          report = {
+              "schema_version": "aiat.openhands-candidate-helper-contract.v1",
+              "status": status,
+              "failure_class": None if status == "PASS" else "WORKFLOW_CANDIDATE_HELPER_VERSION_SKEW",
+              "candidate_sha": os.environ.get("AIAT_CANDIDATE_SHA", ""),
+              "required_helpers": sorted(requirements),
+              "missing_files": sorted(missing_files),
+              "missing_markers": missing_markers,
+              "payloads_retained": False,
+          }
+          Path(sys.argv[1]).write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+          print(status)
+          PY
+          contract_exit=$?
+          contract_status="$(python3 - "$output" "$contract_exit" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          path = Path(sys.argv[1])
+          exit_code = int(sys.argv[2])
+          try:
+              report = json.loads(path.read_text(encoding="utf-8"))
+          except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+              report = {}
+          if not isinstance(report, dict) or report.get("status") not in {
+              "PASS",
+              "FAILED_CERTIFICATION_IMPLEMENTATION",
+          }:
+              report = {
+                  "schema_version": "aiat.openhands-candidate-helper-contract.v1",
+                  "status": "FAILED_CERTIFICATION_IMPLEMENTATION",
+                  "failure_class": "WORKFLOW_CANDIDATE_HELPER_VERSION_SKEW",
+                  "candidate_sha": os.environ.get("AIAT_CANDIDATE_SHA", ""),
+                  "required_helpers": [],
+                  "missing_files": [],
+                  "missing_markers": {},
+                  "checker_exit_code": exit_code,
+                  "payloads_retained": False,
+              }
+              path.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+          print(report.get("status", "FAILED_CERTIFICATION_IMPLEMENTATION"))
+          PY
+          )"
+          echo "exit_code=$contract_exit" >> "$GITHUB_OUTPUT"
+          echo "status=$contract_status" >> "$GITHUB_OUTPUT"
+          if [ "$contract_exit" -eq 0 ] && [ "$contract_status" = PASS ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Pull pinned certification images and verify gateway provenance
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true' && steps.candidate_contract.outputs.ready == 'true'
         run: |
           set -euo pipefail
           docker pull "$OPENHANDS_IMAGE"
+          docker pull "$LITELLM_IMAGE"
+          docker pull "$OMNIROUTE_IMAGE"
           docker image inspect "$OPENHANDS_IMAGE" >/dev/null
+          docker image inspect "$LITELLM_IMAGE" >/dev/null
+          docker image inspect "$OMNIROUTE_IMAGE" >/dev/null
+          mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/gateway"
+          openhands_platform="$(docker image inspect "$OPENHANDS_IMAGE" --format '{{.Os}}/{{.Architecture}}')"
+          litellm_platform="$(docker image inspect "$LITELLM_IMAGE" --format '{{.Os}}/{{.Architecture}}')"
+          omniroute_platform="$(docker image inspect "$OMNIROUTE_IMAGE" --format '{{.Os}}/{{.Architecture}}')"
+          test "$openhands_platform" = "linux/amd64"
+          test "$litellm_platform" = "linux/amd64"
+          test "$omniroute_platform" = "linux/amd64"
+          OPENHANDS_PLATFORM="$openhands_platform" LITELLM_PLATFORM="$litellm_platform" \
+            OMNIROUTE_PLATFORM="$omniroute_platform" \
+            python3 - "$RUNNER_TEMP/aiat-openhands-evidence/gateway/image-platforms.json" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
 
-      - name: Start Agent Server under runsc
-        id: server
+          Path(sys.argv[1]).write_text(
+              json.dumps(
+                  {
+                      "schema_version": "aiat.openhands-certification-image-platforms.v1",
+                      "expected_platform": "linux/amd64",
+                      "platforms": {
+                          "openhands": os.environ["OPENHANDS_PLATFORM"],
+                          "litellm": os.environ["LITELLM_PLATFORM"],
+                          "omniroute": os.environ["OMNIROUTE_PLATFORM"],
+                      },
+                      "all_verified": True,
+                      "payloads_retained": False,
+                  },
+                  sort_keys=True,
+                  indent=2,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+          uv run python scripts/verify_openhands_gateway_pins.py \
+            --output "$RUNNER_TEMP/aiat-openhands-evidence/gateway/pins.json"
+          uv run python scripts/verify_openhands_gateway_provenance.py \
+            --litellm-image "$LITELLM_IMAGE" \
+            --omniroute-image "$OMNIROUTE_IMAGE" \
+            --output "$RUNNER_TEMP/aiat-openhands-evidence/gateway/version-verification.json"
+
+      - name: Create disposable model-gateway network
+        id: network
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true' && steps.candidate_contract.outputs.ready == 'true'
+        continue-on-error: true
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/gateway"
+          network="aiat-openhands-cert-network-${GITHUB_RUN_ID}"
+          docker_available=false
+          if docker info >/dev/null 2>&1; then
+            docker_available=true
+          fi
+          create_exit_code=1
+          if [ "$docker_available" = true ]; then
+            docker network create "$network" >/dev/null 2>&1
+            create_exit_code=$?
+          fi
+          DOCKER_AVAILABLE="$docker_available" CREATE_EXIT_CODE="$create_exit_code" NETWORK_NAME="$network" \
+            python3 - "$RUNNER_TEMP/aiat-openhands-evidence/gateway/network-startup.json" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          created = os.environ.get("CREATE_EXIT_CODE") == "0"
+          Path(sys.argv[1]).write_text(
+              json.dumps(
+                  {
+                      "schema_version": "aiat.openhands-certification-network-startup.v1",
+                      "network_name": os.environ.get("NETWORK_NAME", ""),
+                      "docker_available": os.environ.get("DOCKER_AVAILABLE") == "true",
+                      "status": "PASS" if created else "BLOCKED",
+                      "failure_class": None if created else "FAILED_INFRASTRUCTURE",
+                      "reason": None if created else "docker_network_create_failed",
+                      "payloads_retained": False,
+                  },
+                  sort_keys=True,
+                  indent=2,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+          if [ "$create_exit_code" -ne 0 ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "status=FAILED_INFRASTRUCTURE" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "network=$network" >> "$GITHUB_OUTPUT"
+          echo "network=$network" >> "$GITHUB_ENV"
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+          echo "status=PASS" >> "$GITHUB_OUTPUT"
+
+      - name: Start disposable OmniRoute provider gateway
+        id: omniroute
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true' && steps.candidate_contract.outputs.ready == 'true' && steps.network.outputs.ready == 'true'
+        continue-on-error: true
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/gateway/omniroute"
+          name="aiat-openhands-omniroute-${GITHUB_RUN_ID}"
+          run_exit_code=0
+          docker run --detach --name "$name" \
+            --network "$network" --network-alias omniroute \
+            --publish 127.0.0.1:20128:20128 \
+            --publish 127.0.0.1:20129:20129 \
+            --env PORT=20128 \
+            --env DASHBOARD_PORT=20128 \
+            --env API_PORT=20129 \
+            --env API_HOST=0.0.0.0 \
+            --env REQUIRE_API_KEY=true \
+            --env OMNIROUTE_API_KEY="$OPENHANDS_MODEL_GATEWAY_API_KEY" \
+            --env GROQ_API_KEY="$GROQ_API_KEY" \
+            "$OMNIROUTE_IMAGE" || run_exit_code=$?
+          echo "omniroute_container=$name" >> "$GITHUB_ENV"
+          echo "container=$name" >> "$GITHUB_OUTPUT"
+          omniroute_ip=""
+          if [ "$run_exit_code" -eq 0 ]; then
+            omniroute_ip="$(docker inspect --format '{{json .NetworkSettings.Networks}}' "$name" \
+              | python3 -c 'import json, sys; data = json.load(sys.stdin); network = sys.argv[1]; print((data.get(network) or {}).get("IPAddress", ""))' "$network" || true)"
+            if [ -z "$omniroute_ip" ]; then
+              run_exit_code=125
+            fi
+          fi
+          echo "omniroute_ip=$omniroute_ip" >> "$GITHUB_ENV"
+          container_running=false
+          if docker inspect "$name" >/dev/null 2>&1; then
+            docker inspect --format '{{json .State}}' "$name" > "$RUNNER_TEMP/aiat-openhands-evidence/gateway/omniroute/container-state.json"
+            docker inspect --format '{{json .HostConfig.Runtime}}' "$name" > "$RUNNER_TEMP/aiat-openhands-evidence/gateway/omniroute/container-runtime.json"
+            container_running="$(docker inspect --format '{{if .State.Running}}true{{else}}false{{end}}' "$name")"
+          fi
+          readiness_exit_code=0
+          # The readiness helper emits OMNIROUTE_STARTUP_FAILURE,
+          # OMNIROUTE_HEALTH_AUTH_CONTRACT_FAILURE,
+          # OMNIROUTE_APPLICATION_HEALTH_FAILURE, or OMNIROUTE_HEALTH_TIMEOUT.
+          uv run python scripts/check_openhands_omniroute_readiness.py \
+            --url http://127.0.0.1:20128/api/monitoring/health \
+            --output "$RUNNER_TEMP/aiat-openhands-evidence/gateway/omniroute/health.json" \
+            --run-exit-code "$run_exit_code" \
+            --container-running "$container_running" \
+            --attempts 60 --interval-seconds 2 --timeout-seconds 5 || readiness_exit_code=$?
+          readiness_status="$(python3 - "$RUNNER_TEMP/aiat-openhands-evidence/gateway/omniroute/health.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          try:
+              report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+              report = {}
+          print(report.get("status", "BLOCKED") if isinstance(report, dict) else "BLOCKED")
+          PY
+          )"
+          if [ "$run_exit_code" -ne 0 ] || [ "$readiness_exit_code" -ne 0 ] || [ "$readiness_status" != PASS ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "status=BLOCKED_RUNTIME_STARTUP" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+          echo "status=PASS" >> "$GITHUB_OUTPUT"
+
+      - name: Verify OmniRoute OpenAI API authentication boundary
+        id: omniroute_auth
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true' && steps.candidate_contract.outputs.ready == 'true' && steps.network.outputs.ready == 'true' && steps.omniroute.outputs.ready == 'true'
+        continue-on-error: true
+        run: |
+          set +e
+          output="$RUNNER_TEMP/aiat-openhands-evidence/gateway/omniroute/auth.json"
+          mkdir -p "$(dirname "$output")"
+          echo "::add-mask::$OPENHANDS_MODEL_GATEWAY_API_KEY"
+          auth_helper=(
+            --url http://127.0.0.1:20129/v1/models
+            --output "$output"
+          )
+          auth_exit_code=2
+          auth_attempt_count=0
+          auth_probe_mode="compatibility_outer_retry"
+          # Candidate checkouts can legitimately predate the helper's native
+          # transport-retry flags.  Detect the interface from the exact
+          # checked-out candidate instead of passing unknown arguments.  New
+          # helpers retain the richer per-request retry evidence; older
+          # helpers receive the same bounded startup protection through this
+          # outer loop.  HTTP authentication decisions remain fail-closed.
+          if uv run python scripts/check_openhands_omniroute_auth.py --help 2>/dev/null | grep -q -- "--attempts"; then
+            auth_probe_mode="native_transport_retry"
+            uv run python scripts/check_openhands_omniroute_auth.py \
+              "${auth_helper[@]}" \
+              --attempts 30 \
+              --interval-seconds 1
+            auth_exit_code=$?
+            auth_attempt_count=1
+          else
+            for attempt in $(seq 1 30); do
+              auth_attempt_count="$attempt"
+              uv run python scripts/check_openhands_omniroute_auth.py "${auth_helper[@]}"
+              auth_exit_code=$?
+              if [ "$auth_exit_code" -eq 0 ]; then
+                break
+              fi
+              if [ "$attempt" -lt 30 ]; then
+                sleep 1
+              fi
+            done
+          fi
+          AUTH_PROBE_MODE="$auth_probe_mode" AUTH_ATTEMPT_COUNT="$auth_attempt_count" \
+            python3 - "$output" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          output = Path(sys.argv[1])
+          try:
+              report = json.loads(output.read_text(encoding="utf-8"))
+          except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+              report = {
+                  "schema_version": "aiat.openhands-certification-omniroute-auth.v1",
+                  "status": "BLOCKED",
+                  "failure_class": "MODEL_GATEWAY_RESPONSE_INVALID",
+                  "raw_response_retained": False,
+                  "credentials_retained": False,
+              }
+          if not isinstance(report, dict):
+              report = {
+                  "schema_version": "aiat.openhands-certification-omniroute-auth.v1",
+                  "status": "BLOCKED",
+                  "failure_class": "MODEL_GATEWAY_RESPONSE_INVALID",
+                  "raw_response_retained": False,
+                  "credentials_retained": False,
+              }
+          report["workflow_probe_mode"] = os.environ.get("AUTH_PROBE_MODE", "unknown")
+          try:
+              report["workflow_attempt_count"] = int(os.environ.get("AUTH_ATTEMPT_COUNT", "0"))
+          except ValueError:
+              report["workflow_attempt_count"] = 0
+          report["raw_response_retained"] = False
+          report["credentials_retained"] = False
+          output.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+          PY
+          if [ "$auth_exit_code" -eq 0 ]; then
+            echo "status=PASS" >> "$GITHUB_OUTPUT"
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=BLOCKED" >> "$GITHUB_OUTPUT"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure exactly one disposable OmniRoute provider route
+        id: provider
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true' && steps.candidate_contract.outputs.ready == 'true' && steps.network.outputs.ready == 'true' && steps.omniroute.outputs.ready == 'true' && steps.omniroute_auth.outputs.ready == 'true'
+        continue-on-error: true
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/gateway"
+          OMNIROUTE_BASE_URL=http://127.0.0.1:20128 \
+            OMNIROUTE_API_KEY="$OPENHANDS_MODEL_GATEWAY_API_KEY" \
+            uv run python scripts/provision_openhands_certification_gateway.py \
+              --output "$RUNNER_TEMP/aiat-openhands-evidence/gateway/provider-provisioning.json"
+          exit_code=$?
+          provider_status=$(python3 - "$RUNNER_TEMP/aiat-openhands-evidence/gateway/provider-provisioning.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          try:
+              report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+              report = {}
+          print("PASS" if isinstance(report, dict) and report.get("status") == "PASS" else "BLOCKED")
+          PY
+          )
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          echo "status=$provider_status" >> "$GITHUB_OUTPUT"
+          if [ "$exit_code" -eq 0 ] && [ "$provider_status" = PASS ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify deterministic provider baseline through OmniRoute
+        id: baseline
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true' && steps.candidate_contract.outputs.ready == 'true' && steps.network.outputs.ready == 'true' && steps.provider.outputs.ready == 'true'
+        continue-on-error: true
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/gateway"
+          OMNIROUTE_BASE_URL=http://127.0.0.1:20129 \
+            OPENHANDS_MODEL_GATEWAY_API_KEY="$OPENHANDS_MODEL_GATEWAY_API_KEY" \
+            uv run python scripts/check_openhands_provider_baseline.py \
+              --url http://127.0.0.1:20129 \
+              --max-attempts 2 \
+              --retry-delay-seconds 1 \
+              --output "$RUNNER_TEMP/aiat-openhands-evidence/gateway/provider-baseline.json"
+          exit_code=$?
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          if [ "$exit_code" -eq 0 ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "status=PASS" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "status=BLOCKED" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Start disposable LiteLLM model gateway
+        id: litellm
+        # The deterministic baseline is an independent diagnostic gate.  Do
+        # not suppress the production auto/coding path when that baseline is
+        # blocked; the gate matrix still retains the baseline blocker and
+        # remains fail-closed.
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true' && steps.candidate_contract.outputs.ready == 'true' && steps.network.outputs.ready == 'true' && steps.provider.outputs.ready == 'true'
         continue-on-error: true
         run: |
           set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/gateway/litellm"
+          name="aiat-openhands-litellm-${GITHUB_RUN_ID}"
+          config="$GITHUB_WORKSPACE/mas/infra/compose/litellm_openhands_certification.yaml"
+          test -s "$config"
+          run_exit_code=0
+          if [ -n "${omniroute_ip:-}" ]; then
+            docker run --detach --name "$name" \
+              --network "$network" --network-alias litellm \
+              --add-host "omniroute:${omniroute_ip}" \
+              --publish 127.0.0.1:4000:4000 \
+              --volume "$config:/app/config.yaml:ro" \
+              --env LITELLM_MASTER_KEY="$OPENHANDS_MODEL_GATEWAY_API_KEY" \
+              --env OMNIROUTE_API_KEY="$OPENHANDS_MODEL_GATEWAY_API_KEY" \
+              "$LITELLM_IMAGE" \
+              --config /app/config.yaml --host 0.0.0.0 --port 4000 || run_exit_code=$?
+          else
+            run_exit_code=125
+          fi
+          echo "litellm_container=$name" >> "$GITHUB_ENV"
+          echo "container=$name" >> "$GITHUB_OUTPUT"
+          litellm_ip=""
+          if [ "$run_exit_code" -eq 0 ]; then
+            litellm_ip="$(docker inspect --format '{{json .NetworkSettings.Networks}}' "$name" \
+              | python3 -c 'import json, sys; data = json.load(sys.stdin); network = sys.argv[1]; print((data.get(network) or {}).get("IPAddress", ""))' "$network" || true)"
+            if [ -z "$litellm_ip" ]; then
+              run_exit_code=125
+            fi
+          fi
+          echo "litellm_ip=$litellm_ip" >> "$GITHUB_ENV"
+          healthy=0
+          if [ "$run_exit_code" -eq 0 ]; then
+            for _ in $(seq 1 60); do
+              if curl --fail --silent --show-error http://127.0.0.1:4000/health/readiness >/dev/null; then
+                healthy=1
+                break
+              fi
+              sleep 2
+            done
+            docker inspect --format '{{json .State}}' "$name" > "$RUNNER_TEMP/aiat-openhands-evidence/gateway/litellm/container-state.json"
+            docker inspect --format '{{json .HostConfig.Runtime}}' "$name" > "$RUNNER_TEMP/aiat-openhands-evidence/gateway/litellm/container-runtime.json"
+          fi
+          RUN_EXIT_CODE="$run_exit_code" python3 - "$healthy" "$RUNNER_TEMP/aiat-openhands-evidence/gateway/litellm/health.json" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          healthy, output = sys.argv[1:]
+          run_exit_code = os.environ.get("RUN_EXIT_CODE", "1")
+          startup_failed = run_exit_code != "0"
+          Path(output).write_text(
+              json.dumps(
+                  {
+                      "schema_version": "aiat.openhands-certification-litellm-health.v1",
+                      "health_status": "PASS" if healthy == "1" else "BLOCKED",
+                      "failure_class": None if healthy == "1" else "LITELLM_STARTUP_FAILURE" if startup_failed else "LITELLM_HEALTH_FAILURE",
+                      "run_exit_code": int(run_exit_code),
+                      "endpoint": "http://litellm:4000/health/readiness",
+                      "model_id": "omniroute-coding",
+                      "raw_response_retained": False,
+                  },
+                  sort_keys=True,
+                  indent=2,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+          if [ "$run_exit_code" -ne 0 ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "status=BLOCKED_RUNTIME_STARTUP" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          test "$healthy" = 1
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+          echo "status=PASS" >> "$GITHUB_OUTPUT"
+
+      - name: Verify governed OmniRoute auto/coding route through LiteLLM
+        id: gateway
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true' && steps.candidate_contract.outputs.ready == 'true' && steps.network.outputs.ready == 'true' && steps.provider.outputs.ready == 'true' && steps.litellm.outputs.ready == 'true'
+        continue-on-error: true
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/gateway"
+          LITELLM_BASE_URL=http://127.0.0.1:4000 \
+            OMNIROUTE_BASE_URL=http://127.0.0.1:20128 \
+            uv run python scripts/check_openhands_certification_gateway.py \
+              --litellm-url http://127.0.0.1:4000 \
+              --omniroute-url http://127.0.0.1:20128 \
+              --output "$RUNNER_TEMP/aiat-openhands-evidence/gateway/route-probe.json" \
+              --auto-routing-output "$RUNNER_TEMP/aiat-openhands-evidence/gateway/auto-routing.json"
+          exit_code=$?
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          if [ "$exit_code" -eq 0 ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "status=PASS" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "status=BLOCKED" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Start disposable AIAT tool-service bridge
+        id: bridge
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true' && steps.candidate_contract.outputs.ready == 'true' && steps.network.outputs.ready == 'true' && steps.gateway.outputs.ready == 'true'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/aiat-openhands-workspace" "$RUNNER_TEMP/aiat-openhands-evidence/bridge"
+          tool_name="aiat-openhands-tool-service-${GITHUB_RUN_ID}"
+          image="aiat-openhands-tool-service-cert:${GITHUB_RUN_ID}"
+          build_exit_code=0
+          docker build --file infra/docker/Dockerfile.tool-service --tag "$image" . || build_exit_code=$?
+          run_exit_code=0
+          if [ "$build_exit_code" -eq 0 ]; then
+            docker run --detach --name "$tool_name" \
+            --network "$network" --network-alias tool-service \
+            --publish 127.0.0.1:18002:8002 \
+            --volume "$RUNNER_TEMP/aiat-openhands-workspace:/workspace:rw" \
+            --env TOOL_SECRET="$AIAT_TOOL_SECRET" \
+            --env TOOL_WORKSPACE_ROOT=/workspace \
+            --env LOG_LEVEL=INFO \
+            "$image" || run_exit_code=$?
+          else
+            run_exit_code=125
+          fi
+          echo "network=$network" >> "$GITHUB_OUTPUT"
+          echo "tool_container=$tool_name" >> "$GITHUB_OUTPUT"
+          echo "network=$network" >> "$GITHUB_ENV"
+          echo "tool_container=$tool_name" >> "$GITHUB_ENV"
+          tool_service_ip=""
+          if [ "$run_exit_code" -eq 0 ]; then
+            tool_service_ip="$(docker inspect --format '{{json .NetworkSettings.Networks}}' "$tool_name" \
+              | python3 -c 'import json, sys; data = json.load(sys.stdin); network = sys.argv[1]; print((data.get(network) or {}).get("IPAddress", ""))' "$network" || true)"
+            if [ -z "$tool_service_ip" ]; then
+              run_exit_code=125
+            fi
+          fi
+          echo "tool_service_ip=$tool_service_ip" >> "$GITHUB_ENV"
+          healthy=0
+          if [ "$run_exit_code" -eq 0 ]; then
+            for _ in $(seq 1 60); do
+              if curl --fail --silent --show-error http://127.0.0.1:18002/health >/dev/null; then
+                healthy=1
+                break
+              fi
+              sleep 2
+            done
+            docker inspect --format '{{json .State}}' "$tool_name" > "$RUNNER_TEMP/aiat-openhands-evidence/bridge/container-state.json"
+            docker inspect --format '{{json .HostConfig.Runtime}}' "$tool_name" > "$RUNNER_TEMP/aiat-openhands-evidence/bridge/container-runtime.json"
+          fi
+          BUILD_EXIT_CODE="$build_exit_code" RUN_EXIT_CODE="$run_exit_code" \
+            python3 - "$healthy" "$RUNNER_TEMP/aiat-openhands-evidence/bridge/startup.json" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          healthy, output = sys.argv[1:]
+          build_exit_code = os.environ.get("BUILD_EXIT_CODE", "1")
+          run_exit_code = os.environ.get("RUN_EXIT_CODE", "1")
+          startup_failed = build_exit_code != "0" or run_exit_code != "0"
+          Path(output).write_text(
+              json.dumps(
+                  {
+                      "schema_version": "aiat.openhands-tool-service-startup.v1",
+                      "health_status": "PASS" if healthy == "1" else "BLOCKED",
+                      "failure_class": None if healthy == "1" else "TOOL_SERVICE_STARTUP_FAILURE" if startup_failed else "TOOL_SERVICE_HEALTH_FAILURE",
+                      "build_exit_code": int(build_exit_code),
+                      "run_exit_code": int(run_exit_code),
+                      "bridge_url": "http://tool-service:8002/openhands/mcp",
+                      "payloads_retained": False,
+                      "container_logs_retained": False,
+                  },
+                  sort_keys=True,
+                  indent=2,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+          if [ "$run_exit_code" -ne 0 ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "status=BLOCKED_TOOL_BRIDGE" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          test "$healthy" = 1
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+          echo "status=PASS" >> "$GITHUB_OUTPUT"
+
+      - name: Start Agent Server under runsc
+        id: server
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true' && steps.candidate_contract.outputs.ready == 'true' && steps.network.outputs.ready == 'true' && steps.bridge.outputs.ready == 'true'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/startup" "$RUNNER_TEMP/aiat-openhands-workspace"
           name="aiat-openhands-cert-${GITHUB_RUN_ID}"
           key=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
           echo "::add-mask::$key"
+          key_file="$RUNNER_TEMP/aiat-openhands-session-key"
+          umask 077
+          printf '%s' "$key" > "$key_file"
           echo "container=$name" >> "$GITHUB_OUTPUT"
-          echo "session_key=$key" >> "$GITHUB_OUTPUT"
-          docker run --detach --name "$name" --runtime=runsc \
-            --publish 18000:8000 \
-            --env SESSION_API_KEY="$key" \
-            "$OPENHANDS_IMAGE"
-          for _ in $(seq 1 60); do
-            if curl --fail --silent --show-error \
-              -H "X-Session-API-Key: $key" \
-              http://127.0.0.1:18000/health >/dev/null; then
-              break
+          echo "agent_container=$name" >> "$GITHUB_ENV"
+          run_exit_code=0
+          test -n "${omniroute_ip:-}" \
+            && test -n "${litellm_ip:-}" \
+            && test -n "${tool_service_ip:-}" || run_exit_code=125
+          if [ "$run_exit_code" -eq 0 ]; then
+            docker run --detach --name "$name" --runtime=runsc \
+              --network "$network" --network-alias agent-server \
+              --add-host "litellm:${litellm_ip}" \
+              --add-host "tool-service:${tool_service_ip}" \
+              --add-host "omniroute:${omniroute_ip}" \
+              --publish 127.0.0.1:18000:8000 \
+              --volume "$RUNNER_TEMP/aiat-openhands-workspace:/workspace/project:rw" \
+              --env SESSION_API_KEY="$key" \
+              --env HOME=/tmp/aiat-openhands-home \
+              --env OH_ENABLE_VSCODE=false \
+              --env OH_ENABLE_VNC=false \
+              --env OH_REGISTERED_MARKETPLACES='[]' \
+              "$OPENHANDS_IMAGE" || run_exit_code=$?
+          fi
+          healthy=0
+          if [ "$run_exit_code" -eq 0 ]; then
+            for _ in $(seq 1 60); do
+              if curl --fail --silent --show-error \
+                -H "X-Session-API-Key: $key" \
+                http://127.0.0.1:18000/health >/dev/null; then
+                healthy=1
+                break
+              fi
+              sleep 2
+            done
+            docker inspect --format '{{json .State}}' "$name" > "$RUNNER_TEMP/aiat-openhands-evidence/startup/container-state.json"
+            docker inspect --format '{{json .HostConfig.Runtime}}' "$name" > "$RUNNER_TEMP/aiat-openhands-evidence/startup/container-runtime.json"
+          fi
+          RUN_EXIT_CODE="$run_exit_code" python3 - "$healthy" "$RUNNER_TEMP/aiat-openhands-evidence/startup/startup.json" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          healthy, output = sys.argv[1:]
+          run_exit_code = os.environ.get("RUN_EXIT_CODE", "1")
+          startup_failed = run_exit_code != "0"
+          Path(output).write_text(
+              json.dumps(
+                  {
+                      "schema_version": "aiat.openhands-startup.v1",
+                      "health_status": "PASS" if healthy == "1" else "BLOCKED",
+                      "failure_class": None if healthy == "1" else "OPENHANDS_AGENT_SERVER_STARTUP_FAILURE" if startup_failed else "OPENHANDS_AGENT_SERVER_HEALTH_FAILURE",
+                      "run_exit_code": int(run_exit_code),
+                      "runtime_expected": "runsc",
+                      "server_controls": {
+                          "home_isolated": True,
+                          "vscode_enabled": False,
+                          "vnc_enabled": False,
+                          "registered_marketplaces": 0,
+                          "public_and_user_skills": "profile_deny_list_verified",
+                          "project_skills": "certification_workspace_must_be_skill_free",
+                      },
+                      "payloads_retained": False,
+                      "container_logs_retained": False,
+                  },
+                  sort_keys=True,
+                  indent=2,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+          if [ "$run_exit_code" -ne 0 ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "status=BLOCKED_GVISOR" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$healthy" != 1 ]; then
+            echo "OpenHands Agent Server did not become healthy under runsc" >&2
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "status=BLOCKED_GVISOR" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+          echo "status=PASS" >> "$GITHUB_OUTPUT"
+
+      - name: Prove runsc Agent Server can reach the internal LiteLLM target
+        id: runsc_gateway
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true' && steps.candidate_contract.outputs.ready == 'true' && steps.network.outputs.ready == 'true' && steps.server.outputs.ready == 'true' && steps.gateway.outputs.ready == 'true'
+        continue-on-error: true
+        env:
+          AGENT_CONTAINER: ${{ steps.server.outputs.container }}
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/gateway"
+          docker exec "$AGENT_CONTAINER" python -c \
+            'import socket, urllib.request; socket.gethostbyname("litellm"); response = urllib.request.urlopen("http://litellm:4000/health/readiness", timeout=10); raise SystemExit(0 if response.status == 200 else 1)'
+          exit_code=$?
+          python3 - "$exit_code" "$RUNNER_TEMP/aiat-openhands-evidence/gateway/runsc-to-litellm.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          exit_code, output = sys.argv[1:]
+          Path(output).write_text(
+              json.dumps(
+                  {
+                      "schema_version": "aiat.openhands-runsc-to-litellm.v1",
+                      "endpoint": "http://litellm:4000/health/readiness",
+                      "runtime": "runsc",
+                      "name_resolution_strategy": "explicit_run_scoped_container_ip_hosts",
+                      "name_resolution_target": "litellm",
+                      "name_resolution_status": "PASS" if exit_code == "0" else "BLOCKED",
+                      "status": "PASS" if exit_code == "0" else "BLOCKED",
+                      "response_payload_retained": False,
+                  },
+                  sort_keys=True,
+                  indent=2,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          if [ "$exit_code" -eq 0 ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "status=PASS" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "status=BLOCKED" >> "$GITHUB_OUTPUT"
+          fi
+          test "$exit_code" = 0
+
+      - name: Record disposable gateway network topology
+        id: network_topology
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true' && steps.candidate_contract.outputs.ready == 'true' && steps.network.outputs.ready == 'true' && steps.omniroute.outputs.ready == 'true' && steps.litellm.outputs.ready == 'true' && steps.bridge.outputs.ready == 'true' && steps.server.outputs.ready == 'true'
+        continue-on-error: true
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/gateway"
+          topology_input="$RUNNER_TEMP/aiat-openhands-network-inspect.json"
+          inspect_exit_code=0
+          docker network inspect "$network" > "$topology_input" || inspect_exit_code=$?
+          python3 - \
+            "$RUNNER_TEMP/aiat-openhands-evidence/gateway/network-topology.json" \
+            "$topology_input" \
+            "$GITHUB_RUN_ID" \
+            "$inspect_exit_code" \
+            "$network" <<'PY'
+          import json
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          output = Path(sys.argv[1])
+          run_id = sys.argv[3]
+          inspect_exit_code = sys.argv[4]
+          network_name = sys.argv[5]
+          try:
+              raw = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+          except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+              raw = []
+          network = raw[0] if isinstance(raw, list) and raw else {}
+          containers = network.get("Containers") if isinstance(network, dict) else {}
+          topology = []
+          expected_aliases = {
+              f"aiat-openhands-cert-{run_id}": "agent-server",
+              f"aiat-openhands-tool-service-{run_id}": "tool-service",
+              f"aiat-openhands-litellm-{run_id}": "litellm",
+              f"aiat-openhands-omniroute-{run_id}": "omniroute",
+          }
+          if isinstance(containers, dict):
+              for value in containers.values():
+                  if not isinstance(value, dict):
+                      continue
+                  topology.append(
+                      {
+                          "name": value.get("Name"),
+                          "aliases": sorted(str(item) for item in (value.get("Aliases") or []) if item),
+                          "ipv4": bool(value.get("IPv4Address")),
+                      }
+                  )
+          expected = {
+              f"aiat-openhands-cert-{run_id}",
+              f"aiat-openhands-tool-service-{run_id}",
+              f"aiat-openhands-litellm-{run_id}",
+              f"aiat-openhands-omniroute-{run_id}",
+          }
+          alias_readback = {}
+          alias_inspect_ok = True
+          for container_name in sorted(expected):
+              inspected = subprocess.run(
+                  [
+                      "docker",
+                      "inspect",
+                      "--format",
+                      "{{json .NetworkSettings.Networks}}",
+                      container_name,
+                  ],
+                  capture_output=True,
+                  text=True,
+                  check=False,
+              )
+              try:
+                  networks = json.loads(inspected.stdout)
+              except (TypeError, json.JSONDecodeError):
+                  networks = {}
+              network_entry = networks.get(network_name) if isinstance(networks, dict) else None
+              attached_networks = sorted(str(item) for item in networks if item) if isinstance(networks, dict) else []
+              aliases = (
+                  sorted(str(item) for item in network_entry.get("Aliases", []) if item)
+                  if isinstance(network_entry, dict)
+                  else []
+              )
+              alias_readback[container_name] = {
+                  "aliases": aliases,
+                  "attached_networks": attached_networks,
+                  "inspect_exit_code": inspected.returncode,
+              }
+              if inspected.returncode != 0 or not isinstance(network_entry, dict):
+                  alias_inspect_ok = False
+          for item in topology:
+              name = str(item.get("name"))
+              item["aliases"] = alias_readback.get(name, {}).get("aliases", [])
+              item["attached_networks"] = alias_readback.get(name, {}).get("attached_networks", [])
+          observed = {str(item.get("name")) for item in topology}
+          network_scope_ok = all(
+              alias_readback.get(name, {}).get("attached_networks") == [network_name]
+              for name in expected
+          )
+          complete = (
+              inspect_exit_code == "0"
+              and alias_inspect_ok
+              and network_scope_ok
+              and observed == expected
+              and all(item.get("ipv4") for item in topology)
+              and all(expected_aliases.get(str(item.get("name"))) in item.get("aliases", []) for item in topology)
+          )
+          output.write_text(
+              json.dumps(
+                  {
+                      "schema_version": "aiat.openhands-certification-network-topology.v1",
+                      "network_aliases_expected": expected_aliases,
+                      "attached_containers": sorted(topology, key=lambda item: str(item.get("name"))),
+                      "container_alias_readback": alias_readback,
+                      "network_scope_status": "PASS" if network_scope_ok else "BLOCKED",
+                      "expected_networks_per_container": [network_name],
+                      "expected_container_count": len(expected),
+                      "observed_container_count": len(observed),
+                      "docker_inspect_exit_code": int(inspect_exit_code),
+                      "alias_inspect_status": "PASS" if alias_inspect_ok else "BLOCKED",
+                      "topology_status": "PASS" if complete else "BLOCKED",
+                      "credentials_or_payloads_retained": False,
+                  },
+                  sort_keys=True,
+                  indent=2,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+          exit_code=$?
+          rm -f "$topology_input"
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          topology_status=$(python3 - "$RUNNER_TEMP/aiat-openhands-evidence/gateway/network-topology.json" <<'PY'
+          import json
+          import sys
+
+          try:
+              report = json.load(open(sys.argv[1], encoding="utf-8"))
+          except (OSError, json.JSONDecodeError):
+              report = {}
+          print(report.get("topology_status", "BLOCKED"))
+          PY
+          )
+          if [ "$topology_status" = PASS ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "status=PASS" >> "$GITHUB_OUTPUT"
+          else
+            # This step intentionally stays on the evidence/cleanup path, but
+            # a failed alias/IP readback must never unlock profile materializa-
+            # tion or the live adapter wave.
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "status=BLOCKED_NETWORK_TOPOLOGY" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Materialize run-scoped OpenHands profile and MCP entry
+        id: runtime
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true' && steps.candidate_contract.outputs.ready == 'true' && steps.network.outputs.ready == 'true' && steps.network_topology.outputs.ready == 'true' && steps.runsc_gateway.outputs.ready == 'true'
+        continue-on-error: true
+        env:
+          OPENHANDS_MODEL_ID: ${{ vars.OPENHANDS_MODEL_ID }}
+          OPENHANDS_MCP_SETTINGS_KEY: ${{ vars.OPENHANDS_MCP_SETTINGS_KEY }}
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/runtime"
+          test -s "$RUNNER_TEMP/aiat-openhands-session-key"
+          export OPENHANDS_SESSION_API_KEY="$(cat "$RUNNER_TEMP/aiat-openhands-session-key")"
+          uv run python scripts/provision_openhands_candidate_runtime.py \
+            --base-url http://127.0.0.1:18000 \
+            --output "$RUNNER_TEMP/aiat-openhands-evidence/runtime/runtime-provisioning.json" \
+            --github-output "$GITHUB_OUTPUT"
+          exit_code=$?
+          runtime_status=$(python3 - "$RUNNER_TEMP/aiat-openhands-evidence/runtime/runtime-provisioning.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          try:
+              report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+              report = {}
+          print("PASS" if isinstance(report, dict) and report.get("status") == "PASS" else "BLOCKED")
+          PY
+          )
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          echo "status=$runtime_status" >> "$GITHUB_OUTPUT"
+          if [ "$exit_code" -eq 0 ] && [ "$runtime_status" = PASS ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run governed OpenHands live adapter wave
+        id: live
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true' && steps.candidate_contract.outputs.ready == 'true' && steps.network.outputs.ready == 'true' && steps.runtime.outputs.ready == 'true'
+        continue-on-error: true
+        env:
+          OPENHANDS_AGENT_PROFILE_ID: ${{ steps.runtime.outputs.profile_id }}
+          OPENHANDS_MCP_SETTINGS_KEY: ${{ steps.runtime.outputs.mcp_key }}
+          OPENHANDS_MODEL_ID: ${{ vars.OPENHANDS_MODEL_ID }}
+          OPENHANDS_CERT_RUN_ID: ${{ steps.runtime.outputs.run_id }}
+          OPENHANDS_PROJECT_ID: ${{ steps.runtime.outputs.project_id }}
+          OPENHANDS_MCP_PRECONFIGURED: "1"
+          OPENHANDS_CERTIFICATION_CONTROLLER: aiat-github-actions
+          OPENHANDS_CERT_CONTROLLER_RUN_ID: ${{ github.run_id }}
+          OPENHANDS_SANDBOX_PROFILE: gvisor
+          OPENHANDS_SANDBOX_RUNTIME: runsc
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/live" "$RUNNER_TEMP/aiat-openhands-workspace"
+          cp -R "$GITHUB_WORKSPACE/mas/scripts/fixtures/openhands-coding-task/." \
+            "$RUNNER_TEMP/aiat-openhands-workspace/"
+          workspace_policy_status=PASS
+          forbidden_sources=()
+          for relative_path in \
+            .openhands .agents .claude .cursor .cursorrules .clinerules \
+            AGENTS.md agents.md; do
+            if [ -e "$RUNNER_TEMP/aiat-openhands-workspace/$relative_path" ]; then
+              forbidden_sources+=("$relative_path")
+              workspace_policy_status=BLOCKED
             fi
-            sleep 2
           done
+          python3 - "$RUNNER_TEMP/aiat-openhands-evidence/live/workspace-skill-sources.json" \
+            "$workspace_policy_status" "${forbidden_sources[*]-}" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          output, status, sources = sys.argv[1:]
+          Path(output).write_text(
+              json.dumps(
+                  {
+                      "schema_version": "aiat.openhands-certification-workspace-policy.v1",
+                      "status": status,
+                      "forbidden_skill_or_plugin_sources": [item for item in sources.split() if item],
+                      "project_skill_loading": "upstream_default_true_but_fixture_sources_absent",
+                      "raw_workspace_payloads_retained": False,
+                  },
+                  sort_keys=True,
+                  indent=2,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+          if [ "$workspace_policy_status" != PASS ]; then
+            echo "workspace_skill_or_plugin_source_present" >&2
+            exit 1
+          fi
+          git -C "$RUNNER_TEMP/aiat-openhands-workspace" init --quiet
+          git -C "$RUNNER_TEMP/aiat-openhands-workspace" config user.email aiat-certification@localhost
+          git -C "$RUNNER_TEMP/aiat-openhands-workspace" config user.name aiat-certification
+          git -C "$RUNNER_TEMP/aiat-openhands-workspace" add -- \
+            pyproject.toml README.md slugger tests
+          git -C "$RUNNER_TEMP/aiat-openhands-workspace" commit --quiet -m "certification baseline"
+          # The pinned Agent Server image runs as UID/GID 10001.  A hosted
+          # runner creates this disposable workspace as its own user, which
+          # otherwise causes v1.43.0 conversation creation to fail while the
+          # server initializes the workspace.  Verify the immutable image
+          # identity before changing ownership; never assume a runtime user.
+          image_user="$(docker image inspect --format '{{.Config.User}}' "$OPENHANDS_IMAGE")"
+          image_uid="$(docker run --rm --network none --entrypoint sh "$OPENHANDS_IMAGE" -c 'id -u')"
+          image_gid="$(docker run --rm --network none --entrypoint sh "$OPENHANDS_IMAGE" -c 'id -g')"
+          test "$image_user" = "openhands"
+          test "$image_uid:$image_gid" = "10001:10001"
+          sudo chown -R 10001:10001 "$RUNNER_TEMP/aiat-openhands-workspace"
+          python3 - "$RUNNER_TEMP/aiat-openhands-evidence/live/workspace-ownership.json" "$image_user" "$image_uid" "$image_gid" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          output, image_user, image_uid, image_gid = sys.argv[1:]
+          Path(output).write_text(
+              json.dumps(
+                  {
+                      "schema_version": "aiat.openhands-workspace-ownership.v1",
+                      "status": "PASS",
+                      "image_user": image_user,
+                      "image_uid": int(image_uid),
+                      "image_gid": int(image_gid),
+                      "workspace_owner": "10001:10001",
+                      "workspace_scope": "disposable-certification-workspace",
+                      "raw_paths_retained": False,
+                  },
+                  sort_keys=True,
+                  indent=2,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+          test -s "$RUNNER_TEMP/aiat-openhands-session-key"
+          export OPENHANDS_SESSION_API_KEY="$(cat "$RUNNER_TEMP/aiat-openhands-session-key")"
+          uv run python scripts/openhands_live_certify.py \
+            --base-url http://127.0.0.1:18000 \
+            --interface-report docs/provenance/openhands-candidate/2026-08-22-v1.43.0/interface-verification.json \
+            --workspace /workspace/project \
+            --host-workspace "$RUNNER_TEMP/aiat-openhands-workspace" \
+            --fixture-root "$GITHUB_WORKSPACE/mas/scripts/fixtures/openhands-coding-task" \
+            --exercise-lifecycle \
+            --task-spec docs/provenance/openhands-candidate/2026-08-22-v1.43.0/coding-task-spec.json \
+            --output "$RUNNER_TEMP/aiat-openhands-evidence/live/live-certification.json"
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
 
       - name: Run OpenHands supply-chain and runtime evidence
         id: certification
+        if: steps.provider_preflight.outputs.ready == 'true' && steps.preflight.outputs.ready == 'true' && steps.candidate_contract.outputs.ready == 'true' && steps.network.outputs.ready == 'true' && steps.runtime.outputs.ready == 'true'
         continue-on-error: true
         env:
-          SESSION_KEY: ${{ steps.server.outputs.session_key }}
           CONTAINER_NAME: ${{ steps.server.outputs.container }}
         run: |
           set +e
           mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/certification"
+          test -s "$RUNNER_TEMP/aiat-openhands-session-key"
+          SESSION_KEY="$(cat "$RUNNER_TEMP/aiat-openhands-session-key")"
           uv run python scripts/openhands_candidate_certify.py \
             --output "$RUNNER_TEMP/aiat-openhands-evidence/certification" \
             --tooling-manifest "$RUNNER_TEMP/aiat-openhands-evidence/tooling/tooling-provisioning.json" \
@@ -120,6 +1304,345 @@ jobs:
             --session-api-key "$SESSION_KEY" \
             --container-name "$CONTAINER_NAME"
           echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Verify disposable cleanup
+        if: always()
+        env:
+          OPENHANDS_MCP_SETTINGS_KEY: ${{ steps.runtime.outputs.mcp_key || vars.OPENHANDS_MCP_SETTINGS_KEY }}
+        run: |
+          set +e
+          name="aiat-openhands-cert-${GITHUB_RUN_ID}"
+          tool_name="${tool_container:-aiat-openhands-tool-service-${GITHUB_RUN_ID}}"
+          litellm_name="${litellm_container:-aiat-openhands-litellm-${GITHUB_RUN_ID}}"
+          omniroute_name="${omniroute_container:-aiat-openhands-omniroute-${GITHUB_RUN_ID}}"
+          network_name="${network:-aiat-openhands-cert-network-${GITHUB_RUN_ID}}"
+          cleanup_ok=1
+          docker_available=false
+          if docker info >/dev/null 2>&1; then
+            docker_available=true
+          else
+            cleanup_ok=0
+          fi
+          mcp_status="NOT_CREATED"
+          mcp_verified_absent=true
+          agent_existed=0
+          agent_running=false
+          if [ "$docker_available" = true ] && [ -n "$(docker ps -aq --filter "name=^/${name}$" 2>/dev/null)" ]; then
+            agent_existed=1
+            agent_running="$(docker inspect --format '{{if .State.Running}}true{{else}}false{{end}}' "$name" 2>/dev/null || echo false)"
+          fi
+          profile_status="NOT_CREATED"
+          if [ "$agent_existed" = 1 ]; then
+            # The workflow gives Agent Server no named profile volume.  Its
+            # run-scoped profile therefore dies with this disposable
+            # container; retain only that scalar disposal assertion.
+            profile_status="VERIFIED_BY_CONTAINER_DISPOSAL"
+          fi
+          if [ "$agent_running" = true ] && [ -s "$RUNNER_TEMP/aiat-openhands-session-key" ] && [ -n "${OPENHANDS_MCP_SETTINGS_KEY:-}" ]; then
+            session_key="$(cat "$RUNNER_TEMP/aiat-openhands-session-key")"
+            delete_code=$(curl --silent --show-error --output /dev/null \
+              --request DELETE \
+              --header "X-Session-API-Key: $session_key" \
+              --write-out '%{http_code}' \
+              "http://127.0.0.1:18000/api/settings/mcp/${OPENHANDS_MCP_SETTINGS_KEY}" || true)
+            settings_response=$(curl --silent --show-error --write-out '\n%{http_code}' \
+              --header "X-Session-API-Key: $session_key" \
+              "http://127.0.0.1:18000/api/settings" || true)
+            settings_code="${settings_response##*$'\n'}"
+            settings_json="${settings_response%$'\n'*}"
+            delete_ok=false
+            case "$delete_code" in
+              200|204|404) delete_ok=true ;;
+            esac
+            DELETE_CODE="$delete_code" SETTINGS_CODE="$settings_code" SETTINGS_JSON="$settings_json" MCP_KEY="$OPENHANDS_MCP_SETTINGS_KEY" \
+              python3 - "$RUNNER_TEMP/aiat-openhands-evidence/mcp-cleanup.json" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          try:
+              settings = json.loads(os.environ.get("SETTINGS_JSON", "{}"))
+          except json.JSONDecodeError:
+              settings = {}
+          config = {}
+          envelopes = [settings] if isinstance(settings, dict) else []
+          agent_settings = settings.get("agent_settings") if isinstance(settings, dict) else None
+          if isinstance(agent_settings, dict):
+              envelopes.append(agent_settings)
+          for envelope in envelopes:
+              for field in ("mcp_config", "mcp_servers"):
+                  candidate = envelope.get(field)
+                  if isinstance(candidate, dict):
+                      config.update(candidate)
+          readback_ok = os.environ.get("SETTINGS_CODE", "") == "200"
+          present = os.environ.get("MCP_KEY", "") in config
+          Path(sys.argv[1]).write_text(
+              json.dumps(
+                  {
+                      "schema_version": "aiat.openhands-mcp-cleanup.v1",
+                      "delete_http_status": os.environ.get("DELETE_CODE", ""),
+                      "settings_readback_http_status": os.environ.get("SETTINGS_CODE", ""),
+                      "verified_absent": readback_ok and not present,
+                      "payloads_retained": False,
+                  },
+                  sort_keys=True,
+                  indent=2,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+            mcp_verified_absent=$(python3 - "$RUNNER_TEMP/aiat-openhands-evidence/mcp-cleanup.json" <<'PY'
+          import json
+          import sys
+
+          try:
+              report = json.load(open(sys.argv[1], encoding="utf-8"))
+          except (OSError, json.JSONDecodeError):
+              report = {}
+          print("true" if report.get("verified_absent") is True else "false")
+          PY
+            )
+            mcp_status="PASS"
+            if [ "$delete_ok" != true ] || [ "$mcp_verified_absent" != true ]; then
+              mcp_status="BLOCKED"
+              cleanup_ok=0
+            fi
+          elif [ "$agent_running" = true ]; then
+            mcp_status="BLOCKED"
+            mcp_verified_absent=false
+            cleanup_ok=0
+            python3 - "$RUNNER_TEMP/aiat-openhands-evidence/mcp-cleanup.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          Path(sys.argv[1]).write_text(
+              json.dumps(
+                  {
+                      "schema_version": "aiat.openhands-mcp-cleanup.v1",
+                      "status": "BLOCKED",
+                      "reason": "agent_server_existed_without_session_key_or_mcp_key",
+                      "verified_absent": False,
+                      "payloads_retained": False,
+                  },
+                  sort_keys=True,
+                  indent=2,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+          elif [ "$agent_existed" = 1 ]; then
+            # A stopped/crashed Agent Server cannot service the authenticated
+            # delete/readback calls.  Its profile and run-scoped MCP state are
+            # local to the disposable container, so container disposal is the
+            # authoritative cleanup proof for this failure path.
+            mcp_status="VERIFIED_BY_CONTAINER_DISPOSAL"
+            mcp_verified_absent=true
+            python3 - "$RUNNER_TEMP/aiat-openhands-evidence/mcp-cleanup.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          Path(sys.argv[1]).write_text(
+              json.dumps(
+                  {
+                      "schema_version": "aiat.openhands-mcp-cleanup.v1",
+                      "status": "VERIFIED_BY_CONTAINER_DISPOSAL",
+                      "reason": "agent_container_not_running",
+                      "verified_absent": True,
+                      "payloads_retained": False,
+                  },
+                  sort_keys=True,
+                  indent=2,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+          else
+            mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence"
+            python3 - "$RUNNER_TEMP/aiat-openhands-evidence/mcp-cleanup.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          Path(sys.argv[1]).write_text(
+              json.dumps(
+                  {
+                      "schema_version": "aiat.openhands-mcp-cleanup.v1",
+                      "status": "NOT_CREATED",
+                      "verified_absent": True,
+                      "payloads_retained": False,
+                  },
+                  sort_keys=True,
+                  indent=2,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+          fi
+          docker rm --force "$name" >/dev/null 2>&1 || true
+          docker rm --force "$tool_name" >/dev/null 2>&1 || true
+          docker rm --force "$litellm_name" >/dev/null 2>&1 || true
+          docker rm --force "$omniroute_name" >/dev/null 2>&1 || true
+          # The build step uses the run id as an image tag.  Reuse the exact
+          # tagged reference here so a failed/partial run cannot leave a
+          # disposable image behind while the residue check reports a false
+          # PASS.
+          tool_image="aiat-openhands-tool-service-cert:${GITHUB_RUN_ID}"
+          docker image rm "$tool_image" >/dev/null 2>&1 || true
+          containers_absent=true
+          image_absent=true
+          network_absent=true
+          if [ "$docker_available" = true ]; then
+            for container in "$name" "$tool_name" "$litellm_name" "$omniroute_name"; do
+              if [ -n "$(docker ps -aq --filter "name=^/${container}$" 2>/dev/null)" ]; then
+                containers_absent=false
+                cleanup_ok=0
+              fi
+            done
+            if docker image inspect "$tool_image" >/dev/null 2>&1; then
+              image_absent=false
+              cleanup_ok=0
+            fi
+            docker network rm "$network_name" >/dev/null 2>&1 || true
+          else
+            containers_absent=false
+            network_absent=false
+          fi
+          if [ "$docker_available" = true ] && [ -n "$(docker network ls -q --filter "name=^${network_name}$" 2>/dev/null)" ]; then
+            network_absent=false
+            cleanup_ok=0
+          fi
+          rm -f "$RUNNER_TEMP/aiat-openhands-session-key"
+          secret_files_absent=true
+          if [ -e "$RUNNER_TEMP/aiat-openhands-session-key" ]; then
+            secret_files_absent=false
+            cleanup_ok=0
+          fi
+          # The exact pinned Agent Server UID owns files created during the
+          # run; use sudo only for this known disposable path so cleanup can
+          # still prove zero residue after partial/failed execution.
+          sudo rm -rf -- "$RUNNER_TEMP/aiat-openhands-workspace"
+          workspace_absent=true
+          if [ -e "$RUNNER_TEMP/aiat-openhands-workspace" ]; then
+            workspace_absent=false
+            cleanup_ok=0
+          fi
+          unset AIAT_TOOL_SECRET OPENHANDS_MODEL_GATEWAY_API_KEY GROQ_API_KEY || true
+          unset session_key settings_response settings_json delete_code || true
+          secret_environment_entries_absent=true
+          if [ -n "${GITHUB_ENV:-}" ]; then
+            if [ -f "$GITHUB_ENV" ]; then
+              if ! sed -i \
+                -e '/^AIAT_TOOL_SECRET=/d' \
+                -e '/^AIAT_TOOL_SECRET_SCOPE=/d' \
+                -e '/^OPENHANDS_MODEL_GATEWAY_API_KEY=/d' \
+                -e '/^OPENHANDS_MODEL_GATEWAY_API_KEY_SCOPE=/d' \
+                -e '/^MODEL_GATEWAY_SECRET_SCOPE=/d' \
+                "$GITHUB_ENV"; then
+                secret_environment_entries_absent=false
+                cleanup_ok=0
+              fi
+              if grep -Eq '^(AIAT_TOOL_SECRET|AIAT_TOOL_SECRET_SCOPE|OPENHANDS_MODEL_GATEWAY_API_KEY|OPENHANDS_MODEL_GATEWAY_API_KEY_SCOPE|MODEL_GATEWAY_SECRET_SCOPE)=' "$GITHUB_ENV"; then
+                secret_environment_entries_absent=false
+                cleanup_ok=0
+              fi
+            else
+              secret_environment_entries_absent=false
+              cleanup_ok=0
+            fi
+          fi
+          python3 - "$RUNNER_TEMP/aiat-openhands-evidence/gateway/cleanup.json" \
+            "$name" "$tool_name" "$litellm_name" "$omniroute_name" "$network_name" \
+            "$mcp_status" "$mcp_verified_absent" "$profile_status" "$containers_absent" "$image_absent" "$network_absent" "$secret_files_absent" "$workspace_absent" "$secret_environment_entries_absent" "$cleanup_ok" "$docker_available" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          output, *values = sys.argv[1:]
+          names = values[:5]
+          mcp_status, mcp_verified_absent, profile_status, containers_absent, image_absent, network_absent, secret_files_absent, workspace_absent, secret_environment_entries_absent, cleanup_ok, docker_available = values[5:]
+          Path(output).parent.mkdir(parents=True, exist_ok=True)
+          Path(output).write_text(
+              json.dumps(
+                  {
+                  "schema_version": "aiat.openhands-certification-gateway-cleanup.v1",
+                  "docker_available": docker_available == "true",
+                  "containers": {
+                      name: "absent" for name in names[:-1]
+                  },
+                  "network": {"name": names[-1], "status": "absent"},
+                  "run_scoped_secret_files": "absent",
+                  "run_scoped_secret_environment_entries_absent": secret_environment_entries_absent == "true",
+                  "mcp": {
+                      "status": mcp_status,
+                      "verified_absent": mcp_verified_absent == "true",
+                  },
+                  "profile": {
+                      "status": profile_status,
+                      "run_scoped": True,
+                      "verified_by_agent_container_absence": profile_status in {"NOT_CREATED", "VERIFIED_BY_CONTAINER_DISPOSAL"} and containers_absent == "true",
+                  },
+                  "containers_absent": containers_absent == "true",
+                  "tool_image_absent": image_absent == "true",
+                  "network_absent": network_absent == "true",
+                  "secret_files_absent": secret_files_absent == "true",
+                  "workspace_absent": workspace_absent == "true",
+                  "provider_payloads_retained": False,
+                  "zero_residue": cleanup_ok == "1",
+              },
+                  sort_keys=True,
+                  indent=2,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+          test "$cleanup_ok" = 1
+
+      - name: Evaluate mandatory OpenHands gate matrix
+        if: always()
+        env:
+          PROVIDER_STATUS: ${{ steps.provider_preflight.outputs.status }}
+          CONFIGURATION_STATUS: ${{ steps.preflight.outputs.status }}
+          CANDIDATE_CONTRACT_STATUS: ${{ steps.candidate_contract.outputs.status }}
+          CANDIDATE_SHA: ${{ env.AIAT_CANDIDATE_SHA }}
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/aiat-openhands-evidence/certification"
+          provider_status="${PROVIDER_STATUS:-BLOCKED_MISSING_OPERATOR_SECRET}"
+          configuration_status="${CANDIDATE_CONTRACT_STATUS:-${CONFIGURATION_STATUS:-FAILED_CERTIFICATION_IMPLEMENTATION}}"
+          uv run python scripts/check_openhands_gate_matrix.py \
+            --output "$RUNNER_TEMP/aiat-openhands-evidence/certification/gate-evaluation.json" \
+            --provider-status "$provider_status" \
+            --configuration-status "$configuration_status" \
+            --evidence-root "$RUNNER_TEMP/aiat-openhands-evidence" \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --source-commit 4c1237f391fe394e9f67505fe3a0bd2d81f84188 \
+            --image-digest sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97
+          exit 0
+
+      - name: Validate sanitized OpenHands evidence schema
+        if: always()
+        id: evidence_schema
+        continue-on-error: true
+        run: |
+          set +e
+          uv run python scripts/check_openhands_evidence_schema.py \
+            --root "$RUNNER_TEMP/aiat-openhands-evidence" \
+            --output "$RUNNER_TEMP/aiat-openhands-evidence/certification/evidence-schema-validation.json"
+          exit_code=$?
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          if [ "$exit_code" -eq 0 ]; then
+            echo "status=PASS" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=FAILED_CERTIFICATION_IMPLEMENTATION" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Upload sanitized OpenHands evidence
         if: always()
@@ -130,11 +1653,63 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Summarize fail-closed certification result
+        if: always()
+        run: |
+          set -euo pipefail
+          report="$RUNNER_TEMP/aiat-openhands-evidence/certification/gate-evaluation.json"
+          {
+            echo "## OpenHands candidate certification"
+            echo
+          if [ -f "$report" ]; then
+              python3 - "$report" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          report = json.load(open(sys.argv[1], encoding="utf-8"))
+          evaluation = report.get("evaluation") or {}
+          root = Path(sys.argv[1]).parent.parent
+
+          def read_status(relative: str, field: str) -> str:
+              try:
+                  value = json.loads((root / relative).read_text(encoding="utf-8"))
+              except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                  return "NOT_RECORDED"
+              return str(value.get(field) or "NOT_RECORDED") if isinstance(value, dict) else "NOT_RECORDED"
+
+          final_status = str(report.get("status") or "FAILED_CERTIFICATION_IMPLEMENTATION")
+          print(f"- Candidate SHA: `{report.get('candidate_sha') or 'unknown'}`")
+          print(f"- Provider configuration: `{report.get('provider_configuration_status') or 'unknown'}`")
+          print(f"- Candidate preflight: `{report.get('configuration_status') or 'unknown'}`")
+          print(f"- gVisor startup: `{read_status('startup/startup.json', 'health_status')}`")
+          print(f"- OmniRoute API auth boundary: `{read_status('gateway/omniroute/auth.json', 'status')}` ({read_status('gateway/omniroute/auth.json', 'failure_class')})")
+          print(f"- Provider baseline: `{read_status('gateway/provider-baseline.json', 'status')}`")
+          print(f"- Provider baseline failure: `{read_status('gateway/provider-baseline.json', 'failure_class')}` HTTP `{read_status('gateway/provider-baseline.json', 'failure_http_status')}` attempts `{read_status('gateway/provider-baseline.json', 'attempt_count')}`")
+          print(f"- Auto-router evidence: `{read_status('gateway/auto-routing.json', 'status')}`")
+          print(f"- Model gateway route: `{read_status('gateway/route-probe.json', 'status')}`")
+          print(f"- Evidence blocker: `{report.get('evidence_blocker_status') or 'none'}`")
+          print(f"- Evidence schema: `{read_status('certification/evidence-schema-validation.json', 'status')}`")
+          print(f"- Mandatory gates: `{evaluation.get('passed_gate_count', 0)}/{evaluation.get('mandatory_gate_count', 0)} PASS`")
+          print(f"- Final result: `{final_status}`")
+          if final_status != "PASSED":
+              print("- Workflow outcome: `EXPECTED_FAIL_CLOSED_CERTIFICATION_BLOCK`")
+          print("- Worker activation: `INACTIVE`")
+          PY
+            else
+              echo '- Final result: `FAILED_CERTIFICATION_IMPLEMENTATION` (gate-evaluation.json missing)'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Keep the workflow red when certification is blocked or unresolved
         if: always()
         run: |
           set -euo pipefail
-          report="$RUNNER_TEMP/aiat-openhands-evidence/certification/candidate-certification.json"
+          report="$RUNNER_TEMP/aiat-openhands-evidence/certification/gate-evaluation.json"
           test -f "$report"
           status=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' "$report")
-          test "$status" = passed
+          test "$status" = PASSED
+          schema_report="$RUNNER_TEMP/aiat-openhands-evidence/certification/evidence-schema-validation.json"
+          test -f "$schema_report"
+          schema_status=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' "$schema_report")
+          test "$schema_status" = PASS

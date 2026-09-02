@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
   RefreshCw,
   Power,
@@ -16,6 +16,7 @@ import {
 import clsx from 'clsx';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import Link from 'next/link';
 
 interface SystemStatus {
   status: string;           // "running" | "shutdown" | "degraded"
@@ -56,13 +57,13 @@ function ConfirmDialog({
         <div className="flex justify-end gap-3">
           <button
             onClick={onCancel}
-            className="px-4 py-2 text-sm text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors"
+            className="min-h-11 px-4 py-2 text-sm text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors"
           >
             Cancel
           </button>
           <button
             onClick={onConfirm}
-            className={clsx('px-4 py-2 text-sm text-white rounded-lg transition-colors font-medium', confirmClass)}
+            className={clsx('min-h-11 px-4 py-2 text-sm text-white rounded-lg transition-colors font-medium', confirmClass)}
           >
             {confirmLabel}
           </button>
@@ -142,8 +143,11 @@ const CRON_HELP =
 
 export default function SystemPage() {
   const [status, setStatus] = useState<SystemStatus | null>(null);
+  const statusRef = useRef<SystemStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [stale, setStale] = useState(false);
+  const [accessDenied, setAccessDenied] = useState(false);
   const [showShutdownConfirm, setShowShutdownConfirm] = useState(false);
   const [showResumeConfirm, setShowResumeConfirm] = useState(false);
   const [actionState, setActionState] = useState<Record<string, ActionState>>({});
@@ -157,13 +161,24 @@ export default function SystemPage() {
 
   const fetchStatus = useCallback(async () => {
     try {
-      const res = await fetch('/api/system/status');
+      const res = await fetch('/api/system/status', { cache: 'no-store' });
+      if (res.status === 401 || res.status === 403) {
+        setAccessDenied(true);
+        setError('This operator identity is not authorized to read System Control.');
+        setStale(statusRef.current !== null);
+        return;
+      }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json: SystemStatus = await res.json();
+      statusRef.current = json;
       setStatus(json);
       setError(null);
+      setStale(false);
+      setAccessDenied(false);
     } catch (e) {
+      setAccessDenied(false);
       setError(e instanceof Error ? e.message : 'Failed to fetch system status');
+      setStale(statusRef.current !== null);
     } finally {
       setLoading(false);
     }
@@ -235,6 +250,12 @@ export default function SystemPage() {
     [status?.scheduled_resume]
   );
 
+  const requestRefresh = () => {
+    if (accessDenied) return;
+    if (status === null) setLoading(true);
+    void fetchStatus();
+  };
+
   const statusColor = {
     running: 'text-emerald-300 bg-emerald-950/30 border-emerald-800/70',
     shutdown: 'text-rose-300 bg-rose-950/30 border-rose-800/70',
@@ -249,34 +270,65 @@ export default function SystemPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64" role="status" aria-live="polite">
-        <RefreshCw className="w-6 h-6 animate-spin text-blue-400" />
-        <span className="sr-only">Loading system status</span>
-      </div>
+      <main className="dashboard-page" aria-label="System Control">
+        <div className="flex items-center justify-center h-64" role="status" aria-live="polite" aria-label="Loading system status">
+          <RefreshCw className="w-6 h-6 animate-spin text-blue-400" />
+          <span className="sr-only">Loading system status</span>
+        </div>
+      </main>
     );
   }
 
   return (
-    <div className="dashboard-page">
+    <main className="dashboard-page" aria-label="System Control">
       <PageHeader
         icon="settings"
         title="System Control"
         description="Monitor and control MAS runtime state"
-        actions={
+        actions={!accessDenied ? (
           <button
-            onClick={() => { setLoading(true); fetchStatus(); }}
+            onClick={requestRefresh}
             aria-label="Refresh system status"
-            className="inline-flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-sm border border-slate-700/80 transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70"
+            className="inline-flex min-h-11 items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-sm border border-slate-700/80 transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70"
           >
             <RefreshCw className="w-4 h-4" />
             Refresh
           </button>
-        }
+        ) : undefined}
       />
 
-      {error && (
-        <ErrorBanner tone="warning" title="Could not reach the orchestrator">
-          {error}
+      {accessDenied && (
+        <section
+          role="region"
+          aria-label="System Control access status"
+          className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-5 py-6 shadow-sm shadow-amber-950/10"
+        >
+          <h2 className="text-base font-semibold text-amber-100">System Control access denied</h2>
+          <p className="mt-2 max-w-2xl text-sm text-amber-200/80">
+            {status
+              ? 'The current operator identity can no longer read or control the runtime. The last known status remains visible for context, but shutdown, resume, scheduling, and retry actions are hidden until authorization is restored.'
+              : 'The current operator identity is not authorized to read or control the runtime. No live system state is being inferred or displayed.'}
+          </p>
+          <Link
+            href="/"
+            className="mt-5 inline-flex min-h-11 items-center rounded-md border border-amber-400/40 px-3 py-2 text-sm font-medium text-amber-100 transition-colors hover:bg-amber-400/10 focus-visible:ring-2 focus-visible:ring-amber-300/70"
+          >
+            Return to dashboard
+          </Link>
+        </section>
+      )}
+
+      {error && !accessDenied && (
+        <ErrorBanner
+          tone="warning"
+          title={stale ? "Showing last known system status" : "Could not reach the orchestrator"}
+          action={(
+            <button type="button" onClick={requestRefresh} disabled={loading} className="min-h-11 px-3 rounded border border-current text-xs font-medium hover:bg-white/10 disabled:opacity-50">
+              Retry
+            </button>
+          )}
+        >
+          {stale ? `${error}. The latest system status refresh failed; retained status remains visible.` : error}
         </ErrorBanner>
       )}
 
@@ -289,6 +341,7 @@ export default function SystemPage() {
               statusColor
             )}
             role="status"
+            aria-label={accessDenied ? 'Last known system runtime status' : 'System runtime status'}
             aria-live="polite"
           >
             <StatusIcon className="w-8 h-8 flex-shrink-0" />
@@ -320,7 +373,7 @@ export default function SystemPage() {
           {/* Schedule Info — shows pending shutdown/resume plus a live countdown
               when the orchestrator returns an absolute date; falls back to the
               raw cron expression otherwise. */}
-          {(status.scheduled_shutdown || status.scheduled_resume) && (
+          {!accessDenied && (status.scheduled_shutdown || status.scheduled_resume) && (
             <div
               className="dashboard-surface p-4 space-y-3"
               role="region"
@@ -376,9 +429,9 @@ export default function SystemPage() {
           )}
 
           {/* Control Buttons */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {!accessDenied && <div className="grid grid-cols-1 sm:grid-cols-2 gap-4" role="region" aria-label="System runtime controls">
             {/* Shutdown */}
-            <div className="dashboard-surface p-5">
+            <div className="dashboard-surface p-5" role="region" aria-label="Shutdown system">
               <div className="flex items-start gap-3 mb-4">
                 <div className="flex-shrink-0 w-9 h-9 rounded-lg border border-rose-900/60 bg-rose-950/30 flex items-center justify-center">
                   <Power className="w-5 h-5 text-rose-300" />
@@ -398,7 +451,7 @@ export default function SystemPage() {
                 disabled={status.status === 'shutdown' || actionState.shutdown === 'loading'}
                 aria-label="Shutdown the MAS runtime"
                 className={clsx(
-                  'w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70',
+                  'w-full min-h-11 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70',
                   actionState.shutdown === 'success'
                     ? 'bg-emerald-700 text-white'
                     : status.status === 'shutdown'
@@ -417,7 +470,7 @@ export default function SystemPage() {
             </div>
 
             {/* Resume */}
-            <div className="dashboard-surface p-5">
+            <div className="dashboard-surface p-5" role="region" aria-label="Resume system">
               <div className="flex items-start gap-3 mb-4">
                 <div className="flex-shrink-0 w-9 h-9 rounded-lg border border-emerald-900/60 bg-emerald-950/30 flex items-center justify-center">
                   <PlayCircle className="w-5 h-5 text-emerald-300" />
@@ -437,7 +490,7 @@ export default function SystemPage() {
                 disabled={status.status === 'running' || actionState.resume === 'loading'}
                 aria-label="Resume the MAS runtime"
                 className={clsx(
-                  'w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70',
+                  'w-full min-h-11 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70',
                   actionState.resume === 'success'
                     ? 'bg-emerald-700 text-white'
                     : status.status === 'running'
@@ -454,10 +507,10 @@ export default function SystemPage() {
                 )}
               </button>
             </div>
-          </div>
+          </div>}
 
           {/* Schedule Form */}
-          <div className="dashboard-surface p-5">
+          {!accessDenied && <div className="dashboard-surface p-5" role="region" aria-label="System schedule">
             <div className="flex items-center gap-2 mb-1">
               <Clock className="w-5 h-5 text-blue-400" />
               <h3 className="font-semibold text-white">Schedule (Cron)</h3>
@@ -487,7 +540,7 @@ export default function SystemPage() {
                   placeholder="e.g. 0 22 * * *"
                   title={CRON_HELP}
                   aria-describedby="cron-help"
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white font-mono placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition-colors"
+                  className="w-full min-h-11 px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white font-mono placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition-colors"
                 />
               </div>
               <div>
@@ -502,7 +555,7 @@ export default function SystemPage() {
                   placeholder="e.g. 0 8 * * *"
                   title={CRON_HELP}
                   aria-describedby="cron-help"
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white font-mono placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition-colors"
+                  className="w-full min-h-11 px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white font-mono placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition-colors"
                 />
               </div>
             </div>
@@ -513,12 +566,12 @@ export default function SystemPage() {
                 disabled={scheduleSaving || (!scheduleShutdown && !scheduleResume)}
                 aria-label="Save cron schedule"
                 className={clsx(
-                  'flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70',
+                  'flex min-h-11 items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70',
                   scheduleSaveResult === 'ok'
                     ? 'bg-emerald-700 text-white'
                     : scheduleSaveResult === 'err'
                     ? 'bg-rose-700 text-white'
-                    : 'bg-blue-600 hover:bg-blue-500 text-white disabled:bg-slate-700 disabled:text-slate-500'
+                    : 'bg-blue-600 hover:bg-blue-500 text-white disabled:bg-slate-700 disabled:text-white/80'
                 )}
               >
                 {scheduleSaving
@@ -531,12 +584,12 @@ export default function SystemPage() {
                 }
               </button>
             </div>
-          </div>
+          </div>}
         </>
       )}
 
       {/* Confirm Dialogs */}
-      {showShutdownConfirm && (
+      {!accessDenied && showShutdownConfirm && (
         <ConfirmDialog
           title="Shutdown System?"
           message="This will gracefully halt all running workflows and stop task processing. Active projects will be paused and can be resumed later."
@@ -546,7 +599,7 @@ export default function SystemPage() {
           onCancel={() => setShowShutdownConfirm(false)}
         />
       )}
-      {showResumeConfirm && (
+      {!accessDenied && showResumeConfirm && (
         <ConfirmDialog
           title="Resume System?"
           message="This will restart task processing and resume all paused workflows."
@@ -556,6 +609,6 @@ export default function SystemPage() {
           onCancel={() => setShowResumeConfirm(false)}
         />
       )}
-    </div>
+    </main>
   );
 }

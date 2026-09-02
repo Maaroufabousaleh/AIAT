@@ -1,0 +1,6 @@
+# Optional, isolated Microsoft Agent Framework certification profile.
+# This profile is not installed into the default orchestrator/tool-service
+# images.  Resolve with uv's prerelease allowance because the locked MAF
+# release currently resolves prerelease Azure transitive dependencies.
+agent-framework==1.13.0
+mcp==1.29.0

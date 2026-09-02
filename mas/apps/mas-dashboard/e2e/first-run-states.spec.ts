@@ -3,7 +3,13 @@ import { authenticate } from "./auth";
 
 test("renders the requested first-run state from the live orchestrator", async ({ page }) => {
   await authenticate(page);
+  await expect(page.getByRole("main", { name: "System Overview" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "System Overview" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "System health summary" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Overview metrics" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Quick Links" })).toBeVisible();
+  const quickLinks = page.getByRole("region", { name: "Quick Links" });
+  await expect(quickLinks.getByRole("link", { name: /^Projects View all projects/ })).toHaveCSS("min-height", "44px");
 
   const response = await page.request.get("/api/system/status");
   expect(response.ok()).toBeTruthy();
@@ -17,7 +23,9 @@ test("renders the requested first-run state from the live orchestrator", async (
     await expect(page.getByText("Configuration required")).toHaveCount(0);
   } else if (expected === "not_seeded") {
     await expect(page.getByText("Default company not yet seeded")).toBeVisible();
-    await expect(page.getByRole("button", { name: /seed default aiat/i })).toBeVisible();
+    const seedButton = page.getByRole("button", { name: /seed default aiat/i });
+    await expect(seedButton).toBeVisible();
+    await expect(seedButton).toHaveCSS("min-height", "44px");
   } else {
     await expect(page.getByText("Configuration required")).toBeVisible();
   }

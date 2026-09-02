@@ -1,0 +1,55 @@
+{
+  "schema_version": "aiat.openhands-certification-historical-run.v1",
+  "immutable": true,
+  "run": {
+    "run_id": "32694322492",
+    "job_id": "97333516942",
+    "candidate_sha": "61686354fc7818e6f3430e31e1012ccb80f09d11",
+    "workflow_head_sha": "61686354fc7818e6f3430e31e1012ccb80f09d11",
+    "artifact_id": "9508395624",
+    "artifact_digest": "sha256:f82d30f93af169a26da02fbe216eee33bddbd515346521516e3bd596a21d6dcc"
+  },
+  "classification": {
+    "final_status": "FAILED_INFRASTRUCTURE",
+    "normalized_blocker_status": "BLOCKED_MODEL_GATEWAY",
+    "failure_class": "FAILED_CERTIFICATION_IMPLEMENTATION",
+    "root_cause_status": "RUNSC_DNS_RESOLUTION_FAILURE_AFTER_NETWORK_ALIAS_MISREADBACK",
+    "root_cause": "The disposable network was created and all gateway containers started, but the topology collector incorrectly expected aliases in docker network inspect Containers values, where this Docker output does not provide them. The runsc Agent Server then failed to resolve the stable litellm name and could not reach LiteLLM. Profile/MCP materialization and the live gate wave were correctly skipped. The provider/model path, image provenance, and gVisor startup had already passed.",
+    "failure_stage": "runsc_to_litellm",
+    "network_alias_readback": "BLOCKED_BY_INSPECT_SHAPE",
+    "runsc_name_resolution": "BLOCKED_DNS_RESOLUTION",
+    "response_payload_retained": false,
+    "credentials_retained": false
+  },
+  "evidence": {
+    "groq_provider_preflight": "PASS",
+    "candidate_preflight": "READY_FOR_CERTIFICATION_AUTHORIZATION",
+    "openhands_image_pull": "PASS",
+    "litellm_image_pull": "PASS",
+    "omniroute_image_pull": "PASS",
+    "image_platform_verification": "PASS",
+    "gateway_provenance": "PASS",
+    "network_create": "PASS",
+    "omniroute_container_start": "PASS",
+    "omniroute_management_health": "PASS",
+    "omniroute_api_auth_boundary": "PASS",
+    "provider_route_configuration": "PASS",
+    "provider_baseline": "PASS",
+    "litellm_start": "PASS",
+    "litellm_provider_route": "PASS",
+    "auto_routing": "PASS",
+    "tool_service": "PASS",
+    "openhands_runsc_start": "PASS",
+    "network_topology": "BLOCKED_ALIAS_READBACK",
+    "runsc_to_litellm": "BLOCKED_DNS_RESOLUTION",
+    "profile_mcp": "NOT_RUN",
+    "live_gate_wave": "NOT_RUN",
+    "zero_residue": "PASS",
+    "evidence_schema": "PASS"
+  },
+  "retention": {
+    "credentials_retained": false,
+    "model_payloads_retained": false,
+    "unnecessary_logs_retained": false
+  }
+}

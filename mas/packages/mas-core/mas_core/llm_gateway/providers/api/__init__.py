@@ -8,6 +8,7 @@ from . import cerebras as cerebras  # noqa: F401
 from . import cloudflare as cloudflare  # noqa: F401
 from . import gemini as gemini  # noqa: F401
 from . import groq as groq  # noqa: F401
+from . import litellm as litellm  # noqa: F401
 from . import mistral as mistral  # noqa: F401
 from . import nvidia as nvidia  # noqa: F401
 from . import openrouter as openrouter  # noqa: F401

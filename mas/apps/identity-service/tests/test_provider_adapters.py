@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import json
+import time
 
 import httpx
 import pytest
@@ -28,14 +32,16 @@ async def test_stalwart_adapter_uses_jmap_idempotency_and_redacts_provider_failu
         adapter = StalwartAdapter(base_url="https://mail.example", api_key="not-returned", client=client)
         result = await adapter.create_mailbox("w-1@agents.example", quota_mb=100, idempotency_key="mailbox:identity-job")
 
-    assert observed["paths"] == ["/api", "/api"]
+    assert observed["paths"] == ["/jmap", "/jmap"]
     assert observed["idempotency"] == "mailbox:identity-job"
     assert result["provider_account_id"] == "a-1"
     assert "x:Account/set" in str(observed["body"])
     assert observed["body"]["using"] == ["urn:ietf:params:jmap:core", "urn:stalwart:jmap"]  # type: ignore[index]
     account = next(iter(observed["body"]["methodCalls"][0][1]["create"].values()))  # type: ignore[index]
     assert account["domainId"] == "domain-1"
-    assert account["credentials"] == []
+    assert account["credentials"] == {}
+    assert account["permissions"]["@type"] == "Replace"
+    assert account["permissions"]["enabledPermissions"]["emailReceive"] is True
     assert account["quotas"]["maxDiskQuota"] == 100 * 1024 * 1024
 
 
@@ -118,6 +124,8 @@ async def test_stalwart_mail_operations_use_the_separate_jmap_service_token() ->
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/jmap"
         assert request.headers["Authorization"] == "Bearer mail-service-token"
+        payload = json.loads(request.content)
+        assert "filter" not in payload["methodCalls"][0][1]
         return httpx.Response(200, json={"methodResponses": [["Email/query", {"ids": []}, "list-mail"]]})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -233,3 +241,65 @@ async def test_resend_adapter_validates_domain_without_exposing_api_key() -> Non
     assert "secret-api-key" not in json.dumps(result)
     assert adapter.classify_transient_or_permanent_failure(503) == "transient"
     assert adapter.classify_transient_or_permanent_failure(400) == "permanent"
+
+
+def test_resend_webhook_normalization_drops_provider_payload_fields() -> None:
+    observation = ResendRelayAdapter.normalize_webhook(
+        {
+            "id": "resend-event-1",
+            "type": "email.bounced",
+            "data": {
+                "email_id": "resend-message-1",
+                "status": "bounced",
+                "body": "drop-me",
+            },
+        },
+        signature_verified=True,
+    )
+    assert observation.event_type == "bounced"
+    assert observation.signature_verified is True
+    assert observation.metadata == {"provider_event_type": "email.bounced", "provider_status": "bounced"}
+    assert "drop-me" not in str(observation)
+
+
+def _resend_signature(raw_body: bytes, *, secret: bytes, message_id: str, timestamp: int) -> dict[str, str]:
+    signed = f"{message_id}.{timestamp}.".encode() + raw_body
+    signature = base64.b64encode(hmac.new(secret, signed, hashlib.sha256).digest()).decode()
+    return {
+        "svix-id": message_id,
+        "svix-timestamp": str(timestamp),
+        "svix-signature": f"v1,{signature}",
+    }
+
+
+def test_resend_webhook_signature_verification_accepts_valid_and_rotated_signatures() -> None:
+    secret = b"resend-webhook-secret"
+    encoded = "whsec_" + base64.b64encode(secret).decode()
+    body = b'{"id":"evt-1","type":"email.delivered"}'
+    headers = _resend_signature(body, secret=secret, message_id="msg-1", timestamp=1_700_000_000)
+    rotated = _resend_signature(body, secret=b"old-secret", message_id="msg-1", timestamp=1_700_000_000)
+    headers["svix-signature"] = f"{rotated['svix-signature']} {headers['svix-signature']}"
+
+    assert ResendRelayAdapter.verify_webhook_signature(
+        body, headers, signing_secret=encoded, now=1_700_000_010
+    ) is True
+
+
+def test_resend_webhook_signature_verification_rejects_tampering_missing_headers_and_replay() -> None:
+    secret = b"resend-webhook-secret"
+    encoded = "whsec_" + base64.b64encode(secret).decode()
+    body = b'{"id":"evt-1","type":"email.delivered"}'
+    headers = _resend_signature(body, secret=secret, message_id="msg-1", timestamp=1_700_000_000)
+
+    assert ResendRelayAdapter.verify_webhook_signature(
+        body + b" ", headers, signing_secret=encoded, now=1_700_000_010
+    ) is False
+    assert ResendRelayAdapter.verify_webhook_signature(
+        body, {"svix-id": "msg-1"}, signing_secret=encoded, now=1_700_000_010
+    ) is False
+    assert ResendRelayAdapter.verify_webhook_signature(
+        body, headers, signing_secret=encoded, now=time.time(), tolerance_seconds=300
+    ) is False
+    assert ResendRelayAdapter.verify_webhook_signature(
+        body, headers, signing_secret="not-base64", now=1_700_000_010
+    ) is False

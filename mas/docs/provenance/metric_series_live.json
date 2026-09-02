@@ -1,0 +1,32 @@
+{
+  "schema_version": "aiat.metric-series-budget-live.v1",
+  "programme_scope": "personal-internal-only",
+  "observed_at": "2026-08-18T16:05:09Z",
+  "environment": {
+    "host_class": "WSL2 with Docker Desktop Linux engine",
+    "orchestrator_url_configured": true,
+    "credentials_printed": false
+  },
+  "report": {
+    "status": "pass",
+    "total_series": 31,
+    "total_budget": 2000,
+    "family_counts": {
+      "mas_infra_lead_time": 12,
+      "mas_project_state": 18,
+      "mas_review_circuit_open": 1
+    },
+    "family_budgets": {
+      "mas_infra_lead_time": 20,
+      "mas_project_state": 32,
+      "mas_review_circuit_open": 4
+    },
+    "project_id_label_present": false,
+    "violations": []
+  },
+  "notices": [
+    "This is the refreshed 31-series local orchestrator scrape; the separate durable 10,000-project certificate is retained at metric_series_many_projects.json, while clean native-Linux release-host scale evidence remains open.",
+    "No licence or resource metadata was evaluated as a gate.",
+    "This run used the authenticated Compose orchestrator endpoint and retained only series counts, bounded label inventories, and policy violations."
+  ]
+}

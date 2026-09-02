@@ -28,7 +28,7 @@ services:
 
   # pgAdmin — Postgres GUI
   pgadmin:
-    image: dpage/pgadmin4:latest
+    image: dpage/pgadmin4:latest@sha256:2f4ce946ddf8360680d7eff4eaba1d91859eb6b4003e6623bad5c63a322c2f4d
     restart: unless-stopped
     networks:
       - internal
@@ -42,7 +42,7 @@ services:
 
   # RedisInsight — Redis GUI
   redis-insight:
-    image: redislabs/redisinsight:latest
+    image: redislabs/redisinsight:latest@sha256:b5e19ee240abef6edb435871b90ff8a210995422e8e018ab61c0339d318a1f84
     restart: unless-stopped
     networks:
       - internal
@@ -86,6 +86,15 @@ services:
   omniroute:
     ports:
       - "20128:20128"
+      - "20129:20129"
+
+  dashboard:
+    depends_on:
+      prometheus:
+        # Metrics are optional; start the dashboard as soon as Prometheus is
+        # launched and let the bounded query timeout handle a cold/unhealthy
+        # metrics backend without blocking the UI.
+        condition: service_started
 
   # Dev overrides for FastAPI services. These intentionally avoid uvicorn's
   # reload watcher because bind-mounted WSL workspaces can raise watchfiles
@@ -96,8 +105,16 @@ services:
         --host 0.0.0.0 --port 8000
     volumes:
       - ../../apps/orchestrator-api/orchestrator_api:/app/orchestrator_api
+      # Keep the provider-control-plane core hot-reloadable with the API in
+      # development; production remains image-pinned.
+      - ../../packages/mas-core/mas_core:/app/mas_core
       - ../../migrations:/app/migrations
+      # Keep the checked-in default company manifest in sync with the mounted
+      # development API instead of relying on a stale image layer.
+      - ../../companies:/app/companies:ro
     environment:
+      MAS_ENVIRONMENT: development
+      PYTHONPATH: /app
       LOG_LEVEL: DEBUG
       WATCHFILES_FORCE_POLLING: "true"
 
@@ -127,6 +144,17 @@ services:
     environment:
       LOG_LEVEL: DEBUG
       WATCHFILES_FORCE_POLLING: "true"
+
+  pm-gateway:
+    ports:
+      - "8010:8010"
+    command: >
+      uvicorn pm_gateway.main:app
+        --host 0.0.0.0 --port 8010
+    volumes:
+      - ../../apps/pm-gateway/pm_gateway:/usr/local/lib/python3.11/site-packages/pm_gateway
+    environment:
+      PM_GATEWAY_ENVIRONMENT: development
 
 secrets:
   orchestrator_api_key:

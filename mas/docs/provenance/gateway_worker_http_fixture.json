@@ -1,0 +1,21 @@
+{
+  "adapter_type": "aiat_gateway",
+  "authorization_boundary_match": true,
+  "bounded_payload_match": true,
+  "controller_terminal_state": "SUCCEEDED",
+  "exact_model_id": "fixture/model-v1",
+  "external_provider_call_performed": false,
+  "fixture_dispatch_performed": true,
+  "gateway_endpoint": "/v1/chat/completions",
+  "gateway_request_count": 2,
+  "licence_metadata_is_gate": false,
+  "mode": "fixture",
+  "network_mutation_performed": false,
+  "provider_id": "fixture-provider",
+  "retry_count": 1,
+  "sandbox_execution_performed": false,
+  "schema_version": "aiat.gateway-worker-http-fixture.v1",
+  "scope": "real LLMGatewayClient/GatewayWorkerAdapter/WorkerRunController through in-process HTTP transport",
+  "status": "pass",
+  "usage_attribution_match": true
+}

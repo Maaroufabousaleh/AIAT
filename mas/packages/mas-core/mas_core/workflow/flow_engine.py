@@ -154,6 +154,10 @@ class FlowDefinition:
     nodes: list[FlowNode]
     edges: list[FlowEdge]
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Version of the canonical node configuration catalogue used to author
+    # this definition.  Definitions written before the catalogue existed are
+    # read as v1 for a backwards-compatible migration window.
+    schema_version: str = "1.0"
 
     def get_node(self, node_id: str) -> FlowNode | None:
         for n in self.nodes:
@@ -217,7 +221,9 @@ def validate_flow(definition: FlowDefinition) -> list[str]:
       - parallel: requires "branches" (array of node IDs)
       - join: no extra required config
     """
-    errors: list[str] = []
+    from .node_schema import validate_node_schema_version
+
+    errors: list[str] = validate_node_schema_version(definition.schema_version)
 
     if not definition.nodes:
         errors.append("Flow must have at least one node")
@@ -254,6 +260,72 @@ def validate_flow(definition: FlowDefinition) -> list[str]:
         node_errors = _validate_node_config(node)
         errors.extend(node_errors)
 
+    # Typed node fields are necessary but not sufficient for control-flow
+    # safety.  Keep the graph contract explicit so runtime traversal cannot
+    # silently ignore a declared parallel branch or route a switch case to a
+    # node that has no edge from the switch.
+    errors.extend(_validate_control_flow_topology(definition))
+
+    return errors
+
+
+def _validate_control_flow_topology(definition: FlowDefinition) -> list[str]:
+    """Validate graph relationships owned by parallel, join, and switch nodes.
+
+    ``FlowNode.config`` declares the intended branch/case targets while edges
+    describe the persisted graph.  Requiring the two views to agree prevents a
+    definition from appearing valid in the editor but taking a different path
+    at runtime.  This helper is deterministic and has no storage or provider
+    side effects.
+    """
+
+    node_ids = {node.id for node in definition.nodes}
+    errors: list[str] = []
+
+    for node in definition.nodes:
+        outgoing_targets = [edge.target for edge in definition.get_outgoing_edges(node.id)]
+        outgoing_set = set(outgoing_targets)
+
+        if node.type == FlowNodeType.PARALLEL:
+            branches = [str(branch).strip() for branch in node.branches]
+            if len(branches) != len(set(branches)):
+                errors.append(f"Node '{node.id}' (parallel): branches must be unique")
+            unknown = sorted(set(branches) - node_ids)
+            if unknown:
+                errors.append(
+                    f"Node '{node.id}' (parallel): branches reference unknown nodes: {unknown}"
+                )
+            missing_edges = sorted(set(branches) - outgoing_set)
+            if missing_edges:
+                errors.append(
+                    f"Node '{node.id}' (parallel): missing outgoing edges for branches: {missing_edges}"
+                )
+            undeclared_edges = sorted(outgoing_set - set(branches))
+            if undeclared_edges:
+                errors.append(
+                    f"Node '{node.id}' (parallel): outgoing edges are not declared branches: {undeclared_edges}"
+                )
+
+        elif node.type == FlowNodeType.JOIN:
+            incoming = definition.get_incoming_edges(node.id)
+            if len(incoming) < 2:
+                errors.append(
+                    f"Node '{node.id}' (join): requires at least two incoming branch edges"
+                )
+
+        elif node.type == FlowNodeType.SWITCH:
+            cases = {str(key): str(value) for key, value in node.switch_cases.items()}
+            unknown = sorted(set(cases.values()) - node_ids)
+            if unknown:
+                errors.append(
+                    f"Node '{node.id}' (switch): cases reference unknown nodes: {unknown}"
+                )
+            missing_edges = sorted(set(cases.values()) - outgoing_set)
+            if missing_edges:
+                errors.append(
+                    f"Node '{node.id}' (switch): missing outgoing edges for cases: {missing_edges}"
+                )
+
     return errors
 
 
@@ -277,45 +349,23 @@ def _compute_reachable(definition: FlowDefinition, start_id: str) -> set[str]:
 
 def _validate_node_config(node: FlowNode) -> list[str]:
     """Validate required config for a node type."""
-    errors: list[str] = []
+    from .node_schema import validate_node_config_schema
+
+    # The schema catalogue owns common types/required fields.  The task policy
+    # model below owns the deeper worker/model/checkpoint semantics.
+    errors: list[str] = [
+        f"Node '{node.id}' ({node.type.value}): {error}"
+        for error in validate_node_config_schema(node.type, node.config)
+    ]
     config = node.config
 
     if node.type == FlowNodeType.TASK:
-        if not config.get("action") and not config.get("team_id"):
-            if not config.get("worker_id"):
-                errors.append(f"Node '{node.id}' (task): requires 'action', 'team_id', or 'worker_id'")
         # Modern typed worker policy validation is additive to the legacy graph
         # rules. It rejects raw model IDs and invalid retry/cancellation policy
         # while keeping old action/team flows readable during migration.
         from .worker_policy import validate_task_policy
 
         errors.extend(f"Node '{node.id}' (task): {error}" for error in validate_task_policy(config))
-
-    elif node.type == FlowNodeType.APPROVAL:
-        if not config.get("approver_role") and not config.get("approver_user"):
-            errors.append(
-                f"Node '{node.id}' (approval): requires 'approver_role' or 'approver_user'"
-            )
-
-    elif node.type == FlowNodeType.CONDITION:
-        if not config.get("expression"):
-            errors.append(f"Node '{node.id}' (condition): requires 'expression'")
-
-    elif node.type == FlowNodeType.PARALLEL:
-        if not config.get("branches") or not isinstance(config.get("branches"), list):
-            errors.append(f"Node '{node.id}' (parallel): requires 'branches' as array of node IDs")
-
-    elif node.type == FlowNodeType.SWITCH:
-        if not config.get("switch_key"):
-            errors.append(f"Node '{node.id}' (switch): requires 'switch_key'")
-        if not config.get("switch_cases") or not isinstance(config.get("switch_cases"), dict):
-            errors.append(f"Node '{node.id}' (switch): requires 'switch_cases' as object")
-
-    elif node.type == FlowNodeType.ESCALATE:
-        if not config.get("escalate_to_team") and not config.get("escalate_to_agent"):
-            errors.append(
-                f"Node '{node.id}' (escalate): requires 'escalate_to_team' or 'escalate_to_agent'"
-            )
 
     return errors
 
@@ -341,7 +391,7 @@ def parse_flow_definition(data: dict[str, Any]) -> FlowDefinition:
         try:
             node_type = FlowNodeType(n.get("type", ""))
         except ValueError:
-            raise FlowValidationError(f"Invalid node type: {n.get('type')}")
+            raise FlowValidationError(f"Invalid node type: {n.get('type')}") from None
         nodes.append(
             FlowNode(
                 id=str(n["id"]),
@@ -364,7 +414,12 @@ def parse_flow_definition(data: dict[str, Any]) -> FlowDefinition:
         )
 
     metadata = data.get("metadata", {})
-    return FlowDefinition(nodes=nodes, edges=edges, metadata=metadata)
+    schema_version = str(
+        data.get("schema_version")
+        or metadata.get("node_schema_version")
+        or "1.0"
+    )
+    return FlowDefinition(nodes=nodes, edges=edges, metadata=metadata, schema_version=schema_version)
 
 
 @dataclass
@@ -424,11 +479,25 @@ def get_next_nodes(
                 edge_cond = (
                     edge.condition or edge.label
                 )  # label is used as condition when condition is absent
-                if result and edge_cond in (None, "true", "pass"):
-                    next_ids.append(target)
-                elif not result and edge_cond in ("false", "fail"):
+                if (result and edge_cond in (None, "true", "pass")) or (
+                    not result and edge_cond in ("false", "fail")
+                ):
                     next_ids.append(target)
             continue  # condition node handled; skip generic outgoing logic
+
+        # A completed switch owns its case selection.  Do not also walk every
+        # outgoing edge through the generic path, or one traversal would
+        # schedule both the selected and unselected branches.
+        if source_node is not None and source_node.type == FlowNodeType.SWITCH:
+            switch_key = source_node.config.get("switch_key", "")
+            switch_cases = source_node.config.get("switch_cases", {})
+            context_value = (context or {}).get(switch_key)
+            matched_target = (
+                switch_cases.get(str(context_value)) if context_value is not None else None
+            )
+            if matched_target and matched_target not in completed_node_ids:
+                next_ids.append(matched_target)
+            continue
 
         for edge in outgoing:
             target = edge.target
@@ -445,7 +514,7 @@ def get_next_nodes(
             elif target_node.type == FlowNodeType.JOIN:
                 incoming = definition.get_incoming_edges(target)
                 all_completed = all(e.source in completed_node_ids for e in incoming)
-                if all_completed:
+                if target not in completed_node_ids and all_completed:
                     next_ids.append(target)
 
             elif target_node.type == FlowNodeType.PARALLEL:
@@ -455,19 +524,23 @@ def get_next_nodes(
                     next_ids.append(target)
 
             elif target_node.type == FlowNodeType.SWITCH:
-                switch_key = target_node.config.get("switch_key", "")
-                switch_cases = target_node.config.get("switch_cases", {})
-                context_value = (context or {}).get(switch_key)
-                matched_target = (
-                    switch_cases.get(str(context_value)) if context_value is not None else None
-                )
-                if matched_target and matched_target not in completed_node_ids:
-                    next_ids.append(matched_target)
+                # A switch is a real control node, not an implicit edge.
+                # Activate it first so the runtime can persist an execution
+                # record and let the completed switch select exactly one case
+                # through the source-node branch above.  Routing directly from
+                # the predecessor skipped the switch execution entirely and
+                # blocked when its context value was not set until completion.
+                if target not in completed_node_ids:
+                    next_ids.append(target)
 
             else:
                 if target not in completed_node_ids:
                     next_ids.append(target)
 
+    # Multiple completed branch nodes can point at one join, and a traversal
+    # receives the full completed set on every call.  Preserve graph order but
+    # never schedule the same node twice or re-activate a completed join.
+    next_ids = list(dict.fromkeys(next_ids))
     if not next_ids:
         end_nodes = definition.get_end_nodes()
         if all(n.id in completed_node_ids for n in end_nodes):
@@ -598,6 +671,7 @@ class FlowAdvanceResult:
 def serialize_flow_definition(definition: FlowDefinition) -> dict[str, Any]:
     """Serialize a FlowDefinition to a JSON-serializable dict."""
     return {
+        "schema_version": definition.schema_version,
         "nodes": [
             {
                 "id": n.id,

@@ -1,6 +1,11 @@
 import type { Edge, Node } from "@xyflow/react";
 
 import type { FlowDefinition, FlowEdgeDefinition, FlowNodeDefinition, FlowNodeType } from "@/lib/flow-types";
+import { FLOW_NODE_SCHEMA_CATALOG } from "@/lib/generated/flow-node-schemas";
+
+export function getFlowNodeSchema(type: FlowNodeType) {
+  return FLOW_NODE_SCHEMA_CATALOG.node_types[type];
+}
 
 export function convertFlowToReactFlow(
   nodes: FlowNodeDefinition[],
@@ -26,8 +31,14 @@ export function convertFlowToReactFlow(
   };
 }
 
-export function convertReactFlowToFlow(nodes: Node[], edges: Edge[]): FlowDefinition {
+export function convertReactFlowToFlow(
+  nodes: Node[],
+  edges: Edge[],
+  metadata?: Record<string, unknown>
+): FlowDefinition {
   return {
+    schema_version: FLOW_NODE_SCHEMA_CATALOG.schema_version,
+    ...(metadata && Object.keys(metadata).length > 0 ? { metadata } : {}),
     nodes: nodes.map((node) => ({
       id: node.id,
       type: node.data.type as FlowNodeType,

@@ -1,0 +1,22 @@
+# Disposable, single-route LiteLLM configuration for the governed OpenHands
+# certification workflow.  The workflow mounts this file into the pinned
+# LiteLLM image; it is intentionally not the production multi-route config.
+model_list:
+  - model_name: omniroute-coding
+    litellm_params:
+      # The OpenHands-visible alias is stable; OmniRoute owns governed provider
+      # selection through its pinned zero-config coding combo.  The explicit
+      # ``openai/`` prefix selects LiteLLM's OpenAI-compatible transport and
+      # forwards ``auto/coding`` as the model id to OmniRoute.
+      model: openai/auto/coding
+      # OmniRoute v3.8.38 serves dashboard/management on 20128 and its
+      # OpenAI-compatible API bridge on API_PORT=20129.
+      api_base: http://omniroute:20129/v1
+      api_key: os.environ/OMNIROUTE_API_KEY
+
+litellm_settings:
+  drop_params: true
+  request_timeout: 120
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY

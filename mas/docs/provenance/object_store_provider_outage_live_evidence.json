@@ -1,0 +1,84 @@
+{
+  "schema_version": "aiat.object-store-provider-outage.v1",
+  "evidence_commit": "d92b3dced463c9f70487aaaf0a6573f12d9e3c78",
+  "observed_at": "2026-08-18T15:15:51Z",
+  "mode": "live-disposable-process-outage",
+  "status": "pass",
+  "reserved_project": "aiat-outage-live-20260818-r3",
+  "topology": {
+    "network": "mas_internal",
+    "network_created_for_wave": false,
+    "minio_alias": "minio-outage",
+    "seaweedfs_alias": "seaweedfs-resource",
+    "container_identity": "explicit aiat.release-gate=object-store-provider-outage and aiat.project labels",
+    "storage": "anonymous disposable volume per provider; no host bind or persistent named volume"
+  },
+  "workload": {
+    "object_count_per_provider": 2,
+    "payload_sizes_bytes": [65536, 1048576],
+    "total_payload_bytes_per_provider": 1114112,
+    "operation_timeout_seconds": 5.0,
+    "recovery_timeout_seconds": 30.0,
+    "same_workload_for_both_providers": true
+  },
+  "providers": [
+    {
+      "name": "minio",
+      "status": "pass",
+      "adapter": "s3-compatible/aioboto3",
+      "process_outage_observed": true,
+      "restart_verified": true,
+      "recovery_endpoint_observed": true,
+      "checksum_readback_verified": true,
+      "cleanup_deleted_count": 2,
+      "remaining_fixture_count": 0,
+      "cleanup_verified": true,
+      "container_removed": true,
+      "disposable_storage_cleanup_verified": true,
+      "resource_limit_status": "not_checked"
+    },
+    {
+      "name": "seaweedfs",
+      "status": "pass",
+      "adapter": "s3-compatible/aioboto3",
+      "process_outage_observed": true,
+      "restart_verified": true,
+      "recovery_endpoint_observed": true,
+      "checksum_readback_verified": true,
+      "cleanup_deleted_count": 2,
+      "remaining_fixture_count": 0,
+      "cleanup_verified": true,
+      "container_removed": true,
+      "disposable_storage_cleanup_verified": true,
+      "resource_limit_status": "not_checked"
+    }
+  ],
+  "cleanup": {
+    "provider_containers_remaining": 0,
+    "helper_containers_remaining": 0,
+    "disposable_volumes_remaining": 0,
+    "disposable_networks_created": 0,
+    "canonical_network_residue_aliases": 0
+  },
+  "failure_classification": {
+    "harness_or_configuration_failure": "not observed in corrected r3; earlier development attempts were excluded from provider evidence",
+    "provider_functional_failure": "not observed; both providers retained and read back the reserved objects after restart",
+    "provider_resource_limit_failure": "not checked; this gate is process outage/recovery, not a production resource threshold",
+    "infrastructure_or_environment_failure": "not observed after the reserved namespace, canonical network, and labelled disposable containers were validated"
+  },
+  "excluded_attempts": [
+    "r1: development attempt with cancelled S3 probes; no provider verdict retained",
+    "r2: development attempt used tmpfs and therefore could not test restart persistence; no provider verdict retained"
+  ],
+  "not_checked": [
+    "multipart upload",
+    "provider-managed SSE/KMS",
+    "clean-host bootstrap",
+    "independent-host disaster recovery",
+    "production resource thresholds",
+    "licence-based provider selection"
+  ],
+  "payload_free": true,
+  "secret_free": true,
+  "licence_metadata_is_gate": false
+}

@@ -13,6 +13,8 @@ import hashlib
 import importlib
 import json
 import logging
+import math
+import os
 import re
 import time
 from dataclasses import dataclass
@@ -45,8 +47,59 @@ from mas_core.worker_contract import (
     WorkerUsage,
     issue_opencode_tool_grant,
 )
+from mas_core.worker_registry.firecracker import FirecrackerLaunchSpec
 
 logger = logging.getLogger(__name__)
+
+_OPENHANDS_CANONICAL_REPORT_DIR = Path("docs/provenance/openhands-candidate")
+
+
+def _resolve_openhands_interface_report(report_ref: str | Path) -> Path:
+    """Resolve a committed OpenHands report in source or the API image.
+
+    Source manifests use ``mas/docs/...`` while the orchestrator image copies
+    the canonical candidate evidence under ``/app/docs/...``. Both forms are
+    accepted only inside that exact provenance directory; arbitrary paths and
+    inline approval claims remain invalid.
+    """
+
+    raw = Path(str(report_ref))
+    if any(part == ".." for part in raw.parts):
+        raise ValueError("OpenHands interface verification ref must not contain parent traversal")
+    roots: list[Path] = []
+    configured_root = os.getenv("AIAT_REPOSITORY_ROOT", "").strip()
+    if configured_root:
+        roots.append(Path(configured_root))
+    roots.extend((Path(__file__).resolve().parents[5], Path("/app")))
+    seen: set[Path] = set()
+    for root in roots:
+        root = root.resolve()
+        if root in seen:
+            continue
+        seen.add(root)
+        relative_options = [raw]
+        if not raw.is_absolute() and raw.parts[:2] == ("mas", "docs"):
+            relative_options.append(Path(*raw.parts[1:]))
+        for relative in relative_options:
+            candidate = relative if relative.is_absolute() else root / relative
+            try:
+                resolved = candidate.resolve()
+            except (OSError, ValueError):
+                continue
+            if resolved.name != "interface-verification.json" or not resolved.is_file():
+                continue
+            for canonical_root in (
+                (root / "mas/docs/provenance/openhands-candidate").resolve(),
+                (root / _OPENHANDS_CANONICAL_REPORT_DIR).resolve(),
+            ):
+                try:
+                    resolved.relative_to(canonical_root)
+                except ValueError:
+                    continue
+                return resolved
+    raise ValueError(
+        "OpenHands interface verification must use the canonical candidate provenance directory"
+    )
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -460,6 +513,292 @@ class CrewAIAdapter(NativeWorkerAdapter):
     runtime_type = "crewai"
 
 
+class GatewayWorkerAdapter(NativeWorkerAdapter):
+    """Run a bounded model-backed worker through AIAT's gateway.
+
+    The adapter owns no provider credentials and never selects a model on its
+    own.  The controller supplies an immutable ``resolved_model_profile``;
+    readiness rejects requests without an exact model ID, and the normalized
+    result records the adapter's configured provider identity for the
+    controller's snapshot-attribution check.  A real gateway client may be
+    injected for tests or a host-certified deployment; the default client is
+    created from an AIAT-owned ``LLMConfig``.
+    """
+
+    runtime_type = "aiat_gateway"
+    _MAX_GATEWAY_MESSAGES = 64
+    _MAX_GATEWAY_CONTENT_CHARS = 32_000
+
+    def __init__(
+        self,
+        *,
+        worker_id: str,
+        provider_id: str = "litellm",
+        gateway_client: Any | None = None,
+        gateway_config: Any | None = None,
+        capabilities: WorkerCapabilities | None = None,
+        context: AdapterContext | None = None,
+        runtime_version: str | None = None,
+        max_provider_retries: int = 0,
+        retry_min_wait_s: float = 0.0,
+        retry_max_wait_s: float = 1.0,
+    ) -> None:
+        from mas_core.llm_gateway.client import LLMGatewayClient
+        from mas_core.llm_gateway.models import LLMConfig
+
+        normalized_provider = str(provider_id).strip()
+        if not normalized_provider:
+            raise ValueError("gateway worker provider_id must not be blank")
+        if not 0 <= int(max_provider_retries) <= 3:
+            raise ValueError("max_provider_retries must be between 0 and 3")
+        if not 0 <= float(retry_min_wait_s) <= 30:
+            raise ValueError("retry_min_wait_s must be between 0 and 30 seconds")
+        if not 0 <= float(retry_max_wait_s) <= 60:
+            raise ValueError("retry_max_wait_s must be between 0 and 60 seconds")
+        if float(retry_max_wait_s) < float(retry_min_wait_s):
+            raise ValueError("retry_max_wait_s must be at least retry_min_wait_s")
+        owns_gateway_client = gateway_client is None
+        if gateway_client is None:
+            if gateway_config is None:
+                gateway_config = LLMConfig()
+            elif isinstance(gateway_config, dict):
+                gateway_config = LLMConfig(**gateway_config)
+            gateway_client = LLMGatewayClient(gateway_config)
+        self.gateway_client = gateway_client
+        self.provider_id = normalized_provider
+        self._owns_gateway_client = owns_gateway_client
+        self._gateway_started = False
+        self.max_provider_retries = int(max_provider_retries)
+        self.retry_min_wait_s = float(retry_min_wait_s)
+        self.retry_max_wait_s = float(retry_max_wait_s)
+
+        async def runner(request: WorkerRunRequest, _adapter: NativeWorkerAdapter) -> WorkerResult:
+            return await self._run_gateway(request)
+
+        super().__init__(
+            runner,
+            worker_id=worker_id,
+            capabilities=capabilities
+            or _external_capabilities(
+                checkpoint_mode=CheckpointMode.UNSUPPORTED,
+                model_mode=ModelMode.AIAT_GATEWAY,
+                capability_names=["model.chat"],
+            ),
+            context=context,
+            runtime_version=runtime_version,
+        )
+
+    async def start(self, request: WorkerRunRequest) -> Any:
+        """Start an owned gateway client before accepting the worker run."""
+
+        if self._owns_gateway_client and not self._gateway_started:
+            starter = getattr(self.gateway_client, "start", None)
+            if callable(starter):
+                await starter()
+            self._gateway_started = True
+        return await super().start(request)
+
+    async def readiness(self, request: WorkerRunRequest | None = None) -> WorkerReadiness:
+        local = await super().readiness(request)
+        blockers = list(local.blockers)
+        checks = dict(local.checks)
+        checks["gateway_client_configured"] = self.gateway_client is not None
+        checks["resolved_model_profile"] = False
+        if request is None or request.resolved_model_profile is None:
+            blockers.append("AIAT gateway worker requires a resolved Model Profile")
+        else:
+            model_id = str(request.resolved_model_profile.exact_model_id or "").strip()
+            if not model_id or model_id.lower() == "auto":
+                blockers.append("AIAT gateway worker requires an exact resolved model ID")
+            else:
+                checks["resolved_model_profile"] = True
+        return WorkerReadiness(
+            worker_id=self.worker_id,
+            ready=not blockers,
+            checks=checks,
+            blockers=blockers,
+        )
+
+    @staticmethod
+    def _messages_from_request(request: WorkerRunRequest) -> list[dict[str, str]]:
+        task_input = request.task_input if isinstance(request.task_input, dict) else {}
+        raw_messages = task_input.get("messages")
+        if raw_messages is None:
+            prompt = task_input.get("prompt")
+            if not isinstance(prompt, str) or not prompt.strip():
+                raise ValueError("task_input requires a non-empty prompt or messages list")
+            content = prompt.strip()
+            if len(content) > GatewayWorkerAdapter._MAX_GATEWAY_CONTENT_CHARS:
+                raise ValueError("task_input.prompt exceeds the gateway content limit")
+            return [{"role": "user", "content": content}]
+        if not isinstance(raw_messages, list) or not raw_messages:
+            raise ValueError("task_input.messages must be a non-empty list")
+        if len(raw_messages) > GatewayWorkerAdapter._MAX_GATEWAY_MESSAGES:
+            raise ValueError("task_input.messages exceeds the gateway message limit")
+        messages: list[dict[str, str]] = []
+        for item in raw_messages:
+            if not isinstance(item, dict):
+                raise ValueError("each task_input message must be an object")
+            role = str(item.get("role") or "").strip()
+            content = item.get("content")
+            if not role or not isinstance(content, str) or not content.strip():
+                raise ValueError("each task_input message requires role and content")
+            normalized_content = content.strip()
+            if len(normalized_content) > GatewayWorkerAdapter._MAX_GATEWAY_CONTENT_CHARS:
+                raise ValueError("task_input message content exceeds the gateway content limit")
+            messages.append({"role": role, "content": normalized_content})
+        return messages
+
+    @staticmethod
+    def _bounded_generation_options(request: WorkerRunRequest) -> tuple[int, float]:
+        task_input = request.task_input if isinstance(request.task_input, dict) else {}
+        try:
+            max_tokens = int(task_input.get("max_tokens", 256))
+            temperature = float(task_input.get("temperature", 0.2))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("max_tokens and temperature must be numeric") from exc
+        if not 1 <= max_tokens <= 4096:
+            raise ValueError("max_tokens must be between 1 and 4096")
+        if not math.isfinite(temperature) or not 0 <= temperature <= 2:
+            raise ValueError("temperature must be between 0 and 2")
+        return max_tokens, temperature
+
+    async def _run_gateway(self, request: WorkerRunRequest) -> WorkerResult:
+        profile = request.resolved_model_profile
+        model_id = str(profile.exact_model_id or "").strip() if profile is not None else ""
+        try:
+            messages = self._messages_from_request(request)
+            max_tokens, temperature = self._bounded_generation_options(request)
+        except ValueError as exc:
+            return WorkerResult(
+                run_id=request.run_id,
+                worker_id=self.worker_id,
+                success=False,
+                error=WorkerError(
+                    code="MODEL_GATEWAY_INPUT_REJECTED",
+                    message="AIAT model gateway input was rejected before dispatch",
+                    retryable=False,
+                    terminal=True,
+                    category="validation",
+                    details={"cause_type": type(exc).__name__},
+                ),
+            )
+        from mas_core.llm_gateway.client import (
+            RETRYABLE_LLM_STATUS_CODES,
+            LLMGatewayError,
+        )
+
+        provider_attempts = 0
+        last_error: Exception | None = None
+        response: Any | None = None
+        for attempt in range(self.max_provider_retries + 1):
+            provider_attempts = attempt + 1
+            try:
+                response = await self.gateway_client.chat_completion(
+                    messages=messages,
+                    model=model_id,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                )
+                break
+            except Exception as exc:
+                last_error = exc
+                if isinstance(exc, LLMGatewayError):
+                    status_code = int(exc.status_code)
+                    retryable = status_code in RETRYABLE_LLM_STATUS_CODES or status_code == 0
+                else:
+                    status_code = 0
+                    retryable = True
+                if not retryable or attempt >= self.max_provider_retries:
+                    break
+                wait_s = min(
+                    self.retry_max_wait_s,
+                    self.retry_min_wait_s * (2**attempt),
+                )
+                if wait_s > 0:
+                    await asyncio.sleep(wait_s)
+
+        if response is None:
+            exc = last_error or RuntimeError("gateway dispatch returned no response")
+            if isinstance(exc, LLMGatewayError):
+                status_code = int(exc.status_code)
+                retryable = status_code in RETRYABLE_LLM_STATUS_CODES or status_code == 0
+                return WorkerResult(
+                    run_id=request.run_id,
+                    worker_id=self.worker_id,
+                    success=False,
+                    error=WorkerError(
+                        code=(
+                            "MODEL_GATEWAY_TRANSIENT_FAILURE"
+                            if retryable
+                            else "MODEL_GATEWAY_REQUEST_REJECTED"
+                        ),
+                        message=(
+                            "AIAT model gateway transient failure"
+                            if retryable
+                            else "AIAT model gateway request was rejected"
+                        ),
+                        retryable=retryable,
+                        terminal=not retryable,
+                        category="provider",
+                        details={
+                            "status_code": status_code,
+                            "provider_attempts": provider_attempts,
+                            "provider_retry_count": max(0, provider_attempts - 1),
+                        },
+                        cause_type=type(exc).__name__,
+                    ),
+                )
+            return WorkerResult(
+                run_id=request.run_id,
+                worker_id=self.worker_id,
+                success=False,
+                error=WorkerError(
+                    code="MODEL_GATEWAY_DISPATCH_FAILED",
+                    message="AIAT model gateway dispatch failed",
+                    retryable=True,
+                    category="provider",
+                    details={
+                        "cause_type": type(exc).__name__,
+                        "provider_attempts": provider_attempts,
+                        "provider_retry_count": max(0, provider_attempts - 1),
+                    },
+                ),
+            )
+        usage = getattr(response, "usage", None)
+        return WorkerResult(
+            run_id=request.run_id,
+            worker_id=self.worker_id,
+            success=True,
+            output={
+                "text": str(getattr(response, "text", "") or ""),
+                "finish_reason": str(getattr(response, "finish_reason", "stop") or "stop"),
+            },
+            usage=WorkerUsage(
+                prompt_tokens=max(0, int(getattr(usage, "prompt_tokens", 0) or 0)),
+                completion_tokens=max(0, int(getattr(usage, "completion_tokens", 0) or 0)),
+                total_tokens=max(0, int(getattr(usage, "total_tokens", 0) or 0)),
+                cost_usd=max(0.0, float(getattr(usage, "estimated_cost_usd", 0.0) or 0.0)),
+                provider=self.provider_id,
+                exact_model_id=model_id,
+            ),
+            replay_metadata={
+                "adapter_type": self.runtime_type,
+                "gateway_backend": str(getattr(getattr(self.gateway_client, "_config", None), "backend", "unknown")),
+                "provider_attempts": provider_attempts,
+                "provider_retry_count": max(0, provider_attempts - 1),
+            },
+        )
+
+    async def close(self) -> None:
+        await super().close()
+        if self._owns_gateway_client and self._gateway_started:
+            stop = getattr(self.gateway_client, "stop", None)
+            if callable(stop):
+                await stop()
+            self._gateway_started = False
+
+
 def _load_certified_callable(reference: str) -> Callable[..., Any]:
     module_name, separator, attribute = reference.partition(":")
     if not separator or not module_name or not attribute or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]*", module_name) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", attribute):
@@ -542,6 +881,65 @@ class OCIAdapter(ProcessAdapter):
         super().__init__(command, worker_id=worker_id, **kwargs)
         self.image = image
         self.sandbox_profile = sandbox_profile
+
+
+class FirecrackerAdapter(ProcessAdapter):
+    """Run a worker through an AIAT-certified Firecracker launcher.
+
+    The adapter only constructs a validated argv and delegates execution to a
+    launcher supplied by the host profile. It never accepts secret values or
+    falls back to Docker/runc when the launcher is unavailable.
+    """
+
+    runtime_type = "firecracker"
+
+    def __init__(
+        self,
+        *,
+        worker_id: str,
+        kernel_path: str,
+        kernel_sha256: str,
+        rootfs_path: str,
+        rootfs_sha256: str,
+        artifact_dir: str,
+        launcher: str = "aiat-firecracker-launcher",
+        network_mode: str = "egress-deny-all",
+        egress_allowlist: tuple[str, ...] | list[str] = (),
+        vcpu_count: int = 1,
+        memory_mib: int = 512,
+        pids_limit: int = 256,
+        disk_limit_mb: int = 1024,
+        output_limit_bytes: int = 4 * 1024 * 1024,
+        wall_clock_seconds: int = 300,
+        secret_refs: tuple[str, ...] | list[str] = (),
+        context: AdapterContext | None = None,
+        runtime_version: str | None = None,
+    ) -> None:
+        spec = FirecrackerLaunchSpec(
+            launcher=launcher,
+            kernel_path=kernel_path,
+            kernel_sha256=kernel_sha256,
+            rootfs_path=rootfs_path,
+            rootfs_sha256=rootfs_sha256,
+            artifact_dir=artifact_dir,
+            network_mode=network_mode,  # type: ignore[arg-type]
+            egress_allowlist=tuple(egress_allowlist),
+            vcpu_count=vcpu_count,
+            memory_mib=memory_mib,
+            pids_limit=pids_limit,
+            disk_limit_mb=disk_limit_mb,
+            output_limit_bytes=output_limit_bytes,
+            wall_clock_seconds=wall_clock_seconds,
+            secret_refs=tuple(secret_refs),
+        )
+        super().__init__(
+            spec.argv(),
+            worker_id=worker_id,
+            context=context,
+            runtime_version=runtime_version,
+        )
+        self.launch_spec = spec
+        self.sandbox_profile = "firecracker"
 
 
 @dataclass(frozen=True, slots=True)
@@ -1396,6 +1794,27 @@ def adapter_for_transport(
         )
         return MCPAdapter(mcp, worker_id=worker_id, context=context)
     if normalized == "oci":
+        if str(config.get("sandbox_profile") or "").strip().lower() == "firecracker":
+            return FirecrackerAdapter(
+                worker_id=worker_id,
+                context=context,
+                launcher=str(config.get("launcher") or "aiat-firecracker-launcher"),
+                kernel_path=str(config["kernel_path"]),
+                kernel_sha256=str(config["kernel_sha256"]),
+                rootfs_path=str(config["rootfs_path"]),
+                rootfs_sha256=str(config["rootfs_sha256"]),
+                artifact_dir=str(config["artifact_dir"]),
+                network_mode=str(config.get("network_mode") or "egress-deny-all"),
+                egress_allowlist=tuple(config.get("egress_allowlist") or ()),
+                vcpu_count=int(config.get("vcpu_count", 1)),
+                memory_mib=int(config.get("memory_mib", 512)),
+                pids_limit=int(config.get("pids_limit", 256)),
+                disk_limit_mb=int(config.get("disk_limit_mb", 1024)),
+                output_limit_bytes=int(config.get("output_limit_bytes", 4 * 1024 * 1024)),
+                wall_clock_seconds=int(config.get("wall_clock_seconds", 300)),
+                secret_refs=tuple(config.get("secret_refs") or ()),
+                runtime_version=config.get("runtime_version"),
+            )
         return OCIAdapter(
             config["image"],
             worker_id=worker_id,
@@ -1406,6 +1825,59 @@ def adapter_for_transport(
             memory_limit=config.get("memory_limit", "512m"),
             cpu_limit=config.get("cpu_limit", "1.0"),
             pids_limit=int(config.get("pids_limit", 256)),
+        )
+    if normalized in {"aiat_gateway", "gateway"}:
+        from mas_core.llm_gateway.models import LLMConfig
+
+        context_secrets = context.secrets if context is not None else {}
+        gateway_config = LLMConfig(
+            gateway_url=str(config.get("gateway_url") or "http://litellm:4000"),
+            default_model=str(config.get("default_model") or "auto"),
+            api_key=str(
+                context_secrets.get("llm_api_key")
+                or context_secrets.get("LLM_API_KEY")
+                or ""
+            ),
+            backend=str(config.get("backend") or "litellm"),
+            timeout_s=float(config.get("timeout_s", 120.0)),
+            max_retries=int(config.get("max_retries", 3)),
+        )
+        return GatewayWorkerAdapter(
+            worker_id=worker_id,
+            provider_id=str(config.get("provider_id") or "litellm"),
+            gateway_config=gateway_config,
+            context=context,
+            runtime_version=config.get("runtime_version"),
+        )
+    if normalized in {"openhands", "openhands_agent_server"}:
+        from mas_core.worker_registry.openhands_agent_server_adapter import (
+            OpenHandsAgentServerAdapter,
+            OpenHandsInterfaceVerification,
+        )
+
+        report = config.get("interface_verification")
+        report_ref = config.get("interface_verification_ref")
+        # Unlike the isolated certification factory, the normal runtime path
+        # is activation-scoped.  An inline mapping is caller-controlled data
+        # and could simply set ``approved=true`` without a steward record.  A
+        # production adapter may therefore consume only the repository's
+        # canonical, committed interface-verification report.  This mirrors
+        # the OpenCode adapter's committed-fixture rule and keeps approval
+        # evidence outside ordinary worker request/configuration input.
+        if report is not None:
+            raise ValueError(
+                "OpenHands transport requires interface_verification_ref; inline approval claims are not trusted"
+            )
+        if not report_ref:
+            raise ValueError("OpenHands transport requires pinned interface verification evidence")
+        report = _resolve_openhands_interface_report(report_ref)
+        verification = OpenHandsInterfaceVerification.from_report(report)
+        return OpenHandsAgentServerAdapter(
+            verification,
+            base_url=str(config.get("base_url") or ""),
+            worker_id=worker_id,
+            context=context,
+            timeout_seconds=float(config.get("timeout_seconds", 60.0)),
         )
     if normalized in {"native", "langgraph", "crewai"}:
         reference = str(config.get("implementation_ref") or config.get("entrypoint") or "")

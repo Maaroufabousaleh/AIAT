@@ -1,0 +1,12 @@
+{
+  "archive_sha256": "77b8cee43c3f74d94ad4651c375ec02bcd55a20aff06f9aac8e7be59c70811a0",
+  "clone_retained": false,
+  "commit": "826d9ad46a22bef0294998e08daa3c4904fea28f",
+  "commit_url": "https://github.com/anomalyco/opencode/commit/826d9ad46a22bef0294998e08daa3c4904fea28f",
+  "file_count": 6520,
+  "immutable_provenance_ref": true,
+  "release": "1.18.21",
+  "repository": "https://github.com/anomalyco/opencode.git",
+  "scan_tree_git_metadata_excluded": true,
+  "tag": "v1.18.21"
+}

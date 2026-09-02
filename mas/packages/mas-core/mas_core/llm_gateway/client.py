@@ -61,7 +61,7 @@ cli
 
 Retry behaviour
 ---------------
-429 (rate limited) and 5xx responses are retried with exponential backoff.
+Transient 408/409/412/425/429/5xx responses are retried with exponential backoff.
 The retry policy is configured in ``LLMConfig`` (max_retries, min/max wait).
 ``httpx.TimeoutException`` is also retried.
 
@@ -103,6 +103,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _OPENAI_TOOL_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+# Keep transient provider failures explicit and deterministic across the
+# normal, streaming, and fallback dispatch paths.  Credential/permission and
+# malformed-request 4xx responses remain permanent and are never blindly
+# retried.  409/412 are treated as retryable only at this transport layer;
+# callers still own any provider-state refresh or reconciliation semantics.
+RETRYABLE_LLM_STATUS_CODES = frozenset({408, 409, 412, 425, 429, 500, 502, 503, 504})
 
 
 # ---------------------------------------------------------------------------
@@ -656,6 +663,12 @@ class LLMGatewayClient:
                     wait_s *= 2
                 continue
 
+        if last_exc is not None:
+            self._record_stream_failure(
+                concrete_model,
+                last_exc,
+                provider=entry.provider if entry is not None else None,
+            )
         raise last_exc or LLMGatewayError(0, "Unknown error after retries exhausted")
 
     @staticmethod
@@ -1046,6 +1059,7 @@ class LLMGatewayClient:
         self.rate_limits.record_success(
             model=model_key,
             tokens=resp.usage.total_tokens,
+            provider=audit_evt.provider or None,
         )
 
     def _record_failure(
@@ -1075,6 +1089,41 @@ class LLMGatewayClient:
         if status == "rate_limited":
             self.rate_limits.record_rate_limit(model=model_key)
 
+        # Only transient transport/provider failures arm cooldown state.
+        # Permanent 4xx errors remain visible to operators without becoming a
+        # hidden availability gate.
+        if status == "timeout" or status_code in RETRYABLE_LLM_STATUS_CODES or status_code == 0:
+            self.rate_limits.record_transient_failure(
+                model=model_key,
+                provider=audit_evt.provider or None,
+                status_code=status_code,
+                reason=detail,
+            )
+
+    def _record_stream_failure(
+        self,
+        model: str,
+        exc: Exception,
+        *,
+        provider: str | None = None,
+    ) -> None:
+        """Record a final transient failure for the raw SSE path.
+
+        ``stream_raw_sse`` intentionally bypasses ``chat_completion``'s
+        audit wrapper, so it needs this small parity hook for cooldown state.
+        """
+        status_code = int(getattr(exc, "status_code", 0) or 0)
+        retryable = isinstance(exc, httpx.TransportError) or (
+            status_code in RETRYABLE_LLM_STATUS_CODES or status_code == 0
+        )
+        if retryable:
+            self.rate_limits.record_transient_failure(
+                model=model,
+                provider=provider,
+                status_code=status_code,
+                reason=str(exc),
+            )
+
     # ------------------------------------------------------------------
     # Observability accessors
     # ------------------------------------------------------------------
@@ -1088,8 +1137,14 @@ class LLMGatewayClient:
             self._smart_router = SmartRouter(
                 metrics=self.metrics,
                 rate_limits=self.rate_limits,
+                provider_for_model=self._provider_id_for_model,
             )
         return self._smart_router
+
+    def _provider_id_for_model(self, model: str) -> str | None:
+        """Resolve a registered model's provider without consuming a pool."""
+        entry = self._registry.get(model) if hasattr(self._registry, "get") else None
+        return entry.provider if entry is not None else None
 
     def observability_dashboard(self) -> dict[str, Any]:
         """Return a combined dashboard: audit summary + metrics + rate limits + routing."""
@@ -1261,7 +1316,7 @@ class LLMGatewayClient:
 
     @staticmethod
     def _is_retryable_status(status_code: int) -> bool:
-        return status_code == 429 or status_code >= 500
+        return status_code in RETRYABLE_LLM_STATUS_CODES
 
     @staticmethod
     def _log_retry(status_code: int, attempt: int, max_retries: int, wait_s: float) -> None:
@@ -1529,6 +1584,8 @@ class LLMGatewayClient:
                     wait_s *= 2
                 continue
 
+        if last_exc is not None:
+            self._record_stream_failure(model, last_exc, provider="litellm")
         raise last_exc or LLMGatewayError(0, "Unknown error after retries exhausted")
 
     # ------------------------------------------------------------------
@@ -2322,9 +2379,39 @@ class LLMGatewayClient:
                 if len(chain) >= chain_length:
                     break
 
+        # Do not repeatedly send automatic fallback traffic to endpoints that
+        # are already cooling down. If every candidate is cooling, probe the
+        # one that expires first so an outage can recover without a hard gate.
+        available_chain = self.rate_limits.available_models(
+            chain,
+            provider_for_model=self._provider_id_for_model,
+        )
+        probe_override: str | None = None
+        if available_chain:
+            skipped = [candidate for candidate in chain if candidate not in available_chain]
+            if skipped:
+                logger.info("Fallback skipped cooling endpoints: %s", skipped)
+            chain = available_chain
+        elif chain:
+            probe = self.rate_limits.earliest_available_model(
+                chain,
+                provider_for_model=self._provider_id_for_model,
+            )
+            chain = [probe] if probe else chain
+            probe_override = probe
+            logger.warning("Fallback chain is cooling; probing earliest endpoint '%s'", chain[0])
+
         last_exc: Exception | None = None
         tried: list[str] = []
         for candidate in chain:
+            # A prior candidate may have armed a provider-wide cooldown during
+            # this same request. Re-check immediately before each attempt.
+            if candidate != probe_override and self.rate_limits.is_in_cooldown(
+                candidate,
+                provider=self._provider_id_for_model(candidate),
+            ):
+                logger.info("Fallback skipped endpoint '%s' after a new cooldown", candidate)
+                continue
             try:
                 resp = await self.chat_completion(
                     messages=messages,
@@ -2345,7 +2432,7 @@ class LLMGatewayClient:
                         tried,
                     )
                 return resp
-            except (LLMRateLimited, LLMGatewayError, httpx.TimeoutException) as exc:
+            except (LLMRateLimited, LLMGatewayError, httpx.TransportError) as exc:
                 logger.warning(
                     "Fallback: model '%s' failed (%s), trying next in chain",
                     candidate,

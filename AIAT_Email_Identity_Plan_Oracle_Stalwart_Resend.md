@@ -1,5 +1,11 @@
 # AIAT Email Identity and External-Account Plan
 
+> Superseded topology notice (2026-07-29): this document intentionally
+> preserves the former Oracle/Stalwart/Resend architecture as historical
+> record. It is not the active production deployment instruction. The active
+> provider-neutral topology is `self_hosted_stalwart_resend`; use the current
+> mail-edge README and domain-migration guide for activation.
+
 ## Chosen deployment architecture
 
 This plan uses the following production topology:

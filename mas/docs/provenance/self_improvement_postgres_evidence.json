@@ -1,0 +1,52 @@
+{
+  "schema_version": "aiat.self-improvement-postgres-evidence-certification.v1",
+  "evidence_at": "2026-08-17T23:50:14Z",
+  "commit": "10983c8",
+  "mode": "local-postgres-self-improvement",
+  "status": "pass",
+  "command": "docker exec mas-orchestrator-api-1 sh -lc 'python /tmp/check_self_improvement_postgres_evidence.py --json'",
+  "migration_version": "0036_native_trace_spans",
+  "project_id_present": true,
+  "reserved_rows_removed_before": 0,
+  "cas_conflict_rejected": true,
+  "technical_gate_count": 6,
+  "human_approval_recorded": true,
+  "promoted_version_before_rollback": "self-improvement-postgres-v1",
+  "rollback_exact": true,
+  "artifact_bundle_recorded": true,
+  "artifact_bundle_complete": true,
+  "artifact_readback_complete": true,
+  "artifact_readback_count": 5,
+  "outcome_persisted": true,
+  "outcome_cost_usd": "4.50",
+  "outcome_incident_count": 0,
+  "final_status": "rolled_back",
+  "final_revision": 21,
+  "history_transition_count": 7,
+  "durable_counts": {
+    "project_present": 1,
+    "project_state": "INIT",
+    "project_revision": 21,
+    "lifecycle_revision": 21,
+    "history_rows": 20
+  },
+  "cleanup": {
+    "after_rows": 1,
+    "remaining_project_rows": 0
+  },
+  "mutation_performed": true,
+  "local_database_access_performed": true,
+  "external_network_access_performed": false,
+  "external_provider_mutation_performed": false,
+  "worker_dispatch_performed": false,
+  "payload_free_report": true,
+  "licence_metadata_is_gate": false,
+  "scope": "reserved local Postgres project/lifecycle only; no worker/provider/deployment mutation",
+  "remaining_open_gates": [
+    "selected live model-backed worker execution",
+    "external provider callback and artifact read-back",
+    "live issue/worker-run/budget/deployment reconciliation",
+    "multi-host and Firecracker execution",
+    "production retention and disaster-recovery evidence"
+  ]
+}

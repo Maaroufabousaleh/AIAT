@@ -7,6 +7,7 @@ raw password, cookie, token, credential, or relay fields.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from uuid import UUID
 
@@ -14,7 +15,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.routing import APIRoute
 
 from .clients.auth import SIGNATURE_VERSION, verify_request
-from .messages.verification_parser import extract_verification_code, extract_verification_link
+from .messages.verification_parser import (
+    extract_verification_code,
+    extract_verification_link,
+    message_text,
+)
 from .models import (
     ApprovalDecisionRequest,
     BrowserSessionLeaseRequest,
@@ -29,6 +34,7 @@ from .models import (
     MailQueryRequest,
     OutboundRequest,
     OutboundStatusRequest,
+    ProviderWebhookRequest,
     ProvisionIdentityRequest,
     RequestActor,
     SendApprovedRequest,
@@ -38,6 +44,7 @@ from .models import (
     WorkerIdentityActionRequest,
     redact,
 )
+from .observability import normalize_trace_id
 from .service import AuthenticatedClient, IdentityService
 
 
@@ -120,6 +127,16 @@ def _safe_session(value: dict[str, Any]) -> dict[str, Any]:
     return redact({key: item for key, item in value.items() if key in allowed})
 
 
+def _safe_mail_edge(value: dict[str, Any]) -> dict[str, Any]:
+    allowed = {
+        "id", "schema_version", "provider", "source", "event_id", "event_type",
+        "outcome", "failure_class", "worker_id", "outbound_request_id",
+        "provider_message_ref", "trace_id", "span_id", "occurred_at",
+        "received_at", "signature_verified", "metadata",
+    }
+    return redact({key: item for key, item in value.items() if key in allowed})
+
+
 @router.post("/domains")
 async def create_domain(body: DomainCreateRequest, client: AuthenticatedClient = Depends(_signed_client), service: IdentityService = Depends(_service)) -> dict[str, Any]:
     try:
@@ -156,6 +173,54 @@ async def verify_identity(worker_id: UUID, body: IdentityVerificationRequest, cl
     except (PermissionError, ValueError) as exc:
         raise HTTPException(403 if isinstance(exc, PermissionError) else 409, str(exc)) from exc
     return _safe_identity(identity)
+
+
+@router.post("/mail-edge/provider-webhook")
+async def record_provider_webhook(body: ProviderWebhookRequest, client: AuthenticatedClient = Depends(_signed_client), service: IdentityService = Depends(_service)) -> dict[str, Any]:
+    try:
+        observation = await service.record_provider_webhook(
+            client,
+            provider=body.provider,
+            payload=body.payload,
+            actor_id=body.actor.actor_id,
+            event_id=body.event_id,
+            signature_verified=body.signature_verified,
+            worker_id=body.worker_id,
+            outbound_request_id=body.outbound_request_id,
+            trace_id=body.trace_id,
+            span_id=body.span_id,
+        )
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return _safe_mail_edge(observation)
+
+
+@router.post("/mail-edge/provider-webhook/resend")
+async def receive_resend_provider_webhook(request: Request, service: IdentityService = Depends(_service)) -> dict[str, Any]:
+    """Accept a Resend/Svix webhook after raw-body signature verification."""
+
+    raw_body = bytes(request.scope.get("aiat.identity.raw_body", b""))
+    if len(raw_body) > 1 * 1024 * 1024:
+        raise HTTPException(413, "webhook body exceeds 1 MiB limit")
+    if not service.resend.verify_configured_webhook_signature(raw_body, request.headers):
+        raise HTTPException(401, "invalid provider webhook authentication")
+    try:
+        payload = json.loads(raw_body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HTTPException(400, "webhook body must be valid UTF-8 JSON") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(400, "webhook body must be a JSON object")
+    try:
+        observation = await service.record_verified_provider_webhook(
+            provider="resend",
+            payload=payload,
+            actor_id="provider:resend",
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return _safe_mail_edge(observation)
 
 
 @router.post("/worker-identities/{worker_id}/suspend")
@@ -278,7 +343,7 @@ async def extract_code(body: MailQueryRequest, client: AuthenticatedClient = Dep
         message = await service.mail_read(client, worker_id=body.worker_id, actor_id=body.actor.actor_id, message_id=body.message_id)
     except PermissionError as exc:
         raise HTTPException(403, str(exc)) from exc
-    code = extract_verification_code(str(message))
+    code = extract_verification_code(message_text(message))
     await service.record_verification_extraction(client, worker_id=body.worker_id, actor_id=body.actor.actor_id, message_id=body.message_id, code=code)
     return {"code": code}
 
@@ -291,7 +356,7 @@ async def extract_link(body: MailQueryRequest, client: AuthenticatedClient = Dep
         message = await service.mail_read(client, worker_id=body.worker_id, actor_id=body.actor.actor_id, message_id=body.message_id)
     except PermissionError as exc:
         raise HTTPException(403, str(exc)) from exc
-    link = extract_verification_link(str(message))
+    link = extract_verification_link(message_text(message))
     await service.record_verification_extraction(client, worker_id=body.worker_id, actor_id=body.actor.actor_id, message_id=body.message_id, link=link)
     return {"link": link}
 
@@ -306,12 +371,12 @@ async def outbound_request(body: OutboundRequest, client: AuthenticatedClient = 
 
 
 @router.post("/outbound/send-approved")
-async def outbound_send_approved(body: SendApprovedRequest, client: AuthenticatedClient = Depends(_signed_client), service: IdentityService = Depends(_service)) -> dict[str, Any]:
+async def outbound_send_approved(request: Request, body: SendApprovedRequest, client: AuthenticatedClient = Depends(_signed_client), service: IdentityService = Depends(_service)) -> dict[str, Any]:
     try:
-        request = await service.send_approved(client, worker_id=body.worker_id, actor_id=body.actor.actor_id, request_id=body.outbound_request_id, idempotency_key=body.idempotency_key)
+        result = await service.send_approved(client, worker_id=body.worker_id, actor_id=body.actor.actor_id, request_id=body.outbound_request_id, idempotency_key=body.idempotency_key, trace_id=normalize_trace_id(request.headers.get("X-AIAT-Trace-ID")))
     except (PermissionError, ValueError) as exc:
         raise HTTPException(403 if isinstance(exc, PermissionError) else 409, str(exc)) from exc
-    return _safe_outbound(request)
+    return _safe_outbound(result)
 
 
 @router.get("/outbound/{request_id}/delivery-status")
@@ -376,6 +441,13 @@ async def signup_external_account(body: ExternalAccountRequest, client: Authenti
         raise HTTPException(403, str(exc)) from exc
 
 
+@router.get("/external-accounts/action-policy")
+async def external_account_action_policy(client: AuthenticatedClient = Depends(_signed_client), service: IdentityService = Depends(_service)) -> dict[str, Any]:
+    """Return the versioned high-risk action taxonomy for operator clients."""
+
+    return service.external_account_action_catalog()
+
+
 @router.get("/external-accounts/{account_id}")
 async def external_account_status(account_id: UUID, worker_id: UUID, actor_id: str, client: AuthenticatedClient = Depends(_signed_client), service: IdentityService = Depends(_service)) -> dict[str, Any]:
     try:
@@ -427,7 +499,7 @@ async def suspend_external_account(account_id: UUID, body: ExternalAccountReques
 @router.post("/external-accounts/{account_id}/close")
 async def close_external_account(account_id: UUID, body: ExternalAccountRequest, client: AuthenticatedClient = Depends(_signed_client), service: IdentityService = Depends(_service)) -> dict[str, Any]:
     try:
-        return redact(await service.set_external_account_state(client, worker_id=body.worker_id, actor_id=body.actor.actor_id, account_id=account_id, state=ExternalAccountState.CLOSED))
+        return redact(await service.request_external_account_close(client, worker_id=body.worker_id, actor_id=body.actor.actor_id, account_id=account_id, idempotency_key=body.idempotency_key))
     except PermissionError as exc:
         raise HTTPException(403, str(exc)) from exc
 
@@ -493,7 +565,7 @@ async def dashboard_resource(resource: str, client: AuthenticatedClient = Depend
         service.assert_admin(client)
     except PermissionError as exc:
         raise HTTPException(403, str(exc)) from exc
-    allowed = {"identities", "mail-domains", "mailboxes", "outbound-mail", "mail-relay", "external-accounts", "auth-sessions", "identity-approvals", "identity-audit"}
+    allowed = {"identities", "mail-domains", "mailboxes", "outbound-mail", "mail-relay", "mail-edge", "external-accounts", "auth-sessions", "identity-approvals", "identity-audit"}
     if resource not in allowed:
         raise HTTPException(404, "identity dashboard resource not found")
     return {"items": redact(await service.dashboard_resource(resource)), "resource": resource}

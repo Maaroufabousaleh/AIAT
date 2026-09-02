@@ -52,6 +52,21 @@ def _entry(
         "cache_ttl_seconds": cache_ttl,
         "idempotent": idempotent,
         "transport": transport,
+        # Static entries predate typed tool classes.  They intentionally carry
+        # a permissive schema until the concrete implementation declares a
+        # Pydantic input/output model; the live ToolRegistry replaces these
+        # with generated schemas for typed tools.
+        "schema_version": "1",
+        "input_schema": {"type": "object", "additionalProperties": True},
+        "output_schema": {},
+        "schema_status": "legacy",
+        "risk_tier": "standard",
+        "approval_policy": "role",
+        "credential_requirements": [],
+        # Static entries cannot infer mutation semantics from idempotence (an
+        # idempotent upsert may still mutate state).  Keep the legacy contract
+        # conservative until the concrete tool declares this field.
+        "side_effect": True,
     }
 
 
@@ -303,6 +318,14 @@ _register(
         cache_ttl=0,
         idempotent=False,
     ),
+    _entry(
+        name="privileged_ops.request",
+        group=ToolGroup.WORKFLOW,
+        description="Request a Layer-2 privileged action through the audited CEO gate.",
+        allowed_roles=_ORCH,
+        cache_ttl=0,
+        idempotent=False,
+    ),
 )
 
 # --- Sprint / Issue ---
@@ -371,6 +394,46 @@ _register(
         allowed_roles=_ADMIN,
         cache_ttl=15,
     ),
+    _entry(
+        name="issue.get",
+        group=ToolGroup.SPRINT_ISSUE,
+        description="Read one canonical work item with comments and links.",
+        allowed_roles=_WORKER,
+        cache_ttl=5,
+    ),
+    _entry(
+        name="issue.update",
+        group=ToolGroup.SPRINT_ISSUE,
+        description="Update canonical work-item fields with optimistic concurrency.",
+        allowed_roles=_ADMIN,
+        blocked_roles=[AgentRole.WORKER, AgentRole.SUB_AGENT],
+        cache_ttl=0,
+        idempotent=False,
+    ),
+    _entry(
+        name="issue.comment",
+        group=ToolGroup.SPRINT_ISSUE,
+        description="Add an attributed comment to a canonical work item.",
+        allowed_roles=_ADMIN,
+        blocked_roles=[AgentRole.WORKER, AgentRole.SUB_AGENT],
+        cache_ttl=0,
+        idempotent=False,
+    ),
+    _entry(
+        name="issue.link",
+        group=ToolGroup.SPRINT_ISSUE,
+        description="Link a canonical work item to another object.",
+        allowed_roles=_ADMIN,
+        blocked_roles=[AgentRole.WORKER, AgentRole.SUB_AGENT],
+        cache_ttl=0,
+    ),
+    _entry(
+        name="pm.sync.status",
+        group=ToolGroup.SPRINT_ISSUE,
+        description="Inspect PM integration outbox and unresolved conflicts.",
+        allowed_roles=_ADMIN,
+        cache_ttl=5,
+    ),
 )
 
 # --- DevOps ---
@@ -424,6 +487,65 @@ _register(
         name="iac.plan",
         group=ToolGroup.DEVOPS,
         description="Run OpenTofu/tofu plan through the DevOps adapter.",
+        allowed_roles=_ADMIN,
+        blocked_roles=[AgentRole.WORKER, AgentRole.SUB_AGENT],
+        cache_ttl=0,
+        idempotent=False,
+    ),
+    _entry(
+        name="scm.installation.discover",
+        group=ToolGroup.DEVOPS,
+        description="Discover repositories in the governed SCM installation.",
+        allowed_roles=_WORKER,
+        cache_ttl=15,
+    ),
+    _entry(
+        name="scm.branch.create",
+        group=ToolGroup.DEVOPS,
+        description="Create a governed repository branch.",
+        allowed_roles=_ADMIN,
+        blocked_roles=[AgentRole.WORKER, AgentRole.SUB_AGENT],
+        cache_ttl=0,
+        idempotent=False,
+    ),
+    _entry(
+        name="scm.pull_request.create",
+        group=ToolGroup.DEVOPS,
+        description="Create or record a governed pull request.",
+        allowed_roles=_ADMIN,
+        blocked_roles=[AgentRole.WORKER, AgentRole.SUB_AGENT],
+        cache_ttl=0,
+        idempotent=False,
+    ),
+    _entry(
+        name="scm.review.comment",
+        group=ToolGroup.DEVOPS,
+        description="Publish a governed pull-request review comment.",
+        allowed_roles=_ADMIN,
+        blocked_roles=[AgentRole.WORKER, AgentRole.SUB_AGENT],
+        cache_ttl=0,
+        idempotent=False,
+    ),
+    _entry(
+        name="scm.check.publish",
+        group=ToolGroup.DEVOPS,
+        description="Publish a governed CI or security check result.",
+        allowed_roles=_ADMIN,
+        blocked_roles=[AgentRole.WORKER, AgentRole.SUB_AGENT],
+        cache_ttl=0,
+        idempotent=False,
+    ),
+    _entry(
+        name="scm.commit.evidence",
+        group=ToolGroup.DEVOPS,
+        description="Capture source-control commit metadata as evidence.",
+        allowed_roles=_WORKER,
+        cache_ttl=5,
+    ),
+    _entry(
+        name="scm.run_credential.mint",
+        group=ToolGroup.DEVOPS,
+        description="Mint a short-lived, scoped source-control run credential.",
         allowed_roles=_ADMIN,
         blocked_roles=[AgentRole.WORKER, AgentRole.SUB_AGENT],
         cache_ttl=0,
@@ -628,7 +750,7 @@ _register(
     _entry(
         name="security.scan",
         group=ToolGroup.KPI_UTILITY,
-        description="Run Semgrep/SkillSpector-style static checks through a safe adapter.",
+        description="Run configured Semgrep/SkillSpector/TruffleHog checks through a safe adapter.",
         allowed_roles=_WORKER,
         cache_ttl=0,
         idempotent=False,
@@ -740,6 +862,12 @@ _register(
 
 # Compatibility aliases (legacy_name -> canonical_name)
 TOOL_ALIASES: dict[str, str] = {
+    # AIAT OpenHands bridge capability labels.  These names are the stable
+    # worker-facing grant contract; they resolve only to existing bounded
+    # tool implementations and do not add new capabilities.
+    "aiat.repository.read": "repo.read",
+    "aiat.repository.write": "file_write",
+    "aiat.tests.execute": "test.run",
     # legacy document/review names
     "document_create": "document.create_draft",
     "document_get": "document.get_latest",
@@ -766,6 +894,7 @@ TOOL_ALIASES: dict[str, str] = {
     "risk_assess": "security.scan",
     "semgrep": "security.scan",
     "skillspector": "security.scan",
+    "trufflehog": "security.scan",
     "docling": "document.ingest",
     "docling.parse": "document.ingest",
     "mermaid": "diagram.render",

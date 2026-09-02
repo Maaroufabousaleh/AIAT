@@ -208,6 +208,38 @@ class ToolManifestEntry(BaseModel):
         default="internal",
         description="Tool transport backend: internal | http | mcp | process.",
     )
+    schema_version: str = Field(
+        default="1",
+        description="Version of the input/output contract represented by this entry.",
+    )
+    input_schema: dict[str, Any] = Field(
+        default_factory=lambda: {"type": "object", "additionalProperties": True},
+        description="JSON Schema for tool kwargs before the reserved AIAT context is injected.",
+    )
+    output_schema: dict[str, Any] = Field(
+        default_factory=lambda: {},
+        description="JSON Schema for the successful tool result, when declared.",
+    )
+    schema_status: Literal["declared", "legacy"] = Field(
+        default="legacy",
+        description="Whether the implementation declares typed input/output models.",
+    )
+    risk_tier: str = Field(
+        default="standard",
+        description="Governance risk tier used by approval and sandbox policy.",
+    )
+    approval_policy: str = Field(
+        default="role",
+        description="Approval policy identifier evaluated by the control plane.",
+    )
+    credential_requirements: list[str] = Field(
+        default_factory=list,
+        description="Named credential capabilities required by this tool.",
+    )
+    side_effect: bool = Field(
+        default=True,
+        description="Whether execution can mutate external or durable state.",
+    )
     deprecated_alias_of: str | None = Field(
         default=None,
         description="If set, this entry is a legacy alias of the canonical tool name.",

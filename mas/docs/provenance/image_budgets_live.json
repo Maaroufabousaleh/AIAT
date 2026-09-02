@@ -1,0 +1,65 @@
+{
+  "schema_version": "aiat.image-budget-live.v1",
+  "programme_scope": "personal-internal-only",
+  "observed_at": "2026-08-10T17:46:04Z",
+  "environment": {
+    "host_class": "WSL2 with Docker Desktop Linux engine",
+    "platform": "linux/amd64",
+    "measurement_scope": "local build and bounded resource probe; not a native-Linux release certification",
+    "credentials_printed": false
+  },
+  "budgets": {
+    "tool-service-core": {
+      "profile": "core",
+      "image_ref": "mas/tool-service:dev",
+      "image_id": "sha256:2cce924f77b4945825924158f410ccb339fe6da4cd591dd5ca6ee70c35fedef1",
+      "uncompressed_bytes": 267957904,
+      "max_uncompressed_bytes": 1572864000,
+      "uncompressed_budget_status": "pass",
+      "compressed_bytes": null,
+      "compressed_measurement_status": "not_measured",
+      "startup_to_health_ms_observed": 26836,
+      "max_startup_seconds": 30,
+      "startup_budget_status": "pass",
+      "health_probe": {
+        "transport": "docker exec over loopback",
+        "network": "none",
+        "path": "/health",
+        "http_status": 200
+      },
+      "steady_state_memory_text": "112.3MiB",
+      "steady_state_memory_bytes_approx": 117755085,
+      "max_memory_bytes": 805306368,
+      "memory_budget_status": "pass"
+    },
+    "tool-service-extensions": {
+      "profile": "extensions",
+      "image_ref": "mas/tool-service-extensions:local",
+      "image_id": "sha256:8db2dfb968ab3b2281b543f4fbde51a95163e5d71907023ec032b7da374860e6",
+      "uncompressed_bytes": 4155668123,
+      "max_uncompressed_bytes": 4294967296,
+      "uncompressed_budget_status": "pass",
+      "compressed_bytes": null,
+      "compressed_measurement_status": "not_measured",
+      "startup_to_health_ms_observed": 29913,
+      "max_startup_seconds": 120,
+      "startup_budget_status": "pass",
+      "health_probe": {
+        "transport": "docker exec over loopback",
+        "network": "none",
+        "path": "/health",
+        "http_status": 200
+      },
+      "steady_state_memory_text": "137.7MiB",
+      "steady_state_memory_bytes_approx": 144388915,
+      "max_memory_bytes": 2147483648,
+      "memory_budget_status": "pass",
+      "probe_status": "pass",
+      "initial_probe_notice": "The first container-create attempt timed out while Docker Desktop unpacked the 4.16GB image; a subsequent bounded launch and health probe completed successfully."
+    }
+  },
+  "notices": [
+    "Compressed size still requires a completed native-Linux or stable local archive measurement; both profile startup and memory probes pass in this local Linux engine.",
+    "This evidence is descriptive and does not authorize deployment, worker activation, or any licence-based gate."
+  ]
+}

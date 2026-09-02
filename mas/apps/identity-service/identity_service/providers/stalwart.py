@@ -18,6 +18,32 @@ from ..models import redact
 
 logger = logging.getLogger(__name__)
 
+# Worker accounts are deliberately passwordless and receive only the mail/JMAP
+# capabilities that the identity-service uses.  Do not use Stalwart's
+# ``Inherit`` permission set here: on account creation that asks the caller to
+# grant the complete default user role, which defeats the scoped management
+# key and makes the permission boundary depend on provider defaults.
+_WORKER_PERMISSION_NAMES = (
+    "emailReceive",
+    "jmapMailboxGet",
+    "jmapEmailGet",
+    "jmapEmailQuery",
+    "jmapEmailUpdate",
+    "jmapEmailDestroy",
+    "jmapIdentityGet",
+    "jmapEmailSubmissionGet",
+    "jmapEmailSubmissionQuery",
+    "jmapEmailSubmissionCreate",
+    "jmapEmailSubmissionUpdate",
+    "jmapEmailSubmissionDestroy",
+    "jmapEmailCreate",
+)
+
+
+def _worker_permissions() -> dict[str, bool]:
+    """Return a fresh explicit permission map for a worker mailbox."""
+    return {name: True for name in _WORKER_PERMISSION_NAMES}
+
 
 class StalwartAdapterError(RuntimeError):
     def __init__(self, code: str, message: str, *, transient: bool = False, correlation_id: str | None = None) -> None:
@@ -39,13 +65,34 @@ class StalwartAdapter:
 
     @staticmethod
     def _headers(token: str, correlation_id: str) -> dict[str, str]:
-        return {"Authorization": f"Bearer {token}", "X-Request-ID": correlation_id}
+        """Build an authorization header without leaking provider credentials.
 
-    async def _call(self, method_calls: list[list[Any]], *, endpoint: str, token: str, idempotency_key: str | None = None) -> tuple[dict[str, Any], str]:
+        Stalwart's management and mail surfaces are both JMAP in v0.16.  The
+        production deployment supplies short-lived OAuth bearer tokens, while
+        the loopback-only development profile uses a Basic credential for its
+        dedicated service account.  Accepting an explicit scheme keeps the
+        provider credential boundary in configuration rather than baking a
+        development-only authentication method into the adapter.
+        """
+        value = token.strip()
+        if value.lower().startswith(("bearer ", "basic ", "oauth ")):
+            authorization = value
+        else:
+            authorization = f"Bearer {value}"
+        return {"Authorization": authorization, "X-Request-ID": correlation_id}
+
+    async def _call(
+        self,
+        method_calls: list[list[Any]],
+        *,
+        token: str,
+        management: bool,
+        idempotency_key: str | None = None,
+    ) -> tuple[dict[str, Any], str]:
         correlation_id = str(uuid4())
         using = (
             ["urn:ietf:params:jmap:core", "urn:stalwart:jmap"]
-            if endpoint == "/api"
+            if management
             else ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:mail", "urn:ietf:params:jmap:submission"]
         )
         payload = {"using": using, "methodCalls": method_calls}
@@ -54,10 +101,10 @@ class StalwartAdapter:
             headers["Idempotency-Key"] = idempotency_key
         try:
             if self._client is not None:
-                response = await self._client.post(f"{self.base_url}{endpoint}", json=payload, headers=headers, timeout=self.timeout)
+                response = await self._client.post(f"{self.base_url}/jmap", json=payload, headers=headers, timeout=self.timeout)
             else:
                 async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=False) as client:
-                    response = await client.post(f"{self.base_url}{endpoint}", json=payload, headers=headers)
+                    response = await client.post(f"{self.base_url}/jmap", json=payload, headers=headers)
         except httpx.TimeoutException as exc:
             raise StalwartAdapterError("STALWART_TIMEOUT", "Stalwart request timed out", transient=True, correlation_id=correlation_id) from exc
         except httpx.HTTPError as exc:
@@ -74,13 +121,13 @@ class StalwartAdapter:
 
     async def _management_call(self, method_calls: list[list[Any]], *, idempotency_key: str | None = None) -> tuple[dict[str, Any], str]:
         """Call Stalwart's management JMAP API with the provisioning API key."""
-        return await self._call(method_calls, endpoint="/api", token=self._api_key, idempotency_key=idempotency_key)
+        return await self._call(method_calls, token=self._api_key, management=True, idempotency_key=idempotency_key)
 
     async def _mail_call(self, method_calls: list[list[Any]], *, idempotency_key: str | None = None) -> tuple[dict[str, Any], str]:
         """Call mail JMAP with a separate service bearer token, never an API key."""
         if not self._jmap_service_token:
             raise StalwartAdapterError("STALWART_JMAP_AUTH_UNAVAILABLE", "Stalwart mail JMAP service authentication is unavailable")
-        return await self._call(method_calls, endpoint="/jmap", token=self._jmap_service_token, idempotency_key=idempotency_key)
+        return await self._call(method_calls, token=self._jmap_service_token, management=False, idempotency_key=idempotency_key)
 
     @staticmethod
     def _first_response(data: dict[str, Any]) -> dict[str, Any]:
@@ -150,9 +197,9 @@ class StalwartAdapter:
         creation_id = f"identity-{idempotency_key[-32:]}"
         account = {
             "@type": "User", "name": local_part, "domainId": str(domain_ids[0]),
-            "credentials": [], "memberGroupIds": [], "roles": {"@type": "User"},
-            "permissions": {"@type": "Inherit"},
-            "quotas": {"maxDiskQuota": quota_mb * 1024 * 1024}, "aliases": [],
+            "credentials": {}, "memberGroupIds": {}, "roles": {"@type": "User"},
+            "permissions": {"@type": "Replace", "enabledPermissions": _worker_permissions()},
+            "quotas": {"maxDiskQuota": quota_mb * 1024 * 1024}, "aliases": {},
             "encryptionAtRest": {"@type": "Disabled"},
         }
         data, correlation_id = await self._management_call([["x:Account/set", {"create": {creation_id: account}}, "create-mailbox"]], idempotency_key=idempotency_key)
@@ -229,16 +276,20 @@ class StalwartAdapter:
         return {"correlation_id": correlation_id, "result": redact(self._first_response(data))}
 
     async def disable_mailbox(self, provider_account_id: str) -> dict[str, Any]:
-        return await self._account_set(provider_account_id, {"permissions": {"@type": "Replace", "enabledPermissions": []}}, "disable-mailbox")
+        return await self._account_set(provider_account_id, {"permissions": {"@type": "Replace", "enabledPermissions": {}}}, "disable-mailbox")
 
     async def enable_mailbox(self, provider_account_id: str) -> dict[str, Any]:
-        return await self._account_set(provider_account_id, {"permissions": {"@type": "Inherit"}}, "enable-mailbox")
+        return await self._account_set(
+            provider_account_id,
+            {"permissions": {"@type": "Replace", "enabledPermissions": _worker_permissions()}},
+            "enable-mailbox",
+        )
 
     async def rotate_mailbox_password(self, provider_account_id: str) -> dict[str, Any]:
         # Mailboxes are created without password credentials. Reasserting an
         # empty credential set revokes any accidental direct-login credential
         # without generating a secret that AIAT could expose or persist.
-        return await self._account_set(provider_account_id, {"credentials": []}, "rotate-mailbox-password")
+        return await self._account_set(provider_account_id, {"credentials": {}}, "rotate-mailbox-password")
 
     async def set_quota(self, provider_account_id: str, quota_mb: int) -> dict[str, Any]:
         return await self._account_set(provider_account_id, {"quotas/maxDiskQuota": quota_mb * 1024 * 1024}, "set-quota")
@@ -272,28 +323,46 @@ class StalwartAdapter:
             domain_id = ids[0]
         if not domain_id:
             raise StalwartAdapterError("STALWART_ACCOUNT_INVALID", "Stalwart mailbox has no domain")
-        aliases = list(account.get("aliases") or [])
+        raw_aliases = account.get("aliases") or {}
+        if isinstance(raw_aliases, dict):
+            aliases = [item for item in raw_aliases.values() if isinstance(item, dict)]
+        else:
+            aliases = [item for item in raw_aliases if isinstance(item, dict)]
         candidate = {"name": local_part, "domainId": str(domain_id), "enabled": True}
         if not any(item.get("name") == local_part and str(item.get("domainId")) == str(domain_id) for item in aliases if isinstance(item, dict)):
             aliases.append(candidate)
-        return await self._account_set(provider_account_id, {"aliases": aliases}, "add-alias")
+        return await self._account_set(
+            provider_account_id,
+            {"aliases": {str(index): value for index, value in enumerate(aliases)}},
+            "add-alias",
+        )
 
     async def remove_alias(self, provider_account_id: str, alias: str) -> dict[str, Any]:
         account = await self._account_details(provider_account_id)
         local_part = alias.split("@", 1)[0]
-        aliases = [item for item in list(account.get("aliases") or []) if not (isinstance(item, dict) and item.get("name") == local_part)]
-        return await self._account_set(provider_account_id, {"aliases": aliases}, "remove-alias")
+        raw_aliases = account.get("aliases") or {}
+        values = raw_aliases.values() if isinstance(raw_aliases, dict) else raw_aliases
+        aliases = [item for item in values if isinstance(item, dict) and item.get("name") != local_part]
+        return await self._account_set(
+            provider_account_id,
+            {"aliases": {str(index): value for index, value in enumerate(aliases)}},
+            "remove-alias",
+        )
 
     async def archive_mailbox(self, provider_account_id: str) -> dict[str, Any]:
-        return await self._account_set(provider_account_id, {"permissions": {"@type": "Replace", "enabledPermissions": []}, "description": "Archived by AIAT"}, "archive-mailbox")
+        return await self._account_set(provider_account_id, {"permissions": {"@type": "Replace", "enabledPermissions": {}}, "description": "Archived by AIAT"}, "archive-mailbox")
 
     async def delete_mailbox(self, provider_account_id: str) -> dict[str, Any]:
         data, correlation_id = await self._management_call([["x:Account/set", {"destroy": [provider_account_id]}, "delete-mailbox"]])
         return {"correlation_id": correlation_id, "result": redact(self._first_response(data))}
 
     async def list_messages(self, account_id: str, *, limit: int = 25, query: str | None = None) -> dict[str, Any]:
-        filter_value = {"text": query} if query else None
-        data, correlation_id = await self._mail_call([["Email/query", {"accountId": account_id, "filter": filter_value, "limit": limit}, "list-mail"]])
+        arguments: dict[str, Any] = {"accountId": account_id, "limit": limit}
+        # Stalwart rejects an explicit JSON null for the optional JMAP filter;
+        # omit it for an unfiltered mailbox listing.
+        if query:
+            arguments["filter"] = {"text": query}
+        data, correlation_id = await self._mail_call([["Email/query", arguments, "list-mail"]])
         return {"correlation_id": correlation_id, "result": redact(self._first_response(data))}
 
     async def search_messages(self, account_id: str, query: str, *, limit: int = 25) -> dict[str, Any]:
@@ -319,9 +388,11 @@ class StalwartAdapter:
     async def wait_for_message(self, account_id: str, *, sender_domain: str | None, timeout_seconds: int) -> dict[str, Any] | None:
         deadline = anyio.current_time() + timeout_seconds
         while anyio.current_time() < deadline:
-            filter_value = {"from": sender_domain} if sender_domain else None
+            arguments: dict[str, Any] = {"accountId": account_id, "limit": 1}
+            if sender_domain:
+                arguments["filter"] = {"from": sender_domain}
             data, _correlation_id = await self._mail_call([[
-                "Email/query", {"accountId": account_id, "filter": filter_value, "limit": 1},
+                "Email/query", arguments,
                 "wait-verification",
             ]])
             ids = self._first_response(data).get("ids") or []

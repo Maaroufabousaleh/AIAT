@@ -16,6 +16,88 @@ from mas_core.workflow import (
 from mas_core.workflow.transitions import RESTORE_LAST_SAFE_STATE, RESTORE_PRIOR_STATE
 
 
+def test_evidence_policy_checks_required_artifact_kinds() -> None:
+    from mas_core.workflow import EvidencePolicy, evaluate_project_evidence
+
+    result = evaluate_project_evidence(
+        project_id="project-1",
+        policy=EvidencePolicy(
+            policy_id="release",
+            version="1.0",
+            requires_artifacts=True,
+            required_artifact_kinds=("test-report", "coverage"),
+            requires_approvals_closed=False,
+            requires_audit=False,
+        ),
+        project={"id": "project-1"},
+        artifacts=[{"id": "artifact-1", "kind": "test-report"}],
+    )
+
+    check = next(item for item in result.checks if item.name == "required_artifact_kinds")
+    assert check.passed is False
+    assert "coverage" in (check.reason or "")
+
+
+def test_evidence_package_groups_sources_without_turning_notices_into_gates() -> None:
+    from mas_core.workflow import (
+        EvidencePolicy,
+        build_evidence_package,
+        evaluate_project_evidence,
+    )
+
+    policy = EvidencePolicy(
+        policy_id="release",
+        version="1.0",
+        requires_artifacts=True,
+        required_artifact_kinds=("security-scan", "deployment"),
+        requires_repository=True,
+        requires_approvals_closed=False,
+        requires_audit=False,
+    )
+    artifacts = [
+        {
+            "id": "artifact-security",
+            "kind": "security-scan",
+            "sha256": "abc",
+            "size_bytes": 12,
+            "path": "reports/security.json",
+            "metadata": {"license": "restricted-for-commercial-use"},
+        },
+        {"id": "artifact-deploy", "kind": "deployment", "path": "deploy.json"},
+    ]
+    completeness = evaluate_project_evidence(
+        project_id="project-1",
+        policy=policy,
+        project={"id": "project-1"},
+        artifacts=artifacts,
+        repository={"id": "repo-1", "initialized": True, "adapter_health": "ok"},
+    )
+
+    package = build_evidence_package(
+        completeness=completeness,
+        policy=policy,
+        artifacts=artifacts,
+        repository={"id": "repo-1", "initialized": True, "adapter_health": "ok"},
+        generated_at="2026-08-10T00:00:00+00:00",
+    )
+
+    assert package.schema_version == "aiat.project-evidence-package.v1"
+    assert package.status == "complete"
+    assert {item.category for item in package.items} >= {"security", "deployment", "repository"}
+    security = next(item for item in package.categories if item.category == "security")
+    deployment = next(item for item in package.categories if item.category == "deployment")
+    assert security.status == "present"
+    assert security.required is True
+    assert deployment.required is True
+    assert package.notices == [
+        {
+            "artifact_id": "artifact-security",
+            "field": "license",
+            "value": "restricted-for-commercial-use",
+        }
+    ]
+
+
 def test_transition_table_matches_happy_path_edge_examples() -> None:
     assert (
         resolve_transition(ProjectState.INIT, WorkflowEvent.PROJECT_CREATED)

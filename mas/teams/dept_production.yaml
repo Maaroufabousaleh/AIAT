@@ -6,6 +6,7 @@ team_id: dept_production
 
 admin:
   agent_id: production_pm
+  worker_manifest_ref: production_pm
   role: admin
   class: AdminAgent
   display_name: "Production PM"
@@ -27,6 +28,7 @@ admin:
 
 workers:
   - agent_id: requirements_writer
+    worker_manifest_ref: requirements_writer
     role: worker
     class: WorkerAgent
     display_name: "Requirements Writer"
@@ -44,6 +46,7 @@ workers:
       - blob.upload
 
   - agent_id: planner
+    worker_manifest_ref: planner
     role: worker
     class: WorkerAgent
     display_name: "Planner"
@@ -61,6 +64,7 @@ workers:
       - blob.upload
 
   - agent_id: cost_estimator
+    worker_manifest_ref: cost_estimator
     role: worker
     class: WorkerAgent
     display_name: "Cost Estimator"
@@ -77,6 +81,7 @@ workers:
       - blob.upload
 
   - agent_id: research_worker
+    worker_manifest_ref: research_worker
     role: worker
     class: WorkerAgent
     display_name: "Research Worker"

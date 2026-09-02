@@ -9,7 +9,7 @@ API         register worker (all fields), list workers, update config,
             deregister, health check, YAML bulk import (valid + invalid + dry-run),
             upstream info endpoint
 Integration register → read back via GET → verify all fields survive round-trip
-Security    forbidden-tool policy gap (TODO), invalid update_policy rejected (422)
+Security    forbidden direct/persisted tool grants rejected, invalid update_policy rejected (422)
 Negative    missing required fields (422), invalid sandbox_profile (422),
             update non-existent worker (404), deactivate non-existent (404),
             YAML import outside CWD (400), import missing required YAML field
@@ -824,3 +824,65 @@ async def test_assigning_forbidden_tool_is_rejected(client):
     assert resp.status_code == 403
     assert resp.json()["detail"]["code"] == "WORKER_TOOL_GRANT_FORBIDDEN"
     storage.register_worker.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_register_worker_invalid_update_policy_returns_422(client):
+    """The registry accepts only the manifest update-policy vocabulary."""
+    storage = MagicMock()
+    storage.register_worker = AsyncMock()
+    _patch(storage)
+
+    resp = await client.post(
+        "/capabilities/workers",
+        json={
+            "name": "invalid-policy-worker",
+            "adapter_type": "process",
+            "update_policy": "always-replace",
+        },
+    )
+
+    assert resp.status_code == 422
+    storage.register_worker.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_update_worker_invalid_update_policy_returns_422(client):
+    """Partial worker updates cannot persist an unknown update policy."""
+    storage = MagicMock()
+    storage.get_worker = AsyncMock(return_value=_worker_row())
+    storage.update_worker_config = AsyncMock()
+    _patch(storage)
+
+    resp = await client.put(
+        f"/capabilities/workers/{WORKER_ID}",
+        json={"update_policy": "always-replace"},
+    )
+
+    assert resp.status_code == 422
+    storage.update_worker_config.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_update_worker_forbidden_persisted_capability_is_rejected(client):
+    """Attaching a capability with a forbidden tool fails before persistence."""
+    storage = MagicMock()
+    storage.get_worker = AsyncMock(return_value=_worker_row(capability_ids=[]))
+    storage.get_capability = AsyncMock(
+        return_value={
+            "id": CAP_ID,
+            "name": "project-admin",
+            "required_tools": ["project.create"],
+        }
+    )
+    storage.update_worker_config = AsyncMock()
+    _patch(storage)
+
+    resp = await client.put(
+        f"/capabilities/workers/{WORKER_ID}",
+        json={"capability_ids": [str(CAP_ID)]},
+    )
+
+    assert resp.status_code == 403
+    assert resp.json()["detail"]["code"] == "WORKER_TOOL_GRANT_FORBIDDEN"
+    storage.update_worker_config.assert_not_awaited()

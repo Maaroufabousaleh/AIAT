@@ -24,14 +24,33 @@ def test_worker_network_has_only_required_service_gateways() -> None:
     required = {
         "message-router",
         "tool-service",
-        "pgbouncer",
-        "minio",
         "litellm",
         "orchestrator-api",
     }
     assert all("workers" in compose["services"][name]["networks"] for name in required)
     assert "workers" not in compose["services"]["redis"]["networks"]
     assert "workers" not in compose["services"]["postgres"]["networks"]
+    assert "workers" not in compose["services"]["pgbouncer"]["networks"]
+    assert "workers" not in compose["services"]["minio"]["networks"]
+    assert "workers" not in compose["services"]["opencode-runtime"]["networks"]
+
+    team_env = compose["x-team-env"]
+    assert "PGBOUNCER_DSN" not in team_env
+    assert all(not key.startswith("MINIO_") for key in team_env)
+    assert "MAS_API_KEY" not in team_env
+    assert "AIAT_CEO_API_KEY" not in team_env
+    team_services = [
+        name for name in compose["services"] if name.startswith("team-")
+    ]
+    assert team_services
+    assert all("MAS_API_KEY" not in compose["services"][name]["environment"] for name in team_services)
+    assert "AIAT_CEO_API_KEY" in compose["services"]["team-exec-ceo"]["environment"]
+    assert "AIAT_WORKER_API_KEY" not in compose["services"]["team-exec-ceo"]["environment"]
+    assert all(
+        "AIAT_CEO_API_KEY" not in compose["services"][name]["environment"]
+        for name in team_services
+        if name != "team-exec-ceo"
+    )
 
 
 def test_egress_and_scoped_workspace_are_preserved() -> None:

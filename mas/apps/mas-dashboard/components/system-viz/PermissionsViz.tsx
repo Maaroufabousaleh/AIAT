@@ -86,9 +86,10 @@ export function PermissionsViz({
           <div className="flex-1">
             <label className="block text-xs text-gray-500 mb-1">Sender Role</label>
             <select
+              aria-label="Permission sender role"
               value={senderRole}
               onChange={(e) => setSenderRole(e.target.value)}
-              className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-white"
+              className="min-h-11 w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-white"
             >
               {roles.map(role => (
                 <option key={role} value={role}>{ROLE_LABELS[role] || role}</option>
@@ -231,8 +232,9 @@ export function PermissionsViz({
                   className="bg-gray-900 rounded-lg overflow-hidden"
                 >
                   <button
+                    type="button"
                     onClick={() => toggleMsgTypeGroup(group)}
-                    className="w-full flex items-center justify-between p-2 text-sm text-gray-300 hover:bg-gray-800"
+                    className="w-full min-h-11 flex items-center justify-between p-2 text-sm text-gray-300 hover:bg-gray-800"
                   >
                     <span className="capitalize">{group}</span>
                     {expandedMsgTypes.has(group) ? <ChevronDown size={14} /> : <ChevronRight size={14} />}

@@ -13,6 +13,7 @@ Implements:
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import hmac
 import importlib
@@ -20,11 +21,15 @@ import importlib.util
 import inspect
 import json
 import logging
+import math
 import os
 import re
 import shutil
+import ssl
+import time
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from enum import Enum
 from functools import partial
 from typing import Any, Literal
@@ -38,29 +43,115 @@ import sqlalchemy as sa
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from prometheus_client import Counter
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from mas_core.integrations import ProviderRegistry
+from mas_core.integrations.contracts import (
+    DEDICATED_PROJECT_MAPPING_PROFILE,
+    BootstrapApplyResult,
+    BootstrapPlan,
+    CanonicalIteration,
+    CanonicalProject,
+    CanonicalWorkItem,
+    ExternalEvent,
+    LifecyclePlanError,
+    LifecyclePlanStatus,
+    ObjectType,
+    PMInboundCanaryPlan,
+    PMLifecycleTransitionPlan,
+    ProjectProvisioningPlan,
+    ProviderConnection,
+    normalize_project_mapping_profile,
+    pm_binding_effective_policy,
+    validate_credential_references,
+)
+from mas_core.integrations.providers.base import (
+    provider_failure_is_permanent,
+    provider_ssl_context,
+)
+from mas_core.company_manifest import (
+    DEFAULT_COMPANY_ID,
+    CompanyManifestError,
+    compile_company_manifest,
+)
 from mas_core.llm_gateway.client import LLMGatewayClient
+from mas_core.memory import models as memory_models
 from mas_core.memory.storage import AgentStorage, document_to_context_item
 from mas_core.observability import configure_logging
-from mas_core.observability.metrics import MAS_PROJECT_STATE
-from mas_core.observability.tracing import bind_trace_id, new_trace_id
-from mas_core.protocols.enums import AgentRole, MessageType
+from mas_core.observability.metrics import (
+    observe_project_state,
+    record_project_state_transition,
+    reconcile_project_state_metrics,
+)
+from mas_core.observability.slo import (
+    CapacityForecast,
+    SLOReport,
+    build_capacity_forecast,
+    build_slo_report,
+    default_slo_policy,
+)
+from mas_core.observability.retention import (
+    TraceRetentionPlanResponse,
+    plan_native_span_retention,
+)
+from mas_core.observability.trace_evidence import (
+    TraceEvidence,
+    TraceRetentionPolicy,
+    build_trace_evidence,
+    trace_retention_from_manifest,
+)
+from mas_core.observability.trace_incident import TraceIncident, build_trace_incident
+from mas_core.observability.tracing import (
+    bind_trace_id,
+    clear_trace_context,
+    current_trace_id,
+    is_safe_trace_id,
+    new_trace_id,
+    resolve_trace_id,
+)
+from mas_core.policy.dashboard_access import (
+    DASHBOARD_PRINCIPALS,
+    DASHBOARD_SECTION_ACL_CONFIG_KEY,
+    DASHBOARD_SECTIONS,
+    DEFAULT_DASHBOARD_SECTION_ACL,
+    normalize_dashboard_acl,
+    principal_can_access_section,
+    sections_for_principal,
+    serialize_dashboard_acl,
+)
 from mas_core.policy.tool_access import can_use_tool_with_metadata
+from mas_core.protocols.enums import AgentRole, MessageType
+from mas_core.worker_registry._risk_utils import is_medium_or_dual_use_worker, worker_risk_labels
+from mas_core.worker_registry.runtime_catalog import (
+    OPTIONAL_RUNTIME_IDS,
+    RUNTIME_REQUIRED_PACKAGES,
+)
+from mas_core.worker_registry.steward import operational_promotion_checks
 from mas_core.workflow import (
+    GateName,
+    ImprovementArtifactBundle,
+    ImprovementOpportunity,
+    ImprovementOutcomeKind,
     InvalidTransitionError,
+    SelfImprovementAuthorityError,
+    SelfImprovementLifecycle,
+    SelfImprovementTransitionError,
     WatchdogConfig,
     WorkflowController,
     WorkflowEvent,
+    bind_pending_worker_run,
+    classify_worker_run_state,
+    clear_worker_run_binding,
     is_terminal_state,
+    normalize_worker_run_state,
     resolve_transition,
     should_watchdog_fire,
 )
 from mas_core.workflow.states import ProjectState
-from mas_core.worker_registry._risk_utils import is_medium_or_dual_use_worker, worker_risk_labels
 
 VALID_SANDBOX_PROFILES = {"standard", "restricted", "gvisor", "firecracker"}
 HARDENED_SANDBOX_PROFILES = {"gvisor", "firecracker"}
+WorkerUpdatePolicy = Literal["manual", "auto-patch", "auto-minor", "auto-all"]
 
 logger = logging.getLogger(__name__)
 
@@ -104,14 +195,23 @@ configure_logging("orchestrator-api", json=os.getenv("LOG_FORMAT") != "console")
 # ---------------------------------------------------------------------------
 
 
-def _check_auth(x_api_key: str | None = Header(None), authorization: str | None = Header(None)) -> None:
+def _check_auth(x_api_key: str | None = Header(None), authorization: str | None = Header(None)) -> str:
     """Validate API key for protected endpoints.
 
     Accepts either X-API-Key header (frontend proxy) or Authorization: Bearer.
     """
-    _MAS_API_KEY = os.getenv("MAS_API_KEY", "")
-    _GATEWAY_API_KEY = os.getenv("GATEWAY_API_KEY", "")
-    configured_keys = tuple(key for key in (_MAS_API_KEY, _GATEWAY_API_KEY) if key)
+    configured_keys = (
+        ("operator", os.getenv("AIAT_OPERATOR_API_KEY", "")),
+        ("pm_gateway", os.getenv("PM_GATEWAY_API_KEY", "")),
+        ("service", os.getenv("MAS_API_KEY", "")),
+        ("ceo", os.getenv("AIAT_CEO_API_KEY", "")),
+        ("worker", os.getenv("AIAT_WORKER_API_KEY", "")),
+        ("gateway", os.getenv("GATEWAY_API_KEY", "")),
+    )
+    configured_keys = tuple(item for item in configured_keys if item[1])
+    distinct_values = [value for _principal, value in configured_keys]
+    if len(distinct_values) != len(set(distinct_values)):
+        raise HTTPException(503, "API credentials must be distinct by principal")
     if not configured_keys:
         raise HTTPException(503, "API authentication is not configured")
     token = x_api_key or authorization
@@ -121,8 +221,10 @@ def _check_auth(x_api_key: str | None = Header(None), authorization: str | None 
     if token.lower().startswith("bearer "):
         token = token[7:]
     supplied = token.strip()
-    if not any(hmac.compare_digest(supplied, key) for key in configured_keys):
-        raise HTTPException(401, "Invalid API key")
+    for principal, key in configured_keys:
+        if hmac.compare_digest(supplied, key):
+            return principal
+    raise HTTPException(401, "Invalid API key")
 
 
 def _router_auth_headers() -> dict[str, str]:
@@ -135,7 +237,11 @@ def _router_auth_headers() -> dict[str, str]:
     secret = os.getenv("ROUTER_SECRET") or os.getenv("AGENT_TOKEN_SECRET")
     if not secret:
         raise RuntimeError("ROUTER_SECRET must be configured for router publication")
-    return {"Authorization": f"Bearer orchestrator-api:{secret}"}
+    headers = {"Authorization": f"Bearer orchestrator-api:{secret}"}
+    trace_id = current_trace_id()
+    if trace_id:
+        headers["X-AIAT-Trace-ID"] = trace_id
+    return headers
 
 
 def _control_plane_auth_headers() -> dict[str, str]:
@@ -434,7 +540,7 @@ DELTA_INTEGRATION_CANDIDATES: list[dict[str, Any]] = [
         "status_when_missing": "blocked",
         "required_gates": [
             "adapter contract",
-            "license/provenance approval",
+            "source/version provenance record",
             "gVisor sandbox profile",
             "artifact reference output contract",
         ],
@@ -468,7 +574,7 @@ DELTA_INTEGRATION_CANDIDATES: list[dict[str, Any]] = [
         "required_gates": [
             "skipped-tool reporting",
             "sandboxed execution",
-            "license/provenance approval",
+            "source/version provenance record",
         ],
         "blocked_reason": None,
     },
@@ -864,11 +970,30 @@ def _delta_policy_for(integration_id: str) -> dict[str, Any]:
 
 async def _company_read_model(storage: AgentStorage) -> dict[str, Any]:
     seeded = (await storage.get_config("default_company_seeded")) == "true"
+    persistent_company: dict[str, Any] | None = None
+    try:
+        first_class = await storage.get_company_read_model(DEFAULT_COMPANY_ID)
+        if first_class.get("company"):
+            persistent_company = first_class
+            seeded = True
+    except Exception:
+        # Older test databases and pre-0031 installations use the bootstrap
+        # config read model until the migration has been applied.
+        logger.debug("company_read_model.first_class_unavailable", exc_info=True)
     ceo = _decode_json_config(
         await storage.get_config("default_company_ceo"),
         {"id": "ceo_agent", "name": "AIAT CEO", "role": "CEO"},
     )
     departments = _decode_json_config(await storage.get_config("default_company_departments"), [])
+    if persistent_company and persistent_company.get("departments"):
+        departments = [
+            {
+                "id": row.get("department_key"),
+                "name": row.get("name"),
+                "chief_worker_id": row.get("chief_worker_id"),
+            }
+            for row in persistent_company["departments"]
+        ]
     workers = await storage.list_workers()
     projects = await storage.list_projects(limit=1000)
     capabilities = await storage.list_capabilities()
@@ -926,10 +1051,12 @@ async def _company_read_model(storage: AgentStorage) -> dict[str, Any]:
             }
         )
 
+    manifest = (persistent_company or {}).get("manifest") if persistent_company else None
     return {
         "company": {
-            "id": "aiat",
-            "name": "AIAT",
+            "id": str((persistent_company or {}).get("company", {}).get("id") or DEFAULT_COMPANY_ID),
+            "slug": (persistent_company or {}).get("company", {}).get("slug") or "aiat-default",
+            "name": (persistent_company or {}).get("company", {}).get("name") or "AIAT",
             "seeded": seeded,
             "seeded_at": await storage.get_config("default_company_seeded_at"),
         },
@@ -947,6 +1074,9 @@ async def _company_read_model(storage: AgentStorage) -> dict[str, Any]:
             "capabilities": len(capabilities),
             "evaluation_warnings": sum(1 for w in workers if _worker_eval_warning(w)),
         },
+        "manifest": _serialize(manifest) if manifest is not None else None,
+        "company_assignments": (persistent_company or {}).get("assignments") or [],
+        "company_budgets": (persistent_company or {}).get("budgets") or [],
     }
 
 
@@ -957,10 +1087,11 @@ async def _org_graph_read_model(storage: AgentStorage) -> dict[str, Any]:
     capability_by_id = {str(c["id"]): c for c in capabilities}
 
     nodes = [
-        {"id": "company_aiat", "type": "company", "label": company["company"]["name"]},
+        {"id": _graph_id("company", company["company"]["id"]), "type": "company", "label": company["company"]["name"]},
         {"id": "ceo_ceo_agent", "type": "ceo", "label": company["ceo"].get("name", "AIAT CEO")},
     ]
-    edges = [{"id": "company-ceo", "source": "company_aiat", "target": "ceo_ceo_agent", "label": "led by"}]
+    company_node = _graph_id("company", company["company"]["id"])
+    edges = [{"id": "company-ceo", "source": company_node, "target": "ceo_ceo_agent", "label": "led by"}]
 
     for department in company["departments"]:
         dept_node = _graph_id("department", department["id"])
@@ -1063,6 +1194,7 @@ class CreateProjectRequest(BaseModel):
     flow_id: UUID | None = None
     workspace: ProjectWorkspaceRequest | None = None
     initial_context: list[ProjectContextSeedRequest] = Field(default_factory=list, max_length=25)
+    company_id: UUID = DEFAULT_COMPANY_ID
 
     @field_validator("name")
     @classmethod
@@ -1071,6 +1203,387 @@ class CreateProjectRequest(BaseModel):
         if not normalized:
             raise ValueError("name must not be blank")
         return normalized
+
+
+class SelfImprovementReferenceRequest(BaseModel):
+    """Link an existing canonical record to an improvement lifecycle."""
+
+    kind: Literal[
+        "issue",
+        "worker_run",
+        "artifact",
+        "artifact_readback",
+        "budget_reservation",
+        "branch",
+        "sbom",
+        "deployment",
+        "evidence",
+        "repository",
+    ]
+    reference: str = Field(min_length=1, max_length=512)
+
+    @field_validator("reference")
+    @classmethod
+    def normalize_reference(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("reference must not be blank")
+        return normalized
+
+
+class SelfImprovementActionRequest(BaseModel):
+    """One governed mutation of a revisioned self-improvement lifecycle."""
+
+    action: Literal[
+        "record_gate",
+        "start_shadow",
+        "record_observation",
+        "start_canary",
+        "request_promotion",
+        "approve_promotion",
+        "rollback",
+        "record_outcome",
+        "record_artifacts",
+        "record_artifact_readback",
+    ]
+    gate: GateName | None = None
+    passed: bool | None = None
+    evidence_refs: list[str] = Field(default_factory=list, max_length=32)
+    detail: str | None = Field(default=None, max_length=2000)
+    candidate_version: str | None = Field(default=None, max_length=240)
+    stage: Literal["shadow", "canary"] | None = None
+    sample_count: int | None = Field(default=None, gt=0)
+    regression_fraction: float | None = Field(default=None, ge=0.0, le=1.0)
+    irreversible_side_effects: int = Field(default=0, ge=0)
+    reason: str | None = Field(default=None, max_length=2000)
+    outcome_id: UUID | None = None
+    outcome: ImprovementOutcomeKind | None = None
+    cost_usd: Decimal | None = Field(default=None, ge=Decimal("0"), le=Decimal("1000000"))
+    incident_count: int | None = Field(default=None, ge=0, le=100000)
+    rollback_performed: bool | None = None
+    kpi_learning: dict[str, float] = Field(default_factory=dict)
+    artifact_bundle: ImprovementArtifactBundle | None = None
+    artifact_id: UUID | None = None
+    actual_sha256: str | None = Field(default=None, max_length=64)
+    actual_size_bytes: int | None = Field(default=None, ge=0, le=1_000_000_000_000)
+    readback_source: str | None = Field(default=None, max_length=240)
+    canonical_artifact_id: str | None = Field(default=None, max_length=160)
+
+    @field_validator("evidence_refs")
+    @classmethod
+    def normalize_evidence_refs(cls, values: list[str]) -> list[str]:
+        normalized = [value.strip() for value in values]
+        if any(not value for value in normalized):
+            raise ValueError("evidence_refs must not contain blank values")
+        return list(dict.fromkeys(normalized))
+
+    @model_validator(mode="after")
+    def validate_action_payload(self) -> SelfImprovementActionRequest:
+        if self.action == "record_gate" and self.gate is None:
+            raise ValueError("record_gate requires gate")
+        if self.action == "record_gate" and self.passed is None:
+            raise ValueError("record_gate requires passed")
+        if self.action == "start_shadow" and not (self.candidate_version or "").strip():
+            raise ValueError("start_shadow requires candidate_version")
+        if (
+            self.action == "record_observation"
+            and (
+                self.stage is None
+                or self.sample_count is None
+                or self.regression_fraction is None
+            )
+        ):
+            raise ValueError(
+                "record_observation requires stage, sample_count, and regression_fraction"
+            )
+        if self.action == "rollback" and not (self.reason or "").strip():
+            raise ValueError("rollback requires reason")
+        if self.action == "record_outcome":
+            if self.outcome is None:
+                raise ValueError("record_outcome requires outcome")
+            if self.cost_usd is None:
+                raise ValueError("record_outcome requires cost_usd")
+            if self.incident_count is None:
+                raise ValueError("record_outcome requires incident_count")
+            if self.rollback_performed is None:
+                raise ValueError("record_outcome requires rollback_performed")
+        if self.action == "record_artifacts" and self.artifact_bundle is None:
+            raise ValueError("record_artifacts requires artifact_bundle")
+        if self.action == "record_artifact_readback":
+            if self.artifact_id is None:
+                raise ValueError("record_artifact_readback requires artifact_id")
+            if self.actual_sha256 is None:
+                raise ValueError("record_artifact_readback requires actual_sha256")
+            if self.actual_size_bytes is None:
+                raise ValueError("record_artifact_readback requires actual_size_bytes")
+            if not (self.readback_source or "").strip():
+                raise ValueError("record_artifact_readback requires readback_source")
+        return self
+
+
+class CompanyCreateRequest(BaseModel):
+    slug: str = Field(min_length=1, max_length=120, pattern=r"^[a-z][a-z0-9-]*$")
+    name: str = Field(min_length=1, max_length=200)
+    description: str = Field(default="", max_length=20_000)
+    created_by: str = Field(default="operator", min_length=1, max_length=200)
+
+
+class CompanyManifestRequest(BaseModel):
+    manifest: dict[str, Any]
+    source: str = Field(default="api", min_length=1, max_length=1000)
+
+
+class CompanyManifestRollbackRequest(BaseModel):
+    manifest_version: int = Field(ge=1)
+    reason: str = Field(min_length=1, max_length=2000)
+
+
+class PMConnectionCreateRequest(BaseModel):
+    provider_kind: str = Field(..., min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    display_name: str = Field(..., min_length=1, max_length=200)
+    base_url: str = Field(..., max_length=1000)
+    credential_ref: str = Field(..., min_length=1, max_length=200)
+    capability_profile: str = Field(default="pm", min_length=1, max_length=64)
+    config: dict[str, Any] = Field(default_factory=dict)
+    created_by: str = Field(default="operator", min_length=1, max_length=200)
+
+    @field_validator("config")
+    @classmethod
+    def reject_inline_secrets(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return validate_credential_references(value)
+
+    @model_validator(mode="after")
+    def require_secure_provider_url(self) -> PMConnectionCreateRequest:
+        from urllib.parse import urlsplit
+
+        parsed = urlsplit(self.base_url)
+        host = str(parsed.hostname or "").lower()
+        local_hosts = {"localhost", "127.0.0.1", "::1"}
+        if self.provider_kind.lower() != "fake" and parsed.scheme != "https" and host not in local_hosts:
+            raise ValueError("non-fake provider connections must use HTTPS")
+        if self.provider_kind.lower() != "fake" and any(
+            key in self.config
+            for key in ("webhook_secret_test_only", "webhook_token_test_only")
+        ):
+            raise ValueError("test-only webhook credentials are permitted only for fake connections")
+        return self
+
+
+class PMConnectionStatusRequest(BaseModel):
+    status: Literal["DISABLED", "SHADOW", "READ_ONLY", "ACTIVE", "DRAINING"]
+
+
+class PMBindingCreateRequest(BaseModel):
+    connection_id: UUID
+    external_project_id: str | None = None
+    external_project_key: str | None = Field(default=None, max_length=240)
+    external_repository: str | None = None
+    mapping_profile: str = Field(default=DEDICATED_PROJECT_MAPPING_PROFILE, min_length=1, max_length=100)
+    direction: Literal["outbound", "inbound", "both"] = "outbound"
+    status: Literal["DISABLED", "SHADOW", "READ_ONLY", "ACTIVE", "DRAINING"] = "DISABLED"
+
+    @field_validator("mapping_profile")
+    @classmethod
+    def normalize_mapping_profile(cls, value: str) -> str:
+        return normalize_project_mapping_profile(value)
+
+
+class PMBindingUpdateRequest(BaseModel):
+    external_project_id: str | None = Field(default=None, max_length=240)
+    external_project_key: str | None = Field(default=None, max_length=240)
+    external_repository: str | None = Field(default=None, max_length=1000)
+    mapping_profile: str | None = Field(default=None, min_length=1, max_length=100)
+    direction: Literal["outbound", "inbound", "both"] | None = None
+    status: Literal["DISABLED", "SHADOW", "READ_ONLY", "ACTIVE", "DRAINING"] | None = None
+
+    @field_validator("mapping_profile")
+    @classmethod
+    def normalize_mapping_profile(cls, value: str | None) -> str | None:
+        return normalize_project_mapping_profile(value) if value is not None else None
+
+
+class PMProjectProvisioningRequest(BaseModel):
+    connection_id: UUID
+    mapping_profile: str = Field(default=DEDICATED_PROJECT_MAPPING_PROFILE, min_length=1, max_length=100)
+    external_project_id: str | None = Field(default=None, max_length=240)
+
+    @field_validator("mapping_profile")
+    @classmethod
+    def normalize_mapping_profile(cls, value: str) -> str:
+        return normalize_project_mapping_profile(value)
+
+
+class PMProjectProvisioningApplyRequest(BaseModel):
+    plan: ProjectProvisioningPlan
+    plan_digest: str = Field(..., min_length=64, max_length=64)
+    confirm: bool = False
+
+
+class PMPlanRequest(BaseModel):
+    desired: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("desired")
+    @classmethod
+    def reject_inline_secrets(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return validate_credential_references(value)
+
+
+class PMApplyRequest(BaseModel):
+    plan: BootstrapPlan
+    plan_digest: str = Field(..., min_length=64, max_length=64)
+    confirm: bool = False
+
+
+class PMReconcileRequest(BaseModel):
+    binding_id: UUID | None = None
+    cursor: str | None = None
+    limit: int = Field(default=100, ge=1, le=1000)
+    mode: Literal["audit", "repair_proposal"] = "audit"
+
+
+class PMCutoverRequest(BaseModel):
+    project_id: UUID
+    binding_id: UUID
+    confirm: bool = False
+
+
+class PMRollbackRequest(BaseModel):
+    project_id: UUID
+    binding_id: UUID
+    confirm: bool = False
+
+
+class PMLifecyclePlanCreateRequest(BaseModel):
+    target_type: Literal["pm_connection", "pm_binding"] = "pm_binding"
+    connection_id: UUID
+    binding_id: UUID | None = None
+    desired_connection_status: Literal["DISABLED", "SHADOW", "READ_ONLY", "ACTIVE", "DRAINING"] | None = None
+    desired_binding_status: Literal["DISABLED", "SHADOW", "READ_ONLY", "ACTIVE", "DRAINING"] | None = None
+    ttl_seconds: int = Field(default=3600, ge=60, le=86400)
+
+
+class PMLifecyclePlanApprovalRequest(BaseModel):
+    plan_digest: str = Field(..., min_length=64, max_length=64)
+    reason: str | None = Field(default=None, max_length=1000)
+
+
+class PMLifecyclePlanApplyRequest(BaseModel):
+    plan_digest: str = Field(..., min_length=64, max_length=64)
+    confirm: bool = False
+
+
+class PMLifecyclePlanRejectRequest(BaseModel):
+    plan_digest: str = Field(..., min_length=64, max_length=64)
+    reason: str | None = Field(default=None, max_length=1000)
+
+
+class PMConflictResolutionRequest(BaseModel):
+    status: Literal["RESOLVED", "IGNORED", "REOPENED"] = "RESOLVED"
+    resolution: dict[str, Any] = Field(default_factory=dict)
+
+
+class PMExternalActorMappingCreateRequest(BaseModel):
+    inbox_event_ids: list[UUID] = Field(min_length=1, max_length=20)
+    authorized_scopes: list[Literal["issue.priority"]] = Field(default_factory=lambda: ["issue.priority"])
+    reason: str = Field(default="operator-authorized live YouTrack certification actor", min_length=1, max_length=500)
+
+
+class PMInboundCanaryPlanCreateRequest(BaseModel):
+    binding_id: UUID
+    canonical_issue_id: UUID
+    external_issue_id: str = Field(min_length=1, max_length=240)
+    mapping_id: UUID
+    actor_mapping_id: UUID
+    target_priority: Literal["low", "medium", "high", "urgent", "critical", "normal"] | None = None
+    ttl_seconds: int = Field(default=900, ge=60, le=14400)
+
+
+class PMInboundCanaryPlanActionRequest(BaseModel):
+    digest: str = Field(min_length=64, max_length=64)
+    confirm: bool = False
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class PMInboundCanaryReplayRequest(BaseModel):
+    digest: str = Field(min_length=64, max_length=64)
+    inbox_id: UUID
+    confirm: bool = False
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class PMOutboxDispositionRequest(BaseModel):
+    disposition: Literal["RESOLVED", "SUPERSEDED"]
+    reason: str = Field(min_length=1, max_length=1000)
+    provider_state: dict[str, Any] = Field(default_factory=dict)
+
+
+class SCMActionRequest(BaseModel):
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("payload")
+    @classmethod
+    def reject_provider_credentials(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return validate_credential_references(value)
+
+
+class CanonicalIssueUpdateRequest(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=500)
+    description: str | None = Field(default=None, max_length=100_000)
+    status: str | None = Field(default=None, min_length=1, max_length=64)
+    priority: str | None = Field(default=None, min_length=1, max_length=64)
+    assigned_team: str | None = Field(default=None, max_length=200)
+    assigned_agent: str | None = Field(default=None, max_length=200)
+    estimated_hours: float | None = Field(default=None, ge=0)
+    actual_hours: float | None = Field(default=None, ge=0)
+    story_points: int | None = Field(default=None, ge=0)
+    expected_revision: int | None = Field(default=None, ge=1)
+
+
+class CanonicalIssueCreateRequest(BaseModel):
+    title: str = Field(default="Untitled issue", min_length=1, max_length=500)
+    description: str | None = Field(default=None, max_length=100_000)
+    issue_type: str = Field(default="TASK", min_length=1, max_length=64)
+    priority: str = Field(default="medium", min_length=1, max_length=64)
+    sprint_id: UUID | None = None
+    assigned_team: str | None = Field(default=None, max_length=200)
+    assigned_agent: str | None = Field(default=None, max_length=200)
+    estimated_hours: float | None = Field(default=None, ge=0)
+    story_points: int | None = Field(default=None, ge=0)
+
+
+class CanonicalSprintCreateRequest(BaseModel):
+    sprint_number: int = Field(default=1, ge=1)
+    milestone: str | None = Field(default=None, max_length=200)
+    goal: str | None = Field(default=None, max_length=20_000)
+    planned_story_points: int | None = Field(default=None, ge=0)
+    estimated_hours: float | None = Field(default=None, ge=0)
+
+
+class CanonicalSprintUpdateRequest(BaseModel):
+    milestone: str | None = Field(default=None, max_length=200)
+    goal: str | None = Field(default=None, max_length=20_000)
+    status: str | None = Field(default=None, min_length=1, max_length=64)
+    planned_story_points: int | None = Field(default=None, ge=0)
+    completed_story_points: int | None = Field(default=None, ge=0)
+    estimated_hours: float | None = Field(default=None, ge=0)
+    actual_hours: float | None = Field(default=None, ge=0)
+    expected_revision: int | None = Field(default=None, ge=1)
+
+
+class CanonicalIssueCommentRequest(BaseModel):
+    body: str = Field(..., min_length=1, max_length=100_000)
+    actor_id: str = Field(default="operator", min_length=1, max_length=200)
+    run_id: UUID | None = None
+    approval_id: UUID | None = None
+    evidence_id: str | None = None
+    body_blob_ref: str | None = Field(default=None, max_length=500)
+
+
+class CanonicalIssueLinkRequest(BaseModel):
+    link_type: str = Field(..., min_length=1, max_length=80)
+    target_type: str = Field(..., min_length=1, max_length=80)
+    target_id: str = Field(..., min_length=1, max_length=400)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 # ── Credentials Manager request models ──────────────────────────────────────
@@ -1185,10 +1698,42 @@ class ScheduleRequest(BaseModel):
     enabled: bool = False
     start_hour: int = Field(default=8, ge=0, le=23)
     end_hour: int = Field(default=18, ge=0, le=23)
-    timezone: str = "UTC"
+    # Omitted values inherit the active company-manifest timezone. An explicit
+    # value remains available for a schedule that intentionally differs from
+    # the company display/schedule default.
+    timezone: str | None = None
     days: list[str] = Field(default_factory=lambda: ["mon", "tue", "wed", "thu", "fri"])
     auto_shutdown: bool = True
     auto_resume: bool = True
+
+
+class DashboardSectionACLRequest(BaseModel):
+    """Human-managed principals for one dashboard section."""
+
+    principals: list[str] = Field(default_factory=list)
+
+
+class TeamRunnerStorageRequest(BaseModel):
+    """Allow-listed storage operation issued by a deployed team runner."""
+
+    operation: Literal[
+        "storage_health",
+        "checkpoint_save",
+        "checkpoint_load",
+        "checkpoint_latest",
+        "checkpoint_delete",
+        "usage_record",
+        "document_get",
+        "document_create",
+        "document_update_status",
+        "review_create",
+        "review_get",
+        "review_update",
+        "review_comment_add",
+        "review_comments_get",
+        "review_list",
+    ]
+    payload: dict[str, Any] = Field(default_factory=dict)
 
 
 class CapabilitySearchRequest(BaseModel):
@@ -1211,7 +1756,7 @@ class RegisterWorkerRequest(BaseModel):
     team_id: str | None = None
     source_repo: str | None = None
     version_pin: str | None = None
-    update_policy: str = "manual"
+    update_policy: WorkerUpdatePolicy = "manual"
     model_mode: str = "none"
     model_profile_id: str | None = None
     identity_mailbox_class: str = "permanent"
@@ -1225,7 +1770,7 @@ class UpdateWorkerRequest(BaseModel):
     team_id: str | None = None
     version: str | None = None
     version_pin: str | None = None
-    update_policy: str | None = None
+    update_policy: WorkerUpdatePolicy | None = None
     adapter_entrypoint: str | None = None
     adapter_module: str | None = None
     wrapper_config: dict[str, Any] | None = None
@@ -1389,6 +1934,36 @@ class ModelResolutionPreviewRequest(BaseModel):
     requested_raw_model_id: str | None = None
 
 
+def _model_override_is_expired(value: Any, *, now: datetime | None = None) -> bool:
+    """Return whether an override expiry is past, failing closed on bad data.
+
+    Durable PostgreSQL rows normally provide an aware ``datetime``.  API
+    adapters and replay fixtures may provide an ISO-8601 string instead, so
+    normalise both representations at this boundary.  A missing expiry is
+    intentionally non-expiring; an invalid or unsupported value is treated as
+    expired so it can never authorize a model override accidentally.
+    """
+
+    if value is None:
+        return False
+    expires_at: datetime
+    if isinstance(value, datetime):
+        expires_at = value
+    elif isinstance(value, str):
+        try:
+            expires_at = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return True
+    else:
+        return True
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    reference = now or datetime.now(UTC)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=UTC)
+    return expires_at <= reference
+
+
 class WorkerRunDispatchRequest(BaseModel):
     worker_id: UUID
     idempotency_key: str
@@ -1419,6 +1994,37 @@ class WorkerRunDispatchRequest(BaseModel):
     budget_usd: float | None = Field(default=None, ge=0)
     model_override_request_id: UUID | None = None
     model_override_approval_id: UUID | None = None
+    dispatch_mode: Literal["queued", "inline"] | None = None
+    queue_priority: int = Field(default=0, ge=-100, le=100)
+    lease_seconds: int = Field(default=300, ge=30, le=86_400)
+
+
+EXECUTIVE_ACTION_SCHEMA = "aiat.executive-action.v1"
+
+
+class ExecutiveCFOModelOverrideRequest(BaseModel):
+    """CFO request for a project-scoped model-profile override."""
+
+    project_id: UUID
+    requested_profile_id: str = Field(..., min_length=1, max_length=256)
+    requested_by: str = Field(default="cfo", min_length=1, max_length=256)
+    reason: str = Field(..., min_length=1, max_length=4_000)
+    scope: dict[str, Any] = Field(default_factory=dict)
+
+
+class ExecutiveCTOWorkerRunRequest(BaseModel):
+    """CTO request for a governed worker run using the canonical dispatch contract."""
+
+    requested_by: str = Field(default="cto", min_length=1, max_length=256)
+    dispatch: WorkerRunDispatchRequest
+
+
+class ExecutiveCEOPrivilegedActionRequest(BaseModel):
+    """CEO request for a privileged operation through the audited gate."""
+
+    action: str = Field(..., min_length=1, max_length=256)
+    requested_by: str = Field(default="ceo", min_length=1, max_length=256)
+    payload: dict[str, Any] = Field(default_factory=dict)
 
 
 class WorkerRunPauseRequest(BaseModel):
@@ -1433,8 +2039,18 @@ class WorkerRunResumeRequest(BaseModel):
 
 class EvidencePolicyRequest(BaseModel):
     policy_id: str
-    policy_version: str
-    requirements: dict[str, Any]
+    policy_version: str = "1.0"
+    requirements: dict[str, Any] = Field(default_factory=dict)
+    scope: Literal["project", "milestone"] = "project"
+    milestone: str | None = Field(default=None, min_length=1, max_length=200)
+
+    @model_validator(mode="after")
+    def validate_scope(self) -> "EvidencePolicyRequest":
+        if self.scope == "milestone" and not self.milestone:
+            raise ValueError("milestone is required for milestone-scoped evidence policy")
+        if self.scope == "project" and self.milestone is not None:
+            raise ValueError("milestone is only valid for milestone-scoped evidence policy")
+        return self
 
 
 
@@ -1473,6 +2089,56 @@ class CreateFlowRequest(BaseModel):
     created_by: str = "human"
     is_active: bool = False
     version_from_flow_id: UUID | None = None
+
+
+class FlowFromTemplateRequest(BaseModel):
+    template_id: str = Field(..., min_length=1, max_length=100)
+    name: str | None = None
+    description: str | None = None
+    created_by: str = "template"
+    is_active: bool = False
+
+
+class FlowImportRequest(BaseModel):
+    """Import a validated flow envelope, optionally as a new immutable version."""
+
+    name: str
+    description: str | None = None
+    definition_json: dict[str, Any]
+    created_by: str = "import"
+    is_active: bool = False
+    version_from_flow_id: UUID | None = None
+
+
+class FlowDiffRequest(BaseModel):
+    from_flow_id: UUID
+    to_flow_id: UUID
+
+
+class FlowMigrationRequest(BaseModel):
+    """Request a compatible or explicitly mapped graph migration.
+
+    Graph rewrites are intentionally opt-in.  A mapping only remaps active
+    nodes; historical executions remain attached to their original node IDs.
+    """
+
+    flow_id: UUID
+    preserve_context: bool = True
+    actor_id: str = "human_operator"
+    allow_graph_rewrite: bool = False
+    active_node_mapping: dict[str, str] = Field(default_factory=dict)
+
+
+class FlowLegacyTaskMigrationRequest(BaseModel):
+    """Migrate compatibility task aliases into an immutable worker-bound version."""
+
+    worker_bindings: dict[str, UUID] = Field(default_factory=dict)
+    model_profile_bindings: dict[str, str] = Field(default_factory=dict)
+    actor_id: str = Field(default="human_operator", min_length=1, max_length=256)
+    dry_run: bool = False
+    is_active: bool = False
+    name: str | None = Field(default=None, min_length=1, max_length=256)
+    description: str | None = None
 
 
 class FlowDryRunRequest(BaseModel):
@@ -1777,12 +2443,16 @@ async def watchdog_loop(
                     pid = str(project["id"])
                     logger.warning("Watchdog timeout for project=%s state=%s", pid, state_str)
                     try:
-                        await controller.transition(
+                        watchdog_result = await controller.transition(
                             project_id=pid,
                             current_state=state,
                             event=WorkflowEvent.WATCHDOG_TIMEOUT,
                             actor_id="watchdog",
                             context={"reason": "Watchdog timeout — project stuck"},
+                        )
+                        record_project_state_transition(
+                            watchdog_result.prior_state,
+                            watchdog_result.next_state,
                         )
                     except InvalidTransitionError:
                         logger.debug(
@@ -1836,6 +2506,30 @@ async def update_monitor_loop(
             logger.exception("steward_update_monitor_loop_error")
 
 
+async def worker_run_recovery_loop(
+    storage: AgentStorage,
+    stop_event: Any,
+    *,
+    interval_seconds: int = 30,
+) -> None:
+    """Requeue worker runs whose executor lease expired after a restart."""
+    while not stop_event.is_set():
+        try:
+            await anyio.sleep(interval_seconds)
+            if stop_event.is_set():
+                break
+            recovered = await storage.recover_expired_worker_runs(limit=100)
+            if recovered:
+                logger.warning(
+                    "worker_run_leases_recovered",
+                    extra={"count": len(recovered)},
+                )
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            logger.exception("worker_run_recovery_loop_error")
+
+
 # ── Resume protocol ──────────────────────────────────────────────────────────
 
 
@@ -1878,6 +2572,27 @@ async def _publish_project_resume(
     return False
 
 
+async def _reconcile_project_state_metrics(storage: AgentStorage) -> None:
+    """Refresh bounded project-state gauges from the durable source of truth."""
+
+    try:
+        state_reader = getattr(storage, "list_project_states", None)
+        if inspect.iscoroutinefunction(state_reader):
+            states = await state_reader()
+        else:
+            # Lightweight storage doubles from older tests do not implement
+            # the state-only query; keep the compatibility fallback bounded by
+            # their existing project-list API.
+            projects = await storage.list_projects(limit=100_000)
+            states = [project.get("state") for project in projects]
+        if isinstance(states, (list, tuple)):
+            reconcile_project_state_metrics(states)
+    except Exception:
+        # Metrics must never prevent a restart/resume sequence. The next
+        # committed transition will still update the in-process aggregate.
+        logger.warning("project_state_metric_reconciliation_failed", exc_info=True)
+
+
 async def run_resume_sequence(storage: AgentStorage) -> int:
     """Re-publish DIRECTIVE(action=RESUME) for all non-terminal projects.
 
@@ -1885,6 +2600,7 @@ async def run_resume_sequence(storage: AgentStorage) -> int:
     decision, while COMPLETED/ARCHIVED projects have no automatic work to
     resume.  Returns the count of directives accepted by the router.
     """
+    await _reconcile_project_state_metrics(storage)
     projects = await storage.list_projects()
     count = 0
     for project in projects:
@@ -2016,15 +2732,30 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
     # Store in app state
     app.state.storage = storage
     app.state.controller = controller
+    # Section ACLs are durable system configuration, with a safe in-process
+    # default for development/test startup without Postgres.  The middleware
+    # reads this snapshot on every request; updates replace it atomically.
+    app.state.dashboard_acl = dict(DEFAULT_DASHBOARD_SECTION_ACL)
     app.state.watchdog_config = watchdog_config
     app.state.boot_at = boot_at
     app.state.stop_event = stop_event
     app.state.watchdog_task = None
     app.state.scheduler = None
     app.state.ceo_command_tasks = set()
+    app.state.worker_run_tasks = set()
 
     # Run resume sequence if DB is available
     if storage is not None:
+        try:
+            persisted_dashboard_acl = await storage.get_config(DASHBOARD_SECTION_ACL_CONFIG_KEY)
+            if persisted_dashboard_acl:
+                app.state.dashboard_acl = normalize_dashboard_acl(persisted_dashboard_acl)
+        except ValueError:
+            # A malformed operator policy must not silently become an access
+            # bypass.  Keep the safe defaults and leave an actionable record in
+            # the logs for the operator to repair.
+            logger.exception("dashboard_acl_config_invalid_using_defaults")
+            app.state.dashboard_acl = dict(DEFAULT_DASHBOARD_SECTION_ACL)
         try:
             await storage.set_config("system_state", "STARTING")
             resumed = await run_resume_sequence(storage)
@@ -2077,9 +2808,41 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
         except Exception:
             logger.exception("Worker manifest seeding failed; continuing anyway")
 
+        # Company compilation is separate from worker declaration seeding so
+        # an incomplete worker inventory can never partially activate an org.
+        # Apply the checked-in manifest only after all declarations have been
+        # persisted; AgentStorage keeps the operation atomic and idempotent.
+        try:
+            company_result = await _apply_default_company_manifest(storage)
+            if company_result is not None:
+                await storage.set_config("default_company_seeded", "true")
+                await storage.set_config("default_company_seeded_at", datetime.now(tz=UTC).isoformat())
+                logger.info(
+                    "default_company_manifest_applied",
+                    extra={"digest": (company_result.get("manifest") or {}).get("digest")},
+                )
+        except Exception:
+            logger.exception("Default company manifest bootstrap failed; continuing in compatibility mode")
+
+        # Persist only the explicitly shipped, evidence-referenced model
+        # profiles.  The helper is idempotent and never overwrites an
+        # operator-owned profile/version; conflicts remain visible as a
+        # governance blocker instead of becoming an implicit route.
+        try:
+            from mas_core.llm_gateway import seed_default_model_profiles
+
+            model_profile_result = await seed_default_model_profiles(storage)
+            if model_profile_result.get("status") != "pass":
+                logger.error("Default model-profile bootstrap requires operator review: %s", model_profile_result)
+            else:
+                logger.info("Default model-profile bootstrap reconciled: %s", model_profile_result)
+        except Exception:
+            logger.exception("Default model-profile bootstrap failed; continuing with profile resolution fail-closed")
+
         # Start after seeding so newly created external-worker stewardship
         # jobs are eligible on the first scheduler cycle.
         ceo_command_task_group.start_soon(update_monitor_loop, storage, stop_event)
+        ceo_command_task_group.start_soon(worker_run_recovery_loop, storage, stop_event)
 
         try:
             await _recover_ceo_commands(storage)
@@ -2100,6 +2863,13 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
     ceo_command_task_group.cancel_scope.cancel()
     await ceo_command_task_group.__aexit__(None, None, None)
     app.state.ceo_command_task_group = None
+
+    worker_tasks = list(getattr(app.state, "worker_run_tasks", set()))
+    for task in worker_tasks:
+        task.cancel()
+    if worker_tasks:
+        await asyncio.gather(*worker_tasks, return_exceptions=True)
+    app.state.worker_run_tasks.clear()
 
     for scope in list(_stage_directive_retry_scopes.values()):
         scope.cancel()
@@ -2132,23 +2902,131 @@ async def require_control_plane_auth(request: Request, call_next):  # type: igno
         # v1 is the canonical public prefix.  Existing unprefixed routes stay
         # available as migration aliases while they share the same handlers.
         request.scope["path"] = request.scope["path"][7:]
+    # Provider webhooks are authenticated by the connection-specific provider
+    # secret inside ``receive_integration_webhook``.  They arrive through the
+    # separately isolated PM gateway, so requiring an AIAT control-plane key
+    # here would turn a valid provider delivery into an origin 401/403 and
+    # would couple external providers to an internal operator credential.
+    # Keep this exception narrow: only POSTs to the UUID webhook route bypass
+    # the global API-key middleware. Every management, operator, health-sensitive
+    # and internal route continues through the normal principal check.
+    is_provider_webhook = bool(
+        request.method == "POST"
+        and re.fullmatch(
+            r"/integrations/webhooks/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}",
+            str(request.scope.get("path") or ""),
+        )
+    )
+    if is_provider_webhook:
+        request.state.aiat_auth_principal = "provider_webhook"
+        response = await call_next(request)
+        if requested_v1:
+            response.headers["X-AIAT-API-Version"] = "v1"
+        return response
     if request.method == "OPTIONS" or request.url.path in {"/health", "/docs", "/openapi.json"}:
         response = await call_next(request)
         if requested_v1:
             response.headers["X-AIAT-API-Version"] = "v1"
         return response
     try:
-        _check_auth(request.headers.get("x-api-key"), request.headers.get("authorization"))
+        request.state.aiat_auth_principal = _check_auth(
+            request.headers.get("x-api-key"), request.headers.get("authorization")
+        )
     except HTTPException as exc:
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    # Next.js dashboard/API proxies send this explicit section context.  Keep
+    # it separate from the route path because one section is composed from
+    # several API endpoints.  Direct control-plane callers remain governed by
+    # their normal endpoint authorization; a caller that opts into a dashboard
+    # section must also satisfy the persisted section ACL.
+    requested_dashboard_section = str(
+        request.headers.get("x-aiat-dashboard-section") or ""
+    ).strip().lower()
+    if requested_dashboard_section:
+        if requested_dashboard_section not in DASHBOARD_SECTIONS:
+            return JSONResponse(
+                status_code=400,
+                content={"detail": f"Unknown dashboard section: {requested_dashboard_section}"},
+            )
+        principal = str(request.state.aiat_auth_principal)
+        if not principal_can_access_section(
+            principal,
+            requested_dashboard_section,
+            getattr(request.app.state, "dashboard_acl", DEFAULT_DASHBOARD_SECTION_ACL),
+        ):
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "detail": (
+                        f"principal {principal!r} is not authorized for dashboard section "
+                        f"{requested_dashboard_section!r}"
+                    )
+                },
+            )
+        request.state.aiat_dashboard_section = requested_dashboard_section
     response = await call_next(request)
     if requested_v1:
         response.headers["X-AIAT-API-Version"] = "v1"
     return response
 
+
+def _request_trace_id(request: Request) -> str:
+    """Accept a bounded caller trace ID or create a fresh root trace."""
+
+    return resolve_trace_id(
+        request.headers.get("x-aiat-trace-id"),
+        request.headers.get("traceparent"),
+    )
+
+
+@app.middleware("http")
+async def propagate_trace_context(request: Request, call_next):  # type: ignore[no-untyped-def]
+    """Bind and return one trace ID for every API request, including errors."""
+
+    trace_id = _request_trace_id(request)
+    bind_trace_id(trace_id)
+    request.state.aiat_trace_id = trace_id
+    started_at = time.perf_counter()
+    status_code = 500
+    try:
+        response = await call_next(request)
+        status_code = int(getattr(response, "status_code", 500) or 500)
+        response.headers["X-AIAT-Trace-ID"] = current_trace_id() or trace_id
+        return response
+    except Exception:
+        # The observation is intentionally scalar and never includes the
+        # exception text.  Re-raise so FastAPI's normal error handling remains
+        # authoritative for the client response.
+        status_code = 500
+        raise
+    finally:
+        storage = getattr(request.app.state, "storage", None)
+        recorder = getattr(storage, "record_api_request_observation", None)
+        if inspect.iscoroutinefunction(recorder):
+            route = request.scope.get("route")
+            route_template = getattr(route, "path", None)
+            try:
+                await recorder(
+                    method=request.method,
+                    path=request.url.path,
+                    route_template=route_template,
+                    status_code=status_code,
+                    duration_ms=(time.perf_counter() - started_at) * 1000.0,
+                    trace_id=trace_id,
+                    principal=getattr(request.state, "aiat_auth_principal", None),
+                    dashboard_section=getattr(request.state, "aiat_dashboard_section", None),
+                )
+            except Exception:  # noqa: BLE001
+                # Observability must never turn a successful API request into a
+                # failure.  The scalar row is best effort when the database is
+                # unavailable, and the error text is not persisted.
+                logger.debug("api_request_observation.persist_failed", exc_info=True)
+        clear_trace_context()
+
 # Pre-initialize state defaults so that test monkeypatching and
 # non-lifespan access paths don't raise AttributeError.
 app.state.storage = None
+app.state.dashboard_acl = dict(DEFAULT_DASHBOARD_SECTION_ACL)
 app.state.controller = WorkflowController(storage=None, event_publisher=publish_system_event)
 app.state.watchdog_config = WatchdogConfig()
 app.state.boot_at = datetime.now(tz=UTC)
@@ -2156,6 +3034,7 @@ app.state.stop_event = anyio.Event()
 app.state.watchdog_task = None
 app.state.ceo_command_tasks = set()
 app.state.ceo_command_task_group = None
+app.state.worker_run_tasks = set()
 
 # ── LLM Gateway compatibility router (OpenAI-compatible) ─────────────────────
 from orchestrator_api.llm_gateway_compat import router as llm_compat_router  # noqa: E402
@@ -2170,7 +3049,18 @@ _prom_app = prometheus_client.make_asgi_app()
 
 @app.get("/metrics")
 async def prometheus_metrics(request: Request) -> Response:
-    """Expose Prometheus metrics at /metrics."""
+    """Expose Prometheus metrics at /metrics.
+
+    Project-state gauges are aggregate presence metrics, so a scrape must
+    refresh them from the durable project table before rendering.  The
+    process-global registry is still useful when the database is unavailable
+    (for example during a health probe or a unit-test double), therefore the
+    reconciliation remains best-effort and never turns observability into a
+    control-plane outage.
+    """
+    storage = getattr(request.app.state, "storage", None)
+    if storage is not None:
+        await _reconcile_project_state_metrics(storage)
     scope = dict(request.scope)
     scope["path"] = "/"
     status_code = 200
@@ -2201,6 +3091,274 @@ def _storage() -> AgentStorage:
     if s is None:
         raise HTTPException(503, "Database not available")
     return s
+
+
+async def _trace_retention_policy(storage: AgentStorage) -> TraceRetentionPolicy:
+    """Read trace sampling/retention metadata without making it a gate."""
+
+    getter = getattr(storage, "get_company_manifest", None)
+    if not inspect.iscoroutinefunction(getter):
+        return trace_retention_from_manifest(None)
+    try:
+        record = await getter(DEFAULT_COMPANY_ID)
+    except Exception:  # noqa: BLE001
+        logger.debug("trace_evidence.retention_unavailable", exc_info=True)
+        record = None
+    return trace_retention_from_manifest(record)
+
+
+async def _native_span_retention_rows(
+    storage: AgentStorage,
+    *,
+    trace_id: str | None,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Read bounded native-span metadata without introducing a write path.
+
+    Newer storage adapters may expose a dedicated reader.  The compatibility
+    fallback keeps this phase usable with the current storage object without
+    changing its public file while still restricting the query to the native
+    span table and a hard row bound.
+    """
+
+    bounded_limit = max(1, min(int(limit), 10_000))
+    reader = getattr(storage, "list_native_trace_spans_for_retention", None)
+    if inspect.iscoroutinefunction(reader):
+        return list(await reader(trace_id=trace_id, limit=bounded_limit))
+
+    engine = getattr(storage, "engine", None)
+    if engine is None:
+        raise HTTPException(503, "native trace retention reader is unavailable")
+    query = memory_models.native_trace_spans.select()
+    if trace_id:
+        query = query.where(memory_models.native_trace_spans.c.trace_id == trace_id)
+    query = (
+        query.order_by(
+            memory_models.native_trace_spans.c.started_at.asc(),
+            memory_models.native_trace_spans.c.span_id.asc(),
+        )
+        .limit(bounded_limit)
+    )
+    async with engine.connect() as conn:
+        rows = (await conn.execute(query)).mappings().all()
+    return [dict(row) for row in rows]
+
+
+def _observability_datetime(value: Any) -> datetime | None:
+    """Parse a bounded timestamp for operational read-model calculations."""
+
+    if isinstance(value, datetime):
+        return value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC)
+    if value is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return parsed.astimezone(UTC) if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+async def _operational_slo_observations(
+    storage: AgentStorage,
+    *,
+    company_id: UUID | None = None,
+    window_days: int = 30,
+) -> list[dict[str, Any]]:
+    """Project currently durable telemetry into the SLO observation shape.
+
+    Missing service-specific authorities are intentionally omitted.  The pure
+    SLO builder then reports those targets as ``no_data`` instead of treating
+    an absent mail edge, integration, API, or recovery metric as a success.
+    """
+
+    since = datetime.now(tz=UTC) - timedelta(days=max(1, min(int(window_days), 3650)))
+    observations: list[dict[str, Any]] = []
+    usage_reader = getattr(storage, "list_project_usage_aggregates", None)
+    if inspect.iscoroutinefunction(usage_reader):
+        usage_rows = await usage_reader(company_id=company_id, since=since, limit=10_000)
+        for row in usage_rows:
+            if not isinstance(row, dict):
+                continue
+            tool_calls = max(0, int(row.get("tool_calls") or 0))
+            if tool_calls:
+                observations.append(
+                    {
+                        "service": "tool_latency",
+                        "total": tool_calls,
+                        "good": max(0, tool_calls - int(row.get("tool_failed_calls") or 0)),
+                        "latency_ms": row.get("tool_duration_avg_ms"),
+                    }
+                )
+            llm_calls = max(0, int(row.get("llm_calls") or 0))
+            if llm_calls:
+                observations.append(
+                    {
+                        "service": "model_routing",
+                        "total": llm_calls,
+                        "good": max(0, llm_calls - int(row.get("llm_failed_calls") or 0)),
+                        "latency_ms": row.get("llm_duration_avg_ms"),
+                    }
+                )
+
+    run_reader = getattr(storage, "list_worker_runs", None)
+    if inspect.iscoroutinefunction(run_reader):
+        project_ids: set[str] | None = None
+        if company_id is not None:
+            project_reader = getattr(storage, "list_projects", None)
+            if inspect.iscoroutinefunction(project_reader):
+                projects = await project_reader(limit=10_000)
+                project_ids = {
+                    str(project.get("id"))
+                    for project in projects
+                    if str(project.get("company_id")) == str(company_id)
+                }
+        runs = await run_reader(limit=10_000)
+        now = datetime.now(tz=UTC)
+        for row in runs:
+            if not isinstance(row, dict):
+                continue
+            if project_ids is not None and str(row.get("project_id")) not in project_ids:
+                continue
+            created = _observability_datetime(row.get("created_at"))
+            if created is None or created < since or created > now:
+                continue
+            started = _observability_datetime(row.get("started_at"))
+            claimed = _observability_datetime(row.get("claimed_at"))
+            completed = _observability_datetime(row.get("completed_at"))
+            state = str(row.get("state") or "").upper()
+            if claimed is not None:
+                observations.append(
+                    {
+                        "service": "queue_age",
+                        "status": "success",
+                        "latency_ms": max(0.0, (claimed - created).total_seconds() * 1000),
+                    }
+                )
+            if started is not None:
+                observations.append(
+                    {
+                        "service": "worker_startup",
+                        "status": "success",
+                        "latency_ms": max(0.0, (started - created).total_seconds() * 1000),
+                    }
+                )
+            if completed is not None:
+                observations.append(
+                    {
+                        "service": "worker_run",
+                        "status": "success" if state == "SUCCEEDED" else "failed",
+                        "latency_ms": max(0.0, (completed - (started or created)).total_seconds() * 1000),
+                    }
+                )
+
+    # API observations are platform-wide because the compact ledger does not
+    # carry a company foreign key.  Do not mix that global source into a
+    # company-scoped report; a future company attribution projection can opt in
+    # once it has a durable, authorized mapping.
+    api_reader = getattr(storage, "list_api_request_observations", None)
+    if company_id is None and inspect.iscoroutinefunction(api_reader):
+        api_rows = await api_reader(since=since, limit=20_000)
+        for row in api_rows:
+            if not isinstance(row, dict):
+                continue
+            observations.append(
+                {
+                    "service": "orchestrator_api",
+                    "status": row.get("outcome", "failure"),
+                    "latency_ms": row.get("duration_ms"),
+                }
+            )
+
+    # Mail delivery is owned by identity-service.  Pull only its bounded,
+    # signed scalar projection when that service is explicitly configured;
+    # company-scoped reports stay isolated because the dashboard projection is
+    # currently platform-wide and has no company foreign key.
+    identity_configured = bool(
+        os.getenv("IDENTITY_SERVICE_URL", "").strip()
+        and os.getenv("AIAT_IDENTITY_CLIENT_PRIVATE_KEY", "").strip()
+    )
+    if company_id is None and identity_configured:
+        try:
+            identity_client = _identity_client()
+            mail_reader = getattr(identity_client, "list_mail_delivery_observations", None)
+            if inspect.iscoroutinefunction(mail_reader):
+                mail_rows = await mail_reader(since=since, limit=20_000)
+                for row in mail_rows:
+                    if not isinstance(row, dict):
+                        continue
+                    observations.append(
+                        {
+                            "service": "mail_delivery",
+                            "status": row.get("status", "failed"),
+                        }
+                    )
+        except Exception:  # noqa: BLE001
+            # A missing or unavailable optional identity edge must remain
+            # explicit `no_data`; it cannot make the SLO endpoint fail or
+            # convert an unobserved mail path into a success.
+            logger.debug("mail_slo.identity_projection_unavailable", exc_info=True)
+
+    pm_reader = getattr(storage, "list_pm_slo_observations", None)
+    if inspect.iscoroutinefunction(pm_reader):
+        pm_rows = await pm_reader(company_id=company_id, since=since, limit=10_000)
+        for row in pm_rows:
+            if not isinstance(row, dict):
+                continue
+            observations.append(
+                {
+                    "service": "pm_scm_sync",
+                    "status": row.get("status", "failed"),
+                    "latency_ms": row.get("duration_ms"),
+                }
+            )
+
+    recovery_reader = getattr(storage, "list_recovery_slo_observations", None)
+    if inspect.iscoroutinefunction(recovery_reader):
+        recovery_rows = await recovery_reader(company_id=company_id, since=since, limit=10_000)
+        for row in recovery_rows:
+            if not isinstance(row, dict):
+                continue
+            observations.append(
+                {
+                    "service": "recovery",
+                    "status": row.get("status", "failed"),
+                    "latency_ms": row.get("duration_ms"),
+                }
+            )
+    return observations
+
+
+async def _operational_budget_limit(
+    storage: AgentStorage,
+    company_id: UUID | None,
+) -> tuple[float | None, Literal["company_budgets", "not_configured"]]:
+    """Sum configured company budget limits for the forecast read model."""
+
+    budget_reader = getattr(storage, "list_company_budgets", None)
+    if not inspect.iscoroutinefunction(budget_reader):
+        return None, "not_configured"
+    if company_id is not None:
+        companies = [await storage.get_company(company_id)]
+    else:
+        company_reader = getattr(storage, "list_companies", None)
+        companies = await company_reader(status="ACTIVE") if inspect.iscoroutinefunction(company_reader) else []
+    total = 0.0
+    configured = False
+    for company in companies:
+        if not isinstance(company, dict) or company.get("id") is None:
+            continue
+        rows = await budget_reader(UUID(str(company["id"])))
+        for row in rows:
+            if not isinstance(row, dict) or row.get("limit_value") is None:
+                continue
+            try:
+                value = float(row["limit_value"])
+            except (TypeError, ValueError):
+                continue
+            if value >= 0 and value == value and abs(value) != float("inf"):
+                total += value
+                configured = True
+    return (round(total, 8), "company_budgets") if configured else (None, "not_configured")
 
 
 def _controller() -> WorkflowController:
@@ -2315,10 +3473,13 @@ async def _persist_project_workspace(
 @app.post("/projects", status_code=201)
 async def create_project(req: CreateProjectRequest) -> dict[str, Any]:
     """Human creates a project request. Triggers CEO via SYSTEM_EVENT."""
-    tid = new_trace_id()
+    tid = current_trace_id() or new_trace_id()
     bind_trace_id(tid)
 
     storage = _storage()
+    if inspect.iscoroutinefunction(getattr(storage, "get_company", None)):
+        if await storage.get_company(req.company_id) is None:
+            raise HTTPException(404, f"Company {req.company_id} not found")
     flow_for_instance: dict[str, Any] | None = None
     if req.flow_id is not None:
         flow_for_instance = await storage.get_flow(req.flow_id)
@@ -2326,6 +3487,13 @@ async def create_project(req: CreateProjectRequest) -> dict[str, Any]:
             raise HTTPException(404, f"Flow {req.flow_id} not found")
 
     project_config = dict(req.config or {})
+    # Every canonical project starts with an explicit, provider-neutral PM
+    # provisioning intent.  The dedicated-project profile is the safe default;
+    # an operator must opt into issue-only umbrella mapping later.
+    pm_provisioning = dict(project_config.get("pm_provisioning") or {})
+    pm_provisioning.setdefault("mapping_profile", DEDICATED_PROJECT_MAPPING_PROFILE)
+    pm_provisioning.setdefault("state", "UNPROVISIONED")
+    project_config["pm_provisioning"] = pm_provisioning
     requested_workspace: dict[str, Any] | None = None
     if req.workspace is not None:
         requested_workspace = {
@@ -2348,6 +3516,7 @@ async def create_project(req: CreateProjectRequest) -> dict[str, Any]:
         description=req.description,
         created_by=req.human_requester or "human",
         human_requester=req.human_requester,
+        company_id=req.company_id,
         config=project_config or None,
         initial_context=[
             {
@@ -2394,18 +3563,25 @@ async def create_project(req: CreateProjectRequest) -> dict[str, Any]:
         }
         project = await _persist_project_workspace(storage, project, requested_workspace)
 
-    MAS_PROJECT_STATE.labels(project_id=pid, state="INIT").set(1)
+    # Keep the state gauge bounded. Per-project drill-down belongs in the
+    # structured workflow/audit records, not an unbounded Prometheus label.
+    observe_project_state(ProjectState.INIT)
     projects_created_total.inc()
 
     # Trigger workflow: INIT → FEASIBILITY_CHECK
     try:
-        await _controller().transition(
+        creation_transition = await _controller().transition(
             project_id=pid,
             current_state=ProjectState.INIT,
             event=WorkflowEvent.PROJECT_CREATED,
             actor_id=req.human_requester or "human",
             context={"name": req.name, "description": req.description},
         )
+        if creation_transition is not None:
+            record_project_state_transition(
+                creation_transition.prior_state,
+                creation_transition.next_state,
+            )
     except InvalidTransitionError:
         logger.warning("Could not auto-transition new project %s", pid)
 
@@ -2454,6 +3630,39 @@ async def create_project(req: CreateProjectRequest) -> dict[str, Any]:
     return _serialize(project)
 
 
+@app.post("/projects/self-improvement", status_code=201)
+async def create_self_improvement_project(
+    req: ImprovementOpportunity,
+    request: Request,
+) -> dict[str, Any]:
+    """Create a guarded self-improvement opportunity as a normal project.
+
+    The typed opportunity is only a request projection.  Persistence remains
+    in the canonical project writer, and the authenticated API principal must
+    match the declared creator so callers cannot forge attribution.  Licence
+    or other restriction values are retained in the project configuration as
+    metadata only; they are not an admission or execution gate.
+    """
+    principal = _authenticated_principal(request)
+    if req.created_by != principal:
+        raise HTTPException(403, "created_by must match the authenticated principal")
+
+    storage = _storage()
+    writer = getattr(storage, "create_self_improvement_project", None)
+    if not inspect.iscoroutinefunction(writer):
+        raise HTTPException(503, "Self-improvement project writer is unavailable")
+
+    company_id = req.company_id or DEFAULT_COMPANY_ID
+    get_company = getattr(storage, "get_company", None)
+    if inspect.iscoroutinefunction(get_company) and await get_company(company_id) is None:
+        raise HTTPException(404, f"Company {company_id} not found")
+
+    project = await writer(req)
+    if not isinstance(project, dict):
+        raise HTTPException(503, "Self-improvement project writer returned an invalid project")
+    return _serialize(project)
+
+
 @app.get("/projects")
 async def list_projects(
     state: str | None = None,
@@ -2476,26 +3685,313 @@ async def get_project(project_id: UUID) -> dict[str, Any]:
     return _serialize(project)
 
 
-async def _build_project_evidence(project_id: UUID, storage: AgentStorage) -> Any:
-    from mas_core.workflow import evaluate_project_evidence, policy_for
+@app.get("/projects/{project_id}/self-improvement")
+async def get_self_improvement_lifecycle(
+    project_id: UUID,
+    request: Request,
+) -> dict[str, Any]:
+    """Return the validated lifecycle snapshot stored in project config."""
+
+    _authenticated_principal(request)
+    storage = _storage()
+    reader = getattr(storage, "get_self_improvement_lifecycle", None)
+    if not inspect.iscoroutinefunction(reader):
+        raise HTTPException(503, "Self-improvement lifecycle reader is unavailable")
+    lifecycle = await reader(project_id)
+    if lifecycle is None:
+        raise HTTPException(404, f"Self-improvement lifecycle for project {project_id} not found")
+    return _serialize(lifecycle)
+
+
+@app.post("/projects/{project_id}/self-improvement/references")
+async def link_self_improvement_reference(
+    project_id: UUID,
+    req: SelfImprovementReferenceRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Attach an existing issue/run/artifact/budget/deployment reference.
+
+    The endpoint records a pointer in the canonical project lifecycle.  It
+    does not clone or reinterpret the referenced record; each service remains
+    authoritative for its own state and evidence.
+    """
+
+    principal = _authenticated_principal(request)
+    storage = _storage()
+    reader = getattr(storage, "get_self_improvement_lifecycle", None)
+    writer = getattr(storage, "update_self_improvement_lifecycle", None)
+    if not inspect.iscoroutinefunction(reader) or not inspect.iscoroutinefunction(writer):
+        raise HTTPException(503, "Self-improvement lifecycle persistence is unavailable")
+    snapshot = await reader(project_id)
+    if snapshot is None:
+        raise HTTPException(404, f"Self-improvement lifecycle for project {project_id} not found")
+    try:
+        lifecycle = SelfImprovementLifecycle.from_dict(snapshot)
+        lifecycle.link_reference(req.kind, req.reference)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    project = await writer(project_id, lifecycle, actor=principal)
+    if project is None:
+        raise HTTPException(409, "Self-improvement lifecycle changed; re-read and retry")
+    return {"project": _serialize(project), "lifecycle": lifecycle.as_dict()}
+
+
+def _self_improvement_actor_kind(principal: str) -> Literal["human", "agent", "system"]:
+    """Map authenticated control-plane identities to lifecycle actor kinds."""
+
+    if principal == "operator":
+        return "human"
+    if principal == "worker":
+        return "agent"
+    return "system"
+
+
+@app.post("/projects/{project_id}/self-improvement/actions")
+async def apply_self_improvement_action(
+    project_id: UUID,
+    req: SelfImprovementActionRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Apply one governed lifecycle action through the canonical writer."""
+
+    principal = _authenticated_principal(request)
+    storage = _storage()
+    reader = getattr(storage, "get_self_improvement_lifecycle", None)
+    writer = getattr(storage, "update_self_improvement_lifecycle", None)
+    if not inspect.iscoroutinefunction(reader) or not inspect.iscoroutinefunction(writer):
+        raise HTTPException(503, "Self-improvement lifecycle persistence is unavailable")
+    snapshot = await reader(project_id)
+    if snapshot is None:
+        raise HTTPException(404, f"Self-improvement lifecycle for project {project_id} not found")
+
+    actor_kind = _self_improvement_actor_kind(principal)
+    try:
+        lifecycle = SelfImprovementLifecycle.from_dict(snapshot)
+        if req.action == "record_gate":
+            assert req.gate is not None
+            assert req.passed is not None
+            lifecycle.record_gate(
+                req.gate,
+                passed=req.passed,
+                actor=principal,
+                actor_kind=actor_kind,
+                evidence_refs=tuple(req.evidence_refs),
+                detail=req.detail,
+            )
+        elif req.action == "start_shadow":
+            assert req.candidate_version is not None
+            lifecycle.start_shadow(
+                candidate_version=req.candidate_version,
+                actor=principal,
+                actor_kind=actor_kind,
+            )
+        elif req.action == "record_observation":
+            assert req.stage is not None
+            assert req.sample_count is not None
+            assert req.regression_fraction is not None
+            lifecycle.record_observation(
+                stage=req.stage,
+                sample_count=req.sample_count,
+                regression_fraction=req.regression_fraction,
+                irreversible_side_effects=req.irreversible_side_effects,
+            )
+        elif req.action == "start_canary":
+            lifecycle.start_canary(actor=principal, actor_kind=actor_kind)
+        elif req.action == "request_promotion":
+            lifecycle.request_promotion(actor=principal, actor_kind=actor_kind)
+        elif req.action == "approve_promotion":
+            lifecycle.approve_promotion(actor=principal, actor_kind=actor_kind)
+        elif req.action == "rollback":
+            assert req.reason is not None
+            lifecycle.rollback(actor=principal, actor_kind=actor_kind, reason=req.reason)
+        elif req.action == "record_outcome":
+            assert req.outcome is not None
+            assert req.cost_usd is not None
+            assert req.incident_count is not None
+            assert req.rollback_performed is not None
+            lifecycle.record_outcome(
+                outcome=req.outcome,
+                cost_usd=req.cost_usd,
+                incident_count=req.incident_count,
+                rollback_performed=req.rollback_performed,
+                kpi_learning=req.kpi_learning,
+                evidence_refs=tuple(req.evidence_refs),
+                actor=principal,
+                actor_kind=actor_kind,
+                outcome_id=req.outcome_id,
+                detail=req.detail,
+            )
+        elif req.action == "record_artifacts":
+            assert req.artifact_bundle is not None
+            lifecycle.record_artifact_bundle(
+                req.artifact_bundle,
+                actor=principal,
+                actor_kind=actor_kind,
+            )
+        elif req.action == "record_artifact_readback":
+            assert req.artifact_id is not None
+            assert req.actual_sha256 is not None
+            assert req.actual_size_bytes is not None
+            assert req.readback_source is not None
+            lifecycle.record_artifact_readback(
+                artifact_id=req.artifact_id,
+                actual_sha256=req.actual_sha256,
+                actual_size_bytes=req.actual_size_bytes,
+                source=req.readback_source,
+                actor=principal,
+                actor_kind=actor_kind,
+                canonical_artifact_id=req.canonical_artifact_id,
+            )
+    except SelfImprovementAuthorityError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except SelfImprovementTransitionError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    project = await writer(project_id, lifecycle, actor=principal)
+    if project is None:
+        raise HTTPException(409, "Self-improvement lifecycle changed; re-read and retry")
+    return {"project": _serialize(project), "lifecycle": lifecycle.as_dict()}
+
+
+def _manifest_evidence_selection(
+    record: dict[str, Any] | None,
+    *,
+    milestone: str | None = None,
+) -> dict[str, Any] | None:
+    """Extract a company default or milestone override from a manifest row."""
+
+    milestone_policies, default = _manifest_evidence_scopes(record)
+    if isinstance(milestone, str):
+        selection = milestone_policies.get(milestone.strip())
+        if isinstance(selection, dict):
+            return selection
+    return default
+
+
+def _manifest_evidence_scopes(
+    record: dict[str, Any] | None,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Extract company milestone and default selections without evaluating them."""
+
+    if not isinstance(record, dict):
+        return {}, None
+    manifest = record.get("manifest_json")
+    if not isinstance(manifest, dict):
+        nested = record.get("manifest")
+        manifest = nested.get("manifest_json") if isinstance(nested, dict) else None
+    if not isinstance(manifest, dict):
+        return {}, None
+    evidence = manifest.get("evidence_policy")
+    if not isinstance(evidence, dict):
+        return {}, None
+    milestones = evidence.get("milestone_policies")
+    milestone_policies = milestones if isinstance(milestones, dict) else {}
+    default = evidence.get("default_policy")
+    return milestone_policies, default if isinstance(default, dict) else None
+
+
+async def _project_active_milestone(
+    project: dict[str, Any], project_id: UUID, storage: AgentStorage
+) -> str | None:
+    config = dict(project.get("config") or {})
+    explicit = config.get("active_milestone") or project.get("milestone")
+    if isinstance(explicit, str) and explicit.strip():
+        return explicit.strip()
+    list_sprints = getattr(storage, "list_sprints", None)
+    if not inspect.iscoroutinefunction(list_sprints):
+        return None
+    rows = await list_sprints(project_id)
+    candidates = [
+        row
+        for row in (rows or [])
+        if isinstance(row, dict)
+        and isinstance(row.get("milestone"), str)
+        and row.get("milestone", "").strip()
+        and str(row.get("status", "")).upper() not in {"COMPLETED", "CLOSED", "CANCELLED"}
+    ]
+    candidates.sort(key=lambda row: int(row.get("sprint_number") or 0), reverse=True)
+    return str(candidates[0]["milestone"]).strip() if candidates else None
+
+
+async def _company_evidence_selection(
+    project: dict[str, Any], storage: AgentStorage, *, milestone: str | None = None
+) -> dict[str, Any] | None:
+    get_manifest = getattr(storage, "get_company_manifest", None)
+    if not inspect.iscoroutinefunction(get_manifest):
+        return None
+    company_id = project.get("company_id") or DEFAULT_COMPANY_ID
+    try:
+        record = await get_manifest(UUID(str(company_id)))
+    except (TypeError, ValueError):
+        return None
+    return _manifest_evidence_selection(record, milestone=milestone)
+
+
+async def _company_evidence_scopes(
+    project: dict[str, Any], storage: AgentStorage
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    get_manifest = getattr(storage, "get_company_manifest", None)
+    if not inspect.iscoroutinefunction(get_manifest):
+        return {}, None
+    company_id = project.get("company_id") or DEFAULT_COMPANY_ID
+    try:
+        record = await get_manifest(UUID(str(company_id)))
+    except (TypeError, ValueError):
+        return {}, None
+    return _manifest_evidence_scopes(record)
+
+
+async def _collect_project_evidence(
+    project_id: UUID, storage: AgentStorage
+) -> tuple[dict[str, Any], Any, dict[str, Any], Any]:
+    from mas_core.workflow import (
+        evaluate_project_evidence,
+        policy_for,
+        resolve_evidence_policy_selection,
+    )
 
     project = await storage.get_project(project_id)
     if project is None:
         raise HTTPException(404, f"Project {project_id} not found")
     config = dict(project.get("config") or {})
-    selected = config.get("evidence_policy") or "manual"
+    flow_instance = await storage.get_flow_instance_by_project(project_id)
+    milestone = await _project_active_milestone(project, project_id, storage)
+    flow_selection = None
+    if flow_instance is not None:
+        get_flow = getattr(storage, "get_flow", None)
+        if inspect.iscoroutinefunction(get_flow):
+            flow = await get_flow(flow_instance["flow_id"])
+            metadata = dict((flow or {}).get("definition_json", {}).get("metadata") or {})
+            flow_selection = metadata.get("evidence_policy")
+    selected, selection_source = resolve_evidence_policy_selection(
+        milestone=milestone,
+        project_milestone_policies=config.get("evidence_policy_milestones"),
+        project_selection=config.get("evidence_policy"),
+        flow_selection=flow_selection,
+    )
+    if selection_source == "fallback":
+        company_milestones, company_default = await _company_evidence_scopes(project, storage)
+        selected, selection_source = resolve_evidence_policy_selection(
+            milestone=milestone,
+            project_milestone_policies=config.get("evidence_policy_milestones"),
+            project_selection=config.get("evidence_policy"),
+            flow_selection=flow_selection,
+            company_milestone_policies=company_milestones,
+            company_selection=company_default,
+        )
     if isinstance(selected, dict):
         policy = policy_for(str(selected.get("policy_id") or "custom"), version=selected.get("version"), requirements=dict(selected.get("requirements") or {}))
     else:
         policy = policy_for(str(selected))
     documents = await storage.list_documents(project_id)
     artifacts = await _project_artifact_rows(storage, project_id)
-    flow_instance = await storage.get_flow_instance_by_project(project_id)
     approvals = await storage.list_approval_gates(project_id=project_id)
     runs = await storage.list_worker_runs(project_id=project_id, limit=1000) if inspect.iscoroutinefunction(getattr(storage, "list_worker_runs", None)) else []
     repository = await storage.get_project_repository_record(project_id) if inspect.iscoroutinefunction(getattr(storage, "get_project_repository_record", None)) else (config.get("workspace") or None)
     history = await storage.get_project_history(project_id)
-    return evaluate_project_evidence(
+    evidence = evaluate_project_evidence(
         project_id=str(project_id),
         policy=policy,
         project=project,
@@ -2507,6 +4003,20 @@ async def _build_project_evidence(project_id: UUID, storage: AgentStorage) -> An
         repository=repository,
         audit_events=history,
     )
+    return project, evidence, {
+        "documents": documents,
+        "artifacts": artifacts,
+        "flow_instance": flow_instance,
+        "approvals": approvals,
+        "worker_runs": runs,
+        "repository": repository,
+        "audit_events": history,
+    }, policy
+
+
+async def _build_project_evidence(project_id: UUID, storage: AgentStorage) -> Any:
+    _project, evidence, _sources, _policy = await _collect_project_evidence(project_id, storage)
+    return evidence
 
 
 @app.get("/projects/{project_id}/overview")
@@ -2559,7 +4069,22 @@ async def validate_project_evidence(project_id: UUID, req: EvidencePolicyRequest
         from mas_core.workflow import evaluate_project_evidence, policy_for
         documents = await storage.list_documents(project_id)
         artifacts = await _project_artifact_rows(storage, project_id)
-        evidence = evaluate_project_evidence(project_id=str(project_id), policy=policy_for(req.policy_id, version=req.policy_version, requirements=req.requirements), project=project, documents=documents, artifacts=artifacts, flow_instance=await storage.get_flow_instance_by_project(project_id), approvals=await storage.list_approval_gates(project_id=project_id), audit_events=await storage.get_project_history(project_id))
+        flow_instance = await storage.get_flow_instance_by_project(project_id)
+        approvals = await storage.list_approval_gates(project_id=project_id)
+        runs = await storage.list_worker_runs(project_id=project_id, limit=1000) if inspect.iscoroutinefunction(getattr(storage, "list_worker_runs", None)) else []
+        repository = await storage.get_project_repository_record(project_id) if inspect.iscoroutinefunction(getattr(storage, "get_project_repository_record", None)) else (config.get("workspace") or None)
+        evidence = evaluate_project_evidence(
+            project_id=str(project_id),
+            policy=policy_for(req.policy_id, version=req.policy_version, requirements=req.requirements),
+            project=project,
+            documents=documents,
+            artifacts=artifacts,
+            flow_instance=flow_instance,
+            approvals=approvals,
+            worker_runs=runs,
+            repository=repository,
+            audit_events=await storage.get_project_history(project_id),
+        )
     else:
         evidence = await _build_project_evidence(project_id, storage)
     return evidence.model_dump(mode="json")
@@ -2709,6 +4234,96 @@ async def _project_usage_summary(storage: AgentStorage, project_id: UUID) -> dic
     return result
 
 
+async def _record_sprint_retrospective(
+    storage: Any,
+    *,
+    project_id: UUID,
+    sprint_id: UUID,
+) -> dict[str, Any] | None:
+    """Persist one explainable sprint aggregate with issue/profile lineage.
+
+    The existing KPI snapshot table is the durable read surface for sprint
+    retrospectives.  This helper intentionally derives every value from the
+    canonical issue rows and keeps the source IDs in ``raw_data`` so an
+    operator can reproduce or challenge the aggregate later.  Lightweight
+    storage doubles and older rolling deployments may not expose the snapshot
+    writer yet; in that case the issue completion remains authoritative and no
+    synthetic success is reported.
+    """
+
+    list_issues = getattr(storage, "list_issues", None)
+    save_snapshot = getattr(storage, "save_kpi_snapshot", None)
+    if not inspect.iscoroutinefunction(list_issues) or not inspect.iscoroutinefunction(save_snapshot):
+        return None
+    issues = await list_issues(sprint_id=sprint_id)
+    if not isinstance(issues, list):
+        return None
+
+    terminal_states = {"DONE", "COMPLETED", "CLOSED"}
+    status_counts: dict[str, int] = {}
+    source_issue_ids: list[str] = []
+    completed_issue_ids: list[str] = []
+    profile_lineage: list[dict[str, str]] = []
+    total_estimated = Decimal("0")
+    total_actual = Decimal("0")
+    completed_story_points = 0
+    for issue in issues:
+        if not isinstance(issue, dict):
+            continue
+        issue_id = issue.get("id")
+        if issue_id is None:
+            continue
+        issue_id_text = str(issue_id)
+        source_issue_ids.append(issue_id_text)
+        status = str(issue.get("status") or "UNKNOWN").upper()
+        status_counts[status] = status_counts.get(status, 0) + 1
+        if status not in terminal_states:
+            continue
+        completed_issue_ids.append(issue_id_text)
+        completed_story_points += int(issue.get("story_points") or 0)
+        estimated = Decimal(str(issue.get("estimated_hours") or 0))
+        actual = Decimal(str(issue.get("actual_hours") or 0))
+        total_estimated += max(Decimal("0"), estimated)
+        total_actual += max(Decimal("0"), actual)
+        agent_id = str(issue.get("assigned_agent") or "")
+        if agent_id:
+            profile_lineage.append({"issue_id": issue_id_text, "agent_id": agent_id})
+
+    issue_count = len(source_issue_ids)
+    completed_count = len(completed_issue_ids)
+    completion_rate = (
+        Decimal(completed_count) / Decimal(issue_count) if issue_count else None
+    )
+    estimation_accuracy = None
+    if total_estimated > 0:
+        estimation_accuracy = max(
+            Decimal("0"),
+            min(Decimal("1"), Decimal("1") - abs(total_actual - total_estimated) / total_estimated),
+        )
+    raw_data = {
+        "schema": "aiat.sprint-retrospective.v1",
+        "project_id": str(project_id),
+        "sprint_id": str(sprint_id),
+        "total_estimated_hours": str(total_estimated),
+        "total_actual_hours": str(total_actual),
+        "source_issue_ids": source_issue_ids,
+        "completed_issue_ids": completed_issue_ids,
+        "profile_lineage": profile_lineage,
+        "status_counts": status_counts,
+        "issue_count": issue_count,
+        "completed_issue_count": completed_count,
+    }
+    return await save_snapshot(
+        project_id=project_id,
+        scope="sprint_retrospective",
+        sprint_id=sprint_id,
+        estimation_accuracy=estimation_accuracy,
+        task_completion_rate=completion_rate,
+        velocity=Decimal(completed_story_points),
+        raw_data=raw_data,
+    )
+
+
 @app.get("/projects/{project_id}/artifacts")
 async def list_project_artifacts(
     project_id: UUID,
@@ -2719,6 +4334,278 @@ async def list_project_artifacts(
     if await storage.get_project(project_id) is None:
         raise HTTPException(404, f"Project {project_id} not found")
     return [_serialize(a) for a in await _project_artifact_rows(storage, project_id, limit)]
+
+
+@app.get("/artifacts/{artifact_id}")
+async def get_artifact_evidence(artifact_id: int, request: Request) -> dict[str, Any]:
+    """Return operator-safe scalar metadata for one artifact citation."""
+
+    _require_operator_identity(request)
+    artifact = await _storage().get_artifact(artifact_id)
+    if artifact is None:
+        raise HTTPException(404, f"Artifact {artifact_id} not found")
+    return _serialize_safe_scalars(artifact, _ARTIFACT_EVIDENCE_KEYS)
+
+
+@app.get("/observability/traces/{trace_id}", response_model=TraceEvidence)
+async def get_trace_evidence(
+    trace_id: str,
+    request: Request,
+    limit: int = Query(default=100, ge=1, le=300),
+) -> TraceEvidence:
+    """Return bounded, secret-safe evidence for one trace/message ID.
+
+    The operator-only route joins existing task, usage, model, artifact,
+    integration, worker-transition, and native span authorities. It exposes
+    only bounded, payload-free metadata; mail-edge coverage and live retention
+    enforcement remain explicit rather than implying full distributed tracing.
+    """
+
+    _require_operator_identity(request)
+    normalized_trace_id = str(trace_id).strip()
+    if not is_safe_trace_id(normalized_trace_id):
+        raise HTTPException(422, "trace_id must be a bounded safe identifier")
+    storage = _storage()
+    task_rows = await storage.list_task_logs(trace_id=normalized_trace_id, limit=limit)
+    usage_rows = await storage.list_project_usage_events_by_trace(normalized_trace_id, limit=limit)
+    transition_rows = await storage.list_worker_run_transitions_by_correlation(
+        normalized_trace_id,
+        limit=limit,
+    )
+    worker_usage_reader = getattr(storage, "list_worker_usage_records_by_trace", None)
+    worker_usage_rows = (
+        await worker_usage_reader(normalized_trace_id, limit=limit)
+        if inspect.iscoroutinefunction(worker_usage_reader)
+        else []
+    )
+    artifact_reader = getattr(storage, "list_worker_artifacts_by_trace", None)
+    artifact_rows = (
+        await artifact_reader(normalized_trace_id, limit=limit)
+        if inspect.iscoroutinefunction(artifact_reader)
+        else []
+    )
+    integration_reader = getattr(storage, "list_pm_inbox_events_by_correlation", None)
+    integration_rows = (
+        await integration_reader(normalized_trace_id, limit=limit)
+        if inspect.iscoroutinefunction(integration_reader)
+        else []
+    )
+    integration_evidence_reader = getattr(storage, "list_integration_evidence_by_trace", None)
+    integration_evidence_rows = (
+        await integration_evidence_reader(normalized_trace_id, limit=limit)
+        if inspect.iscoroutinefunction(integration_evidence_reader)
+        else []
+    )
+    api_reader = getattr(storage, "list_api_request_observations", None)
+    api_rows = (
+        await api_reader(trace_id=normalized_trace_id, limit=limit)
+        if inspect.iscoroutinefunction(api_reader)
+        else []
+    )
+    native_span_reader = getattr(storage, "list_native_trace_spans_by_trace", None)
+    native_span_rows = list(
+        await native_span_reader(normalized_trace_id, limit=limit)
+        if inspect.iscoroutinefunction(native_span_reader)
+        else []
+    )
+    # The identity service owns its database.  When configured, consume only
+    # its signed scalar delivery-attempt projection and turn matching rows into
+    # mail-kind trace items; provider IDs, recipients, subjects, relay errors,
+    # and message content never cross this boundary.
+    if (
+        os.getenv("IDENTITY_SERVICE_URL", "").strip()
+        and os.getenv("AIAT_IDENTITY_CLIENT_PRIVATE_KEY", "").strip()
+    ):
+        try:
+            identity_client = _identity_client()
+            mail_reader = getattr(identity_client, "list_mail_delivery_observations", None)
+            mail_rows = (
+                await mail_reader(trace_id=normalized_trace_id, limit=limit)
+                if inspect.iscoroutinefunction(mail_reader)
+                else []
+            )
+            for row in mail_rows:
+                if not isinstance(row, dict):
+                    continue
+                native_span_rows.append(
+                    {
+                        "id": row.get("id"),
+                        "trace_id": normalized_trace_id,
+                        "span_id": row.get("span_id"),
+                        "source_kind": "mail",
+                        "operation": (
+                            "mail.delivery_attempt"
+                            if not row.get("event_type")
+                            else f"mail.provider_webhook.{row.get('event_type')}"
+                        ),
+                        "service": row.get("source") or "identity_service",
+                        "status": row.get("status") or "unknown",
+                        "started_at": row.get("occurred_at"),
+                        "duration_ms": 0,
+                        "sampled": True,
+                    }
+                )
+        except Exception:  # noqa: BLE001
+            logger.debug("trace_evidence.identity_mail_projection_unavailable", exc_info=True)
+    return build_trace_evidence(
+        trace_id=normalized_trace_id,
+        api_rows=api_rows,
+        task_rows=task_rows,
+        usage_rows=usage_rows,
+        transition_rows=transition_rows,
+        worker_usage_rows=worker_usage_rows,
+        artifact_rows=artifact_rows,
+        integration_rows=integration_rows,
+        integration_evidence_rows=integration_evidence_rows,
+        native_span_rows=native_span_rows,
+        retention=await _trace_retention_policy(storage),
+        generated_at=datetime.now(tz=UTC).isoformat(),
+        limit=limit * 3,
+    )
+
+
+@app.get("/observability/incidents/{trace_id}", response_model=TraceIncident)
+async def get_trace_incident(
+    trace_id: str,
+    request: Request,
+    limit: int = Query(default=100, ge=1, le=300),
+) -> TraceIncident:
+    """Return a bounded incident summary for one operator trace citation.
+
+    The incident view is a read-only projection over the same secret-safe
+    trace evidence boundary. It classifies observed failure references while
+    preserving partial/empty instrumentation coverage as an explicit status;
+    it is not an execution, release, or licence gate.
+    """
+
+    evidence = await get_trace_evidence(trace_id, request, limit)
+    return build_trace_incident(evidence)
+
+
+@app.get("/observability/retention/plan", response_model=TraceRetentionPlanResponse)
+async def get_trace_retention_plan(
+    request: Request,
+    trace_id: str | None = None,
+    limit: int = Query(default=1_000, ge=1, le=10_000),
+) -> TraceRetentionPlanResponse:
+    """Return a bounded, read-only retention plan over native-span metadata.
+
+    The response classifies retain/archive/delete candidates but never applies
+    any archive, deletion, legal-hold, or erasure mutation.  It is descriptive
+    operator evidence, not a release, security, or licence decision.
+    """
+
+    _require_operator_identity(request)
+    normalized_trace_id = str(trace_id).strip() if trace_id is not None else None
+    if normalized_trace_id and not is_safe_trace_id(normalized_trace_id):
+        raise HTTPException(422, "trace_id must be a bounded safe identifier")
+    storage = _storage()
+    rows = await _native_span_retention_rows(
+        storage,
+        trace_id=normalized_trace_id,
+        limit=limit,
+    )
+    plan = plan_native_span_retention(
+        rows,
+        await _trace_retention_policy(storage),
+        evaluated_at=datetime.now(tz=UTC),
+        limit=limit,
+    )
+    payload = plan.as_dict()
+    payload.update(
+        {
+            "mode": "read-only-plan",
+            "mutation_performed": False,
+            "trace_id": normalized_trace_id,
+            "scope": "trace" if normalized_trace_id else "bounded native-span metadata",
+        }
+    )
+    return TraceRetentionPlanResponse.model_validate(payload)
+
+
+@app.get("/observability/slo", response_model=SLOReport)
+async def get_operational_slo_report(
+    request: Request,
+    company_id: UUID | None = None,
+    window_days: int = Query(default=30, ge=1, le=3650),
+) -> SLOReport:
+    """Return descriptive SLO targets and observed durable telemetry."""
+
+    _require_operator_identity(request)
+    storage = _storage()
+    if company_id is not None and await storage.get_company(company_id) is None:
+        raise HTTPException(404, "company not found")
+    observations = await _operational_slo_observations(
+        storage,
+        company_id=company_id,
+        window_days=window_days,
+    )
+    return build_slo_report(
+        observations,
+        policy=default_slo_policy(),
+        generated_at=datetime.now(tz=UTC).isoformat(),
+    )
+
+
+@app.get("/observability/capacity/forecast", response_model=CapacityForecast)
+async def get_capacity_forecast(
+    request: Request,
+    company_id: UUID | None = None,
+    window_days: int = Query(default=30, ge=1, le=3650),
+    forecast_days: int = Query(default=30, ge=1, le=3650),
+) -> CapacityForecast:
+    """Forecast cost and token demand from bounded durable usage aggregates."""
+
+    _require_operator_identity(request)
+    storage = _storage()
+    if company_id is not None and await storage.get_company(company_id) is None:
+        raise HTTPException(404, "company not found")
+    since = datetime.now(tz=UTC) - timedelta(days=window_days)
+    reader = getattr(storage, "list_project_usage_aggregates", None)
+    usage_rows = (
+        await reader(company_id=company_id, since=since, limit=10_000)
+        if inspect.iscoroutinefunction(reader)
+        else []
+    )
+    budget_limit, budget_source = await _operational_budget_limit(storage, company_id)
+    return build_capacity_forecast(
+        usage_rows,
+        window_days=window_days,
+        forecast_days=forecast_days,
+        budget_limit_usd=budget_limit,
+        budget_source=budget_source,
+        generated_at=datetime.now(tz=UTC).isoformat(),
+    )
+
+
+@app.get("/projects/{project_id}/usage/events")
+async def list_project_usage_events(
+    project_id: UUID,
+    limit: int = Query(default=1000, ge=1, le=10000),
+    offset: int = Query(default=0, ge=0),
+) -> list[dict[str, Any]]:
+    storage = _storage()
+    if await storage.get_project(project_id) is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+    return [
+        _serialize(row)
+        for row in await storage.list_project_usage_events(
+            project_id,
+            limit=limit,
+            offset=offset,
+        )
+    ]
+
+
+@app.get("/usage/events/{event_id}")
+async def get_usage_event_evidence(event_id: UUID, request: Request) -> dict[str, Any]:
+    """Return operator-safe scalar metadata for one usage-event citation."""
+
+    _require_operator_identity(request)
+    event = await _storage().get_project_usage_event(event_id)
+    if event is None:
+        raise HTTPException(404, f"Usage event {event_id} not found")
+    return _serialize_safe_scalars(event, _USAGE_EVIDENCE_KEYS)
 
 
 @app.post("/projects/{project_id}/artifacts", status_code=201)
@@ -3045,6 +4932,10 @@ async def transition_project(project_id: UUID, req: TransitionRequest) -> dict[s
             actor_id=req.actor_id,
             context=req.context,
         )
+        # The controller has committed the state transition at this point;
+        # keep aggregate metrics aligned even if a later evidence/approval
+        # projection fails independently.
+        record_project_state_transition(result.prior_state, result.next_state)
     except InvalidTransitionError as e:
         raise HTTPException(
             409,
@@ -3100,16 +4991,8 @@ async def transition_project(project_id: UUID, req: TransitionRequest) -> dict[s
         ProjectState(result.next_state),
     )
 
-    # Update Prometheus project-state gauge and transition counter
+    # Update the bounded aggregate project-state gauge and transition counter.
     try:
-        MAS_PROJECT_STATE.labels(
-            project_id=str(result.project_id),
-            state=str(result.prior_state),
-        ).set(0)
-        MAS_PROJECT_STATE.labels(
-            project_id=str(result.project_id),
-            state=str(result.next_state),
-        ).set(1)
         workflow_transitions_total.labels(
             from_state=str(result.prior_state),
             to_state=str(result.next_state),
@@ -3258,6 +5141,7 @@ async def submit_decision(project_id: UUID, req: DecisionRequest) -> dict[str, A
                 "edits": req.edits,
             },
         )
+        record_project_state_transition(result.prior_state, result.next_state)
         return {
             "status": "transitioned",
             "gate_id": str(gate_id),
@@ -3285,6 +5169,10 @@ async def submit_decision(project_id: UUID, req: DecisionRequest) -> dict[str, A
                         "comments": req.comments,
                         "edits": req.edits,
                     },
+                )
+                record_project_state_transition(
+                    retried_result.prior_state,
+                    retried_result.next_state,
                 )
                 return {
                     "status": "transitioned",
@@ -3494,6 +5382,208 @@ async def get_project_review_session(project_id: UUID, session_id: UUID) -> dict
     return _serialize(session)
 
 
+# ── Deployed team-runner storage boundary ───────────────────────────────────
+
+_TEAM_RUNNER_PRINCIPALS = frozenset({"ceo", "worker"})
+_TEAM_RUNNER_UUID_FIELDS = frozenset(
+    {
+        "project_id",
+        "document_id",
+        "session_id",
+        "event_id",
+        "company_id",
+        "run_id",
+        "worker_id",
+        "checkpoint_id",
+    }
+)
+_TEAM_RUNNER_DATETIME_FIELDS = frozenset({"occurred_at", "completed_at"})
+_TEAM_RUNNER_REVIEW_UPDATE_FIELDS = frozenset(
+    {"status", "completed_at", "timeout_count"}
+)
+
+
+def _team_runner_uuid(value: Any, *, field: str, allow_none: bool = False) -> UUID | None:
+    if value is None and allow_none:
+        return None
+    if isinstance(value, UUID):
+        return value
+    try:
+        return UUID(str(value))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(422, f"{field} must be a UUID") from exc
+
+
+def _team_runner_payload_values(
+    payload: dict[str, Any],
+    *,
+    uuid_fields: frozenset[str] = _TEAM_RUNNER_UUID_FIELDS,
+    datetime_fields: frozenset[str] = _TEAM_RUNNER_DATETIME_FIELDS,
+) -> dict[str, Any]:
+    """Normalize the JSON boundary before invoking AgentStorage methods."""
+    values = dict(payload)
+    for field in uuid_fields:
+        if field not in values or values[field] is None:
+            continue
+        values[field] = _team_runner_uuid(values[field], field=field)
+    for field in datetime_fields:
+        if field not in values or values[field] is None:
+            continue
+        if isinstance(values[field], datetime):
+            continue
+        try:
+            values[field] = datetime.fromisoformat(str(values[field]))
+        except ValueError as exc:
+            raise HTTPException(422, f"{field} must be an ISO datetime") from exc
+    return values
+
+
+@app.post("/internal/team-runners/{team_id}/storage")
+async def team_runner_storage(
+    team_id: str,
+    req: TeamRunnerStorageRequest,
+    request: Request,
+) -> Any:
+    """Persist runner checkpoints/reviews through the control plane.
+
+    This is intentionally an operation allowlist rather than a generic SQL
+    proxy.  Team runners authenticate with their distinct CEO/worker key and
+    receive only the narrow methods required for execution, resume, usage
+    telemetry, and COO review durability.  Postgres and MinIO stay on the
+    control-plane network.
+    """
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,79}", team_id):
+        raise HTTPException(422, "invalid team id")
+    principal = _authenticated_principal(request)
+    if principal not in _TEAM_RUNNER_PRINCIPALS:
+        raise HTTPException(403, "team-runner storage requires a CEO or worker principal")
+    claimed_team_id = request.headers.get("x-aiat-team-id")
+    if claimed_team_id != team_id:
+        raise HTTPException(403, "team identity does not match the storage path")
+
+    storage = _storage()
+    payload = dict(req.payload)
+    operation = req.operation
+
+    try:
+        from mas_core.memory.checkpoints import CheckpointStore
+
+        checkpoints = CheckpointStore(storage.engine)
+        if operation == "storage_health":
+            await storage.get_config("system_state")
+            return {"status": "ok"}
+        if operation == "checkpoint_save":
+            supplied_team_id = str(payload.get("team_id") or team_id)
+            if supplied_team_id != team_id:
+                raise HTTPException(403, "checkpoint team identity mismatch")
+            project_id = _team_runner_uuid(
+                payload.get("project_id"), field="project_id", allow_none=True
+            )
+            checkpoint_id = _team_runner_uuid(
+                payload.get("checkpoint_id"), field="checkpoint_id", allow_none=True
+            )
+            checkpoint = await checkpoints.save(
+                agent_id=str(payload["agent_id"]),
+                team_id=team_id,
+                project_id=project_id,
+                task_message_id=str(payload["task_message_id"]),
+                iteration=int(payload.get("iteration", 0)),
+                messages_json=list(payload.get("messages_json") or []),
+                tool_results_json=list(payload.get("tool_results_json") or []),
+                budget_state_json=payload.get("budget_state_json"),
+                task_envelope_json=dict(payload.get("task_envelope_json") or {}),
+                checkpoint_id=checkpoint_id,
+            )
+            return {"checkpoint_id": str(checkpoint)}
+        if operation == "checkpoint_load":
+            supplied_team_id = str(payload.get("team_id") or team_id)
+            if supplied_team_id != team_id:
+                raise HTTPException(403, "checkpoint team identity mismatch")
+            row = await checkpoints.load(
+                str(payload["agent_id"]),
+                str(payload["task_message_id"]) if payload.get("task_message_id") else None,
+                team_id=team_id,
+            )
+            return _serialize(row) if row is not None else None
+        if operation == "checkpoint_latest":
+            requested_team_id = str(payload.get("team_id") or team_id)
+            if requested_team_id != team_id:
+                raise HTTPException(403, "checkpoint team identity mismatch")
+            return [_serialize(row) for row in await checkpoints.load_latest_for_team_agents(team_id)]
+        if operation == "checkpoint_delete":
+            supplied_team_id = str(payload.get("team_id") or team_id)
+            if supplied_team_id != team_id:
+                raise HTTPException(403, "checkpoint team identity mismatch")
+            deleted = await checkpoints.delete(
+                str(payload["agent_id"]),
+                str(payload["task_message_id"]),
+                team_id=team_id,
+            )
+            return {"deleted": deleted}
+
+        if operation == "usage_record":
+            values = _team_runner_payload_values(payload)
+            values["team_id"] = str(values.get("team_id") or team_id)
+            usage = await storage.record_project_usage(**values)
+            return _serialize(usage) if usage is not None else None
+
+        if operation == "document_get":
+            document = await storage.get_document(
+                _team_runner_uuid(payload.get("document_id"), field="document_id")  # type: ignore[arg-type]
+            )
+            return _serialize(document) if document is not None else None
+        if operation == "document_create":
+            values = _team_runner_payload_values(payload)
+            return _serialize(await storage.create_document(**values))
+        if operation == "document_update_status":
+            await storage.update_document_status(
+                _team_runner_uuid(payload.get("document_id"), field="document_id"),  # type: ignore[arg-type]
+                status=str(payload["status"]),
+            )
+            return {"updated": True}
+
+        if operation == "review_create":
+            values = _team_runner_payload_values(payload)
+            return _serialize(await storage.create_review_session(**values))
+        if operation == "review_get":
+            row = await storage.get_review_session(
+                _team_runner_uuid(payload.get("session_id"), field="session_id")  # type: ignore[arg-type]
+            )
+            return _serialize(row) if row is not None else None
+        if operation == "review_update":
+            session_id = _team_runner_uuid(payload.get("session_id"), field="session_id")
+            raw_updates = dict(payload.get("updates") or {})
+            unknown_updates = set(raw_updates) - _TEAM_RUNNER_REVIEW_UPDATE_FIELDS
+            if unknown_updates:
+                raise HTTPException(
+                    422,
+                    f"review update contains unsupported fields: {sorted(unknown_updates)}",
+                )
+            updates = _team_runner_payload_values(raw_updates)
+            await storage.update_review_session(session_id, **updates)  # type: ignore[arg-type]
+            return {"updated": True}
+        if operation == "review_comment_add":
+            values = _team_runner_payload_values(payload)
+            return _serialize(await storage.add_review_comment(**values))
+        if operation == "review_comments_get":
+            session_id = _team_runner_uuid(payload.get("session_id"), field="session_id")
+            rows = await storage.get_review_comments(session_id)  # type: ignore[arg-type]
+            return [_serialize(row) for row in rows]
+        if operation == "review_list":
+            project_id = _team_runner_uuid(payload.get("project_id"), field="project_id")
+            limit = min(1000, max(1, int(payload.get("limit", 100))))
+            rows = await storage.list_review_sessions(project_id, limit=limit)  # type: ignore[arg-type]
+            return [_serialize(row) for row in rows]
+    except HTTPException:
+        raise
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(422, f"invalid {operation} payload: {exc}") from exc
+
+    # Pydantic's Literal makes this unreachable, but retaining a fail-closed
+    # response protects direct calls that bypass validation in tests.
+    raise HTTPException(422, f"unsupported team-runner storage operation: {operation}")
+
+
 @app.get("/projects/{project_id}/feasibility")
 async def get_feasibility(project_id: UUID) -> dict[str, Any]:
     """Get the feasibility report for a project."""
@@ -3511,6 +5601,83 @@ async def get_sprints(project_id: UUID) -> list[dict[str, Any]]:
     storage = _storage()
     sprints = await storage.list_sprints(project_id)
     return [_serialize(s) for s in sprints]
+
+
+@app.post("/projects/{project_id}/sprints", status_code=201)
+async def create_canonical_sprint(
+    project_id: UUID,
+    req: CanonicalSprintCreateRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Typed sprint creation; `/tasks` remains a compatibility wrapper."""
+    _require_operator_identity(request)
+    storage = _storage()
+    if await storage.get_project(project_id) is None:
+        raise HTTPException(404, "project not found")
+    kwargs = req.model_dump()
+    if isinstance(storage, AgentStorage):
+        sprint, queued = await storage.create_sprint_with_pm_projections(
+            project_id=project_id,
+            **kwargs,
+        )
+    else:
+        sprint = await storage.create_sprint(project_id=project_id, **kwargs)
+        queued = []
+    return {
+        "sprint": _serialize(sprint),
+        "projections": [_serialize_projection(row) for row in queued],
+    }
+
+
+@app.get("/projects/{project_id}/sprints/{sprint_id}")
+async def get_canonical_sprint(project_id: UUID, sprint_id: UUID) -> dict[str, Any]:
+    storage = _storage()
+    sprint = await storage.get_sprint(sprint_id)
+    if sprint is None or sprint.get("project_id") != project_id:
+        raise HTTPException(404, "sprint not found for project")
+    return {"sprint": _serialize(sprint)}
+
+
+@app.patch("/projects/{project_id}/sprints/{sprint_id}")
+async def update_canonical_sprint(
+    project_id: UUID,
+    sprint_id: UUID,
+    req: CanonicalSprintUpdateRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _require_operator_identity(request)
+    storage = _storage()
+    sprint = await storage.get_sprint(sprint_id)
+    if sprint is None or sprint.get("project_id") != project_id:
+        raise HTTPException(404, "sprint not found for project")
+    values = {
+        key: value
+        for key, value in req.model_dump(exclude_none=True).items()
+        if key != "expected_revision"
+    }
+    try:
+        if isinstance(storage, AgentStorage):
+            refreshed, queued = await storage.update_sprint_with_pm_projections(
+                sprint_id,
+                expected_revision=req.expected_revision or int(sprint.get("revision") or 1),
+                **values,
+            )
+        else:
+            await storage.update_sprint(
+                sprint_id,
+                expected_revision=req.expected_revision or int(sprint.get("revision") or 1),
+                **values,
+            )
+            refreshed = await storage.get_sprint(sprint_id)
+            queued = []
+            if refreshed is None:
+                raise HTTPException(404, "sprint not found after update")
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {
+        "sprint": _serialize(refreshed),
+        "projections": [_serialize_projection(row) for row in queued],
+    }
 
 
 @app.get("/projects/{project_id}/kpi")
@@ -4030,6 +6197,10 @@ async def retry_project(project_id: UUID) -> dict[str, Any]:
             if updated is None:
                 raise HTTPException(409, "Stale state conflict during retry")
 
+        record_project_state_transition(
+            getattr(result, "prior_state", ProjectState.FAILED),
+            next_state,
+        )
         await _ensure_workflow_approval_gate(storage, project_id, next_state)
         return {
             "status": "retried",
@@ -4064,6 +6235,7 @@ async def archive_project(project_id: UUID) -> dict[str, Any]:
             event=WorkflowEvent.ARCHIVE_REQUESTED,
             actor_id="human",
         )
+        record_project_state_transition(result.prior_state, result.next_state)
         return {"status": "archived", "next_state": str(result.next_state)}
     except InvalidTransitionError as e:
         raise HTTPException(409, f"Cannot archive from state {project['state']}: {e}")
@@ -4181,9 +6353,9 @@ async def replay_dead_letter(letter_id: int) -> dict[str, Any]:
 
 
 @app.post("/tasks")
-async def create_task(body: dict[str, Any]) -> dict[str, Any]:
+async def create_task(body: dict[str, Any], request: Request) -> dict[str, Any]:
     """Publish an ADMIN_TASK to the correct team admin via the router."""
-    tid = new_trace_id()
+    tid = current_trace_id() or new_trace_id()
     bind_trace_id(tid)
 
     team_id = body.get("team_id", "exec_ceo")
@@ -4205,7 +6377,15 @@ async def create_task(body: dict[str, Any]) -> dict[str, Any]:
         "UPDATE_ISSUE_STATUS",
         "UPDATE_AGENT_PROFILE",
     }:
+        # The compatibility wrapper must not become a second path around the
+        # typed canonical-mutation authorization boundary.  Unknown actions
+        # remain routable ADMIN_TASKs; deterministic persistence actions are
+        # operator-only just like their typed replacements.
+        _require_operator_identity(request)
         storage = _storage()
+        projection_rows: list[dict[str, Any]] = []
+        profile_learning: dict[str, Any] | None = None
+        sprint_retrospective: dict[str, Any] | None = None
         pid: UUID | None = None
         if project_id:
             try:
@@ -4246,17 +6426,21 @@ async def create_task(body: dict[str, Any]) -> dict[str, Any]:
                             404,
                             f"Sprint {parsed_sprint_id} not found for project {pid}",
                         )
-                result = await storage.create_issue(
-                    project_id=pid,
-                    sprint_id=parsed_sprint_id,
-                    title=str(task_payload.get("title") or "Untitled issue"),
-                    description=task_payload.get("description"),
-                    issue_type=str(task_payload.get("issue_type") or "TASK"),
-                    priority=str(task_payload.get("priority") or "medium"),
-                    assigned_team=task_payload.get("assigned_team"),
-                    estimated_hours=task_payload.get("estimated_hours"),
-                    story_points=task_payload.get("story_points"),
-                )
+                issue_kwargs = {
+                    "project_id": pid,
+                    "sprint_id": parsed_sprint_id,
+                    "title": str(task_payload.get("title") or "Untitled issue"),
+                    "description": task_payload.get("description"),
+                    "issue_type": str(task_payload.get("issue_type") or "TASK"),
+                    "priority": str(task_payload.get("priority") or "medium"),
+                    "assigned_team": task_payload.get("assigned_team"),
+                    "estimated_hours": task_payload.get("estimated_hours"),
+                    "story_points": task_payload.get("story_points"),
+                }
+                if isinstance(storage, AgentStorage):
+                    result, projection_rows = await storage.create_issue_with_pm_projections(**issue_kwargs)
+                else:
+                    result = await storage.create_issue(**issue_kwargs)
             elif action == "DECOMPOSE_ISSUE":
                 issue_id = UUID(str(task_payload.get("issue_id")))
                 parent = await storage.get_issue(issue_id)
@@ -4298,13 +6482,57 @@ async def create_task(body: dict[str, Any]) -> dict[str, Any]:
                 issue = await storage.get_issue(issue_id)
                 if issue is None or issue.get("project_id") != pid:
                     raise HTTPException(404, f"Issue {issue_id} not found for project {pid}")
+                previous_issue_status = str(issue.get("status") or "").upper()
                 values: dict[str, Any] = {"status": str(task_payload.get("status") or "IN_PROGRESS")}
                 if task_payload.get("actual_hours") is not None:
                     values["actual_hours"] = task_payload["actual_hours"]
-                await storage.update_issue(issue_id, **values)
-                result = await storage.get_issue(issue_id)
+                if isinstance(storage, AgentStorage):
+                    result, projection_rows = await storage.update_issue_with_pm_projections(
+                        issue_id,
+                        expected_revision=int(issue.get("revision") or 1),
+                        **values,
+                    )
+                else:
+                    await storage.update_issue(issue_id, **values)
+                    result = await storage.get_issue(issue_id)
                 if result and str(values["status"]).upper() in {"DONE", "COMPLETED", "CLOSED"}:
-                    sprint_id = result.get("sprint_id")
+                    # A completed issue is the canonical retrospective signal.
+                    # Learn only once on the terminal transition, and only when
+                    # the issue names an agent plus both hour measurements. The
+                    # profile update is durable and remains independent of any
+                    # licence/provenance metadata.
+                    completed_before = previous_issue_status in {"DONE", "COMPLETED", "CLOSED"}
+                    result_row = result if isinstance(result, dict) else {}
+                    profile_agent_id = str(result_row.get("assigned_agent") or issue.get("assigned_agent") or "")
+                    estimated = result_row.get("estimated_hours")
+                    if estimated is None:
+                        estimated = issue.get("estimated_hours")
+                    actual = result_row.get("actual_hours")
+                    if actual is None:
+                        actual = issue.get("actual_hours")
+                    observe_profile = getattr(storage, "observe_agent_profile", None)
+                    if (
+                        not completed_before
+                        and profile_agent_id
+                        and estimated is not None
+                        and actual is not None
+                        and inspect.iscoroutinefunction(observe_profile)
+                    ):
+                        profile_learning = await observe_profile(
+                            agent_id=profile_agent_id,
+                            team_id=result_row.get("assigned_team") or issue.get("assigned_team"),
+                            role=None,
+                            estimated_hours=estimated,
+                            actual_hours=actual,
+                            tasks_completed=1,
+                            alpha=0.5,
+                        )
+                        if isinstance(profile_learning, dict):
+                            profile_learning = {
+                                **profile_learning,
+                                "source_issue_id": str(issue_id),
+                            }
+                    sprint_id = result_row.get("sprint_id")
                     if sprint_id:
                         sprint_issues = await storage.list_issues(sprint_id=sprint_id)
                         completed = [
@@ -4317,11 +6545,35 @@ async def create_task(body: dict[str, Any]) -> dict[str, Any]:
                             completed_story_points=sum(item.get("story_points") or 0 for item in completed),
                             actual_hours=sum(float(item.get("actual_hours") or 0) for item in sprint_issues),
                         )
+                        if not completed_before:
+                            try:
+                                sprint_retrospective = await _record_sprint_retrospective(
+                                    storage,
+                                    project_id=pid,
+                                    sprint_id=UUID(str(sprint_id)),
+                                )
+                            except Exception:
+                                # The issue transition and sprint projection are
+                                # canonical. A retrospective snapshot is durable
+                                # evidence, but must not turn a completed issue
+                                # into an ambiguous state if its optional writer
+                                # is temporarily unavailable.
+                                logger.exception(
+                                    "sprint_retrospective_snapshot_failed",
+                                    extra={"project_id": str(pid), "sprint_id": str(sprint_id)},
+                                )
         except HTTPException:
             raise
         except (TypeError, ValueError) as exc:
             raise HTTPException(422, f"Invalid {action} payload: {exc}") from exc
-        return {"status": "completed", "action": action, "result": _serialize(result)}
+        response = {"status": "completed", "action": action, "result": _serialize(result)}
+        if projection_rows:
+            response["projections"] = [_serialize_projection(row) for row in projection_rows]
+        if profile_learning is not None:
+            response["profile_learning"] = _serialize(profile_learning)
+        if sprint_retrospective is not None:
+            response["sprint_retrospective"] = _serialize(sprint_retrospective)
+        return response
 
     envelope = {
         "message_id": str(uuid4()),
@@ -4548,6 +6800,180 @@ async def system_status() -> dict[str, Any]:
     }
 
 
+def _diagnostic_latency(started: float) -> float:
+    """Return a small, stable latency value for the diagnostics contract."""
+    return round((time.perf_counter() - started) * 1000, 1)
+
+
+async def _probe_database_health(storage: AgentStorage) -> dict[str, Any]:
+    """Run a read-only database probe without returning driver details."""
+    started = time.perf_counter()
+    try:
+        async with storage.engine.connect() as conn:
+            await conn.execute(sa.text("SELECT 1"))
+    except Exception as exc:  # noqa: BLE001 - diagnostics must report, not raise
+        return {
+            "status": "error",
+            "error_type": type(exc).__name__,
+            "latency_ms": _diagnostic_latency(started),
+        }
+    return {"status": "ok", "latency_ms": _diagnostic_latency(started)}
+
+
+async def _probe_http_health(url: str) -> dict[str, Any]:
+    """Probe a dependency health route while retaining only safe fields."""
+    started = time.perf_counter()
+    try:
+        async with httpx.AsyncClient(timeout=2.0, follow_redirects=False) as client:
+            response = await client.get(f"{url.rstrip('/')}/health")
+        payload: dict[str, Any] = {}
+        try:
+            decoded = response.json()
+            if isinstance(decoded, dict):
+                payload = decoded
+        except (TypeError, ValueError):
+            payload = {}
+
+        reported_status = payload.get("status")
+        if response.status_code >= 500:
+            status = "error"
+        elif response.status_code >= 400 or reported_status not in (None, "ok"):
+            status = "degraded"
+        else:
+            status = "ok"
+
+        result: dict[str, Any] = {
+            "status": status,
+            "http_status": response.status_code,
+            "latency_ms": _diagnostic_latency(started),
+        }
+        if isinstance(reported_status, str):
+            result["reported_status"] = reported_status[:32]
+        if isinstance(payload.get("cache_connected"), bool):
+            result["cache_connected"] = payload["cache_connected"]
+        if isinstance(payload.get("tools_registered"), int):
+            result["tools_registered"] = max(0, payload["tools_registered"])
+        if "redis" in payload:
+            result["redis_connected"] = payload.get("redis") == "ok"
+        return result
+    except Exception as exc:  # noqa: BLE001 - diagnostics must report, not raise
+        return {
+            "status": "error",
+            "error_type": type(exc).__name__,
+            "latency_ms": _diagnostic_latency(started),
+        }
+
+
+async def _probe_object_store_health() -> dict[str, Any]:
+    """Perform a non-mutating S3-compatible bucket probe when configured."""
+    endpoint = os.getenv("MINIO_ENDPOINT") or os.getenv("BLOB_ENDPOINT_URL")
+    access_key = os.getenv("MINIO_ACCESS_KEY") or os.getenv("AWS_ACCESS_KEY_ID")
+    secret_key = os.getenv("MINIO_SECRET_KEY") or os.getenv("AWS_SECRET_ACCESS_KEY")
+    bucket = os.getenv("MINIO_BUCKET") or os.getenv("BLOB_BUCKET") or "mas-agents"
+    if not endpoint or not access_key or not secret_key:
+        return {"status": "not_configured", "configured": False}
+
+    started = time.perf_counter()
+    from mas_core.memory.blob import BlobClient
+
+    blob = BlobClient(endpoint, access_key=access_key, secret_key=secret_key, bucket=bucket)
+    try:
+        await blob.connect()
+        await blob.client.head_bucket(Bucket=bucket)
+    except Exception as exc:  # noqa: BLE001 - diagnostics must report, not raise
+        return {
+            "status": "error",
+            "configured": True,
+            "error_type": type(exc).__name__,
+            "latency_ms": _diagnostic_latency(started),
+        }
+    finally:
+        try:
+            await blob.close()
+        except Exception:  # noqa: BLE001 - cleanup cannot hide diagnostic result
+            logger.debug("object_store_diagnostics_close_failed", exc_info=True)
+    return {
+        "status": "ok",
+        "configured": True,
+        "latency_ms": _diagnostic_latency(started),
+    }
+
+
+@app.get("/system/diagnostics")
+async def system_diagnostics() -> dict[str, Any]:
+    """Return secret-safe read-only health for control-plane dependencies."""
+    storage = _storage()
+    state = await storage.get_config("system_state") or "UNKNOWN"
+    dependencies = {
+        "database": await _probe_database_health(storage),
+        "message_router": await _probe_http_health(os.getenv("ROUTER_URL", ROUTER_URL)),
+        "tool_service": await _probe_http_health(
+            os.getenv("TOOL_SERVICE_URL", "http://tool-service:8002")
+        ),
+        "object_store": await _probe_object_store_health(),
+    }
+    overall = (
+        "ok"
+        if all(item.get("status") == "ok" for item in dependencies.values())
+        else "degraded"
+    )
+    return {
+        "status": overall,
+        "state": state,
+        "checked_at": datetime.now(tz=UTC).isoformat(),
+        "dependencies": dependencies,
+    }
+
+
+async def _apply_default_company_manifest(storage: AgentStorage) -> dict[str, Any] | None:
+    """Load and atomically apply the checked-in default company manifest."""
+    import inspect
+    from pathlib import Path
+
+    import yaml
+
+    configured_manifest_path = os.environ.get("COMPANY_MANIFEST_PATH")
+    if configured_manifest_path:
+        manifest_path = Path(configured_manifest_path)
+    else:
+        default_manifest_name = Path("companies/default-software-company.yaml")
+        # Compose runs from /app, while repository tests run from the
+        # workspace root. Resolve the checked-in default from either runtime
+        # layout, but never fall back when an explicit path was supplied.
+        # ``__file__`` has a different depth in the source tree and in the
+        # production image (where it is ``/app/orchestrator_api/main.py``).
+        # Iterate over available parents instead of indexing a presumed depth;
+        # the latter raised ``IndexError`` in the image and silently disabled
+        # default-company bootstrap after worker seeding.
+        candidates = (default_manifest_name,)
+        candidates += tuple(
+            parent / default_manifest_name for parent in Path(__file__).resolve().parents
+        )
+        manifest_path = next(
+            (candidate for candidate in candidates if candidate.is_file()),
+            candidates[0],
+        )
+    if not manifest_path.is_file():
+        raise FileNotFoundError(f"default company manifest not found: {manifest_path}")
+    apply_manifest = getattr(storage, "apply_company_manifest", None)
+    # A few compatibility/test storage doubles predate the company control-plane
+    # API.  They must continue to support the legacy seed endpoint without
+    # attempting to await a dynamically-created MagicMock attribute.
+    if not inspect.iscoroutinefunction(apply_manifest):
+        logger.debug("Storage does not expose async company manifest application; skipping bootstrap")
+        return None
+    raw_manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+    company_manifest, digest, canonical = compile_company_manifest(raw_manifest)
+    return await apply_manifest(
+        company_id=DEFAULT_COMPANY_ID,
+        manifest=company_manifest,
+        digest=digest,
+        canonical=canonical,
+        source=str(manifest_path),
+        actor="system-bootstrap",
+    )
+
+
 @app.post("/system/seed-default-company")
 async def seed_default_company() -> dict[str, Any]:
     """Idempotently seed the default AIAT company bootstrap metadata."""
@@ -4609,6 +7035,17 @@ async def seed_default_company() -> dict[str, Any]:
             "errors": sum(1 for r in results if r.action == "error"),
         }
 
+    company_result: dict[str, Any] | None = None
+    try:
+        company_result = await _apply_default_company_manifest(storage)
+    except (CompanyManifestError, ValueError, OSError) as exc:
+        logger.exception("Default company manifest compilation failed")
+        raise HTTPException(500, f"default company manifest could not be applied: {exc}") from exc
+
+    from mas_core.llm_gateway import seed_default_model_profiles
+
+    model_profile_result = await seed_default_model_profiles(storage)
+
     await storage.set_config("default_company_seeded", "true")
     await storage.set_config("default_company_seeded_at", datetime.now(tz=UTC).isoformat())
     await storage.set_config("default_company_ceo", json.dumps(ceo))
@@ -4622,7 +7059,170 @@ async def seed_default_company() -> dict[str, Any]:
         "departments": departments,
         "sample_project_template": sample_project_template,
         "workers_imported": worker_summary,
+        "model_profiles": model_profile_result,
+        "company": _serialize(company_result) if company_result is not None else None,
     }
+
+
+@app.get("/companies")
+async def list_companies() -> list[dict[str, Any]]:
+    return [_serialize(row) for row in await _storage().list_companies()]
+
+
+@app.post("/companies", status_code=201)
+async def create_company(request: Request, req: CompanyCreateRequest) -> dict[str, Any]:
+    _require_operator_identity(request)
+    storage = _storage()
+    if await storage.get_company_by_slug(req.slug) is not None:
+        raise HTTPException(409, "company slug already exists")
+    company_id = uuid4()
+    now = datetime.now(tz=UTC)
+    async with storage.engine.begin() as conn:
+        await conn.execute(
+            memory_models.companies.insert().values(
+                id=company_id,
+                slug=req.slug,
+                name=req.name,
+                description=req.description,
+                status="ACTIVE",
+                created_by=_authenticated_principal(request),
+                created_at=now,
+                updated_at=now,
+            )
+        )
+    return _serialize(await storage.get_company(company_id))
+
+
+@app.get("/companies/{company_id}")
+async def get_company(company_id: UUID) -> dict[str, Any]:
+    storage = _storage()
+    result = await storage.get_company_read_model(company_id)
+    if not result.get("company"):
+        raise HTTPException(404, "company not found")
+    return _serialize(result)
+
+
+@app.get("/companies/{company_id}/budgets")
+async def list_company_budgets(company_id: UUID) -> list[dict[str, Any]]:
+    storage = _storage()
+    if await storage.get_company(company_id) is None:
+        raise HTTPException(404, "company not found")
+    budgets = await storage.list_company_budgets(company_id)
+    states = [
+        await storage.get_budget_state(company_id, str(row["budget_key"]))
+        for row in budgets
+    ]
+    return [_serialize(row) for row in states]
+
+
+@app.get("/companies/{company_id}/departments")
+async def list_company_departments(company_id: UUID) -> list[dict[str, Any]]:
+    storage = _storage()
+    if await storage.get_company(company_id) is None:
+        raise HTTPException(404, "company not found")
+    return [_serialize(row) for row in await storage.list_company_departments(company_id)]
+
+
+@app.get("/companies/{company_id}/assignments")
+async def list_company_assignments(company_id: UUID) -> list[dict[str, Any]]:
+    storage = _storage()
+    if await storage.get_company(company_id) is None:
+        raise HTTPException(404, "company not found")
+    return [_serialize(row) for row in await storage.list_company_worker_assignments(company_id)]
+
+
+@app.get("/companies/{company_id}/budgets/{budget_key}")
+async def get_company_budget(company_id: UUID, budget_key: str) -> dict[str, Any]:
+    storage = _storage()
+    if await storage.get_company(company_id) is None:
+        raise HTTPException(404, "company not found")
+    state = await storage.get_budget_state(company_id, budget_key)
+    if not state.get("configured"):
+        raise HTTPException(404, "budget not configured")
+    return _serialize(state)
+
+
+@app.get("/companies/{company_id}/budget-reservations")
+async def list_company_budget_reservations(
+    company_id: UUID,
+    run_id: UUID | None = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+) -> list[dict[str, Any]]:
+    storage = _storage()
+    if await storage.get_company(company_id) is None:
+        raise HTTPException(404, "company not found")
+    rows = await storage.list_budget_reservations(company_id=company_id, run_id=run_id, limit=limit)
+    return [_serialize(row) for row in rows]
+
+
+@app.post("/companies/{company_id}/manifest/validate")
+async def validate_company_manifest(company_id: UUID, req: CompanyManifestRequest) -> dict[str, Any]:
+    storage = _storage()
+    if await storage.get_company(company_id) is None:
+        raise HTTPException(404, "company not found")
+    try:
+        manifest, digest, canonical = compile_company_manifest(req.manifest)
+    except CompanyManifestError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {
+        "valid": True,
+        "company_id": str(company_id),
+        "slug": manifest.slug,
+        "digest": digest,
+        "manifest": canonical,
+        "source": req.source,
+    }
+
+
+@app.get("/companies/{company_id}/manifest/history")
+async def company_manifest_history(
+    company_id: UUID,
+    limit: int = Query(default=100, ge=1, le=1000),
+) -> list[dict[str, Any]]:
+    storage = _storage()
+    if await storage.get_company(company_id) is None:
+        raise HTTPException(404, "company not found")
+    return [_serialize(row) for row in await storage.list_company_manifest_versions(company_id, limit=limit)]
+
+
+@app.post("/companies/{company_id}/manifest/apply")
+async def apply_company_manifest(company_id: UUID, request: Request, req: CompanyManifestRequest) -> dict[str, Any]:
+    _require_operator_identity(request)
+    storage = _storage()
+    try:
+        manifest, digest, canonical = compile_company_manifest(req.manifest)
+        result = await storage.apply_company_manifest(
+            company_id=company_id,
+            manifest=manifest,
+            digest=digest,
+            canonical=canonical,
+            source=req.source,
+            actor=_authenticated_principal(request),
+        )
+    except CompanyManifestError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return _serialize(result)
+
+
+@app.post("/companies/{company_id}/manifest/rollback")
+async def rollback_company_manifest(
+    company_id: UUID,
+    request: Request,
+    req: CompanyManifestRollbackRequest,
+) -> dict[str, Any]:
+    _require_operator_identity(request)
+    try:
+        result = await _storage().rollback_company_manifest(
+            company_id,
+            manifest_version=req.manifest_version,
+            actor=_authenticated_principal(request),
+            reason=req.reason,
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return _serialize(result)
 
 
 @app.get("/system/company")
@@ -4782,16 +7382,6 @@ class RuntimeValidationRequest(BaseModel):
     dry_run: bool = True
 
 
-RUNTIME_REQUIRED_PACKAGES: dict[str, tuple[str, ...]] = {
-    "langgraph": ("langgraph",),
-    "crewai": ("crewai",),
-    "autogen": ("autogen_agentchat", "autogen_core"),
-    "letta": ("letta",),
-}
-
-OPTIONAL_RUNTIME_IDS = {"autogen", "letta"}
-
-
 def _runtime_status(runtime_id: str) -> str:
     """Return runtime availability status based on package installation."""
     available = not _missing_runtime_packages(runtime_id)
@@ -4818,8 +7408,31 @@ def _runtime_readiness(runtime_id: str) -> dict[str, Any]:
     }
 
 
-async def _runtime_dry_run(runtime_tier: str, runtime_config: dict[str, Any]) -> dict[str, Any]:
-    """Run a dependency-backed benchmark task without network, tools, or credentials."""
+def _runtime_benchmark_timeout_seconds() -> float:
+    """Return the bounded dependency benchmark timeout.
+
+    Runtime packages are third-party code and may do more work than a simple
+    import suggests (CrewAI, for example, can inspect its local settings while
+    importing).  Keep that work outside the event loop and bound it so a
+    readiness probe cannot make the control plane unresponsive.  The setting
+    is intentionally capped: this endpoint is a smoke probe, not a worker
+    execution queue.
+    """
+    raw_value = os.getenv("AIAT_RUNTIME_BENCHMARK_TIMEOUT_SECONDS", "10")
+    try:
+        configured = float(raw_value)
+    except (TypeError, ValueError):
+        configured = 10.0
+    return max(0.1, min(configured, 60.0))
+
+
+def _runtime_dry_run_sync(runtime_tier: str, runtime_config: dict[str, Any]) -> dict[str, Any]:
+    """Run a dependency-backed benchmark task without network, tools, or credentials.
+
+    This helper is deliberately synchronous so the async route can execute
+    third-party imports in a worker thread.  A package import must not block
+    the orchestrator event loop or delay unrelated control-plane requests.
+    """
     if runtime_tier == "langgraph":
         importlib.import_module("langgraph")
         return {"tasks_run": 1, "tasks_passed": 1, "output": {"messages": ["aiat runtime smoke"]}}
@@ -4829,6 +7442,13 @@ async def _runtime_dry_run(runtime_tier: str, runtime_config: dict[str, Any]) ->
             "tasks_run": 1,
             "tasks_passed": 1,
             "output": {"crew_config_present": bool(runtime_config.get("crew_config"))},
+        }
+    if runtime_tier == "microsoft_agent_framework":
+        importlib.import_module("agent_framework")
+        return {
+            "tasks_run": 1,
+            "tasks_passed": 1,
+            "output": {"agent_name": runtime_config.get("agent_name") or "aiat-worker"},
         }
     if runtime_tier == "autogen":
         importlib.import_module("autogen_agentchat")
@@ -4849,6 +7469,16 @@ async def _runtime_dry_run(runtime_tier: str, runtime_config: dict[str, Any]) ->
             },
         }
     return {"tasks_run": 0, "tasks_passed": 0, "output": None}
+
+
+async def _runtime_dry_run(runtime_tier: str, runtime_config: dict[str, Any]) -> dict[str, Any]:
+    """Run the synchronous dependency probe away from the event loop."""
+    return await anyio.to_thread.run_sync(
+        _runtime_dry_run_sync,
+        runtime_tier,
+        runtime_config,
+        abandon_on_cancel=True,
+    )
 
 
 @app.get("/runtimes")
@@ -4888,6 +7518,20 @@ async def list_available_runtimes() -> dict[str, Any]:
                     "sandbox_required": "gvisor",
                     "allowed_tools": "controlled_by_manifest",
                     "crew_process": "sequential",
+                },
+            },
+            {
+                "id": "microsoft_agent_framework",
+                "name": "Microsoft Agent Framework",
+                **_runtime_readiness("microsoft_agent_framework"),
+                "tier": "departmental",
+                "description": "Microsoft Agent Framework worker runtime behind the AIAT contract",
+                "policy": {
+                    "inner_runtime": True,
+                    "requires_approval": False,
+                    "sandbox_required": "gvisor",
+                    "allowed_tools": "controlled_by_manifest",
+                    "can_spawn_subgraph": False,
                 },
             },
             {
@@ -4945,7 +7589,7 @@ async def validate_runtime(req: RuntimeValidationRequest) -> dict[str, Any]:
 
 @app.post("/runtimes/benchmark")
 async def benchmark_runtime(req: RuntimeValidationRequest) -> dict[str, Any]:
-    """Run a lightweight dependency-backed dry-run for the specified runtime."""
+    """Run a bounded dependency-backed dry-run for the specified runtime."""
     from mas_core.worker_registry.evaluator import evaluate_runtime
 
     validation = await evaluate_runtime(
@@ -4981,7 +7625,69 @@ async def benchmark_runtime(req: RuntimeValidationRequest) -> dict[str, Any]:
             },
         }
 
-    dry_run = await _runtime_dry_run(req.runtime_tier, req.runtime_config)
+    timeout_seconds = _runtime_benchmark_timeout_seconds()
+    try:
+        # Third-party runtime imports execute in a worker thread and are
+        # bounded independently of the client timeout.  A timed-out thread
+        # is abandoned safely; the probe never grants a worker run or keeps
+        # the API event loop hostage to package initialization.
+        with anyio.fail_after(timeout_seconds):
+            dry_run = await _runtime_dry_run(req.runtime_tier, req.runtime_config)
+    except TimeoutError:
+        elapsed_ms = (time.monotonic() - start) * 1000
+        return {
+            "runtime_tier": req.runtime_tier,
+            "status": "benchmark_timeout",
+            "mode": "benchmark",
+            "validation": validation,
+            "benchmark_results": {
+                "elapsed_ms": round(elapsed_ms, 2),
+                "tasks_run": 0,
+                "tasks_passed": 0,
+                "timeout_seconds": timeout_seconds,
+                "note": "Runtime package import or dry-run exceeded the bounded benchmark timeout.",
+            },
+        }
+    except ImportError as exc:
+        elapsed_ms = (time.monotonic() - start) * 1000
+        logger.info(
+            "runtime_benchmark_import_unavailable",
+            extra={"runtime_tier": req.runtime_tier, "error_type": type(exc).__name__},
+        )
+        return {
+            "runtime_tier": req.runtime_tier,
+            "status": "package_unavailable",
+            "mode": "benchmark",
+            "validation": validation,
+            "missing_packages": list(
+                RUNTIME_REQUIRED_PACKAGES.get(req.runtime_tier, (req.runtime_tier,))
+            ),
+            "benchmark_results": {
+                "elapsed_ms": round(elapsed_ms, 2),
+                "tasks_run": 0,
+                "tasks_passed": 0,
+                "note": "Runtime package import failed during the dependency-backed dry-run.",
+            },
+        }
+    except Exception as exc:  # pragma: no cover - dependency-specific failures
+        elapsed_ms = (time.monotonic() - start) * 1000
+        logger.info(
+            "runtime_benchmark_failed",
+            extra={"runtime_tier": req.runtime_tier, "error_type": type(exc).__name__},
+        )
+        return {
+            "runtime_tier": req.runtime_tier,
+            "status": "benchmark_error",
+            "mode": "benchmark",
+            "validation": validation,
+            "benchmark_results": {
+                "elapsed_ms": round(elapsed_ms, 2),
+                "tasks_run": 0,
+                "tasks_passed": 0,
+                "error_type": type(exc).__name__,
+                "note": "Runtime dependency raised during the bounded dry-run; no worker run was started.",
+            },
+        }
     elapsed_ms = (time.monotonic() - start) * 1000
 
     return {
@@ -5087,16 +7793,21 @@ async def update_schedule(req: ScheduleRequest) -> dict[str, str]:
     G4: Also starts/stops the APScheduler cron jobs.
     """
     storage = _storage()
+    schedule_timezone = req.timezone or await _configured_company_timezone(storage)
+    # Validate even when APScheduler is not installed so an invalid timezone
+    # can never be persisted as if it were a usable schedule.
+    _resolve_schedule_timezone(schedule_timezone)
+    effective_req = req.model_copy(update={"timezone": schedule_timezone})
     await storage.set_config("schedule_enabled", str(req.enabled).lower())
     await storage.set_config("schedule_start_hour", str(req.start_hour))
     await storage.set_config("schedule_end_hour", str(req.end_hour))
-    await storage.set_config("schedule_timezone", req.timezone)
+    await storage.set_config("schedule_timezone", schedule_timezone)
     await storage.set_config("schedule_days", ",".join(req.days))
     await storage.set_config("schedule_auto_shutdown", str(req.auto_shutdown).lower())
     await storage.set_config("schedule_auto_resume", str(req.auto_resume).lower())
 
     # G4: Configure APScheduler cron jobs
-    _configure_schedule_cron(req)
+    _configure_schedule_cron(effective_req)
 
     return {"status": "schedule_updated"}
 
@@ -5169,6 +7880,57 @@ def _resolve_schedule_timezone(name: str) -> ZoneInfo:
         return ZoneInfo(candidate)
     except ZoneInfoNotFoundError as exc:
         raise HTTPException(422, f"Unknown timezone: {name}") from exc
+
+
+async def _configured_company_timezone(storage: Any) -> str:
+    """Return the active company timezone for schedule/prompt consumers.
+
+    The active manifest is authoritative. A small config key supports
+    bootstrap/runtime doubles, followed by the deployment environment and UTC
+    as safe fallbacks.
+    """
+    get_manifest = getattr(storage, "get_company_manifest", None)
+    if callable(get_manifest):
+        try:
+            record = get_manifest(DEFAULT_COMPANY_ID)
+            if inspect.isawaitable(record):
+                record = await record
+            raw_manifest = record.get("manifest_json") if isinstance(record, dict) else None
+            candidate = raw_manifest.get("timezone") if isinstance(raw_manifest, dict) else None
+            if isinstance(candidate, str) and candidate.strip():
+                candidate = candidate.strip()
+                try:
+                    _resolve_schedule_timezone(candidate)
+                except HTTPException:
+                    logger.warning("Invalid active-manifest timezone; falling back", extra={"timezone": candidate})
+                else:
+                    return candidate
+        except Exception:
+            logger.debug("Could not read active company manifest timezone", exc_info=True)
+
+    get_config = getattr(storage, "get_config", None)
+    if callable(get_config):
+        try:
+            configured = get_config("company_timezone")
+            if inspect.isawaitable(configured):
+                configured = await configured
+            if isinstance(configured, str) and configured.strip():
+                candidate = configured.strip()
+                try:
+                    _resolve_schedule_timezone(candidate)
+                except HTTPException:
+                    logger.warning("Invalid persisted company timezone; falling back", extra={"timezone": candidate})
+                else:
+                    return candidate
+        except Exception:
+            logger.debug("Could not read persisted company timezone", exc_info=True)
+
+    candidate = os.environ.get("AIAT_COMPANY_TIMEZONE", "UTC").strip() or "UTC"
+    try:
+        _resolve_schedule_timezone(candidate)
+    except HTTPException:
+        return "UTC"
+    return candidate
 
 
 async def _cron_shutdown() -> None:
@@ -5595,6 +8357,26 @@ async def update_worker(worker_id: UUID, req: UpdateWorkerRequest) -> dict[str, 
     if existing is None:
         raise HTTPException(404, f"Worker {worker_id} not found")
 
+    # Capability IDs and their team context are authority-bearing fields.  A
+    # worker update must apply the same persisted-capability grant policy as
+    # registration, otherwise an operator could attach a forbidden tool after
+    # the initial registration checks have completed.
+    if req.capability_ids is not None or req.team_id is not None:
+        existing_adapter_config = dict(existing.get("adapter_config") or {})
+        role_value = existing.get("role") or existing_adapter_config.get("role")
+        team_value = req.team_id if req.team_id is not None else existing.get("team_id")
+        capability_ids = (
+            req.capability_ids
+            if req.capability_ids is not None
+            else list(existing.get("capability_ids") or [])
+        )
+        await _validate_persisted_capability_tool_grants(
+            storage,
+            capability_ids,
+            role_value=role_value,
+            team_id=team_value,
+        )
+
     update_kwargs: dict[str, Any] = {}
     if req.adapter_type is not None:
         update_kwargs["adapter_type"] = req.adapter_type
@@ -5737,8 +8519,11 @@ async def _worker_activation_blockers(
         ):
             if await storage.get_steward_by_worker(worker["id"]) is None:
                 blockers.append("external worker requires a dedicated Steward Agent")
-            if await storage.get_external_provenance_by_worker(worker["id"]) is None:
+            external_provenance = await storage.get_external_provenance_by_worker(worker["id"])
+            if external_provenance is None:
                 blockers.append("external worker requires immutable provenance")
+            elif str(external_provenance.get("security_scan_status") or "").lower() != "passed":
+                blockers.append("external worker requires a passed security scan")
 
     return blockers
 
@@ -6107,6 +8892,7 @@ async def _steward_runtime(storage: AgentStorage, worker_id: UUID) -> Any | None
         CandidateRecord,
         CapabilitySnapshot,
         CertificationRun,
+        CompatibilityMatrix,
         DocumentationSnapshot,
         DocumentationSource,
         ExternalProvenance,
@@ -6175,6 +8961,27 @@ async def _steward_runtime(storage: AgentStorage, worker_id: UUID) -> Any | None
                 )
             except (KeyError, ValueError):
                 logger.warning("steward_capability_snapshot_rehydrate_failed", extra={"snapshot_id": str(row.get("id"))})
+    if inspect.iscoroutinefunction(getattr(storage, "list_compatibility_matrices", None)):
+        for row in await storage.list_compatibility_matrices(worker_id):
+            try:
+                steward.record_compatibility_matrix(
+                    CompatibilityMatrix(
+                        matrix_id=UUID(str(row["id"])),
+                        runtime_version=str(row["runtime_version"]),
+                        adapter_version=str(row["adapter_version"]),
+                        contract_version=str(row["contract_version"]),
+                        model_profiles=row.get("model_profiles_json") or {},
+                        capabilities=row.get("capabilities_json") or {},
+                        fixtures=tuple(row.get("fixtures") or []),
+                        passed=bool(row.get("passed", False)),
+                        generated_at=row.get("created_at") or datetime.now(UTC),
+                    )
+                )
+            except (KeyError, TypeError, ValueError):
+                logger.warning(
+                    "steward_compatibility_matrix_rehydrate_failed",
+                    extra={"matrix_id": str(row.get("id"))},
+                )
     for row in await storage.list_skill_bundle_candidates(worker_id):
         raw_candidate = (row.get("evidence_json") or {}).get("candidate_record")
         if raw_candidate:
@@ -6226,6 +9033,22 @@ async def _steward_runtime(storage: AgentStorage, worker_id: UUID) -> Any | None
             steward.rollouts[rollout.rollout_id] = rollout
         except (KeyError, ValueError):
             logger.warning("steward_rollout_rehydrate_failed", extra={"rollout_id": str(row.get("id"))})
+    if not steward.restore_active_pointers(
+        bundle_id=persisted.get("active_skill_bundle_id"),
+        adapter_id=persisted.get("active_adapter_id"),
+    ):
+        logger.warning(
+            "steward_active_pointer_rehydrate_failed",
+            extra={
+                "worker_id": key,
+                "active_skill_bundle_id": str(persisted.get("active_skill_bundle_id"))
+                if persisted.get("active_skill_bundle_id")
+                else None,
+                "active_adapter_id": str(persisted.get("active_adapter_id"))
+                if persisted.get("active_adapter_id")
+                else None,
+            },
+        )
     _worker_steward_runtimes[key] = steward
     return steward
 
@@ -6800,22 +9623,29 @@ async def certify_steward_candidate(worker_id: UUID, candidate_id: UUID, req: Ca
     if worker is None:
         raise HTTPException(404, "Worker not found")
     provenance = steward.provenance
-    server_checks = {
-        "provenance_pin": bool(
-            provenance.exact_release
-            or provenance.commit_sha
-            or provenance.package_version
-            or provenance.oci_image_digest
-        ),
-        "license": bool(provenance.license_id)
-        and provenance.redistribution_status == "approved",
-        "security": provenance.security_scan_status == "passed",
-        "documentation": bool(steward.documentation_snapshots),
-        "capability_snapshot": bool(steward.capability_snapshots),
-    }
+    # Licence/redistribution fields are retained on provenance for metadata
+    # and operator notices, but personal internal-use policy never makes them
+    # a certification predicate.
+    server_checks = operational_promotion_checks(
+        provenance,
+        documentation=bool(steward.documentation_snapshots),
+        capability_snapshot=bool(steward.capability_snapshots),
+    )
     # Supplemental checks may only make certification stricter; a request
     # cannot manufacture a passing core gate.
-    checks = {**server_checks, **{f"attested:{name}": bool(value) for name, value in req.checks.items()}}
+    # Preserve caller attestations for the audit record, except licence and
+    # redistribution values, which are metadata-only in personal/internal
+    # scope and must never become a certification blocker through a prefixed
+    # request key.
+    checks = {
+        **server_checks,
+        **{
+            f"attested:{name}": bool(value)
+            for name, value in req.checks.items()
+            if str(name).strip().lower().replace("-", "_")
+            not in {"license", "licensing", "license_id", "redistribution", "redistribution_status"}
+        },
+    }
     from mas_core.worker_contract import AdapterContext, ConformanceRunner, WorkerCapabilities
     from mas_core.worker_registry.runtime_adapters import (
         OpenCodeAdapter,
@@ -6897,6 +9727,67 @@ async def certify_steward_candidate(worker_id: UUID, candidate_id: UUID, req: Ca
         checks=checks,
         approved_by=None,
     )
+    compatibility_matrix_row: dict[str, Any] | None = None
+    create_matrix = getattr(storage, "create_compatibility_matrix", None)
+    if inspect.iscoroutinefunction(create_matrix):
+        provenance_version = (
+            provenance.exact_release
+            or provenance.package_version
+            or provenance.oci_image_digest
+            or provenance.commit_sha
+            or worker.get("version_pin")
+            or "unknown"
+        )
+        verified_capabilities = candidate.bundle.verified_capabilities
+        compatibility_matrix_row = await create_matrix(
+            worker_id=worker_id,
+            runtime_version=str(provenance_version),
+            adapter_version=str(candidate.adapter.version),
+            contract_version=str(
+                provenance.protocol_api_version
+                or config.get("contract_version")
+                or "aiat.adapter.v1"
+            ),
+            model_profiles=(
+                {"worker": str(worker.get("model_profile_id"))}
+                if worker.get("model_profile_id")
+                else {}
+            ),
+            capabilities=(
+                verified_capabilities.capabilities.model_dump(mode="json")
+                if verified_capabilities is not None
+                else {}
+            ),
+            fixtures=[
+                str(test.get("name"))
+                for test in (certification.conformance.get("tests") or [])
+                if isinstance(test, dict) and test.get("name")
+            ],
+            passed=certification.passed,
+        )
+        # Keep the process-local steward evidence graph in lockstep with the
+        # canonical storage write.  Restart rehydration covers the durable
+        # boundary, but a same-process status/rollout must not temporarily
+        # report an empty compatibility history.
+        steward.record_compatibility_matrix(
+            CompatibilityMatrix(
+                matrix_id=UUID(str(compatibility_matrix_row["id"])),
+                runtime_version=str(compatibility_matrix_row["runtime_version"]),
+                adapter_version=str(compatibility_matrix_row["adapter_version"]),
+                contract_version=str(compatibility_matrix_row["contract_version"]),
+                model_profiles=compatibility_matrix_row.get("model_profiles_json") or {},
+                capabilities=compatibility_matrix_row.get("capabilities_json") or {},
+                fixtures=tuple(compatibility_matrix_row.get("fixtures") or []),
+                passed=bool(compatibility_matrix_row.get("passed", False)),
+                generated_at=compatibility_matrix_row.get("created_at") or datetime.now(UTC),
+            )
+        )
+    certification_evidence = {
+        "operator_conformance_submission": req.conformance,
+        "server_derived_checks": server_checks,
+    }
+    if compatibility_matrix_row is not None:
+        certification_evidence["compatibility_matrix_id"] = str(compatibility_matrix_row["id"])
     await storage.create_certification_run(
         certification_id=certification.certification_id,
         worker_id=worker_id,
@@ -6905,10 +9796,7 @@ async def certify_steward_candidate(worker_id: UUID, candidate_id: UUID, req: Ca
         status="passed" if certification.passed else "rejected",
         conformance=certification.conformance,
         checks=certification.checks,
-        evidence={
-            "operator_conformance_submission": req.conformance,
-            "server_derived_checks": server_checks,
-        },
+        evidence=certification_evidence,
         failure_reasons=list(certification.failures),
         completed_at=certification.completed_at,
     )
@@ -6922,6 +9810,8 @@ async def certify_steward_candidate(worker_id: UUID, candidate_id: UUID, req: Ca
                 candidate=persisted_candidate,
             )
             evidence["worker_shell_version_id"] = str(shell["id"])
+        if compatibility_matrix_row is not None:
+            evidence["compatibility_matrix_id"] = str(compatibility_matrix_row["id"])
         evidence["candidate_record"] = steward.candidates[candidate_id].model_dump(mode="json")
         await storage.update_skill_bundle_candidate(candidate_id, intake_status=steward.candidates[candidate_id].intake_status.value, evidence=evidence, certification_run_id=certification.certification_id)
     await storage.update_runtime_adapter((persisted_candidate or {}).get("adapter_id"), conformance_status="passed" if certification.passed else "failed", conformance=certification.conformance) if persisted_candidate and persisted_candidate.get("adapter_id") else None
@@ -7038,7 +9928,26 @@ async def advance_steward_rollout(worker_id: UUID, rollout_id: UUID, req: Rollou
         raise HTTPException(404, "Persisted rollout not found")
     from mas_core.worker_registry.steward import RolloutStatus
     try:
-        rollout = steward.advance_rollout(rollout_id, RolloutStatus(req.target_status), sample_count=req.sample_count, metrics=req.comparison_metrics)
+        target_status = RolloutStatus(req.target_status)
+    except ValueError as exc:
+        raise HTTPException(409, f"invalid rollout status: {req.target_status}") from exc
+    if target_status is RolloutStatus.ACTIVE:
+        candidate = steward.candidates.get(UUID(str(persisted_before["candidate_id"])))
+        if candidate is None:
+            raise HTTPException(409, "Rollout candidate is not present in the governed steward runtime")
+        promotion_checks = operational_promotion_checks(candidate.source_provenance)
+        failed_checks = [name for name, passed in promotion_checks.items() if not passed]
+        if failed_checks:
+            raise HTTPException(
+                409,
+                {
+                    "code": "ROLLOUT_PROMOTION_GOVERNANCE_BLOCKED",
+                    "message": "Rollout promotion requires current operational evidence",
+                    "blockers": failed_checks,
+                },
+            )
+    try:
+        rollout = steward.advance_rollout(rollout_id, target_status, sample_count=req.sample_count, metrics=req.comparison_metrics)
     except Exception as exc:
         raise HTTPException(409, str(exc)) from exc
     if rollout.status.value == "ACTIVE":
@@ -7432,6 +10341,270 @@ async def list_model_profiles() -> list[dict[str, Any]]:
     return [profile.model_dump(mode="json") for profile in await _persisted_model_profiles(storage)]
 
 
+@app.get("/model-profiles/catalogue")
+async def model_profile_catalogue() -> dict[str, Any]:
+    """Return deterministic runtime-model/profile reconciliation metadata."""
+    from mas_core.llm_gateway import MODEL_REGISTRY, build_model_profile_catalogue
+
+    storage = _storage()
+    return build_model_profile_catalogue(await _persisted_model_profiles(storage), MODEL_REGISTRY)
+
+
+@app.get("/executive/reconciliation")
+async def executive_reconciliation(company_id: UUID | None = None) -> dict[str, Any]:
+    """Return read-only CFO/CTO/CEO reconciliation over durable evidence."""
+    from mas_core.llm_gateway import MODEL_REGISTRY, build_model_profile_catalogue
+    from mas_core.observability import build_executive_reconciliation
+
+    storage = _storage()
+    projects = await storage.list_projects(limit=100_000)
+    if company_id is not None:
+        if await storage.get_company(company_id) is None:
+            raise HTTPException(404, "company not found")
+        projects = [row for row in projects if str(row.get("company_id")) == str(company_id)]
+    project_ids = {str(row.get("id")) for row in projects}
+
+    usage_by_project: dict[str, dict[str, Any]] = {}
+    for project in projects:
+        project_id = str(project.get("id"))
+        try:
+            usage_by_project[project_id] = await storage.get_project_usage(UUID(project_id))
+        except Exception as exc:
+            usage_by_project[project_id] = {
+                "available": False,
+                "reason": f"project usage read failed: {type(exc).__name__}",
+            }
+
+    worker_runs = await storage.list_worker_runs(limit=100_000)
+    if project_ids:
+        worker_runs = [row for row in worker_runs if str(row.get("project_id")) in project_ids]
+    else:
+        worker_runs = []
+
+    companies = [await storage.get_company(company_id)] if company_id is not None else await storage.list_companies(status="ACTIVE")
+    budget_states: list[dict[str, Any]] = []
+    budget_reservations: list[dict[str, Any]] = []
+    for company in companies:
+        if not company:
+            continue
+        current_company_id = UUID(str(company["id"]))
+        for budget in await storage.list_company_budgets(current_company_id):
+            budget_states.append(await storage.get_budget_state(current_company_id, str(budget["budget_key"])))
+        budget_reservations.extend(
+            await storage.list_budget_reservations(company_id=current_company_id, limit=100_000)
+        )
+
+    profile_catalogue = build_model_profile_catalogue(
+        await _persisted_model_profiles(storage), MODEL_REGISTRY
+    )
+    model_summary = {
+        key: profile_catalogue.get(key)
+        for key in (
+            "schema_version",
+            "registry_model_count",
+            "profile_count",
+            "profile_version_count",
+            "covered_profile_version_count",
+            "profile_pending_model_count",
+            "duplicate_profile_bindings",
+            "findings",
+        )
+    }
+    return build_executive_reconciliation(
+        projects=projects,
+        project_usage=usage_by_project,
+        worker_runs=worker_runs,
+        budget_states=budget_states,
+        budget_reservations=budget_reservations,
+        model_catalogue=model_summary,
+    )
+
+
+@app.get("/executive/views/{role}")
+async def executive_role_view(
+    role: Literal["cfo", "cto", "ceo"],
+    company_id: UUID | None = None,
+) -> dict[str, Any]:
+    """Return one bounded executive projection over the canonical report."""
+    from mas_core.observability import EXECUTIVE_VIEWS_SCHEMA
+
+    report = await executive_reconciliation(company_id=company_id)
+    views = report.get("views")
+    if not isinstance(views, dict) or role not in views:
+        # This is an internal invariant failure, not a user-selectable role
+        # error; Literal validation handles malformed path values before here.
+        raise HTTPException(500, "executive role projection is unavailable")
+    return {
+        "schema_version": EXECUTIVE_VIEWS_SCHEMA,
+        "role": role,
+        "status": report.get("status"),
+        "coverage": report.get("coverage") or {},
+        "view": views[role],
+        "company_id": str(company_id) if company_id is not None else None,
+    }
+
+
+_EXECUTIVE_WRITE_PRINCIPALS = frozenset({"operator", "ceo", "service"})
+
+
+def _require_executive_write_principal(request: Request) -> str:
+    """Require an authenticated control-plane principal for executive writes.
+
+    Logical role fields are audit attribution only. They never elevate a
+    caller that did not authenticate with an allowed control-plane credential.
+    """
+
+    principal = _authenticated_principal(request)
+    if principal not in _EXECUTIVE_WRITE_PRINCIPALS:
+        raise HTTPException(403, "executive write requires operator, CEO, or service identity")
+    return principal
+
+
+def _executive_action_envelope(
+    *,
+    role: str,
+    action: str,
+    requested_by: str,
+    authenticated_principal: str,
+    result: dict[str, Any],
+    evidence: dict[str, Any],
+) -> dict[str, Any]:
+    """Return a stable, secret-safe executive action response envelope."""
+
+    return {
+        "schema_version": EXECUTIVE_ACTION_SCHEMA,
+        "role": role,
+        "action": action,
+        "requested_by": requested_by,
+        "authenticated_principal": authenticated_principal,
+        "result": result,
+        "evidence": {
+            "schema_version": EXECUTIVE_ACTION_SCHEMA,
+            "role": role,
+            "action": action,
+            **evidence,
+        },
+    }
+
+
+@app.post("/executive/actions/cfo/model-overrides", status_code=201)
+async def executive_cfo_model_override(
+    req: ExecutiveCFOModelOverrideRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Create a durable CFO model-override request for human decision."""
+
+    principal = _require_executive_write_principal(request)
+    result = await create_model_override(
+        ModelOverrideCreateRequest(
+            project_id=req.project_id,
+            requested_by=req.requested_by,
+            requested_profile_id=req.requested_profile_id,
+            reason=req.reason,
+            scope=req.scope,
+        )
+    )
+    override_id = result.get("id")
+    safe_result = {
+        key: _serialize_scalar(result.get(key))
+        for key in (
+            "id",
+            "status",
+            "project_id",
+            "requested_by",
+            "requested_profile_id",
+            "created_at",
+            "updated_at",
+        )
+        if key in result
+    }
+    return _executive_action_envelope(
+        role="cfo",
+        action="request_model_override",
+        requested_by=req.requested_by,
+        authenticated_principal=principal,
+        result=safe_result,
+        evidence={
+            "kind": "model_override_request",
+            "project_id": str(req.project_id),
+            "model_override_request_id": str(override_id) if override_id is not None else None,
+        },
+    )
+
+
+@app.post("/executive/actions/cto/worker-runs", status_code=202)
+async def executive_cto_worker_run(
+    req: ExecutiveCTOWorkerRunRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Dispatch one governed CTO worker run through the canonical route."""
+
+    principal = _require_executive_write_principal(request)
+    dispatch_result = await dispatch_worker_run(req.dispatch)
+    # Worker outputs/events may contain project data. The executive action
+    # surface returns only durable identifiers and routing state; callers can
+    # use the normal run/status/evidence endpoints with their existing grants.
+    summary = {
+        key: dispatch_result.get(key)
+        for key in ("run_id", "state", "dispatch_mode", "status_url", "events_url")
+        if key in dispatch_result
+    }
+    if isinstance(dispatch_result.get("accepted"), dict):
+        summary["accepted"] = {
+            key: dispatch_result["accepted"].get(key)
+            for key in ("run_id", "idempotency_key", "initial_state")
+            if key in dispatch_result["accepted"]
+        }
+    return _executive_action_envelope(
+        role="cto",
+        action="dispatch_worker_run",
+        requested_by=req.requested_by,
+        authenticated_principal=principal,
+        result=summary,
+        evidence={
+            "kind": "worker_run",
+            "project_id": str(req.dispatch.project_id) if req.dispatch.project_id else None,
+            "worker_id": str(req.dispatch.worker_id),
+            "run_id": str(dispatch_result.get("run_id")) if dispatch_result.get("run_id") else None,
+        },
+    )
+
+
+@app.post("/executive/actions/ceo/privileged-actions")
+async def executive_ceo_privileged_action(
+    req: ExecutiveCEOPrivilegedActionRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Request a CEO privileged operation through the audited approval gate."""
+
+    principal = _require_executive_write_principal(request)
+    result = await request_privileged_action(
+        PrivilegedActionRequest(
+            action=req.action,
+            actor_id=req.requested_by,
+            actor_role="ceo",
+            payload=req.payload,
+        )
+    )
+    safe_result = {
+        key: result.get(key)
+        for key in ("allowed", "level", "decision", "record_id", "risk", "reason")
+        if key in result
+    }
+    return _executive_action_envelope(
+        role="ceo",
+        action="request_privileged_action",
+        requested_by=req.requested_by,
+        authenticated_principal=principal,
+        result=safe_result,
+        evidence={
+            "kind": "privileged_action",
+            "action": req.action,
+            "record_id": str(result.get("record_id")) if result.get("record_id") else None,
+        },
+    )
+
+
 @app.post("/model-profiles/resolve-preview")
 async def preview_model_resolution(req: ModelResolutionPreviewRequest) -> dict[str, Any]:
     from mas_core.llm_gateway import ModelPolicyLayer, ModelProfileResolver, ModelResolutionRequest
@@ -7456,6 +10629,226 @@ async def preview_model_resolution(req: ModelResolutionPreviewRequest) -> dict[s
     return ModelProfileResolver().dry_run(await _persisted_model_profiles(storage), request)
 
 
+async def _enforce_company_dispatch_grants(
+    *,
+    storage: Any,
+    project_id: UUID | None,
+    worker_id: UUID,
+    tool_grants: list[str],
+    permission_requirements: list[str],
+) -> UUID | None:
+    """Require company-backed runs to stay within the active assignment grants."""
+
+    if project_id is None:
+        return None
+    project = await storage.get_project(project_id)
+    if project is None or not project.get("company_id"):
+        return None
+    company_id = UUID(str(project["company_id"]))
+    list_assignments = getattr(storage, "list_company_worker_assignments", None)
+    if not inspect.iscoroutinefunction(list_assignments):
+        raise HTTPException(
+            503,
+            {
+                "code": "COMPANY_ASSIGNMENT_STORE_UNAVAILABLE",
+                "message": "Company assignment grants cannot be verified",
+            },
+        )
+    assignments = await list_assignments(company_id)
+    assignment = next(
+        (
+            item
+            for item in assignments
+            if UUID(str(item["worker_id"])) == worker_id
+        ),
+        None,
+    )
+    if assignment is None or str(assignment.get("status")) != "ACTIVE":
+        raise HTTPException(
+            403,
+            {
+                "code": "COMPANY_ASSIGNMENT_REQUIRED",
+                "message": "Worker has no active assignment for this company",
+            },
+        )
+    unapproved_tools = sorted(set(tool_grants) - set(assignment.get("tool_grants") or []))
+    unapproved_permissions = sorted(
+        set(permission_requirements) - set(assignment.get("permission_grants") or [])
+    )
+    if unapproved_tools or unapproved_permissions:
+        raise HTTPException(
+            403,
+            {
+                "code": "COMPANY_ASSIGNMENT_GRANT_EXCEEDED",
+                "message": "Worker Run grants exceed the active company manifest assignment",
+                "unapproved_tool_grants": unapproved_tools,
+                "unapproved_permission_requirements": unapproved_permissions,
+            },
+        )
+    return company_id
+
+
+async def _reserve_worker_run_budgets(
+    *,
+    storage: Any,
+    request: Any,
+    worker_id: UUID,
+    project_id: UUID | None,
+    company_id: UUID | None = None,
+) -> list[tuple[UUID, str]]:
+    """Reserve configured company budgets before a run enters the queue.
+
+    Cost and concurrency reservations use the request idempotency key, so a
+    retry of the dispatch request reuses the original reservation instead of
+    consuming the budget twice.  Lightweight storage doubles may omit this
+    optional ledger API; the durable AgentStorage path is fail-closed.
+    """
+    reserve = getattr(storage, "reserve_budget", None)
+    if not inspect.iscoroutinefunction(reserve):
+        return []
+    resolved_company_id = company_id or DEFAULT_COMPANY_ID
+    if company_id is None and project_id is not None:
+        project = await storage.get_project(project_id)
+        if project is not None and project.get("company_id"):
+            resolved_company_id = UUID(str(project["company_id"]))
+    requested_cost = request.budget_usd if hasattr(request, "budget_usd") else None
+    if requested_cost is None:
+        requested_cost = (request.budget or {}).get("max_cost_usd")
+    budgets: list[tuple[str, Decimal]] = []
+    if requested_cost is not None and float(requested_cost) > 0:
+        budgets.append(("max_cost_usd", Decimal(str(requested_cost))))
+    # A configured max_concurrent_runs budget is a semaphore: every active
+    # run consumes one unit and releases it on completion/cancellation.
+    budgets.append(("max_concurrent_runs", Decimal("1")))
+    reservations: list[tuple[UUID, str]] = []
+    try:
+        for budget_key, amount in budgets:
+            reservation = await reserve(
+                company_id=resolved_company_id,
+                budget_key=budget_key,
+                amount=amount,
+                idempotency_key=f"worker-run:{worker_id}:{request.idempotency_key}:{budget_key}",
+                project_id=project_id,
+                worker_id=worker_id,
+                run_id=request.run_id,
+                metadata={"task_type": request.task_type, "source": "worker_dispatch"},
+            )
+            if reservation is not None:
+                reservations.append((UUID(str(reservation["id"])), budget_key))
+    except Exception:
+        settle = getattr(storage, "settle_budget_reservation", None)
+        if inspect.iscoroutinefunction(settle):
+            for reservation_id, _budget_key in reservations:
+                await settle(reservation_id, state="RELEASED")
+        raise
+    return reservations
+
+
+async def _settle_worker_run_budgets(
+    storage: Any,
+    reservations: list[tuple[UUID, str]],
+    *,
+    state: str,
+    actual_cost_usd: float | Decimal | None = None,
+) -> None:
+    settle = getattr(storage, "settle_budget_reservation", None)
+    if not inspect.iscoroutinefunction(settle):
+        return
+    successful = state == "SUCCEEDED"
+    reported_cost = Decimal(str(actual_cost_usd)) if actual_cost_usd is not None else None
+    billed_failed_run = reported_cost is not None and reported_cost > 0
+    for reservation_id, budget_key in reservations:
+        cost_has_authoritative_usage = successful and reported_cost is not None
+        cost_has_failed_usage = budget_key == "max_cost_usd" and billed_failed_run
+        reservation_state = (
+            "RELEASED"
+            if budget_key == "max_concurrent_runs"
+            or (budget_key == "max_cost_usd" and not (cost_has_authoritative_usage or cost_has_failed_usage))
+            or (budget_key != "max_cost_usd" and not successful)
+            else "COMMITTED"
+        )
+        try:
+            settlement_kwargs: dict[str, Any] = {"state": reservation_state}
+            if budget_key == "max_cost_usd" and reservation_state == "COMMITTED":
+                settlement_kwargs["amount"] = reported_cost or Decimal("0")
+                if not successful and billed_failed_run:
+                    settlement_kwargs["metadata"] = {"settlement_reason": "failed_run_billed_usage"}
+            await settle(reservation_id, **settlement_kwargs)
+        except Exception:
+            logger.exception(
+                "worker_budget_settlement_failed",
+                extra={"reservation_id": str(reservation_id), "state": reservation_state},
+            )
+
+
+async def _execute_queued_worker_run(
+    *,
+    controller: Any,
+    request: Any,
+    adapter: Any,
+    worker: dict[str, Any],
+    storage: AgentStorage,
+    model_resolution_snapshot_id: UUID | None,
+    lease_seconds: int,
+    canonical_run_id: UUID,
+    budget_reservations: list[tuple[UUID, str]] | None = None,
+) -> None:
+    """Execute one claimed run in an application-owned background task."""
+
+    run_id = canonical_run_id
+    owner = f"orchestrator-background:{run_id}"
+    heartbeat_task: asyncio.Task[Any] | None = None
+    outcome_state = "FAILED"
+    actual_cost_usd: float | Decimal | None = None
+
+    async def renew_lease() -> None:
+        while True:
+            await asyncio.sleep(max(5, lease_seconds // 3))
+            refreshed = await storage.heartbeat_worker_run(
+                run_id,
+                owner=owner,
+                lease_seconds=lease_seconds,
+            )
+            if refreshed is None:
+                return
+
+    try:
+        # A claim is persisted before this task is scheduled.  The heartbeat
+        # method is intentionally available to adapters and recovery loops;
+        # this bounded task still retains the existing event-driven controller.
+        heartbeat_task = asyncio.create_task(renew_lease())
+        outcome = await controller.execute(
+            request,
+            adapter,
+            worker_registry_id=worker["id"],
+            worker_shell_version_id=worker.get("active_shell_version_id"),
+            adapter_id=worker.get("active_adapter_id"),
+            steward_id=UUID(str((worker.get("adapter_config") or {}).get("steward_id"))) if (worker.get("adapter_config") or {}).get("steward_id") else None,
+            model_resolution_snapshot_id=model_resolution_snapshot_id,
+        )
+        outcome_state = outcome.state
+        if outcome.result is not None:
+            actual_cost_usd = outcome.result.usage.cost_usd
+    except asyncio.CancelledError:
+        logger.info("queued_worker_run_cancelled", extra={"run_id": str(run_id)})
+        raise
+    except Exception:
+        logger.exception("queued_worker_run_failed", extra={"run_id": str(run_id), "owner": owner, "lease_seconds": lease_seconds})
+    finally:
+        if heartbeat_task is not None:
+            heartbeat_task.cancel()
+            await asyncio.gather(heartbeat_task, return_exceptions=True)
+        await _settle_worker_run_budgets(
+            storage,
+            budget_reservations or [],
+            state=outcome_state,
+            actual_cost_usd=actual_cost_usd,
+        )
+        current = asyncio.current_task()
+        if current is not None:
+            app.state.worker_run_tasks.discard(current)
+
+
 @app.post("/workers/runs", status_code=202)
 async def dispatch_worker_run(req: WorkerRunDispatchRequest) -> dict[str, Any]:
     storage = _storage()
@@ -7464,6 +10857,13 @@ async def dispatch_worker_run(req: WorkerRunDispatchRequest) -> dict[str, Any]:
         raise HTTPException(404, f"Worker {req.worker_id} not found")
     if worker.get("status") not in {"ACTIVE", "DRAINING"}:
         raise HTTPException(409, "Worker is not active")
+    company_id = await _enforce_company_dispatch_grants(
+        storage=storage,
+        project_id=req.project_id,
+        worker_id=req.worker_id,
+        tool_grants=req.tool_grants,
+        permission_requirements=req.permission_requirements,
+    )
     adapter = await _certified_worker_adapter(storage, worker)
     if adapter is None:
         raise HTTPException(409, "Worker has no certified runtime adapter registered with the control plane")
@@ -7514,7 +10914,7 @@ async def dispatch_worker_run(req: WorkerRunDispatchRequest) -> dict[str, Any]:
                 )
             override = await storage.get_model_override_request(req.model_override_request_id)
             approval = await storage.get_approval_record(req.model_override_approval_id)
-            expired = override is not None and override.get("expires_at") is not None and override["expires_at"] <= datetime.now(UTC)
+            expired = override is None or _model_override_is_expired(override.get("expires_at"))
             if (
                 override is None
                 or override.get("status") != "APPROVED"
@@ -7596,26 +10996,99 @@ async def dispatch_worker_run(req: WorkerRunDispatchRequest) -> dict[str, Any]:
             permission_requirements=req.permission_requirements,
             workspace_mode=req.workspace_mode,
             timeout_seconds=req.timeout_seconds,
-            budget=req.budget,
+            budget={
+                **req.budget,
+                **({"max_cost_usd": req.budget_usd} if req.budget_usd is not None else {}),
+            },
             checkpoint_policy=req.checkpoint_policy,
             retry_policy=req.retry_policy,
             extensions=req.runtime_extensions,
+            trace_id=current_trace_id(),
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     controller = WorkerRunController(storage=storage)
-    outcome = await controller.execute(
-        request,
-        adapter,
-        worker_registry_id=req.worker_id,
-        worker_shell_version_id=worker.get("active_shell_version_id"),
-        adapter_id=worker.get("active_adapter_id"),
-        steward_id=UUID(str((worker.get("adapter_config") or {}).get("steward_id"))) if (worker.get("adapter_config") or {}).get("steward_id") else None,
-        model_resolution_snapshot_id=model_resolution_snapshot_id,
+    try:
+        budget_reservations = await _reserve_worker_run_budgets(
+            storage=storage,
+            request=request,
+            worker_id=req.worker_id,
+            project_id=req.project_id,
+            company_id=company_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(409, {"code": "BUDGET_EXCEEDED", "message": str(exc)}) from exc
+    dispatch_mode = req.dispatch_mode or ("queued" if os.getenv("MAS_ENVIRONMENT", "development").lower() in {"production", "prod", "staging"} else "inline")
+    try:
+        if dispatch_mode == "queued":
+            queued = await storage.create_worker_run(
+                run_id=request.run_id,
+                worker_id=req.worker_id,
+                idempotency_key=req.idempotency_key,
+                task_type=req.task_type,
+                request=request.model_dump(mode="json"),
+                project_id=req.project_id,
+                flow_id=req.flow_id,
+                flow_instance_id=req.flow_instance_id,
+                flow_node_execution_id=req.flow_node_execution_id,
+                worker_shell_version_id=worker.get("active_shell_version_id"),
+                adapter_id=worker.get("active_adapter_id"),
+                steward_id=UUID(str((worker.get("adapter_config") or {}).get("steward_id"))) if (worker.get("adapter_config") or {}).get("steward_id") else None,
+                model_resolution_snapshot_id=model_resolution_snapshot_id,
+                state="QUEUED",
+                queue_priority=req.queue_priority,
+            )
+            canonical_run_id = UUID(str(queued["id"]))
+            claim = await storage.claim_worker_run(
+                owner=f"orchestrator-background:{canonical_run_id}",
+                lease_seconds=req.lease_seconds,
+                run_id=canonical_run_id,
+            )
+            if claim is not None and str(claim.get("state")) == "CLAIMED":
+                task = asyncio.create_task(
+                    _execute_queued_worker_run(
+                        controller=controller,
+                        request=request,
+                        adapter=adapter,
+                        worker=worker,
+                        storage=storage,
+                        model_resolution_snapshot_id=model_resolution_snapshot_id,
+                        lease_seconds=req.lease_seconds,
+                        canonical_run_id=canonical_run_id,
+                        budget_reservations=budget_reservations,
+                    )
+                )
+                app.state.worker_run_tasks.add(task)
+            return {
+                "run_id": str(queued["id"]),
+                "state": str(queued.get("state") or "QUEUED"),
+                "dispatch_mode": "queued",
+                "accepted": {"run_id": str(queued["id"]), "idempotency_key": req.idempotency_key, "initial_state": str(queued.get("state") or "QUEUED")},
+                "status_url": f"/workers/runs/{queued['id']}",
+                "events_url": f"/workers/runs/{queued['id']}/events",
+            }
+        outcome = await controller.execute(
+            request,
+            adapter,
+            worker_registry_id=req.worker_id,
+            worker_shell_version_id=worker.get("active_shell_version_id"),
+            adapter_id=worker.get("active_adapter_id"),
+            steward_id=UUID(str((worker.get("adapter_config") or {}).get("steward_id"))) if (worker.get("adapter_config") or {}).get("steward_id") else None,
+            model_resolution_snapshot_id=model_resolution_snapshot_id,
+        )
+    except BaseException:
+        await _settle_worker_run_budgets(storage, budget_reservations, state="FAILED")
+        raise
+    await _settle_worker_run_budgets(
+        storage,
+        budget_reservations,
+        state=outcome.state,
+        actual_cost_usd=(outcome.result.usage.cost_usd if outcome.result is not None else None),
     )
     return {
         "run_id": str(outcome.run_id),
         "state": outcome.state,
+        "dispatch_mode": "inline",
         "accepted": outcome.accepted.model_dump(mode="json") if outcome.accepted else None,
         "result": outcome.result.model_dump(mode="json") if outcome.result else None,
         "events": [event.model_dump(mode="json") for event in outcome.events],
@@ -7630,6 +11103,27 @@ async def list_worker_runs_api(project_id: UUID | None = None, worker_id: UUID |
         return []
     rows = await storage.list_worker_runs(project_id=project_id, worker_id=worker_id, flow_instance_id=flow_instance_id, state=state, limit=limit, offset=offset)
     return [_serialize(row) for row in rows]
+
+
+@app.post("/workers/runs/recover-expired")
+async def recover_expired_worker_runs(limit: int = Query(default=100, ge=1, le=1000)) -> dict[str, Any]:
+    rows = await _storage().recover_expired_worker_runs(limit=limit)
+    return {"recovered": len(rows), "runs": [_serialize(row) for row in rows]}
+
+
+@app.post("/workers/runs/{run_id}/heartbeat")
+async def heartbeat_worker_run(run_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
+    owner = str(payload.get("owner") or "").strip()
+    if not owner:
+        raise HTTPException(422, "owner is required")
+    row = await _storage().heartbeat_worker_run(
+        run_id,
+        owner=owner,
+        lease_seconds=int(payload.get("lease_seconds") or 300),
+    )
+    if row is None:
+        raise HTTPException(409, "run is not owned by this executor or is terminal")
+    return _serialize(row)
 
 
 @app.get("/workers/runs/{run_id}")
@@ -7817,7 +11311,28 @@ async def cancel_worker_run(run_id: UUID, payload: dict[str, Any]) -> dict[str, 
     row = await storage.get_worker_run(run_id)
     if row is None:
         raise HTTPException(404, "Worker run not found")
+    await storage.request_worker_run_cancel(run_id)
     if not row.get("adapter_id"):
+        if str(row.get("state")) in {"CREATED", "QUEUED", "CLAIMED"}:
+            cancelled = await storage.transition_worker_run(
+                run_id,
+                new_state="CANCELLED",
+                expected_state=str(row.get("state")),
+                error={
+                    "code": "CANCELLED",
+                    "message": str(payload.get("reason") or "operator cancellation"),
+                },
+                actor=str(payload.get("requested_by") or "operator"),
+                reason="cancelled before runtime activation",
+            )
+            if cancelled is None:
+                raise HTTPException(409, "worker run state changed before cancellation")
+            list_reservations = getattr(storage, "list_budget_reservations", None)
+            settle = getattr(storage, "settle_budget_reservation", None)
+            if inspect.iscoroutinefunction(list_reservations) and inspect.iscoroutinefunction(settle):
+                for reservation in await list_reservations(run_id=run_id):
+                    await settle(UUID(str(reservation["id"])), state="RELEASED")
+            return _serialize(cancelled)
         raise HTTPException(409, "This Worker Run has no pinned certified adapter")
     worker = await storage.get_worker(UUID(str(row["worker_id"])))
     adapter = (
@@ -7836,12 +11351,26 @@ async def cancel_worker_run(run_id: UUID, payload: dict[str, Any]) -> dict[str, 
     row = await WorkerRunController(storage=storage).cancel(run_id, adapter, reason=str(payload.get("reason") or "operator cancellation"), requested_by=str(payload.get("requested_by") or "operator"), force=bool(payload.get("force", False)))
     if row is None:
         raise HTTPException(404, "Worker run not found")
+    list_reservations = getattr(storage, "list_budget_reservations", None)
+    settle = getattr(storage, "settle_budget_reservation", None)
+    if str(row.get("state")) in {"CANCELLED", "FAILED", "TIMED_OUT"} and inspect.iscoroutinefunction(list_reservations) and inspect.iscoroutinefunction(settle):
+        for reservation in await list_reservations(run_id=run_id):
+            await settle(UUID(str(reservation["id"])), state="RELEASED")
     return _serialize(row)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 # Orchestration Flows (Phase 14)
 # ═════════════════════════════════════════════════════════════════════════════
+
+
+@app.get("/flow-templates")
+async def list_flow_templates() -> dict[str, Any]:
+    """Return the canonical reusable flow templates."""
+
+    from mas_core.workflow import flow_template_catalog
+
+    return flow_template_catalog()
 
 
 @app.post("/flows", status_code=201)
@@ -7861,7 +11390,11 @@ async def create_flow(req: CreateFlowRequest) -> dict[str, Any]:
     storage = _storage()
 
     version = 1
+    # Persist the explicit node-schema version even when an older client did
+    # not send it.  This makes later migrations/diffs deterministic while the
+    # parser remains backwards-compatible with legacy definitions.
     definition_payload = dict(req.definition_json)
+    definition_payload.setdefault("schema_version", definition.schema_version)
     if req.version_from_flow_id is not None:
         base_flow = await storage.get_flow(req.version_from_flow_id)
         if base_flow is None:
@@ -7886,6 +11419,216 @@ async def create_flow(req: CreateFlowRequest) -> dict[str, Any]:
     return _serialize(flow)
 
 
+@app.post("/flows/from-template", status_code=201)
+async def create_flow_from_template(req: FlowFromTemplateRequest) -> dict[str, Any]:
+    """Create a flow from a canonical template after normal validation."""
+
+    from mas_core.workflow import flow_template
+
+    template = flow_template(req.template_id)
+    if template is None:
+        raise HTTPException(404, f"Flow template {req.template_id} not found")
+    created = await create_flow(
+        CreateFlowRequest(
+            name=req.name or str(template["name"]),
+            description=req.description or str(template["description"]),
+            definition_json=template["definition_json"],
+            created_by=req.created_by,
+            is_active=req.is_active,
+        )
+    )
+    return {"status": "created_from_template", "template_id": req.template_id, "flow": created}
+
+
+@app.post("/flows/import", status_code=201)
+async def import_flow(req: FlowImportRequest) -> dict[str, Any]:
+    """Import a flow through the same validation/versioning path as creation."""
+
+    created = await create_flow(
+        CreateFlowRequest(
+            name=req.name,
+            description=req.description,
+            definition_json=req.definition_json,
+            created_by=req.created_by,
+            is_active=req.is_active,
+            version_from_flow_id=req.version_from_flow_id,
+        )
+    )
+    return {"status": "imported", "flow": created}
+
+
+def _flow_definition_hash(definition_json: dict[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(definition_json, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    ).hexdigest()
+
+
+def _flow_definition_diff(
+    from_definition: dict[str, Any], to_definition: dict[str, Any]
+) -> dict[str, Any]:
+    """Build a deterministic node/edge/metadata diff for operator review."""
+
+    def keyed(items: Any, key: str) -> dict[str, Any]:
+        if not isinstance(items, list):
+            return {}
+        return {
+            str(item.get(key)): item
+            for item in items
+            if isinstance(item, dict) and item.get(key) is not None
+        }
+
+    def diff_items(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
+        before_keys = set(before)
+        after_keys = set(after)
+        changed = [
+            {"id": key, "before": before[key], "after": after[key]}
+            for key in sorted(before_keys & after_keys)
+            if before[key] != after[key]
+        ]
+        return {
+            "added": [after[key] for key in sorted(after_keys - before_keys)],
+            "removed": [before[key] for key in sorted(before_keys - after_keys)],
+            "changed": changed,
+        }
+
+    return {
+        "schema_version": {
+            "from": from_definition.get("schema_version", "1.0"),
+            "to": to_definition.get("schema_version", "1.0"),
+        },
+        "nodes": diff_items(keyed(from_definition.get("nodes"), "id"), keyed(to_definition.get("nodes"), "id")),
+        "edges": diff_items(keyed(from_definition.get("edges"), "id"), keyed(to_definition.get("edges"), "id")),
+        "metadata_changed": (from_definition.get("metadata") or {}) != (to_definition.get("metadata") or {}),
+    }
+
+
+@app.post("/flows/diff")
+async def diff_flows(req: FlowDiffRequest) -> dict[str, Any]:
+    """Compare two immutable flow definitions without mutating either one."""
+
+    storage = _storage()
+    from_flow = await storage.get_flow(req.from_flow_id)
+    to_flow = await storage.get_flow(req.to_flow_id)
+    if from_flow is None:
+        raise HTTPException(404, f"Flow {req.from_flow_id} not found")
+    if to_flow is None:
+        raise HTTPException(404, f"Flow {req.to_flow_id} not found")
+    from_definition = dict(from_flow.get("definition_json") or {})
+    to_definition = dict(to_flow.get("definition_json") or {})
+    return {
+        "from": {
+            "flow_id": str(req.from_flow_id),
+            "version": from_flow.get("version"),
+            "definition_sha256": _flow_definition_hash(from_definition),
+        },
+        "to": {
+            "flow_id": str(req.to_flow_id),
+            "version": to_flow.get("version"),
+            "definition_sha256": _flow_definition_hash(to_definition),
+        },
+        "changes": _flow_definition_diff(from_definition, to_definition),
+    }
+
+
+@app.post("/flows/{flow_id}/migrate-legacy-tasks")
+async def migrate_legacy_flow_tasks(
+    flow_id: UUID,
+    req: FlowLegacyTaskMigrationRequest,
+) -> dict[str, Any]:
+    """Preview or version a saved flow with explicit Worker Run bindings.
+
+    The source flow is immutable.  A non-dry-run request creates a new
+    version through the ordinary flow-version path; it never updates the
+    existing definition in place and never infers a worker from ``team_id``.
+    """
+    from mas_core.workflow import migrate_legacy_task_aliases
+
+    storage = _storage()
+    source_flow = await storage.get_flow(flow_id)
+    if source_flow is None:
+        raise HTTPException(404, f"Flow {flow_id} not found")
+
+    source_definition = dict(source_flow.get("definition_json") or {})
+    migration = migrate_legacy_task_aliases(
+        source_definition,
+        worker_bindings=req.worker_bindings,
+        model_profile_bindings=req.model_profile_bindings,
+    )
+    migration_record = {
+        "schema": "aiat.flow-legacy-task-migration.v1",
+        "actor_id": req.actor_id,
+        "source_flow_id": str(source_flow["id"]),
+        "source_flow_version": int(source_flow.get("version") or 1),
+        "migrated_node_ids": migration["migrated_node_ids"],
+        "worker_bindings": {
+            key: str(value) for key, value in sorted(req.worker_bindings.items())
+        },
+        "model_profile_bindings": {
+            key: value for key, value in sorted(req.model_profile_bindings.items())
+        },
+        "removed_alias_findings": migration["findings_before"],
+        "remaining_alias_findings": migration["findings_after"],
+    }
+    preview = {
+        "source_flow_id": str(source_flow["id"]),
+        "source_flow_version": int(source_flow.get("version") or 1),
+        "valid": not migration["errors"],
+        "changed": migration["changed"],
+        "definition_json": migration["definition_json"],
+        "migrated_node_ids": migration["migrated_node_ids"],
+        "missing_worker_bindings": migration["missing_worker_bindings"],
+        "unknown_worker_bindings": migration["unknown_worker_bindings"],
+        "unknown_model_profile_bindings": migration["unknown_model_profile_bindings"],
+        "errors": migration["errors"],
+        "findings_before": migration["findings_before"],
+        "findings_after": migration["findings_after"],
+        "migration": migration_record,
+    }
+    if req.dry_run:
+        return {"status": "dry_run", **preview}
+    if migration["errors"]:
+        raise HTTPException(
+            409,
+            {
+                "code": "LEGACY_TASK_MIGRATION_REQUIRES_REVIEW",
+                "message": "Flow cannot be versioned until every migration finding is resolved",
+                **preview,
+            },
+        )
+    if not migration["changed"]:
+        raise HTTPException(
+            409,
+            {
+                "code": "LEGACY_TASK_MIGRATION_NOOP",
+                "message": "Flow has no legacy task aliases or explicit worker bindings to migrate",
+                **preview,
+            },
+        )
+
+    definition_payload = dict(migration["definition_json"])
+    metadata = dict(definition_payload.get("metadata") or {})
+    metadata["legacy_task_migration"] = migration_record
+    definition_payload["metadata"] = metadata
+    created = await create_flow(
+        CreateFlowRequest(
+            name=req.name or str(source_flow.get("name") or "Migrated flow"),
+            description=req.description
+            if req.description is not None
+            else source_flow.get("description"),
+            definition_json=definition_payload,
+            created_by=req.actor_id,
+            is_active=req.is_active,
+            version_from_flow_id=flow_id,
+        )
+    )
+    return {
+        "status": "migrated",
+        "source_flow_id": str(flow_id),
+        "migration": migration_record,
+        "flow": created,
+    }
+
+
 @app.post("/flows/dry-run")
 async def dry_run_flow(req: FlowDryRunRequest) -> dict[str, Any]:
     """Validate topology and every typed task assignment without creating a flow.
@@ -7899,6 +11642,7 @@ async def dry_run_flow(req: FlowDryRunRequest) -> dict[str, Any]:
     from mas_core.workflow import (
         FlowNodeType,
         FlowValidationError,
+        audit_legacy_task_aliases,
         parse_flow_definition,
         validate_flow,
     )
@@ -7915,11 +11659,13 @@ async def dry_run_flow(req: FlowDryRunRequest) -> dict[str, Any]:
             "errors": [{"code": "INVALID_FLOW_DEFINITION", "message": str(exc)}],
             "warnings": warnings,
             "nodes": node_checks,
+            "compatibility_aliases": [],
         }
     for message in validate_flow(definition):
         errors.append({"code": "FLOW_VALIDATION_FAILED", "message": message})
 
     storage = _storage()
+    compatibility_aliases = audit_legacy_task_aliases(definition)
     if req.project_id is not None:
         project = await storage.get_project(req.project_id)
         if project is None:
@@ -7931,6 +11677,12 @@ async def dry_run_flow(req: FlowDryRunRequest) -> dict[str, Any]:
         if node.type != FlowNodeType.TASK:
             continue
         check: dict[str, Any] = {"node_id": node.id, "ready": True, "checks": {}}
+        alias_finding = next(
+            (item for item in compatibility_aliases if item["node_id"] == node.id),
+            None,
+        )
+        if alias_finding is not None:
+            check["compatibility_aliases"] = alias_finding
         node_checks.append(check)
         try:
             policy = TaskNodePolicy.model_validate(node.config)
@@ -8072,10 +11824,21 @@ async def dry_run_flow(req: FlowDryRunRequest) -> dict[str, Any]:
 
     return {
         "valid": not errors and all(check["ready"] for check in node_checks),
+        "schema_version": definition.schema_version,
         "errors": errors,
         "warnings": warnings,
         "nodes": node_checks,
+        "compatibility_aliases": compatibility_aliases,
     }
+
+
+@app.get("/flows/node-schemas")
+async def list_flow_node_schemas() -> dict[str, Any]:
+    """Return the versioned node catalogue used by validation and dashboard forms."""
+
+    from mas_core.workflow import node_schema_catalog
+
+    return node_schema_catalog()
 
 
 @app.get("/flows")
@@ -8163,11 +11926,62 @@ async def get_flow(flow_id: UUID) -> dict[str, Any]:
     return _serialize(flow)
 
 
+@app.get("/flows/{flow_id}/export")
+async def export_flow(flow_id: UUID) -> dict[str, Any]:
+    """Return a portable, hashed flow envelope for backup or review."""
+
+    storage = _storage()
+    flow = await storage.get_flow(flow_id)
+    if flow is None:
+        raise HTTPException(404, f"Flow {flow_id} not found")
+    definition_json = dict(flow.get("definition_json") or {})
+    return {
+        "format": "aiat.flow-export.v1",
+        "flow": {
+            "name": flow.get("name"),
+            "description": flow.get("description"),
+            "version": flow.get("version"),
+            "created_by": flow.get("created_by"),
+            "definition_json": definition_json,
+        },
+        "definition_sha256": _flow_definition_hash(definition_json),
+    }
+
+
+@app.post("/flows/{flow_id}/publish")
+async def publish_flow(flow_id: UUID) -> dict[str, Any]:
+    """Publish a validated definition as the active selectable flow."""
+
+    storage = _storage()
+    flow = await storage.get_flow(flow_id)
+    if flow is None:
+        raise HTTPException(404, f"Flow {flow_id} not found")
+    published = await storage.update_flow(flow_id, is_active=True)
+    if published is None:
+        raise HTTPException(404, f"Flow {flow_id} not found")
+    return _serialize(published)
+
+
+@app.post("/flows/{flow_id}/deprecate")
+async def deprecate_flow(flow_id: UUID) -> dict[str, Any]:
+    """Deprecate a definition without deleting its immutable history."""
+
+    storage = _storage()
+    flow = await storage.get_flow(flow_id)
+    if flow is None:
+        raise HTTPException(404, f"Flow {flow_id} not found")
+    deprecated = await storage.update_flow(flow_id, is_active=False)
+    if deprecated is None:
+        raise HTTPException(404, f"Flow {flow_id} not found")
+    return _serialize(deprecated)
+
+
 @app.put("/flows/{flow_id}")
 async def update_flow(flow_id: UUID, req: UpdateFlowRequest) -> dict[str, Any]:
     """Update a flow definition."""
     from mas_core.workflow import parse_flow_definition, validate_flow, FlowValidationError
 
+    definition_payload = req.definition_json
     if req.definition_json is not None:
         try:
             definition = parse_flow_definition(req.definition_json)
@@ -8177,6 +11991,8 @@ async def update_flow(flow_id: UUID, req: UpdateFlowRequest) -> dict[str, Any]:
         errors = validate_flow(definition)
         if errors:
             raise HTTPException(400, f"Flow validation failed: {'; '.join(errors)}")
+        definition_payload = dict(req.definition_json)
+        definition_payload.setdefault("schema_version", definition.schema_version)
 
     storage = _storage()
     if req.definition_json is not None and inspect.iscoroutinefunction(getattr(storage, "list_flow_instances", None)):
@@ -8187,7 +12003,7 @@ async def update_flow(flow_id: UUID, req: UpdateFlowRequest) -> dict[str, Any]:
         flow_id,
         name=req.name,
         description=req.description,
-        definition_json=req.definition_json,
+        definition_json=definition_payload,
         is_active=req.is_active,
     )
     if flow is None:
@@ -8325,7 +12141,16 @@ async def flow_instance_action(instance_id: UUID, req: FlowInstanceActionRequest
         if current_status in ("COMPLETED", "FAILED", "CANCELLED"):
             raise HTTPException(409, f"Instance is already in terminal state: {current_status}")
 
-        await storage.update_flow_instance(instance_id, status="CANCELLED")
+        # Cancellation is terminal: clear execution authority so no stale
+        # active node can be resumed or mistaken for work still in flight.
+        # Node-execution history remains available for the explicit retry
+        # boundary, which supersedes prior attempts instead of deleting them.
+        await storage.update_flow_instance(
+            instance_id,
+            status="CANCELLED",
+            active_node_ids=[],
+            completed_at=datetime.now(tz=UTC),
+        )
         cancelled_instance = await storage.get_flow_instance(instance_id)
         if cancelled_instance is None:
             raise HTTPException(404, f"Flow instance {instance_id} not found")
@@ -8459,7 +12284,9 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
                 )
             )
             result = dispatch.get("result") or {}
-            if dispatch["state"] == "SUCCEEDED":
+            dispatch_state = normalize_worker_run_state(dispatch.get("state"))
+            dispatch_class = classify_worker_run_state(dispatch_state)
+            if dispatch_class == "succeeded":
                 output = result.get("output")
                 normalized_output = output if isinstance(output, dict) else {"worker_output": output}
                 normalized_output["worker_run_id"] = dispatch["run_id"]
@@ -8472,12 +12299,38 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
                         worker_run_id=UUID(dispatch["run_id"]),
                     ),
                 )
-            error = (result.get("error") or {}).get("message") or f"Worker Run ended {dispatch['state']}"
+            if dispatch_class == "pending":
+                # Queued production dispatch is asynchronous.  Keep the task
+                # active and persist the authoritative run binding; treating
+                # QUEUED/CLAIMED/RUNNING as an immediate failure would leave
+                # the flow and Worker Run in contradictory states.  A later
+                # terminal callback/operator action must supply this run ID,
+                # and the terminal-state guard below remains authoritative.
+                pending_context = bind_pending_worker_run(
+                    current_context,
+                    node_id=node.id,
+                    run_id=str(dispatch["run_id"]),
+                    state=dispatch_state,
+                    dispatch_mode=dispatch.get("dispatch_mode"),
+                )
+                await storage.update_flow_instance(
+                    instance_id,
+                    status="RUNNING",
+                    active_node_ids=active_node_ids,
+                    context_json=pending_context,
+                )
+                return _serialize(await _get_refreshed_instance())
+            if dispatch_class == "unknown":
+                raise HTTPException(
+                    409,
+                    f"Worker Run returned unknown non-terminal state {dispatch_state or '<missing>'}; flow task remains unresolved",
+                )
+            error = (result.get("error") or {}).get("message") or f"Worker Run ended {dispatch_state}"
             return await flow_node_action(
                 instance_id,
                 FlowNodeActionRequest(
                     node_id=req.node_id,
-                    action="timeout" if dispatch["state"] == "TIMED_OUT" else "fail",
+                    action="timeout" if dispatch_state == "TIMED_OUT" else "fail",
                     error=str(error),
                     worker_run_id=UUID(dispatch["run_id"]),
                 ),
@@ -8495,21 +12348,30 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
             or worker_run.get("flow_node_execution_id") != execution["id"]
         ):
             raise HTTPException(409, "Worker Run is not bound to this active flow node execution")
-        expected_run_state = {
-            "complete": "SUCCEEDED",
-            "fail": "FAILED",
-            "timeout": "TIMED_OUT",
+        expected_run_states = {
+            "complete": frozenset({"SUCCEEDED"}),
+            # Cancellation is a terminal non-success outcome and therefore
+            # settles the task through the same failure path as FAILED.
+            "fail": frozenset({"FAILED", "CANCELLED"}),
+            "timeout": frozenset({"TIMED_OUT"}),
         }[req.action]
-        if worker_run.get("state") != expected_run_state:
+        observed_run_state = normalize_worker_run_state(worker_run.get("state"))
+        if observed_run_state not in expected_run_states:
             raise HTTPException(
                 409,
-                f"Task node action {req.action} requires Worker Run state {expected_run_state}",
+                f"Task node action {req.action} requires Worker Run state in {sorted(expected_run_states)}",
             )
 
     if req.action == "complete":
         updated_context = dict(current_context)
         if req.output:
             updated_context.update(req.output)
+
+        # A governed task's pending asynchronous binding is consumed only by
+        # its authoritative terminal Worker Run.  Remove that one node entry
+        # while preserving other parallel task bindings in the same context.
+        if node.type == FlowNodeType.TASK and node.config.get("worker_id"):
+            updated_context = clear_worker_run_binding(updated_context, node_id=node.id)
 
         if node.type == FlowNodeType.APPROVAL:
             decision = req.decision
@@ -8693,7 +12555,17 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
                 completed_at=now,
             )
 
-        await storage.update_flow_instance(instance_id, status="FAILED", active_node_ids=[])
+        failure_context = dict(current_context)
+        if node.type == FlowNodeType.TASK and node.config.get("worker_id"):
+            failure_context = clear_worker_run_binding(failure_context, node_id=node.id)
+        if req.error:
+            failure_context["last_error"] = req.error
+        await storage.update_flow_instance(
+            instance_id,
+            status="FAILED",
+            active_node_ids=[],
+            context_json=failure_context,
+        )
         return _serialize(await _get_refreshed_instance())
 
     elif req.action == "timeout":
@@ -8712,6 +12584,8 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
         timeout_context = dict(current_context)
         timeout_context["last_error"] = req.error or "Timed out"
         timeout_context["last_timed_out_node_id"] = req.node_id
+        if node.type == FlowNodeType.TASK and node.config.get("worker_id"):
+            timeout_context = clear_worker_run_binding(timeout_context, node_id=node.id)
 
         await storage.update_flow_instance(
             instance_id,
@@ -8871,6 +12745,168 @@ async def switch_flow_instance(instance_id: UUID, req: dict[str, Any]) -> dict[s
     return _serialize(updated)
 
 
+@app.post("/flows/instances/{instance_id}/migrate")
+async def migrate_flow_instance(instance_id: UUID, req: FlowMigrationRequest) -> dict[str, Any]:
+    """Apply a compatible or explicitly mapped flow version.
+
+    The default path only accepts unchanged active node IDs and node types.
+    A graph rewrite requires ``allow_graph_rewrite`` plus a one-to-one mapping
+    for every active node whose ID changes.  The mapping is recorded in the
+    instance context and project history; node execution history is never
+    rewritten or deleted.
+    """
+
+    storage = _storage()
+    instance = await storage.get_flow_instance(instance_id)
+    if instance is None:
+        raise HTTPException(404, f"Flow instance {instance_id} not found")
+    if instance.get("status") in {"COMPLETED", "FAILED", "CANCELLED"}:
+        raise HTTPException(409, "Terminal flow instances are immutable; use an explicit recovery action")
+
+    old_flow = await storage.get_flow(instance["flow_id"])
+    new_flow = await storage.get_flow(req.flow_id)
+    if old_flow is None or new_flow is None:
+        raise HTTPException(404, "Source or target flow definition not found")
+
+    from mas_core.workflow import parse_flow_definition
+
+    try:
+        old_definition = parse_flow_definition(old_flow["definition_json"])
+        new_definition = parse_flow_definition(new_flow["definition_json"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(409, f"Flow migration definitions are invalid: {exc}") from exc
+
+    if old_definition.schema_version != new_definition.schema_version:
+        raise HTTPException(
+            409,
+            {
+                "code": "FLOW_SCHEMA_MIGRATION_REQUIRED",
+                "message": "Compatible migration requires matching node-schema versions",
+                "from": old_definition.schema_version,
+                "to": new_definition.schema_version,
+            },
+        )
+
+    old_nodes = {node.id: node for node in old_definition.nodes}
+    new_nodes = {node.id: node for node in new_definition.nodes}
+    active_node_ids = sorted(str(node_id) for node_id in (instance.get("active_node_ids") or []))
+    mapping = {
+        str(source): str(target)
+        for source, target in (req.active_node_mapping or {}).items()
+    }
+    if mapping and not req.allow_graph_rewrite:
+        raise HTTPException(
+            409,
+            {
+                "code": "FLOW_GRAPH_REWRITE_NOT_ENABLED",
+                "message": "active_node_mapping requires allow_graph_rewrite=true",
+            },
+        )
+    if req.allow_graph_rewrite and not mapping:
+        raise HTTPException(
+            400,
+            {
+                "code": "FLOW_GRAPH_REWRITE_MAPPING_REQUIRED",
+                "message": "allow_graph_rewrite requires an explicit active_node_mapping",
+            },
+        )
+    if mapping and any(source not in active_node_ids for source in mapping):
+        unknown_sources = sorted(set(mapping) - set(active_node_ids))
+        raise HTTPException(
+            409,
+            {
+                "code": "FLOW_GRAPH_REWRITE_SOURCE_NOT_ACTIVE",
+                "message": "graph rewrite mappings may only address active nodes",
+                "sources": unknown_sources,
+            },
+        )
+    incompatibilities: list[dict[str, Any]] = []
+    mapped_active_node_ids: list[str] = []
+    for node_id in active_node_ids:
+        old_node = old_nodes.get(node_id)
+        target_id = mapping.get(node_id, node_id)
+        new_node = new_nodes.get(target_id)
+        if new_node is None:
+            incompatibilities.append(
+                {
+                    "node_id": node_id,
+                    "target_node_id": target_id,
+                    "reason": "active node is absent from target flow",
+                }
+            )
+        elif old_node is not None and old_node.type != new_node.type:
+            incompatibilities.append(
+                {
+                    "node_id": node_id,
+                    "reason": "active node type changed",
+                    "from": old_node.type.value,
+                    "to": new_node.type.value,
+                }
+            )
+        else:
+            mapped_active_node_ids.append(target_id)
+    if len(set(mapped_active_node_ids)) != len(mapped_active_node_ids):
+        incompatibilities.append(
+            {
+                "node_ids": active_node_ids,
+                "reason": "active graph rewrite mappings must be one-to-one",
+            }
+        )
+    if mapping and set(mapping) != set(active_node_ids):
+        missing_sources = sorted(set(active_node_ids) - set(mapping))
+        if missing_sources:
+            incompatibilities.append(
+                {
+                    "node_ids": missing_sources,
+                    "reason": "graph rewrite must map every active node explicitly",
+                }
+            )
+    if incompatibilities:
+        raise HTTPException(
+            409,
+            {
+                "code": "FLOW_MIGRATION_INCOMPATIBLE",
+                "message": "Active nodes cannot be mapped without resetting the instance",
+                "incompatibilities": incompatibilities,
+            },
+        )
+
+    migrate = getattr(storage, "migrate_flow_instance", None)
+    if not inspect.iscoroutinefunction(migrate):
+        raise HTTPException(501, "Storage does not support evidence-preserving flow migration")
+    migration_record = {
+        "from_flow_id": str(old_flow["id"]),
+        "from_flow_version": old_flow.get("version"),
+        "to_flow_id": str(new_flow["id"]),
+        "to_flow_version": new_flow.get("version"),
+        "preserved_active_node_ids": active_node_ids,
+        "mapped_active_node_ids": mapped_active_node_ids,
+        "active_node_mapping": mapping,
+        "graph_rewrite": bool(mapping),
+        "actor_id": req.actor_id,
+    }
+    updated = await migrate(
+        instance_id,
+        req.flow_id,
+        active_node_ids=mapped_active_node_ids,
+        preserve_context=req.preserve_context,
+        migration_record=migration_record,
+    )
+    if updated is None:
+        raise HTTPException(404, f"Flow instance {instance_id} not found")
+
+    project = await storage.get_project(instance["project_id"])
+    if project is not None:
+        await storage.transition_project(
+            instance["project_id"],
+            new_state=project["state"],
+            event="flow_migrated",
+            triggered_by=req.actor_id,
+            payload=migration_record,
+        )
+    return _serialize(updated)
+
+
 @app.post("/flows/instances/{instance_id}/context")
 async def update_flow_instance_context(instance_id: UUID, req: dict[str, Any]) -> dict[str, Any]:
     """Update the context for a flow instance."""
@@ -8942,7 +12978,13 @@ async def retry_flow_instance(instance_id: UUID) -> dict[str, Any]:
     if isinstance(last_safe_node_id, str) and definition.get_node(last_safe_node_id) is not None:
         retry_count = int(instance.get("retry_count") or 0) + 1
         restored_node = definition.get_node(last_safe_node_id)
-        await storage.clear_flow_node_executions(instance_id)
+        supersede = getattr(storage, "supersede_flow_node_executions", None)
+        if not inspect.iscoroutinefunction(supersede):
+            raise HTTPException(
+                503,
+                "Flow retry requires evidence-preserving node-execution storage",
+            )
+        await supersede(instance_id)
         await storage.update_flow_instance(
             instance_id,
             status="RUNNING",
@@ -8966,6 +13008,15 @@ async def retry_flow_instance(instance_id: UUID) -> dict[str, Any]:
                     or restored_node.config.get("approver_user")
                     or restored_node.label,
                 )
+            if restored_node.type.value == "task" and restored_node.config.get("worker_id"):
+                # Safe retry of a governed task must re-enter the same
+                # authoritative Worker Run path as normal traversal.  Legacy
+                # team/action-only tasks intentionally keep their manual
+                # compatibility behavior until an operator migrates them.
+                return await flow_node_action(
+                    instance_id,
+                    FlowNodeActionRequest(node_id=restored_node.id, action="advance"),
+                )
         restored_instance = await storage.get_flow_instance(instance_id)
         if restored_instance is None:
             raise HTTPException(404, "Failed to retry instance")
@@ -8981,6 +13032,59 @@ async def retry_flow_instance(instance_id: UUID) -> dict[str, Any]:
 # ═════════════════════════════════════════════════════════════════════════════
 # Utilities
 # ═════════════════════════════════════════════════════════════════════════════
+
+
+_ARTIFACT_EVIDENCE_KEYS = frozenset(
+    {"id", "agent_id", "path", "sha256", "size_bytes", "created_at"}
+)
+_USAGE_EVIDENCE_KEYS = frozenset(
+    {
+        "id",
+        "project_id",
+        "company_id",
+        "run_id",
+        "worker_id",
+        "event_type",
+        "agent_id",
+        "team_id",
+        "model",
+        "provider_id",
+        "tool_name",
+        "status",
+        "prompt_tokens",
+        "completion_tokens",
+        "cost_usd",
+        "duration_ms",
+        "trace_id",
+        "span_id",
+        "occurred_at",
+    }
+)
+
+
+def _serialize_safe_scalars(row: dict[str, Any], allowed_keys: frozenset[str]) -> dict[str, Any]:
+    """Project a row to bounded scalar evidence without nested payloads."""
+
+    result: dict[str, Any] = {}
+    for key in sorted(allowed_keys):
+        if key not in row:
+            continue
+        value = row[key]
+        if value is None:
+            result[key] = None
+        elif isinstance(value, UUID):
+            result[key] = str(value)
+        elif isinstance(value, datetime):
+            result[key] = value.isoformat()
+        elif isinstance(value, Decimal):
+            result[key] = str(value)
+        elif isinstance(value, str):
+            result[key] = value[:256]
+        elif isinstance(value, (bool, int)):
+            result[key] = value
+        elif isinstance(value, float) and math.isfinite(value):
+            result[key] = value
+    return result
 
 
 def _serialize(obj: dict[str, Any]) -> dict[str, Any]:
@@ -9015,6 +13119,22 @@ def _serialize_scalar(v: Any) -> Any:
     if hasattr(v, "__str__") and type(v).__name__ == "Decimal":
         return str(v)
     return v
+
+
+def _serialize_projection(row: dict[str, Any]) -> dict[str, Any]:
+    """Expose a stable projection state while retaining the outbox status."""
+    result = _serialize(row)
+    status = str(row.get("status") or "PENDING").upper()
+    result["projection_status"] = {
+        "PENDING": "pending",
+        "PROCESSING": "pending",
+        "SYNCED": "synced",
+        "CONFLICT": "conflicted",
+        "CONFLICTED": "conflicted",
+        "FAILED": "failed",
+        "DEAD_LETTER": "failed",
+    }.get(status, "pending")
+    return result
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -9178,7 +13298,7 @@ async def full_audit_log(limit: int = 100) -> list[dict[str, Any]]:
 async def identity_dashboard_resource(resource: str, _auth: None = Depends(_check_auth)) -> dict[str, Any]:
     """Signed control-plane proxy for secret-free identity dashboard data."""
     allowed = {
-        "identities", "mail-domains", "mailboxes", "outbound-mail", "mail-relay",
+        "identities", "mail-domains", "mailboxes", "outbound-mail", "mail-relay", "mail-edge",
         "external-accounts", "auth-sessions", "identity-approvals", "identity-audit",
     }
     if resource not in allowed:
@@ -9235,6 +13355,100 @@ async def identity_dashboard_action(req: IdentityDashboardActionRequest, _auth: 
         return await _identity_client().request("POST", path, body)
     except Exception as exc:
         raise HTTPException(503, "identity action could not be completed") from exc
+
+
+def _dashboard_acl_snapshot() -> dict[str, frozenset[str]]:
+    """Return the validated in-process ACL snapshot used by middleware/routes."""
+
+    try:
+        return normalize_dashboard_acl(
+            getattr(app.state, "dashboard_acl", DEFAULT_DASHBOARD_SECTION_ACL)
+        )
+    except ValueError:
+        # Never turn a malformed in-memory override into an authorization
+        # bypass. The operator can repair the persisted row through a fresh
+        # process start or a valid PUT below.
+        logger.exception("dashboard_acl_snapshot_invalid_using_defaults")
+        return dict(DEFAULT_DASHBOARD_SECTION_ACL)
+
+
+def _validate_dashboard_section(section: str) -> str:
+    normalized = str(section).strip().lower()
+    if normalized not in DASHBOARD_SECTIONS:
+        raise HTTPException(404, f"Unknown dashboard section: {section}")
+    return normalized
+
+
+@app.get("/dashboard/access")
+async def dashboard_access(request: Request) -> dict[str, Any]:
+    """Return the sections visible to the authenticated principal."""
+
+    principal = _authenticated_principal(request)
+    acl = _dashboard_acl_snapshot()
+    return {
+        "principal": principal,
+        "sections": list(sections_for_principal(principal, acl)),
+        "all_sections": list(DASHBOARD_SECTIONS),
+        "policy_key": DASHBOARD_SECTION_ACL_CONFIG_KEY,
+    }
+
+
+@app.get("/dashboard/sections/{section}")
+async def dashboard_section_access(section: str, request: Request) -> dict[str, Any]:
+    """Authorize one dashboard section for an API caller.
+
+    Dashboard proxies use the same predicate through the middleware header;
+    this explicit endpoint gives CEO/service/worker runtimes a small,
+    auditable capability check without granting them operator UI access.
+    """
+
+    normalized = _validate_dashboard_section(section)
+    principal = _authenticated_principal(request)
+    acl = _dashboard_acl_snapshot()
+    if not principal_can_access_section(principal, normalized, acl):
+        raise HTTPException(
+            403,
+            f"principal {principal!r} is not authorized for dashboard section {normalized!r}",
+        )
+    return {"section": normalized, "principal": principal, "allowed": True}
+
+
+@app.put("/dashboard/sections/{section}/acl")
+async def update_dashboard_section_acl(
+    section: str,
+    req: DashboardSectionACLRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Persist one section's principal list; only a human operator may edit it."""
+
+    _require_operator_identity(request)
+    normalized = _validate_dashboard_section(section)
+    requested_principals = {str(item).strip().lower() for item in req.principals if str(item).strip()}
+    unknown = requested_principals - set(DASHBOARD_PRINCIPALS)
+    if unknown:
+        raise HTTPException(422, f"Unknown dashboard principals: {sorted(unknown)}")
+    if "operator" not in requested_principals:
+        raise HTTPException(422, "operator must retain access to every dashboard section")
+
+    acl = _dashboard_acl_snapshot()
+    updated: dict[str, set[str]] = {
+        principal: set(acl.get(principal, frozenset()))
+        for principal in DASHBOARD_PRINCIPALS
+    }
+    for principal in DASHBOARD_PRINCIPALS:
+        if principal in requested_principals:
+            updated[principal].add(normalized)
+        else:
+            updated[principal].discard(normalized)
+    validated = normalize_dashboard_acl(updated)
+    await _storage().set_config(DASHBOARD_SECTION_ACL_CONFIG_KEY, serialize_dashboard_acl(validated))
+    app.state.dashboard_acl = validated
+    return {
+        "section": normalized,
+        "principals": sorted(requested_principals),
+        "policy_key": DASHBOARD_SECTION_ACL_CONFIG_KEY,
+        "persisted": True,
+    }
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -9368,12 +13582,250 @@ def _ceo_stream_instruction(instruction: str) -> str:
     return instruction
 
 
+CEO_EVIDENCE_SCHEMA = "aiat.ceo-evidence.v1"
+
+# Evidence is deliberately a small citation surface.  The response payloads
+# returned by CEO intent handlers can contain reports, graph nodes, runtime
+# diagnostics, or credential metadata; none of those arbitrary objects should
+# be copied into the operator chat stream.  Keep the allow-list here about
+# *record identity* rather than about licence/provenance policy: those notices
+# remain metadata-only elsewhere in AIAT.
+_CEO_EVIDENCE_REFERENCE_FIELDS: tuple[tuple[str, str], ...] = (
+    ("company", "company"),
+    ("project", "project"),
+    ("worker", "worker"),
+    ("flow", "flow"),
+    ("instance", "flow_instance"),
+    ("flow_instance", "flow_instance"),
+    ("evaluation", "evaluation"),
+    ("credential", "credential"),
+    ("dead_letter", "dead_letter"),
+    ("artifact", "artifact"),
+    ("integration", "integration"),
+    ("model", "model"),
+    ("runtime", "runtime"),
+    ("tool", "tool"),
+    ("usage", "usage"),
+    ("worker_run", "worker_run"),
+    ("trace_record", "trace"),
+)
+_CEO_EVIDENCE_REFERENCE_LISTS: tuple[tuple[str, str], ...] = (
+    ("projects", "project"),
+    ("workers", "worker"),
+    ("flows", "flow"),
+    ("instances", "flow_instance"),
+    ("active_instances", "flow_instance"),
+    ("evaluations", "evaluation"),
+    ("credentials", "credential"),
+    ("dead_letters", "dead_letter"),
+    ("artifacts", "artifact"),
+    ("integrations", "integration"),
+    ("models", "model"),
+    ("runtimes", "runtime"),
+    ("tools", "tool"),
+    ("usages", "usage"),
+    ("worker_runs", "worker_run"),
+    ("trace_records", "trace"),
+)
+_CEO_EVIDENCE_MAX_REFS = 24
+
+
+def _ceo_action_evidence(action: dict[str, Any]) -> dict[str, Any]:
+    """Build a secret-safe evidence envelope for deterministic CEO actions.
+
+    Only stable record identifiers and the action's deterministic trace are
+    exposed.  Payloads, credential values, provider responses, and arbitrary
+    nested action data never enter the chat citation surface.
+    """
+    refs: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    targets = (
+        ("company", "company"),
+        ("project", "project"),
+        ("worker", "worker"),
+        ("flow", "flow"),
+        ("instance", "flow_instance"),
+        ("evaluation", "evaluation"),
+        ("credential", "credential"),
+        ("dead_letter", "dead_letter"),
+        ("artifact", "artifact"),
+        ("integration", "integration"),
+        ("model", "model"),
+        ("runtime", "runtime"),
+        ("tool", "tool"),
+        ("usage", "usage"),
+        ("worker_run", "worker_run"),
+        ("trace_record", "trace"),
+    )
+
+    def stable_id(value: Any) -> str | None:
+        """Return only scalar identifiers; never stringify arbitrary payloads."""
+        if isinstance(value, (str, int, UUID)) and not isinstance(value, bool):
+            text = str(value).strip()
+            return text or None
+        return None
+
+    for field, kind in targets:
+        value = action.get(field)
+        if not isinstance(value, dict):
+            continue
+        record_id = stable_id(
+            value.get("id") or value.get("record_id") or value.get("report_id")
+        )
+        if record_id is None:
+            continue
+        key = (kind, record_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        refs.append({"kind": kind, "id": key[1]})
+    for field, kind in (
+        ("company_id", "company"),
+        ("project_id", "project"),
+        ("worker_id", "worker"),
+        ("flow_id", "flow"),
+        ("integration_id", "integration"),
+        ("model_id", "model"),
+        ("runtime_id", "runtime"),
+        ("tool_id", "tool"),
+        ("worker_run_id", "worker_run"),
+        ("artifact_id", "artifact"),
+        ("trace_id", "trace"),
+    ):
+        record_id = stable_id(action.get(field))
+        if record_id is None:
+            continue
+        key = (kind, record_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        refs.append({"kind": kind, "id": key[1]})
+    trace = action.get("trace")
+    return {
+        "schema_version": CEO_EVIDENCE_SCHEMA,
+        "authority": "aiat.orchestrator-api",
+        "refs": refs,
+        "trace": [str(item) for item in trace if isinstance(item, (str, int, UUID))]
+        if isinstance(trace, (list, tuple))
+        else [],
+    }
+
+
+def _ceo_response_evidence(result: dict[str, Any]) -> dict[str, Any]:
+    """Cite bounded record identities for any deterministic CEO response.
+
+    ``_ceo_action_evidence`` covers the common one-record action shape.  Read
+    intents often return bounded lists (for example a hiring board or active
+    flow instances), so this companion keeps only IDs from explicitly named
+    record fields and caps the resulting citation list.  It never serializes
+    an arbitrary response object, model output, secret, or provider payload.
+    """
+    evidence = _ceo_action_evidence(result)
+    refs = list(evidence["refs"])
+    seen = {(item["kind"], item["id"]) for item in refs}
+
+    def stable_id(value: Any) -> str | None:
+        if isinstance(value, (str, int, UUID)) and not isinstance(value, bool):
+            text = str(value).strip()
+            return text or None
+        return None
+
+    def add_ref(kind: str, value: Any) -> None:
+        if len(refs) >= _CEO_EVIDENCE_MAX_REFS or not isinstance(value, dict):
+            return
+        record_id = stable_id(value.get("id") or value.get("record_id") or value.get("report_id"))
+        if record_id is None:
+            return
+        key = (kind, record_id)
+        if key in seen:
+            return
+        seen.add(key)
+        refs.append({"kind": kind, "id": record_id})
+
+    for field, kind in _CEO_EVIDENCE_REFERENCE_FIELDS:
+        add_ref(kind, result.get(field))
+    for field, kind in _CEO_EVIDENCE_REFERENCE_LISTS:
+        values = result.get(field)
+        if not isinstance(values, (list, tuple)):
+            continue
+        for value in values:
+            add_ref(kind, value)
+            if len(refs) >= _CEO_EVIDENCE_MAX_REFS:
+                break
+        if len(refs) >= _CEO_EVIDENCE_MAX_REFS:
+            break
+    evidence["refs"] = refs
+    return evidence
+
+
+_CEO_FALLBACK_EVIDENCE_RE = re.compile(
+    r"(?im)^\s*(?:AIAT_EVIDENCE|AIAT-EVIDENCE)\s*:\s*"
+    r"(?P<kind>[a-z_]+)\s*=\s*(?P<id>[^\s,;]+)\s*$"
+)
+_CEO_FALLBACK_EVIDENCE_KINDS = {
+    "company",
+    "project",
+    "worker",
+    "flow",
+    "flow_instance",
+    "evaluation",
+    "credential",
+    "dead_letter",
+    "artifact",
+    "integration",
+    "model",
+    "runtime",
+    "tool",
+    "usage",
+    "worker_run",
+    "trace",
+}
+
+
+def _ceo_fallback_evidence(response_text: str) -> tuple[str, dict[str, Any]]:
+    """Extract opt-in, canonical citations from the legacy model fallback.
+
+    The fallback model has no authority to invent database facts.  It may emit
+    an explicit ``AIAT_EVIDENCE: kind=id`` line only when it was given a
+    canonical record identifier; the line is removed from operator-visible
+    prose and represented as an unverified citation envelope.  Malformed or
+    unsupported lines are ignored, and the result is bounded like all other
+    CEO evidence.
+    """
+    refs: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def collect(match: re.Match[str]) -> str:
+        kind = match.group("kind").lower()
+        record_id = match.group("id").strip()
+        if (
+            kind in _CEO_FALLBACK_EVIDENCE_KINDS
+            and record_id
+            and len(record_id) <= 200
+            and (kind, record_id) not in seen
+            and len(refs) < _CEO_EVIDENCE_MAX_REFS
+        ):
+            seen.add((kind, record_id))
+            refs.append({"kind": kind, "id": record_id})
+        return ""
+
+    cleaned = _CEO_FALLBACK_EVIDENCE_RE.sub(collect, response_text).strip()
+    return cleaned, {
+        "schema_version": CEO_EVIDENCE_SCHEMA,
+        "authority": "aiat.ceo-fallback",
+        "status": "unverified",
+        "refs": refs,
+        "trace": ["legacy_model_fallback", "explicit_citations_only"],
+    }
+
+
 async def _publish_ceo_chat_response(
     *,
     response_text: str,
     correlation_id: str,
     parent_id: str,
     action: dict[str, Any] | None = None,
+    evidence: dict[str, Any] | None = None,
 ) -> None:
     payload: dict[str, Any] = {
         "response": response_text,
@@ -9392,6 +13844,9 @@ async def _publish_ceo_chat_response(
         if worker_id:
             context["worker_id"] = str(worker_id)
         payload["context"] = context
+        payload["evidence"] = evidence or _ceo_response_evidence(action)
+    elif evidence is not None:
+        payload["evidence"] = evidence
 
     envelope = {
         "message_id": str(uuid4()),
@@ -9486,7 +13941,10 @@ async def _publish_ceo_response(
                     "You are the AIAT CEO Executive Copilot speaking directly to the human "
                     "operator in the dashboard chat. Reply conversationally and helpfully. "
                     "Be concise, direct, and practical. If the operator asks for an action, "
-                    "state what you can do next and any required clarification."
+                    "state what you can do next and any required clarification. If the supplied "
+                    "context contains a canonical AIAT record ID that you cite, add one separate "
+                    "line in the exact form `AIAT_EVIDENCE: kind=id`; never invent IDs or include "
+                    "secret values in that line."
                 ),
                 task="general",
                 max_tokens=450,
@@ -9499,10 +13957,12 @@ async def _publish_ceo_response(
             "limited. Your request is queued with the CEO runtime."
         )
     response_text = _clean_ceo_chat_text(response_text)
+    response_text, evidence = _ceo_fallback_evidence(response_text)
     await _publish_ceo_chat_response(
         response_text=response_text.strip() or "I received your message.",
         correlation_id=correlation_id,
         parent_id=parent_id,
+        evidence=evidence,
     )
 
 
@@ -10427,6 +14887,7 @@ async def _handle_ceo_system_intent(instruction: str) -> dict[str, Any] | None:
 
     if "schedule" in lowered:
         storage = _storage()
+        company_timezone = await _configured_company_timezone(storage)
         if re.search(r"\b(?:show|status|current|what|inspect|list)\b", lowered) or not re.search(
             r"\b(?:enable|disable|set|update|change|configure)\b", lowered
         ):
@@ -10434,7 +14895,7 @@ async def _handle_ceo_system_intent(instruction: str) -> dict[str, Any] | None:
                 "enabled": (await storage.get_config("schedule_enabled") or "false") == "true",
                 "start_hour": int(await storage.get_config("schedule_start_hour") or 8),
                 "end_hour": int(await storage.get_config("schedule_end_hour") or 18),
-                "timezone": await storage.get_config("schedule_timezone") or "UTC",
+                "timezone": await storage.get_config("schedule_timezone") or company_timezone,
                 "days": (await storage.get_config("schedule_days") or "mon,tue,wed,thu,fri").split(","),
                 "auto_shutdown": (await storage.get_config("schedule_auto_shutdown") or "true") == "true",
                 "auto_resume": (await storage.get_config("schedule_auto_resume") or "true") == "true",
@@ -10464,14 +14925,14 @@ async def _handle_ceo_system_intent(instruction: str) -> dict[str, Any] | None:
             enabled=enabled,
             start_hour=int(start_match.group(1)) if start_match else int(await storage.get_config("schedule_start_hour") or 8),
             end_hour=int(end_match.group(1)) if end_match else int(await storage.get_config("schedule_end_hour") or 18),
-            timezone=timezone_match.group(1) if timezone_match else (await storage.get_config("schedule_timezone") or "UTC"),
+            timezone=timezone_match.group(1) if timezone_match else (await storage.get_config("schedule_timezone") or company_timezone),
             days=current_days,
             auto_shutdown="no auto shutdown" not in lowered,
             auto_resume="no auto resume" not in lowered,
         )
         try:
-            ZoneInfo(req.timezone)
-        except ZoneInfoNotFoundError:
+            _resolve_schedule_timezone(req.timezone)
+        except HTTPException:
             return {
                 "type": "system_schedule",
                 "status": "needs_timezone",
@@ -11439,6 +15900,7 @@ async def _process_ceo_operator_intent(
             correlation_id=message_id,
             parent_id=message_id,
             action=action,
+            evidence=_ceo_response_evidence(action),
         )
         if durable:
             await _transition_ceo_command(
@@ -11477,7 +15939,7 @@ async def operator_send_to_ceo(
 ) -> dict[str, Any]:
     """Operator sends a message directly to the CEO via the message-router."""
     _check_auth(x_api_key, authorization)
-    tid = new_trace_id()
+    tid = current_trace_id() or new_trace_id()
     bind_trace_id(tid)
     message_id = str(req.request_id or uuid4())
     instruction = req.message.strip()
@@ -11622,8 +16084,14 @@ async def operator_send_to_ceo(
             correlation_id=message_id,
             parent_id=message_id,
             action=action,
+            evidence=_ceo_response_evidence(action),
         )
-        return {"ok": True, "entry_id": result.get("entry_id"), "action": action}
+        return {
+            "ok": True,
+            "entry_id": result.get("entry_id"),
+            "action": action,
+            "evidence": _ceo_response_evidence(action),
+        }
     background_tasks.add_task(
         _publish_ceo_response,
         instruction=instruction,
@@ -11744,3 +16212,4334 @@ async def stream_container_logs(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+# ── Provider-neutral PM/SCM integration API ──────────────────────────────────
+
+
+def _authenticated_principal(request: Request) -> str:
+    """Return the principal established by the API-key middleware.
+
+    Actor headers are attribution metadata only.  They are deliberately not
+    used as authorization input because every caller that knows the shared
+    service key could otherwise claim to be an operator.
+    """
+    principal = str(getattr(request.state, "aiat_auth_principal", "") or "").lower()
+    if not principal:
+        raise HTTPException(401, "authenticated principal is unavailable")
+    return principal
+
+
+def _require_operator_identity(request: Request) -> None:
+    """Require the separately configured operator API credential."""
+    if _authenticated_principal(request) != "operator":
+        raise HTTPException(403, "canonical mutation requires an operator credential")
+
+
+def _integration_operator(
+    request: Request,
+    *,
+    allow_worker_read: bool = False,
+    allow_gateway: bool = False,
+) -> None:
+    """Authorize integration operations using an authenticated principal.
+
+    ``X-AIAT-Actor-Role`` remains useful for audit attribution, but cannot
+    elevate a service or worker authenticated with ``MAS_API_KEY``.  Gateway
+    ingress/drain uses its own ``PM_GATEWAY_API_KEY`` and read-only worker
+    surfaces may use the ordinary service credential.
+    """
+    principal = _authenticated_principal(request)
+    if principal == "operator":
+        return
+    if allow_gateway and principal in {"pm_gateway", "gateway"}:
+        return
+    if allow_worker_read and principal == "service":
+        return
+    raise HTTPException(403, "integration operation requires an authorized principal")
+
+
+def _redact_integration_config(value: Any) -> Any:
+    """Return provider configuration without bearer material.
+
+    Credential references are safe to display because they are opaque names;
+    values under secret/token/password/private-key fields are omitted.  This
+    is applied to every connection response, including dashboard reads.
+    """
+    if isinstance(value, dict):
+        redacted: dict[str, Any] = {}
+        secret_markers = ("secret", "token", "password", "private_key", "api_key")
+        safe_suffixes = ("_ref", "_refs")
+        for key, child in value.items():
+            lowered = str(key).lower()
+            if any(marker in lowered for marker in secret_markers) and not lowered.endswith(safe_suffixes):
+                continue
+            redacted[str(key)] = _redact_integration_config(child)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_integration_config(item) for item in value]
+    return value
+
+
+def _youtrack_actor_observation(payload: dict[str, Any]) -> dict[str, str] | None:
+    """Extract provider-signed actor hints; never treat them as an auth key."""
+    candidates: list[Any] = [payload.get("updatedBy"), payload.get("reporter")]
+    comments = payload.get("comments")
+    if isinstance(comments, list) and comments and isinstance(comments[-1], dict):
+        candidates.append(comments[-1].get("author"))
+    comment = payload.get("comment")
+    if isinstance(comment, dict):
+        candidates.append(comment.get("author"))
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        login = str(candidate.get("login") or "").strip()
+        email = str(candidate.get("email") or "").strip()
+        immutable_id = str(candidate.get("id") or "").strip()
+        if immutable_id or login or email:
+            return {"id": immutable_id, "login": login, "email": email}
+    return None
+
+
+def _pm_tenant_key(row: dict[str, Any]) -> str:
+    return str(row.get("base_url") or "").rstrip("/").lower()
+
+
+def _serialize_pm_connection(row: dict[str, Any] | None) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    safe = dict(row)
+    safe["config"] = _redact_integration_config(row.get("config") or {})
+    return _serialize(safe)
+
+
+async def _integration_secret(name: str) -> str:
+    value = await _credentials_manager().resolve(
+        name,
+        requester="pm-integration-gateway",
+        context="pm-provider",
+    )
+    if not value:
+        raise RuntimeError(f"credential {name!r} is unavailable or denied")
+    return value
+
+
+def _jwt_segment(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
+
+
+async def _integration_run_token_broker(
+    connection: ProviderConnection,
+    repository: str,
+    permissions: dict[str, str],
+) -> dict[str, object]:
+    """Mint a repository/permission-scoped GitHub App installation token.
+
+    The App private key is resolved only inside the credentials boundary.  The
+    resulting one-hour token is returned to the governed run and is never
+    persisted in AIAT evidence (the evidence scrubber stores issuance metadata
+    only).
+    """
+    config = connection.config or {}
+    app_id = str(config.get("github_app_id") or "")
+    installation_id = str(config.get("github_installation_id") or "")
+    private_key_ref = str(config.get("github_app_private_key_ref") or "")
+    if not app_id.isdigit() or not installation_id.isdigit() or not private_key_ref:
+        raise RuntimeError(
+            "GitHub App broker requires numeric github_app_id, "
+            "github_installation_id, and github_app_private_key_ref"
+        )
+    owner, separator, name = str(repository).partition("/")
+    allowed_repository_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-"
+    if (
+        not separator
+        or not owner
+        or not name
+        or "/" in name
+        or any(char not in allowed_repository_chars for char in owner + name)
+        or owner.startswith((".", "-"))
+        or name.startswith((".", "-"))
+    ):
+        raise ValueError("GitHub repository must be a safe owner/name value")
+    profile_permissions: dict[str, str] = {
+        "metadata": "read",
+        "issues": "write",
+    }
+    profile = connection.capability_profile.lower()
+    if profile in {"delivery", "checks"}:
+        profile_permissions.update({"contents": "write", "pull_requests": "write"})
+    if profile == "checks":
+        profile_permissions["checks"] = "write"
+    if profile not in {"pm", "delivery", "checks"}:
+        raise ValueError("GitHub capability_profile does not define a token permission profile")
+    if not permissions:
+        permissions = dict(profile_permissions)
+    for permission, requested in permissions.items():
+        if permission not in profile_permissions or requested not in {"read", "write"}:
+            raise ValueError(f"GitHub token permission {permission!r} is outside the connection profile")
+        maximum = profile_permissions[permission]
+        if maximum == "read" and requested == "write":
+            raise ValueError(f"GitHub token permission {permission!r} exceeds the connection profile")
+    private_key = await _integration_secret(private_key_ref)
+    try:
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import padding
+
+        key = serialization.load_pem_private_key(private_key.encode("utf-8"), password=None)
+        header = _jwt_segment(json.dumps({"alg": "RS256", "typ": "JWT"}, separators=(",", ":")).encode())
+        now = int(time.time())
+        claims = _jwt_segment(
+            json.dumps({"iat": now - 60, "exp": now + 540, "iss": int(app_id)}, separators=(",", ":")).encode()
+        )
+        signing_input = f"{header}.{claims}".encode("ascii")
+        signature = key.sign(signing_input, padding.PKCS1v15(), hashes.SHA256())
+        app_jwt = f"{header}.{claims}.{_jwt_segment(signature)}"
+    except (ImportError, ValueError, TypeError, AttributeError) as exc:
+        raise RuntimeError("GitHub App private key could not be loaded") from exc
+    api_base = str(config.get("github_api_base_url") or "https://api.github.com").rstrip("/")
+    parsed = httpx.URL(api_base)
+    allowed_hosts = {
+        str(value).strip().lower()
+        for value in config.get("allowed_hosts", [])
+        if str(value).strip()
+    }
+    if (
+        parsed.scheme != "https"
+        or not parsed.host
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or (allowed_hosts and str(parsed.host).lower() not in allowed_hosts)
+    ):
+        raise RuntimeError("github_api_base_url must be HTTPS")
+    url = f"{api_base}/app/installations/{installation_id}/access_tokens"
+    body = {"repositories": [name], "permissions": permissions}
+    async with httpx.AsyncClient(timeout=20.0, follow_redirects=False) as client:
+        response = await client.post(
+            url,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "Authorization": f"Bearer {app_jwt}",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            json=body,
+        )
+    if response.status_code >= 400:
+        raise RuntimeError(f"GitHub installation token exchange failed ({response.status_code})")
+    value = response.json()
+    if not isinstance(value, dict) or not value.get("token"):
+        raise RuntimeError("GitHub installation token exchange returned no token")
+    return {
+        "token": str(value["token"]),
+        "expires_at": value.get("expires_at"),
+        "repository": repository,
+        "permissions": permissions,
+    }
+
+
+def _integration_registry() -> ProviderRegistry:
+    registry = getattr(app.state, "pm_registry", None)
+    if registry is None:
+        registry = ProviderRegistry(
+            credential_resolver=_integration_secret,
+            run_credential_broker=_integration_run_token_broker,
+        )
+        app.state.pm_registry = registry
+    return registry
+
+
+def _provider_connection(row: dict[str, Any]) -> ProviderConnection:
+    return ProviderConnection(
+        id=row["id"],
+        provider_kind=str(row["provider_kind"]),
+        display_name=str(row["display_name"]),
+        base_url=str(row["base_url"]),
+        credential_ref=str(row["credential_ref"]),
+        capability_profile=str(row.get("capability_profile") or "pm"),
+        config=dict(row.get("config") or {}),
+        status=str(row.get("status") or "DISABLED"),
+        schema_version=int(row.get("schema_version") or 1),
+    )
+
+
+def _provider_for(row: dict[str, Any]) -> Any:
+    return _integration_registry().get(str(row["provider_kind"]), str(row["id"]))
+
+
+def _canonical_work_item(issue: dict[str, Any]) -> CanonicalWorkItem:
+    return CanonicalWorkItem(
+        id=issue["id"],
+        project_id=issue["project_id"],
+        title=str(issue.get("title") or "Untitled issue"),
+        description=issue.get("description"),
+        item_type=str(issue.get("issue_type") or "TASK"),
+        status=str(issue.get("status") or "backlog"),
+        priority=str(issue.get("priority") or "medium"),
+        sprint_id=issue.get("sprint_id"),
+        parent_id=issue.get("parent_issue_id"),
+        assigned_team=issue.get("assigned_team"),
+        assigned_agent=issue.get("assigned_agent"),
+        estimated_hours=float(issue["estimated_hours"]) if issue.get("estimated_hours") is not None else None,
+        actual_hours=float(issue["actual_hours"]) if issue.get("actual_hours") is not None else None,
+        story_points=issue.get("story_points"),
+        revision=int(issue.get("revision") or 1),
+        updated_at=issue.get("updated_at"),
+    )
+
+
+async def _enqueue_issue_projection(
+    storage: AgentStorage,
+    issue: dict[str, Any],
+    *,
+    exclude_connection_id: UUID | None = None,
+) -> list[dict[str, Any]]:
+    """Create idempotent outbox records for every eligible project binding."""
+    bindings = await storage.list_pm_bindings(project_id=issue["project_id"])
+    queued: list[dict[str, Any]] = []
+    item = _canonical_work_item(issue).model_dump(mode="json")
+    for binding in bindings:
+        if exclude_connection_id is not None and binding.get("connection_id") == exclude_connection_id:
+            continue
+        connection = await storage.get_pm_connection(binding["connection_id"])
+        if connection is None or not pm_binding_effective_policy(
+            str(binding.get("status") or "DISABLED"),
+            str(connection.get("status") or "DISABLED"),
+            str(binding.get("direction") or "outbound"),
+        )["outbound_projection"]:
+            continue
+        key = f"{binding['id']}:{issue['id']}:{issue.get('revision', 1)}:upsert"
+        queued.append(
+            await storage.enqueue_pm_outbox(
+                connection_id=binding["connection_id"],
+                aggregate_type="work_item",
+                aggregate_id=issue["id"],
+                canonical_revision=int(issue.get("revision") or 1),
+                operation="upsert_work_item",
+                idempotency_key=key,
+                payload={"binding_id": str(binding["id"]), "item": item},
+            )
+        )
+    return queued
+
+
+async def _enqueue_comment_projection(
+    storage: AgentStorage,
+    issue: dict[str, Any],
+    comment: dict[str, Any],
+    *,
+    exclude_connection_id: UUID | None = None,
+) -> list[dict[str, Any]]:
+    """Queue comments after the work-item mapping exists; delivery resolves it."""
+    bindings = await storage.list_pm_bindings(project_id=issue["project_id"])
+    queued: list[dict[str, Any]] = []
+    provider_body = str(comment.get("body") or "")
+    if str(comment.get("origin") or "aiat") == "aiat":
+        attribution = [f"AIAT actor: {comment.get('actor_id') or 'operator'}"]
+        if comment.get("run_id"):
+            attribution.append(f"Run: {comment['run_id']}")
+        if comment.get("evidence_id"):
+            attribution.append(f"Evidence: {comment['evidence_id']}")
+        provider_body = (
+            f"<!-- aiat:comment={comment['id']} -->\n"
+            + "\n".join(attribution)
+            + "\n\n"
+            + provider_body
+        )
+    for binding in bindings:
+        if exclude_connection_id is not None and binding.get("connection_id") == exclude_connection_id:
+            continue
+        connection = await storage.get_pm_connection(binding["connection_id"])
+        if connection is None or not pm_binding_effective_policy(
+            str(binding.get("status") or "DISABLED"),
+            str(connection.get("status") or "DISABLED"),
+            str(binding.get("direction") or "outbound"),
+        )["outbound_projection"]:
+            continue
+        key = f"{binding['id']}:{comment['id']}:comment"
+        queued.append(
+            await storage.enqueue_pm_outbox(
+                connection_id=binding["connection_id"],
+                aggregate_type="comment",
+                aggregate_id=issue["id"],
+                canonical_revision=int(issue.get("revision") or 1),
+                operation="project_comment",
+                idempotency_key=key,
+                payload={
+                    "binding_id": str(binding["id"]),
+                    "comment": {
+                        "id": str(comment["id"]),
+                        "body": provider_body,
+                        "actor_id": comment["actor_id"],
+                        "run_id": str(comment["run_id"]) if comment.get("run_id") else None,
+                        "approval_id": str(comment["approval_id"]) if comment.get("approval_id") else None,
+                        "evidence_id": comment.get("evidence_id"),
+                        "body_blob_ref": comment.get("body_blob_ref"),
+                    },
+                },
+            )
+        )
+    return queued
+
+
+async def _enqueue_link_projection(
+    storage: AgentStorage,
+    issue: dict[str, Any],
+    link: dict[str, Any],
+) -> list[dict[str, Any]]:
+    bindings = await storage.list_pm_bindings(project_id=issue["project_id"])
+    queued: list[dict[str, Any]] = []
+    for binding in bindings:
+        connection = await storage.get_pm_connection(binding["connection_id"])
+        if connection is None or not pm_binding_effective_policy(
+            str(binding.get("status") or "DISABLED"),
+            str(connection.get("status") or "DISABLED"),
+            str(binding.get("direction") or "outbound"),
+        )["outbound_projection"]:
+            continue
+        key = f"{binding['id']}:{link['id']}:link"
+        queued.append(
+            await storage.enqueue_pm_outbox(
+                connection_id=binding["connection_id"],
+                aggregate_type="link",
+                aggregate_id=issue["id"],
+                canonical_revision=int(issue.get("revision") or 1),
+                operation="project_link",
+                idempotency_key=key,
+                payload={
+                    "binding_id": str(binding["id"]),
+                    "link": {
+                        "id": str(link["id"]),
+                        "link_type": link["link_type"],
+                        "target_type": link["target_type"],
+                        "target_id": link["target_id"],
+                        "metadata": link.get("metadata") or {},
+                    },
+                },
+            )
+        )
+    return queued
+
+
+def _canonical_status_from_external(value: Any, current: str) -> str:
+    """Normalize common provider status vocabularies into AIAT's vocabulary."""
+    normalized = str(value or "").strip().lower().replace(" ", "_")
+    aliases = {
+        "open": "in_progress",
+        "reopened": "in_progress",
+        "todo": "backlog",
+        "new": "backlog",
+        "closed": "done",
+        "completed": "done",
+        "complete": "done",
+        "resolved": "done",
+        "cancelled": "cancelled",
+        "canceled": "cancelled",
+    }
+    return aliases.get(normalized, normalized or current)
+
+
+_AIAT_COMMENT_MARKER_RE = re.compile(
+    r"^\s*<!--\s*aiat:comment=(?P<comment_id>[0-9a-fA-F-]{36})\s*-->\s*"
+)
+
+
+def _aiat_comment_marker(value: str) -> str | None:
+    match = _AIAT_COMMENT_MARKER_RE.match(value)
+    return match.group("comment_id") if match else None
+
+
+def _provider_version_is_older(current: Any, incoming: Any) -> bool:
+    """Compare common provider version tokens without guessing across types."""
+    if current in (None, "") or incoming in (None, ""):
+        return False
+    left = str(current)
+    right = str(incoming)
+    if left == right:
+        return False
+    try:
+        return float(right) < float(left)
+    except ValueError:
+        pass
+    try:
+        from datetime import datetime as _datetime
+
+        left_dt = _datetime.fromisoformat(left.replace("Z", "+00:00"))
+        right_dt = _datetime.fromisoformat(right.replace("Z", "+00:00"))
+        return right_dt < left_dt
+    except ValueError:
+        # Opaque provider tokens have no safe ordering; only exact echoes can
+        # be treated as a no-op.
+        return False
+
+
+# ACTIVE inbound commands are intentionally narrower than the provider object
+# vocabulary.  A provider webhook is evidence by default; it becomes a
+# canonical command only when its field, actor, revision, and binding gates all
+# pass.  Keep this table provider-neutral so adapters cannot widen policy by
+# adding a new field to a payload.
+ACTIVE_INBOUND_COMMAND_POLICY: dict[str, dict[str, Any]] = {
+    "title": {
+        "mode": "approval_required",
+        "reason": "title changes require an AIAT approval proposal",
+    },
+    "description": {
+        "mode": "approval_required",
+        "reason": "description changes require an AIAT approval proposal",
+    },
+    "priority": {
+        "mode": "allowed",
+        "values": {"low", "medium", "high", "urgent", "critical", "normal"},
+        "rollback": "restore the prior priority through the governed canonical update path",
+    },
+    "status": {
+        "mode": "allowlist_except_destructive",
+        "values": {"backlog", "in_progress", "review", "blocked"},
+        "approval_values": {"done", "cancelled"},
+        "rollback": "restore the prior status through the governed canonical update path",
+    },
+    "assigned_team": {
+        "mode": "approval_required",
+        "reason": "reassignment requires an AIAT approval proposal",
+    },
+    "assigned_agent": {
+        "mode": "approval_required",
+        "reason": "reassignment requires an AIAT approval proposal",
+    },
+    "assignee": {
+        "mode": "approval_required",
+        "reason": "reassignment requires an AIAT approval proposal",
+    },
+    "comment": {
+        "mode": "evidence_only",
+        "command_mode": "structured_command_requires_approval",
+        "reason": "ordinary provider comments are evidence; structured commands require approval",
+    },
+}
+
+ACTIVE_INBOUND_RESERVED_FIELDS = {
+    "AIAT Object ID",
+    "AIAT Object Type",
+    "AIAT Revision",
+    "AIAT Managed",
+    "canonical_ownership",
+    "project_id",
+    "connection_id",
+    "binding_id",
+    "lifecycle_state",
+    "credential_ref",
+}
+_ACTIVE_SYNTHETIC_ACTOR_IDS = {
+    "aiat_agents",
+    "aiat-integration",
+    "aiat_integration",
+    "certification-actor",
+    "certification_actor",
+    "external-provider",
+}
+_AIAT_STRUCTURED_COMMAND_RE = re.compile(r"^\s*AIAT-COMMAND\s*:\s*(?P<body>\{.*\})\s*$", re.IGNORECASE | re.DOTALL)
+
+
+async def _active_actor_resolution(storage: Any, connection_row: dict[str, Any], command: Any) -> dict[str, Any] | None:
+    """Resolve only a durable immutable provider actor mapping for ACTIVE."""
+    actor_id = str(getattr(command.actor, "actor_id", "") or "").strip()
+    if not actor_id or actor_id.lower() in _ACTIVE_SYNTHETIC_ACTOR_IDS:
+        return None
+    actor = command.actor
+    if not bool(getattr(actor, "immutable_actor_id", False)):
+        resolver = getattr(_provider_for(connection_row), "resolve_external_actor", None)
+        if not callable(resolver):
+            return None
+        try:
+            resolved = await resolver(
+                _provider_connection(connection_row),
+                login=getattr(actor, "provider_login", None) or actor_id,
+                email=getattr(actor, "provider_email", None),
+            )
+        except Exception:
+            return None
+        actor_id = str(resolved.get("id") or "")
+        if not actor_id:
+            return None
+    tenant_key = str(connection_row.get("base_url") or "").rstrip("/").lower()
+    getter = getattr(storage, "get_pm_external_actor_mapping", None)
+    if not callable(getter):
+        return None
+    mapping = getter(
+        connection_id=command.connection_id,
+        external_actor_id=actor_id,
+        tenant_key=tenant_key,
+    )
+    if hasattr(mapping, "__await__"):
+        mapping = await mapping
+    if not isinstance(mapping, dict) or str(mapping.get("status") or "") != "TRUSTED":
+        return None
+    scopes = {str(item) for item in (mapping.get("authorized_scopes") or [])}
+    if "issue.priority" not in scopes:
+        return None
+    return {
+        "provider_actor_id": actor_id,
+        "provider_actor_role": getattr(command.actor, "role", None),
+        "aiat_identity": str(mapping.get("aiat_identity_id")),
+        "identity_type": "operator",
+        "role": "operator",
+        "actor_mapping_id": str(mapping.get("id")),
+        "authorized_scopes": sorted(scopes),
+    }
+
+
+def _structured_comment_command(body: str) -> dict[str, Any] | None:
+    match = _AIAT_STRUCTURED_COMMAND_RE.match(body)
+    if not match:
+        return None
+    try:
+        parsed = json.loads(match.group("body"))
+    except json.JSONDecodeError:
+        return {"invalid": True}
+    return parsed if isinstance(parsed, dict) else {"invalid": True}
+
+
+def _active_actor_evidence_payload(
+    *,
+    command: Any,
+    issue: dict[str, Any],
+    inbox: dict[str, Any],
+    resolution: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "provider_actor": {
+            "id": resolution.get("provider_actor_id"),
+            "role": resolution.get("provider_actor_role"),
+        },
+        "resolved_aiat_identity": resolution.get("aiat_identity"),
+        "actor_mapping_id": resolution.get("actor_mapping_id"),
+        "identity_type": resolution.get("identity_type"),
+        "role": resolution.get("role"),
+        "inbox_id": str(inbox.get("id")),
+        "event_type": inbox.get("event_type"),
+        "operation": command.operation,
+        "expected_canonical_revision": getattr(command, "expected_canonical_revision", None),
+        "mapping_revision": issue.get("revision"),
+        "payload_hash": inbox.get("payload_hash"),
+    }
+
+
+async def _record_active_actor_evidence(
+    storage: Any,
+    *,
+    command: Any,
+    issue: dict[str, Any],
+    inbox: dict[str, Any],
+    resolution: dict[str, Any],
+) -> None:
+    recorder = getattr(storage, "record_integration_evidence", None)
+    if not callable(recorder):
+        return
+    payload = _active_actor_evidence_payload(
+        command=command, issue=issue, inbox=inbox, resolution=resolution
+    )
+    saved = recorder(
+        connection_id=command.connection_id,
+        evidence_type="active_inbound_actor",
+        external_id=command.external_id,
+        project_id=issue.get("project_id"),
+        binding_id=command.binding_id,
+        payload=payload,
+        idempotency_key=f"active-actor:{command.idempotency_key}",
+    )
+    if hasattr(saved, "__await__"):
+        await saved
+async def _apply_normalized_command(
+    storage: AgentStorage,
+    command: Any,
+    inbox: dict[str, Any],
+) -> dict[str, Any]:
+    """Apply a verified provider command to canonical state with CAS protection.
+
+    Unknown external objects and stale revisions are recorded as conflicts and
+    never guessed into a project.  This is the critical boundary that keeps a
+    provider webhook from becoming an unscoped write API.
+    """
+    object_type = getattr(command.object_type, "value", str(command.object_type))
+    if object_type in {
+        ObjectType.PULL_REQUEST.value,
+        ObjectType.CHECK.value,
+        ObjectType.REPOSITORY.value,
+    }:
+        # Source-control objects are evidence, not PM work items.  Retaining
+        # them in the evidence ledger prevents a PR/check webhook from being
+        # misinterpreted as a canonical issue update while still making CI and
+        # review facts available to governance and release gates.
+        evidence_type = {
+            ObjectType.PULL_REQUEST.value: "pull_request_event",
+            ObjectType.CHECK.value: "check_event",
+            ObjectType.REPOSITORY.value: "repository_event",
+        }[object_type]
+        connection_row = await storage.get_pm_connection(command.connection_id)
+        configured_repository = str(
+            (connection_row or {}).get("config", {}).get("repository") or ""
+        )
+        incoming_repository = str(getattr(command, "external_repository", None) or "")
+        if connection_row is None or connection_row.get("status") == "DISABLED":
+            await storage.create_pm_conflict(
+                connection_id=command.connection_id,
+                binding_id=command.binding_id,
+                reason="connection_not_active",
+                object_type=object_type,
+                external_id=command.external_id,
+                external_snapshot={"repository": incoming_repository},
+            )
+            await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="connection is disabled")
+            return {"status": "conflict", "reason": "connection_not_active"}
+        if configured_repository and incoming_repository != configured_repository:
+            await storage.create_pm_conflict(
+                connection_id=command.connection_id,
+                binding_id=command.binding_id,
+                reason="out_of_scope_repository",
+                object_type=object_type,
+                external_id=command.external_id,
+                external_snapshot={"expected_repository": configured_repository, "incoming_repository": incoming_repository},
+            )
+            await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="external repository is outside the connection scope")
+            return {"status": "conflict", "reason": "out_of_scope_repository"}
+        recorder = getattr(storage, "record_integration_evidence", None)
+        if callable(recorder):
+            evidence_payload = _scrub_integration_evidence(dict(command.fields or {}))
+            evidence_payload["provider_version"] = command.expected_provider_version
+            evidence_payload["external_repository"] = getattr(command, "external_repository", None)
+            saved = recorder(
+                connection_id=command.connection_id,
+                evidence_type=evidence_type,
+                external_id=command.external_id,
+                repository=getattr(command, "external_repository", None),
+                binding_id=command.binding_id,
+                payload=evidence_payload,
+                idempotency_key=command.idempotency_key,
+            )
+            if hasattr(saved, "__await__"):
+                await saved
+        await storage.mark_pm_inbox_event(inbox["id"], status="PROCESSED")
+        return {"status": "evidence_recorded", "evidence_type": evidence_type, "external_id": command.external_id}
+    if object_type != ObjectType.WORK_ITEM.value:
+        await storage.create_pm_conflict(
+            connection_id=command.connection_id,
+            binding_id=command.binding_id,
+            reason="unsupported_object_type",
+            object_type=object_type,
+            external_id=command.external_id,
+            external_snapshot=command.fields,
+        )
+        await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="unsupported object type")
+        return {"status": "conflict", "reason": "unsupported_object_type"}
+
+    mapping = await storage.get_pm_mapping(
+        connection_id=command.connection_id,
+        object_type=object_type,
+        external_id=command.external_id,
+    )
+    if mapping is None:
+        # YouTrack webhook payloads commonly carry the readable key (AIAT-3),
+        # while outbound REST projections persist the stable numeric ID (3-23).
+        # Resolve by the recorded provider key without changing the canonical
+        # mapping's stable external_id.
+        mapping = await storage.get_pm_mapping(
+            connection_id=command.connection_id,
+            object_type=object_type,
+            external_key=command.external_id,
+        )
+    if mapping is None:
+        await storage.create_pm_conflict(
+            connection_id=command.connection_id,
+            binding_id=command.binding_id,
+            reason="unknown_mapping",
+            object_type=object_type,
+            external_id=command.external_id,
+            external_snapshot=command.fields,
+        )
+        await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="external object is not mapped")
+        return {"status": "conflict", "reason": "unknown_mapping", "external_id": command.external_id}
+    mapped_external_id = str(mapping.get("external_id") or command.external_id)
+
+    if _provider_version_is_older(mapping.get("provider_version"), command.expected_provider_version):
+        await storage.create_pm_conflict(
+            connection_id=command.connection_id,
+            binding_id=command.binding_id,
+            reason="stale_provider_version",
+            object_type=object_type,
+            aiat_object_id=mapping.get("aiat_object_id"),
+            external_id=command.external_id,
+            external_snapshot={"provider_version": command.expected_provider_version, "mapping_version": mapping.get("provider_version")},
+        )
+        await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="provider version is older than the mapped version")
+        return {"status": "conflict", "reason": "stale_provider_version"}
+
+    issue = await storage.get_issue(mapping["aiat_object_id"])
+    if issue is None:
+        await storage.create_pm_conflict(
+            connection_id=command.connection_id,
+            binding_id=command.binding_id,
+            reason="missing_canonical_object",
+            object_type=object_type,
+            aiat_object_id=mapping["aiat_object_id"],
+            external_id=command.external_id,
+            external_snapshot=command.fields,
+        )
+        await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="canonical object is missing")
+        return {"status": "conflict", "reason": "missing_canonical_object"}
+
+    bindings = await storage.list_pm_bindings(connection_id=command.connection_id)
+    binding = next(
+        (
+            item
+            for item in bindings
+            if item.get("project_id") == issue.get("project_id")
+            and item.get("direction") in {"inbound", "both"}
+            and item.get("status") in {"SHADOW", "READ_ONLY", "ACTIVE", "DRAINING"}
+        ),
+        None,
+    )
+    if binding is None:
+        await storage.create_pm_conflict(
+            connection_id=command.connection_id,
+            reason="out_of_scope",
+            object_type=object_type,
+            aiat_object_id=issue["id"],
+            external_id=command.external_id,
+            canonical_snapshot=issue,
+            external_snapshot=command.fields,
+        )
+        await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="mapping is not in an active inbound binding")
+        return {"status": "conflict", "reason": "out_of_scope"}
+    connection_row = await storage.get_pm_connection(command.connection_id)
+    if connection_row is None or connection_row.get("status") == "DISABLED":
+        await storage.create_pm_conflict(
+            connection_id=command.connection_id,
+            binding_id=binding["id"],
+            reason="connection_not_active",
+            object_type=object_type,
+            aiat_object_id=issue["id"],
+            external_id=command.external_id,
+            canonical_snapshot=issue,
+            external_snapshot=command.fields,
+        )
+        await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="connection is not active for inbound changes")
+        return {"status": "conflict", "reason": "connection_not_active"}
+    # A provider event is trusted only inside the binding's explicit project
+    # or repository scope.  Missing scope metadata is also rejected for the
+    # GitHub adapter because every GitHub issue event carries repository data.
+    provider_kind = str(connection_row.get("provider_kind") or "").lower()
+    expected_project = str(binding.get("external_project_id") or "")
+    incoming_project = str(getattr(command, "external_project_id", None) or "")
+    if expected_project and incoming_project and expected_project != incoming_project:
+        await storage.create_pm_conflict(
+            connection_id=command.connection_id,
+            binding_id=binding["id"],
+            reason="out_of_scope_project",
+            object_type=object_type,
+            aiat_object_id=issue["id"],
+            external_id=command.external_id,
+            canonical_snapshot=issue,
+            external_snapshot={"expected_project": expected_project, "incoming_project": incoming_project},
+        )
+        await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="external project is outside the binding scope")
+        return {"status": "conflict", "reason": "out_of_scope_project"}
+    configured_repository = str(
+        binding.get("external_repository")
+        or (connection_row.get("config") or {}).get("repository")
+        or ""
+    )
+    incoming_repository = str(getattr(command, "external_repository", None) or "")
+    if configured_repository and (
+        (incoming_repository and incoming_repository != configured_repository)
+        or (provider_kind == "github" and not incoming_repository)
+    ):
+        await storage.create_pm_conflict(
+            connection_id=command.connection_id,
+            binding_id=binding["id"],
+            reason="out_of_scope_repository",
+            object_type=object_type,
+            aiat_object_id=issue["id"],
+            external_id=command.external_id,
+            canonical_snapshot=issue,
+            external_snapshot={"expected_repository": configured_repository, "incoming_repository": incoming_repository},
+        )
+        await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="external repository is outside the binding scope")
+        return {"status": "conflict", "reason": "out_of_scope_repository"}
+    # The webhook edge has already authenticated the delivery.  Once the
+    # event is also inside this binding's project scope, retain monotonic
+    # issue/comment coverage evidence for the later ACTIVE gate.
+    evidence_recorder = getattr(storage, "record_pm_binding_evidence", None)
+    event_name = str(inbox.get("event_type") or "").lower()
+    operation_name = str(command.operation or "").lower()
+    webhook_event = (
+        "comment"
+        if "comment" in event_name or operation_name == "comment"
+        else "issue"
+        if "issue" in event_name or operation_name in {"update", "created", "create"}
+        else None
+    )
+    if callable(evidence_recorder) and webhook_event:
+        recorded = evidence_recorder(
+            binding["id"],
+            webhook_event=webhook_event,
+            webhook_verified=True,
+        )
+        if hasattr(recorded, "__await__"):
+            await recorded
+
+    operation = operation_name or "update"
+    fields = dict(command.fields or {})
+    content_hash = str(getattr(command, "content_hash", None) or "") or hashlib.sha256(
+        json.dumps(fields, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
+    marker_object_id = str(fields.get("_aiat_marker_object_id") or "")
+    marker_revision = fields.get("_aiat_marker_revision")
+    try:
+        marker_revision_matches = marker_revision is not None and int(marker_revision) == int(issue.get("revision") or 1)
+    except (TypeError, ValueError):
+        marker_revision_matches = False
+    controlled_fields_match = all(
+        fields.get(name) == issue.get(name)
+        for name in ("title", "description", "status", "priority")
+        if name in fields
+    )
+    is_projection_echo = (
+        marker_object_id == str(issue["id"])
+        or (marker_revision_matches and controlled_fields_match)
+    )
+    if is_projection_echo and operation not in {"comment", "created"}:
+        # This is the marker written by AIAT's own projection.  Treat it as an
+        # acknowledged echo before the READ_ONLY inbound-mutation gate.  The
+        # provider event remains authenticated evidence, but it must not become
+        # a policy conflict or copy provider formatting into canonical state.
+        await storage.upsert_pm_mapping(
+            connection_id=command.connection_id,
+            object_type=object_type,
+            aiat_object_id=issue["id"],
+            external_id=mapped_external_id,
+            provider_version=command.expected_provider_version or mapping.get("provider_version"),
+            imported_revision=int(issue.get("revision") or 1),
+            content_hash=content_hash,
+        )
+        await storage.mark_pm_inbox_event(inbox["id"], status="PROCESSED", error=None)
+        return {"status": "echo", "issue_id": str(issue["id"])}
+
+    # Comment projections carry an immutable AIAT comment marker.  Resolve
+    # these echoes before ACTIVE actor/revision gates so an integration bot can
+    # acknowledge its own delivery without ever becoming a human command.
+    if operation == "comment" or "comment" in operation:
+        marker_body = str(fields.get("comment") or fields.get("body") or fields.get("description") or "").strip()
+        marker_comment_id = _aiat_comment_marker(marker_body)
+        if marker_comment_id:
+            existing_comments = await storage.list_work_item_comments(issue["id"])
+            if any(str(item.get("id")) == marker_comment_id for item in existing_comments):
+                await storage.upsert_pm_mapping(
+                    connection_id=command.connection_id,
+                    object_type=object_type,
+                    aiat_object_id=issue["id"],
+                    external_id=mapped_external_id,
+                    provider_version=command.expected_provider_version or mapping.get("provider_version"),
+                    imported_revision=int(issue.get("revision") or 1),
+                    content_hash=content_hash,
+                )
+                await storage.mark_pm_inbox_event(inbox["id"], status="PROCESSED", error=None)
+                return {
+                    "status": "echo",
+                    "operation": "comment",
+                    "issue_id": str(issue["id"]),
+                    "comment_id": marker_comment_id,
+                }
+
+    effective_policy = pm_binding_effective_policy(
+        str(binding.get("status") or "DISABLED"),
+        str(connection_row.get("status") or "DISABLED"),
+        str(binding.get("direction") or "outbound"),
+    )
+    # A canary is a narrow, durable exception to READ_ONLY.  It does not
+    # alter either lifecycle state and cannot widen a binding's normal policy.
+    canary_getter = getattr(storage, "get_armed_pm_inbound_canary_plan", None)
+    canary_plan = canary_getter(binding["id"]) if callable(canary_getter) else None
+    if hasattr(canary_plan, "__await__"):
+        canary_plan = await canary_plan
+    if not isinstance(canary_plan, dict):
+        canary_plan = None
+    inbound_mutation_allowed = bool(effective_policy["inbound_canonical_mutation"] or canary_plan)
+    actor_id = getattr(command.actor, "actor_id", None)
+    allowed_actors = set((connection_row.get("config") or {}).get("allowed_external_actors") or [])
+    actor_resolution: dict[str, Any] | None = None
+    actor_evidence_payload: dict[str, Any] | None = None
+    if inbound_mutation_allowed:
+        actor_resolution = await _active_actor_resolution(storage, connection_row, command)
+        if actor_resolution is None:
+            await storage.create_pm_conflict(
+                connection_id=command.connection_id,
+                binding_id=binding["id"],
+                reason="unauthorized_external_actor",
+                object_type=object_type,
+                aiat_object_id=issue["id"],
+                external_id=command.external_id,
+                canonical_snapshot=issue,
+                external_snapshot={
+                    "provider_actor": {"actor_id": actor_id, "role": getattr(command.actor, "role", None)},
+                    "resolved_aiat_identity": None,
+                    "fields": command.fields,
+                },
+            )
+            await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="ACTIVE requires an authorized mapped human actor")
+            return {"status": "conflict", "reason": "unauthorized_external_actor"}
+        actor_evidence_payload = _active_actor_evidence_payload(
+            command=command, issue=issue, inbox=inbox, resolution=actor_resolution
+        )
+    elif allowed_actors and (
+        not actor_id or str(actor_id) not in {str(item) for item in allowed_actors}
+    ):
+        await storage.create_pm_conflict(
+            connection_id=command.connection_id,
+            binding_id=binding["id"],
+            reason="unauthorized_external_actor",
+            object_type=object_type,
+            aiat_object_id=issue["id"],
+            external_id=command.external_id,
+            canonical_snapshot=issue,
+            external_snapshot={"actor_id": actor_id, "fields": command.fields},
+        )
+        await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="external actor is not allowlisted")
+        return {"status": "conflict", "reason": "unauthorized_external_actor"}
+
+    # SHADOW and READ_ONLY deliveries are authenticated, scoped evidence but
+    # are not permitted to mutate canonical state.  Record the event coverage
+    # above, then retain an explicit policy conflict instead of pretending the
+    # inbound write was applied.
+    if not inbound_mutation_allowed:
+        # READ_ONLY/SHADOW still advance the provider-side observation on the
+        # existing mapping.  This acknowledges the authenticated external
+        # version for reconciliation without importing fields or changing the
+        # canonical revision.  Keep the outbound content hash untouched so a
+        # later promotion can still detect provider divergence explicitly.
+        await storage.upsert_pm_mapping(
+            connection_id=command.connection_id,
+            object_type=object_type,
+            aiat_object_id=issue["id"],
+            external_id=mapped_external_id,
+            provider_version=command.expected_provider_version or mapping.get("provider_version"),
+            imported_revision=int(issue.get("revision") or 1),
+        )
+        await storage.create_pm_conflict(
+            connection_id=command.connection_id,
+            binding_id=binding["id"],
+            reason="out_of_scope",
+            object_type=object_type,
+            aiat_object_id=issue["id"],
+            external_id=command.external_id,
+            canonical_snapshot=issue,
+            external_snapshot={"fields": command.fields, "binding_status": binding.get("status"), "connection_status": connection_row.get("status")},
+        )
+        await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="mapping is not in an active inbound binding")
+        return {"status": "conflict", "reason": "out_of_scope"}
+
+    # ACTIVE is a command boundary, not a provider-to-database mirror.  The
+    # expected revision is explicit when a structured provider command carries
+    # it; otherwise use the latest durable canonical observation on the
+    # mapping.  A missing or stale observation fails closed before any write.
+    mapped_revisions = [
+        value
+        for value in (mapping.get("imported_revision"), mapping.get("exported_revision"))
+        if value is not None
+    ]
+    resolved_expected_revision = getattr(command, "expected_canonical_revision", None)
+    if resolved_expected_revision is None and mapped_revisions:
+        try:
+            resolved_expected_revision = max(int(value) for value in mapped_revisions)
+        except (TypeError, ValueError):
+            resolved_expected_revision = None
+    current_revision = int(issue.get("revision") or 1)
+    if canary_plan is not None:
+        # The persisted plan, not a provider payload, supplies the one exact
+        # optimistic-concurrency precondition for this bounded exception.
+        resolved_expected_revision = int(canary_plan.get("expected_canonical_revision") or -1)
+    if resolved_expected_revision is None:
+        await storage.create_pm_conflict(
+            connection_id=command.connection_id,
+            binding_id=binding["id"],
+            reason="missing_expected_revision",
+            object_type=object_type,
+            aiat_object_id=issue["id"],
+            external_id=command.external_id,
+            canonical_snapshot=issue,
+            external_snapshot={"provider_fields": fields, "mapping": mapping},
+        )
+        await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="ACTIVE command requires an expected canonical revision")
+        return {"status": "conflict", "reason": "missing_expected_revision"}
+    if int(resolved_expected_revision) != current_revision:
+        await storage.create_pm_conflict(
+            connection_id=command.connection_id,
+            binding_id=binding["id"],
+            reason="stale_revision",
+            object_type=object_type,
+            aiat_object_id=issue["id"],
+            external_id=command.external_id,
+            canonical_snapshot=issue,
+            external_snapshot={
+                "expected_canonical_revision": int(resolved_expected_revision),
+                "current_canonical_revision": current_revision,
+                "provider_fields": fields,
+            },
+        )
+        await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="provider command revision is stale")
+        return {"status": "conflict", "reason": "stale_revision"}
+
+    # Reject fields outside the stable command vocabulary, including attempts
+    # to alter AIAT identity, ownership, governance, or lifecycle metadata.
+    incoming_field_names = {
+        str(key)
+        for key in fields
+        if not str(key).startswith("_") and str(key) != "comment"
+    }
+    if canary_plan is not None:
+        canary_target = str(canary_plan.get("target_priority") or "").strip().lower().replace(" ", "_")
+        canary_scope_ok = (
+            str(canary_plan.get("connection_id")) == str(command.connection_id)
+            and str(canary_plan.get("binding_id")) == str(binding["id"])
+            and str(canary_plan.get("canonical_issue_id")) == str(issue["id"])
+            # YouTrack Webhook Triggers commonly sends the readable key
+            # (AIAT-3), while the durable mapping and canary plan bind the
+            # stable provider ID (3-23).  Mapping resolution above has already
+            # proven that these refer to the same provider object.
+            and str(canary_plan.get("external_issue_id")) == str(mapped_external_id)
+            and str(canary_plan.get("mapping_id")) == str(mapping.get("id"))
+            and actor_resolution is not None
+            and str(canary_plan.get("actor_mapping_id")) == str(actor_resolution.get("actor_mapping_id"))
+            and int(canary_plan.get("expected_canonical_revision") or -1) == int(issue.get("revision") or 1)
+            and operation not in {"comment", "deleted", "delete", "removed", "archived"}
+            and incoming_field_names == {"priority"}
+            and str(fields.get("priority") or "").strip().lower().replace(" ", "_") == canary_target
+        )
+        if not canary_scope_ok:
+            await storage.create_pm_conflict(
+                connection_id=command.connection_id, binding_id=binding["id"], reason="canary_scope_denied",
+                object_type=object_type, aiat_object_id=issue["id"], external_id=command.external_id,
+                canonical_snapshot=issue, external_snapshot={"fields": fields, "canary_plan_id": str(canary_plan.get("id"))},
+            )
+            await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="inbound command is outside the armed canary scope")
+            return {"status": "conflict", "reason": "canary_scope_denied"}
+    unsupported_fields = sorted(
+        name for name in incoming_field_names
+        if name not in ACTIVE_INBOUND_COMMAND_POLICY
+    )
+    if unsupported_fields:
+        reason = "reserved_field_mutation" if any(name in ACTIVE_INBOUND_RESERVED_FIELDS for name in unsupported_fields) else "unsupported_inbound_field"
+        await storage.create_pm_conflict(
+            connection_id=command.connection_id,
+            binding_id=binding["id"],
+            reason=reason,
+            object_type=object_type,
+            aiat_object_id=issue["id"],
+            external_id=command.external_id,
+            canonical_snapshot=issue,
+            external_snapshot={"fields": fields, "unsupported_fields": unsupported_fields},
+        )
+        await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="provider field is not in the ACTIVE inbound allowlist")
+        return {"status": "conflict", "reason": reason, "fields": unsupported_fields}
+
+    # Provider payloads often include the full issue on every webhook.  Only
+    # changed values need policy evaluation; unchanged approval-gated fields
+    # cannot turn an otherwise allowed priority/status event into a proposal.
+    changed_input_fields: dict[str, Any] = {}
+    for key in incoming_field_names:
+        value = fields.get(key)
+        if key == "status":
+            value = _canonical_status_from_external(value, str(issue.get("status") or "backlog"))
+        elif key == "priority":
+            value = str(value).strip().lower().replace(" ", "_")
+        current_value = issue.get(key)
+        if str(current_value if current_value is not None else "") != str(value if value is not None else ""):
+            changed_input_fields[key] = fields.get(key)
+
+    for key in changed_input_fields:
+        policy = ACTIVE_INBOUND_COMMAND_POLICY[key]
+        mode = str(policy.get("mode") or "")
+        normalized_value = changed_input_fields[key]
+        if key == "status":
+            normalized_value = _canonical_status_from_external(normalized_value, str(issue.get("status") or "backlog"))
+        elif key == "priority":
+            normalized_value = str(normalized_value).strip().lower().replace(" ", "_")
+        if mode == "approval_required" or (
+            mode == "allowlist_except_destructive" and normalized_value in set(policy.get("approval_values") or set())
+        ):
+            await storage.create_pm_conflict(
+                connection_id=command.connection_id,
+                binding_id=binding["id"],
+                reason="approval_required",
+                object_type=object_type,
+                aiat_object_id=issue["id"],
+                external_id=command.external_id,
+                canonical_snapshot=issue,
+                external_snapshot={
+                    "fields": fields,
+                    "changed_fields": changed_input_fields,
+                    "provider_actor": actor_resolution,
+                    "expected_canonical_revision": int(resolved_expected_revision),
+                    "approval_scope": key,
+                },
+            )
+            await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error=f"ACTIVE field {key} requires an AIAT approval")
+            return {"status": "conflict", "reason": "approval_required", "field": key}
+        if mode == "allowed" and normalized_value not in set(policy.get("values") or set()):
+            await storage.create_pm_conflict(
+                connection_id=command.connection_id,
+                binding_id=binding["id"],
+                reason="incompatible_field_value",
+                object_type=object_type,
+                aiat_object_id=issue["id"],
+                external_id=command.external_id,
+                canonical_snapshot=issue,
+                external_snapshot={"field": key, "value": normalized_value},
+            )
+            await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="field value is outside the ACTIVE allowlist")
+            return {"status": "conflict", "reason": "incompatible_field_value", "field": key}
+
+    if operation == "comment" or "comment" in operation:
+        comment_body = str(fields.get("comment") or fields.get("body") or fields.get("description") or "").strip()
+        marker_comment_id = _aiat_comment_marker(comment_body)
+        if marker_comment_id:
+            existing_comments = await storage.list_work_item_comments(issue["id"])
+            if any(str(item.get("id")) == marker_comment_id for item in existing_comments):
+                await storage.upsert_pm_mapping(
+                    connection_id=command.connection_id,
+                    object_type=object_type,
+                    aiat_object_id=issue["id"],
+                    external_id=mapped_external_id,
+                    provider_version=command.expected_provider_version or mapping.get("provider_version"),
+                    imported_revision=current_revision,
+                    content_hash=content_hash,
+                )
+                await storage.mark_pm_inbox_event(inbox["id"], status="PROCESSED", error=None)
+                return {
+                    "status": "echo",
+                    "operation": "comment",
+                    "issue_id": str(issue["id"]),
+                    "comment_id": marker_comment_id,
+                }
+        structured = _structured_comment_command(comment_body)
+        if structured is not None:
+            await storage.create_pm_conflict(
+                connection_id=command.connection_id,
+                binding_id=binding["id"],
+                reason="approval_required" if not structured.get("invalid") else "invalid_inbound_command",
+                object_type=object_type,
+                aiat_object_id=issue["id"],
+                external_id=command.external_id,
+                canonical_snapshot=issue,
+                external_snapshot={
+                    "comment": comment_body,
+                    "structured_command": structured,
+                    "provider_actor": actor_resolution,
+                    "expected_canonical_revision": int(resolved_expected_revision),
+                },
+            )
+            await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="structured provider comment requires an AIAT approval")
+            return {"status": "conflict", "reason": "approval_required" if not structured.get("invalid") else "invalid_inbound_command", "operation": "comment"}
+        await _record_active_actor_evidence(
+            storage, command=command, issue=issue, inbox=inbox,
+            resolution=actor_resolution or {},
+        )
+        await storage.mark_pm_inbox_event(inbox["id"], status="PROCESSED", error=None)
+        return {"status": "evidence_only", "operation": "comment", "issue_id": str(issue["id"])}
+
+    if operation in {"deleted", "delete", "removed", "archived"}:
+        await storage.create_pm_conflict(
+            connection_id=command.connection_id,
+            binding_id=binding["id"],
+            reason="external_delete",
+            object_type=object_type,
+            aiat_object_id=issue["id"],
+            external_id=command.external_id,
+            canonical_snapshot=issue,
+            external_snapshot=fields,
+        )
+        await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="external deletion requires operator decision")
+        return {"status": "conflict", "reason": "external_delete"}
+    values: dict[str, Any] = {}
+    for key in ("title", "description", "priority", "assigned_team", "assigned_agent"):
+        if key in fields and fields[key] is not None:
+            values[key] = fields[key]
+    if "priority" in values:
+        priority = str(values["priority"]).strip().lower().replace(" ", "_")
+        if priority not in {"low", "medium", "high", "urgent", "critical", "normal"}:
+            await storage.create_pm_conflict(
+                connection_id=command.connection_id,
+                binding_id=binding["id"],
+                reason="incompatible_field_value",
+                object_type=object_type,
+                aiat_object_id=issue["id"],
+                external_id=command.external_id,
+                canonical_snapshot=issue,
+                external_snapshot={"priority": fields.get("priority")},
+            )
+            await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="unsupported external priority")
+            return {"status": "conflict", "reason": "incompatible_field_value"}
+        values["priority"] = priority
+    if fields.get("status") is not None:
+        status = _canonical_status_from_external(fields["status"], str(issue.get("status") or "backlog"))
+        if status not in {"backlog", "in_progress", "review", "blocked", "done", "cancelled"}:
+            await storage.create_pm_conflict(
+                connection_id=command.connection_id,
+                binding_id=binding["id"],
+                reason="unsupported_transition",
+                object_type=object_type,
+                aiat_object_id=issue["id"],
+                external_id=command.external_id,
+                canonical_snapshot=issue,
+                external_snapshot={"status": fields.get("status")},
+            )
+            await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="unsupported external status")
+            return {"status": "conflict", "reason": "unsupported_transition"}
+        values["status"] = status
+    changed_values = {
+        key: value
+        for key, value in values.items()
+        if str(issue.get(key) if issue.get(key) is not None else "") != str(value if value is not None else "")
+    }
+    if not changed_values:
+        await storage.upsert_pm_mapping(
+            connection_id=command.connection_id,
+            object_type=object_type,
+            aiat_object_id=issue["id"],
+            external_id=mapped_external_id,
+            provider_version=command.expected_provider_version or mapping.get("provider_version"),
+            imported_revision=int(issue.get("revision") or 1),
+            content_hash=content_hash,
+        )
+        await storage.mark_pm_inbox_event(inbox["id"], status="PROCESSED")
+        return {"status": "noop", "issue_id": str(issue["id"])}
+    values = changed_values
+
+    atomic_evidence_records: list[dict[str, Any]] | None = None
+    projection_evidence: dict[str, Any] | None = None
+    if isinstance(storage, AgentStorage) and actor_evidence_payload is not None and canary_plan is None:
+        command_key = str(command.idempotency_key)
+        command_evidence_payload = {
+            "inbox_id": str(inbox.get("id")),
+            "provider_delivery_id": inbox.get("provider_delivery_id"),
+            "event_type": inbox.get("event_type"),
+            "payload_hash": inbox.get("payload_hash"),
+            "external_issue_id": command.external_id,
+            "canonical_issue_id": str(issue["id"]),
+            "changed_fields": sorted(values),
+            "canonical_before": {
+                "priority": issue.get("priority"),
+                "revision": current_revision,
+            },
+            "canonical_after": {
+                "priority": values.get("priority", issue.get("priority")),
+                "revision": current_revision + 1,
+            },
+            "expected_canonical_revision": int(resolved_expected_revision),
+            "provider_version": command.expected_provider_version,
+            "provider_actor_id": actor_resolution.get("provider_actor_id"),
+            "actor_mapping_id": actor_resolution.get("actor_mapping_id"),
+            "correlation_id": command.correlation_id,
+            "causation_id": command.causation_id,
+        }
+        atomic_evidence_records = [
+            {
+                "connection_id": command.connection_id,
+                "binding_id": binding["id"],
+                "project_id": issue.get("project_id"),
+                "evidence_type": "active_inbound_actor",
+                "external_id": command.external_id,
+                "payload": actor_evidence_payload,
+                "idempotency_key": f"active-actor:{command_key}",
+            },
+            {
+                "connection_id": command.connection_id,
+                "binding_id": binding["id"],
+                "project_id": issue.get("project_id"),
+                "evidence_type": "active_inbound_command",
+                "external_id": command.external_id,
+                "payload": command_evidence_payload,
+                "idempotency_key": f"active-command:{command_key}",
+            },
+        ]
+        projection_evidence = {
+            "connection_id": command.connection_id,
+            "binding_id": binding["id"],
+            "external_id": command.external_id,
+            "command_key": command_key,
+            "inbox_id": str(inbox.get("id")),
+            "excluded_connection_id": str(command.connection_id),
+            "correlation_id": command.correlation_id,
+            "causation_id": command.causation_id,
+            "loop_prevention_policy": "originating_connection_suppressed",
+        }
+
+    if canary_plan is not None:
+        if set(values) != {"priority"}:
+            await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="canary accepts priority only")
+            return {"status": "conflict", "reason": "canary_scope_denied"}
+        atomic_apply = getattr(storage, "apply_pm_inbound_canary_priority", None)
+        if callable(atomic_apply) and isinstance(storage, AgentStorage):
+            try:
+                refreshed, queued = await atomic_apply(
+                    plan_id=canary_plan["id"], issue_id=issue["id"], expected_revision=current_revision,
+                    target_priority=str(values["priority"]), connection_id=command.connection_id,
+                    inbox_id=inbox["id"], command_key=command.idempotency_key,
+                )
+            except ValueError as exc:
+                await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error=str(exc)[:500])
+                return {"status": "conflict", "reason": "canary_atomic_apply_failed"}
+            await storage.mark_pm_inbox_event(inbox["id"], status="PROCESSED")
+            return {"status": "applied", "issue_id": str(issue["id"]), "revision": refreshed.get("revision"), "projections": len(queued), "canary": "SUCCEEDED"}
+        claimer = getattr(storage, "claim_pm_inbound_canary_command", None)
+        claimed = await claimer(canary_plan["id"], inbox_id=inbox["id"]) if callable(claimer) else None
+        if claimed is None:
+            await storage.create_pm_conflict(
+                connection_id=command.connection_id, binding_id=binding["id"], reason="canary_command_limit",
+                object_type=object_type, aiat_object_id=issue["id"], external_id=command.external_id,
+                canonical_snapshot=issue, external_snapshot={"canary_plan_id": str(canary_plan.get("id")), "fields": fields},
+            )
+            await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error="armed canary has already accepted its single command")
+            return {"status": "conflict", "reason": "canary_command_limit"}
+
+    atomic_result: dict[str, Any] | None = None
+    try:
+        if isinstance(storage, AgentStorage):
+            updated = await storage.update_issue_with_pm_projections(
+                issue["id"],
+                expected_revision=int(issue.get("revision") or 1),
+                exclude_connection_id=command.connection_id,
+                evidence_records=atomic_evidence_records,
+                projection_evidence=projection_evidence,
+                **values,
+            )
+            if atomic_evidence_records:
+                refreshed, queued, atomic_result = updated
+            else:
+                refreshed, queued = updated
+        else:
+            await storage.update_issue(
+                issue["id"],
+                expected_revision=int(issue.get("revision") or 1),
+                **values,
+            )
+            refreshed = await storage.get_issue(issue["id"])
+            assert refreshed is not None
+            queued = []
+    except ValueError as exc:
+        if canary_plan is not None:
+            completer = getattr(storage, "complete_pm_inbound_canary_plan", None)
+            if callable(completer):
+                await completer(canary_plan["id"], success=False, result={"error": str(exc), "inbox_id": str(inbox["id"])})
+        await storage.create_pm_conflict(
+            connection_id=command.connection_id,
+            binding_id=command.binding_id,
+            reason="stale_revision",
+            object_type=object_type,
+            aiat_object_id=issue["id"],
+            external_id=command.external_id,
+            canonical_snapshot=issue,
+            external_snapshot=fields,
+        )
+        await storage.mark_pm_inbox_event(inbox["id"], status="CONFLICT", error=str(exc)[:500])
+        return {"status": "conflict", "reason": "stale_revision"}
+
+    await storage.upsert_pm_mapping(
+        connection_id=command.connection_id,
+        object_type=object_type,
+        aiat_object_id=issue["id"],
+        external_id=mapped_external_id,
+        provider_version=command.expected_provider_version or mapping.get("provider_version"),
+        imported_revision=int(refreshed.get("revision") or 1),
+        content_hash=content_hash,
+    )
+    if not isinstance(storage, AgentStorage):
+        queued = await _enqueue_issue_projection(
+            storage,
+            refreshed,
+            exclude_connection_id=command.connection_id,
+        )
+    inbox_result = {
+        "status": "applied",
+        "issue_id": str(issue["id"]),
+        "revision": refreshed.get("revision"),
+        "projections": len(queued),
+    }
+    if atomic_result:
+        inbox_result["atomic_transaction_id"] = atomic_result.get("transaction_id")
+        inbox_result["evidence_ids"] = atomic_result.get("evidence_ids")
+    if atomic_result:
+        await storage.mark_pm_inbox_event(inbox["id"], status="PROCESSED", result=inbox_result)
+    else:
+        await storage.mark_pm_inbox_event(inbox["id"], status="PROCESSED")
+    if canary_plan is not None:
+        completer = getattr(storage, "complete_pm_inbound_canary_plan", None)
+        if callable(completer):
+            await completer(canary_plan["id"], success=True, result={
+                "inbox_id": str(inbox["id"]), "canonical_issue_id": str(issue["id"]),
+                "canonical_revision": refreshed.get("revision"), "outbox_count": len(queued),
+            })
+    return {
+        **inbox_result,
+    }
+
+
+@app.post("/integrations/connections", status_code=201)
+async def create_integration_connection(req: PMConnectionCreateRequest, request: Request) -> dict[str, Any]:
+    _integration_operator(request)
+    storage = _storage()
+    try:
+        _integration_registry().get(req.provider_kind, "validation")
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    try:
+        result = await storage.create_pm_connection(**req.model_dump())
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return _serialize_pm_connection(result) or {}
+
+
+@app.get("/integrations/connections")
+async def list_integration_connections(request: Request, status: str | None = None) -> list[dict[str, Any]]:
+    _integration_operator(request)
+    return [
+        _serialize_pm_connection(item) or {}
+        for item in await _storage().list_pm_connections(status=status)
+    ]
+
+
+@app.post("/integrations/connections/{connection_id}/external-actor-mappings", status_code=201)
+async def create_external_actor_mapping(
+    connection_id: UUID,
+    req: PMExternalActorMappingCreateRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Approve one immutable provider actor from authenticated inbox evidence."""
+    _integration_operator(request)
+    approver = _authenticated_principal(request)
+    storage = _storage()
+    row = await storage.get_pm_connection(connection_id)
+    if row is None:
+        raise HTTPException(404, "integration connection not found")
+    if str(row.get("provider_kind") or "").lower() != "youtrack":
+        raise HTTPException(422, "immutable actor resolution is currently implemented for YouTrack only")
+    observations: list[tuple[dict[str, Any], dict[str, str]]] = []
+    for event_id in req.inbox_event_ids:
+        inbox = await storage.get_pm_inbox_event(event_id)
+        if inbox is None or inbox.get("connection_id") != connection_id or not bool(inbox.get("verified")):
+            raise HTTPException(422, "every mapping evidence inbox row must be authenticated and belong to this connection")
+        observation = _youtrack_actor_observation(dict(inbox.get("payload") or {}))
+        if observation is None:
+            raise HTTPException(422, "authenticated webhook evidence contains no provider actor observation")
+        observations.append((inbox, observation))
+    first = observations[0][1]
+    if any(
+        item[1].get("login") != first.get("login") or item[1].get("email", "").lower() != first.get("email", "").lower()
+        for item in observations[1:]
+    ):
+        raise HTTPException(422, "mapping evidence refers to more than one provider actor")
+    resolver = getattr(_provider_for(row), "resolve_external_actor", None)
+    if not callable(resolver):
+        raise HTTPException(409, "provider does not support immutable actor resolution")
+    try:
+        resolved = await resolver(
+            _provider_connection(row), login=first.get("login") or None, email=first.get("email") or None
+        )
+    except Exception as exc:
+        raise HTTPException(409, f"immutable provider actor resolution failed: {exc}") from exc
+    external_actor_id = str(resolved.get("id") or "")
+    if not external_actor_id:
+        raise HTTPException(409, "provider resolution did not return an immutable actor ID")
+    # API-key authentication currently authenticates the operator principal;
+    # no caller-supplied human identity header is accepted.
+    aiat_identity_id = f"aiat:{approver}"
+    snapshot = {
+        "immutable_provider_actor_id": external_actor_id,
+        "provider_login": resolved.get("login"),
+        "provider_email": resolved.get("email"),
+        "resolution_method": "authenticated_youtrack_user_lookup_correlated_to_verified_inbox",
+    }
+    evidence_refs = {
+        "inbox_ids": [str(item[0]["id"]) for item in observations],
+        "payload_hashes": [str(item[0].get("payload_hash") or "") for item in observations],
+        "reason": req.reason,
+    }
+    try:
+        mapping, audit = await storage.create_pm_external_actor_mapping(
+            connection_id=connection_id,
+            provider_kind=str(row.get("provider_kind")),
+            tenant_key=_pm_tenant_key(row),
+            external_actor_id=external_actor_id,
+            actor_snapshot=snapshot,
+            aiat_identity_id=aiat_identity_id,
+            authorized_scopes=list(req.authorized_scopes),
+            created_by=approver,
+            approved_by=approver,
+            evidence_refs=evidence_refs,
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {
+        "mapping_id": str(mapping["id"]), "connection_id": str(connection_id),
+        "immutable_provider_actor_id": external_actor_id, "provider_tenant": _pm_tenant_key(row),
+        "aiat_identity_id": aiat_identity_id, "status": mapping["status"],
+        "authorized_scopes": mapping["authorized_scopes"], "created_by": mapping["created_by"],
+        "approved_by": mapping["approved_by"], "created_at": mapping["created_at"],
+        "approved_at": mapping["approved_at"], "audit_id": str(audit["id"]),
+    }
+
+
+@app.post("/integrations/connections/{connection_id}/external-actor-mappings/{mapping_id}/revoke")
+async def revoke_external_actor_mapping(connection_id: UUID, mapping_id: UUID, request: Request, reason: str = Query(min_length=1, max_length=500)) -> dict[str, Any]:
+    _integration_operator(request)
+    mapping, audit = await _storage().revoke_pm_external_actor_mapping(
+        mapping_id, connection_id=connection_id, actor=_authenticated_principal(request), reason=reason
+    )
+    if mapping is None:
+        raise HTTPException(404, "external actor mapping not found for this connection")
+    return {"mapping_id": str(mapping_id), "status": mapping["status"], "audit_id": str(audit["id"])}
+
+
+@app.post("/integrations/connections/{connection_id}/inbound-canaries", status_code=201)
+async def create_inbound_priority_canary_plan(
+    connection_id: UUID,
+    req: PMInboundCanaryPlanCreateRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Persist a short-lived, priority-only canary without widening the binding."""
+    _integration_operator(request)
+    actor = _authenticated_principal(request)
+    storage = _storage()
+    connection_row = await storage.get_pm_connection(connection_id)
+    if connection_row is None:
+        raise HTTPException(404, "integration connection not found")
+    bindings = await storage.list_pm_bindings(connection_id=connection_id)
+    binding = next((item for item in bindings if item.get("id") == req.binding_id), None)
+    if binding is None:
+        raise HTTPException(404, "binding not found for connection")
+    if str(connection_row.get("status")) != "SHADOW" or str(binding.get("status")) != "READ_ONLY":
+        raise HTTPException(409, "bounded canary requires connection SHADOW and binding READ_ONLY")
+    if str(binding.get("direction") or "").lower() not in {"inbound", "both"}:
+        raise HTTPException(409, "bounded canary requires inbound binding direction")
+    issue = await storage.get_issue(req.canonical_issue_id)
+    if issue is None or issue.get("project_id") != binding.get("project_id"):
+        raise HTTPException(422, "canonical issue is not inside the requested binding project")
+    mapping = await storage.get_pm_mapping(
+        connection_id=connection_id, object_type="work_item", aiat_object_id=req.canonical_issue_id
+    )
+    if mapping is None or mapping.get("id") != req.mapping_id or str(mapping.get("external_id")) != req.external_issue_id:
+        raise HTTPException(422, "canonical issue, external issue, and mapping must match exactly")
+    actor_mapping = await storage.get_pm_external_actor_mapping_by_id(req.actor_mapping_id)
+    if (
+        actor_mapping is None or actor_mapping.get("connection_id") != connection_id
+        or str(actor_mapping.get("status")) != "TRUSTED"
+        or "issue.priority" not in {str(item) for item in (actor_mapping.get("authorized_scopes") or [])}
+    ):
+        raise HTTPException(422, "canary requires a trusted priority-authorized actor mapping for this connection")
+    try:
+        provider_item = await _provider_for(connection_row).read_work_item(
+            _provider_connection(connection_row), req.external_issue_id
+        )
+    except Exception as exc:
+        raise HTTPException(502, f"provider canary inspection failed: {exc}") from exc
+    canonical_priority = str(issue.get("priority") or "medium").strip().lower().replace(" ", "_")
+    provider_priority = str(getattr(provider_item, "priority", "") or "").strip().lower().replace(" ", "_")
+    if not provider_priority:
+        raise HTTPException(409, "provider inspection did not return a priority value")
+    # READ_ONLY deliberately retains provider edits as evidence, so the two
+    # values can differ before a canary.  Model both observations explicitly;
+    # require the selected value to change *both* sides rather than silently
+    # re-baselining or performing a canonical write during planning.
+    choices = ["high", "medium", "urgent", "critical", "normal", "low"]
+    target_priority = str(req.target_priority or next(
+        value for value in choices if value not in {canonical_priority, provider_priority}
+    ))
+    if target_priority in {canonical_priority, provider_priority}:
+        raise HTTPException(422, "canary target priority must change both the provider and canonical values")
+    doctor = await doctor_integration_connection(connection_id, request)
+    recent_runs = await storage.list_pm_reconciliation_runs(connection_id=connection_id, limit=1)
+    latest_reconciliation = recent_runs[0] if recent_runs else None
+    gates = {
+        "doctor_ready": bool(doctor.get("ready")),
+        "connection_status": connection_row.get("status"),
+        "binding_status": binding.get("status"),
+        "connection_revision": connection_row.get("revision"),
+        "binding_revision": binding.get("revision"),
+        "canonical_revision": issue.get("revision"),
+        "mapping_id": str(mapping.get("id")),
+        "reconciliation_run_id": str(latest_reconciliation.get("id")) if latest_reconciliation else None,
+        "reconciliation_status": latest_reconciliation.get("status") if latest_reconciliation else None,
+    }
+    blockers = [] if gates["doctor_ready"] else ["integration doctor is not ready"]
+    if latest_reconciliation is None:
+        blockers.append("a fresh reconciliation run is required")
+    elif any(int((latest_reconciliation.get("counts") or {}).get(name) or 0) != 0 for name in ("drift", "conflicts")):
+        blockers.append("latest reconciliation has drift or conflicts")
+    if blockers:
+        raise HTTPException(409, {"code": "canary_preconditions_blocked", "blockers": blockers})
+    now = datetime.now(tz=UTC)
+    plan_id = uuid4()
+    plan = PMInboundCanaryPlan(
+        plan_id=plan_id,
+        connection_id=connection_id, binding_id=req.binding_id, project_id=issue["project_id"],
+        canonical_issue_id=req.canonical_issue_id, external_issue_id=req.external_issue_id,
+        mapping_id=req.mapping_id, actor_mapping_id=req.actor_mapping_id,
+        expected_connection_revision=int(connection_row.get("revision") or 1),
+        expected_binding_revision=int(binding.get("revision") or 1),
+        expected_canonical_revision=int(issue.get("revision") or 1),
+        current_priority=canonical_priority, target_priority=target_priority,
+        operations=[{
+            "operation": "accept_one_inbound_priority_command", "binding_id": str(req.binding_id),
+            "canonical_issue_id": str(req.canonical_issue_id), "external_issue_id": req.external_issue_id,
+            "actor_mapping_id": str(req.actor_mapping_id), "field": "priority",
+            "canonical_from": canonical_priority, "provider_from": provider_priority,
+            "to": target_priority, "max_command_count": 1,
+            "expected_canonical_revision": int(issue.get("revision") or 1),
+        }],
+        gate_results={**gates, "provider_priority": provider_priority, "canonical_priority": canonical_priority,
+                      "pre_canary_priority_divergence": provider_priority != canonical_priority},
+        evidence_refs={"mapping_id": str(req.mapping_id), "actor_mapping_id": str(req.actor_mapping_id),
+                       "provider_version": getattr(provider_item, "provider_version", None),
+                       "doctor_connection_id": str(connection_id),
+                       "reconciliation_run_id": str(latest_reconciliation.get("id")) if latest_reconciliation else None},
+        rollback_operations=[
+            {"operation": "disarm_inbound_canary", "plan_id": str(plan_id)},
+            {"operation": "governed_binding_transition", "binding_id": str(req.binding_id), "desired_status": "READ_ONLY"},
+        ],
+        created_by=actor, created_at=now, expires_at=now + timedelta(seconds=req.ttl_seconds),
+    )
+    digest = plan.digest()
+    stored = await storage.create_pm_inbound_canary_plan(plan, digest=digest)
+    return {
+        "plan": plan.model_dump(mode="json"), "plan_id": str(plan.plan_id), "digest": digest,
+        "status": stored["status"], "created_at": stored["created_at"], "expires_at": stored["expires_at"],
+        "permitted_action": f"On {req.external_issue_id}, the mapped human may change provider priority from {provider_priority} to {target_priority} once after explicit approval and arming; canonical priority is expected to move from {canonical_priority} to {target_priority}.",
+        "rollback_operations": plan.rollback_operations,
+    }
+
+
+@app.get("/integrations/inbound-canaries/{plan_id}")
+async def get_inbound_canary_plan(plan_id: UUID, request: Request) -> dict[str, Any]:
+    _integration_operator(request)
+    row = await _storage().get_pm_inbound_canary_plan(plan_id)
+    if row is None:
+        raise HTTPException(404, "inbound canary plan not found")
+    immutable = PMInboundCanaryPlan(
+        plan_id=row["id"], connection_id=row["connection_id"], binding_id=row["binding_id"],
+        project_id=row["project_id"], canonical_issue_id=row["canonical_issue_id"],
+        external_issue_id=row["external_issue_id"], mapping_id=row["mapping_id"],
+        actor_mapping_id=row["actor_mapping_id"], expected_connection_status=row["expected_connection_status"],
+        expected_binding_status=row["expected_binding_status"],
+        expected_connection_revision=row["expected_connection_revision"], expected_binding_revision=row["expected_binding_revision"],
+        expected_canonical_revision=row["expected_canonical_revision"], current_priority=row["current_priority"],
+        target_priority=row["target_priority"], max_command_count=row["max_command_count"],
+        operations=row["operations"], gate_results=row["gate_results"], evidence_refs=row["evidence_refs"],
+        rollback_operations=row["rollback_operations"], created_by=row["created_by"], created_at=row["created_at"],
+        expires_at=row["expires_at"],
+    )
+    digest = immutable.digest()
+    return _serialize({
+        "plan": immutable.model_dump(mode="json"), "digest": row["digest"], "digest_valid": digest == row["digest"],
+        "status": row["status"], "accepted_command_count": row["accepted_command_count"],
+        "approved_by": row.get("approved_by"), "approved_at": row.get("approved_at"),
+        "armed_by": row.get("armed_by"), "armed_at": row.get("armed_at"),
+        "expired_by": row.get("expired_by"), "expired_at": row.get("expired_at"),
+        "completed_at": row.get("completed_at"), "result": row.get("result"), "error": row.get("error"),
+        "updated_at": row.get("updated_at"),
+    })
+
+
+@app.post("/integrations/inbound-canaries/{plan_id}/approve")
+async def approve_inbound_canary_plan(plan_id: UUID, req: PMInboundCanaryPlanActionRequest, request: Request) -> dict[str, Any]:
+    """Operator-only, exact-digest approval; approval alone does not arm it."""
+    _integration_operator(request)
+    if not req.confirm:
+        raise HTTPException(422, "explicit confirmation is required")
+    try:
+        row = await _storage().approve_pm_inbound_canary_plan(
+            plan_id, digest=req.digest, actor=_authenticated_principal(request)
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return _serialize(row)
+
+
+@app.post("/integrations/inbound-canaries/{plan_id}/expire")
+async def expire_inbound_canary_plan(plan_id: UUID, req: PMInboundCanaryPlanActionRequest, request: Request) -> dict[str, Any]:
+    """Operator-only expiry recording; immutable plan content is retained."""
+    _integration_operator(request)
+    if not req.confirm:
+        raise HTTPException(422, "explicit confirmation is required")
+    try:
+        row = await _storage().expire_pm_inbound_canary_plan(
+            plan_id, digest=req.digest, actor=_authenticated_principal(request)
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return _serialize(row)
+
+
+@app.post("/integrations/inbound-canaries/{plan_id}/arm")
+async def arm_inbound_canary_plan(plan_id: UUID, req: PMInboundCanaryPlanActionRequest, request: Request) -> dict[str, Any]:
+    """Arm a pre-approved exact plan only after current readiness rechecks."""
+    _integration_operator(request)
+    if not req.confirm:
+        raise HTTPException(422, "explicit confirmation is required")
+    storage = _storage()
+    plan = await storage.get_pm_inbound_canary_plan(plan_id)
+    if plan is None:
+        raise HTTPException(404, "inbound canary plan not found")
+    if str(plan.get("digest")) != req.digest:
+        raise HTTPException(409, "canary plan digest mismatch")
+    connection = await storage.get_pm_connection(plan["connection_id"])
+    bindings = await storage.list_pm_bindings(connection_id=plan["connection_id"])
+    binding = next((item for item in bindings if item.get("id") == plan["binding_id"]), None)
+    issue = await storage.get_issue(plan["canonical_issue_id"])
+    actor_mapping = await storage.get_pm_external_actor_mapping_by_id(plan["actor_mapping_id"])
+    if connection is None or binding is None or issue is None or actor_mapping is None or (
+        str(connection.get("status")) != str(plan.get("expected_connection_status"))
+        or str(binding.get("status")) != str(plan.get("expected_binding_status"))
+        or int(connection.get("revision") or 1) != int(plan.get("expected_connection_revision") or -1)
+        or int(binding.get("revision") or 1) != int(plan.get("expected_binding_revision") or -1)
+        or int(issue.get("revision") or 1) != int(plan.get("expected_canonical_revision") or -1)
+    ):
+        raise HTTPException(409, "canary plan is stale")
+    if (
+        actor_mapping.get("connection_id") != plan["connection_id"]
+        or str(actor_mapping.get("status")) != "TRUSTED"
+        or "issue.priority" not in {str(item) for item in (actor_mapping.get("authorized_scopes") or [])}
+        or str(issue.get("priority") or "").strip().lower().replace(" ", "_") != str(plan.get("current_priority") or "")
+    ):
+        raise HTTPException(409, "canary plan actor mapping or canonical priority is stale")
+    try:
+        provider_item = await _provider_for(connection).read_work_item(
+            _provider_connection(connection), str(plan["external_issue_id"])
+        )
+    except Exception as exc:
+        raise HTTPException(502, f"provider canary verification failed: {exc}") from exc
+    provider_priority = str(getattr(provider_item, "priority", "") or "").strip().lower().replace(" ", "_")
+    planned_provider_priority = str((plan.get("gate_results") or {}).get("provider_priority") or "")
+    if provider_priority != planned_provider_priority:
+        raise HTTPException(409, "canary plan provider priority is stale")
+    doctor = await doctor_integration_connection(plan["connection_id"], request)
+    if not doctor.get("ready"):
+        raise HTTPException(409, "integration doctor blocks canary arming")
+    try:
+        row = await storage.arm_pm_inbound_canary_plan(plan_id, digest=req.digest, actor=_authenticated_principal(request))
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return _serialize(row)
+
+
+@app.post("/integrations/inbound-canaries/{plan_id}/audit-evidence")
+async def record_inbound_canary_audit_evidence(plan_id: UUID, req: PMInboundCanaryPlanActionRequest, request: Request) -> dict[str, Any]:
+    """Persist idempotent operator evidence for an already governed action."""
+    _integration_operator(request)
+    storage = _storage()
+    plan = await storage.get_pm_inbound_canary_plan(plan_id)
+    if plan is None or str(plan.get("digest")) != req.digest:
+        raise HTTPException(409, "canary plan is missing or digest-mismatched")
+    evidence: dict[str, Any] = {}
+    governed_actions = [
+        ("approval", "approved_by", "approved_at"),
+        ("arming", "armed_by", "armed_at"),
+    ]
+    if str(plan.get("status") or "") == "EXPIRED":
+        governed_actions.append(("expiry", "expired_by", "expired_at"))
+    for action, actor_key, timestamp_key in governed_actions:
+        if plan.get(actor_key) and plan.get(timestamp_key):
+            row = await storage.record_integration_evidence(
+                connection_id=plan["connection_id"], binding_id=plan["binding_id"], project_id=plan["project_id"],
+                evidence_type=f"pm_inbound_canary_{action}", external_id=str(plan_id),
+                payload={"plan_id": str(plan_id), "digest": req.digest, "actor": plan[actor_key], "occurred_at": plan[timestamp_key].isoformat()},
+                idempotency_key=f"pm-inbound-canary:{plan_id}:{action}:{req.digest}",
+                trace_id=current_trace_id(),
+            )
+            evidence[action] = str(row["id"])
+    return {"plan_id": str(plan_id), "evidence": evidence}
+
+
+@app.post("/integrations/inbound-canaries/{plan_id}/disarm")
+async def disarm_inbound_canary_plan(plan_id: UUID, req: PMInboundCanaryPlanActionRequest, request: Request) -> dict[str, Any]:
+    _integration_operator(request)
+    if not req.confirm:
+        raise HTTPException(422, "explicit confirmation is required")
+    try:
+        row = await _storage().disarm_pm_inbound_canary_plan(
+            plan_id, digest=req.digest, actor=_authenticated_principal(request),
+            reason=req.reason or "operator_disarm",
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return _serialize(row)
+
+
+@app.post("/integrations/inbound-canaries/{plan_id}/replay-verified-event")
+async def replay_verified_inbound_canary_event(
+    plan_id: UUID, req: PMInboundCanaryReplayRequest, request: Request
+) -> dict[str, Any]:
+    """Replay one persisted, provider-verified event through the canary gate.
+
+    This is an operator-authenticated recovery boundary for a real delivery
+    that was durably verified but rejected before command application.  It
+    never accepts a caller-supplied webhook body and never calls the provider
+    write API.  The original inbox row and conflict remain forensic records.
+    """
+    _integration_operator(request)
+    if not req.confirm:
+        raise HTTPException(422, "explicit confirmation is required")
+    storage = _storage()
+    plan = await storage.get_pm_inbound_canary_plan(plan_id)
+    if plan is None or str(plan.get("digest")) != req.digest:
+        raise HTTPException(409, "canary plan is missing or digest-mismatched")
+    now = datetime.now(tz=UTC)
+    if (
+        str(plan.get("status")) != "ARMED"
+        or int(plan.get("accepted_command_count") or 0) != 0
+        or int(plan.get("max_command_count") or 0) != 1
+        or plan.get("expires_at") <= now
+    ):
+        raise HTTPException(409, "canary is not an unexpired, unused armed plan")
+    inbox = await storage.get_pm_inbox_event(req.inbox_id)
+    if inbox is None or inbox.get("connection_id") != plan.get("connection_id"):
+        raise HTTPException(404, "verified inbox event was not found for this canary connection")
+    if not bool(inbox.get("verified")) or str(inbox.get("status") or "") != "CONFLICT":
+        raise HTTPException(409, "only a verified terminal-conflict inbox event may be replayed")
+    armed_at = plan.get("armed_at")
+    if armed_at is not None and inbox.get("received_at") is not None and inbox["received_at"] < armed_at:
+        raise HTTPException(409, "inbox event predates canary arming")
+    if str(inbox.get("event_type") or "").lower() != "issueupdated":
+        raise HTTPException(409, "replay is limited to the persisted issueUpdated canary event")
+
+    connection = await storage.get_pm_connection(plan["connection_id"])
+    if connection is None:
+        raise HTTPException(409, "canary connection is unavailable")
+    provider = _provider_for(connection)
+    normalized = provider.normalize_webhook(
+        ExternalEvent(
+            connection_id=plan["connection_id"],
+            provider_delivery_id=str(inbox["provider_delivery_id"]),
+            event_type=str(inbox["event_type"]),
+            payload=dict(inbox.get("payload") or {}),
+            verified=True,
+        )
+    )
+    if normalized is None:
+        raise HTTPException(409, "persisted verified event does not normalize to a command")
+    replay_evidence = await storage.record_integration_evidence(
+        connection_id=plan["connection_id"],
+        binding_id=plan["binding_id"],
+        project_id=plan["project_id"],
+        evidence_type="pm_inbound_canary_replay",
+        external_id=str(inbox["id"]),
+        payload={
+            "plan_id": str(plan_id),
+            "inbox_id": str(inbox["id"]),
+            "provider_delivery_id": str(inbox["provider_delivery_id"]),
+            "payload_hash": str(inbox.get("payload_hash") or ""),
+            "original_status": str(inbox.get("status") or ""),
+            "original_result": dict(inbox.get("result") or {}),
+            "normalized_external_id": normalized.external_id,
+            "reason": req.reason,
+        },
+        idempotency_key=f"pm-inbound-canary:replay:{plan_id}:{inbox['id']}:{req.digest}",
+        trace_id=current_trace_id(),
+    )
+    applied = await _apply_normalized_command(storage, normalized, inbox)
+    final_status = "CONFLICT" if applied.get("status") == "conflict" else "PROCESSED"
+    applied_result = {**applied, "replay_evidence_id": str(replay_evidence["id"])}
+    await storage.mark_pm_inbox_event(
+        inbox["id"],
+        status=final_status,
+        normalized_type=str(getattr(normalized.object_type, "value", normalized.object_type)),
+        result=applied_result,
+        error=None if final_status == "PROCESSED" else str(applied.get("reason") or "replay conflict"),
+    )
+    return {
+        "status": "accepted" if final_status == "PROCESSED" else "conflict",
+        "plan_id": str(plan_id),
+        "inbox_id": str(inbox["id"]),
+        "replay_evidence_id": str(replay_evidence["id"]),
+        "result": applied_result,
+    }
+
+
+@app.get("/integrations/connections/{connection_id}/health")
+async def integration_connection_health(connection_id: UUID, request: Request) -> dict[str, Any]:
+    _integration_operator(request)
+    storage = _storage()
+    row = await storage.get_pm_connection(connection_id)
+    if row is None:
+        raise HTTPException(404, "integration connection not found")
+    if str(row.get("status") or "DISABLED") == "DISABLED":
+        raise HTTPException(409, "integration connection is disabled")
+    try:
+        value = await _provider_for(row).health(_provider_connection(row))
+    except Exception as exc:
+        if isinstance(storage, AgentStorage):
+            await storage.update_pm_connection(
+                connection_id,
+                last_health_at=datetime.now(tz=UTC),
+                last_health_status="FAILED",
+                last_health_error=str(exc)[:500],
+            )
+        return {"ok": False, "connection_id": str(connection_id), "error": str(exc)[:500]}
+    if isinstance(storage, AgentStorage):
+        await storage.update_pm_connection(
+            connection_id,
+            last_health_at=datetime.now(tz=UTC),
+            last_health_status="OK",
+            last_health_error=None,
+        )
+    return {"ok": True, "connection_id": str(connection_id), **value}
+
+
+@app.get("/integrations/connections/{connection_id}/capabilities")
+async def integration_connection_capabilities(connection_id: UUID, request: Request) -> dict[str, Any]:
+    _integration_operator(request)
+    storage = _storage()
+    row = await storage.get_pm_connection(connection_id)
+    if row is None:
+        raise HTTPException(404, "integration connection not found")
+    try:
+        capabilities = await _provider_for(row).capabilities(_provider_connection(row))
+    except Exception as exc:
+        raise HTTPException(502, f"provider capabilities unavailable: {exc}") from exc
+    return _serialize(capabilities.model_dump(mode="json"))
+
+
+@app.get("/integrations/connections/{connection_id}/doctor")
+async def doctor_integration_connection(connection_id: UUID, request: Request) -> dict[str, Any]:
+    """Run non-mutating credential, scope, capability, and mapping checks."""
+    _integration_operator(request)
+    storage = _storage()
+    row = await storage.get_pm_connection(connection_id)
+    if row is None:
+        raise HTTPException(404, "integration connection not found")
+    provider = _provider_for(row)
+    connection = _provider_connection(row)
+    checks: list[dict[str, Any]] = []
+
+    async def check(name: str, operation: Any) -> None:
+        try:
+            value = await operation()
+            checks.append({"name": name, "ok": True, "detail": value})
+        except Exception as exc:
+            checks.append({"name": name, "ok": False, "error": str(exc)[:500]})
+
+    await check("health_and_credentials", lambda: provider.health(connection))
+    await check("capabilities", lambda: provider.capabilities(connection))
+    await check("configuration", lambda: provider.verify_configuration(connection))
+    if connection.provider_kind.lower() == "youtrack":
+        least_privilege_check = getattr(provider, "verify_least_privilege", None)
+        if not callable(least_privilege_check):
+            checks.append(
+                {
+                    "name": "least_privilege",
+                    "ok": False,
+                    "error": "YouTrack adapter does not implement least-privilege certification",
+                }
+            )
+        else:
+            try:
+                permission_report = await least_privilege_check(connection)
+                permission_errors = [
+                    *(str(item) for item in permission_report.get("missing", [])),
+                    *(f"forbidden permission: {item}" for item in permission_report.get("forbidden", [])),
+                ]
+                checks.append(
+                    {
+                        "name": "least_privilege",
+                        "ok": bool(permission_report.get("ok")),
+                        "detail": permission_report,
+                        "error": "; ".join(permission_errors) if permission_errors else None,
+                    }
+                )
+            except Exception as exc:
+                checks.append({"name": "least_privilege", "ok": False, "error": str(exc)[:500]})
+    await check("provider_scope_discovery", lambda: provider.discover(connection))
+    config = dict(row.get("config") or {})
+    bindings = await storage.list_pm_bindings(connection_id=connection_id)
+    if not bindings:
+        checks.append({"name": "project_or_repository_binding", "ok": False, "error": "no project binding configured"})
+    else:
+        checks.append({"name": "project_or_repository_binding", "ok": True, "detail": len(bindings)})
+        lifecycle_blockers: list[str] = []
+        for binding in bindings:
+            # Older lightweight fixtures may omit lifecycle columns; live
+            # rows created after migration 0025 always contain them.
+            if "mapping_profile" not in binding and "provisioning_state" not in binding:
+                continue
+            profile = str(binding.get("mapping_profile") or DEDICATED_PROJECT_MAPPING_PROFILE)
+            if profile in {"default", DEDICATED_PROJECT_MAPPING_PROFILE} and not binding.get("external_project_id"):
+                lifecycle_blockers.append(f"binding {binding.get('id')} has no dedicated provider project selector")
+            lifecycle_blockers.extend(str(item) for item in (binding.get("activation_blockers") or []) if item)
+            if str(binding.get("status") or "DISABLED") == "ACTIVE":
+                for field, label in (
+                    ("webhook_verified_at", "authenticated webhook"),
+                    ("projection_verified_at", "projection"),
+                    ("reconciliation_verified_at", "reconciliation"),
+                ):
+                    if not binding.get(field):
+                        lifecycle_blockers.append(f"binding {binding.get('id')} lacks {label} evidence")
+        checks.append(
+            {
+                "name": "project_binding_lifecycle",
+                "ok": not lifecycle_blockers,
+                "detail": "dedicated provider project and activation evidence are enforced",
+                "error": "; ".join(lifecycle_blockers) if lifecycle_blockers else None,
+            }
+        )
+    active_bindings = [
+        binding for binding in bindings
+        if str(binding.get("status") or "DISABLED").upper() == "ACTIVE"
+        and str(binding.get("direction") or "outbound").lower() in {"inbound", "both"}
+    ]
+    durable_actor_mapping_count = 0
+    counter = getattr(storage, "count_trusted_pm_external_actor_mappings", None)
+    if callable(counter):
+        counted = counter(connection_id)
+        if hasattr(counted, "__await__"):
+            counted = await counted
+        if isinstance(counted, int):
+            durable_actor_mapping_count = counted
+    active_policy_blockers: list[str] = []
+    if active_bindings and durable_actor_mapping_count <= 0:
+        active_policy_blockers.append(
+            "ACTIVE inbound bindings require a trusted durable external actor mapping"
+        )
+    checks.append(
+        {
+            "name": "active_inbound_command_policy",
+            "ok": not active_policy_blockers,
+            "detail": {
+                "allowlist": ACTIVE_INBOUND_COMMAND_POLICY,
+                "reserved_fields": sorted(ACTIVE_INBOUND_RESERVED_FIELDS),
+                "actor_mapping_count": durable_actor_mapping_count,
+                "activation_checked": bool(active_bindings),
+            },
+            "error": "; ".join(active_policy_blockers) if active_policy_blockers else None,
+        }
+    )
+    if str(row.get("provider_kind")).lower() != "fake" and not (
+        config.get("webhook_secret_ref") or config.get("webhook_secret_refs")
+    ):
+        checks.append({"name": "webhook_secret_reference", "ok": False, "error": "webhook_secret_ref is required"})
+    else:
+        checks.append({"name": "webhook_secret_reference", "ok": True, "detail": "configured"})
+    if str(row.get("provider_kind")).lower() == "github" and connection.capability_profile.lower() in {"delivery", "checks"}:
+        broker_fields = {
+            "github_app_id": config.get("github_app_id"),
+            "github_installation_id": config.get("github_installation_id"),
+            "github_app_private_key_ref": config.get("github_app_private_key_ref"),
+        }
+        missing_broker_fields = [name for name, value in broker_fields.items() if not value]
+        checks.append(
+            {
+                "name": "github_installation_token_broker",
+                "ok": not missing_broker_fields,
+                "error": f"missing broker configuration: {', '.join(missing_broker_fields)}" if missing_broker_fields else None,
+                "detail": "server-side App JWT broker configured" if not missing_broker_fields else None,
+            }
+        )
+    blockers = [item.get("error") or item["name"] for item in checks if not item.get("ok")]
+    return {
+        "connection_id": str(connection_id),
+        "provider_kind": connection.provider_kind,
+        "ready": not blockers,
+        "blockers": blockers,
+        "checks": checks,
+    }
+
+
+def _lifecycle_plan_from_row(row: dict[str, Any]) -> PMLifecycleTransitionPlan:
+    """Rehydrate the immutable plan payload stored in Postgres."""
+    payload = {
+        "plan_id": row["id"],
+        "plan_kind": row["plan_kind"],
+        "schema_version": row["schema_version"],
+        "target_type": row["target_type"],
+        "target_id": row["target_id"],
+        "connection_id": row["connection_id"],
+        "binding_id": row.get("binding_id"),
+        "expected_connection_status": row.get("expected_connection_status"),
+        "expected_binding_status": row.get("expected_binding_status"),
+        "expected_connection_revision": row.get("expected_connection_revision"),
+        "expected_binding_revision": row.get("expected_binding_revision"),
+        "desired_connection_status": row.get("desired_connection_status"),
+        "desired_binding_status": row.get("desired_binding_status"),
+        "observed_versions": row.get("observed_versions") or {},
+        "operations": row.get("operations") or [],
+        "gate_results": row.get("gate_results") or {},
+        "evidence_refs": row.get("evidence_refs") or {},
+        "blockers": row.get("blockers") or [],
+        "rollback_operations": row.get("rollback_operations") or [],
+        "created_by": row["created_by"],
+        "created_at": row["created_at"],
+        "expires_at": row["expires_at"],
+        "status": row.get("status") or LifecyclePlanStatus.PLANNED.value,
+    }
+    return PMLifecycleTransitionPlan.model_validate(payload)
+
+
+def _serialize_lifecycle_plan(row: dict[str, Any]) -> dict[str, Any]:
+    plan = _lifecycle_plan_from_row(row)
+    computed_digest = plan.digest()
+    return {
+        "plan": plan.model_dump(mode="json"),
+        "plan_digest": computed_digest,
+        "persisted_digest": row.get("digest"),
+        "digest_valid": computed_digest == str(row.get("digest") or ""),
+        "status": row.get("status"),
+        "approval_actor": row.get("approval_actor"),
+        "approved_at": row.get("approved_at"),
+        "approval_reason": row.get("approval_reason"),
+        "applied_actor": row.get("applied_actor"),
+        "applied_at": row.get("applied_at"),
+        "application_result": row.get("application_result"),
+        "error": row.get("error"),
+        "created_at": row.get("created_at"),
+        "expires_at": row.get("expires_at"),
+    }
+
+
+def _lifecycle_safety_transition(
+    target_type: str,
+    *,
+    desired_connection_status: str | None = None,
+    desired_binding_status: str | None = None,
+) -> bool:
+    """Return whether readiness evidence may be bypassed for a safe shutdown."""
+    if target_type != "pm_connection":
+        return False
+    return str(desired_connection_status or "").upper() in {"DISABLED", "DRAINING"}
+
+
+async def _lifecycle_gate_snapshot(
+    storage: AgentStorage,
+    *,
+    connection_id: UUID,
+    binding: dict[str, Any] | None,
+    doctor: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    """Collect apply-time gates without changing lifecycle state."""
+    latest_runs = await storage.list_pm_reconciliation_runs(connection_id=connection_id, limit=1)
+    latest_run = latest_runs[0] if latest_runs else None
+    counts = dict((latest_run or {}).get("counts") or {})
+    open_conflicts = await storage.list_pm_conflicts(connection_id=connection_id, status="OPEN", limit=1000)
+    pending = await storage.list_pm_outbox(connection_id=connection_id, status="PENDING", limit=1000)
+    processing = await storage.list_pm_outbox(connection_id=connection_id, status="PROCESSING", limit=1000)
+    failed = await storage.list_pm_outbox(connection_id=connection_id, status="FAILED", limit=1000)
+    dead_letter_counter = getattr(storage, "get_pm_outbox_dead_letter_counts", None)
+    dead_letter_counts: dict[str, int] | None = None
+    if callable(dead_letter_counter):
+        count_result = dead_letter_counter(connection_id=connection_id)
+        if inspect.isawaitable(count_result):
+            count_result = await count_result
+        if isinstance(count_result, dict):
+            dead_letter_counts = {
+                "active": int(count_result.get("active") or 0),
+                "historical": int(count_result.get("historical") or 0),
+                "total": int(count_result.get("total") or 0),
+            }
+    if dead_letter_counts is None:
+        # Lightweight storage doubles predate the database anti-join.  Their
+        # complete in-memory lists remain useful for endpoint unit tests.
+        dead_letters = await storage.list_pm_outbox(
+            connection_id=connection_id, status="DEAD_LETTER", limit=1000
+        )
+        disposition_reader = getattr(storage, "list_pm_outbox_dispositions", None)
+        disposition_result = (
+            disposition_reader(connection_id=connection_id)
+            if callable(disposition_reader)
+            else []
+        )
+        dispositions = (
+            await disposition_result
+            if hasattr(disposition_result, "__await__")
+            else disposition_result
+        )
+        active_dead_letters = _classify_pm_dead_letters(dead_letters, dispositions)
+        dead_letter_counts = {
+            "active": len(active_dead_letters),
+            "historical": len(dead_letters) - len(active_dead_letters),
+            "total": len(dead_letters),
+        }
+    try:
+        tls_context = provider_ssl_context()
+        tls_verified = tls_context.verify_mode == ssl.CERT_REQUIRED and tls_context.check_hostname
+    except Exception:
+        tls_verified = False
+    # Reconciliation pages also contain provider observations that are
+    # intentionally evidence-only (for example comments).  They do not have
+    # canonical object mappings by design.  Require at least one mapped
+    # canonical object when the provider returned objects, while the existing
+    # conflict/drift gates continue to reject unresolved actionable
+    # observations.  Requiring mapped == seen falsely blocked this clean
+    # single-binding topology when a resolved evidence-only observation was
+    # present.
+    seen_count = int(counts.get("seen") or 0)
+    mapped_count = int(counts.get("mapped") or 0)
+    mapping_complete = latest_run is not None and (seen_count == 0 or mapped_count > 0)
+    blockers: list[str] = []
+    if not doctor.get("ready"):
+        blockers.extend(str(item) for item in doctor.get("blockers") or ["doctor not ready"])
+    if latest_run is None or latest_run.get("status") != "COMPLETED":
+        blockers.append("no completed reconciliation evidence")
+    if any(int(counts.get(key) or 0) != 0 for key in ("drift", "conflicts", "scope_conflicts", "version_mismatches", "hash_mismatches")):
+        blockers.append("latest reconciliation has drift or conflicts")
+    if not mapping_complete:
+        blockers.append("latest reconciliation mappings are incomplete")
+    if open_conflicts:
+        blockers.append("blocking PM conflicts are open")
+    if pending or processing or failed:
+        blockers.append("PM projections are pending, processing, or failed")
+    if int(dead_letter_counts.get("active") or 0) > 0:
+        blockers.append("active PM dead letters exist")
+    if not tls_verified:
+        blockers.append("provider TLS certificate verification is not enabled")
+    snapshot = {
+        "doctor_ready": bool(doctor.get("ready")),
+        "doctor_blockers": list(doctor.get("blockers") or []),
+        "reconciliation_run_id": str(latest_run["id"]) if latest_run else None,
+        "reconciliation_status": latest_run.get("status") if latest_run else None,
+        "reconciliation_counts": counts,
+        "mapping_complete": mapping_complete,
+        "open_conflicts": len(open_conflicts),
+        "pending_projections": len(pending),
+        "processing_projections": len(processing),
+        "failed_projections": len(failed),
+        "active_dead_letters": int(dead_letter_counts.get("active") or 0),
+        "historical_dead_letters": int(dead_letter_counts.get("historical") or 0),
+        "tls_verification_enabled": bool(tls_verified),
+        "binding_policy": pm_binding_effective_policy(
+            str((binding or {}).get("status") or "DISABLED"),
+            str((binding or {}).get("connection_status") or "DISABLED"),
+            str((binding or {}).get("direction") or "outbound"),
+        ) if binding else None,
+    }
+    return snapshot, blockers
+
+
+def _classify_pm_dead_letters(
+    dead_letters: list[dict[str, Any]], dispositions: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Return only unresolved failures; never infer resolution from error text."""
+    dispositioned = {str(row.get("outbox_id")) for row in dispositions}
+    return [row for row in dead_letters if str(row.get("id")) not in dispositioned]
+
+
+def _active_policy_snapshot() -> dict[str, Any]:
+    """Return a JSON-safe, provider-neutral snapshot for ACTIVE plans."""
+    policy: dict[str, Any] = {}
+    for field, rule in ACTIVE_INBOUND_COMMAND_POLICY.items():
+        normalized: dict[str, Any] = {}
+        for key, value in rule.items():
+            if isinstance(value, set):
+                normalized[key] = sorted(str(item) for item in value)
+            else:
+                normalized[key] = value
+        policy[field] = normalized
+    return {
+        "direct_command_policy": policy,
+        "reserved_fields": sorted(ACTIVE_INBOUND_RESERVED_FIELDS),
+        "unsupported_fields_default_deny": True,
+        "ordinary_comments": "evidence_only",
+        "structured_comments": "approval_required",
+        "source_connection_projection": "suppressed",
+        "kill_switch": "governed binding ACTIVE to READ_ONLY or DRAINING transition",
+    }
+
+
+async def _active_binding_plan_scope(
+    storage: AgentStorage,
+    *,
+    connection_id: UUID,
+    binding: dict[str, Any],
+) -> dict[str, Any]:
+    """Snapshot the exact durable actor scope and binding blast radius."""
+    reader = getattr(storage, "list_pm_external_actor_mappings", None)
+    mappings: list[dict[str, Any]] = []
+    if callable(reader):
+        result = reader(connection_id=connection_id, status="TRUSTED", limit=1000)
+        if inspect.isawaitable(result):
+            result = await result
+        if isinstance(result, list):
+            mappings = result
+    trusted_actor_mappings = [
+        {
+            "mapping_id": str(row.get("id")),
+            "external_actor_id": str(row.get("external_actor_id")),
+            "status": str(row.get("status")),
+            "authorized_scopes": sorted(str(scope) for scope in (row.get("authorized_scopes") or [])),
+        }
+        for row in mappings
+    ]
+    return {
+        "trusted_actor_mappings": trusted_actor_mappings,
+        "direct_command_scope": sorted(
+            {
+                scope
+                for row in trusted_actor_mappings
+                for scope in row["authorized_scopes"]
+            }
+        ),
+        "blast_radius": {
+            "connection_id": str(connection_id),
+            "binding_id": str(binding.get("id")),
+            "project_id": str(binding.get("project_id")),
+            "external_project_id": binding.get("external_project_id"),
+            "mapping_profile": binding.get("mapping_profile"),
+            "direction": binding.get("direction"),
+            "object_types": ["issue"],
+        },
+        "policy": _active_policy_snapshot(),
+    }
+
+
+def _source_control_provider_for(row: dict[str, Any]) -> Any:
+    try:
+        return _integration_registry().source_control(str(row["provider_kind"]), str(row["id"]))
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+def _provider_failure_is_permanent(exc: BaseException) -> bool:
+    """Classify provider responses that cannot succeed through retries."""
+    return provider_failure_is_permanent(getattr(exc, "status_code", None))
+
+
+async def _require_source_control_capability(
+    row: dict[str, Any],
+    capability: str,
+    *,
+    write: bool = False,
+) -> Any:
+    status = str(row.get("status") or "DISABLED").upper()
+    allowed_statuses = {"ACTIVE"} if write else {"SHADOW", "READ_ONLY", "ACTIVE", "DRAINING"}
+    if status not in allowed_statuses:
+        action = "write" if write else "read"
+        raise HTTPException(409, f"source-control {action} is not allowed while connection is {status}")
+    provider = _source_control_provider_for(row)
+    try:
+        capabilities = await provider.capabilities(_provider_connection(row))
+    except Exception as exc:
+        raise HTTPException(502, f"source-control capability discovery failed: {exc}") from exc
+    if not bool(getattr(capabilities, capability, False)):
+        raise HTTPException(409, f"provider profile does not enable source-control capability {capability}")
+    return provider
+
+
+def _validate_repository_scope(row: dict[str, Any], payload: dict[str, Any]) -> None:
+    configured = str((row.get("config") or {}).get("repository") or "")
+    requested = payload.get("repository")
+    if requested is not None and configured and str(requested) != configured:
+        raise HTTPException(403, "requested repository is outside the connection scope")
+    if configured:
+        payload["repository"] = configured
+
+
+def _scrub_integration_evidence(value: Any) -> Any:
+    """Remove credential-shaped fields before source-control evidence storage."""
+    if isinstance(value, dict):
+        result: dict[str, Any] = {}
+        for key, item in value.items():
+            lowered = str(key).lower()
+            if any(marker in lowered for marker in ("token", "secret", "password", "private_key", "app_key")):
+                result[str(key)] = "<redacted>"
+            else:
+                result[str(key)] = _scrub_integration_evidence(item)
+        return result
+    if isinstance(value, list):
+        return [_scrub_integration_evidence(item) for item in value]
+    return value
+
+
+async def _record_source_control_evidence(
+    storage: Any,
+    *,
+    connection_id: UUID,
+    evidence_type: str,
+    request_payload: dict[str, Any],
+    result: Any,
+) -> dict[str, Any] | None:
+    recorder = getattr(storage, "record_integration_evidence", None)
+    if not callable(recorder):
+        return None
+    result_payload = result.model_dump(mode="json") if hasattr(result, "model_dump") else result
+    safe_payload = _scrub_integration_evidence({"request": request_payload, "result": result_payload})
+    external_id = None
+    if isinstance(result_payload, dict) and result_payload.get("external_id") is not None:
+        external_id = str(result_payload["external_id"])
+    repository = str(request_payload.get("repository") or "") or None
+    project_id = None
+    binding_id = None
+    try:
+        project_id = UUID(str(request_payload["project_id"])) if request_payload.get("project_id") else None
+    except (TypeError, ValueError):
+        project_id = None
+    try:
+        binding_id = UUID(str(request_payload["binding_id"])) if request_payload.get("binding_id") else None
+    except (TypeError, ValueError):
+        binding_id = None
+    explicit_key = str(request_payload.get("idempotency_key") or "")
+    digest = hashlib.sha256(
+        json.dumps(safe_payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    ).hexdigest()
+    key = explicit_key or f"{connection_id}:{evidence_type}:{external_id or 'none'}:{digest}"
+    saved = recorder(
+        connection_id=connection_id,
+        evidence_type=evidence_type,
+        external_id=external_id,
+        repository=repository,
+        project_id=project_id,
+        binding_id=binding_id,
+        payload=safe_payload,
+        idempotency_key=key,
+    )
+    if hasattr(saved, "__await__"):
+        return await saved
+    return saved
+
+
+@app.post("/integrations/connections/{connection_id}/source-control/installation")
+async def discover_source_control_installation(connection_id: UUID, request: Request) -> dict[str, Any]:
+    _integration_operator(request, allow_worker_read=True)
+    row = await _storage().get_pm_connection(connection_id)
+    if row is None:
+        raise HTTPException(404, "integration connection not found")
+    provider = await _require_source_control_capability(row, "repositories")
+    value = await provider.discover_installation(_provider_connection(row))
+    return _serialize(value)
+
+
+@app.post("/integrations/connections/{connection_id}/source-control/branches", status_code=201)
+async def create_source_control_branch(
+    connection_id: UUID,
+    req: SCMActionRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _integration_operator(request)
+    row = await _storage().get_pm_connection(connection_id)
+    if row is None:
+        raise HTTPException(404, "integration connection not found")
+    _validate_repository_scope(row, req.payload)
+    provider = await _require_source_control_capability(row, "repositories", write=True)
+    if not bool((await provider.capabilities(_provider_connection(row))).pull_requests):
+        raise HTTPException(409, "provider profile does not enable branch delivery")
+    result = await provider.create_branch(_provider_connection(row), req.payload)
+    await _record_source_control_evidence(
+        _storage(), connection_id=connection_id, evidence_type="branch",
+        request_payload=req.payload, result=result,
+    )
+    return _serialize(result.model_dump(mode="json"))
+
+
+@app.post("/integrations/connections/{connection_id}/source-control/pull-requests", status_code=201)
+async def project_source_control_pull_request(
+    connection_id: UUID,
+    req: SCMActionRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _integration_operator(request)
+    row = await _storage().get_pm_connection(connection_id)
+    if row is None:
+        raise HTTPException(404, "integration connection not found")
+    _validate_repository_scope(row, req.payload)
+    provider = await _require_source_control_capability(row, "pull_requests", write=True)
+    result = await provider.project_pull_request(_provider_connection(row), req.payload)
+    await _record_source_control_evidence(
+        _storage(), connection_id=connection_id, evidence_type="pull_request",
+        request_payload=req.payload, result=result,
+    )
+    return _serialize(result.model_dump(mode="json"))
+
+
+@app.post("/integrations/connections/{connection_id}/source-control/review-comments", status_code=201)
+async def publish_source_control_review_comment(
+    connection_id: UUID,
+    req: SCMActionRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _integration_operator(request)
+    row = await _storage().get_pm_connection(connection_id)
+    if row is None:
+        raise HTTPException(404, "integration connection not found")
+    _validate_repository_scope(row, req.payload)
+    provider = await _require_source_control_capability(row, "pull_requests", write=True)
+    result = await provider.publish_review_comment(_provider_connection(row), req.payload)
+    await _record_source_control_evidence(
+        _storage(), connection_id=connection_id, evidence_type="review_comment",
+        request_payload=req.payload, result=result,
+    )
+    return _serialize(result.model_dump(mode="json"))
+
+
+@app.post("/integrations/connections/{connection_id}/source-control/checks", status_code=201)
+async def publish_source_control_check(
+    connection_id: UUID,
+    req: SCMActionRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _integration_operator(request)
+    row = await _storage().get_pm_connection(connection_id)
+    if row is None:
+        raise HTTPException(404, "integration connection not found")
+    _validate_repository_scope(row, req.payload)
+    provider = await _require_source_control_capability(row, "checks", write=True)
+    result = await provider.publish_check(_provider_connection(row), req.payload)
+    await _record_source_control_evidence(
+        _storage(), connection_id=connection_id, evidence_type="check",
+        request_payload=req.payload, result=result,
+    )
+    return _serialize(result.model_dump(mode="json"))
+
+
+@app.post("/integrations/connections/{connection_id}/source-control/commits", status_code=201)
+async def capture_source_control_commit(
+    connection_id: UUID,
+    req: SCMActionRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _integration_operator(request, allow_worker_read=True)
+    row = await _storage().get_pm_connection(connection_id)
+    if row is None:
+        raise HTTPException(404, "integration connection not found")
+    _validate_repository_scope(row, req.payload)
+    provider = await _require_source_control_capability(row, "repositories")
+    result = await provider.capture_commit_evidence(_provider_connection(row), req.payload)
+    await _record_source_control_evidence(
+        _storage(), connection_id=connection_id, evidence_type="commit",
+        request_payload=req.payload, result=result,
+    )
+    return _serialize(result.model_dump(mode="json"))
+
+
+@app.post("/integrations/connections/{connection_id}/source-control/run-credentials")
+async def mint_source_control_run_credential(
+    connection_id: UUID,
+    req: SCMActionRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _integration_operator(request)
+    row = await _storage().get_pm_connection(connection_id)
+    if row is None:
+        raise HTTPException(404, "integration connection not found")
+    _validate_repository_scope(row, req.payload)
+    configured_repository = str((row.get("config") or {}).get("repository") or "")
+    if not configured_repository:
+        raise HTTPException(
+            409,
+            "GitHub run credentials require a repository configured on the connection",
+        )
+    requested_repository = str(req.payload.get("repository") or "")
+    if requested_repository and requested_repository != configured_repository:
+        raise HTTPException(403, "requested repository is outside the connection scope")
+    repository = configured_repository
+    req.payload["repository"] = repository
+    permissions = dict(req.payload.get("permissions") or {})
+    provider = await _require_source_control_capability(row, "repositories", write=True)
+    if not bool((await provider.capabilities(_provider_connection(row))).pull_requests):
+        raise HTTPException(409, "provider profile does not enable delivery credentials")
+    result = await provider.mint_run_credential(
+        _provider_connection(row),
+        repository,
+        permissions,
+    )
+    await _record_source_control_evidence(
+        _storage(), connection_id=connection_id, evidence_type="run_credential_issued",
+        request_payload=req.payload, result=result,
+    )
+    # The broker returns an expiry and token for an already-authorized governed
+    # run.  The private app key itself never crosses this endpoint.
+    return _serialize(result)
+
+
+@app.get("/integrations/connections/{connection_id}/source-control/evidence")
+async def list_source_control_evidence(
+    connection_id: UUID,
+    request: Request,
+    evidence_type: str | None = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+) -> list[dict[str, Any]]:
+    _integration_operator(request, allow_worker_read=True)
+    storage = _storage()
+    row = await storage.get_pm_connection(connection_id)
+    if row is None:
+        raise HTTPException(404, "integration connection not found")
+    lister = getattr(storage, "list_integration_evidence", None)
+    if not callable(lister):
+        return []
+    return [
+        _serialize(item)
+        for item in await lister(connection_id=connection_id, evidence_type=evidence_type, limit=limit)
+    ]
+
+
+@app.patch("/integrations/connections/{connection_id}/status")
+async def update_integration_connection_status(connection_id: UUID, req: PMConnectionStatusRequest, request: Request) -> dict[str, Any]:
+    _integration_operator(request)
+    storage = _storage()
+    current = await storage.get_pm_connection(connection_id)
+    if current is None:
+        raise HTTPException(404, "integration connection not found")
+    if req.status == "ACTIVE":
+        provider = _provider_for(current)
+        if str(current.get("provider_kind") or "").lower() == "youtrack":
+            least_privilege_check = getattr(provider, "verify_least_privilege", None)
+            if not callable(least_privilege_check):
+                raise HTTPException(409, "YouTrack adapter does not implement least-privilege certification")
+            report = await least_privilege_check(_provider_connection(current))
+            if not report.get("ok"):
+                reasons = [
+                    *(str(item) for item in report.get("missing", [])),
+                    *(f"forbidden permission: {item}" for item in report.get("forbidden", [])),
+                ]
+                raise HTTPException(
+                    409,
+                    "YouTrack least-privilege certification is not satisfied"
+                    + (f": {'; '.join(reasons)}" if reasons else ""),
+                )
+    if str(current.get("status") or "DISABLED") != req.status:
+        raise HTTPException(
+            409,
+            {
+                "code": "lifecycle_plan_required",
+                "message": "connection state changes require a persisted approved lifecycle plan",
+            },
+        )
+    row = await storage.update_pm_connection(connection_id, status=req.status)
+    if row is None:
+        raise HTTPException(404, "integration connection not found")
+    return _serialize_pm_connection(row) or {}
+
+
+@app.post("/integrations/connections/{connection_id}/plan")
+async def plan_integration_bootstrap(connection_id: UUID, req: PMPlanRequest, request: Request) -> dict[str, Any]:
+    _integration_operator(request)
+    storage = _storage()
+    row = await storage.get_pm_connection(connection_id)
+    if row is None:
+        raise HTTPException(404, "integration connection not found")
+    try:
+        plan = await _provider_for(row).plan_bootstrap(_provider_connection(row), req.desired)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(502, f"provider bootstrap planning failed: {exc}") from exc
+    plan_digest = plan.digest()
+    stored_config = dict(row.get("config") or {})
+    stored_config["_bootstrap_plan"] = {
+        "plan_id": str(plan.plan_id),
+        "digest": plan_digest,
+        "connection_id": str(connection_id),
+    }
+    try:
+        await storage.update_pm_connection(connection_id, config=stored_config)
+    except ValueError as exc:
+        raise HTTPException(503, f"could not persist bootstrap plan identity: {exc}") from exc
+    return {
+        "plan": plan.model_dump(mode="json"),
+        "plan_digest": plan_digest,
+        "ready_to_apply": plan.ready_to_apply,
+    }
+
+
+@app.post("/integrations/connections/{connection_id}/apply")
+async def apply_integration_bootstrap(connection_id: UUID, req: PMApplyRequest, request: Request) -> dict[str, Any]:
+    _integration_operator(request)
+    if not req.confirm:
+        raise HTTPException(400, "bootstrap apply requires confirm=true")
+    try:
+        validate_credential_references(req.plan.model_dump(mode="python"))
+    except ValueError as exc:
+        raise HTTPException(422, "bootstrap plan contains inline provider secret material") from exc
+    if req.plan.connection_id != connection_id or req.plan.digest() != req.plan_digest:
+        raise HTTPException(409, "bootstrap plan digest or connection does not match")
+    storage = _storage()
+    row = await storage.get_pm_connection(connection_id)
+    if row is None:
+        raise HTTPException(404, "integration connection not found")
+    stored_plan = (row.get("config") or {}).get("_bootstrap_plan")
+    if not isinstance(stored_plan, dict) or (
+        str(stored_plan.get("plan_id") or "") != str(req.plan.plan_id)
+        or str(stored_plan.get("digest") or "") != req.plan_digest
+        or str(stored_plan.get("connection_id") or "") != str(connection_id)
+    ):
+        raise HTTPException(
+            409,
+            "bootstrap plan was not generated by the server for this connection",
+        )
+    if str(row.get("status") or "DISABLED") != "DISABLED":
+        raise HTTPException(409, "bootstrap apply requires the connection to remain DISABLED")
+    try:
+        applied = await _provider_for(row).apply_bootstrap(_provider_connection(row), req.plan)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(502, f"provider bootstrap apply failed: {exc}") from exc
+    if isinstance(applied, BootstrapPlan):
+        # Compatibility for third-party adapters that still implement the
+        # pre-result contract.  Built-in adapters return BootstrapApplyResult.
+        applied = BootstrapApplyResult(plan=applied)
+    if not isinstance(applied, BootstrapApplyResult) or applied.plan.digest() != req.plan_digest:
+        raise HTTPException(502, "provider bootstrap apply returned a mismatched plan")
+
+    # Persist only non-secret resource identifiers needed for idempotent
+    # retries and later binding creation.  This is metadata, not a binding,
+    # and deliberately leaves the connection DISABLED.
+    updated_config = dict(row.get("config") or {})
+    resources = [*applied.created, *applied.adopted]
+    if str(row.get("provider_kind") or "").lower() == "youtrack":
+        project_resource = next(
+            (item for item in resources if str(item.get("resource") or "").startswith("youtrack:project:")),
+            None,
+        )
+        if project_resource and project_resource.get("external_id"):
+            project_id = str(project_resource["external_id"])
+            updated_config["project_id"] = project_id
+            updated_config["project_short_name"] = str(
+                project_resource.get("short_name") or "AIAT"
+            )
+            managed = [
+                str(value)
+                for value in (updated_config.get("managed_project_ids") or [])
+                if value
+            ]
+            if project_id not in managed:
+                managed.append(project_id)
+            updated_config["managed_project_ids"] = managed
+            if project_resource.get("project_admin") is True:
+                # Successful creation/adoption under the approved plan is the
+                # live certification evidence for the integration user's
+                # project-scoped Project Admin authority.  Keep it redacted
+                # and scoped to this exact provider project.
+                evidence = dict(updated_config.get("permission_evidence") or {})
+                project_roles = dict(evidence.get("project_roles") or {})
+                current_roles = project_roles.get(project_id)
+                roles = list(current_roles) if isinstance(current_roles, list) else []
+                if "Project Admin" not in roles:
+                    roles.append("Project Admin")
+                project_roles[project_id] = roles
+                evidence["project_roles"] = project_roles
+                updated_config["permission_evidence"] = evidence
+        field_ids = dict(updated_config.get("youtrack_field_ids") or {})
+        for item in resources:
+            resource = str(item.get("resource") or "")
+            if resource.startswith("youtrack:field:") and item.get("external_id"):
+                field_ids[str(item.get("name") or resource.rsplit(":", 1)[-1])] = {
+                    "project_field_id": str(item["external_id"]),
+                    "global_field_id": str(item.get("global_field_id") or "") or None,
+                    "type": str(item.get("type") or ""),
+                }
+        if field_ids:
+            updated_config["youtrack_field_ids"] = field_ids
+        previous_apply = updated_config.get("_bootstrap_apply")
+        previous_created = (
+            previous_apply.get("created", [])
+            if isinstance(previous_apply, dict) and isinstance(previous_apply.get("created"), list)
+            else []
+        )
+        previous_adopted = (
+            previous_apply.get("adopted", [])
+            if isinstance(previous_apply, dict) and isinstance(previous_apply.get("adopted"), list)
+            else []
+        )
+
+        def _unique_resources(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            unique: list[dict[str, Any]] = []
+            seen: set[tuple[str, str]] = set()
+            for item in items:
+                key = (str(item.get("resource") or ""), str(item.get("external_id") or ""))
+                if key in seen:
+                    continue
+                seen.add(key)
+                unique.append(item)
+            return unique
+
+        updated_config["_bootstrap_apply"] = {
+            "plan_id": str(req.plan.plan_id),
+            "digest": req.plan_digest,
+            "created": _unique_resources([*previous_created, *applied.created]),
+            "adopted": _unique_resources([*previous_adopted, *applied.adopted]),
+        }
+    updated = await storage.update_pm_connection(connection_id, config=updated_config)
+    return {
+        "connection": _serialize_pm_connection(updated),
+        "plan": applied.plan.model_dump(mode="json"),
+        "plan_digest": applied.plan.digest(),
+        "applied_resources": {"created": applied.created, "adopted": applied.adopted},
+    }
+
+
+def _lifecycle_http_error(exc: LifecyclePlanError) -> HTTPException:
+    status = 404 if exc.code == "missing_plan" else 409
+    return HTTPException(status, {"code": exc.code, "message": exc.message})
+
+
+@app.post("/integrations/lifecycle-plans", status_code=201)
+async def create_pm_lifecycle_plan(
+    req: PMLifecyclePlanCreateRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Generate and durably persist one PM lifecycle transition plan."""
+    _integration_operator(request)
+    actor = _authenticated_principal(request)
+    storage = _storage()
+    connection = await storage.get_pm_connection(req.connection_id)
+    if connection is None:
+        raise HTTPException(404, "integration connection not found")
+    binding: dict[str, Any] | None = None
+    if req.target_type == "pm_binding":
+        if req.binding_id is None or req.desired_binding_status is None:
+            raise HTTPException(422, "binding lifecycle plans require binding_id and desired_binding_status")
+        bindings = await storage.list_pm_bindings(connection_id=req.connection_id)
+        binding = next((row for row in bindings if row.get("id") == req.binding_id), None)
+        if binding is None:
+            raise HTTPException(404, "integration binding not found")
+        if req.desired_connection_status is not None:
+            raise HTTPException(422, "binding transition plans cannot change the connection state")
+        target_id = req.binding_id
+    else:
+        if req.binding_id is not None or req.desired_connection_status is None:
+            raise HTTPException(422, "connection lifecycle plans require desired_connection_status and no binding_id")
+        target_id = req.connection_id
+
+    safety_transition = _lifecycle_safety_transition(
+        req.target_type,
+        desired_connection_status=req.desired_connection_status,
+        desired_binding_status=req.desired_binding_status,
+    )
+    try:
+        doctor = await doctor_integration_connection(req.connection_id, request)
+    except Exception:
+        if not safety_transition:
+            raise
+        # Provider discovery is itself a readiness check.  Keep the shutdown
+        # plan available when the adapter is unavailable, while recording the
+        # failed check in the plan evidence.
+        doctor = {
+            "connection_id": str(req.connection_id),
+            "ready": False,
+            "blockers": ["integration doctor unavailable"],
+            "checks": [],
+        }
+    connection = await storage.get_pm_connection(req.connection_id) or connection
+    if binding is not None:
+        binding = next(
+            (row for row in await storage.list_pm_bindings(connection_id=req.connection_id) if row.get("id") == req.binding_id),
+            binding,
+        )
+        binding_for_gate = {**binding, "connection_status": connection.get("status")}
+    else:
+        binding_for_gate = None
+    gate_results, gate_blockers = await _lifecycle_gate_snapshot(
+        storage,
+        connection_id=req.connection_id,
+        binding=binding_for_gate,
+        doctor=doctor,
+    )
+    # Preserve the failed readiness evidence in the immutable plan for audit,
+    # but do not make an emergency shutdown depend on a healthy provider,
+    # reconciliation, projection queue, or TLS probe.
+    gate_results = {
+        **gate_results,
+        "readiness_gate_blockers": list(gate_blockers),
+        "readiness_gates_bypassed": safety_transition,
+    }
+    active_scope_snapshot: dict[str, Any] | None = None
+    if (
+        req.target_type == "pm_binding"
+        and binding is not None
+        and str(req.desired_binding_status or "").upper() == "ACTIVE"
+    ):
+        active_scope_snapshot = await _active_binding_plan_scope(
+            storage,
+            connection_id=req.connection_id,
+            binding=binding,
+        )
+        gate_results = {**gate_results, "active_binding_scope": active_scope_snapshot}
+    effective_gate_blockers = [] if safety_transition else gate_blockers
+    transition_blockers: list[str] = []
+    if req.target_type == "pm_binding":
+        current_status = str(binding.get("status") or "DISABLED")
+        if current_status == req.desired_binding_status:
+            transition_blockers.append("desired binding state is already current")
+        if connection.get("status") == "DISABLED":
+            transition_blockers.append("binding transition requires a non-disabled connection")
+        if str(req.desired_binding_status or "").upper() == "ACTIVE":
+            try:
+                AgentStorage._assert_pm_binding_activation_ready(
+                    {**binding, "status": "ACTIVE"},
+                    connection,
+                )
+            except ValueError as exc:
+                transition_blockers.append(str(exc))
+        operations = [{
+            "operation": "set_binding_status",
+            "binding_id": str(req.binding_id),
+            "from": current_status,
+            "to": req.desired_binding_status,
+        }]
+        rollback_operations = [{
+            "operation": "set_binding_status",
+            "binding_id": str(req.binding_id),
+            "from": req.desired_binding_status,
+            "to": current_status,
+        }]
+    else:
+        current_status = str(connection.get("status") or "DISABLED")
+        if current_status == req.desired_connection_status:
+            transition_blockers.append("desired connection state is already current")
+        operations = [{
+            "operation": "set_connection_status",
+            "connection_id": str(req.connection_id),
+            "from": current_status,
+            "to": req.desired_connection_status,
+        }]
+        rollback_operations = [{
+            "operation": "set_connection_status",
+            "connection_id": str(req.connection_id),
+            "from": req.desired_connection_status,
+            "to": current_status,
+        }]
+    blockers = [*transition_blockers, *effective_gate_blockers]
+    created_at = datetime.now(tz=UTC)
+    plan = PMLifecycleTransitionPlan(
+        plan_kind="pm_binding_transition" if req.target_type == "pm_binding" else "pm_connection_transition",
+        target_type=req.target_type,
+        target_id=target_id,
+        connection_id=req.connection_id,
+        binding_id=req.binding_id,
+        expected_connection_status=str(connection.get("status") or "DISABLED"),
+        expected_binding_status=str(binding.get("status") or "DISABLED") if binding is not None else None,
+        expected_connection_revision=int(connection.get("revision") or 1),
+        expected_binding_revision=int(binding.get("revision") or 1) if binding is not None else None,
+        desired_connection_status=req.desired_connection_status,
+        desired_binding_status=req.desired_binding_status,
+        observed_versions={
+            "connection_revision": int(connection.get("revision") or 1),
+            "binding_revision": int(binding.get("revision") or 1) if binding is not None else None,
+        },
+        operations=operations,
+        gate_results=gate_results,
+        evidence_refs={
+            "doctor": {"connection_id": str(req.connection_id), "checked_at": created_at.isoformat()},
+            "reconciliation_run_id": gate_results.get("reconciliation_run_id"),
+            "active_binding_scope": active_scope_snapshot,
+        },
+        blockers=blockers,
+        rollback_operations=rollback_operations,
+        created_by=actor,
+        created_at=created_at,
+        expires_at=created_at + timedelta(seconds=req.ttl_seconds),
+    )
+    digest = plan.digest()
+    try:
+        persisted = await storage.create_pm_lifecycle_plan(plan, digest=digest)
+    except LifecyclePlanError as exc:
+        raise _lifecycle_http_error(exc) from exc
+    return _serialize_lifecycle_plan(persisted)
+
+
+@app.get("/integrations/lifecycle-plans")
+async def list_pm_lifecycle_plans(
+    request: Request,
+    connection_id: UUID | None = None,
+    target_id: UUID | None = None,
+    status: str | None = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+) -> list[dict[str, Any]]:
+    _integration_operator(request)
+    rows = await _storage().list_pm_lifecycle_plans(
+        connection_id=connection_id,
+        target_id=target_id,
+        status=status,
+        limit=limit,
+    )
+    return [_serialize_lifecycle_plan(row) for row in rows]
+
+
+@app.get("/integrations/lifecycle-plans/{plan_id}")
+async def get_pm_lifecycle_plan(plan_id: UUID, request: Request) -> dict[str, Any]:
+    _integration_operator(request)
+    row = await _storage().get_pm_lifecycle_plan(plan_id)
+    if row is None:
+        raise HTTPException(404, "lifecycle plan was not found")
+    return _serialize_lifecycle_plan(row)
+
+
+@app.post("/integrations/lifecycle-plans/{plan_id}/approve")
+async def approve_pm_lifecycle_plan(
+    plan_id: UUID,
+    req: PMLifecyclePlanApprovalRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _integration_operator(request)
+    row = await _storage().get_pm_lifecycle_plan(plan_id)
+    if row is None:
+        raise HTTPException(404, "lifecycle plan was not found")
+    serialized = _serialize_lifecycle_plan(row)
+    if not serialized["digest_valid"] or serialized["plan_digest"] != req.plan_digest:
+        raise HTTPException(409, {"code": "digest_mismatch", "message": "lifecycle plan digest is not current"})
+    plan = serialized["plan"]
+    if plan.get("blockers"):
+        raise HTTPException(409, {"code": "blocked_plan", "message": "lifecycle plan contains blockers", "blockers": plan["blockers"]})
+    try:
+        approved = await _storage().approve_pm_lifecycle_plan(
+            plan_id,
+            digest=req.plan_digest,
+            actor=_authenticated_principal(request),
+            reason=req.reason,
+        )
+    except LifecyclePlanError as exc:
+        raise _lifecycle_http_error(exc) from exc
+    return _serialize_lifecycle_plan(approved)
+
+
+@app.post("/integrations/lifecycle-plans/{plan_id}/reject")
+async def reject_pm_lifecycle_plan(
+    plan_id: UUID,
+    req: PMLifecyclePlanRejectRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _integration_operator(request)
+    try:
+        rejected = await _storage().reject_pm_lifecycle_plan(
+            plan_id,
+            digest=req.plan_digest,
+            actor=_authenticated_principal(request),
+            reason=req.reason,
+        )
+    except LifecyclePlanError as exc:
+        raise _lifecycle_http_error(exc) from exc
+    return _serialize_lifecycle_plan(rejected)
+
+
+@app.post("/integrations/lifecycle-plans/{plan_id}/apply")
+async def apply_pm_lifecycle_plan(
+    plan_id: UUID,
+    req: PMLifecyclePlanApplyRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _integration_operator(request)
+    if not req.confirm:
+        raise HTTPException(400, "lifecycle plan apply requires confirm=true")
+    storage = _storage()
+    row = await storage.get_pm_lifecycle_plan(plan_id)
+    if row is None:
+        raise HTTPException(404, "lifecycle plan was not found")
+    serialized = _serialize_lifecycle_plan(row)
+    if not serialized["digest_valid"] or serialized["plan_digest"] != req.plan_digest:
+        raise HTTPException(409, {"code": "digest_mismatch", "message": "lifecycle plan digest is not current"})
+    if row.get("status") == "APPLIED":
+        result = await storage.apply_pm_lifecycle_plan(
+            plan_id,
+            digest=req.plan_digest,
+            actor=_authenticated_principal(request),
+        )
+        return {**_serialize_lifecycle_plan(result["plan"]), "application": result["result"], "idempotent": True}
+    plan = _lifecycle_plan_from_row(row)
+    safety_transition = _lifecycle_safety_transition(
+        plan.target_type,
+        desired_connection_status=plan.desired_connection_status,
+        desired_binding_status=plan.desired_binding_status,
+    )
+    plan_blockers = list(plan.blockers)
+    if safety_transition:
+        # Plans created before the bypass metadata existed may still contain
+        # the exact readiness blockers in their immutable payload.  Remove
+        # only blockers explicitly classified as readiness evidence; retain
+        # transition blockers and all other safety checks.
+        readiness_blockers = {
+            str(item)
+            for item in (plan.gate_results.get("readiness_gate_blockers") or [])
+            if item
+        }
+        plan_blockers = [item for item in plan_blockers if item not in readiness_blockers]
+    if plan_blockers:
+        raise HTTPException(409, {"code": "blocked_plan", "message": "lifecycle plan contains blockers", "blockers": plan_blockers})
+    connection = await storage.get_pm_connection(plan.connection_id)
+    if connection is None:
+        raise HTTPException(409, {"code": "stale_state", "message": "target connection no longer exists"})
+    binding = None
+    if plan.binding_id is not None:
+        binding = next(
+            (item for item in await storage.list_pm_bindings(connection_id=plan.connection_id) if item.get("id") == plan.binding_id),
+            None,
+        )
+    try:
+        doctor = await doctor_integration_connection(plan.connection_id, request)
+    except Exception:
+        if not safety_transition:
+            raise
+        doctor = {
+            "connection_id": str(plan.connection_id),
+            "ready": False,
+            "blockers": ["integration doctor unavailable"],
+            "checks": [],
+        }
+    connection = await storage.get_pm_connection(plan.connection_id) or connection
+    if binding is not None:
+        binding = next(
+            (item for item in await storage.list_pm_bindings(connection_id=plan.connection_id) if item.get("id") == plan.binding_id),
+            binding,
+        )
+        binding = {**binding, "connection_status": connection.get("status")}
+    fresh_gates, fresh_blockers = await _lifecycle_gate_snapshot(
+        storage,
+        connection_id=plan.connection_id,
+        binding=binding,
+        doctor=doctor,
+    )
+    fresh_gates = {
+        **fresh_gates,
+        "readiness_gate_blockers": list(fresh_blockers),
+        "readiness_gates_bypassed": safety_transition,
+    }
+    effective_fresh_blockers = [] if safety_transition else fresh_blockers
+    if effective_fresh_blockers:
+        raise HTTPException(
+            409,
+            {
+                "code": "lifecycle_gate_blocked",
+                "message": "lifecycle apply gates changed after approval",
+                "blockers": effective_fresh_blockers,
+                "gate_results": fresh_gates,
+            },
+        )
+    try:
+        result = await storage.apply_pm_lifecycle_plan(
+            plan_id,
+            digest=req.plan_digest,
+            actor=_authenticated_principal(request),
+        )
+    except LifecyclePlanError as exc:
+        raise _lifecycle_http_error(exc) from exc
+    if result.get("status") == "STALE":
+        raise HTTPException(409, {"code": "stale_state", "message": "lifecycle plan expected state or revision changed", "result": result["result"]})
+    return {**_serialize_lifecycle_plan(result["plan"]), "application": result["result"], "idempotent": result["idempotent"]}
+
+
+@app.get("/integrations/lifecycle-plans/{plan_id}/audit")
+async def get_pm_lifecycle_audit(plan_id: UUID, request: Request) -> list[dict[str, Any]]:
+    _integration_operator(request)
+    rows = await _storage().list_pm_lifecycle_audits(limit=100)
+    return [_serialize(row) for row in rows if row.get("plan_id") == plan_id]
+
+
+@app.post("/integrations/connections/{connection_id}/reconcile")
+async def reconcile_integration_connection(
+    connection_id: UUID,
+    req: PMReconcileRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Compare provider objects with durable mappings without guessing imports."""
+    _integration_operator(request)
+    storage = _storage()
+    row = await storage.get_pm_connection(connection_id)
+    if row is None:
+        raise HTTPException(404, "integration connection not found")
+    connection = _provider_connection(row)
+    bindings = await storage.list_pm_bindings(connection_id=connection_id)
+    eligible_bindings = [item for item in bindings if item.get("status") in {"ACTIVE", "SHADOW", "READ_ONLY", "DRAINING"}]
+    if req.binding_id is not None:
+        binding = next((item for item in eligible_bindings if item.get("id") == req.binding_id), None)
+        if binding is None:
+            raise HTTPException(404, "PM binding not found for reconciliation")
+    else:
+        if len(eligible_bindings) > 1:
+            raise HTTPException(409, "binding_id is required when a connection serves multiple project bindings")
+        binding = eligible_bindings[0] if eligible_bindings else None
+    if binding is not None and binding.get("external_project_id"):
+        connection = connection.model_copy(
+            update={"config": {**connection.config, "project_id": str(binding["external_project_id"])}},
+        )
+    effective_cursor = req.cursor if req.cursor is not None else (binding or {}).get("sync_cursor")
+    reconciliation_run = None
+    if isinstance(storage, AgentStorage):
+        reconciliation_run = await storage.create_pm_reconciliation_run(
+            connection_id=connection_id,
+            binding_id=binding["id"] if binding else None,
+            cursor=effective_cursor,
+        )
+    try:
+        objects, next_cursor = await _provider_for(row).list_changes(connection, cursor=effective_cursor)
+    except Exception as exc:
+        if reconciliation_run is not None:
+            await storage.finish_pm_reconciliation_run(
+                reconciliation_run["id"],
+                status="FAILED",
+                counts={},
+                error=str(exc)[:1000],
+            )
+        raise HTTPException(502, f"provider reconciliation failed: {exc}") from exc
+    # Include resolved/ignored forensic conflicts when reconciling.  Otherwise
+    # a deliberately ignored certification fixture is re-created as OPEN on
+    # every full scan and falsely blocks a clean READ_ONLY gate.  Existing
+    # OPEN/REOPENED rows remain blocking; resolved/ignored rows suppress
+    # duplicate creation and are excluded from the run's conflict count.
+    existing_conflicts = {
+        (
+            str(item.get("object_type")),
+            str(item.get("external_id")),
+            str(item.get("reason") or ""),
+        ): str(item.get("status") or "OPEN").upper()
+        for item in await storage.list_pm_conflicts(connection_id=connection_id, status=None, limit=1000)
+    }
+    mapped = conflicts = drift = scope_conflicts = 0
+    hash_mismatches = version_mismatches = 0
+    # A provider page is the cursor's atomic unit.  Processing only a prefix
+    # and then persisting the provider's page cursor would permanently skip
+    # the unprocessed suffix, so reconcile the complete returned page.
+    for external in list(objects):
+        object_type = getattr(external.object_type, "value", str(external.object_type))
+        mapping = await storage.get_pm_mapping(
+            connection_id=connection_id,
+            object_type=object_type,
+            external_id=external.external_id,
+        )
+        if mapping is not None:
+            # Only compare an explicit provider-normalized hash.  Falling
+            # back to the DTO's generic stable hash would compare different
+            # adapter field vocabularies and manufacture drift on every run.
+            external_hash = str(external.content_hash or "")
+            expected_project = str(binding.get("external_project_id") or "") if binding else ""
+            expected_repository = str(binding.get("external_repository") or "") if binding else ""
+            incoming_project = str(external.project_external_id or "")
+            incoming_repository = str((external.metadata or {}).get("repository") or "")
+            scope_error = (
+                (expected_project and incoming_project and expected_project != incoming_project)
+                or (expected_repository and incoming_repository and expected_repository != incoming_repository)
+            )
+            hash_mismatch = bool(
+                mapping.get("content_hash")
+                and external_hash
+                and mapping.get("content_hash") != external_hash
+            )
+            version_mismatch = bool(
+                mapping.get("provider_version")
+                and external.provider_version
+                and str(mapping.get("provider_version")) != str(external.provider_version)
+            )
+            if scope_error or hash_mismatch or version_mismatch:
+                if (
+                    version_mismatch
+                    and not scope_error
+                    and not hash_mismatch
+                    and str((binding or {}).get("status") or "").upper() in {"SHADOW", "READ_ONLY"}
+                ):
+                    # Provider-originated changes are evidence-only before
+                    # ACTIVE.  Advance the observed provider version on the
+                    # existing mapping without importing fields or treating
+                    # the observation as canonical drift.
+                    await storage.upsert_pm_mapping(
+                        connection_id=connection_id,
+                        object_type=object_type,
+                        aiat_object_id=mapping["aiat_object_id"],
+                        external_id=external.external_id,
+                        external_key=external.external_key,
+                        provider_version=external.provider_version,
+                        imported_revision=int(mapping.get("last_import_revision") or 1),
+                    )
+                    mapped += 1
+                    continue
+                drift += 1
+                hash_mismatches += int(hash_mismatch)
+                version_mismatches += int(version_mismatch)
+                scope_conflicts += int(bool(scope_error))
+                reason = "out_of_scope" if scope_error else "state_drift"
+                key = (object_type, str(external.external_id), reason)
+                existing_status = existing_conflicts.get(key)
+                if existing_status is None:
+                    await storage.create_pm_conflict(
+                        connection_id=connection_id,
+                        binding_id=binding["id"] if binding else None,
+                        reason=reason,
+                        object_type=object_type,
+                        aiat_object_id=mapping.get("aiat_object_id"),
+                        external_id=external.external_id,
+                        canonical_snapshot={"mapping": mapping},
+                        external_snapshot={
+                            "object": external.model_dump(mode="json"),
+                            "hash_mismatch": hash_mismatch,
+                            "version_mismatch": version_mismatch,
+                            "repair_mode": req.mode,
+                        },
+                    )
+                    existing_conflicts[key] = "OPEN"
+                elif existing_status in {"RESOLVED", "IGNORED"}:
+                    continue
+                continue
+            mapped += 1
+            continue
+        key = (object_type, str(external.external_id), "unknown_mapping")
+        existing_status = existing_conflicts.get(key)
+        if existing_status is None:
+            await storage.create_pm_conflict(
+                connection_id=connection_id,
+                binding_id=binding["id"] if binding else None,
+                reason="unknown_mapping",
+                object_type=object_type,
+                external_id=external.external_id,
+                external_snapshot=external.model_dump(mode="json"),
+            )
+            existing_conflicts[key] = "OPEN"
+            conflicts += 1
+        elif existing_status not in {"RESOLVED", "IGNORED"}:
+            conflicts += 1
+    if binding is not None:
+        await storage.update_pm_binding(
+            binding["id"],
+            sync_cursor=next_cursor,
+            last_reconciled_at=datetime.now(tz=UTC),
+        )
+        reconciliation_evidence = getattr(storage, "record_pm_binding_evidence", None)
+        if callable(reconciliation_evidence) and conflicts == 0 and drift == 0 and scope_conflicts == 0:
+            recorded = reconciliation_evidence(binding["id"], reconciliation_verified=True)
+            if hasattr(recorded, "__await__"):
+                await recorded
+    counts = {
+        "seen": len(objects),
+        "mapped": mapped,
+        "conflicts": conflicts,
+        "drift": drift,
+        "hash_mismatches": hash_mismatches,
+        "version_mismatches": version_mismatches,
+        "scope_conflicts": scope_conflicts,
+        "mode": req.mode,
+    }
+    if reconciliation_run is not None:
+        await storage.finish_pm_reconciliation_run(
+            reconciliation_run["id"],
+            status="COMPLETED",
+            counts=counts,
+            next_cursor=next_cursor,
+        )
+    return {
+        "connection_id": str(connection_id),
+        **counts,
+        "next_cursor": next_cursor,
+        "run_id": str(reconciliation_run["id"]) if reconciliation_run else None,
+    }
+
+
+@app.post("/integrations/cutovers")
+async def cutover_integration_binding(req: PMCutoverRequest, request: Request) -> dict[str, Any]:
+    _integration_operator(request)
+    # The historical cutover endpoint used to mutate connection and binding
+    # state directly.  Keep the route as a compatibility surface, but fail
+    # closed until an operator has generated, approved, and applied a durable
+    # lifecycle plan.  This prevents an unaudited status write from bypassing
+    # the digest, gate, CAS, and immutable-audit path.
+    raise HTTPException(
+        409,
+        {
+            "code": "lifecycle_plan_required",
+            "message": "cutover requires a persisted approved lifecycle plan; use /api/v1/integrations/lifecycle-plans",
+        },
+    )
+@app.post("/integrations/rollbacks")
+async def rollback_integration_binding(req: PMRollbackRequest, request: Request) -> dict[str, Any]:
+    _integration_operator(request)
+    # Rollback is a state transition too.  It must be represented by a
+    # persisted lifecycle plan so the expected revision, rollback operation,
+    # approval, and resulting audit are durable and idempotent.
+    raise HTTPException(
+        409,
+        {
+            "code": "lifecycle_plan_required",
+            "message": "rollback requires a persisted approved lifecycle plan; use /api/v1/integrations/lifecycle-plans",
+        },
+    )
+async def _canonical_project_for_pm(project_row: dict[str, Any]) -> CanonicalProject:
+    return CanonicalProject(
+        id=project_row["id"],
+        name=str(project_row.get("name") or "Project"),
+        description=project_row.get("description"),
+        state=str(project_row.get("state") or "INIT"),
+        revision=int(project_row.get("revision") or 1),
+        updated_at=project_row.get("updated_at"),
+    )
+
+
+async def _remember_project_provisioning(
+    storage: Any,
+    project: dict[str, Any],
+    values: dict[str, Any],
+) -> dict[str, Any]:
+    config = dict(project.get("config") or {})
+    current = dict(config.get("pm_provisioning") or {})
+    current.update(values)
+    config["pm_provisioning"] = current
+    writer = getattr(storage, "update_project_config", None)
+    if callable(writer):
+        refreshed = writer(project["id"], config=config)
+        if hasattr(refreshed, "__await__"):
+            refreshed = await refreshed
+        if refreshed is not None:
+            return refreshed
+    project["config"] = config
+    return project
+
+
+@app.post("/projects/{project_id}/pm-provisioning/plan")
+async def plan_project_pm_provisioning(
+    project_id: UUID,
+    req: PMProjectProvisioningRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Generate a read-only, per-project provider provisioning plan."""
+    _integration_operator(request)
+    storage = _storage()
+    project_row = await storage.get_project(project_id)
+    if project_row is None:
+        raise HTTPException(404, "project not found")
+    connection_row = await storage.get_pm_connection(req.connection_id)
+    if connection_row is None:
+        raise HTTPException(404, "integration connection not found")
+    provider = _provider_for(connection_row)
+    planner = getattr(provider, "plan_project_provisioning", None)
+    if not callable(planner):
+        raise HTTPException(409, f"provider {connection_row.get('provider_kind')} does not support project provisioning")
+    try:
+        plan = await planner(
+            _provider_connection(connection_row),
+            await _canonical_project_for_pm(project_row),
+            mapping_profile=req.mapping_profile,
+            external_project_id=req.external_project_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    digest = plan.digest()
+    await _remember_project_provisioning(
+        storage,
+        project_row,
+        {
+            "mapping_profile": plan.mapping_profile,
+            "state": "PLANNED",
+            "plan_id": str(plan.plan_id),
+            "plan_digest": digest,
+            "external_project_id": plan.external_project_id,
+            "external_project_key": plan.external_project_key,
+            "blockers": list(plan.blockers),
+            "manual_actions": list(plan.manual_actions),
+        },
+    )
+    return {
+        "project_id": str(project_id),
+        "connection_id": str(req.connection_id),
+        "plan": plan.model_dump(mode="json"),
+        "plan_digest": digest,
+        "blockers": list(plan.blockers),
+        "manual_actions": list(plan.manual_actions),
+    }
+
+
+@app.post("/projects/{project_id}/pm-provisioning/apply")
+async def apply_project_pm_provisioning(
+    project_id: UUID,
+    req: PMProjectProvisioningApplyRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Apply one exact project plan and create its disabled/shadow binding."""
+    _integration_operator(request)
+    if not req.confirm:
+        raise HTTPException(400, "project provisioning requires confirm=true")
+    if req.plan.project_id != project_id or req.plan.digest() != req.plan_digest:
+        raise HTTPException(409, "project provisioning plan digest or project scope is invalid")
+    storage = _storage()
+    project_row = await storage.get_project(project_id)
+    if project_row is None:
+        raise HTTPException(404, "project not found")
+    connection_row = await storage.get_pm_connection(req.plan.connection_id)
+    if connection_row is None:
+        raise HTTPException(404, "integration connection not found")
+    stored_provisioning = dict((project_row.get("config") or {}).get("pm_provisioning") or {})
+    if (
+        str(stored_provisioning.get("plan_id") or "") != str(req.plan.plan_id)
+        or str(stored_provisioning.get("plan_digest") or "") != req.plan_digest
+    ):
+        raise HTTPException(409, "project provisioning plan is not the server-generated plan for this project")
+    applier = getattr(_provider_for(connection_row), "apply_project_provisioning", None)
+    if not callable(applier):
+        raise HTTPException(409, f"provider {connection_row.get('provider_kind')} does not support project provisioning")
+    try:
+        applied = await applier(_provider_connection(connection_row), req.plan)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    resources = [*applied.created, *applied.adopted]
+    project_resource = next(
+        (item for item in resources if ":project:" in str(item.get("resource") or "") or str(item.get("object_type") or "") == "project"),
+        None,
+    )
+    external_project_id = str((project_resource or {}).get("external_id") or req.plan.external_project_id or "")
+    if not external_project_id:
+        raise HTTPException(409, "provider provisioning returned no external project selector")
+    external_project_key = str((project_resource or {}).get("short_name") or req.plan.external_project_key or "") or None
+    # Keep the connection's redacted scope/certification metadata aligned with
+    # every provider project it now manages.  This records evidence only; it
+    # never grants a new provider permission.
+    connection_config = dict(connection_row.get("config") or {})
+    managed_project_ids = [
+        str(value) for value in (connection_config.get("managed_project_ids") or []) if value
+    ]
+    if external_project_id not in managed_project_ids:
+        managed_project_ids.append(external_project_id)
+    connection_config["managed_project_ids"] = managed_project_ids
+    permission_evidence = dict(connection_config.get("permission_evidence") or {})
+    project_roles = dict(permission_evidence.get("project_roles") or {})
+    existing_roles = project_roles.get(external_project_id)
+    roles = list(existing_roles) if isinstance(existing_roles, list) else []
+    if "Project Admin" not in roles:
+        roles.append("Project Admin")
+    project_roles[external_project_id] = roles
+    permission_evidence["project_roles"] = project_roles
+    connection_config["permission_evidence"] = permission_evidence
+    updater = getattr(storage, "update_pm_connection", None)
+    if callable(updater):
+        updated_connection = updater(req.plan.connection_id, config=connection_config)
+        if hasattr(updated_connection, "__await__"):
+            await updated_connection
+    binding_blockers = list(req.plan.manual_actions)
+    binding_state = "WAITING_MANUAL_WEBHOOK" if binding_blockers else "PROVISIONED"
+    binding_status = "SHADOW" if binding_blockers else "DISABLED"
+    existing = await storage.list_pm_bindings(project_id=project_id)
+    binding = next(
+        (
+            row for row in existing
+            if row.get("connection_id") == req.plan.connection_id
+            and row.get("mapping_profile") in {req.plan.mapping_profile, "default"}
+            and str(row.get("external_project_id") or "") == external_project_id
+        ),
+        None,
+    )
+    binding_values = {
+        "external_project_id": external_project_id,
+        "external_project_key": external_project_key,
+        "mapping_profile": req.plan.mapping_profile,
+        "direction": "both",
+        "status": binding_status,
+        "provisioning_state": binding_state,
+        "provisioning_plan_id": req.plan.plan_id,
+        "provisioning_plan_digest": req.plan_digest,
+        "activation_blockers": binding_blockers,
+    }
+    try:
+        if binding is None:
+            binding = await storage.create_pm_binding(
+                project_id=project_id,
+                connection_id=req.plan.connection_id,
+                **binding_values,
+            )
+        else:
+            binding = await storage.update_pm_binding(binding["id"], **binding_values)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    await _remember_project_provisioning(
+        storage,
+        project_row,
+        {
+            "state": binding_state,
+            "binding_id": str(binding["id"]) if binding else None,
+            "external_project_id": external_project_id,
+            "external_project_key": external_project_key,
+            "blockers": binding_blockers,
+            "applied_plan_digest": req.plan_digest,
+        },
+    )
+    return {
+        "project_id": str(project_id),
+        "connection_id": str(req.plan.connection_id),
+        "plan_digest": req.plan_digest,
+        "applied_resources": {"created": applied.created, "adopted": applied.adopted},
+        "binding": _serialize(binding) if binding else None,
+        "status": binding_status,
+        "blockers": binding_blockers,
+    }
+
+
+@app.post("/projects/{project_id}/pm-bindings", status_code=201)
+async def create_project_pm_binding(project_id: UUID, req: PMBindingCreateRequest, request: Request) -> dict[str, Any]:
+    _integration_operator(request)
+    storage = _storage()
+    project_row = await storage.get_project(project_id)
+    if project_row is None:
+        raise HTTPException(404, "project not found")
+    connection = await storage.get_pm_connection(req.connection_id)
+    if connection is None:
+        raise HTTPException(404, "integration connection not found")
+    mapping_profile = normalize_project_mapping_profile(req.mapping_profile)
+    if mapping_profile == DEDICATED_PROJECT_MAPPING_PROFILE and not req.external_project_id:
+        raise HTTPException(
+            422,
+            "dedicated_project bindings require the provider project to be provisioned/adopted first; use the project provisioning plan",
+        )
+    if mapping_profile == DEDICATED_PROJECT_MAPPING_PROFILE:
+        provisioning = dict((project_row.get("config") or {}).get("pm_provisioning") or {})
+        if (
+            str(provisioning.get("external_project_id") or "") != str(req.external_project_id or "")
+            or not provisioning.get("applied_plan_digest")
+            or str(provisioning.get("state") or "") not in {"PROVISIONED", "WAITING_MANUAL_WEBHOOK"}
+        ):
+            raise HTTPException(
+                409,
+                "dedicated_project bindings require an applied project provisioning plan for this canonical project",
+            )
+    if mapping_profile == "umbrella_issues" and not (req.external_project_id or req.external_repository):
+        raise HTTPException(422, "umbrella_issues requires an explicit provider project or repository selector")
+    if req.status == "ACTIVE" and connection.get("status") != "ACTIVE":
+        raise HTTPException(409, "an active binding requires an active integration connection")
+    if req.direction in {"inbound", "both"} and not (req.external_project_id or req.external_repository):
+        raise HTTPException(422, "inbound bindings require an explicit external project or repository selector")
+    if req.external_repository:
+        configured_repository = str((connection.get("config") or {}).get("repository") or "")
+        if configured_repository and req.external_repository != configured_repository:
+            raise HTTPException(403, "binding repository is outside the connection scope")
+    try:
+        binding = await storage.create_pm_binding(
+            project_id=project_id,
+            **{**req.model_dump(), "mapping_profile": mapping_profile},
+        )
+    except ValueError as exc:
+        status = 409 if "conflict" in str(exc).lower() or "active" in str(exc).lower() else 422
+        raise HTTPException(status, str(exc)) from exc
+    return _serialize(binding)
+
+
+@app.patch("/projects/{project_id}/pm-bindings/{binding_id}")
+async def update_project_pm_binding(
+    project_id: UUID,
+    binding_id: UUID,
+    req: PMBindingUpdateRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Change a binding phase without bypassing storage activation gates."""
+    _integration_operator(request)
+    storage = _storage()
+    bindings = await storage.list_pm_bindings(project_id=project_id)
+    current = next((row for row in bindings if row.get("id") == binding_id), None)
+    if current is None:
+        raise HTTPException(404, "PM binding not found for project")
+    values = req.model_dump(exclude_none=True)
+    if "status" in values and str(values["status"]) != str(current.get("status") or "DISABLED"):
+        raise HTTPException(
+            409,
+            {
+                "code": "lifecycle_plan_required",
+                "message": "binding state changes require a persisted approved lifecycle plan",
+            },
+        )
+    next_profile = normalize_project_mapping_profile(values.get("mapping_profile", current.get("mapping_profile")))
+    next_external_project = values.get("external_project_id", current.get("external_project_id"))
+    if next_profile == DEDICATED_PROJECT_MAPPING_PROFILE:
+        project = await storage.get_project(project_id)
+        provisioning = dict((project or {}).get("config", {}).get("pm_provisioning") or {})
+        if str(provisioning.get("external_project_id") or "") != str(next_external_project or ""):
+            raise HTTPException(409, "dedicated_project selector changes require a new approved project provisioning plan")
+    if values.get("external_repository"):
+        connection = await storage.get_pm_connection(current["connection_id"])
+        configured_repository = str((connection or {}).get("config", {}).get("repository") or "")
+        if configured_repository and values["external_repository"] != configured_repository:
+            raise HTTPException(403, "binding repository is outside the connection scope")
+    try:
+        updated = await storage.update_pm_binding(binding_id, **values)
+    except ValueError as exc:
+        status = 409 if "active" in str(exc).lower() or "activation" in str(exc).lower() else 422
+        raise HTTPException(status, str(exc)) from exc
+    if updated is None:
+        raise HTTPException(404, "PM binding not found for project")
+    return _serialize(updated)
+
+
+@app.get("/projects/{project_id}/pm-bindings")
+async def list_project_pm_bindings(project_id: UUID, request: Request) -> list[dict[str, Any]]:
+    _integration_operator(request)
+    return [_serialize(row) for row in await _storage().list_pm_bindings(project_id=project_id)]
+
+
+@app.get("/integrations/conflicts")
+async def list_integration_conflicts(request: Request, connection_id: UUID | None = None, limit: int = Query(default=100, ge=1, le=1000)) -> list[dict[str, Any]]:
+    _integration_operator(request)
+    return [_serialize(row) for row in await _storage().list_pm_conflicts(connection_id=connection_id, limit=limit)]
+
+
+@app.post("/integrations/conflicts/{conflict_id}/resolve")
+async def resolve_integration_conflict(
+    conflict_id: UUID,
+    req: PMConflictResolutionRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _integration_operator(request)
+    row = await _storage().resolve_pm_conflict(
+        conflict_id,
+        status=req.status,
+        resolution=req.resolution,
+    )
+    if row is None:
+        raise HTTPException(404, "PM conflict not found")
+    return _serialize(row)
+
+
+@app.get("/integrations/outbox")
+async def list_integration_outbox(request: Request, connection_id: UUID | None = None, limit: int = Query(default=100, ge=1, le=1000)) -> list[dict[str, Any]]:
+    _integration_operator(request)
+    return [_serialize(row) for row in await _storage().list_pm_outbox(connection_id=connection_id, limit=limit)]
+
+
+@app.get("/integrations/reconciliation-runs")
+async def list_integration_reconciliation_runs(
+    request: Request,
+    connection_id: UUID | None = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+) -> list[dict[str, Any]]:
+    _integration_operator(request)
+    return [
+        _serialize(row)
+        for row in await _storage().list_pm_reconciliation_runs(connection_id=connection_id, limit=limit)
+    ]
+
+
+@app.post("/integrations/outbox/{outbox_id}/disposition")
+async def dispose_integration_outbox(
+    outbox_id: UUID, req: PMOutboxDispositionRequest, request: Request
+) -> dict[str, Any]:
+    """Record an immutable operator disposition for a terminal PM failure."""
+    _integration_operator(request)
+    try:
+        return _serialize(await _storage().dispose_pm_outbox_dead_letter(
+            outbox_id,
+            disposition=req.disposition,
+            reason=req.reason,
+            provider_state=req.provider_state,
+            actor=_authenticated_principal(request),
+        ))
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.get("/integrations/cutovers")
+async def list_integration_cutovers(
+    request: Request,
+    project_id: UUID | None = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+) -> list[dict[str, Any]]:
+    _integration_operator(request)
+    return [_serialize(row) for row in await _storage().list_pm_cutovers(project_id=project_id, limit=limit)]
+
+
+@app.post("/integrations/outbox/drain")
+async def drain_integration_outbox(request: Request, limit: int = Query(default=100, ge=1, le=1000)) -> dict[str, Any]:
+    """Run a bounded delivery pass; production deployments may run this in a worker."""
+    _integration_operator(request, allow_gateway=True)
+    storage = _storage()
+    rows = await storage.list_pm_outbox(limit=limit)
+    synced = failed = dead_letter = 0
+    for candidate in rows:
+        outbox = await storage.claim_pm_outbox(candidate["id"])
+        if outbox is None:
+            continue
+        connection_row = await storage.get_pm_connection(outbox["connection_id"])
+        try:
+            if connection_row is None:
+                raise RuntimeError("connection was removed")
+            provider = _provider_for(connection_row)
+            connection = _provider_connection(connection_row)
+            # A connection may serve many canonical projects.  For every
+            # binding-scoped delivery, overlay the binding's provider project
+            # selector so a missing object mapping cannot fall back to the
+            # connection bootstrap project (AIAT) and leak work across
+            # projects.
+            binding_id_value = (outbox.get("payload") or {}).get("binding_id")
+            if binding_id_value:
+                binding_rows = await storage.list_pm_bindings(connection_id=connection.id)
+                binding_row = next(
+                    (item for item in binding_rows if str(item.get("id")) == str(binding_id_value)),
+                    None,
+                )
+                binding_project = str((binding_row or {}).get("external_project_id") or "")
+                if binding_project:
+                    connection = connection.model_copy(
+                        update={"config": {**connection.config, "project_id": binding_project}}
+                    )
+            if outbox["operation"] == "upsert_project":
+                project = CanonicalProject.model_validate(outbox["payload"]["project"])
+                mapping = await storage.get_pm_mapping(
+                    connection_id=connection.id,
+                    object_type=ObjectType.PROJECT.value,
+                    aiat_object_id=project.id,
+                )
+                result = await provider.project_project(
+                    connection,
+                    project,
+                    external_id=mapping.get("external_id") if mapping else None,
+                    idempotency_key=outbox["idempotency_key"],
+                )
+                await storage.upsert_pm_mapping(
+                    connection_id=connection.id,
+                    object_type=ObjectType.PROJECT.value,
+                    aiat_object_id=project.id,
+                    external_id=str(result.external_id),
+                    provider_version=result.provider_version,
+                    exported_revision=project.revision,
+                )
+            elif outbox["operation"] == "upsert_iteration":
+                iteration = CanonicalIteration.model_validate(outbox["payload"]["iteration"])
+                mapping = await storage.get_pm_mapping(
+                    connection_id=connection.id,
+                    object_type=ObjectType.SPRINT.value,
+                    aiat_object_id=iteration.id,
+                )
+                result = await provider.project_iteration(
+                    connection,
+                    iteration,
+                    external_id=mapping.get("external_id") if mapping else None,
+                    idempotency_key=outbox["idempotency_key"],
+                )
+                await storage.upsert_pm_mapping(
+                    connection_id=connection.id,
+                    object_type=ObjectType.SPRINT.value,
+                    aiat_object_id=iteration.id,
+                    external_id=str(result.external_id),
+                    provider_version=result.provider_version,
+                    exported_revision=iteration.revision,
+                )
+            elif outbox["operation"] == "upsert_work_item":
+                item = CanonicalWorkItem.model_validate(outbox["payload"]["item"])
+                mapping = await storage.get_pm_mapping(connection_id=connection.id, object_type="work_item", aiat_object_id=item.id)
+                result = await provider.project_work_item(connection, item, external_id=mapping.get("external_id") if mapping else None, idempotency_key=outbox["idempotency_key"])
+                await storage.upsert_pm_mapping(connection_id=connection.id, object_type="work_item", aiat_object_id=item.id, external_id=str(result.external_id), external_key=result.external_key, provider_version=result.provider_version, exported_revision=item.revision)
+            elif outbox["operation"] == "project_comment":
+                mapping = await storage.get_pm_mapping(
+                    connection_id=connection.id,
+                    object_type="work_item",
+                    aiat_object_id=outbox["aggregate_id"],
+                )
+                if mapping is None:
+                    raise RuntimeError("cannot project comment before work-item mapping exists")
+                comment = outbox["payload"].get("comment") or {}
+                result = await provider.project_comment(
+                    connection,
+                    external_id=str(mapping["external_id"]),
+                    body=str(comment.get("body") or ""),
+                    idempotency_key=outbox["idempotency_key"],
+                )
+                comment_id = comment.get("id")
+                if comment_id and result.external_id:
+                    await storage.upsert_pm_mapping(
+                        connection_id=connection.id,
+                        object_type=ObjectType.COMMENT.value,
+                        aiat_object_id=UUID(str(comment_id)),
+                        external_id=str(result.external_id),
+                        provider_version=result.provider_version,
+                        exported_revision=int(outbox.get("canonical_revision") or 1),
+                    )
+            elif outbox["operation"] == "project_link":
+                mapping = await storage.get_pm_mapping(
+                    connection_id=connection.id,
+                    object_type="work_item",
+                    aiat_object_id=outbox["aggregate_id"],
+                )
+                if mapping is None:
+                    raise RuntimeError("cannot project link before work-item mapping exists")
+                capabilities = await provider.capabilities(connection)
+                if not capabilities.links:
+                    await storage.create_pm_conflict(
+                        connection_id=connection.id,
+                        binding_id=UUID(str((outbox.get("payload") or {}).get("binding_id")))
+                        if (outbox.get("payload") or {}).get("binding_id")
+                        else None,
+                        reason="unsupported_capability",
+                        object_type="link",
+                        aiat_object_id=outbox["aggregate_id"],
+                        external_snapshot={
+                            "provider": connection.provider_kind,
+                            "capability": "links",
+                            "link": outbox.get("payload", {}).get("link"),
+                        },
+                    )
+                    await storage.record_pm_delivery_attempt(
+                        outbox["id"],
+                        status="CONFLICT",
+                        response_metadata={"capability": "links"},
+                        error="provider does not support typed links",
+                    )
+                    await storage.mark_pm_outbox(
+                        outbox["id"],
+                        status="CONFLICT",
+                        error="provider does not support typed links",
+                    )
+                    failed += 1
+                    continue
+                result = await provider.project_link(
+                    connection,
+                    external_id=str(mapping["external_id"]),
+                    link=dict(outbox["payload"].get("link") or {}),
+                    idempotency_key=outbox["idempotency_key"],
+                )
+            else:
+                raise RuntimeError(f"unsupported outbox operation {outbox['operation']}")
+            projection_status = getattr(getattr(result, "status", None), "value", getattr(result, "status", None))
+            if projection_status not in {None, "synced", "SYNCED"}:
+                raise RuntimeError(f"provider projection returned non-synced status {projection_status!r}")
+            result_payload = result.model_dump(mode="json") if hasattr(result, "model_dump") else {}
+            response_metadata = {
+                key: result_payload.get(key)
+                for key in ("external_id", "external_url", "provider_version", "object_type")
+                if result_payload.get(key) is not None
+            }
+            await storage.record_pm_delivery_attempt(
+                outbox["id"],
+                status="SUCCEEDED",
+                response_metadata=response_metadata,
+            )
+            await storage.mark_pm_outbox(outbox["id"], status="SYNCED")
+            projection_evidence = getattr(storage, "record_pm_binding_evidence", None)
+            payload_binding_id = (outbox.get("payload") or {}).get("binding_id")
+            if callable(projection_evidence) and payload_binding_id:
+                recorded = projection_evidence(UUID(str(payload_binding_id)), projection_verified=True)
+                if hasattr(recorded, "__await__"):
+                    await recorded
+            synced += 1
+        except ValueError as exc:
+            if str(exc).startswith("PM mapping conflict:"):
+                payload = dict(outbox.get("payload") or {})
+                item_payload = payload.get("item") or payload.get("project") or payload.get("iteration") or {}
+                await storage.create_pm_conflict(
+                    connection_id=outbox["connection_id"],
+                    binding_id=UUID(str(payload["binding_id"])) if payload.get("binding_id") else None,
+                    reason="mapping_conflict",
+                    object_type=str(outbox.get("aggregate_type") or "provider_object"),
+                    aiat_object_id=UUID(str(item_payload["id"])) if item_payload.get("id") else None,
+                    external_snapshot={"error": str(exc), "payload": payload},
+                )
+                await storage.mark_pm_outbox(outbox["id"], status="CONFLICT", error=str(exc)[:1000])
+                failed += 1
+                continue
+            attempt = await storage.record_pm_delivery_attempt(
+                outbox["id"],
+                status="FAILED",
+                provider_status=getattr(exc, "status_code", None),
+                error=str(exc)[:1000],
+                retry_after_seconds=getattr(exc, "retry_after", None),
+            )
+            if _provider_failure_is_permanent(exc) or (
+                attempt is not None and int(attempt.get("attempts") or 0) >= 5
+            ):
+                await storage.mark_pm_outbox(outbox["id"], status="DEAD_LETTER", error=str(exc)[:1000])
+                dead_letter += 1
+            else:
+                await storage.mark_pm_outbox(outbox["id"], status="PENDING", error=str(exc)[:1000])
+            failed += 1
+        except Exception as exc:
+            attempt = await storage.record_pm_delivery_attempt(
+                outbox["id"],
+                status="FAILED",
+                provider_status=getattr(exc, "status_code", None),
+                error=str(exc)[:1000],
+                retry_after_seconds=getattr(exc, "retry_after", None),
+            )
+            if _provider_failure_is_permanent(exc) or (
+                attempt is not None and int(attempt.get("attempts") or 0) >= 5
+            ):
+                await storage.mark_pm_outbox(outbox["id"], status="DEAD_LETTER", error=str(exc)[:1000])
+                dead_letter += 1
+            else:
+                await storage.mark_pm_outbox(outbox["id"], status="PENDING", error=str(exc)[:1000])
+            failed += 1
+    return {"claimed": len(rows), "synced": synced, "failed": failed, "dead_letter": dead_letter}
+
+
+@app.post("/integrations/webhooks/{connection_id}", status_code=202)
+async def receive_integration_webhook(connection_id: UUID, request: Request) -> dict[str, Any]:
+    """Verify, persist, dedupe, and normalize a provider webhook."""
+    # Do not call ``_integration_operator`` here.  The public PM gateway does
+    # not expose the internal API key to providers; this route's authorization
+    # boundary is the configured provider header resolved by the adapter below.
+    max_body_bytes = 1 * 1024 * 1024
+    declared_length = request.headers.get("content-length")
+    if declared_length:
+        try:
+            if int(declared_length) > max_body_bytes:
+                raise HTTPException(413, "webhook body exceeds 1 MiB limit")
+        except ValueError as exc:
+            raise HTTPException(400, "invalid webhook content length") from exc
+    storage = _storage()
+    row = await storage.get_pm_connection(connection_id)
+    if row is None:
+        raise HTTPException(404, "integration connection not found")
+    if str(row.get("status") or "DISABLED") == "DISABLED":
+        raise HTTPException(409, "integration connection is disabled")
+    chunks: list[bytes] = []
+    body_size = 0
+    async for chunk in request.stream():
+        body_size += len(chunk)
+        if body_size > max_body_bytes:
+            raise HTTPException(413, "webhook body exceeds 1 MiB limit")
+        chunks.append(chunk)
+    body = b"".join(chunks)
+    headers = {key.lower(): value for key, value in request.headers.items()}
+    provider = _provider_for(row)
+    connection = _provider_connection(row)
+    verifier = getattr(provider, "verify_webhook_async", None)
+    try:
+        config = row.get("config", {}) or {}
+        secret_ref = config.get("webhook_secret_ref") or (config.get("webhook_secret_refs") or [None])[0]
+        provider_kind = str(row.get("provider_kind") or "").lower()
+        if provider_kind != "fake" and not secret_ref:
+            raise HTTPException(
+                503,
+                "managed webhook_secret_ref is required for non-fake providers",
+            )
+        if provider_kind != "fake" and verifier is None:
+            raise HTTPException(
+                503,
+                "provider does not expose an asynchronous managed-secret verifier",
+            )
+        if verifier is not None and secret_ref:
+            verifier_kwargs = {"secret_ref": str(secret_ref)} if str(row.get("provider_kind")) == "github" else {}
+            verified = await verifier(connection, body, headers, **verifier_kwargs)
+        else:
+            verified = provider.verify_webhook(connection, body, headers)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(503, f"webhook verifier unavailable: {exc}") from exc
+    if not verified:
+        raise HTTPException(401, "invalid provider webhook authentication")
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HTTPException(400, "webhook body must be valid UTF-8 JSON") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(400, "webhook body must be a JSON object")
+    delivery_id = headers.get("x-github-delivery") or headers.get("x-youtrack-delivery") or headers.get("x-delivery-id") or hashlib.sha256(body).hexdigest()
+    event_type = headers.get("x-github-event") or str(payload.get("event_type") or payload.get("event") or "provider.event")
+    # Retain only non-secret transport metadata.  In particular, never write
+    # the API key used by an upstream gateway into the forensic event row.
+    retained_header_names = {
+        "content-type", "user-agent", "x-github-delivery", "x-github-event",
+        "x-hub-signature-256", "x-youtrack-delivery", "x-delivery-id",
+        "x-youtrack-signature", "x-webhook-signature",
+    }
+    retained_headers = {
+        key: value for key, value in headers.items() if key in retained_header_names
+    }
+    raw_payload_hash = hashlib.sha256(body).hexdigest()
+    inbox, inserted = await storage.create_pm_inbox_event(
+        connection_id=connection_id,
+        provider_delivery_id=delivery_id,
+        event_type=event_type,
+        payload=payload,
+        verified=True,
+        raw_body=body,
+        headers=retained_headers,
+        payload_hash=raw_payload_hash,
+    )
+    if not inserted:
+        incoming_hash = raw_payload_hash
+        if inbox.get("payload_hash") and inbox.get("payload_hash") != incoming_hash:
+            await storage.create_pm_conflict(
+                connection_id=connection_id,
+                reason="delivery_id_reuse",
+                object_type="event",
+                external_id=delivery_id,
+                external_snapshot={"event_type": event_type, "payload_hash": incoming_hash},
+            )
+            await storage.mark_pm_inbox_event(
+                inbox["id"],
+                status="CONFLICT",
+                error="provider delivery ID was reused with a different payload",
+            )
+            return {
+                "status": "conflict",
+                "delivery_id": delivery_id,
+                "reason": "delivery_id_reuse",
+                "inbox_id": str(inbox["id"]),
+            }
+        if str(inbox.get("status") or "RECEIVED").upper() in {"PROCESSED", "CONFLICT"}:
+            return {"status": "duplicate", "delivery_id": delivery_id, "inbox_id": str(inbox["id"])}
+        # A previous attempt may have committed the inbox row and crashed
+        # before normalization/acknowledgement.  Re-enter the normalizer for
+        # RECEIVED/FAILED rows so durable inbox persistence is a recoverable
+        # crash boundary rather than a permanent black hole.
+    normalized = provider.normalize_webhook(ExternalEvent(connection_id=connection_id, provider_delivery_id=delivery_id, event_type=event_type, payload=payload, verified=True))
+    if normalized is None:
+        await storage.mark_pm_inbox_event(
+            inbox["id"],
+            status="PROCESSED",
+            normalized_type="none",
+            result={"status": "accepted", "normalized": False},
+        )
+        return {"status": "accepted", "delivery_id": delivery_id, "normalized": False}
+    applied = await _apply_normalized_command(storage, normalized, inbox)
+    await storage.mark_pm_inbox_event(
+        inbox["id"],
+        status="CONFLICT" if applied.get("status") == "conflict" else "PROCESSED",
+        normalized_type=str(getattr(normalized.object_type, "value", normalized.object_type)),
+        result=applied,
+    )
+    return {
+        "status": "accepted" if applied.get("status") != "conflict" else "conflict",
+        "delivery_id": delivery_id,
+        "normalized": True,
+        "command": normalized.model_dump(mode="json"),
+        "result": applied,
+    }
+
+
+@app.post("/projects/{project_id}/issues", status_code=201)
+async def create_canonical_issue(project_id: UUID, req: CanonicalIssueCreateRequest, request: Request) -> dict[str, Any]:
+    """Typed canonical issue creation used by generic tools and integrations."""
+    _require_operator_identity(request)
+    storage = _storage()
+    if await storage.get_project(project_id) is None:
+        raise HTTPException(404, "project not found")
+    if req.sprint_id is not None:
+        sprint = await storage.get_sprint(req.sprint_id)
+        if sprint is None or sprint.get("project_id") != project_id:
+            raise HTTPException(404, "sprint not found for project")
+    if isinstance(storage, AgentStorage):
+        issue, queued = await storage.create_issue_with_pm_projections(
+            project_id=project_id,
+            **req.model_dump(),
+        )
+    else:  # keep lightweight endpoint tests and local storage doubles useful
+        issue = await storage.create_issue(project_id=project_id, **req.model_dump())
+        queued = await _enqueue_issue_projection(storage, issue)
+    return {"issue": _serialize(issue), "projections": [_serialize_projection(row) for row in queued]}
+
+
+@app.get("/projects/{project_id}/issues/{issue_id}")
+async def get_canonical_issue(project_id: UUID, issue_id: UUID, request: Request) -> dict[str, Any]:
+    """Read one canonical work item with its durable integration metadata."""
+    storage = _storage()
+    issue = await storage.get_issue(issue_id)
+    if issue is None or issue.get("project_id") != project_id:
+        raise HTTPException(404, "issue not found for project")
+    return {
+        "issue": _serialize(issue),
+        "comments": [_serialize(row) for row in await storage.list_work_item_comments(issue_id)],
+        "links": [_serialize(row) for row in await storage.list_work_item_links(issue_id)],
+    }
+
+
+@app.patch("/projects/{project_id}/issues/{issue_id}")
+async def update_canonical_issue(project_id: UUID, issue_id: UUID, req: CanonicalIssueUpdateRequest, request: Request) -> dict[str, Any]:
+    _require_operator_identity(request)
+    storage = _storage()
+    issue = await storage.get_issue(issue_id)
+    if issue is None or issue.get("project_id") != project_id:
+        raise HTTPException(404, "issue not found for project")
+    values = {key: value for key, value in req.model_dump(exclude_none=True).items() if key != "expected_revision"}
+    try:
+        if isinstance(storage, AgentStorage):
+            refreshed, queued = await storage.update_issue_with_pm_projections(
+                issue_id,
+                expected_revision=req.expected_revision or int(issue.get("revision") or 1),
+                **values,
+            )
+        else:
+            await storage.update_issue(
+                issue_id,
+                expected_revision=req.expected_revision or int(issue.get("revision") or 1),
+                **values,
+            )
+            refreshed = await storage.get_issue(issue_id)
+            assert refreshed is not None
+            queued = await _enqueue_issue_projection(storage, refreshed)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"issue": _serialize(refreshed), "projections": [_serialize_projection(row) for row in queued]}
+
+
+@app.post("/projects/{project_id}/issues/{issue_id}/comments", status_code=201)
+async def comment_on_canonical_issue(project_id: UUID, issue_id: UUID, req: CanonicalIssueCommentRequest, request: Request) -> dict[str, Any]:
+    _require_operator_identity(request)
+    storage = _storage()
+    issue = await storage.get_issue(issue_id)
+    if issue is None or issue.get("project_id") != project_id:
+        raise HTTPException(404, "issue not found for project")
+    if isinstance(storage, AgentStorage):
+        comment, projections = await storage.create_work_item_comment_with_pm_projections(
+            issue_id=issue_id,
+            body=req.body,
+            actor_id=req.actor_id,
+            run_id=req.run_id,
+            approval_id=req.approval_id,
+            evidence_id=req.evidence_id,
+            body_blob_ref=req.body_blob_ref,
+        )
+    else:
+        comment = await storage.create_work_item_comment(
+            issue_id=issue_id,
+            body=req.body,
+            actor_id=req.actor_id,
+            run_id=req.run_id,
+            approval_id=req.approval_id,
+            evidence_id=req.evidence_id,
+            body_blob_ref=req.body_blob_ref,
+        )
+        projections = []
+    return {
+        "comment": _serialize(comment),
+        "issue_id": str(issue_id),
+        "projections": [_serialize_projection(row) for row in projections],
+    }
+
+
+@app.get("/projects/{project_id}/issues/{issue_id}/comments")
+async def list_canonical_issue_comments(project_id: UUID, issue_id: UUID, request: Request) -> list[dict[str, Any]]:
+    storage = _storage()
+    issue = await storage.get_issue(issue_id)
+    if issue is None or issue.get("project_id") != project_id:
+        raise HTTPException(404, "issue not found for project")
+    return [_serialize(row) for row in await storage.list_work_item_comments(issue_id)]
+
+
+@app.post("/projects/{project_id}/issues/{issue_id}/links", status_code=201)
+async def link_canonical_issue(
+    project_id: UUID,
+    issue_id: UUID,
+    req: CanonicalIssueLinkRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Create an idempotent link from a canonical work item to an external object."""
+    _require_operator_identity(request)
+    storage = _storage()
+    issue = await storage.get_issue(issue_id)
+    if issue is None or issue.get("project_id") != project_id:
+        raise HTTPException(404, "issue not found for project")
+    if isinstance(storage, AgentStorage):
+        link, projections = await storage.create_work_item_link_with_pm_projections(
+            issue_id=issue_id,
+            **req.model_dump(),
+        )
+    else:
+        link = await storage.create_work_item_link(issue_id=issue_id, **req.model_dump())
+        projections = []
+    return {
+        "link": _serialize(link),
+        "issue_id": str(issue_id),
+        "projections": [_serialize_projection(row) for row in projections],
+    }
+
+
+@app.get("/projects/{project_id}/issues/{issue_id}/links")
+async def list_canonical_issue_links(
+    project_id: UUID,
+    issue_id: UUID,
+    request: Request,
+) -> list[dict[str, Any]]:
+    storage = _storage()
+    issue = await storage.get_issue(issue_id)
+    if issue is None or issue.get("project_id") != project_id:
+        raise HTTPException(404, "issue not found for project")
+    return [_serialize(row) for row in await storage.list_work_item_links(issue_id)]
+
+
+# Keep the project evidence package/policy surface isolated from this module's
+# large control-plane implementation.  The router owns the deterministic
+# projection and operator-only persistence boundary.
+from orchestrator_api.project_evidence_routes import router as project_evidence_router
+
+app.include_router(project_evidence_router)

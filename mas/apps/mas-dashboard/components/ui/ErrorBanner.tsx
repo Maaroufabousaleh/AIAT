@@ -73,7 +73,7 @@ export function ErrorBanner({
       )}
     >
       <div className={clsx("flex-shrink-0 p-1.5 rounded-md", cfg.iconWrap)}>
-        <Icon size={16} className={cfg.icon} />
+        <Icon size={16} className={cfg.icon} aria-hidden="true" />
       </div>
       <div className="flex-1 min-w-0">
         {title !== "" && (

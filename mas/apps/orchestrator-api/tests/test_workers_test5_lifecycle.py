@@ -9,7 +9,7 @@ API         register with source_repo, POST /evaluate, GET /evaluations,
             reject breaking upgrade (compat test fail → 409),
             accept compatible upgrade (compat pass → updated commit_sha)
 Unit        evaluator._compute_verdict: APPROVED/CONDITIONAL/REJECTED thresholds,
-            evaluator._check_licensing: compatible/rejected/missing license,
+            evaluator._check_licensing: metadata collection for compatible/restricted/missing license,
             evaluator._check_security: clean/secrets-found scenarios,
             evaluator._check_architecture: entrypoint/structure scoring,
             evaluator._check_compatibility: python+main scoring
@@ -122,7 +122,7 @@ def _eval_report(
         },
         "overall_score": overall_score,
         "verdict": verdict,
-        "evaluator_version": "1.1.0",
+        "evaluator_version": "1.2.0",
         "risk_tier": "low",
         "blocked_reasons": [],
         "recommended_status": "ACTIVE",
@@ -239,17 +239,20 @@ async def test_evaluate_unknown_worker_returns_404(client):
 
 
 @pytest.mark.anyio
-async def test_evaluate_worker_with_gpl_license_verdict_is_rejected(client):
-    """Evaluate endpoint returns REJECTED when licensing check fails (GPL)."""
+async def test_evaluate_worker_with_restricted_license_metadata_remains_usable(client):
+    """Licence metadata is returned without turning an internal worker into a rejection."""
     worker = _worker_row()
     rejected_report = _eval_report(
-        verdict="REJECTED",
-        overall_score=30.0,
+        verdict="APPROVED",
+        overall_score=80.0,
     )
     rejected_report["checks"]["licensing"] = {
-        "passed": False,
+        "passed": True,
+        "metadata_only": True,
+        "gate": "informational",
         "score": 0.0,
-        "details": "Rejected license detected: gpl-3.0",
+        "metadata_status": "restriction-noted",
+        "details": "Licence metadata recorded; stated restriction or licence family: gpl-3.0 (operator notice; non-blocking)",
         "license": "gpl-3.0",
     }
 
@@ -270,11 +273,11 @@ async def test_evaluate_worker_with_gpl_license_verdict_is_rejected(client):
 
     assert resp.status_code == 200
     body = resp.json()
-    assert body["verdict"] == "REJECTED"
-    # evaluation_status written as "rejected"
+    assert body["verdict"] == "APPROVED"
+    # evaluation_status written as "approved"
     storage.update_worker_config.assert_awaited_once()
     _, kwargs = storage.update_worker_config.await_args
-    assert kwargs.get("evaluation_status") == "rejected"
+    assert kwargs.get("evaluation_status") == "approved"
 
 
 # ── 4. Get evaluation history ─────────────────────────────────────────────────
@@ -569,8 +572,8 @@ def test_compute_verdict_approved_with_requested_subset_checks():
     assert _compute_verdict(results, 87.1) == "APPROVED"
 
 
-def test_compute_verdict_rejected_when_licensing_fails():
-    """_compute_verdict returns REJECTED when licensing score < 50 (GPL etc)."""
+def test_compute_verdict_ignores_license_metadata_failure():
+    """_compute_verdict ignores licence metadata status and keeps technical scoring."""
     from mas_core.worker_registry.evaluator import _compute_verdict
 
     results = {
@@ -578,7 +581,11 @@ def test_compute_verdict_rejected_when_licensing_fails():
         "licensing": {"score": 0.0, "passed": False},
         "security": {"score": 100.0, "passed": True},
     }
-    assert _compute_verdict(results, 65.0) == "REJECTED"
+    assert _compute_verdict(
+        results,
+        65.0,
+        blocked_reasons=["licensing: restricted metadata"],
+    ) == "CONDITIONAL"
 
 
 def test_compute_verdict_rejected_when_security_very_low():
@@ -622,17 +629,15 @@ def test_compute_overall_score_weighted_average():
 
 
 def test_compute_overall_score_partial_checks():
-    """_compute_overall_score normalizes by actual weight when checks are missing."""
+    """_compute_overall_score excludes licence metadata from technical scoring."""
     from mas_core.worker_registry.evaluator import _compute_overall_score
 
     results = {
-        "licensing": {"score": 100.0},
-        "security": {"score": 0.0},
+        "licensing": {"score": 0.0, "passed": True, "metadata_only": True},
+        "security": {"score": 100.0},
     }
-    # licensing weight=0.25, security weight=0.25 → total_weight=0.5
-    # total = 0.25*100 + 0.25*0 = 25 → normalized = 25/0.5 = 50
     score = _compute_overall_score(results)
-    assert score == 50.0
+    assert score == 100.0
 
 
 # ── 9. Unit tests for licensing check ────────────────────────────────────────
@@ -682,8 +687,8 @@ async def test_licensing_check_recognizes_canonical_permissive_texts(
 
 
 @pytest.mark.anyio
-async def test_licensing_check_fails_for_gpl_license(tmp_path):
-    """_check_licensing returns passed=False for GPL license (text contains 'gpl-3.0')."""
+async def test_licensing_check_records_gpl_metadata_without_rejection(tmp_path):
+    """_check_licensing records GPL metadata but never fails the gate."""
     from mas_core.worker_registry.evaluator import _check_licensing
 
     # The evaluator scans for exact substrings like "gpl-3.0" in lowercase license text.
@@ -693,19 +698,23 @@ async def test_licensing_check_fails_for_gpl_license(tmp_path):
         "GNU GENERAL PUBLIC LICENSE\nVersion 3, June 2007"
     )
     result = await _check_licensing("https://github.com/example/repo", tmp_path)
-    assert result["passed"] is False
+    assert result["passed"] is True
+    assert result["metadata_only"] is True
+    assert result["metadata_status"] == "restriction-noted"
     assert result["score"] == 0.0
     assert "gpl" in result["details"].lower()
 
 
 @pytest.mark.anyio
-async def test_licensing_check_fails_when_no_license_file(tmp_path):
-    """_check_licensing returns passed=False when no LICENSE file exists."""
+async def test_licensing_check_records_missing_license_as_notice(tmp_path):
+    """Missing licence metadata is an operator notice, not a failed gate."""
     from mas_core.worker_registry.evaluator import _check_licensing
 
     result = await _check_licensing("https://github.com/example/repo", tmp_path)
-    assert result["passed"] is False
-    assert "no license" in result["details"].lower()
+    assert result["passed"] is True
+    assert result["metadata_only"] is True
+    assert result["metadata_status"] == "missing"
+    assert "missing" in result["details"].lower()
 
 
 # ── 10. Unit tests for security check ────────────────────────────────────────
@@ -1287,6 +1296,36 @@ async def test_activate_external_worker_blocked_until_approved(client):
     )
     assert resp.status_code == 409
     storage.update_worker_status.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_external_activation_requires_passed_security_provenance():
+    """An approved label cannot bypass a pending external security scan."""
+    from orchestrator_api.main import _worker_activation_blockers
+
+    worker = _worker_row(status="INACTIVE", evaluation_status="approved")
+    worker.update(
+        {
+            "active_shell_version_id": uuid4(),
+            "active_adapter_id": uuid4(),
+            "active_skill_bundle_id": uuid4(),
+        }
+    )
+    storage = MagicMock()
+    storage.get_worker_shell_version = AsyncMock(return_value={"status": "active"})
+    storage.get_runtime_adapter = AsyncMock(
+        return_value={"status": "active", "conformance_status": "passed"}
+    )
+    storage.get_skill_bundle = AsyncMock(return_value={"status": "APPROVED"})
+    storage.list_capability_snapshots = AsyncMock(return_value=[{"id": uuid4()}])
+    storage.get_steward_by_worker = AsyncMock(return_value={"id": uuid4()})
+    storage.get_external_provenance_by_worker = AsyncMock(
+        return_value={"security_scan_status": "pending"}
+    )
+
+    blockers = await _worker_activation_blockers(storage, worker)
+
+    assert "external worker requires a passed security scan" in blockers
 
 
 @pytest.mark.anyio

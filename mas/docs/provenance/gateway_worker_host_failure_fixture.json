@@ -1,0 +1,49 @@
+{
+  "cases": [
+    {
+      "binding_after": "RELEASED",
+      "binding_before": "COMMITTED",
+      "category": "provider",
+      "cause_type": "LLMGatewayError",
+      "error_code": "MODEL_GATEWAY_TRANSIENT_FAILURE",
+      "event_count": 2,
+      "gateway_call_count": 1,
+      "payload_free_report": true,
+      "reported_status_code": 429,
+      "reservation_after": "RELEASED",
+      "retryable": true,
+      "run_state": "FAILED",
+      "status": "pass",
+      "status_code": 429,
+      "terminal": false,
+      "usage_count": 1
+    },
+    {
+      "binding_after": "RELEASED",
+      "binding_before": "COMMITTED",
+      "category": "provider",
+      "cause_type": "LLMGatewayError",
+      "error_code": "MODEL_GATEWAY_REQUEST_REJECTED",
+      "event_count": 2,
+      "gateway_call_count": 1,
+      "payload_free_report": true,
+      "reported_status_code": 401,
+      "reservation_after": "RELEASED",
+      "retryable": false,
+      "run_state": "FAILED",
+      "status": "pass",
+      "status_code": 401,
+      "terminal": true,
+      "usage_count": 1
+    }
+  ],
+  "external_provider_call_performed": false,
+  "licence_metadata_is_gate": false,
+  "mode": "in-memory-gateway-worker-host-failure-fixture",
+  "mutation_performed": true,
+  "network_access_performed": false,
+  "sandbox_execution_performed": false,
+  "schema_version": "aiat.gateway-worker-host-failure-fixture.v1",
+  "scope": "real WorkerHostExecutor/WorkerRunController/GatewayWorkerAdapter over bounded in-memory failure fixture; no durable host, provider, sandbox, or live recovery claim",
+  "status": "pass"
+}

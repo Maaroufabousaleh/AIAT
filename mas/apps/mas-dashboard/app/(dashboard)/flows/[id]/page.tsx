@@ -1,11 +1,12 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { useRouter } from "next/navigation";
+import { useRef } from "react";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
 import { formatDistanceToNow } from "date-fns";
-import { ArrowLeft, Save, Copy, X, AlertTriangle, Undo2, Redo2, GitBranch, CheckCircle2, Circle, History, Info } from "lucide-react";
+import { ArrowLeft, Save, Copy, X, AlertTriangle, Undo2, Redo2, GitBranch, CheckCircle2, Circle, History, Info, RefreshCw } from "lucide-react";
 import {
   ReactFlow,
   Background,
@@ -33,6 +34,12 @@ import {
 import { convertFlowToReactFlow, convertReactFlowToFlow } from "@/lib/flow-editor";
 import { KpiCard } from "@/components/ui/KpiCard";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
+import { NodeSchemaContractSummary } from "@/components/flows/NodeSchemaContractSummary";
+import {
+  NodeSchemaForm,
+  type GovernedModelProfile,
+  type GovernedWorkerOption,
+} from "@/components/flows/NodeSchemaForm";
 
 const CUSTOM_NODE_TYPES: NodeTypes = {};
 let pendingConnectionSource: string | null = null;
@@ -80,6 +87,7 @@ const NODE_TYPES_OPTIONS: FlowNodeType[] = ["start", "task", "approval", "condit
 
 export default function FlowEditorPage() {
   const router = useRouter();
+  const { id } = useParams<{ id: string }>();
   const { currentFlow, fetchFlow, createFlow, updateFlow, loading } = useFlowStore();
   
   const [name, setName] = useState("");
@@ -101,38 +109,125 @@ export default function FlowEditorPage() {
   const [history, setHistory] = useState<{ nodes: Node[]; edges: Edge[] }[]>([]);
   const [redoStack, setRedoStack] = useState<{ nodes: Node[]; edges: Edge[] }[]>([]);
   const [historyVersion, setHistoryVersion] = useState(0);
+  const [governedWorkers, setGovernedWorkers] = useState<GovernedWorkerOption[]>([]);
+  const [modelProfiles, setModelProfiles] = useState<GovernedModelProfile[]>([]);
+  const [governanceLoading, setGovernanceLoading] = useState(true);
+  const [governanceLoadError, setGovernanceLoadError] = useState<string | null>(null);
+  const [flowMetadata, setFlowMetadata] = useState<Record<string, unknown>>({});
+  const [flowLoading, setFlowLoading] = useState(false);
+  const [flowLoaded, setFlowLoaded] = useState(id === "new");
+  const [flowLoadStale, setFlowLoadStale] = useState(false);
+  const [flowLoadError, setFlowLoadError] = useState<string | null>(null);
+  const [accessDenied, setAccessDenied] = useState(false);
+  const [hasReadContext, setHasReadContext] = useState(false);
+  const hasFlowRef = useRef(false);
+  const flowLoadGenerationRef = useRef(0);
+  const hasReadContextRef = useRef(false);
 
-  const isNew = !currentFlow?.id;
+  const isNew = id === "new";
+
+  const handleAccessDenied = useCallback(() => {
+    const current = useFlowStore.getState().currentFlow;
+    const hadReadContext = hasReadContextRef.current || hasFlowRef.current || current !== null;
+    flowLoadGenerationRef.current += 1;
+    setAccessDenied(true);
+    setHasReadContext(hadReadContext);
+    setFlowLoading(false);
+    setFlowLoadError(null);
+    setFlowLoadStale(false);
+    setSaving(false);
+    setValidationError(null);
+    setSelectedNode(null);
+    setShowConfig(false);
+  }, []);
 
   useEffect(() => {
-    const flowId = window.location.pathname.split("/").pop();
-    if (flowId && flowId !== "new") {
-      fetchFlow(flowId).then((flow) => {
-        if (flow) {
-          setName(flow.name);
-          setDescription(flow.description || "");
-          setIsActive(flow.is_active);
-          const { nodes: rawNodes, edges: rawEdges } = convertFlowToReactFlow(
-            flow.definition_json?.nodes || [],
-            flow.definition_json?.edges || []
-          );
-          const flowNodes = rawNodes.map((node) => ({
-            ...node,
-            markerEnd: { type: MarkerType.ArrowClosed },
-          }));
-          const flowEdges = rawEdges.map((edge) => ({
-            ...edge,
-            markerEnd: { type: MarkerType.ArrowClosed },
-            style: { stroke: "#6b7280" },
-          }));
-          setNodes(flowNodes);
-          setEdges(flowEdges);
-          setSaveStatus("saved");
-          setLastSavedAt(new Date(flow.updated_at));
+    const controller = new AbortController();
+    async function loadGovernanceOptions() {
+      setGovernanceLoading(true);
+      try {
+        const [workersResponse, profilesResponse] = await Promise.all([
+          fetch("/api/workers", { signal: controller.signal }),
+          fetch("/api/governance/model-profiles", { signal: controller.signal }),
+        ]);
+        if (!workersResponse.ok || !profilesResponse.ok) {
+          throw new Error("The worker registry or Model Profile catalog is unavailable");
         }
-      });
+        const workers = await workersResponse.json();
+        const profiles = await profilesResponse.json();
+        setGovernedWorkers(Array.isArray(workers) ? workers : []);
+        setModelProfiles(Array.isArray(profiles) ? profiles : []);
+        setGovernanceLoadError(null);
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setGovernanceLoadError(error instanceof Error ? error.message : "Could not load governed worker options");
+        }
+      } finally {
+        if (!controller.signal.aborted) setGovernanceLoading(false);
+      }
     }
-  }, [fetchFlow, setNodes, setEdges]);
+    void loadGovernanceOptions();
+    return () => controller.abort();
+  }, []);
+
+  const loadFlow = useCallback(async (flowId: string) => {
+    if (accessDenied) return;
+    const generation = flowLoadGenerationRef.current + 1;
+    flowLoadGenerationRef.current = generation;
+    setFlowLoading(true);
+    setFlowLoadError(null);
+    const flow = await fetchFlow(flowId);
+    if (generation !== flowLoadGenerationRef.current) return;
+    if (!flow) {
+      const status = useFlowStore.getState().errorStatus;
+      if (status === 401 || status === 403) {
+        handleAccessDenied();
+        return;
+      }
+      const message = useFlowStore.getState().error || "The flow could not be loaded from the canonical API.";
+      if (hasFlowRef.current) {
+        setFlowLoadStale(true);
+        setFlowLoadError(message);
+      } else {
+        setFlowLoadError(message);
+      }
+      setFlowLoading(false);
+      return;
+    }
+
+    setName(flow.name);
+    setDescription(flow.description || "");
+    setIsActive(flow.is_active);
+    setFlowMetadata(flow.definition_json?.metadata || {});
+    const { nodes: rawNodes, edges: rawEdges } = convertFlowToReactFlow(
+      flow.definition_json?.nodes || [],
+      flow.definition_json?.edges || []
+    );
+    const flowNodes = rawNodes.map((node) => ({
+      ...node,
+      markerEnd: { type: MarkerType.ArrowClosed },
+    }));
+    const flowEdges = rawEdges.map((edge) => ({
+      ...edge,
+      markerEnd: { type: MarkerType.ArrowClosed },
+      style: { stroke: "#6b7280" },
+    }));
+    setNodes(flowNodes);
+    setEdges(flowEdges);
+    setSaveStatus("saved");
+    setLastSavedAt(new Date(flow.updated_at));
+    hasFlowRef.current = true;
+    hasReadContextRef.current = true;
+    setHasReadContext(true);
+    setFlowLoaded(true);
+    setFlowLoadStale(false);
+    setFlowLoadError(null);
+    setFlowLoading(false);
+  }, [accessDenied, fetchFlow, handleAccessDenied, setNodes, setEdges]);
+
+  useEffect(() => {
+    if (!isNew && id) void loadFlow(id);
+  }, [id, isNew, loadFlow]);
 
   // Track canvas edits in the undo stack. We sample on a debounce so quick
   // drags (which fire many change events) don't fill the history. The version
@@ -145,6 +240,7 @@ export default function FlowEditorPage() {
   }, [historyVersion]);
 
   const undo = useCallback(() => {
+    if (accessDenied) return;
     setHistory((prev) => {
       if (prev.length === 0) return prev;
       const last = prev[prev.length - 1];
@@ -154,9 +250,10 @@ export default function FlowEditorPage() {
       setSaveStatus("dirty");
       return prev.slice(0, -1);
     });
-  }, [nodes, edges, setNodes, setEdges]);
+  }, [accessDenied, nodes, edges, setNodes, setEdges]);
 
   const redo = useCallback(() => {
+    if (accessDenied) return;
     setRedoStack((prev) => {
       if (prev.length === 0) return prev;
       const next = prev[prev.length - 1];
@@ -166,7 +263,7 @@ export default function FlowEditorPage() {
       setSaveStatus("dirty");
       return prev.slice(0, -1);
     });
-  }, [nodes, edges, setNodes, setEdges]);
+  }, [accessDenied, nodes, edges, setNodes, setEdges]);
 
   // Keyboard shortcuts: Ctrl/Cmd+Z = undo, Ctrl/Cmd+Shift+Z or Ctrl+Y = redo.
   useEffect(() => {
@@ -206,11 +303,12 @@ export default function FlowEditorPage() {
 
   const onConnect = useCallback(
     (connection: Connection) => {
+      if (accessDenied) return;
       setEdges((eds) => addEdge({ ...connection, id: `e${Date.now()}`, markerEnd: { type: MarkerType.ArrowClosed } }, eds));
       setSaveStatus("dirty");
       setHistoryVersion((v) => v + 1);
     },
-    [setEdges]
+    [accessDenied, setEdges]
   );
 
   useEffect(() => {
@@ -237,6 +335,7 @@ export default function FlowEditorPage() {
       pendingConnectionSource = null;
     };
     const handleQuickConnect = (event: Event) => {
+      if (accessDenied) return;
       const { source, target } = (event as CustomEvent<{ source: string; target: string }>).detail;
       setEdges((eds) => {
         if (eds.some((edge) => edge.source === source && edge.target === target)) return eds;
@@ -253,16 +352,18 @@ export default function FlowEditorPage() {
       document.removeEventListener("mouseup", handleMouseUp, true);
       window.removeEventListener("flow-quick-connect", handleQuickConnect);
     };
-  }, [setEdges]);
+  }, [accessDenied, setEdges]);
 
   const onNodeClick = useCallback((_: unknown, node: Node) => {
+    if (accessDenied) return;
     setSelectedNode(node);
     setShowConfig(true);
     setNodeConfig((node.data?.config as Record<string, unknown>) || {});
     setRawSwitchCases(JSON.stringify((node.data?.config as Record<string, unknown>)?.switch_cases || {}, null, 2));
-  }, []);
+  }, [accessDenied]);
 
   const addNode = useCallback((type: FlowNodeType) => {
+    if (accessDenied) return;
     const index = nodes.length;
     const id = `${type}_${Date.now()}`;
     const label = NODE_TYPE_LABELS[type] || type;
@@ -275,17 +376,19 @@ export default function FlowEditorPage() {
     setNodes((nds) => [...nds, newNode]);
     setSaveStatus("dirty");
     setHistoryVersion((v) => v + 1);
-  }, [nodes.length, setNodes]);
+  }, [accessDenied, nodes.length, setNodes]);
 
   const updateNodeLabel = useCallback((nodeId: string, label: string) => {
+    if (accessDenied) return;
     setNodes((nds) =>
       nds.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, label } } : n))
     );
     setSelectedNode((node) => (node?.id === nodeId ? { ...node, data: { ...node.data, label } } : node));
     setSaveStatus("dirty");
-  }, [setNodes]);
+  }, [accessDenied, setNodes]);
 
   const updateNodeConfig = useCallback((config: Record<string, unknown>) => {
+    if (accessDenied) return;
     setNodeConfig(config);
     if (selectedNode) {
       setNodes((nds) =>
@@ -294,7 +397,7 @@ export default function FlowEditorPage() {
       setSelectedNode((node) => (node ? { ...node, data: { ...node.data, config } } : node));
       setSaveStatus("dirty");
     }
-  }, [selectedNode, setNodes]);
+  }, [accessDenied, selectedNode, setNodes]);
 
   const switchCases = useMemo(() => (
     nodeConfig.switch_cases && typeof nodeConfig.switch_cases === "object" && !Array.isArray(nodeConfig.switch_cases)
@@ -329,7 +432,7 @@ export default function FlowEditorPage() {
   }, [setSwitchCases, switchCaseEntries.length, switchCases]);
 
   const deleteSelectedNode = useCallback(() => {
-    if (selectedNode) {
+    if (!accessDenied && selectedNode) {
       setNodes((nds) => nds.filter((n) => n.id !== selectedNode.id));
       setEdges((eds) => eds.filter((e) => e.source !== selectedNode.id && e.target !== selectedNode.id));
       setSelectedNode(null);
@@ -337,7 +440,7 @@ export default function FlowEditorPage() {
       setSaveStatus("dirty");
       setHistoryVersion((v) => v + 1);
     }
-  }, [selectedNode, setNodes, setEdges]);
+  }, [accessDenied, selectedNode, setNodes, setEdges]);
 
   const validateFlow = useCallback((): string | null => {
     if (!name.trim()) return "Flow name is required";
@@ -353,6 +456,7 @@ export default function FlowEditorPage() {
   }, [name, nodes]);
 
   const handleSave = async () => {
+    if (accessDenied) return;
     const validation = validateFlow();
     if (validation) {
       setValidationError(validation);
@@ -362,7 +466,7 @@ export default function FlowEditorPage() {
     setSaving(true);
     setSaveStatus("saving");
 
-    const definition = convertReactFlowToFlow(nodes, edges);
+    const definition = convertReactFlowToFlow(nodes, edges, flowMetadata);
 
     try {
       if (isNew) {
@@ -377,6 +481,11 @@ export default function FlowEditorPage() {
           setLastSavedAt(new Date());
           router.push(`/flows/${created.id}`);
         } else {
+          const status = useFlowStore.getState().errorStatus;
+          if (status === 401 || status === 403) {
+            handleAccessDenied();
+            return;
+          }
           setSaveStatus("error");
         }
       } else {
@@ -390,10 +499,20 @@ export default function FlowEditorPage() {
           setSaveStatus("saved");
           setLastSavedAt(new Date());
         } else {
+          const status = useFlowStore.getState().errorStatus;
+          if (status === 401 || status === 403) {
+            handleAccessDenied();
+            return;
+          }
           setSaveStatus("error");
         }
       }
     } catch (err) {
+      const status = useFlowStore.getState().errorStatus;
+      if (status === 401 || status === 403) {
+        handleAccessDenied();
+        return;
+      }
       setSaveStatus("error");
     } finally {
       setSaving(false);
@@ -401,6 +520,7 @@ export default function FlowEditorPage() {
   };
 
   const handleSaveAsNewVersion = async () => {
+    if (accessDenied) return;
     const validation = validateFlow();
     if (validation || !currentFlow) {
       setValidationError(validation);
@@ -414,7 +534,7 @@ export default function FlowEditorPage() {
       const created = await createFlow({
         name,
         description,
-        definition_json: convertReactFlowToFlow(nodes, edges),
+        definition_json: convertReactFlowToFlow(nodes, edges, flowMetadata),
         is_active: isActive,
         version_from_flow_id: currentFlow.id,
       });
@@ -423,38 +543,129 @@ export default function FlowEditorPage() {
         setLastSavedAt(new Date());
         router.push(`/flows/${created.id}`);
       } else {
+        const status = useFlowStore.getState().errorStatus;
+        if (status === 401 || status === 403) {
+          handleAccessDenied();
+          return;
+        }
         setSaveStatus("error");
       }
     } catch (err) {
+      const status = useFlowStore.getState().errorStatus;
+      if (status === 401 || status === 403) {
+        handleAccessDenied();
+        return;
+      }
       setSaveStatus("error");
     } finally {
       setSaving(false);
     }
   };
 
+  if (!isNew && accessDenied && !flowLoaded) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100">
+        <header className="flex items-center gap-3 border-b border-slate-800 bg-slate-900/80 p-4">
+          <Link
+            href="/flows"
+            aria-label="Back to flows"
+            className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-400/60"
+          >
+            <ArrowLeft size={18} />
+          </Link>
+          <h1 className="text-lg font-semibold">Flow editor access denied</h1>
+        </header>
+        <main
+          aria-label="Flow editor access denied"
+          className="mx-auto flex w-full max-w-2xl flex-col gap-6 p-6"
+        >
+          <section
+            role="region"
+            aria-label="Flow editor access status"
+            className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-5 text-sm text-amber-100"
+          >
+            <h2 className="font-medium text-amber-50">Flow editor access denied</h2>
+            <p className="mt-1 text-amber-100/80">
+              This flow cannot be read while authorization is unavailable. Retry,
+              editing, and save controls remain hidden until access is restored.
+            </p>
+          </section>
+        </main>
+      </div>
+    );
+  }
+
+  if (!isNew && !flowLoaded) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100">
+        <header className="flex items-center gap-3 border-b border-slate-800 bg-slate-900/80 p-4">
+          <Link
+            href="/flows"
+            aria-label="Back to flows"
+            className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-400/60"
+          >
+            <ArrowLeft size={18} />
+          </Link>
+          <h1 className="text-lg font-semibold">Flow unavailable</h1>
+        </header>
+        <main className="mx-auto flex w-full max-w-2xl flex-col gap-6 p-6">
+          {flowLoadError ? (
+            <ErrorBanner
+              tone="error"
+              title="Could not load flow"
+              action={(
+                <button
+                  type="button"
+                  onClick={() => void loadFlow(id)}
+                  disabled={flowLoading}
+                  aria-busy={flowLoading}
+                  data-testid="flow-load-retry"
+                  className="inline-flex min-h-11 items-center gap-2 rounded-md border border-slate-700 bg-slate-900/60 px-3 py-2 text-xs font-medium text-slate-100 transition-colors hover:bg-slate-800 disabled:cursor-wait disabled:opacity-60"
+                >
+                  <RefreshCw size={14} className={flowLoading ? "animate-spin" : ""} aria-hidden="true" />
+                  Retry
+                </button>
+              )}
+            >
+              {flowLoadError}
+            </ErrorBanner>
+          ) : (
+            <p role="status" className="text-sm text-slate-400">Loading flow…</p>
+          )}
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="h-screen flex flex-col bg-slate-950 text-slate-100">
-      <div className="flex flex-wrap items-center justify-between gap-3 p-4 border-b border-slate-800 bg-slate-900/80 backdrop-blur">
+      <header className="flex flex-wrap items-center justify-between gap-3 p-4 border-b border-slate-800 bg-slate-900/80 backdrop-blur">
         <div className="flex items-center gap-3 min-w-0">
           <Link
             href="/flows"
             aria-label="Back to flows"
-            className="p-1.5 rounded-md text-slate-500 hover:text-slate-200 hover:bg-slate-800 transition-colors"
+            className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-md text-slate-500 hover:text-slate-200 hover:bg-slate-800 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400/60"
           >
             <ArrowLeft size={18} />
           </Link>
           <div className="min-w-0">
-            <input
-              value={name}
-              onChange={(e) => {
-                setName(e.target.value);
-                setSaveStatus("dirty");
-              }}
-              placeholder="Flow name..."
-              aria-label="Flow name"
-              data-testid="flow-name-input"
-              className="text-lg font-semibold bg-transparent text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-400/60 rounded px-1 -mx-1"
-            />
+            {accessDenied ? (
+              <span className="inline-flex min-h-11 items-center text-lg font-semibold text-white">
+                {name || "Flow"}
+              </span>
+            ) : (
+              <input
+                value={name}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  setSaveStatus("dirty");
+                }}
+                placeholder="Flow name..."
+                aria-label="Flow name"
+                data-testid="flow-name-input"
+                className="min-h-11 text-lg font-semibold bg-transparent text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-400/60 rounded px-1 -mx-1"
+              />
+            )}
             {currentFlow && (
               <p className="text-xs text-slate-500 mt-0.5">
                 v{currentFlow.version} · Updated {formatDistanceToNow(new Date(currentFlow.updated_at), { addSuffix: true })}
@@ -466,8 +677,23 @@ export default function FlowEditorPage() {
           <SaveStatusBadge status={saveStatus} lastSavedAt={lastSavedAt} />
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          {!accessDenied && !isNew && (
+            <button
+              type="button"
+              onClick={() => void loadFlow(id)}
+              disabled={flowLoading || saving || !flowLoaded}
+              aria-busy={flowLoading}
+              aria-label="Refresh flow"
+              title="Refresh flow"
+              data-testid="flow-refresh-button"
+              className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-200 transition-colors hover:bg-slate-700 disabled:cursor-wait disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-blue-400/60"
+            >
+              <RefreshCw size={14} className={flowLoading ? "animate-spin" : ""} aria-hidden="true" />
+              Refresh
+            </button>
+          )}
           {/* Undo / Redo buttons + keyboard shortcut hints */}
-          <div className="flex items-center gap-1 mr-1">
+          {!accessDenied && <div className="flex items-center gap-1 mr-1">
             <button
               type="button"
               onClick={undo}
@@ -475,7 +701,7 @@ export default function FlowEditorPage() {
               aria-label="Undo last change"
               title="Undo (Ctrl+Z)"
               data-testid="flow-undo-button"
-              className="p-1.5 rounded-md text-slate-300 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed border border-slate-700 transition-colors"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-md text-slate-300 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed border border-slate-700 transition-colors"
             >
               <Undo2 size={14} />
             </button>
@@ -486,12 +712,12 @@ export default function FlowEditorPage() {
               aria-label="Redo last undone change"
               title="Redo (Ctrl+Shift+Z)"
               data-testid="flow-redo-button"
-              className="p-1.5 rounded-md text-slate-300 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed border border-slate-700 transition-colors"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-md text-slate-300 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed border border-slate-700 transition-colors"
             >
               <Redo2 size={14} />
             </button>
-          </div>
-          <label className="flex items-center gap-2 text-sm text-slate-300 mr-2 select-none cursor-pointer">
+          </div>}
+          {!accessDenied && <label className="flex min-h-11 items-center gap-2 text-sm text-slate-300 mr-2 select-none cursor-pointer">
             <input
               type="checkbox"
               checked={isActive}
@@ -500,36 +726,53 @@ export default function FlowEditorPage() {
                 setSaveStatus("dirty");
               }}
               aria-label="Mark flow as active"
-              className="rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-blue-400/60"
+              className="min-h-11 min-w-11 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-blue-400/60"
             />
             Active
-          </label>
-          <button
+          </label>}
+          {!accessDenied && <button
+            type="button"
             onClick={handleSave}
             disabled={saving || loading}
             data-testid="flow-save-button"
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 disabled:bg-slate-800 disabled:text-slate-500 text-white text-sm rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400/60"
+            className="inline-flex min-h-11 items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 disabled:bg-slate-800 text-white text-sm rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400/60"
           >
             <Save size={14} />
             {saving ? "Saving..." : "Save"}
-          </button>
-          {currentFlow && (
+          </button>}
+          {!accessDenied && currentFlow && (
             <button
+              type="button"
               onClick={handleSaveAsNewVersion}
               disabled={saving || loading}
               data-testid="flow-save-version-button"
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 active:bg-slate-600 disabled:bg-slate-900 disabled:text-slate-500 text-white text-sm rounded-lg border border-slate-700 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400/60"
+              className="inline-flex min-h-11 items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 active:bg-slate-600 disabled:bg-slate-900 disabled:text-slate-500 text-white text-sm rounded-lg border border-slate-700 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400/60"
             >
               <Copy size={14} />
               Save As New Version
             </button>
           )}
         </div>
-      </div>
+      </header>
+
+      {accessDenied && (
+        <section
+          role="region"
+          aria-label="Flow editor access status"
+          className="border-b border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100"
+        >
+          <h2 className="font-medium text-amber-50">Flow editor access denied</h2>
+          <p className="mt-1 text-amber-100/80">
+            {hasReadContext
+              ? "The last successfully loaded flow remains visible as a read-only canvas. Refresh, retry, palette, editing, and save controls are hidden until authorization is restored."
+              : "No live flow definition is available while authorization is unavailable. Editing and save controls remain hidden until access is restored."}
+          </p>
+        </section>
+      )}
 
       {/* Node count summary strip — total / edges / undo depth, with KPI tiles
           for each node type so the user can see composition at a glance. */}
-      <div className="flex flex-wrap items-center gap-3 px-4 py-2 border-b border-slate-800 bg-slate-900/45">
+      <section aria-label="Flow summary" className="flex flex-wrap items-center gap-3 px-4 py-2 border-b border-slate-800 bg-slate-900/45">
         <KpiCard
           label="Total nodes"
           value={nodeSummary.total}
@@ -579,9 +822,9 @@ export default function FlowEditorPage() {
           <span aria-hidden="true">·</span>
           <span>Ctrl+Shift+Z redo</span>
         </div>
-      </div>
+      </section>
 
-      {validationError && (
+      {validationError && !accessDenied && (
         <div className="px-4 py-2 border-b border-slate-800">
           <ErrorBanner tone="error" title="Cannot save flow" icon={AlertTriangle}>
             {validationError}
@@ -589,43 +832,81 @@ export default function FlowEditorPage() {
         </div>
       )}
 
-      <div className="flex-1 flex">
-        <div className="w-48 border-r border-slate-800 bg-slate-900/60 p-3 space-y-2">
-          <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Add Node</p>
-          {NODE_TYPES_OPTIONS.map((type) => (
-            <button
-              key={type}
-              onClick={() => addNode(type)}
-              data-testid={`add-node-${type}`}
-              aria-label={`Add ${NODE_TYPE_LABELS[type]} node`}
-              className={clsx(
-                "w-full px-2 py-1.5 text-xs text-left rounded border border-slate-700/80 hover:brightness-110 hover:border-slate-600 active:scale-[0.98] transition focus:outline-none focus:ring-2 focus:ring-blue-400/60 text-white",
-                FLOW_NODE_COLORS[type]
-              )}
-            >
-              {NODE_TYPE_LABELS[type]}
-            </button>
-          ))}
-          <div className="pt-2 mt-2 border-t border-slate-800/80 text-xxs text-slate-500 leading-snug flex items-start gap-1.5">
-            <Info size={12} className="flex-shrink-0 mt-0.5 text-slate-600" />
-            <span>Drag from a node&apos;s bottom handle to another node to connect them.</span>
-          </div>
+      {flowLoadStale && flowLoadError && !accessDenied && (
+        <div className="px-4 py-2 border-b border-slate-800" data-testid="flow-editor-stale">
+          <ErrorBanner
+            tone="warning"
+            title="Showing last known flow"
+            action={(
+              <button
+                type="button"
+                onClick={() => void loadFlow(id)}
+                disabled={flowLoading || saving}
+                aria-busy={flowLoading}
+                className="inline-flex min-h-11 items-center gap-2 rounded-md border border-slate-700 bg-slate-900/60 px-3 py-2 text-xs font-medium text-slate-100 transition-colors hover:bg-slate-800 disabled:cursor-wait disabled:opacity-60"
+              >
+                <RefreshCw size={14} className={flowLoading ? "animate-spin" : ""} aria-hidden="true" />
+                Retry
+              </button>
+            )}
+          >
+            {flowLoadError} The last successful flow remains visible until a
+            retry succeeds.
+          </ErrorBanner>
         </div>
+      )}
 
-        <div className="flex-1 relative">
+      <main aria-label="Flow editor" className="flex-1 flex min-h-0">
+        <aside aria-label="Flow node palette" className="w-48 border-r border-slate-800 bg-slate-900/60 p-3 space-y-2">
+          {accessDenied ? (
+            <div className="space-y-2 text-xs text-slate-500">
+              <h2 className="text-xs font-medium uppercase tracking-wider text-slate-400">Read-only canvas</h2>
+              <p>Node creation and connections are hidden until authorization is restored.</p>
+            </div>
+          ) : (
+            <>
+              <h2 className="text-xs font-medium text-slate-500 uppercase tracking-wider">Add Node</h2>
+              {NODE_TYPES_OPTIONS.map((type) => (
+                <button
+                  type="button"
+                  key={type}
+                  onClick={() => addNode(type)}
+                  data-testid={`add-node-${type}`}
+                  aria-label={`Add ${NODE_TYPE_LABELS[type]} node`}
+                  className={clsx(
+                    "w-full min-h-11 px-2 py-2 text-xs text-left rounded border border-slate-700/80 hover:brightness-110 hover:border-slate-600 active:scale-[0.98] transition focus:outline-none focus:ring-2 focus:ring-blue-400/60 text-white",
+                    FLOW_NODE_COLORS[type]
+                  )}
+                >
+                  {NODE_TYPE_LABELS[type]}
+                </button>
+              ))}
+              <div className="pt-2 mt-2 border-t border-slate-800/80 text-xxs text-slate-500 leading-snug flex items-start gap-1.5">
+                <Info size={12} className="flex-shrink-0 mt-0.5 text-slate-600" />
+                <span>Drag from a node&apos;s bottom handle to another node to connect them.</span>
+              </div>
+            </>
+          )}
+        </aside>
+
+        <section aria-label="Flow canvas" className="flex-1 relative min-w-0">
           <ReactFlow
             nodes={nodes}
             edges={edges}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            onNodeClick={onNodeClick}
+            onNodesChange={accessDenied ? undefined : onNodesChange}
+            onEdgesChange={accessDenied ? undefined : onEdgesChange}
+            onConnect={accessDenied ? undefined : onConnect}
+            onNodeClick={accessDenied ? undefined : onNodeClick}
+            nodesDraggable={!accessDenied}
+            nodesConnectable={!accessDenied}
+            elementsSelectable={!accessDenied}
+            nodesFocusable={!accessDenied}
             nodeTypes={CUSTOM_NODE_TYPES}
             fitView
             className="bg-slate-950"
           >
             <Background color="#334155" gap={16} />
-            <Controls className="!bg-slate-800 !border-slate-700 [&>button]:!bg-slate-800 [&>button]:!border-slate-700 [&>button]:!text-slate-200 [&>button:hover]:!bg-slate-700" />
+            <Controls className="!bg-slate-800 !border-slate-700 [&>button]:!min-h-11 [&>button]:!min-w-11 [&>button]:!bg-slate-800 [&>button]:!border-slate-700 [&>button]:!text-slate-200 [&>button:hover]:!bg-slate-700" />
             <MiniMap className="!bg-slate-900 !border-slate-700 !pointer-events-none" />
           </ReactFlow>
           {/* Dirty canvas indicator — corner badge that surfaces the unsaved
@@ -640,16 +921,17 @@ export default function FlowEditorPage() {
               Unsaved changes
             </div>
           )}
-        </div>
+        </section>
 
-        {showConfig && selectedNode && (
-          <div className="w-72 border-l border-slate-800 bg-slate-900/60 p-4 space-y-4 overflow-y-auto">
+        {showConfig && selectedNode && !accessDenied && (
+          <aside aria-label="Node configuration" className="w-72 border-l border-slate-800 bg-slate-900/60 p-4 space-y-4 overflow-y-auto">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-medium text-white">Node Config</h3>
               <button
+                type="button"
                 onClick={() => setShowConfig(false)}
                 aria-label="Close node config panel"
-                className="p-1 rounded text-slate-500 hover:text-slate-200 hover:bg-slate-800 transition-colors"
+                className="inline-flex min-h-11 min-w-11 items-center justify-center rounded text-slate-500 hover:text-slate-200 hover:bg-slate-800 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400/60"
               >
                 <X size={14} />
               </button>
@@ -662,7 +944,7 @@ export default function FlowEditorPage() {
                 onChange={(e) => updateNodeLabel(selectedNode.id, e.target.value)}
                 data-testid="node-label-input"
                 aria-label="Node label"
-                className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-400/60"
+                className="min-h-11 w-full bg-slate-800 border border-slate-700 rounded px-2 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-400/60"
               />
             </div>
 
@@ -676,6 +958,27 @@ export default function FlowEditorPage() {
               </div>
             </div>
 
+            <NodeSchemaContractSummary nodeType={selectedNode.data.type as FlowNodeType} />
+
+            <NodeSchemaForm
+              nodeType={selectedNode.data.type as FlowNodeType}
+              value={nodeConfig}
+              onChange={updateNodeConfig}
+              governedWorkers={governedWorkers}
+              modelProfiles={modelProfiles}
+              governanceLoading={governanceLoading}
+            />
+            {governanceLoadError && (
+              <div className="rounded-md border border-amber-800/70 bg-amber-950/20 p-2 text-xs text-amber-200" role="status">
+                {governanceLoadError}. Governed worker and Model Profile fields remain unavailable until the catalogue recovers.
+              </div>
+            )}
+
+            <details className="rounded-md border border-slate-800 bg-slate-950/30">
+              <summary className="cursor-pointer px-2.5 py-2 text-xs font-medium text-slate-400 hover:text-slate-200">
+                Compatibility controls (legacy aliases)
+              </summary>
+              <div className="space-y-4 border-t border-slate-800 p-2.5">
             {selectedNode.data.type === "task" && (
               <>
                 <div>
@@ -826,7 +1129,7 @@ export default function FlowEditorPage() {
                       type="button"
                       onClick={addSwitchCase}
                       data-testid="switch-case-add-button"
-                      className="w-full px-2 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs rounded transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400/60"
+                      className="w-full min-h-11 px-2 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs rounded transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400/60"
                     >
                       Add Case
                     </button>
@@ -892,16 +1195,19 @@ export default function FlowEditorPage() {
                 />
               </div>
             )}
+              </div>
+            </details>
 
             <button
+              type="button"
               onClick={deleteSelectedNode}
-              className="w-full px-2 py-1.5 bg-rose-600/20 text-rose-300 border border-rose-800/60 text-xs rounded hover:bg-rose-600/30 active:bg-rose-600/40 transition-colors focus:outline-none focus:ring-2 focus:ring-rose-400/60"
+              className="w-full min-h-11 px-2 py-2 bg-rose-600/20 text-rose-300 border border-rose-800/60 text-xs rounded hover:bg-rose-600/30 active:bg-rose-600/40 transition-colors focus:outline-none focus:ring-2 focus:ring-rose-400/60"
             >
               Delete Node
             </button>
-          </div>
+          </aside>
         )}
-      </div>
+      </main>
     </div>
   );
 }

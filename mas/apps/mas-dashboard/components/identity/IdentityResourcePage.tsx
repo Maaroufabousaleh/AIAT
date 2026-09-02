@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { RefreshCw, ShieldCheck } from "lucide-react";
+import Link from "next/link";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
@@ -21,23 +22,54 @@ export function IdentityResourcePage({ resource, title, description }: Props) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState("");
+  const [stale, setStale] = useState(false);
+  const [accessDenied, setAccessDenied] = useState(false);
+  const itemsRef = useRef<Record<string, unknown>[]>([]);
+  const requestIdRef = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
 
-  async function load() {
+  const load = useCallback(async () => {
+    const requestId = ++requestIdRef.current;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
     setLoading(true);
-    setError("");
+    setError((previous) => (itemsRef.current.length > 0 ? previous : ""));
     try {
-      const response = await fetch(`/api/identity/${resource}`, { cache: "no-store" });
+      const response = await fetch(`/api/identity/${resource}`, { cache: "no-store", signal: controller.signal });
+      if (response.status === 401 || response.status === 403) {
+        if (requestId !== requestIdRef.current) return;
+        setAccessDenied(true);
+        setError("This operator identity is not authorized to read this identity resource.");
+        setStale(itemsRef.current.length > 0);
+        return;
+      }
       const data = await response.json();
       if (!response.ok) throw new Error(data.error ?? "Identity data is unavailable");
-      setItems(Array.isArray(data.items) ? data.items : []);
+      if (requestId !== requestIdRef.current) return;
+      const nextItems = Array.isArray(data.items) ? data.items : [];
+      itemsRef.current = nextItems;
+      setItems(nextItems);
+      setError("");
+      setStale(false);
+      setAccessDenied(false);
     } catch (cause) {
+      if (controller.signal.aborted || requestId !== requestIdRef.current) return;
+      setAccessDenied(false);
       setError(cause instanceof Error ? cause.message : "Identity data is unavailable");
+      setStale(true);
     } finally {
-      setLoading(false);
+      if (requestId === requestIdRef.current) setLoading(false);
     }
-  }
+  }, [resource]);
 
-  useEffect(() => { void load(); }, [resource]);
+  useEffect(() => {
+    void load();
+    return () => {
+      requestIdRef.current += 1;
+      abortRef.current?.abort();
+    };
+  }, [load]);
   const columns = Array.from(new Set(items.flatMap((item) => Object.keys(item).filter((key) => !SENSITIVE.test(key))))).slice(0, 10);
 
   function itemActions(item: Record<string, unknown>): { action: string; label: string }[] {
@@ -76,24 +108,75 @@ export function IdentityResourcePage({ resource, title, description }: Props) {
   }
 
   return (
-    <div className="space-y-6">
-      <PageHeader title={title} description={description} actions={
-        <button onClick={() => void load()} className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-200 hover:bg-slate-800" disabled={loading}>
-          <RefreshCw size={15} className={loading ? "animate-spin" : ""} /> Refresh
-        </button>
-      } />
-      <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3 text-sm text-emerald-100 flex gap-2">
-        <ShieldCheck size={17} className="mt-0.5 flex-none" />
-        Metadata only: credential values, cookies, tokens, and message bodies are never displayed.
+    <main className="space-y-6" aria-label={title} aria-busy={loading}>
+      <div role="status" aria-live="polite" className="sr-only">
+        {loading
+          ? `Loading ${title.toLowerCase()} records`
+          : accessDenied
+            ? `${title} access denied`
+            : `${title} records loaded`}
       </div>
-      {error && <ErrorBanner>{error}</ErrorBanner>}
+      <PageHeader title={title} description={description} actions={
+        !accessDenied ? (
+          <button type="button" onClick={() => void load()} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-200 hover:bg-slate-800" disabled={loading} aria-busy={loading}>
+            <RefreshCw size={15} aria-hidden="true" className={loading ? "animate-spin" : ""} /> Refresh
+          </button>
+        ) : undefined
+      } />
+      <section className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3 text-sm text-emerald-100 flex gap-2" aria-label="Identity resource notice">
+        <ShieldCheck size={17} aria-hidden="true" className="mt-0.5 flex-none" />
+        Metadata only: credential values, cookies, tokens, and message bodies are never displayed.
+      </section>
+      {accessDenied && (
+        <section
+          role="region"
+          aria-label="Identity access status"
+          className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-5 py-6 shadow-sm shadow-amber-950/10"
+        >
+          <h2 className="text-base font-semibold text-amber-100">Identity access denied</h2>
+          <p className="mt-2 max-w-2xl text-sm text-amber-200/80">
+            {items.length > 0
+              ? "The current operator identity can no longer read this resource. Showing the last known metadata-only records; no new identity state is being inferred."
+              : "The current operator identity is not authorized to read this resource. No identity records are being inferred or displayed."}
+          </p>
+          <Link
+            href="/"
+            className="mt-5 inline-flex min-h-11 items-center rounded-md border border-amber-400/40 px-3 py-2 text-sm font-medium text-amber-100 transition-colors hover:bg-amber-400/10 focus-visible:ring-2 focus-visible:ring-amber-300/70"
+          >
+            Return to dashboard
+          </Link>
+        </section>
+      )}
+      {error && !accessDenied && (
+        <ErrorBanner
+          tone={stale && items.length > 0 ? "warning" : "error"}
+          title={stale && items.length > 0 ? "Showing last known records" : "Identity data unavailable"}
+          action={
+            <button
+              type="button"
+              onClick={() => void load()}
+              disabled={loading}
+              aria-busy={loading}
+              className="inline-flex min-h-11 items-center gap-2 rounded-md border border-slate-700 bg-slate-900/60 px-3 py-2 text-xs font-medium text-slate-100 transition-colors hover:bg-slate-800 disabled:cursor-wait disabled:opacity-60"
+            >
+              <RefreshCw size={14} className={loading ? "animate-spin" : ""} aria-hidden="true" />
+              Retry
+            </button>
+          }
+        >
+          {stale && items.length > 0
+            ? `The latest refresh failed (${error}). The table remains usable but may be out of date.`
+            : error}
+        </ErrorBanner>
+      )}
       {!loading && !error && items.length === 0 && <EmptyState title="No records" description="No identity records are available for this view." />}
-      {items.length > 0 && <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/50">
+      {items.length > 0 && <section className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/50" aria-label={`${title} records`} aria-busy={loading}>
         <table className="min-w-full text-left text-sm">
-          <thead className="border-b border-slate-800 text-xs uppercase tracking-wide text-slate-500"><tr>{columns.map((column) => <th key={column} className="px-4 py-3">{column.replaceAll("_", " ")}</th>)}<th className="px-4 py-3">Actions</th></tr></thead>
-          <tbody>{items.map((item, index) => <tr key={String(item.id ?? index)} className="border-b border-slate-900 text-slate-300 last:border-0">{columns.map((column) => <td key={column} className="max-w-xs truncate px-4 py-3 font-mono text-xs">{displayValue(item[column])}</td>)}<td className="px-4 py-3"><div className="flex gap-2">{itemActions(item).map(({ action, label }) => <button key={action} onClick={() => void performAction(item, action, label)} disabled={acting === `${String(item.id)}:${action}`} className="rounded border border-slate-700 px-2 py-1 text-xs hover:bg-slate-800 disabled:opacity-50">{label}</button>)}</div></td></tr>)}</tbody>
+          <caption className="sr-only">{title} records</caption>
+          <thead className="border-b border-slate-800 text-xs uppercase tracking-wide text-slate-500"><tr>{columns.map((column) => <th key={column} scope="col" className="px-4 py-3">{column.replaceAll("_", " ")}</th>)}<th scope="col" className="px-4 py-3">Actions</th></tr></thead>
+          <tbody>{items.map((item, index) => <tr key={String(item.id ?? index)} className="border-b border-slate-900 text-slate-300 last:border-0">{columns.map((column) => <td key={column} className="max-w-xs truncate px-4 py-3 font-mono text-xs">{displayValue(item[column])}</td>)}<td className="px-4 py-3"><div className="flex flex-wrap gap-2">{itemActions(item).map(({ action, label }) => <button key={action} type="button" onClick={() => void performAction(item, action, label)} disabled={acting === `${String(item.id)}:${action}`} aria-label={`${label} ${String(item.id ?? "record")}`} className="inline-flex min-h-11 items-center rounded border border-slate-700 px-3 py-2 text-xs hover:bg-slate-800 disabled:opacity-50">{label}</button>)}</div></td></tr>)}</tbody>
         </table>
-      </div>}
-    </div>
+      </section>}
+    </main>
   );
 }

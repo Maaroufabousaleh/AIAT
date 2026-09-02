@@ -8,12 +8,14 @@ import {
   Copy,
   Pause,
   Play,
+  RefreshCw,
   Search,
   Send,
   Trash2,
   X,
 } from "lucide-react";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { KpiCard } from "@/components/ui/KpiCard";
 import { FilterChip } from "@/components/ui/FilterChips";
@@ -42,6 +44,10 @@ export default function CeoPage() {
   const [search, setSearch] = useState("");
   const [activeType, setActiveType] = useState<KnownType>("ALL");
   const [groupByCycle, setGroupByCycle] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [stale, setStale] = useState(false);
+  const [accessDenied, setAccessDenied] = useState(false);
+  const [hasReadContext, setHasReadContext] = useState(false);
 
   // Message composer state
   const [composerText, setComposerText] = useState("");
@@ -50,35 +56,125 @@ export default function CeoPage() {
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const pausedRef = useRef(false);
+  const entriesRef = useRef<FeedEntry[]>([]);
+  const esRef = useRef<EventSource | null>(null);
+  const connectionIdRef = useRef(0);
+  const streamFailedRef = useRef(false);
+  const hasReadContextRef = useRef(false);
+
+  const handleAccessDenied = useCallback(() => {
+    connectionIdRef.current += 1;
+    setAccessDenied(true);
+    setHasReadContext(hasReadContextRef.current || entriesRef.current.length > 0);
+    setLoadError(null);
+    setStale(false);
+    setSendError(null);
+    setConnected(false);
+    esRef.current?.close();
+    esRef.current = null;
+  }, []);
 
   useEffect(() => {
     pausedRef.current = paused;
   }, [paused]);
 
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/streams/exec_ceo?history=1&limit=50")
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data: { entries?: RecentStreamEntry[] } | null) => {
-        if (cancelled || !data?.entries) return;
-        setEntries(data.entries.map((entry) => entryFromRaw(entry.envelope)));
+  const connect = useCallback((preserveEntries: boolean) => {
+    const connectionId = ++connectionIdRef.current;
+    const hadEntries = entriesRef.current.length > 0;
+    const isCurrent = () => connectionIdRef.current === connectionId;
+
+    esRef.current?.close();
+    esRef.current = null;
+    streamFailedRef.current = false;
+    setConnected(false);
+    setLoadError(null);
+    setStale(false);
+    if (!preserveEntries) {
+      entriesRef.current = [];
+      setEntries([]);
+    }
+
+    const reportError = (message: string) => {
+      if (!isCurrent()) return;
+      streamFailedRef.current = true;
+      setConnected(false);
+      setLoadError(message);
+      setStale(entriesRef.current.length > 0 || hadEntries);
+      esRef.current?.close();
+      esRef.current = null;
+    };
+
+    fetch("/api/streams/exec_ceo?history=1&limit=50", { cache: "no-store" })
+      .then(async (res) => {
+        if (res.status === 401 || res.status === 403) {
+          handleAccessDenied();
+          return null;
+        }
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return (await res.json()) as { entries?: RecentStreamEntry[] };
       })
-      .catch(() => {
-        // The live connection below still reports stream state.
+      .then((data) => {
+        if (!isCurrent() || !data?.entries) return;
+        hasReadContextRef.current = true;
+        setHasReadContext(true);
+        const history = data.entries.map((entry) => entryFromRaw(entry.envelope));
+        const liveEntries = entriesRef.current;
+        const liveRaw = new Set(liveEntries.map((entry) => entry.raw));
+        const next = [...history.filter((entry) => !liveRaw.has(entry.raw)), ...liveEntries].slice(-300);
+        entriesRef.current = next;
+        setEntries(next);
+        if (!streamFailedRef.current) setLoadError(null);
+      })
+      .catch((cause: unknown) => {
+        if (!isCurrent()) return;
+        reportError(cause instanceof Error ? `CEO history unavailable: ${cause.message}` : "CEO history unavailable");
       });
 
     const es = new EventSource("/api/streams/exec_ceo");
-    es.addEventListener("connected", () => setConnected(true));
-    es.addEventListener("error", () => setConnected(false));
+    esRef.current = es;
+    es.addEventListener("connected", () => {
+      if (!isCurrent()) return;
+      hasReadContextRef.current = true;
+      setHasReadContext(true);
+      setConnected(true);
+    });
+    es.addEventListener("error", (event) => {
+      const raw = (event as MessageEvent<string>).data;
+      let message = "CEO stream disconnected.";
+      let status: number | undefined;
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw) as { error?: string; status?: number };
+          if (parsed.error) message = parsed.error;
+          status = parsed.status;
+        } catch {
+          message = raw;
+        }
+      }
+      if (status === 401 || status === 403) {
+        handleAccessDenied();
+        return;
+      }
+      reportError(message);
+    });
     es.onmessage = (e) => {
-      if (pausedRef.current) return;
-      setEntries((prev) => [...prev.slice(-300), entryFromRaw(e.data)]);
+      if (!isCurrent() || pausedRef.current) return;
+      setEntries((prev) => {
+        const next = [...prev, entryFromRaw(e.data)].slice(-300);
+        entriesRef.current = next;
+        return next;
+      });
     };
+  }, [handleAccessDenied]);
+
+  useEffect(() => {
+    connect(false);
     return () => {
-      cancelled = true;
-      es.close();
+      connectionIdRef.current += 1;
+      esRef.current?.close();
+      esRef.current = null;
     };
-  }, []);
+  }, [connect]);
 
   // Auto-scroll to bottom while the live feed is unpaused.
   useEffect(() => {
@@ -212,6 +308,10 @@ export default function CeoPage() {
         body: JSON.stringify({ message: text }),
       });
       if (!res.ok) {
+        if (res.status === 401 || res.status === 403) {
+          handleAccessDenied();
+          return;
+        }
         const err = await res.json().catch(() => ({ error: "Unknown error" }));
         setSendError(err.error ?? `HTTP ${res.status}`);
       } else {
@@ -232,7 +332,11 @@ export default function CeoPage() {
           ts: now,
           outbound: true,
         };
-        setEntries((prev) => [...prev.slice(-299), outboundEntry]);
+        setEntries((prev) => {
+          const next = [...prev.slice(-299), outboundEntry];
+          entriesRef.current = next;
+          return next;
+        });
         setComposerText("");
       }
     } catch (e) {
@@ -240,7 +344,7 @@ export default function CeoPage() {
     } finally {
       setSending(false);
     }
-  }, [composerText, sending]);
+  }, [composerText, sending, handleAccessDenied]);
 
   // Handle Enter+Shift for newlines, Enter alone to send.
   const handleComposerKeyDown = useCallback(
@@ -254,7 +358,10 @@ export default function CeoPage() {
   );
 
   return (
-    <div className="dashboard-page flex flex-col h-full">
+    <main
+      className="dashboard-page flex flex-col h-full"
+      aria-label="CEO live feed"
+    >
       <PageHeader
         icon="brain"
         title="CEO Live Feed"
@@ -268,7 +375,13 @@ export default function CeoPage() {
                   : "bg-slate-800/60 text-slate-400 border-slate-700",
               )}
               aria-live="polite"
-              aria-label={connected ? "Stream connected" : "Stream connecting"}
+              aria-label={
+                connected
+                  ? "Stream connected"
+                  : loadError
+                    ? "Stream disconnected"
+                    : "Stream connecting"
+              }
             >
               <span
                 className={clsx(
@@ -276,7 +389,11 @@ export default function CeoPage() {
                   connected ? "bg-emerald-400 animate-pulse" : "bg-slate-500",
                 )}
               />
-              {connected ? "stream:exec_ceo connected" : "connecting..."}
+              {connected
+                ? "stream:exec_ceo connected"
+                : loadError
+                  ? "stream disconnected"
+                  : "connecting..."}
             </span>
             <span className="text-slate-500">
               {entries.length} buffered · {filteredEntries.length} shown
@@ -284,7 +401,7 @@ export default function CeoPage() {
             </span>
           </span>
         }
-        actions={
+        actions={!accessDenied ? (
           <>
             <button
               type="button"
@@ -292,7 +409,7 @@ export default function CeoPage() {
               aria-pressed={groupByCycle}
               aria-label="Group entries by think cycle"
               className={clsx(
-                "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors",
+                "flex min-h-11 items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors",
                 groupByCycle
                   ? "bg-indigo-500/15 text-indigo-200 border-indigo-500/40 hover:bg-indigo-500/25"
                   : "bg-slate-900/60 text-slate-400 border-slate-700 hover:bg-slate-800 hover:text-slate-200",
@@ -307,7 +424,7 @@ export default function CeoPage() {
               aria-pressed={paused}
               aria-label={paused ? "Resume live feed" : "Pause live feed"}
               className={clsx(
-                "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors",
+                "flex min-h-11 items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors",
                 paused
                   ? "bg-amber-500/15 text-amber-200 border-amber-500/40 hover:bg-amber-500/25"
                   : "bg-slate-900/60 text-slate-300 border-slate-700 hover:bg-slate-800 hover:text-slate-100",
@@ -318,19 +435,62 @@ export default function CeoPage() {
             </button>
             <button
               type="button"
-              onClick={() => setEntries([])}
+              onClick={() => {
+                entriesRef.current = [];
+                setEntries([]);
+              }}
               aria-label="Clear buffered messages"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-rose-300 hover:border-rose-500/40 transition-colors"
+              className="flex min-h-11 items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-rose-300 hover:border-rose-500/40 transition-colors"
             >
               <Trash2 size={12} />
               Clear
             </button>
+            <button
+              type="button"
+              onClick={() => connect(true)}
+              aria-label="Reconnect CEO feed"
+              className="flex min-h-11 items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-slate-100 transition-colors"
+            >
+              <RefreshCw size={12} />
+              Reconnect
+            </button>
           </>
-        }
+        ) : undefined}
       />
 
+      {accessDenied && (
+        <section
+          role="region"
+          aria-label="CEO feed access status"
+          className="mx-4 mt-3 rounded-xl border border-amber-500/30 bg-amber-500/5 px-5 py-6 shadow-sm shadow-amber-950/10"
+        >
+          <h2 className="text-base font-semibold text-amber-100">CEO feed access denied</h2>
+          <p className="mt-2 max-w-2xl text-sm text-amber-200/80">
+            {hasReadContext
+              ? "The current operator identity can no longer read or send CEO feed messages. Previously loaded messages remain visible, but reconnect, retry, copy, clear, filters, and the composer are hidden until authorization is restored."
+              : "The current operator identity is not authorized to read or send CEO feed messages. No live feed state is inferred or displayed."}
+          </p>
+        </section>
+      )}
+
+      {loadError && !accessDenied && (
+        <div className="mx-4 mt-3">
+          <ErrorBanner
+            tone={stale ? "warning" : "error"}
+            title={stale ? "Showing last known CEO feed" : "CEO feed unavailable"}
+            action={(
+              <button type="button" onClick={() => connect(true)} className="min-h-11 px-3 rounded border border-current text-xs font-medium hover:bg-white/10">
+                Retry
+              </button>
+            )}
+          >
+            {stale ? `${loadError} Retained messages remain visible while the feed is retried.` : loadError}
+          </ErrorBanner>
+        </div>
+      )}
+
       {/* Message composer — talk directly to the CEO */}
-      <div className="mx-4 mt-3 mb-1">
+      {!accessDenied && <section className="mx-4 mt-3 mb-1" aria-label="CEO message composer">
         <div className="rounded-xl border border-violet-500/30 bg-violet-500/5 p-3 space-y-2">
           <div className="flex items-center gap-2">
             <Send
@@ -350,7 +510,7 @@ export default function CeoPage() {
               placeholder="Send a directive, question, or request to the CEO… (Enter to send, Shift+Enter for newline)"
               rows={2}
               aria-label="Message to CEO"
-              className="flex-1 rounded-lg bg-slate-950/80 border border-slate-700 text-xs text-slate-100 placeholder-slate-500 px-3 py-2 resize-none focus:border-violet-500/60 focus:outline-none transition-colors"
+              className="flex-1 min-h-11 rounded-lg bg-slate-950/80 border border-slate-700 text-xs text-slate-100 placeholder-slate-500 px-3 py-2 resize-none focus:border-violet-500/60 focus:outline-none transition-colors"
             />
             <button
               type="button"
@@ -358,7 +518,7 @@ export default function CeoPage() {
               disabled={!composerText.trim() || sending}
               aria-label="Send message to CEO"
               className={clsx(
-                "flex-shrink-0 flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold border transition-colors",
+                "flex-shrink-0 flex min-h-11 items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold border transition-colors",
                 composerText.trim() && !sending
                   ? "bg-violet-600 hover:bg-violet-500 text-white border-violet-500/60 hover:border-violet-400"
                   : "bg-slate-800 text-slate-500 border-slate-700 cursor-not-allowed",
@@ -379,11 +539,14 @@ export default function CeoPage() {
             </div>
           )}
         </div>
-      </div>
+      </section>}
 
       {/* KPI summary row — quick at-a-glance counts per message type. */}
-      {entries.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 px-4 mt-2">
+      {entries.length > 0 && !accessDenied && (
+        <section
+          className="grid grid-cols-2 sm:grid-cols-4 gap-3 px-4 mt-2"
+          aria-label="CEO feed summary"
+        >
           <KpiCard
             label="Buffered"
             value={entries.length}
@@ -412,12 +575,15 @@ export default function CeoPage() {
             icon="alert-triangle"
             tone={typeCounts.VETO > 0 ? "negative" : "neutral"}
           />
-        </div>
+        </section>
       )}
 
       {/* Search + filter chips */}
-      {entries.length > 0 && (
-        <div className="flex flex-col gap-2 px-4 mt-2">
+      {entries.length > 0 && !accessDenied && (
+        <section
+          className="flex flex-col gap-2 px-4 mt-2"
+          aria-label="CEO feed filters"
+        >
           <div className="relative">
             <Search
               size={13}
@@ -430,14 +596,14 @@ export default function CeoPage() {
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search message type, sender, project_id, payload..."
               aria-label="Search CEO feed"
-              className="w-full pl-8 pr-8 py-1.5 rounded-lg bg-slate-950/60 border border-slate-800 text-xs text-slate-200 placeholder-slate-500 focus:border-blue-500/60 focus:bg-slate-900 transition-colors"
+              className="w-full min-h-11 pl-8 pr-8 py-1.5 rounded-lg bg-slate-950/60 border border-slate-800 text-xs text-slate-200 placeholder-slate-500 focus:border-blue-500/60 focus:bg-slate-900 transition-colors"
             />
             {search && (
               <button
                 type="button"
                 onClick={() => setSearch("")}
                 aria-label="Clear search"
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-200 transition-colors"
+                className="absolute right-2 top-1/2 min-h-11 min-w-11 -translate-y-1/2 text-slate-500 hover:text-slate-200 transition-colors"
               >
                 <X size={12} />
               </button>
@@ -457,17 +623,27 @@ export default function CeoPage() {
                   onClick={() => setActiveType(type)}
                   count={typeCounts[type]}
                   activeTone={getChipToneForType(type)}
+                  className="min-h-11"
                 >
                   {type === "ALL" ? "All" : type.replace(/_/g, " ")}
                 </FilterChip>
               );
             })}
           </div>
-        </div>
+        </section>
       )}
 
-      <div className="dashboard-surface flex-1 overflow-y-auto p-4 space-y-3">
-        {entries.length === 0 ? (
+      <section
+        className="dashboard-surface flex-1 overflow-y-auto p-4 space-y-3"
+        role="region"
+        aria-label="CEO message feed"
+        aria-busy={!connected && !loadError}
+      >
+        {accessDenied && entries.length === 0 ? (
+          <div className="py-12 text-center text-sm text-slate-400">
+            No live CEO feed state is inferred while authorization is unavailable.
+          </div>
+        ) : entries.length === 0 ? (
           <div className="py-12">
             <EmptyState
               icon="radio"
@@ -475,7 +651,9 @@ export default function CeoPage() {
                 connected ? "No recent CEO activity" : "Connecting to stream…"
               }
               description={
-                connected
+                loadError
+                  ? "The last CEO feed refresh failed. Use Retry to reconnect while retained messages remain visible."
+                  : connected
                   ? "The live connection is open. CEO messages will appear here immediately, and retained Redis history is loaded when available."
                   : "The dashboard is establishing a Server-Sent Events connection to the orchestrator."
               }
@@ -577,7 +755,7 @@ export default function CeoPage() {
                             queued
                           </span>
                         )}
-                        <button
+                        {!accessDenied && <button
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
@@ -589,7 +767,7 @@ export default function CeoPage() {
                               : "Copy raw envelope to clipboard"
                           }
                           className={clsx(
-                            "ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xxs font-medium border transition-colors",
+                            "ml-auto inline-flex min-h-11 min-w-11 items-center justify-center gap-1 px-1.5 py-0.5 rounded text-xxs font-medium border transition-colors",
                             copiedIndex === originalIndex
                               ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/40"
                               : "bg-slate-900/60 text-slate-400 border-slate-700 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-slate-800 hover:text-slate-100",
@@ -606,7 +784,7 @@ export default function CeoPage() {
                               Copy raw
                             </>
                           )}
-                        </button>
+                        </button>}
                       </div>
 
                       {/* Tool call / result summary */}
@@ -670,11 +848,12 @@ export default function CeoPage() {
           ))
         )}
         <div ref={bottomRef} />
-      </div>
+      </section>
 
-      <div
+      <section
         className="dashboard-toolbar flex items-center justify-between text-xxs text-slate-500"
         aria-live="polite"
+        aria-label="CEO feed status"
       >
         <span>
           {filteredEntries.length}
@@ -692,7 +871,7 @@ export default function CeoPage() {
             search: &ldquo;{search}&rdquo;
           </span>
         )}
-      </div>
-    </div>
+      </section>
+    </main>
   );
 }

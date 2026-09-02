@@ -39,47 +39,43 @@ import {
   NODE_TYPE_LABELS,
   FLOW_NODE_COLORS,
   type FlowNodeType,
+  type FlowTemplate as CanonicalFlowTemplate,
 } from "@/lib/flow-types";
 import { convertReactFlowToFlow } from "@/lib/flow-editor";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
+import { NodeSchemaContractSummary } from "@/components/flows/NodeSchemaContractSummary";
+import {
+  NodeSchemaForm,
+  type GovernedModelProfile,
+  type GovernedWorkerOption,
+} from "@/components/flows/NodeSchemaForm";
 
 /**
- * A reusable flow scaffolding users can drop in to get started quickly.
- * Templates are position-only blueprints — labels get generated at apply time
- * so multiple templates never collide on `Date.now()` IDs in the same canvas.
+ * A dashboard-ready projection of the canonical flow-template API response.
+ * IDs are remapped at apply time so repeatedly using a template never creates
+ * collisions on the canvas.
  */
-interface FlowTemplate {
+interface DashboardFlowTemplate {
   id: string;
   name: string;
   description: string;
   icon: LucideIcon;
-  nodes: Array<{ type: FlowNodeType; label: string; position: { x: number; y: number } }>;
+  nodes: Array<{
+    templateNodeId?: string;
+    type: FlowNodeType;
+    label: string;
+    config?: Record<string, unknown>;
+    position: { x: number; y: number };
+  }>;
   edges: Array<{ sourceIndex: number; targetIndex: number; label?: string }>;
+  metadata?: Record<string, unknown>;
 }
 
 interface FlowDryRunResult {
   valid: boolean;
   errors: Array<{ code: string; message: string; node_id?: string }>;
   warnings: Array<{ code: string; message: string; node_id?: string }>;
-}
-
-interface GovernedWorkerOption {
-  id: string;
-  name: string;
-  status?: string;
-  model_mode?: string;
-  model_profile_id?: string | null;
-  adapter_type?: string;
-  active_adapter_id?: string | null;
-  active_skill_bundle_id?: string | null;
-}
-
-interface GovernedModelProfile {
-  profile_id: string;
-  status?: string;
-  purpose?: string;
-  versions?: Array<{ version?: string; status?: string }>;
 }
 
 function csvValues(value: unknown): string {
@@ -90,97 +86,60 @@ function parseCsv(value: string): string[] {
   return value.split(",").map((entry) => entry.trim()).filter(Boolean);
 }
 
-const FLOW_TEMPLATES: FlowTemplate[] = [
-  {
-    id: "blank",
-    name: "Blank canvas",
-    description: "Start from scratch with just a Start and End node.",
-    icon: GitBranch,
-    nodes: [
-      { type: "start", label: "Start", position: { x: 80, y: 80 } },
-      { type: "end", label: "End", position: { x: 80, y: 220 } },
-    ],
-    edges: [{ sourceIndex: 0, targetIndex: 1 }],
-  },
-  {
-    id: "approval",
-    name: "Approval workflow",
-    description: "Task → human approval → end. Pauses until a user signs off.",
-    icon: ShieldCheck,
-    nodes: [
-      { type: "start", label: "Start", position: { x: 80, y: 80 } },
-      { type: "task", label: "Do work", position: { x: 80, y: 200 } },
-      { type: "approval", label: "Manager review", position: { x: 80, y: 320 } },
-      { type: "end", label: "End", position: { x: 80, y: 440 } },
-    ],
-    edges: [
-      { sourceIndex: 0, targetIndex: 1 },
-      { sourceIndex: 1, targetIndex: 2 },
-      { sourceIndex: 2, targetIndex: 3 },
-    ],
-  },
-  {
-    id: "branch",
-    name: "Branch on condition",
-    description: "Fan out a task into parallel branches that re-join.",
-    icon: GitFork,
-    nodes: [
-      { type: "start", label: "Start", position: { x: 200, y: 60 } },
-      { type: "task", label: "Prepare", position: { x: 200, y: 180 } },
-      { type: "parallel", label: "Run in parallel", position: { x: 200, y: 300 } },
-      { type: "task", label: "Branch A", position: { x: 60, y: 420 } },
-      { type: "task", label: "Branch B", position: { x: 340, y: 420 } },
-      { type: "join", label: "Re-join", position: { x: 200, y: 540 } },
-      { type: "end", label: "End", position: { x: 200, y: 660 } },
-    ],
-    edges: [
-      { sourceIndex: 0, targetIndex: 1 },
-      { sourceIndex: 1, targetIndex: 2 },
-      { sourceIndex: 2, targetIndex: 3, label: "a" },
-      { sourceIndex: 2, targetIndex: 4, label: "b" },
-      { sourceIndex: 3, targetIndex: 5 },
-      { sourceIndex: 4, targetIndex: 5 },
-      { sourceIndex: 5, targetIndex: 6 },
-    ],
-  },
-  {
-    id: "switch",
-    name: "Switch routing",
-    description: "Route outcomes to different downstream nodes based on a key.",
-    icon: ArrowRightLeft,
-    nodes: [
-      { type: "start", label: "Start", position: { x: 200, y: 60 } },
-      { type: "switch", label: "Decide", position: { x: 200, y: 200 } },
-      { type: "task", label: "Path: approved", position: { x: 40, y: 360 } },
-      { type: "task", label: "Path: rejected", position: { x: 360, y: 360 } },
-      { type: "end", label: "End", position: { x: 200, y: 520 } },
-    ],
-    edges: [
-      { sourceIndex: 0, targetIndex: 1 },
-      { sourceIndex: 1, targetIndex: 2, label: "approved" },
-      { sourceIndex: 1, targetIndex: 3, label: "rejected" },
-      { sourceIndex: 2, targetIndex: 4 },
-      { sourceIndex: 3, targetIndex: 4 },
-    ],
-  },
-  {
-    id: "escalate",
-    name: "Escalation ladder",
-    description: "Try a task first, then escalate to a senior team if it fails.",
-    icon: Sparkles,
-    nodes: [
-      { type: "start", label: "Start", position: { x: 80, y: 80 } },
-      { type: "task", label: "First attempt", position: { x: 80, y: 200 } },
-      { type: "escalate", label: "Escalate to lead", position: { x: 80, y: 340 } },
-      { type: "end", label: "End", position: { x: 80, y: 480 } },
-    ],
-    edges: [
-      { sourceIndex: 0, targetIndex: 1 },
-      { sourceIndex: 1, targetIndex: 2 },
-      { sourceIndex: 2, targetIndex: 3 },
-    ],
-  },
-];
+function isAccessDeniedStatus(status: number): boolean {
+  return status === 401 || status === 403;
+}
+
+const TEMPLATE_ICONS: Record<string, LucideIcon> = {
+  software_delivery: GitBranch,
+  research: Sparkles,
+  hiring: ShieldCheck,
+  incident_response: GitFork,
+  integration_rollout: ArrowRightLeft,
+  self_improvement: Sparkles,
+};
+
+const BLANK_TEMPLATE: DashboardFlowTemplate = {
+  id: "blank",
+  name: "Blank canvas",
+  description: "Start from scratch with just a Start and End node.",
+  icon: GitBranch,
+  nodes: [
+    { type: "start", label: "Start", position: { x: 80, y: 80 } },
+    { type: "end", label: "End", position: { x: 80, y: 220 } },
+  ],
+  edges: [{ sourceIndex: 0, targetIndex: 1 }],
+};
+
+function toDashboardTemplate(template: CanonicalFlowTemplate): DashboardFlowTemplate {
+  const sourceNodes = template.definition_json.nodes || [];
+  const sourceEdges = template.definition_json.edges || [];
+  const nodeIndex = new Map(sourceNodes.map((node, index) => [node.id, index]));
+  return {
+    id: template.template_id,
+    name: template.name,
+    description: template.description,
+    icon: TEMPLATE_ICONS[template.template_id] || GitBranch,
+    nodes: sourceNodes.map((node, index) => ({
+      templateNodeId: node.id,
+      type: node.type,
+      label: node.label,
+      config: node.config || {},
+      position: node.position || {
+        x: (index % 3) * 220 + 80,
+        y: Math.floor(index / 3) * 140 + 80,
+      },
+    })),
+    edges: sourceEdges.flatMap((edge) => {
+      const sourceIndex = nodeIndex.get(edge.source);
+      const targetIndex = nodeIndex.get(edge.target);
+      return sourceIndex === undefined || targetIndex === undefined
+        ? []
+        : [{ sourceIndex, targetIndex, label: edge.condition }];
+    }),
+    metadata: template.definition_json.metadata,
+  };
+}
 
 const CUSTOM_NODE_TYPES: NodeTypes = {};
 let pendingConnectionSource: string | null = null;
@@ -244,10 +203,24 @@ export default function NewFlowPage() {
   const [rawSwitchCases, setRawSwitchCases] = useState("");
   const [showTemplates, setShowTemplates] = useState(true);
   const [appliedTemplateId, setAppliedTemplateId] = useState<string | null>(null);
+  const [flowMetadata, setFlowMetadata] = useState<Record<string, unknown>>({});
+  const [flowTemplates, setFlowTemplates] = useState<DashboardFlowTemplate[]>([BLANK_TEMPLATE]);
+  const [templatesLoading, setTemplatesLoading] = useState(true);
+  const [templatesLoadError, setTemplatesLoadError] = useState<string | null>(null);
   const [governedWorkers, setGovernedWorkers] = useState<GovernedWorkerOption[]>([]);
   const [modelProfiles, setModelProfiles] = useState<GovernedModelProfile[]>([]);
   const [governanceLoading, setGovernanceLoading] = useState(true);
   const [governanceLoadError, setGovernanceLoadError] = useState<string | null>(null);
+  const [accessDenied, setAccessDenied] = useState(false);
+  const [accessDeniedSource, setAccessDeniedSource] = useState<string | null>(null);
+
+  const markAccessDenied = useCallback((source: string) => {
+    setAccessDenied(true);
+    setAccessDeniedSource((current) => current ?? source);
+    setSelectedNode(null);
+    setShowConfig(false);
+    setDryRunResult(null);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -258,6 +231,10 @@ export default function NewFlowPage() {
           fetch("/api/workers", { signal: controller.signal }),
           fetch("/api/governance/model-profiles", { signal: controller.signal }),
         ]);
+        if (isAccessDeniedStatus(workersResponse.status) || isAccessDeniedStatus(profilesResponse.status)) {
+          markAccessDenied("governed worker or Model Profile catalogue");
+          return;
+        }
         if (!workersResponse.ok || !profilesResponse.ok) {
           throw new Error("The worker registry or Model Profile catalog is unavailable");
         }
@@ -276,21 +253,71 @@ export default function NewFlowPage() {
     }
     void loadGovernanceOptions();
     return () => controller.abort();
-  }, []);
+  }, [markAccessDenied]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    async function loadCanonicalTemplates() {
+      setTemplatesLoading(true);
+      try {
+        const response = await fetch("/api/flow-templates", { signal: controller.signal });
+        if (isAccessDeniedStatus(response.status)) {
+          markAccessDenied("canonical flow-template catalogue");
+          return;
+        }
+        if (!response.ok) throw new Error("The canonical flow-template catalogue is unavailable");
+        const payload = await response.json();
+        const templates = Array.isArray(payload?.templates)
+          ? payload.templates
+            .map((template: CanonicalFlowTemplate) => toDashboardTemplate(template))
+            .filter((template: DashboardFlowTemplate) => template.nodes.length > 0)
+          : [];
+        setFlowTemplates([BLANK_TEMPLATE, ...templates]);
+        setTemplatesLoadError(null);
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setTemplatesLoadError(error instanceof Error ? error.message : "Could not load canonical flow templates");
+          setFlowTemplates([BLANK_TEMPLATE]);
+        }
+      } finally {
+        if (!controller.signal.aborted) setTemplatesLoading(false);
+      }
+    }
+    void loadCanonicalTemplates();
+    return () => controller.abort();
+  }, [markAccessDenied]);
 
   /**
    * Apply a template by replacing the current canvas with the template's
    * scaffold. IDs are unique-ified at apply time so re-applying or switching
    * templates never collides with existing nodes.
    */
-  const applyTemplate = useCallback((template: FlowTemplate) => {
+  const applyTemplate = useCallback((template: DashboardFlowTemplate) => {
     const stamp = Date.now();
     const idMap = template.nodes.map((n) => `${n.type}_${stamp}_${Math.random().toString(36).slice(2, 7)}`);
+    const templateIdMap = new Map(
+      template.nodes.flatMap((node, index) => node.templateNodeId ? [[node.templateNodeId, idMap[index]] as const] : [])
+    );
+    const remapConfig = (config: Record<string, unknown> | undefined): Record<string, unknown> => {
+      const next = { ...(config || {}) };
+      if (Array.isArray(next.branches)) {
+        next.branches = next.branches.map((branch) => templateIdMap.get(String(branch)) || branch);
+      }
+      if (next.switch_cases && typeof next.switch_cases === "object" && !Array.isArray(next.switch_cases)) {
+        next.switch_cases = Object.fromEntries(
+          Object.entries(next.switch_cases as Record<string, unknown>).map(([key, target]) => [
+            key,
+            templateIdMap.get(String(target)) || target,
+          ])
+        );
+      }
+      return next;
+    };
     const newNodes: Node[] = template.nodes.map((n, i) => ({
       id: idMap[i],
       type: "flowNode",
       position: n.position,
-      data: { label: n.label, type: n.type },
+      data: { label: n.label, type: n.type, config: remapConfig(n.config) },
     }));
     const newEdges: Edge[] = template.edges.map((e, i) => ({
       id: `e_${stamp}_${i}`,
@@ -301,6 +328,7 @@ export default function NewFlowPage() {
     }));
     setNodes(newNodes);
     setEdges(newEdges);
+    setFlowMetadata(template.metadata || {});
     setSelectedNode(null);
     setShowConfig(false);
     setAppliedTemplateId(template.id);
@@ -447,7 +475,7 @@ export default function NewFlowPage() {
     if (validation) { setValidationError(validation); return; }
     setValidationError(null);
     setSaving(true);
-    const definition = convertReactFlowToFlow(nodes, edges);
+    const definition = convertReactFlowToFlow(nodes, edges, flowMetadata);
     try {
       const res = await fetch("/api/flows", {
         method: "POST",
@@ -457,6 +485,9 @@ export default function NewFlowPage() {
       if (res.ok) {
         const created = await res.json();
         router.push(`/flows/${created.id}`);
+      } else if (isAccessDeniedStatus(res.status)) {
+        markAccessDenied("flow creation");
+        setValidationError("Flow creation is unavailable while authorization is unavailable.");
       } else {
         const err = await res.json().catch(() => ({}));
         setValidationError(err.detail || err.error || "Failed to create flow");
@@ -477,13 +508,18 @@ export default function NewFlowPage() {
     setDryRunResult(null);
     setDryRunning(true);
     try {
-      const definition = convertReactFlowToFlow(nodes, edges);
+      const definition = convertReactFlowToFlow(nodes, edges, flowMetadata);
       const response = await fetch("/api/flows/dry-run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ definition_json: definition }),
       });
       const payload = await response.json().catch(() => null);
+      if (isAccessDeniedStatus(response.status)) {
+        markAccessDenied("flow readiness validation");
+        setValidationError("Flow readiness validation is unavailable while authorization is unavailable.");
+        return;
+      }
       if (!response.ok || !payload) {
         setValidationError(payload?.error || payload?.detail || "Could not validate the flow");
         return;
@@ -545,62 +581,80 @@ export default function NewFlowPage() {
                 <ArrowLeft size={14} />
                 Back
               </Link>
-              <label className="inline-flex items-center gap-2 text-sm text-slate-300 px-2 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={isActive}
-                  onChange={(e) => setIsActive(e.target.checked)}
-                  aria-label="Activate flow on save"
-                  className="rounded border-slate-600 bg-slate-900 text-blue-500 focus:ring-2 focus:ring-blue-500/40 focus:ring-offset-0 transition-colors"
-                />
-                Active
-              </label>
-              <button
-                onClick={handleDryRun}
-                disabled={dryRunning}
-                aria-busy={dryRunning}
-                data-testid="flow-dry-run-button"
-                className={clsx(
-                  "inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg border transition-colors",
-                  dryRunning
-                    ? "border-slate-700 text-slate-500 cursor-wait"
-                    : "border-slate-600 text-slate-200 hover:text-white hover:border-slate-400 hover:bg-slate-800"
-                )}
-              >
-                <ShieldCheck size={14} aria-hidden="true" />
-                {dryRunning ? "Validating…" : "Validate readiness"}
-              </button>
-              <button
-                onClick={handleSave}
-                disabled={saving}
-                aria-busy={saving}
-                data-testid="flow-save-button"
-                className={clsx(
-                  "inline-flex items-center gap-1.5 px-3.5 py-1.5 text-sm font-medium rounded-lg transition-colors shadow-sm",
-                  "focus:outline-none focus:ring-2 focus:ring-blue-500/50",
-                  saving
-                    ? "bg-blue-700/60 text-blue-100 cursor-wait"
-                    : "bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white shadow-blue-500/10"
-                )}
-              >
-                {saving ? (
-                  <>
-                    <span
-                      className="inline-block w-3.5 h-3.5 rounded-full border-2 border-white/40 border-t-white animate-spin"
-                      aria-hidden="true"
+              {!accessDenied && (
+                <>
+                  <label className="inline-flex items-center gap-2 text-sm text-slate-300 px-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={isActive}
+                      onChange={(e) => setIsActive(e.target.checked)}
+                      aria-label="Activate flow on save"
+                      className="rounded border-slate-600 bg-slate-900 text-blue-500 focus:ring-2 focus:ring-blue-500/40 focus:ring-offset-0 transition-colors"
                     />
-                    Creating…
-                  </>
-                ) : (
-                  <>
-                    <Save size={14} aria-hidden="true" />
-                    Create Flow
-                  </>
-                )}
-              </button>
+                    Active
+                  </label>
+                  <button
+                    onClick={handleDryRun}
+                    disabled={dryRunning}
+                    aria-busy={dryRunning}
+                    data-testid="flow-dry-run-button"
+                    className={clsx(
+                      "inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg border transition-colors",
+                      dryRunning
+                        ? "border-slate-700 text-slate-500 cursor-wait"
+                        : "border-slate-600 text-slate-200 hover:text-white hover:border-slate-400 hover:bg-slate-800"
+                    )}
+                  >
+                    <ShieldCheck size={14} aria-hidden="true" />
+                    {dryRunning ? "Validating…" : "Validate readiness"}
+                  </button>
+                  <button
+                    onClick={handleSave}
+                    disabled={saving}
+                    aria-busy={saving}
+                    data-testid="flow-save-button"
+                    className={clsx(
+                      "inline-flex items-center gap-1.5 px-3.5 py-1.5 text-sm font-medium rounded-lg transition-colors shadow-sm",
+                      "focus:outline-none focus:ring-2 focus:ring-blue-500/50",
+                      saving
+                        ? "bg-blue-700/60 text-blue-100 cursor-wait"
+                        : "bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white shadow-blue-500/10"
+                    )}
+                  >
+                    {saving ? (
+                      <>
+                        <span
+                          className="inline-block w-3.5 h-3.5 rounded-full border-2 border-white/40 border-t-white animate-spin"
+                          aria-hidden="true"
+                        />
+                        Creating…
+                      </>
+                    ) : (
+                      <>
+                        <Save size={14} aria-hidden="true" />
+                        Create Flow
+                      </>
+                    )}
+                  </button>
+                </>
+              )}
             </>
           }
         />
+
+        {accessDenied && (
+          <section
+            data-testid="flow-builder-access-denied"
+            role="region"
+            aria-label="Flow creation access status"
+            className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 shadow-sm shadow-amber-950/10"
+          >
+            <h2 className="text-sm font-medium text-amber-100">Flow creation access denied</h2>
+            <p className="mt-1 text-xs text-amber-200/75" role="status" aria-live="polite">
+              The {accessDeniedSource ?? "flow"} boundary denied access. The current draft remains visible as read-only context; template, canvas, validation, and creation controls are hidden until authorization is restored.
+            </p>
+          </section>
+        )}
 
         {/* Name + description strip — sits inside the page header band */}
         <div className="mt-3 rounded-xl border border-slate-800/80 bg-slate-950/35 px-4 py-3 shadow-sm shadow-black/10">
@@ -616,6 +670,8 @@ export default function NewFlowPage() {
                 id="flow-name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
+                readOnly={accessDenied}
+                aria-readonly={accessDenied}
                 placeholder="e.g. Customer onboarding v2"
                 data-testid="flow-name-input"
                 aria-label="Flow name"
@@ -633,6 +689,8 @@ export default function NewFlowPage() {
                 id="flow-description"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
+                readOnly={accessDenied}
+                aria-readonly={accessDenied}
                 placeholder="What does this flow do and who owns it?"
                 aria-label="Flow description"
                 className="w-full bg-slate-900/70 border border-slate-700 hover:border-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 rounded-md px-2.5 py-1.5 text-sm text-white placeholder-slate-500 transition-colors"
@@ -642,7 +700,7 @@ export default function NewFlowPage() {
         </div>
 
         {/* Template suggestions — collapsible, hidden once a template is applied */}
-        {showTemplates && (
+        {!accessDenied && showTemplates && (
           <div
             className="mt-3 rounded-xl border border-slate-800/80 bg-slate-950/35 px-4 py-3 shadow-sm shadow-black/10"
             aria-label="Flow template suggestions"
@@ -651,7 +709,9 @@ export default function NewFlowPage() {
               <div className="flex items-center gap-2">
                 <Sparkles size={14} className="text-blue-400" aria-hidden="true" />
                 <h2 className="text-sm font-medium text-slate-200">Start from a template</h2>
-                <span className="text-xxs text-slate-500">Optional — pick a starter or build from scratch.</span>
+                <span className="text-xxs text-slate-500">
+                  {templatesLoading ? "Loading canonical starters…" : "Optional — pick a starter or build from scratch."}
+                </span>
               </div>
               <button
                 onClick={() => setShowTemplates(false)}
@@ -661,11 +721,16 @@ export default function NewFlowPage() {
                 <X size={14} aria-hidden="true" />
               </button>
             </div>
+            {templatesLoadError && (
+              <div className="mb-2 rounded-md border border-amber-800/60 bg-amber-950/20 px-2.5 py-2 text-xs text-amber-200" role="status">
+                {templatesLoadError}. The blank canvas remains available.
+              </div>
+            )}
             <div
               className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2"
               role="list"
             >
-              {FLOW_TEMPLATES.map((template) => {
+              {flowTemplates.map((template) => {
                 const Icon = template.icon;
                 const isApplied = appliedTemplateId === template.id;
                 return (
@@ -722,7 +787,7 @@ export default function NewFlowPage() {
           </div>
         )}
 
-        {!showTemplates && (
+        {!accessDenied && !showTemplates && (
           <button
             onClick={() => setShowTemplates(true)}
             className="mt-3 inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/40 rounded px-1 py-0.5"
@@ -754,7 +819,7 @@ export default function NewFlowPage() {
 
       <div className="flex-1 flex">
         {/* Left panel: node palette */}
-        <div className="w-48 border-r border-slate-800 bg-slate-900 p-3 space-y-2">
+        {!accessDenied && <div className="w-48 border-r border-slate-800 bg-slate-900 p-3 space-y-2">
           <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-3">Node Types</p>
           {NODE_TYPES_OPTIONS.map((type) => (
             <button
@@ -774,17 +839,20 @@ export default function NewFlowPage() {
               Click a node type to add it. Drag nodes to position. Connect nodes by dragging from the bottom handle.
             </p>
           </div>
-        </div>
+        </div>}
 
         {/* Canvas */}
         <div className="flex-1">
           <ReactFlow
             nodes={nodes}
             edges={edges}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            onNodeClick={onNodeClick}
+            onNodesChange={accessDenied ? undefined : onNodesChange}
+            onEdgesChange={accessDenied ? undefined : onEdgesChange}
+            onConnect={accessDenied ? undefined : onConnect}
+            onNodeClick={accessDenied ? undefined : onNodeClick}
+            nodesDraggable={!accessDenied}
+            nodesConnectable={!accessDenied}
+            elementsSelectable={!accessDenied}
             nodeTypes={CUSTOM_NODE_TYPES}
             fitView
             className="bg-slate-950"
@@ -796,7 +864,7 @@ export default function NewFlowPage() {
         </div>
 
         {/* Right panel: node config */}
-        {showConfig && selectedNode && (
+        {!accessDenied && showConfig && selectedNode && (
           <div className="w-72 border-l border-slate-800 bg-slate-900 p-4 space-y-4 overflow-y-auto">
             <div className="flex items-center justify-between">
               <div>
@@ -833,6 +901,27 @@ export default function NewFlowPage() {
               </div>
             </div>
 
+            <NodeSchemaContractSummary nodeType={selectedNode.data.type as FlowNodeType} />
+
+            <NodeSchemaForm
+              nodeType={selectedNode.data.type as FlowNodeType}
+              value={nodeConfig}
+              onChange={updateNodeConfig}
+              governedWorkers={governedWorkers}
+              modelProfiles={modelProfiles}
+              governanceLoading={governanceLoading}
+            />
+            {governanceLoadError && (
+              <div className="rounded-md border border-amber-800/70 bg-amber-950/20 p-2 text-xs text-amber-200" role="status">
+                {governanceLoadError}. Governed worker and Model Profile fields remain unavailable until the catalogue recovers.
+              </div>
+            )}
+
+            <details className="rounded-md border border-slate-800 bg-slate-950/30">
+              <summary className="cursor-pointer px-2.5 py-2 text-xs font-medium text-slate-400 hover:text-slate-200">
+                Compatibility controls (legacy aliases)
+              </summary>
+              <div className="space-y-4 border-t border-slate-800 p-2.5">
             {selectedNode.data.type === "task" && (
               <>
                 <div className="rounded-md border border-blue-900/70 bg-blue-950/20 p-2.5 text-xs text-blue-100">
@@ -1120,6 +1209,8 @@ export default function NewFlowPage() {
                 />
               </div>
             )}
+              </div>
+            </details>
 
             <div>
               <label className="block text-xs text-slate-500 mb-1">Description (optional)</label>

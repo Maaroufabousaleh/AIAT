@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   Plus,
   Key,
@@ -96,11 +96,12 @@ function PolicyEditor({
   return (
     <div className="space-y-3">
       <div>
-        <label className="block text-xs text-slate-400 mb-1">
+        <label htmlFor="credential-allowed-requesters" className="block text-xs text-slate-400 mb-1">
           Allowed Requesters (comma-separated, empty = any)
         </label>
         <input
-          className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm text-white focus-visible:border-blue-500 transition-colors"
+          id="credential-allowed-requesters"
+          className="w-full min-h-11 bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm text-white focus-visible:border-blue-500 transition-colors"
           value={policy.allowed_requesters.join(", ")}
           onChange={(e) =>
             onChange({
@@ -115,11 +116,12 @@ function PolicyEditor({
         />
       </div>
       <div>
-        <label className="block text-xs text-slate-400 mb-1">
+        <label htmlFor="credential-allowed-contexts" className="block text-xs text-slate-400 mb-1">
           Allowed Contexts (comma-separated, empty = any)
         </label>
         <input
-          className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm text-white focus-visible:border-blue-500 transition-colors"
+          id="credential-allowed-contexts"
+          className="w-full min-h-11 bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm text-white focus-visible:border-blue-500 transition-colors"
           value={policy.allowed_contexts.join(", ")}
           onChange={(e) =>
             onChange({
@@ -135,18 +137,20 @@ function PolicyEditor({
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="block text-xs text-slate-400 mb-1">Rate limit / min (0 = unlimited)</label>
+          <label htmlFor="credential-rate-limit" className="block text-xs text-slate-400 mb-1">Rate limit / min (0 = unlimited)</label>
           <input
+            id="credential-rate-limit"
             type="number"
             min={0}
-            className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm text-white focus-visible:border-blue-500 transition-colors"
+            className="w-full min-h-11 bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm text-white focus-visible:border-blue-500 transition-colors"
             value={policy.rate_limit_per_minute}
             onChange={(e) => onChange({ ...policy, rate_limit_per_minute: Number(e.target.value) })}
           />
         </div>
         <div className="flex flex-col justify-end gap-2">
-          <label className="flex items-center gap-2 cursor-pointer">
+          <label htmlFor="credential-enabled" className="flex min-h-11 items-center gap-2 cursor-pointer">
             <input
+              id="credential-enabled"
               type="checkbox"
               checked={policy.enabled}
               onChange={(e) => onChange({ ...policy, enabled: e.target.checked })}
@@ -154,8 +158,9 @@ function PolicyEditor({
             />
             <span className="text-sm text-slate-300">Enabled</span>
           </label>
-          <label className="flex items-center gap-2 cursor-pointer">
+          <label htmlFor="credential-require-approval" className="flex min-h-11 items-center gap-2 cursor-pointer">
             <input
+              id="credential-require-approval"
               type="checkbox"
               checked={policy.require_approval}
               onChange={(e) => onChange({ ...policy, require_approval: e.target.checked })}
@@ -169,7 +174,15 @@ function PolicyEditor({
   );
 }
 
-function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+function CreateModal({
+  onClose,
+  onCreated,
+  onAccessDenied,
+}: {
+  onClose: () => void;
+  onCreated: () => void;
+  onAccessDenied: () => void;
+}) {
   const [form, setForm] = useState({
     name: "",
     value: "",
@@ -203,6 +216,10 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
         body: JSON.stringify({ ...form, policy }),
       });
       if (!res.ok) {
+        if (res.status === 401 || res.status === 403) {
+          onAccessDenied();
+          return;
+        }
         const d = await res.json();
         setError(d.detail ?? "Failed to create credential");
         return;
@@ -218,31 +235,38 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-      <div className="dashboard-surface-strong w-full max-w-lg shadow-xl">
+      <div
+        className="dashboard-surface-strong w-full max-w-lg shadow-xl"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="create-credential-title"
+      >
         <div className="p-5 border-b border-slate-700 flex items-center gap-3">
           <Key className="w-5 h-5 text-blue-400" />
-          <h2 className="text-white font-semibold">New Credential</h2>
+          <h2 id="create-credential-title" className="text-white font-semibold">New Credential</h2>
         </div>
         <div className="p-5 space-y-4">
           {error && (
-            <div className="bg-red-500/10 border border-red-500/30 rounded px-3 py-2 text-red-400 text-sm">
+            <div role="alert" className="bg-red-500/10 border border-red-500/30 rounded px-3 py-2 text-red-400 text-sm">
               {error}
             </div>
           )}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs text-slate-400 mb-1">Name *</label>
+              <label htmlFor="credential-name" className="block text-xs text-slate-400 mb-1">Name *</label>
               <input
-                className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm text-white focus-visible:border-blue-500 transition-colors"
+                id="credential-name"
+                className="w-full min-h-11 bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm text-white focus-visible:border-blue-500 transition-colors"
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value.toUpperCase().replace(/\s/g, "_") })}
                 placeholder="OPENAI_API_KEY"
               />
             </div>
             <div>
-              <label className="block text-xs text-slate-400 mb-1">Type</label>
+              <label htmlFor="credential-type" className="block text-xs text-slate-400 mb-1">Type</label>
               <select
-                className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm text-white focus-visible:border-blue-500 transition-colors"
+                id="credential-type"
+                className="w-full min-h-11 bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm text-white focus-visible:border-blue-500 transition-colors"
                 value={form.secret_type}
                 onChange={(e) => setForm({ ...form, secret_type: e.target.value })}
               >
@@ -253,11 +277,12 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
             </div>
           </div>
           <div>
-            <label className="block text-xs text-slate-400 mb-1">Value *</label>
+            <label htmlFor="credential-value" className="block text-xs text-slate-400 mb-1">Value *</label>
             <div className="relative">
               <input
+                id="credential-value"
                 type={showValue ? "text" : "password"}
-                className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm text-white pr-10 focus-visible:border-blue-500 transition-colors"
+                className="w-full min-h-11 bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm text-white pr-12 focus-visible:border-blue-500 transition-colors"
                 value={form.value}
                 onChange={(e) => setForm({ ...form, value: e.target.value })}
                 placeholder="sk-..."
@@ -265,7 +290,7 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
               <button
                 type="button"
                 aria-label={showValue ? "Hide secret value" : "Show secret value"}
-                className="absolute right-2 top-1.5 text-slate-400 hover:text-white p-1 rounded transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70"
+                className="absolute right-1 top-1/2 -translate-y-1/2 inline-flex min-h-11 min-w-11 items-center justify-center text-slate-400 hover:text-white rounded transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70"
                 onClick={() => setShowValue(!showValue)}
               >
                 {showValue ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -273,30 +298,33 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
             </div>
           </div>
           <div>
-            <label className="block text-xs text-slate-400 mb-1">Description</label>
+            <label htmlFor="credential-description" className="block text-xs text-slate-400 mb-1">Description</label>
             <input
-              className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm text-white focus-visible:border-blue-500 transition-colors"
+              id="credential-description"
+              className="w-full min-h-11 bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm text-white focus-visible:border-blue-500 transition-colors"
               value={form.description}
               onChange={(e) => setForm({ ...form, description: e.target.value })}
               placeholder="OpenAI API key for LLM gateway"
             />
           </div>
           <div>
-            <label className="block text-xs text-slate-400 mb-2 flex items-center gap-2">
+            <div className="block text-xs text-slate-400 mb-2 flex items-center gap-2">
               <Shield className="w-3.5 h-3.5" /> Access Policy
-            </label>
+            </div>
             <PolicyEditor policy={policy} onChange={setPolicy} />
           </div>
         </div>
         <div className="p-5 border-t border-slate-700 flex justify-end gap-3">
           <button
-            className="px-4 py-2 text-sm text-slate-300 hover:text-white rounded transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70"
+            type="button"
+            className="inline-flex min-h-11 items-center px-4 py-2 text-sm text-slate-300 hover:text-white rounded transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70"
             onClick={onClose}
           >
             Cancel
           </button>
           <button
-            className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white rounded-lg disabled:opacity-50 transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+            type="button"
+            className="inline-flex min-h-11 items-center px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white rounded-lg disabled:opacity-50 transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
             onClick={submit}
             disabled={loading}
           >
@@ -332,11 +360,11 @@ function CopyButton({ value }: { value: string }) {
         aria-label={copied ? `Copied ${value}` : `Copy placeholder ${value}`}
         title={copied ? "Copied" : "Copy placeholder"}
         className={clsx(
-          "inline-flex items-center justify-center w-6 h-6 rounded transition-all duration-150",
+          "inline-flex items-center justify-center min-h-11 min-w-11 rounded transition-all duration-150",
           "focus-visible:ring-2 focus-visible:ring-blue-400/70 focus-visible:ring-offset-1 focus-visible:ring-offset-slate-900",
           copied
             ? "bg-emerald-500/15 text-emerald-300"
-            : "text-slate-500 hover:text-blue-300 hover:bg-blue-500/10 opacity-60 group-hover/copy:opacity-100"
+            : "text-white/80 hover:text-blue-100 hover:bg-blue-500/10 opacity-60 group-hover/copy:opacity-100"
         )}
       >
         {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
@@ -347,32 +375,55 @@ function CopyButton({ value }: { value: string }) {
 
 export default function CredentialsPage() {
   const [credentials, setCredentials] = useState<Credential[]>([]);
+  const credentialsRef = useRef<Credential[] | null>(null);
+  const [hasLoaded, setHasLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [loadStale, setLoadStale] = useState(false);
+  const [accessDenied, setAccessDenied] = useState(false);
+  const [hasReadContext, setHasReadContext] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [bulkDeleting, setBulkDeleting] = useState(false);
 
   const credentialIds = useMemo(() => credentials.map((c) => c.id), [credentials]);
   const selection = useBulkSelection(credentialIds);
+  const clearSelection = selection.clear;
+  const handleAccessDenied = useCallback(() => {
+    setAccessDenied(true);
+    setLoadError("This operator identity is not authorized to read or change credentials.");
+    setLoadStale(credentialsRef.current !== null);
+    setError("");
+    setShowCreate(false);
+    clearSelection();
+  }, [clearSelection]);
   useEffect(() => {
     selection.prune();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [credentialIds.join(",")]);
 
   async function handleBulkDelete() {
-    if (selection.selectedCount === 0) return;
+    if (accessDenied || selection.selectedCount === 0) return;
     const targets = credentials.filter((c) => selection.selected.has(c.id));
     setBulkDeleting(true);
     let failed = 0;
+    let denied = false;
     try {
       const results = await Promise.allSettled(
         targets.map(async (c) => {
           const res = await fetch(`/api/credentials/${encodeURIComponent(c.name)}`, { method: "DELETE" });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          if (!res.ok) {
+            if (res.status === 401 || res.status === 403) denied = true;
+            throw new Error(`HTTP ${res.status}`);
+          }
         })
       );
       for (const r of results) if (r.status === "rejected") failed++;
+      if (denied) {
+        handleAccessDenied();
+        return;
+      }
       if (failed > 0) {
         setError(`Deleted ${targets.length - failed} of ${targets.length} credentials (${failed} failed).`);
       }
@@ -385,28 +436,51 @@ export default function CredentialsPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    setError("");
+    setLoadError("");
     try {
-      const res = await fetch("/api/credentials");
-      if (!res.ok) throw new Error(await res.text());
-      setCredentials(await res.json());
+      const res = await fetch("/api/credentials", { cache: "no-store" });
+      if (res.status === 401 || res.status === 403) {
+        handleAccessDenied();
+        return;
+      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const next = await res.json();
+      if (!Array.isArray(next)) throw new Error("Invalid credentials response");
+      credentialsRef.current = next;
+      setCredentials(next);
+      setHasLoaded(true);
+      setHasReadContext(true);
+      setAccessDenied(false);
+      setLoadStale(false);
     } catch (e: unknown) {
-      setError(String(e));
+      setAccessDenied(false);
+      setLoadError(e instanceof Error ? e.message : "Failed to load credentials");
+      setLoadStale(credentialsRef.current !== null);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [handleAccessDenied]);
 
   useEffect(() => {
     load();
   }, [load]);
 
+  const requestRefresh = () => {
+    if (loading || accessDenied) return;
+    void load();
+  };
+
   async function deleteCredential(name: string) {
+    if (accessDenied) return;
     if (!confirm(`Delete credential "${name}"? This cannot be undone.`)) return;
     setDeleting(name);
     try {
       const res = await fetch(`/api/credentials/${name}`, { method: "DELETE" });
       if (!res.ok) {
+        if (res.status === 401 || res.status === 403) {
+          handleAccessDenied();
+          return;
+        }
         const msg = await res.text().catch(() => `HTTP ${res.status}`);
         setError(`Failed to delete "${name}": ${msg}`);
         return;
@@ -418,35 +492,52 @@ export default function CredentialsPage() {
   }
 
   return (
-    <div className="dashboard-page">
+    <main aria-label="Credentials manager" className="dashboard-page">
       <PageHeader
         icon="lock"
         title="Credentials Manager"
         description={`${credentials.length} secrets · Centralised store with policy gates`}
-        actions={
+        actions={!accessDenied ? (
           <>
             <button
-              onClick={load}
+              type="button"
+              onClick={requestRefresh}
               disabled={loading}
               title="Refresh"
               aria-label="Refresh credentials"
-              className="p-2 rounded-lg border border-slate-700 hover:bg-slate-800 text-slate-400 hover:text-slate-100 hover:border-slate-500 transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg border border-slate-700 hover:bg-slate-800 text-slate-400 hover:text-slate-100 hover:border-slate-500 transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <RefreshCw className={clsx("w-4 h-4", loading && "animate-spin")} />
             </button>
             <button
+              type="button"
               onClick={() => setShowCreate(true)}
               aria-label="Create new credential"
-              className="inline-flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white rounded-lg text-sm font-medium shadow-sm shadow-blue-500/10 transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+              className="inline-flex min-h-11 items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white rounded-lg text-sm font-medium shadow-sm shadow-blue-500/10 transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
             >
               <Plus className="w-4 h-4" />
               New Secret
             </button>
           </>
-        }
+        ) : undefined}
       />
 
-      <div className="flex items-start gap-3 p-4 rounded-lg border border-blue-500/30 bg-blue-500/5">
+      {accessDenied && (
+        <section
+          role="region"
+          aria-label="Credentials access status"
+          className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-5 py-6 shadow-sm shadow-amber-950/10"
+        >
+          <h2 className="text-base font-semibold text-amber-100">Credentials access denied</h2>
+          <p className="mt-2 max-w-2xl text-sm text-amber-200/80">
+            {hasReadContext
+              ? "The current operator identity can no longer read or change credentials. Previously loaded redacted metadata remains visible, but Refresh, Retry, creation, deletion, placeholder copy, selection, and audit navigation are hidden until authorization is restored."
+              : "The current operator identity is not authorized to read or change credentials. No live credential metadata is inferred or displayed."}
+          </p>
+        </section>
+      )}
+
+      <section aria-label="Credential security model" className="flex items-start gap-3 p-4 rounded-lg border border-blue-500/30 bg-blue-500/5">
         <Shield className="w-5 h-5 text-blue-400 mt-0.5 shrink-0" />
         <div className="flex-1 text-sm text-blue-200/90">
           <strong className="text-blue-100">Security model:</strong> Real secret values are never
@@ -456,26 +547,42 @@ export default function CredentialsPage() {
             {"<OPENAI_API_KEY>"}
           </code>
           ). The credentials manager resolves values only inside approved execution contexts.
-          <a
-            href="/audit"
-            className="mt-2 inline-flex items-center gap-1.5 text-blue-300 hover:text-blue-100 underline-offset-2 hover:underline transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70 rounded px-1"
-            aria-label="View credential resolve audit log"
-          >
-            <ScrollText className="w-3.5 h-3.5" />
-            View resolve audit log
-            <ExternalLink className="w-3 h-3 opacity-70" />
-          </a>
+          {!accessDenied && (
+            <a
+              href="/audit"
+              className="mt-2 inline-flex min-h-11 items-center gap-1.5 text-blue-300 hover:text-blue-100 underline-offset-2 hover:underline transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70 rounded px-1"
+              aria-label="View credential resolve audit log"
+            >
+              <ScrollText className="w-3.5 h-3.5" />
+              View resolve audit log
+              <ExternalLink className="w-3 h-3 opacity-70" />
+            </a>
+          )}
         </div>
-      </div>
+      </section>
 
-      {error && (
-        <ErrorBanner tone="error" title="Credentials load failed">
+      {loadError && !accessDenied && (
+        <ErrorBanner
+          tone={loadStale ? "warning" : "error"}
+          title={loadStale ? "Showing last known credentials" : "Credentials load failed"}
+          action={(
+            <button type="button" onClick={requestRefresh} disabled={loading} className="inline-flex min-h-11 items-center rounded border border-current px-2.5 py-1 text-xs font-medium hover:bg-white/10 disabled:opacity-50">
+              Retry
+            </button>
+          )}
+        >
+          {loadStale ? `${loadError}. The latest credentials refresh failed; retained metadata remains visible.` : loadError}
+        </ErrorBanner>
+      )}
+
+      {error && !accessDenied && (
+        <ErrorBanner tone="error" title="Credential action failed">
           {error}
         </ErrorBanner>
       )}
 
       {/* Bulk action bar */}
-      {selection.selectedCount > 0 && (
+      {!accessDenied && selection.selectedCount > 0 && (
         <BulkActionBar
           selectedCount={selection.selectedCount}
           totalCount={credentials.length}
@@ -487,33 +594,50 @@ export default function CredentialsPage() {
       )}
 
       {/* Table */}
-      <div className="dashboard-surface overflow-hidden">
-        <table className="dashboard-table">
+      <section aria-label="Credential records" className="dashboard-surface overflow-hidden">
+        <table className="dashboard-table" aria-label="Credentials">
+          <caption className="sr-only">
+            Credential records with redacted placeholders, policy status, and usage metadata.
+          </caption>
           <thead>
             <tr className="border-b border-slate-800 text-slate-500">
-              <th className="px-4 py-3 w-10">
-                <SelectAllCheckbox
-                  checked={selection.isAllSelected}
-                  indeterminate={selection.isIndeterminate}
-                  onChange={selection.toggleAll}
-                  ariaLabel="Select all credentials"
-                />
+              <th scope="col" className="px-4 py-3 w-10">
+                {!accessDenied && (
+                  <SelectAllCheckbox
+                    checked={selection.isAllSelected}
+                    indeterminate={selection.isIndeterminate}
+                    onChange={selection.toggleAll}
+                    ariaLabel="Select all credentials"
+                  />
+                )}
               </th>
-              <th className="text-left px-4 py-3 text-xs font-medium uppercase tracking-wider">Name</th>
-              <th className="text-left px-4 py-3 text-xs font-medium uppercase tracking-wider">Type</th>
-              <th className="text-left px-4 py-3 text-xs font-medium uppercase tracking-wider">Description</th>
-              <th className="text-left px-4 py-3 text-xs font-medium uppercase tracking-wider">Placeholder</th>
-              <th className="text-left px-4 py-3 text-xs font-medium uppercase tracking-wider">Status</th>
-              <th className="text-left px-4 py-3 text-xs font-medium uppercase tracking-wider">Uses</th>
-              <th className="text-left px-4 py-3 text-xs font-medium uppercase tracking-wider">Last Used</th>
-              <th className="px-4 py-3" />
+              <th scope="col" className="text-left px-4 py-3 text-xs font-medium uppercase tracking-wider">Name</th>
+              <th scope="col" className="text-left px-4 py-3 text-xs font-medium uppercase tracking-wider">Type</th>
+              <th scope="col" className="text-left px-4 py-3 text-xs font-medium uppercase tracking-wider">Description</th>
+              <th scope="col" className="text-left px-4 py-3 text-xs font-medium uppercase tracking-wider">Placeholder</th>
+              <th scope="col" className="text-left px-4 py-3 text-xs font-medium uppercase tracking-wider">Status</th>
+              <th scope="col" className="text-left px-4 py-3 text-xs font-medium uppercase tracking-wider">Uses</th>
+              <th scope="col" className="text-left px-4 py-3 text-xs font-medium uppercase tracking-wider">Last Used</th>
+              <th scope="col" className="px-4 py-3"><span className="sr-only">Actions</span></th>
             </tr>
           </thead>
           <tbody>
-            {loading ? (
+            {loading && !hasLoaded ? (
               <tr>
                 <td colSpan={9} className="px-4 py-8 text-center text-slate-500">
                   Loading…
+                </td>
+              </tr>
+            ) : accessDenied && credentials.length === 0 ? (
+              <tr>
+                <td colSpan={9} className="px-4 py-8 text-center text-slate-400">
+                  No live credential metadata is inferred while authorization is unavailable.
+                </td>
+              </tr>
+            ) : loadError && !hasLoaded ? (
+              <tr>
+                <td colSpan={9} className="px-4 py-8 text-center text-slate-400">
+                  Unable to load credentials. Use Retry to try again.
                 </td>
               </tr>
             ) : credentials.length === 0 ? (
@@ -525,8 +649,9 @@ export default function CredentialsPage() {
                     description="Add a secret to give agents scoped access to external systems. The dashboard never exposes the raw value."
                     action={
                       <button
+                        type="button"
                         onClick={() => setShowCreate(true)}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+                        className="inline-flex min-h-11 items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors focus-visible:ring-2 focus-visible:ring-blue-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
                       >
                         <Plus size={14} />
                         New Secret
@@ -549,11 +674,13 @@ export default function CredentialsPage() {
                     )}
                   >
                     <td className="px-4 py-3">
-                      <RowCheckbox
-                        checked={isSelected}
-                        onChange={() => selection.toggle(c.id)}
-                        ariaLabel={`Select ${c.name}`}
-                      />
+                      {!accessDenied && (
+                        <RowCheckbox
+                          checked={isSelected}
+                          onChange={() => selection.toggle(c.id)}
+                          ariaLabel={`Select ${c.name}`}
+                        />
+                      )}
                     </td>
                     <td className="px-4 py-3 font-mono text-white font-medium">{c.name}</td>
                     <td className="px-4 py-3">
@@ -561,7 +688,13 @@ export default function CredentialsPage() {
                     </td>
                     <td className="px-4 py-3 text-slate-300 max-w-xs truncate">{c.description || "—"}</td>
                     <td className="px-4 py-3">
-                      <CopyButton value={c.placeholder} />
+                      {accessDenied ? (
+                        <code className="bg-slate-800 px-2 py-0.5 rounded text-blue-300 text-xs font-mono">
+                          {c.placeholder}
+                        </code>
+                      ) : (
+                        <CopyButton value={c.placeholder} />
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       {c.policy.enabled ? (
@@ -583,20 +716,23 @@ export default function CredentialsPage() {
                         : "Never"}
                     </td>
                     <td className="px-4 py-3">
-                      <button
-                        onClick={() => deleteCredential(c.name)}
-                        disabled={isDeleting}
-                        aria-label={`Delete ${c.name}`}
-                        className={clsx(
-                          "p-1.5 rounded transition-colors focus-visible:ring-2 focus-visible:ring-red-400/70 focus-visible:ring-offset-1 focus-visible:ring-offset-slate-900 disabled:cursor-not-allowed",
-                          isDeleting
-                            ? "text-red-400 bg-red-500/10"
-                            : "text-slate-500 hover:text-red-400 hover:bg-red-500/10"
-                        )}
-                        title={isDeleting ? "Deleting…" : "Delete"}
-                      >
-                        <Trash2 className={clsx("w-4 h-4", isDeleting && "animate-pulse")} />
-                      </button>
+                      {!accessDenied && (
+                        <button
+                          type="button"
+                          onClick={() => deleteCredential(c.name)}
+                          disabled={isDeleting}
+                          aria-label={`Delete ${c.name}`}
+                          className={clsx(
+                            "inline-flex min-h-11 min-w-11 items-center justify-center rounded transition-colors focus-visible:ring-2 focus-visible:ring-red-400/70 focus-visible:ring-offset-1 focus-visible:ring-offset-slate-900 disabled:cursor-not-allowed",
+                            isDeleting
+                              ? "text-red-400 bg-red-500/10"
+                              : "text-white/80 hover:text-red-100 hover:bg-red-500/10"
+                          )}
+                          title={isDeleting ? "Deleting…" : "Delete"}
+                        >
+                          <Trash2 className={clsx("w-4 h-4", isDeleting && "animate-pulse")} />
+                        </button>
+                      )}
                     </td>
                   </tr>
                 );
@@ -604,14 +740,15 @@ export default function CredentialsPage() {
             )}
           </tbody>
         </table>
-      </div>
+      </section>
 
       {showCreate && (
         <CreateModal
           onClose={() => setShowCreate(false)}
           onCreated={load}
+          onAccessDenied={handleAccessDenied}
         />
       )}
-    </div>
+    </main>
   );
 }

@@ -1,0 +1,226 @@
+{
+  "schema_version": "aiat.openhands-overnight-reconciliation.v2",
+  "recorded_at": "2026-08-23",
+  "previous_ending_head": "4b9ae29042a0655d74103fa2da25017ed11b6de6",
+  "starting_head": "0b712b0b78c6b2bb38bde8f87e3f23073c5b81d3",
+  "ending_head": "3ed4993439ee6dc08daccb0177f0d2b72a2e3955",
+  "implementation_baseline": "cedcee2a1efd740439b7b54d45f17610fc6c8a71",
+  "candidate": {
+    "release": "v1.43.0",
+    "source_commit": "4c1237f391fe394e9f67505fe3a0bd2d81f84188",
+    "image_digest": "sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97",
+    "worker_activation": "INACTIVE"
+  },
+  "reconciled_history": {
+    "certification_authorization": "f980fe89b243051e1f553455239e98906ca23a7f",
+    "authorization_model_docs": "96b56920391016bcab4f2b0b89706444282a5a26",
+    "disposable_bridge_secret": "0eef3abb069385e6c2e2af3a4921b68b369aeca2",
+    "gateway_audit_docs": "6c3acfd8fe53534548eb9c83fc350d061843db2d",
+    "self_contained_gateway": "bad5a0bd55a164710da0590c60d34a45f3701f92",
+    "gateway_provenance_docs": "0114f0b518e4c855943605e4027603dd51269540",
+    "single_provider_route_test": "6ad2b3ef3feaed6b0873bef611c31e49db2c827b",
+    "gateway_topology_evidence": "7c0ff171c86e901701683de0a2d2c132ff3bfcb2",
+    "gateway_readiness_gates": "b25abb37243a3a9ac634c4ce782742b4e9b8bd5b",
+    "gateway_failure_taxonomy": "fd50dc9bb324a6e45a64b54df937dc9165eb5cb2",
+    "workspace_secret_scan": "784ce475c33736b9a29136a292bef0e8def78fe0",
+    "gateway_readiness_documentation": "505dd6eeaa2f5ebc8930f14c75f1fc938d1a4514",
+    "fail_closed_summary": "fbbb63c0c14be0bc47f721cf35f4e1ed0bcacc45",
+    "runtime_readiness_output": "4223507e225669100415e877b166795847a94f60",
+    "clean_candidate_static_certificate": "a8ff763b75d7728d2517f52a3c04273fb9b49da3",
+    "clean_candidate_validator_pin": "7dc416baf77b0282a010f5741213bd0dddea4395",
+    "partial_startup_cleanup_hardening": "8d46bc901e4a1e17cd0a67f715dbd46d52dceee6",
+    "litellm_release_tag_verification": "633e7288f268f010b3b67704346913c2944d77bc",
+    "scan_blocker_taxonomy": "498aba091fa4a897a6c62745527b5f33c1869d4b",
+    "gateway_source_archive_verification": "4890aaa2bd0ddbc2ef1e5b19ba075363de58167f",
+    "evidence_schema_validation": "82f053e8e9858c9c70d2fad058ae154675ff9ba5",
+    "host_bound_gateway_rejection": "3b264d485a3e82b8e25d040b8dda4b19d5da4667",
+    "profile_cleanup_evidence": "c7b84609e458cea7947bc34c44f35cd0ed66d2f0",
+    "network_startup_failure_classification": "4b9ae29042a0655d74103fa2da25017ed11b6de6",
+    "service_startup_failure_evidence": "cedcee2a1efd740439b7b54d45f17610fc6c8a71",
+    "overnight_readiness_documentation": "393282d16e1475f618904e21a25013835da18e4a",
+    "network_readiness_documentation": "60e5046f7fc4ed13dde3700a6c88faf5af1e1c8a",
+    "startup_evidence_documentation": "3ed4993439ee6dc08daccb0177f0d2b72a2e3955",
+    "workflow_heredoc_fix": "a02899bc7f36cf79948629b23507db8fa7d557d4"
+  },
+  "dependency_map": [
+    "manual workflow -> exact candidate checkout and candidate preflight",
+    "candidate preflight -> trusted certification authorization",
+    "certification authorization -> runsc Agent Server and run-scoped profile",
+    "run-scoped profile -> fixed MCP logical key and AIAT tool-service",
+    "disposable network -> OpenHands/runsc, tool-service, LiteLLM, OmniRoute",
+    "LiteLLM -> exact omniroute-coding route -> OmniRoute -> Groq",
+    "live adapter -> post-run task/diff/artifact/secret checks and lifecycle probes",
+    "evidence -> 20-gate evaluation -> read-only steward registration preflight",
+    "steward approval -> independent activation approval; worker remains inactive"
+  ],
+  "repository_local_validation": {
+    "checked_at": "2026-08-23T09:15:58Z",
+    "candidate_sha": "3ed4993439ee6dc08daccb0177f0d2b72a2e3955",
+    "static_release_ledger": {
+      "status": "PASS",
+      "checks_passed": 63,
+      "checks_total": 63,
+      "pending_evidence_count": 2,
+      "release_decision": "NO-RELEASE",
+      "worktree_clean": false
+    },
+    "documentation_index": {
+      "status": "PASS",
+      "canonical_feature_count": 13,
+      "canonical_plan_count": 3,
+      "errors": []
+    },
+    "workflow_static_validation": {
+      "status": "PASS",
+      "manual_only": true,
+      "candidate_sha_bound": true,
+      "exact_image_pins": true,
+      "secrets_or_payloads_retained": false,
+      "source_archive_hashes_verified": true,
+      "host_bound_gateway_targets_rejected": true,
+      "run_scoped_profile_cleanup_asserted": true,
+      "network_startup_failure_classified": true,
+      "service_startup_failure_classified": true,
+      "workflow_shell_syntax_validated": true
+    },
+    "gate_matrix": {
+      "status": "BLOCKED_INCOMPLETE_MANDATORY_GATES",
+      "mandatory_gate_count": 20,
+      "reason": "live provider and lifecycle evidence has not been run"
+    },
+    "offline_harness": {
+      "status": "PASS",
+      "scope": "deterministic fixture and negative-security checks"
+    }
+  },
+  "clean_candidate_static_evidence": {
+    "candidate_sha": "61f7d49b905a109a154f961e147f783016792218",
+    "certificate": "../../../release_ledger_clean_candidate_static.json",
+    "validator": "scripts/check_clean_candidate_release.py",
+    "validator_args": "--candidate-sha 61f7d49b905a109a154f961e147f783016792218 --json",
+    "status": "PASS",
+    "worktree_clean": true,
+    "changed_path_count": 0,
+    "static_checks": "63/63",
+    "release_decision": "NO-RELEASE",
+    "live_profile_included": false
+  },
+  "current_external_boundary": {
+    "persistent_github_variables": [
+      "OPENHANDS_MODEL_ID=omniroute-coding",
+      "OPENHANDS_MCP_SETTINGS_KEY=aiat-openhands-v1-43-0-coding"
+    ],
+    "persistent_github_secrets": ["GROQ_API_KEY"],
+    "run_scoped_secrets": [
+      "AIAT_TOOL_SECRET",
+      "OPENHANDS_SESSION_API_KEY",
+      "OPENHANDS_MODEL_GATEWAY_API_KEY"
+    ],
+    "live_provider_evidence": "requires operator-supplied GROQ_API_KEY",
+    "workflow_dispatched_during_reconciliation": false
+  },
+  "historical_workflow_failure": {
+    "run_id": "32645055499",
+    "job_id": "97207942478",
+    "artifact_id": "9494670248",
+    "artifact_digest": "sha256:853293b57127bc7b5766e93655de5b300cf678e3e86aaa27fd9f0bc0a1bf4519",
+    "classification": "FAILED_CERTIFICATION_IMPLEMENTATION",
+    "failure_reason": "MALFORMED_WORKFLOW_HEREDOC",
+    "provider_preflight": "PASS",
+    "candidate_preflight": "PASS",
+    "image_pulls": {
+      "openhands": "PASS",
+      "litellm": "PASS",
+      "omniroute": "PASS"
+    },
+    "live_gate_wave": "NOT_RUN",
+    "evidence_ref": "github-run-32645055499-failure.json",
+    "fix_commit": "a02899bc7f36cf79948629b23507db8fa7d557d4",
+    "historical_evidence_immutable": true
+  },
+  "historical_workflow_failure_32648660093": {
+    "run_id": "32648660093",
+    "job_id": "97216753646",
+    "artifact_id": "9495601763",
+    "artifact_digest": "sha256:abbf2ef1fb934b972d8fa577fefaab4f004c144dcbb96ebb5880ac6a295b2753",
+    "classification": "FAILED_CERTIFICATION_IMPLEMENTATION",
+    "failure_reason": "LITELLM_RELEASE_TAG_RESOLUTION_FAILED",
+    "failure_detail": "lightweight tag queried only through refs/tags/v1.90.0^{}",
+    "provider_preflight": "PASS",
+    "candidate_preflight": "PASS",
+    "image_platform_verification": "PASS",
+    "gateway_pin_verifier": "PASS",
+    "image_pulls": {
+      "openhands": "PASS",
+      "litellm": "PASS",
+      "omniroute": "PASS"
+    },
+    "live_gate_wave": "NOT_RUN",
+    "zero_residue": "PASS",
+    "evidence_ref": "github-run-32648660093-failure.json",
+    "historical_evidence_immutable": true
+  },
+  "historical_workflow_failure_32651712645": {
+    "run_id": "32651712645",
+    "job_id": "97224247350",
+    "artifact_id": "9496431498",
+    "artifact_digest": "sha256:f02622a65ec47c44c7105b236502f8339a37b0c6add30a9f6463e50d71b4dd92",
+    "candidate_sha": "97436eceee9f5d16fc85580fa4f0eecad698ebd2",
+    "classification": "BLOCKED_RUNTIME_STARTUP",
+    "failure_reason": "OMNIROUTE_HEALTH_FAILURE",
+    "retrospective_readiness_classification": "OMNIROUTE_HEALTH_AUTH_CONTRACT_FAILURE",
+    "provider_preflight": "PASS",
+    "candidate_preflight": "PASS",
+    "image_platform_verification": "PASS",
+    "gateway_pin_verifier": "PASS",
+    "image_pulls": {
+      "openhands": "PASS",
+      "litellm": "PASS",
+      "omniroute": "PASS"
+    },
+    "network_create": "PASS",
+    "omniroute_container_start": "PASS",
+    "omniroute_docker_health": "PASS",
+    "old_health_endpoint": "/api/health/ping",
+    "observed_http_status": 401,
+    "new_health_endpoint": "/api/monitoring/health",
+    "provider_route_configuration": "NOT_RUN",
+    "litellm_start": "NOT_RUN",
+    "live_model_call": "NOT_RUN",
+    "live_gate_wave": "NOT_RUN",
+    "zero_residue": "PASS",
+    "evidence_schema": "PASS",
+    "evidence_ref": "github-run-32651712645-failure.json",
+    "historical_evidence_immutable": true
+  },
+  "evidence_policy": {
+    "raw_model_payloads_retained": false,
+    "credentials_retained": false,
+    "licence_metadata_is_gate": false
+  },
+  "post_overnight_refresh": {
+    "recorded_at": "2026-08-23",
+    "starting_head": "4bddd4b3b8819329570e5ca2bb922f564b015720",
+    "ending_head": "2a2be0f79a38b5817c65b8d363fcf66b75c69200",
+    "commits": {
+      "report_path_resolution": "4bddd4b3b8819329570e5ca2bb922f564b015720",
+      "omniroute_fallback_fixture_coverage": "7d06e4f",
+      "preflight_document_refresh": "2a2be0f79a38b5817c65b8d363fcf66b75c69200"
+    },
+    "scope": "repository-local OpenHands activation/report portability and offline OmniRoute routing fixtures",
+    "workflow_dispatched": false,
+    "openhands_active": false,
+    "opencode_modified": false,
+    "protected_memory_files_touched": false,
+    "live_provider_evidence": "not_run; deliberate operator dispatch remains pending",
+    "local_validation": {
+      "workflow_static": "PASS",
+      "dispatch_preflight": "PASS",
+      "openhands_fixture_suite": "PASS",
+      "routing_fixture_suite": "PASS",
+      "docs_index": "PASS",
+      "release_ledger": "PASS; 63/63 checks; 2 unrelated OpenCode review items pending",
+      "global_release_decision": "NO-RELEASE"
+    }
+  }
+}

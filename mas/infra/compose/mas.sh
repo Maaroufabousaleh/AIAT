@@ -41,6 +41,57 @@ elif [ -f ".env" ]; then
     load_env_file "$ENV_FILE"
 fi
 
+# This wrapper always loads the development overlay.  Keep its convenience
+# image names separate from the production Compose contract: direct production
+# invocations must provide every immutable *_IMAGE_REF value, while a personal
+# local `mas.sh up --build` can build the checked-in services without requiring
+# a registry digest first.  A caller-supplied value always wins, including a
+# digest-bearing release image when the wrapper is used for a local smoke test.
+set_development_image_defaults() {
+    local var value
+    local -a defaults=(
+        "AIAT_TEAM_RUNNER_IMAGE_REF=mas/team-runner:dev"
+        "AIAT_REDIS_ACL_INIT_IMAGE_REF=mas/redis-acl-init:dev"
+        "AIAT_MESSAGE_ROUTER_IMAGE_REF=mas/message-router:dev"
+        "AIAT_TOOL_SERVICE_IMAGE_REF=mas/tool-service:dev"
+        "AIAT_OPENCODE_RUNTIME_IMAGE_REF=mas/opencode-runtime:dev"
+        "AIAT_ORCHESTRATOR_IMAGE_REF=mas/orchestrator-api:dev"
+        "AIAT_PM_GATEWAY_IMAGE_REF=mas/pm-gateway:dev"
+        "AIAT_DASHBOARD_IMAGE_REF=mas/dashboard:dev"
+    )
+    for entry in "${defaults[@]}"; do
+        var="${entry%%=*}"
+        value="${entry#*=}"
+        if [ -z "${!var:-}" ]; then
+            export "$var=$value"
+        fi
+    done
+    # These names are retained as development-only compatibility inputs for
+    # existing .env files. Production must set the *_IMAGE_REF counterparts.
+    if [ -z "${LITELLM_IMAGE_REF:-}" ]; then
+        export LITELLM_IMAGE_REF="${LITELLM_IMAGE:-ghcr.io/berriai/litellm:main-stable}"
+    fi
+    if [ -z "${OMNIROUTE_IMAGE_REF:-}" ]; then
+        export OMNIROUTE_IMAGE_REF="${OMNIROUTE_IMAGE:-diegosouzapw/omniroute:3.8.38}"
+    fi
+    # Development-only principal keys keep the local stack's identities
+    # distinct. Production deployments must replace them with secret values
+    # in the environment manifest; never use these defaults for release.
+    if [ -z "${AIAT_CEO_API_KEY:-}" ]; then
+        export AIAT_CEO_API_KEY="aiat-dev-ceo-key"
+    fi
+    if [ -z "${AIAT_WORKER_API_KEY:-}" ]; then
+        export AIAT_WORKER_API_KEY="aiat-dev-worker-key"
+    fi
+    # Local development follows the default company manifest unless an
+    # explicit IANA timezone was supplied by the operator.
+    if [ -z "${AIAT_COMPANY_TIMEZONE:-}" ]; then
+        export AIAT_COMPANY_TIMEZONE="UTC"
+    fi
+}
+
+set_development_image_defaults
+
 # The wrapper loads .env itself so values containing "$" (bcrypt hashes, API
 # keys, etc.) are exported literally instead of parsed by Compose interpolation.
 export COMPOSE_DISABLE_ENV_FILE=1
@@ -95,20 +146,29 @@ prepare_build_context() {
     warn "Using clean staged Docker context because repo temp ACLs are unreadable: $stage_root"
     rm -rf -- "$stage_root"
     mkdir -p -- "$stage_root"
-    tar -C "$context_root" \
-        --exclude='./.tmp-pytest' \
-        --exclude='./.tmp-delete-me' \
-        --exclude='./.venv*' \
-        --exclude='./.uv-cache' \
-        --exclude='./node_modules' \
-        --exclude='*/node_modules' \
-        --exclude='*/.next' \
-        --exclude='*/test-results' \
-        --exclude='*/playwright-report' \
-        --exclude='*/__pycache__' \
-        --exclude='*/.pytest_cache' \
-        --exclude='*/.ruff_cache' \
-        -cf - . | tar -C "$stage_root" -xf -
+    # Exclude every disposable temporary tree, including protected review
+    # directories whose ACLs may prevent tar from opening them. Keep the
+    # pipeline fail-closed so a partial context is never used for a build.
+    if ! (
+        set -o pipefail
+        tar -C "$context_root" \
+            --exclude='./.tmp*' \
+            --exclude='*/.tmp*' \
+            --exclude='./.venv*' \
+            --exclude='./.uv-cache' \
+            --exclude='./node_modules' \
+            --exclude='*/node_modules' \
+            --exclude='*/.next' \
+            --exclude='*/test-results' \
+            --exclude='*/playwright-report' \
+            --exclude='*/__pycache__' \
+            --exclude='*/.pytest_cache' \
+            --exclude='*/.ruff_cache' \
+            -cf - . | tar -C "$stage_root" -xf -
+    ); then
+        error "Unable to stage a complete Docker build context: $stage_root"
+        return 1
+    fi
     export MAS_BUILD_CONTEXT="$stage_root"
 }
 
@@ -119,7 +179,8 @@ validate_env() {
         POSTGRES_PASSWORD MINIO_ROOT_PASSWORD
         ROUTER_PASSWORD TOOLCACHE_PASSWORD
         ROUTER_SECRET TOOL_SECRET
-        LLM_GATEWAY_URL MAS_API_KEY
+        LLM_GATEWAY_URL MAS_API_KEY AIAT_OPERATOR_API_KEY
+        AIAT_CEO_API_KEY AIAT_WORKER_API_KEY
         DASHBOARD_USERNAME DASHBOARD_PASSWORD_HASH JWT_SECRET
     )
     for var in "${required_vars[@]}"; do

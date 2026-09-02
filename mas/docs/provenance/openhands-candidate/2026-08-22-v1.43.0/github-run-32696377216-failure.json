@@ -1,0 +1,59 @@
+{
+    "schema_version": "aiat.openhands-certification-historical-run.v1",
+    "immutable": true,
+    "run": {
+        "run_id": "32696377216",
+        "job_id": "97339115481",
+        "candidate_sha": "fc5bb4494e9750e732394d74427455813cbc9279",
+        "workflow_head_sha": "fc5bb4494e9750e732394d74427455813cbc9279",
+        "artifact_id": "9509057977",
+        "artifact_digest": "sha256:a9348df84c074f9143a6e6bf44b3fc48a5444d1b490e7ecd5a00882612532b57"
+    },
+    "classification": {
+        "final_status": "BLOCKED_TOOL_BRIDGE",
+        "failure_class": "FAILED_CERTIFICATION_IMPLEMENTATION",
+        "normalized_blocker_status": "BLOCKED_TOOL_BRIDGE",
+        "root_cause_status": "MCP_SETTINGS_READBACK_ENVELOPE_MISMATCH",
+        "root_cause": "The pinned Agent Server returned effective MCP settings under its v1.43.0 agent_settings envelope, while this candidate runtime provisioner only inspected top-level MCP envelopes. The run-scoped MCP entry could not be verified, so the live adapter wave and all later mandatory gates were correctly skipped.",
+        "failure_stage": "run_scoped_runtime_provisioning",
+        "runtime_failure": "agent_settings_readback_has_no_mcp_configuration",
+        "response_payload_retained": false
+    },
+    "evidence": {
+        "groq_provider_preflight": "PASS",
+        "candidate_preflight": "READY_FOR_CERTIFICATION_AUTHORIZATION",
+        "openhands_image_pull": "PASS",
+        "litellm_image_pull": "PASS",
+        "omniroute_image_pull": "PASS",
+        "image_platform_verification": "PASS",
+        "gateway_provenance": "PASS",
+        "network_create": "PASS",
+        "omniroute_management_health": "PASS",
+        "omniroute_api_auth_boundary": "PASS",
+        "provider_route_configuration": "PASS",
+        "provider_baseline": "PASS",
+        "litellm_start": "PASS",
+        "litellm_provider_route": "PASS",
+        "auto_routing": "PASS",
+        "tool_service": "PASS",
+        "openhands_runsc_start": "PASS",
+        "runsc_to_litellm": "PASS",
+        "profile_mcp": "BLOCKED_MCP_SETTINGS_READBACK",
+        "live_gate_wave": "NOT_RUN",
+        "zero_residue": "PASS",
+        "evidence_schema": "PASS",
+        "mandatory_gate_count": 20,
+        "mandatory_gates_passed": 2,
+        "mandatory_gates_not_run": 18
+    },
+    "remediation": {
+        "repository_fix": "e0f1891",
+        "fix": "Read the pinned v1.43.0 agent_settings MCP configuration envelope while retaining the older compatibility envelopes.",
+        "replacement_run_claimed": false
+    },
+    "retention": {
+        "credentials_retained": false,
+        "model_payloads_retained": false,
+        "unnecessary_logs_retained": false
+    }
+}

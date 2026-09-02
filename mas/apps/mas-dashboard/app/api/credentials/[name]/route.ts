@@ -1,10 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { orchestratorFetch, OrchestratorError } from "@/lib/orchestrator";
 
-const ORCHESTRATOR =
-  process.env.ORCHESTRATOR_URL ?? "http://orchestrator-api:8000";
-const ORCHESTRATOR_HEADERS = {
-  "X-API-Key": process.env.MAS_API_KEY ?? "",
-};
 const SENSITIVE_RESPONSE_KEYS = new Set([
   "value",
   "encrypted_value",
@@ -29,19 +25,11 @@ type Params = { params: Promise<{ name: string }> };
 export async function GET(_req: NextRequest, props: Params) {
   const params = await props.params;
   try {
-    const res = await fetch(`${ORCHESTRATOR}/credentials/${params.name}`, {
-      cache: "no-store",
-      headers: ORCHESTRATOR_HEADERS,
-    });
-    const data = await res.json();
-    return NextResponse.json(stripCredentialSecrets(data), {
-      status: res.status,
-    });
-  } catch {
-    return NextResponse.json(
-      { error: "Failed to reach orchestrator" },
-      { status: 502 },
-    );
+    const data = await orchestratorFetch(`/credentials/${encodeURIComponent(params.name)}`);
+    return NextResponse.json(stripCredentialSecrets(data));
+  } catch (error) {
+    const status = error instanceof OrchestratorError ? error.status : 502;
+    return NextResponse.json({ error: "Failed to reach orchestrator" }, { status });
   }
 }
 
@@ -49,40 +37,26 @@ export async function PATCH(req: NextRequest, props: Params) {
   const params = await props.params;
   try {
     const body = await req.json();
-    const res = await fetch(`${ORCHESTRATOR}/credentials/${params.name}`, {
+    const data = await orchestratorFetch(`/credentials/${encodeURIComponent(params.name)}`, {
       method: "PATCH",
-      headers: {
-        ...ORCHESTRATOR_HEADERS,
-        "Content-Type": "application/json",
-      },
       body: JSON.stringify(body),
     });
-    const data = await res.json();
-    return NextResponse.json(stripCredentialSecrets(data), {
-      status: res.status,
-    });
-  } catch {
-    return NextResponse.json(
-      { error: "Failed to reach orchestrator" },
-      { status: 502 },
-    );
+    return NextResponse.json(stripCredentialSecrets(data));
+  } catch (error) {
+    const status = error instanceof OrchestratorError ? error.status : 502;
+    return NextResponse.json({ error: "Failed to reach orchestrator" }, { status });
   }
 }
 
 export async function DELETE(_req: NextRequest, props: Params) {
   const params = await props.params;
   try {
-    const res = await fetch(`${ORCHESTRATOR}/credentials/${params.name}`, {
+    await orchestratorFetch(`/credentials/${encodeURIComponent(params.name)}`, {
       method: "DELETE",
-      headers: ORCHESTRATOR_HEADERS,
     });
-    if (res.status === 204) return new NextResponse(null, { status: 204 });
-    const data = await res.json();
-    return NextResponse.json(data, { status: res.status });
-  } catch {
-    return NextResponse.json(
-      { error: "Failed to reach orchestrator" },
-      { status: 502 },
-    );
+    return new NextResponse(null, { status: 204 });
+  } catch (error) {
+    const status = error instanceof OrchestratorError ? error.status : 502;
+    return NextResponse.json({ error: "Failed to reach orchestrator" }, { status });
   }
 }

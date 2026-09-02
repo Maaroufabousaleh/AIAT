@@ -28,9 +28,10 @@ export function SeedDefaultCompanyButton() {
     <div className="flex items-center gap-3">
       {error && <span className="text-xs text-red-400">{error}</span>}
       <button
+        type="button"
         onClick={seed}
         disabled={loading}
-        className="px-3 py-1.5 rounded border border-blue-700 bg-blue-600/20 text-blue-200 text-xs hover:bg-blue-600/30 disabled:opacity-50"
+        className="inline-flex min-h-11 items-center px-3 py-1.5 rounded border border-blue-700 bg-blue-600/20 text-blue-200 text-xs hover:bg-blue-600/30 disabled:opacity-50"
       >
         {loading ? "Seeding..." : "Seed Default AIAT"}
       </button>

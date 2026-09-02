@@ -1,0 +1,101 @@
+{
+  "schema_version": "aiat.object-store-encryption-certification.v1",
+  "evidence_commit": "91504dd",
+  "observed_at": "2026-08-18T11:29:18.534Z",
+  "status": "pass",
+  "mode": "local-in-memory-encrypted-backup",
+  "encryption_algorithm": "AES-256-GCM",
+  "key_id": "aiat-fixture-encryption-key-v1",
+  "manifest": {
+    "schema_version": "aiat.object-store-encrypted-backup.v1",
+    "project_id": "aiat-encrypted-backup-certification-v1",
+    "source_adapter_type": "in-memory-fixture",
+    "encryption_algorithm": "AES-256-GCM",
+    "key_id": "aiat-fixture-encryption-key-v1",
+    "object_count": 2,
+    "manifest_sha256": "df864e752d28a25c036d7d1e22d98c83a0b41973027a3991f92da60ddd89b6c8",
+    "objects": [
+      {
+        "logical_key": "artifacts/empty.bin",
+        "encrypted_key": "encrypted/artifacts/empty.bin.enc",
+        "plaintext_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "plaintext_size_bytes": 0,
+        "ciphertext_sha256": "c2e9d0a3a1213409ce850858007a3eea45307644dcc854d8fd3d083cf1043963",
+        "ciphertext_size_bytes": 16,
+        "content_type": "application/octet-stream",
+        "nonce_b64": "kKr7WqXbo-RFsqle",
+        "key_id": "aiat-fixture-encryption-key-v1"
+      },
+      {
+        "logical_key": "documents/pdr.json",
+        "encrypted_key": "encrypted/documents/pdr.json.enc",
+        "plaintext_sha256": "189859282bb0fcf62352ba0b5f8b4623eb22f2305776c02252ba936ed3481128",
+        "plaintext_size_bytes": 65,
+        "ciphertext_sha256": "f99fbb338ae0f8198b147990a125ccd3b815c9f5e5659ff5bef6b9be0f012042",
+        "ciphertext_size_bytes": 81,
+        "content_type": "application/json",
+        "nonce_b64": "yWGzht1awKwvNn_U",
+        "key_id": "aiat-fixture-encryption-key-v1"
+      }
+    ]
+  },
+  "backup_verification": {
+    "schema_version": "aiat.object-store-encrypted-restore.v1",
+    "project_id": "aiat-encrypted-backup-certification-v1",
+    "target_bucket": "encrypted-backup",
+    "encryption_algorithm": "AES-256-GCM",
+    "key_id": "aiat-fixture-encryption-key-v1",
+    "object_count": 2,
+    "checked_object_count": 2,
+    "clean_target_verified": true,
+    "status": "pass"
+  },
+  "restore_verification": {
+    "schema_version": "aiat.object-store-encrypted-restore.v1",
+    "project_id": "aiat-encrypted-backup-certification-v1",
+    "target_bucket": "encrypted-restore",
+    "encryption_algorithm": "AES-256-GCM",
+    "key_id": "aiat-fixture-encryption-key-v1",
+    "object_count": 2,
+    "checked_object_count": 2,
+    "clean_target_verified": true,
+    "status": "pass"
+  },
+  "plaintext_keys_absent": true,
+  "manifest_secret_free": true,
+  "wrong_key_rejected": true,
+  "tamper_rejected": true,
+  "clean_target_rejected_before_mutation": true,
+  "payload_free": true,
+  "cleanup_deleted_counts": {
+    "blocked_restore": 1,
+    "encrypted_backup": 2,
+    "encrypted_restore": 2,
+    "source": 2
+  },
+  "remaining_fixture_counts": {
+    "blocked_restore": 0,
+    "encrypted_backup": 0,
+    "encrypted_restore": 0,
+    "source": 0
+  },
+  "external_network_access_performed": false,
+  "external_provider_mutation_performed": false,
+  "provider_managed_sse_or_kms_checked": false,
+  "licence_metadata_is_gate": false,
+  "certification_boundary": {
+    "aiat_owned_aes_256_gcm_envelope": "checked",
+    "opaque_key_id_only_manifest": "checked",
+    "ciphertext_checksum_and_readback": "checked",
+    "wrong_key_and_tamper_rejection": "checked",
+    "clean_target_preflight": "checked",
+    "provider_managed_sse_or_kms": "not_checked",
+    "external_garage_r2_b2_or_other_backend": "not_checked",
+    "clean_environment_disaster_recovery": "not_checked",
+    "independent_host_or_provider_outage": "not_checked"
+  },
+  "notes": [
+    "Plaintext is encrypted before the backup adapter receives it; the manifest retains scalar checksums, nonce metadata, and an opaque key ID only.",
+    "The local fixture does not claim provider-managed encryption, KMS/key custody, external backend durability, or clean-environment disaster recovery."
+  ]
+}

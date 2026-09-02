@@ -1,5 +1,10 @@
 # AIAT MAS Plan
 
+> **Obsolete policy notice (2026-08-09):** This plan is historical. Licence
+> classification is metadata only in the current personal internal-use
+> programme and does not block any resource. Use `AIAT_TARGET_PROGRAMME.md`
+> and `ROADMAP.md` from the repository root.
+
 Last updated: 2026-05-31
 
 This document is retained only as historical context. The active implementation

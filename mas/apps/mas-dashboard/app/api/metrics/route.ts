@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { promQuery, promQueryRange } from "@/lib/prometheus";
+import { promQuery, promQueryRange, PrometheusHttpError } from "@/lib/prometheus";
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -22,6 +22,9 @@ export async function GET(req: Request) {
       return NextResponse.json({ results });
     }
   } catch (e) {
+    if (e instanceof PrometheusHttpError && (e.status === 401 || e.status === 403)) {
+      return NextResponse.json({ error: "Metrics access denied", status: e.status }, { status: e.status });
+    }
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }
 }

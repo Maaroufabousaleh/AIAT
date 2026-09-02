@@ -1,0 +1,68 @@
+{
+  "schema_version": "aiat.worker-steward-contract-evidence.v1",
+  "observed_at": "2026-08-11T02:41:43Z",
+  "mode": "deterministic-domain-fixture",
+  "status": "pass",
+  "source_command": "scripts/check_worker_steward_contract.py --json",
+  "external_worker_count": 2,
+  "workers": [
+    {
+      "worker_id": "coding_worker",
+      "source_repo": "https://github.com/anomalyco/opencode",
+      "status": "pass",
+      "checks": {
+        "dedicated_steward": true,
+        "immutable_candidate": true,
+        "compatibility_matrix": true,
+        "certification": true,
+        "replacement_certification": true,
+        "regression_block": true,
+        "rollback": true
+      },
+      "rollout": {
+        "baseline_status": "ACTIVE",
+        "replacement_status": "ROLLED_BACK",
+        "regression_blocked": true,
+        "active_bundle_preserved": true
+      },
+      "real_security_scan_status": "findings_review_required"
+    },
+    {
+      "worker_id": "tester",
+      "source_repo": "https://github.com/anomalyco/opencode",
+      "status": "pass",
+      "checks": {
+        "dedicated_steward": true,
+        "immutable_candidate": true,
+        "compatibility_matrix": true,
+        "certification": true,
+        "replacement_certification": true,
+        "regression_block": true,
+        "rollback": true
+      },
+      "rollout": {
+        "baseline_status": "ACTIVE",
+        "replacement_status": "ROLLED_BACK",
+        "regression_blocked": true,
+        "active_bundle_preserved": true
+      },
+      "real_security_scan_status": "findings_review_required"
+    }
+  ],
+  "boundary": {
+    "steward_candidate_matrix_rollout_rollback": "checked",
+    "pre_activation_pointer_preservation": "checked",
+    "runtime_imports": "not_checked",
+    "security_scan": "not_checked",
+    "sandbox": "not_checked",
+    "live_canary": "not_checked",
+    "live_worker_run": "not_checked",
+    "database_persistence": "not_checked",
+    "licence_metadata": "informational_only"
+  },
+  "policy": {
+    "programme_scope": "personal-internal-only",
+    "licence_metadata_is_gate": false
+  },
+  "scope": "externally sourced default-worker steward lifecycle domain contract only"
+}

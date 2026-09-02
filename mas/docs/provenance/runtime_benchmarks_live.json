@@ -1,0 +1,38 @@
+{
+  "schema_version": "aiat.runtime-benchmark-live-evidence.v1",
+  "observed_at": "2026-08-18T16:05:09Z",
+  "status": "pass",
+  "mode": "live",
+  "scope": "orchestrator dependency-backed dry-run only",
+  "source_command": "scripts/check_runtime_benchmarks.py --live --json",
+  "runtime_benchmark_timeout_seconds": 10.0,
+  "runtimes": [
+    {
+      "runtime_id": "langgraph",
+      "catalogue_status": "available",
+      "status": "dry_run_completed",
+      "sandbox_required": "gvisor",
+      "elapsed_ms": 3.56,
+      "tasks_run": 1,
+      "tasks_passed": 1
+    },
+    {
+      "runtime_id": "crewai",
+      "catalogue_status": "available",
+      "status": "dry_run_completed",
+      "sandbox_required": "gvisor",
+      "elapsed_ms": 3366.97,
+      "tasks_run": 1,
+      "tasks_passed": 1
+    }
+  ],
+  "certification_boundary": {
+    "package_benchmark": "checked",
+    "sandbox": "not_checked",
+    "canary": "not_checked",
+    "live_worker_run": "not_checked",
+    "rollback": "not_checked"
+  },
+  "secret_policy": "operator credentials, project IDs, provider values, and runtime output are omitted",
+  "container": "mas-orchestrator-api-1"
+}

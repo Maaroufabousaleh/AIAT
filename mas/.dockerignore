@@ -14,6 +14,8 @@ build/
 .pytest_tmp/
 .tmp-pytest/
 .tmp-delete-me/
+.tmp*
+**/.tmp*
 .coverage
 htmlcov/
 .ruff_cache/

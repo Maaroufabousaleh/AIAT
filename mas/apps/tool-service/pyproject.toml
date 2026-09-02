@@ -12,13 +12,20 @@ dependencies = [
     "redis[hiredis]>=5.0",
     "aiolimiter>=1.1",          # token-bucket rate limiting per tool group
     "httpx[http2]>=0.27",       # web_search, external API calls
-    "playwright>=1.42",         # browser automation
     "pydantic-settings>=2.3",
     "structlog>=24.2",
     "prometheus-fastapi-instrumentator>=7.0",
     "mcp==1.23.3",
     "cryptography>=42",
     "asyncpg>=0.29",
+]
+
+[project.optional-dependencies]
+# Browser/Docling/coding adapters are intentionally not part of the general
+# tool gateway image.  Install this extra only in the separately budgeted
+# extensions image (or an operator-managed local environment).
+browser = [
+    "playwright>=1.42",
 ]
 
 [project.scripts]

@@ -22,23 +22,39 @@ Usage
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
-from datetime import UTC, datetime
+import random
+from collections.abc import Mapping
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Any
-from uuid import UUID, uuid4
+from typing import TYPE_CHECKING, Any
+from uuid import UUID, uuid4, uuid5
 
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
+from ..company_manifest import DEFAULT_COMPANY_ID
+from ..observability.native_spans import build_native_trace_span
+from ..observability.tracing import current_span_id, current_trace_id, new_span_id
 from . import models as t
+
+if TYPE_CHECKING:
+    from ..workflow.self_improvement import ImprovementOpportunity
 
 logger = logging.getLogger(__name__)
 
 _AGENT_PROFILE_NUMERIC_MIN = Decimal("-9.9999")
 _AGENT_PROFILE_NUMERIC_MAX = Decimal("9.9999")
+
+# Provider payloads are retained as forensic evidence, but must not become an
+# unbounded database/blob sink.  The gateway applies the same limit before the
+# request reaches this service; keeping the invariant here protects direct
+# callers and tests as well.
+_PM_RAW_BODY_MAX_BYTES = 1 * 1024 * 1024
+TERMINAL_WORKER_RUN_STATES = ("SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT")
 
 
 def document_to_context_item(document: dict[str, Any]) -> dict[str, Any]:
@@ -182,6 +198,7 @@ class AgentStorage:
         config: dict | None = None,
         initial_context: list[dict[str, Any]] | None = None,
         project_id: UUID | None = None,
+        company_id: UUID | None = None,
     ) -> dict[str, Any]:
         """Insert a project and optional starter context atomically.
 
@@ -198,7 +215,9 @@ class AgentStorage:
             "state": state,
             "created_by": created_by,
             "human_requester": human_requester,
+            "company_id": company_id or DEFAULT_COMPANY_ID,
             "config": config,
+            "revision": 1,
             "created_at": now,
             "updated_at": now,
         }
@@ -224,7 +243,169 @@ class AgentStorage:
                     "created_at": now,
                 }
                 await conn.execute(t.project_context_items.insert().values(**context_values))
+            await self._enqueue_project_projections_tx(conn, values)
         return {**values, "failure_reason": None, "failed_from_state": None}
+
+    async def create_self_improvement_project(
+        self,
+        opportunity: ImprovementOpportunity,
+        *,
+        project_id: UUID | None = None,
+    ) -> dict[str, Any]:
+        """Persist an improvement opportunity through the canonical project writer.
+
+        The opportunity model is a request projection, not a second project
+        store.  This method delegates to :meth:`create_project`, preserving
+        the normal project transaction, projection enqueue, company scope, and
+        lifecycle ownership while retaining risk/budget/evidence metadata in
+        the project config.
+        """
+
+        from ..workflow.self_improvement import SelfImprovementLifecycle
+
+        request = opportunity.canonical_project_request(project_id=project_id)
+        lifecycle = SelfImprovementLifecycle.create(opportunity)
+        lifecycle.bind_project(
+            request["project_id"],
+            actor=opportunity.created_by,
+            actor_kind=opportunity.created_by_kind,
+        )
+        request_config = dict(request["config"])
+        self_improvement_config = dict(request_config["self_improvement"])
+        self_improvement_config["lifecycle"] = lifecycle.as_dict()
+        request_config["self_improvement"] = self_improvement_config
+        return await self.create_project(
+            name=str(request["name"]),
+            description=str(request["description"]),
+            state=str(request["state"]),
+            created_by=str(request["created_by"]),
+            human_requester=(
+                str(request["human_requester"])
+                if request.get("human_requester") is not None
+                else None
+            ),
+            config=request_config,
+            project_id=request["project_id"],
+            company_id=request.get("company_id"),
+        )
+
+    async def get_self_improvement_lifecycle(
+        self,
+        project_id: UUID,
+    ) -> dict[str, Any] | None:
+        """Read the validated lifecycle snapshot from the canonical project.
+
+        Self-improvement state deliberately lives inside the project config
+        rather than in a second project database.  Rehydrating through the
+        typed contract catches stale or malformed snapshots before API clients
+        observe them.
+        """
+
+        from ..workflow.self_improvement import SelfImprovementLifecycle
+
+        project = await self.get_project(project_id)
+        if project is None:
+            return None
+        config = project.get("config") or {}
+        self_improvement = config.get("self_improvement") or {}
+        snapshot = self_improvement.get("lifecycle")
+        if not isinstance(snapshot, Mapping):
+            return None
+        lifecycle = SelfImprovementLifecycle.from_dict(snapshot)
+        if lifecycle.project_id != project_id:
+            raise ValueError("self-improvement lifecycle project binding does not match project")
+        return lifecycle.as_dict()
+
+    async def update_self_improvement_lifecycle(
+        self,
+        project_id: UUID,
+        lifecycle: Any,
+        *,
+        actor: str,
+    ) -> dict[str, Any] | None:
+        """Persist a lifecycle snapshot with project-row locking and CAS.
+
+        The caller supplies the snapshot it read.  The current lifecycle
+        revision must match; the method then increments it, updates the
+        canonical project configuration, and appends a project-history record
+        in the same transaction.  ``None`` signals a stale revision or a
+        missing project, allowing the API to return a conflict without
+        overwriting newer gate/reference evidence.
+        """
+
+        from ..workflow.self_improvement import SelfImprovementLifecycle
+
+        if not isinstance(lifecycle, SelfImprovementLifecycle):
+            lifecycle = SelfImprovementLifecycle.from_dict(lifecycle)
+        lifecycle.assert_invariants()
+        if lifecycle.project_id != project_id:
+            raise ValueError("self-improvement lifecycle project binding does not match project")
+        if not actor.strip():
+            raise ValueError("self-improvement lifecycle updates require an actor")
+
+        now = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            current_row = (
+                await conn.execute(
+                    t.projects.select().where(t.projects.c.id == project_id).with_for_update()
+                )
+            ).mappings().first()
+            if current_row is None:
+                return None
+            current = dict(current_row)
+            current_config = dict(current.get("config") or {})
+            current_self_improvement = dict(current_config.get("self_improvement") or {})
+            current_snapshot = current_self_improvement.get("lifecycle")
+            if not isinstance(current_snapshot, Mapping):
+                raise ValueError("project has no self-improvement lifecycle snapshot")
+            from ..workflow.self_improvement import SelfImprovementLifecycle
+
+            current_lifecycle = SelfImprovementLifecycle.from_dict(current_snapshot)
+            if lifecycle.revision != current_lifecycle.revision:
+                return None
+            lifecycle.revision = current_lifecycle.revision + 1
+            persisted_snapshot = lifecycle.as_dict()
+            current_self_improvement["lifecycle"] = persisted_snapshot
+            current_config["self_improvement"] = current_self_improvement
+            await conn.execute(
+                t.projects.update()
+                .where(t.projects.c.id == project_id)
+                .values(
+                    config=current_config,
+                    revision=t.projects.c.revision + 1,
+                    updated_at=now,
+                )
+            )
+            from_status = str(current_lifecycle.status)
+            to_status = str(lifecycle.status)
+            await conn.execute(
+                t.project_state_history.insert().values(
+                    project_id=project_id,
+                    from_state=from_status,
+                    to_state=to_status,
+                    event=(
+                        "SELF_IMPROVEMENT_LIFECYCLE"
+                        if from_status != to_status
+                        else "SELF_IMPROVEMENT_METADATA"
+                    ),
+                    triggered_by=actor.strip(),
+                    payload={
+                        "schema_version": lifecycle.schema_version,
+                        "lifecycle_revision": lifecycle.revision,
+                        "from_status": from_status,
+                        "to_status": to_status,
+                        "integration_ref_kinds": sorted(lifecycle.integration_refs),
+                    },
+                    transitioned_at=now,
+                )
+            )
+            refreshed_row = (
+                await conn.execute(t.projects.select().where(t.projects.c.id == project_id))
+            ).mappings().first()
+            if refreshed_row is not None:
+                refreshed = dict(refreshed_row)
+                await self._enqueue_project_projections_tx(conn, refreshed)
+        return await self.get_project(project_id)
 
     async def get_project(self, project_id: UUID) -> dict[str, Any] | None:
         """Fetch a project by ID."""
@@ -235,6 +416,373 @@ class AgentStorage:
                 .first()
             )
         return dict(row) if row else None
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Company manifests and company-scoped assignments
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    async def get_company(self, company_id: UUID) -> dict[str, Any] | None:
+        return await self._get_table_row(t.companies, t.companies.c.id, company_id)
+
+    async def get_company_by_slug(self, slug: str) -> dict[str, Any] | None:
+        async with self.engine.connect() as conn:
+            row = (await conn.execute(t.companies.select().where(t.companies.c.slug == slug))).mappings().first()
+        return dict(row) if row else None
+
+    async def list_companies(self, *, status: str | None = None) -> list[dict[str, Any]]:
+        query = t.companies.select().order_by(t.companies.c.slug)
+        if status is not None:
+            query = query.where(t.companies.c.status == status)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def get_company_manifest(self, company_id: UUID, *, version: int | None = None) -> dict[str, Any] | None:
+        query = t.company_manifest_versions.select().where(t.company_manifest_versions.c.company_id == company_id)
+        if version is None:
+            company = await self.get_company(company_id)
+            active_id = company.get("active_manifest_version_id") if company else None
+            if active_id:
+                query = query.where(t.company_manifest_versions.c.id == active_id)
+            else:
+                query = query.order_by(t.company_manifest_versions.c.manifest_version.desc())
+        else:
+            query = query.where(t.company_manifest_versions.c.manifest_version == version)
+        async with self.engine.connect() as conn:
+            row = (await conn.execute(query.limit(1))).mappings().first()
+        return dict(row) if row else None
+
+    async def list_company_manifest_versions(
+        self,
+        company_id: UUID,
+        *,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Return immutable manifest history newest first."""
+        query = (
+            t.company_manifest_versions.select()
+            .where(t.company_manifest_versions.c.company_id == company_id)
+            .order_by(t.company_manifest_versions.c.manifest_version.desc())
+            .limit(limit)
+        )
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def list_company_departments(self, company_id: UUID) -> list[dict[str, Any]]:
+        query = t.company_departments.select().where(t.company_departments.c.company_id == company_id).order_by(t.company_departments.c.department_key)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def list_company_worker_assignments(self, company_id: UUID) -> list[dict[str, Any]]:
+        query = t.company_worker_assignments.select().where(t.company_worker_assignments.c.company_id == company_id).order_by(t.company_worker_assignments.c.created_at)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def list_company_budgets(self, company_id: UUID) -> list[dict[str, Any]]:
+        query = (
+            t.company_budgets.select()
+            .where(t.company_budgets.c.company_id == company_id)
+            .order_by(t.company_budgets.c.budget_key)
+        )
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def get_company_read_model(self, company_id: UUID) -> dict[str, Any]:
+        async with self.engine.connect() as conn:
+            return await self._company_manifest_read_model(company_id, conn=conn)
+
+    async def apply_company_manifest(
+        self,
+        *,
+        company_id: UUID,
+        manifest: Any,
+        digest: str,
+        canonical: dict[str, Any],
+        source: str,
+        actor: str,
+        compiler_version: str = "aiat-company-compiler/1",
+    ) -> dict[str, Any]:
+        """Compile one validated manifest atomically and idempotently."""
+
+        async with self.engine.begin() as conn:
+            company = (await conn.execute(t.companies.select().where(t.companies.c.id == company_id).with_for_update())).mappings().first()
+            if company is None:
+                raise ValueError(f"company {company_id} does not exist")
+            existing = (
+                await conn.execute(
+                    t.company_manifest_versions.select().where(
+                        sa.and_(
+                            t.company_manifest_versions.c.company_id == company_id,
+                            t.company_manifest_versions.c.digest == digest,
+                        )
+                    )
+                )
+            ).mappings().first()
+            if existing is not None:
+                return await self._company_manifest_read_model(company_id, conn=conn)
+
+            prior = (
+                await conn.execute(
+                    sa.select(sa.func.max(t.company_manifest_versions.c.manifest_version)).where(
+                        t.company_manifest_versions.c.company_id == company_id
+                    )
+                )
+            ).scalar()
+            manifest_version = int(prior or 0) + 1
+            manifest_id = uuid4()
+            await conn.execute(
+                t.company_manifest_versions.insert().values(
+                    id=manifest_id,
+                    company_id=company_id,
+                    schema_version=manifest.schema_version,
+                    manifest_version=manifest_version,
+                    digest=digest,
+                    source=source,
+                    manifest_json=canonical,
+                    compiler_version=compiler_version,
+                    status="APPLIED",
+                    compiled_by=actor,
+                )
+            )
+            await self._materialize_company_manifest_tx(
+                conn,
+                company_id=company_id,
+                manifest=manifest,
+                manifest_id=manifest_id,
+            )
+            await conn.execute(
+                t.companies.update().where(t.companies.c.id == company_id).values(
+                    slug=manifest.slug,
+                    name=manifest.name,
+                    description=manifest.description,
+                    active_manifest_version_id=manifest_id,
+                    updated_at=datetime.now(tz=UTC),
+                )
+            )
+            return await self._company_manifest_read_model(company_id, conn=conn)
+
+    async def _company_manifest_read_model(self, company_id: UUID, *, conn: Any) -> dict[str, Any]:
+        company = (await conn.execute(t.companies.select().where(t.companies.c.id == company_id))).mappings().first()
+        manifest = (await conn.execute(t.company_manifest_versions.select().where(t.company_manifest_versions.c.id == company["active_manifest_version_id"]))).mappings().first() if company and company.get("active_manifest_version_id") else None
+        departments = (await conn.execute(t.company_departments.select().where(t.company_departments.c.company_id == company_id).order_by(t.company_departments.c.department_key))).mappings().all()
+        assignments = (await conn.execute(t.company_worker_assignments.select().where(t.company_worker_assignments.c.company_id == company_id).order_by(t.company_worker_assignments.c.created_at))).mappings().all()
+        budgets = (await conn.execute(t.company_budgets.select().where(t.company_budgets.c.company_id == company_id).order_by(t.company_budgets.c.budget_key))).mappings().all()
+        return {
+            "company": dict(company) if company else None,
+            "manifest": dict(manifest) if manifest else None,
+            "departments": [dict(row) for row in departments],
+            "assignments": [dict(row) for row in assignments],
+            "budgets": [dict(row) for row in budgets],
+        }
+
+    async def _materialize_company_manifest_tx(
+        self,
+        conn: Any,
+        *,
+        company_id: UUID,
+        manifest: Any,
+        manifest_id: UUID,
+    ) -> None:
+        """Reconcile compiled departments, assignments, and budgets in one transaction."""
+        workers: dict[str, Any] = {}
+        worker_names = {manifest.ceo_worker_id}
+        worker_names.update(item.worker_id for item in manifest.worker_assignments)
+        for worker_name in worker_names:
+            row = (
+                await conn.execute(
+                    t.worker_registry.select().where(t.worker_registry.c.name == worker_name)
+                )
+            ).mappings().first()
+            if row is None:
+                raise ValueError(f"manifest references unknown worker {worker_name!r}")
+            workers[worker_name] = row
+
+        now = datetime.now(tz=UTC)
+        await conn.execute(
+            t.company_departments.update()
+            .where(t.company_departments.c.company_id == company_id)
+            .values(status="INACTIVE", updated_at=now)
+        )
+        await conn.execute(
+            t.company_worker_assignments.update()
+            .where(t.company_worker_assignments.c.company_id == company_id)
+            .values(status="INACTIVE", updated_at=now)
+        )
+        department_ids: dict[str, UUID] = {}
+        for department in manifest.departments:
+            department_id = uuid5(company_id, f"department:{department.id}")
+            chief = workers.get(department.chief_worker_id) if department.chief_worker_id else None
+            await conn.execute(
+                pg_insert(t.company_departments)
+                .values(
+                    id=department_id,
+                    company_id=company_id,
+                    department_key=department.id,
+                    name=department.name,
+                    chief_worker_id=chief.get("id") if chief else None,
+                    approval_policy=department.approval_policy,
+                    metadata=department.metadata,
+                    status="ACTIVE",
+                    updated_at=now,
+                )
+                .on_conflict_do_update(
+                    constraint="uq_company_department_key",
+                    set_={
+                        "name": department.name,
+                        "chief_worker_id": chief.get("id") if chief else None,
+                        "approval_policy": department.approval_policy,
+                        "metadata": department.metadata,
+                        "status": "ACTIVE",
+                        "updated_at": now,
+                    },
+                )
+            )
+
+            department_ids[department.id] = department_id
+        for assignment in manifest.worker_assignments:
+            worker = workers[assignment.worker_id]
+            assignment_id = uuid5(company_id, f"worker:{assignment.worker_id}")
+            await conn.execute(
+                pg_insert(t.company_worker_assignments)
+                .values(
+                    id=assignment_id,
+                    company_id=company_id,
+                    worker_id=worker["id"],
+                    department_id=department_ids[assignment.department_id],
+                    manifest_version_id=manifest_id,
+                    status=assignment.status,
+                    tool_grants=assignment.tool_grants,
+                    permission_grants=assignment.permission_grants,
+                    model_profile_id=assignment.model_profile_id,
+                    budget=assignment.budget,
+                    approval_required=assignment.approval_required,
+                    metadata=assignment.metadata,
+                    updated_at=now,
+                )
+                .on_conflict_do_update(
+                    constraint="uq_company_worker_assignment",
+                    set_={
+                        "department_id": department_ids[assignment.department_id],
+                        "manifest_version_id": manifest_id,
+                        "status": assignment.status,
+                        "tool_grants": assignment.tool_grants,
+                        "permission_grants": assignment.permission_grants,
+                        "model_profile_id": assignment.model_profile_id,
+                        "budget": assignment.budget,
+                        "approval_required": assignment.approval_required,
+                        "metadata": assignment.metadata,
+                        "updated_at": now,
+                    },
+                )
+            )
+        if manifest.budgets:
+            await conn.execute(
+                t.company_budgets.delete().where(
+                    sa.and_(
+                        t.company_budgets.c.company_id == company_id,
+                        t.company_budgets.c.budget_key.not_in(list(manifest.budgets)),
+                    )
+                )
+            )
+        else:
+            await conn.execute(
+                t.company_budgets.delete().where(t.company_budgets.c.company_id == company_id)
+            )
+        for budget_key, limit_value in manifest.budgets.items():
+            await conn.execute(
+                pg_insert(t.company_budgets)
+                .values(
+                    id=uuid5(company_id, f"budget:{budget_key}"),
+                    company_id=company_id,
+                    budget_key=budget_key,
+                    limit_value=limit_value,
+                    currency="USD",
+                    period="lifetime",
+                    metadata={},
+                    updated_at=now,
+                )
+                .on_conflict_do_update(
+                    constraint="uq_company_budget_key",
+                    set_={"limit_value": limit_value, "updated_at": now},
+                )
+            )
+
+    async def rollback_company_manifest(
+        self,
+        company_id: UUID,
+        *,
+        manifest_version: int,
+        actor: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        """Activate a previously compiled manifest and reconcile its snapshot."""
+        from mas_core.company_manifest import compile_company_manifest
+
+        async with self.engine.begin() as conn:
+            company = (
+                await conn.execute(
+                    t.companies.select()
+                    .where(t.companies.c.id == company_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if company is None:
+                raise ValueError(f"company {company_id} does not exist")
+            target = (
+                await conn.execute(
+                    t.company_manifest_versions.select().where(
+                        sa.and_(
+                            t.company_manifest_versions.c.company_id == company_id,
+                            t.company_manifest_versions.c.manifest_version == manifest_version,
+                        )
+                    )
+                )
+            ).mappings().first()
+            if target is None:
+                raise ValueError(f"manifest version {manifest_version} does not exist")
+            manifest, _digest, _canonical = compile_company_manifest(target["manifest_json"])
+            active_id = company.get("active_manifest_version_id")
+            await self._materialize_company_manifest_tx(
+                conn,
+                company_id=company_id,
+                manifest=manifest,
+                manifest_id=target["id"],
+            )
+            now = datetime.now(tz=UTC)
+            if active_id and active_id != target["id"]:
+                await conn.execute(
+                    t.company_manifest_versions.update()
+                    .where(t.company_manifest_versions.c.id == active_id)
+                    .values(status="ROLLED_BACK")
+                )
+            await conn.execute(
+                t.company_manifest_versions.update()
+                .where(t.company_manifest_versions.c.id == target["id"])
+                .values(status="APPLIED", error=None)
+            )
+            await conn.execute(
+                t.companies.update()
+                .where(t.companies.c.id == company_id)
+                .values(
+                    slug=manifest.slug,
+                    name=manifest.name,
+                    description=manifest.description,
+                    active_manifest_version_id=target["id"],
+                    updated_at=now,
+                )
+            )
+            result = await self._company_manifest_read_model(company_id, conn=conn)
+            result["rollback"] = {
+                "manifest_version": manifest_version,
+                "actor": actor,
+                "reason": reason,
+                "at": now,
+            }
+            return result
 
     async def update_project_config(
         self,
@@ -247,10 +795,19 @@ class AgentStorage:
             result = await conn.execute(
                 t.projects.update()
                 .where(t.projects.c.id == project_id)
-                .values(config=config, updated_at=datetime.now(tz=UTC))
+                .values(
+                    config=config,
+                    revision=t.projects.c.revision + 1,
+                    updated_at=datetime.now(tz=UTC),
+                )
             )
             if result.rowcount == 0:
                 return None
+            refreshed = (
+                await conn.execute(t.projects.select().where(t.projects.c.id == project_id))
+            ).mappings().first()
+            if refreshed is not None:
+                await self._enqueue_project_projections_tx(conn, dict(refreshed))
         return await self.get_project(project_id)
 
     async def delete_project(self, project_id: UUID) -> bool:
@@ -297,6 +854,19 @@ class AgentStorage:
         async with self.engine.connect() as conn:
             rows = (await conn.execute(q)).mappings().all()
         return [dict(r) for r in rows]
+
+    async def list_project_states(self) -> list[str]:
+        """Return every persisted project state for aggregate metrics.
+
+        This intentionally selects only the bounded state column rather than
+        applying the page limit used by the project-list API. Observability
+        startup reconciliation must not silently undercount a large instance.
+        """
+
+        query = t.projects.select().with_only_columns(t.projects.c.state)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).all()
+        return [str(row[0]) for row in rows]
 
     async def transition_project(
         self,
@@ -348,6 +918,7 @@ class AgentStorage:
             # Update project
             update_values: dict[str, Any] = {
                 "state": new_state,
+                "revision": t.projects.c.revision + 1,
                 "updated_at": now,
             }
             if failure_reason is not None:
@@ -395,6 +966,11 @@ class AgentStorage:
                     transitioned_at=now,
                 )
             )
+            refreshed = (
+                await conn.execute(t.projects.select().where(t.projects.c.id == project_id))
+            ).mappings().first()
+            if refreshed is not None:
+                await self._enqueue_project_projections_tx(conn, dict(refreshed))
 
         return await self.get_project(project_id)
 
@@ -1243,11 +1819,46 @@ class AgentStorage:
             "status": "PLANNED",
             "planned_story_points": planned_story_points,
             "estimated_hours": estimated_hours,
+            "revision": 1,
+            "updated_at": now,
             "created_at": now,
         }
         async with self.engine.begin() as conn:
             await conn.execute(t.sprints.insert().values(**values))
+            await self._enqueue_iteration_projections_tx(conn, values)
         return values
+
+    async def create_sprint_with_pm_projections(
+        self,
+        *,
+        project_id: UUID,
+        sprint_number: int,
+        milestone: str | None = None,
+        goal: str | None = None,
+        planned_story_points: int | None = None,
+        estimated_hours: Decimal | None = None,
+        sprint_id: UUID | None = None,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """Create an iteration and return its same-transaction projection intents."""
+        sid = sprint_id or uuid4()
+        now = datetime.now(tz=UTC)
+        values = {
+            "id": sid,
+            "project_id": project_id,
+            "sprint_number": sprint_number,
+            "milestone": milestone,
+            "goal": goal,
+            "status": "PLANNED",
+            "planned_story_points": planned_story_points,
+            "estimated_hours": estimated_hours,
+            "revision": 1,
+            "updated_at": now,
+            "created_at": now,
+        }
+        async with self.engine.begin() as conn:
+            await conn.execute(t.sprints.insert().values(**values))
+            queued = await self._enqueue_iteration_projections_tx(conn, values)
+        return values, queued
 
     async def get_sprint(self, sprint_id: UUID) -> dict[str, Any] | None:
         """Fetch a sprint by ID."""
@@ -1276,11 +1887,58 @@ class AgentStorage:
         return [dict(r) for r in rows]
 
     async def update_sprint(self, sprint_id: UUID, **kwargs: Any) -> None:
-        """Update sprint fields (status, points, hours, dates, etc.)."""
+        """Update sprint fields and atomically advance its canonical revision."""
+        expected_revision = kwargs.pop("expected_revision", None)
+        values = dict(kwargs)
+        values["revision"] = t.sprints.c.revision + 1
+        values["updated_at"] = datetime.now(tz=UTC)
         async with self.engine.begin() as conn:
-            await conn.execute(
-                t.sprints.update().where(t.sprints.c.id == sprint_id).values(**kwargs)
+            current = (
+                await conn.execute(
+                    t.sprints.select().where(t.sprints.c.id == sprint_id).with_for_update()
+                )
+            ).mappings().first()
+            if current is None or (
+                expected_revision is not None
+                and int(current.get("revision") or 1) != int(expected_revision)
+            ):
+                raise ValueError("sprint not found or revision conflict")
+            await conn.execute(t.sprints.update().where(t.sprints.c.id == sprint_id).values(**values))
+            refreshed = (
+                await conn.execute(t.sprints.select().where(t.sprints.c.id == sprint_id))
+            ).mappings().first()
+            if refreshed is not None:
+                await self._enqueue_iteration_projections_tx(conn, dict(refreshed))
+
+    async def update_sprint_with_pm_projections(
+        self,
+        sprint_id: UUID,
+        *,
+        expected_revision: int | None = None,
+        **kwargs: Any,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """CAS-update an iteration and return durable projection intents."""
+        values = dict(kwargs)
+        values["revision"] = t.sprints.c.revision + 1
+        values["updated_at"] = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            current = await self._mapping_first(
+                await conn.execute(t.sprints.select().where(t.sprints.c.id == sprint_id).with_for_update())
             )
+            if current is None or (
+                expected_revision is not None
+                and int(current.get("revision") or 1) != int(expected_revision)
+            ):
+                raise ValueError("sprint not found or revision conflict")
+            await conn.execute(t.sprints.update().where(t.sprints.c.id == sprint_id).values(**values))
+            refreshed = await self._mapping_first(
+                await conn.execute(t.sprints.select().where(t.sprints.c.id == sprint_id))
+            )
+            if refreshed is None:
+                raise ValueError("sprint disappeared during update")
+            refreshed_dict = dict(refreshed)
+            queued = await self._enqueue_iteration_projections_tx(conn, refreshed_dict)
+        return refreshed_dict, queued
 
     # ═══════════════════════════════════════════════════════════════════════════
     # Issues
@@ -1321,10 +1979,13 @@ class AgentStorage:
             "estimated_hours": estimated_hours,
             "story_points": story_points,
             "dependencies": dependencies,
+            "revision": 1,
+            "updated_at": now,
             "created_at": now,
         }
         async with self.engine.begin() as conn:
             await conn.execute(t.issues.insert().values(**values))
+            await self._enqueue_issue_projections_tx(conn, values)
         return values
 
     async def get_issue(self, issue_id: UUID) -> dict[str, Any] | None:
@@ -1361,9 +2022,2953 @@ class AgentStorage:
         return [dict(r) for r in rows]
 
     async def update_issue(self, issue_id: UUID, **kwargs: Any) -> None:
-        """Update issue fields (status, hours, assignment, etc.)."""
+        """Update issue fields and atomically advance its canonical revision."""
+        expected_revision = kwargs.pop("expected_revision", None)
+        values = dict(kwargs)
+        values["revision"] = t.issues.c.revision + 1
+        values["updated_at"] = datetime.now(tz=UTC)
+        query = t.issues.update().where(t.issues.c.id == issue_id)
+        if expected_revision is not None:
+            query = query.where(t.issues.c.revision == int(expected_revision))
         async with self.engine.begin() as conn:
-            await conn.execute(t.issues.update().where(t.issues.c.id == issue_id).values(**kwargs))
+            result = await conn.execute(query.values(**values))
+            if result.rowcount == 0:
+                raise ValueError("issue not found or revision conflict")
+            refreshed = await self._mapping_first(
+                await conn.execute(t.issues.select().where(t.issues.c.id == issue_id))
+            )
+            if refreshed is not None:
+                await self._enqueue_issue_projections_tx(conn, dict(refreshed))
+
+    @staticmethod
+    def _pm_json_safe(value: Any) -> Any:
+        if isinstance(value, UUID):
+            return str(value)
+        if isinstance(value, datetime):
+            return value.isoformat()
+        if isinstance(value, Decimal):
+            return float(value)
+        if isinstance(value, dict):
+            return {str(key): AgentStorage._pm_json_safe(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple, set)):
+            return [AgentStorage._pm_json_safe(item) for item in value]
+        return value
+
+    @staticmethod
+    async def _mapping_rows(result: Any) -> list[Any]:
+        """Read SQLAlchemy mapping rows while tolerating lightweight test doubles.
+
+        Real ``AsyncConnection`` results expose synchronous ``mappings().all``
+        methods.  Some storage unit tests use ``AsyncMock`` connections whose
+        result methods are awaitable; accepting both keeps the transaction
+        helpers testable without weakening the production query path.
+        """
+        mappings = result.mappings()
+        if hasattr(mappings, "__await__"):
+            mappings = await mappings
+        rows = mappings.all()
+        if hasattr(rows, "__await__"):
+            rows = await rows
+        if isinstance(rows, list):
+            return rows
+        if isinstance(rows, tuple):
+            return list(rows)
+        try:
+            return list(rows)
+        except TypeError:
+            return []
+
+    @staticmethod
+    async def _mapping_first(result: Any) -> Any | None:
+        """Return the first mapping row for real or mocked SQL results."""
+        mappings = result.mappings()
+        if hasattr(mappings, "__await__"):
+            mappings = await mappings
+        row = mappings.first()
+        if hasattr(row, "__await__"):
+            row = await row
+        return row if isinstance(row, Mapping) else None
+
+    async def _enqueue_binding_backfill_tx(
+        self,
+        conn: Any,
+        binding: dict[str, Any],
+    ) -> int:
+        """Queue canonical records that predate a newly-created binding."""
+        binding_direction = str(binding.get("direction") or "outbound")
+        binding_status = str(binding.get("status") or "DISABLED")
+        if binding_direction not in {"outbound", "both"} or binding_status not in {
+            "SHADOW",
+            "READ_ONLY",
+            "ACTIVE",
+            "DRAINING",
+        }:
+            return 0
+
+        connection = await self._mapping_first(
+            await conn.execute(
+                t.pm_connections.select().where(t.pm_connections.c.id == binding["connection_id"])
+            )
+        )
+        if connection is None or connection.get("status") == "DISABLED":
+            return 0
+
+        # YouTrack's connection selector is the documented default for a
+        # binding.  Materialize it onto the binding before using the shared
+        # project/iteration queue helpers so an initial backfill cannot omit
+        # those aggregates merely because the request omitted a duplicate
+        # selector.
+        selector_project = str((connection.get("config") or {}).get("project_id") or "")
+        if not binding.get("external_project_id") and selector_project:
+            await conn.execute(
+                t.pm_project_bindings.update()
+                .where(t.pm_project_bindings.c.id == binding["id"])
+                .values(
+                    external_project_id=selector_project,
+                    revision=t.pm_project_bindings.c.revision + 1,
+                    updated_at=datetime.now(tz=UTC),
+                )
+            )
+            binding["external_project_id"] = selector_project
+
+        queued = 0
+        project = await self._mapping_first(
+            await conn.execute(t.projects.select().where(t.projects.c.id == binding["project_id"]))
+        )
+        if project is not None and binding.get("external_project_id"):
+            queued += len(await self._enqueue_project_projections_tx(conn, dict(project)))
+            sprint_rows = await self._mapping_rows(
+                await conn.execute(
+                    t.sprints.select()
+                    .where(t.sprints.c.project_id == binding["project_id"])
+                    .order_by(t.sprints.c.sprint_number)
+                )
+            )
+            for sprint in sprint_rows:
+                queued += len(await self._enqueue_iteration_projections_tx(conn, dict(sprint)))
+
+        issue_rows = await self._mapping_rows(
+            await conn.execute(
+                t.issues.select()
+                .where(t.issues.c.project_id == binding["project_id"])
+                .order_by(t.issues.c.created_at)
+            )
+        )
+        for issue in issue_rows:
+            issue_dict = dict(issue)
+            issue_events = await self._enqueue_issue_projections_tx(conn, issue_dict)
+            queued += len(issue_events)
+            comment_rows = await self._mapping_rows(
+                await conn.execute(
+                    t.work_item_comments.select()
+                    .where(t.work_item_comments.c.issue_id == issue_dict["id"])
+                    .order_by(t.work_item_comments.c.created_at)
+                )
+            )
+            for comment in comment_rows:
+                queued += len(
+                    await self._enqueue_comment_projections_tx(conn, issue_dict, dict(comment))
+                )
+        return queued
+
+    async def _enqueue_project_projections_tx(
+        self,
+        conn: Any,
+        project: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Queue a project projection in the canonical project transaction."""
+        bindings = await self._mapping_rows(
+            await conn.execute(
+                t.pm_project_bindings.select()
+                .where(t.pm_project_bindings.c.project_id == project["id"])
+                .where(t.pm_project_bindings.c.external_project_id.is_not(None))
+                .where(t.pm_project_bindings.c.direction.in_(["outbound", "both"]))
+                .where(t.pm_project_bindings.c.status.in_(["SHADOW", "READ_ONLY", "ACTIVE", "DRAINING"]))
+            )
+        )
+        if not bindings:
+            return []
+        connection_ids = [binding["connection_id"] for binding in bindings]
+        enabled = {
+            row["id"]
+            for row in await self._mapping_rows(
+                await conn.execute(
+                    t.pm_connections.select()
+                    .where(t.pm_connections.c.id.in_(connection_ids))
+                    .where(t.pm_connections.c.status != "DISABLED")
+                )
+            )
+        }
+        safe_project = self._pm_json_safe(
+            {
+                "id": project["id"],
+                "name": project.get("name") or "",
+                "description": project.get("description"),
+                "state": project.get("state") or "INIT",
+                "revision": project.get("revision") or 1,
+                "updated_at": project.get("updated_at"),
+            }
+        )
+        revision = int(project.get("revision") or 1)
+        queued: list[dict[str, Any]] = []
+        for binding in bindings:
+            if binding["connection_id"] not in enabled:
+                continue
+            key = f"{binding['id']}:{project['id']}:{revision}:upsert_project"
+            values = {
+                "id": uuid4(),
+                "connection_id": binding["connection_id"],
+                "aggregate_type": "project",
+                "aggregate_id": project["id"],
+                "canonical_revision": revision,
+                "operation": "upsert_project",
+                "idempotency_key": key,
+                "payload": {"binding_id": str(binding["id"]), "project": safe_project},
+                "created_at": datetime.now(tz=UTC),
+            }
+            stmt = (
+                pg_insert(t.pm_outbox_events)
+                .values(**values)
+                .on_conflict_do_nothing(index_elements=[t.pm_outbox_events.c.idempotency_key])
+                .returning(t.pm_outbox_events)
+            )
+            row = await self._mapping_first(await conn.execute(stmt))
+            queued.append(dict(row) if row else values)
+        return queued
+
+    async def _enqueue_iteration_projections_tx(
+        self,
+        conn: Any,
+        iteration: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Queue a sprint/iteration projection in the canonical transaction."""
+        bindings = await self._mapping_rows(
+            await conn.execute(
+                t.pm_project_bindings.select()
+                .where(t.pm_project_bindings.c.project_id == iteration["project_id"])
+                .where(t.pm_project_bindings.c.external_project_id.is_not(None))
+                .where(t.pm_project_bindings.c.direction.in_(["outbound", "both"]))
+                .where(t.pm_project_bindings.c.status.in_(["SHADOW", "READ_ONLY", "ACTIVE", "DRAINING"]))
+            )
+        )
+        if not bindings:
+            return []
+        connection_ids = [binding["connection_id"] for binding in bindings]
+        enabled = {
+            row["id"]
+            for row in await self._mapping_rows(
+                await conn.execute(
+                    t.pm_connections.select()
+                    .where(t.pm_connections.c.id.in_(connection_ids))
+                    .where(t.pm_connections.c.status != "DISABLED")
+                )
+            )
+        }
+        safe_iteration = self._pm_json_safe(
+            {
+                "id": iteration["id"],
+                "project_id": iteration["project_id"],
+                "number": iteration.get("sprint_number") or iteration.get("number") or 1,
+                "name": iteration.get("milestone") or iteration.get("name"),
+                "goal": iteration.get("goal"),
+                "status": iteration.get("status") or "PLANNED",
+                "revision": iteration.get("revision") or 1,
+                "updated_at": iteration.get("updated_at"),
+            }
+        )
+        revision = int(iteration.get("revision") or 1)
+        queued: list[dict[str, Any]] = []
+        for binding in bindings:
+            if binding["connection_id"] not in enabled:
+                continue
+            key = f"{binding['id']}:{iteration['id']}:{revision}:upsert_iteration"
+            values = {
+                "id": uuid4(),
+                "connection_id": binding["connection_id"],
+                "aggregate_type": "iteration",
+                "aggregate_id": iteration["id"],
+                "canonical_revision": revision,
+                "operation": "upsert_iteration",
+                "idempotency_key": key,
+                "payload": {"binding_id": str(binding["id"]), "iteration": safe_iteration},
+                "created_at": datetime.now(tz=UTC),
+            }
+            stmt = (
+                pg_insert(t.pm_outbox_events)
+                .values(**values)
+                .on_conflict_do_nothing(index_elements=[t.pm_outbox_events.c.idempotency_key])
+                .returning(t.pm_outbox_events)
+            )
+            row = await self._mapping_first(await conn.execute(stmt))
+            queued.append(dict(row) if row else values)
+        return queued
+
+    async def _enqueue_issue_projections_tx(
+        self,
+        conn: Any,
+        issue: dict[str, Any],
+        *,
+        exclude_connection_id: UUID | None = None,
+    ) -> list[dict[str, Any]]:
+        """Insert projection events on the same transaction as the issue write."""
+        bindings = await self._mapping_rows(
+            await conn.execute(
+                t.pm_project_bindings.select()
+                .where(t.pm_project_bindings.c.project_id == issue["project_id"])
+                .where(t.pm_project_bindings.c.direction.in_(["outbound", "both"]))
+                .where(t.pm_project_bindings.c.status.in_(["SHADOW", "READ_ONLY", "ACTIVE", "DRAINING"]))
+            )
+        )
+        if not bindings:
+            return []
+        connection_ids = [binding["connection_id"] for binding in bindings]
+        connections = await self._mapping_rows(
+            await conn.execute(
+                t.pm_connections.select()
+                .where(t.pm_connections.c.id.in_(connection_ids))
+                .where(t.pm_connections.c.status != "DISABLED")
+            )
+        )
+        enabled = {row["id"] for row in connections}
+        # Keep the outbox payload on the provider-neutral work-item contract.
+        # The database row also contains persistence-only columns (for
+        # example ``created_at``, ``dependencies`` and ``issue_type``) that
+        # CanonicalWorkItem intentionally rejects.  Passing the raw row made
+        # every live work-item projection fail validation before it reached a
+        # provider.  Normalize the row here, at the transactional boundary,
+        # just as the HTTP fallback path does in the orchestrator.
+        safe_issue = self._pm_json_safe(
+            {
+                "id": issue["id"],
+                "project_id": issue["project_id"],
+                "title": issue.get("title") or "Untitled issue",
+                "description": issue.get("description"),
+                "item_type": issue.get("issue_type") or "TASK",
+                "status": issue.get("status") or "backlog",
+                "priority": issue.get("priority") or "medium",
+                "sprint_id": issue.get("sprint_id"),
+                "parent_id": issue.get("parent_issue_id"),
+                "assigned_team": issue.get("assigned_team"),
+                "assigned_agent": issue.get("assigned_agent"),
+                "estimated_hours": issue.get("estimated_hours"),
+                "actual_hours": issue.get("actual_hours"),
+                "story_points": issue.get("story_points"),
+                "revision": issue.get("revision") or 1,
+                "updated_at": issue.get("updated_at"),
+            }
+        )
+        queued: list[dict[str, Any]] = []
+        for binding in bindings:
+            if (
+                binding["connection_id"] not in enabled
+                or (
+                    exclude_connection_id is not None
+                    and binding["connection_id"] == exclude_connection_id
+                )
+            ):
+                continue
+            revision = int(issue.get("revision") or 1)
+            key = f"{binding['id']}:{issue['id']}:{revision}:upsert"
+            values = {
+                "id": uuid4(),
+                "connection_id": binding["connection_id"],
+                "aggregate_type": "work_item",
+                "aggregate_id": issue["id"],
+                "canonical_revision": revision,
+                "operation": "upsert_work_item",
+                "idempotency_key": key,
+                "payload": {"binding_id": str(binding["id"]), "item": safe_issue},
+                "created_at": datetime.now(tz=UTC),
+            }
+            stmt = (
+                pg_insert(t.pm_outbox_events)
+                .values(**values)
+                .on_conflict_do_nothing(index_elements=[t.pm_outbox_events.c.idempotency_key])
+                .returning(t.pm_outbox_events)
+            )
+            row = await self._mapping_first(await conn.execute(stmt))
+            queued.append(dict(row) if row else values)
+        return queued
+
+    async def _eligible_pm_bindings_tx(
+        self,
+        conn: Any,
+        project_id: UUID,
+        *,
+        exclude_connection_id: UUID | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return outbound bindings whose connection is not disabled.
+
+        Keeping this query in the storage transaction prevents a canonical
+        comment/link from being committed without the corresponding durable
+        projection intent.
+        """
+        bindings = await self._mapping_rows(
+            await conn.execute(
+                t.pm_project_bindings.select()
+                .where(t.pm_project_bindings.c.project_id == project_id)
+                .where(t.pm_project_bindings.c.direction.in_(["outbound", "both"]))
+                .where(t.pm_project_bindings.c.status.in_(["SHADOW", "READ_ONLY", "ACTIVE", "DRAINING"]))
+            )
+        )
+        if not bindings:
+            return []
+        connection_ids = [binding["connection_id"] for binding in bindings]
+        enabled = {
+            row["id"]
+            for row in await self._mapping_rows(
+                await conn.execute(
+                    t.pm_connections.select()
+                    .where(t.pm_connections.c.id.in_(connection_ids))
+                    .where(t.pm_connections.c.status != "DISABLED")
+                )
+            )
+        }
+        return [
+            dict(binding)
+            for binding in bindings
+            if binding["connection_id"] in enabled
+            and (exclude_connection_id is None or binding["connection_id"] != exclude_connection_id)
+        ]
+
+    async def _enqueue_comment_projections_tx(
+        self,
+        conn: Any,
+        issue: dict[str, Any],
+        comment: dict[str, Any],
+        *,
+        exclude_connection_id: UUID | None = None,
+    ) -> list[dict[str, Any]]:
+        bindings = await self._eligible_pm_bindings_tx(
+            conn,
+            issue["project_id"],
+            exclude_connection_id=exclude_connection_id,
+        )
+        body = str(comment.get("body") or "")
+        if str(comment.get("origin") or "aiat") == "aiat":
+            attribution = [f"AIAT actor: {comment.get('actor_id') or 'operator'}"]
+            if comment.get("run_id"):
+                attribution.append(f"Run: {comment['run_id']}")
+            if comment.get("evidence_id"):
+                attribution.append(f"Evidence: {comment['evidence_id']}")
+            body = (
+                f"<!-- aiat:comment={comment['id']} -->\n"
+                + "\n".join(attribution)
+                + "\n\n"
+                + body
+            )
+        queued: list[dict[str, Any]] = []
+        for binding in bindings:
+            key = f"{binding['id']}:{comment['id']}:comment"
+            values = {
+                "id": uuid4(),
+                "connection_id": binding["connection_id"],
+                "aggregate_type": "comment",
+                "aggregate_id": issue["id"],
+                "canonical_revision": int(issue.get("revision") or 1),
+                "operation": "project_comment",
+                "idempotency_key": key,
+                "payload": {
+                    "binding_id": str(binding["id"]),
+                    "comment": {
+                        "id": str(comment["id"]),
+                        "body": body,
+                        "actor_id": comment.get("actor_id"),
+                        "run_id": str(comment["run_id"]) if comment.get("run_id") else None,
+                        "approval_id": str(comment["approval_id"]) if comment.get("approval_id") else None,
+                        "evidence_id": comment.get("evidence_id"),
+                        "body_blob_ref": comment.get("body_blob_ref"),
+                    },
+                },
+                "created_at": datetime.now(tz=UTC),
+            }
+            stmt = (
+                pg_insert(t.pm_outbox_events)
+                .values(**values)
+                .on_conflict_do_nothing(index_elements=[t.pm_outbox_events.c.idempotency_key])
+                .returning(t.pm_outbox_events)
+            )
+            row = (await conn.execute(stmt)).mappings().first()
+            queued.append(dict(row) if row else values)
+        return queued
+
+    async def _enqueue_link_projections_tx(
+        self,
+        conn: Any,
+        issue: dict[str, Any],
+        link: dict[str, Any],
+        *,
+        exclude_connection_id: UUID | None = None,
+    ) -> list[dict[str, Any]]:
+        bindings = await self._eligible_pm_bindings_tx(
+            conn,
+            issue["project_id"],
+            exclude_connection_id=exclude_connection_id,
+        )
+        queued: list[dict[str, Any]] = []
+        for binding in bindings:
+            key = f"{binding['id']}:{link['id']}:link"
+            values = {
+                "id": uuid4(),
+                "connection_id": binding["connection_id"],
+                "aggregate_type": "link",
+                "aggregate_id": issue["id"],
+                "canonical_revision": int(issue.get("revision") or 1),
+                "operation": "project_link",
+                "idempotency_key": key,
+                "payload": {
+                    "binding_id": str(binding["id"]),
+                    "link": {
+                        "id": str(link["id"]),
+                        "link_type": link["link_type"],
+                        "target_type": link["target_type"],
+                        "target_id": link["target_id"],
+                        "metadata": link.get("metadata") or {},
+                    },
+                },
+                "created_at": datetime.now(tz=UTC),
+            }
+            stmt = (
+                pg_insert(t.pm_outbox_events)
+                .values(**values)
+                .on_conflict_do_nothing(index_elements=[t.pm_outbox_events.c.idempotency_key])
+                .returning(t.pm_outbox_events)
+            )
+            row = (await conn.execute(stmt)).mappings().first()
+            queued.append(dict(row) if row else values)
+        return queued
+
+    async def create_issue_with_pm_projections(
+        self,
+        **kwargs: Any,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """Create an issue and its provider projections atomically."""
+        iid = kwargs.pop("issue_id", None) or uuid4()
+        now = datetime.now(tz=UTC)
+        values = {
+            "id": iid,
+            "project_id": kwargs["project_id"],
+            "sprint_id": kwargs.get("sprint_id"),
+            "parent_issue_id": kwargs.get("parent_issue_id"),
+            "title": kwargs["title"],
+            "description": kwargs.get("description"),
+            "issue_type": kwargs["issue_type"],
+            "status": "backlog",
+            "priority": kwargs.get("priority", "medium"),
+            "assigned_team": kwargs.get("assigned_team"),
+            "assigned_agent": kwargs.get("assigned_agent"),
+            "estimated_hours": kwargs.get("estimated_hours"),
+            "story_points": kwargs.get("story_points"),
+            "dependencies": kwargs.get("dependencies"),
+            "revision": 1,
+            "updated_at": now,
+            "created_at": now,
+        }
+        async with self.engine.begin() as conn:
+            await conn.execute(t.issues.insert().values(**values))
+            queued = await self._enqueue_issue_projections_tx(conn, values)
+        return values, queued
+
+    async def update_issue_with_pm_projections(
+        self,
+        issue_id: UUID,
+        *,
+        expected_revision: int | None = None,
+        exclude_connection_id: UUID | None = None,
+        evidence_records: list[dict[str, Any]] | None = None,
+        projection_evidence: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]] | tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
+        """CAS-update an issue, projections, and optional command evidence atomically.
+
+        ACTIVE inbound commands pass sanitized actor/command evidence here.
+        Evidence-write failure raises inside the same transaction, rolling back
+        the canonical CAS and any projection intents together.
+        """
+        atomic_evidence = list(evidence_records or [])
+        transaction_id = uuid4() if atomic_evidence or projection_evidence else None
+        async with self.engine.begin() as conn:
+            current = (
+                await conn.execute(
+                    t.issues.select().where(t.issues.c.id == issue_id).with_for_update()
+                )
+            ).mappings().first()
+            if current is None or (
+                expected_revision is not None
+                and int(current.get("revision") or 1) != int(expected_revision)
+            ):
+                raise ValueError("issue not found or revision conflict")
+            values = dict(kwargs)
+            values["revision"] = t.issues.c.revision + 1
+            values["updated_at"] = datetime.now(tz=UTC)
+            await conn.execute(t.issues.update().where(t.issues.c.id == issue_id).values(**values))
+            refreshed = (
+                await conn.execute(t.issues.select().where(t.issues.c.id == issue_id))
+            ).mappings().first()
+            assert refreshed is not None
+            refreshed_dict = dict(refreshed)
+            queued = await self._enqueue_issue_projections_tx(
+                conn,
+                refreshed_dict,
+                exclude_connection_id=exclude_connection_id,
+            )
+            if projection_evidence is not None:
+                atomic_evidence.append(
+                    {
+                        "evidence_type": "active_inbound_projection",
+                        "connection_id": projection_evidence["connection_id"],
+                        "external_id": str(projection_evidence.get("external_id") or ""),
+                        "project_id": refreshed_dict.get("project_id"),
+                        "binding_id": projection_evidence.get("binding_id"),
+                        "payload": {
+                            **projection_evidence,
+                            "transaction_id": str(transaction_id),
+                            "queued_outbox_ids": [str(item.get("id")) for item in queued],
+                            "queued_count": len(queued),
+                            "disposition": (
+                                "projected_to_other_connections_and_origin_suppressed"
+                                if queued
+                                else "originating_connection_suppressed"
+                            ),
+                        },
+                        "idempotency_key": f"active-projection:{projection_evidence['command_key']}",
+                    }
+                )
+            evidence_ids: dict[str, Any] = {}
+            if atomic_evidence:
+                for record in atomic_evidence:
+                    evidence_id = uuid4()
+                    values = {
+                        "id": evidence_id,
+                        "connection_id": record["connection_id"],
+                        "binding_id": record.get("binding_id"),
+                        "project_id": record.get("project_id") or refreshed_dict.get("project_id"),
+                        "evidence_type": record["evidence_type"],
+                        "external_id": record.get("external_id"),
+                        "repository": record.get("repository"),
+                        "payload": self._pm_json_safe({
+                            **(record.get("payload") or {}),
+                            "transaction_id": str(transaction_id),
+                        }),
+                        "idempotency_key": record["idempotency_key"],
+                        "created_at": datetime.now(tz=UTC),
+                    }
+                    stmt = (
+                        pg_insert(t.integration_evidence_records)
+                        .values(**values)
+                        .on_conflict_do_update(
+                            constraint="uq_integration_evidence_idempotency",
+                            set_={
+                                "payload": values["payload"],
+                                "external_id": values["external_id"],
+                                "binding_id": values["binding_id"],
+                                "project_id": values["project_id"],
+                            },
+                        )
+                        .returning(t.integration_evidence_records.c.id)
+                    )
+                    row = await self._mapping_first(await conn.execute(stmt))
+                    if row is None:
+                        raise RuntimeError("integration evidence write returned no row")
+                    evidence_ids[record["evidence_type"]] = str(row["id"])
+        if atomic_evidence:
+            return refreshed_dict, queued, {
+                "transaction_id": str(transaction_id),
+                "evidence_ids": evidence_ids,
+            }
+        return refreshed_dict, queued
+
+    async def create_work_item_comment_with_pm_projections(
+        self,
+        *,
+        issue_id: UUID,
+        body: str,
+        actor_id: str,
+        run_id: UUID | None = None,
+        approval_id: UUID | None = None,
+        evidence_id: str | None = None,
+        body_blob_ref: str | None = None,
+        origin: str = "aiat",
+        exclude_connection_id: UUID | None = None,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """Commit a comment and its projection intents atomically."""
+        now = datetime.now(tz=UTC)
+        values = {
+            "id": uuid4(),
+            "issue_id": issue_id,
+            "body": body,
+            "actor_id": actor_id,
+            "run_id": run_id,
+            "approval_id": approval_id,
+            "evidence_id": evidence_id,
+            "body_blob_ref": body_blob_ref,
+            "origin": origin,
+            "created_at": now,
+            "updated_at": now,
+        }
+        async with self.engine.begin() as conn:
+            issue = (
+                await conn.execute(
+                    t.issues.select().where(t.issues.c.id == issue_id).with_for_update()
+                )
+            ).mappings().first()
+            if issue is None:
+                raise ValueError("issue not found")
+            await conn.execute(t.work_item_comments.insert().values(**values))
+            queued = await self._enqueue_comment_projections_tx(
+                conn,
+                dict(issue),
+                values,
+                exclude_connection_id=exclude_connection_id,
+            )
+        return values, queued
+
+    async def create_work_item_link_with_pm_projections(
+        self,
+        *,
+        issue_id: UUID,
+        link_type: str,
+        target_type: str,
+        target_id: str,
+        metadata: dict[str, Any] | None = None,
+        exclude_connection_id: UUID | None = None,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """Commit an idempotent link and its projection intents atomically."""
+        values = {
+            "id": uuid4(),
+            "issue_id": issue_id,
+            "link_type": link_type,
+            "target_type": target_type,
+            "target_id": target_id,
+            "metadata": metadata or {},
+            "created_at": datetime.now(tz=UTC),
+        }
+        async with self.engine.begin() as conn:
+            issue = (
+                await conn.execute(
+                    t.issues.select().where(t.issues.c.id == issue_id).with_for_update()
+                )
+            ).mappings().first()
+            if issue is None:
+                raise ValueError("issue not found")
+            stmt = (
+                pg_insert(t.work_item_links)
+                .values(**values)
+                .on_conflict_do_nothing(constraint="uq_work_item_link")
+                .returning(t.work_item_links)
+            )
+            row = (await conn.execute(stmt)).mappings().first()
+            link = dict(row) if row else None
+            if link is None:
+                link = dict(
+                    (
+                        await conn.execute(
+                            t.work_item_links.select()
+                            .where(t.work_item_links.c.issue_id == issue_id)
+                            .where(t.work_item_links.c.link_type == link_type)
+                            .where(t.work_item_links.c.target_type == target_type)
+                            .where(t.work_item_links.c.target_id == target_id)
+                        )
+                    ).mappings().first()
+                    or values
+                )
+            queued = await self._enqueue_link_projections_tx(
+                conn,
+                dict(issue),
+                link,
+                exclude_connection_id=exclude_connection_id,
+            )
+        return link, queued
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Provider-neutral PM integration control plane
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    async def create_pm_connection(
+        self,
+        *,
+        provider_kind: str,
+        display_name: str,
+        base_url: str,
+        credential_ref: str,
+        capability_profile: str = "pm",
+        config: dict[str, Any] | None = None,
+        created_by: str = "operator",
+        connection_id: UUID | None = None,
+    ) -> dict[str, Any]:
+        """Create a provider connection without resolving or storing secrets."""
+        from mas_core.integrations.contracts import (
+            ProviderConnection,
+            validate_credential_references,
+        )
+
+        safe_config = validate_credential_references(config or {})
+        if provider_kind.lower() != "fake" and any(
+            key in safe_config
+            for key in ("webhook_secret_test_only", "webhook_token_test_only")
+        ):
+            raise ValueError("test-only webhook credentials are permitted only for fake connections")
+        validated = ProviderConnection(
+            id=connection_id or uuid4(),
+            provider_kind=provider_kind,
+            display_name=display_name,
+            base_url=base_url,
+            credential_ref=credential_ref,
+            capability_profile=capability_profile,
+            config=safe_config,
+        )
+        from urllib.parse import urlsplit
+
+        parsed_url = urlsplit(validated.base_url)
+        if validated.provider_kind.lower() != "fake" and parsed_url.scheme != "https" and parsed_url.hostname not in {"localhost", "127.0.0.1", "::1"}:
+            raise ValueError("non-fake provider connections must use HTTPS")
+        allowed_hosts = validated.config.get("allowed_hosts")
+        if allowed_hosts:
+            from urllib.parse import urlsplit
+
+            allowed = {str(host).strip().lower() for host in allowed_hosts if str(host).strip()}
+            hostname = str(urlsplit(validated.base_url).hostname or "").lower()
+            if allowed and hostname not in allowed:
+                raise ValueError(f"provider host {hostname!r} is not in the connection allowlist")
+        now = datetime.now(tz=UTC)
+        values = {
+            "id": validated.id,
+            "provider_kind": validated.provider_kind,
+            "display_name": validated.display_name,
+            "base_url": validated.base_url,
+            "credential_ref": validated.credential_ref,
+            "capability_profile": validated.capability_profile,
+            "config": validated.config,
+            "schema_version": validated.schema_version,
+            "status": validated.status.value,
+            "revision": 1,
+            "created_by": created_by,
+            "created_at": now,
+            "updated_at": now,
+        }
+        async with self.engine.begin() as conn:
+            await conn.execute(t.pm_connections.insert().values(**values))
+        return values
+
+    async def get_pm_connection(self, connection_id: UUID) -> dict[str, Any] | None:
+        async with self.engine.connect() as conn:
+            row = (
+                await conn.execute(t.pm_connections.select().where(t.pm_connections.c.id == connection_id))
+            ).mappings().first()
+        return dict(row) if row else None
+
+    async def list_pm_connections(self, *, status: str | None = None) -> list[dict[str, Any]]:
+        query = t.pm_connections.select().order_by(t.pm_connections.c.created_at)
+        if status:
+            query = query.where(t.pm_connections.c.status == status)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def update_pm_connection(self, connection_id: UUID, **kwargs: Any) -> dict[str, Any] | None:
+        allowed = {"display_name", "base_url", "credential_ref", "capability_profile", "config", "status", "schema_version", "last_health_at", "last_health_status", "last_health_error"}
+        values = {key: value for key, value in kwargs.items() if key in allowed}
+        if "status" in values and values["status"] not in {
+            "DISABLED",
+            "SHADOW",
+            "READ_ONLY",
+            "ACTIVE",
+            "DRAINING",
+        }:
+            raise ValueError("invalid PM connection status")
+        if not values:
+            return await self.get_pm_connection(connection_id)
+        if any(key in values for key in {"base_url", "credential_ref", "capability_profile", "config"}):
+            from urllib.parse import urlsplit
+
+            from mas_core.integrations.contracts import (
+                ProviderConnection,
+                validate_credential_references,
+            )
+
+            current = await self.get_pm_connection(connection_id)
+            if current is None:
+                return None
+            merged_config = validate_credential_references(values.get("config", current.get("config") or {}))
+            if str(current.get("provider_kind") or "").lower() != "fake" and any(
+                key in merged_config
+                for key in ("webhook_secret_test_only", "webhook_token_test_only")
+            ):
+                raise ValueError("test-only webhook credentials are permitted only for fake connections")
+            validated = ProviderConnection(
+                id=current["id"],
+                provider_kind=str(current["provider_kind"]),
+                display_name=str(values.get("display_name", current["display_name"])),
+                base_url=str(values.get("base_url", current["base_url"])),
+                credential_ref=str(values.get("credential_ref", current["credential_ref"])),
+                capability_profile=str(values.get("capability_profile", current.get("capability_profile") or "pm")),
+                config=merged_config,
+                schema_version=int(values.get("schema_version", current.get("schema_version") or 1)),
+            )
+            parsed_url = urlsplit(validated.base_url)
+            if validated.provider_kind.lower() != "fake" and parsed_url.scheme != "https" and parsed_url.hostname not in {"localhost", "127.0.0.1", "::1"}:
+                raise ValueError("non-fake provider connections must use HTTPS")
+            allowed_hosts = merged_config.get("allowed_hosts")
+            if allowed_hosts:
+                allowed = {str(host).strip().lower() for host in allowed_hosts if str(host).strip()}
+                hostname = str(parsed_url.hostname or "").lower()
+                if allowed and hostname not in allowed:
+                    raise ValueError(f"provider host {hostname!r} is not in the connection allowlist")
+            values.update(
+                {
+                    "base_url": validated.base_url,
+                    "credential_ref": validated.credential_ref,
+                    "capability_profile": validated.capability_profile,
+                    "config": validated.config,
+                }
+            )
+        values["updated_at"] = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            if any(
+                key in values
+                for key in {"display_name", "base_url", "credential_ref", "capability_profile", "config", "status", "schema_version"}
+            ):
+                values["revision"] = t.pm_connections.c.revision + 1
+            result = await conn.execute(
+                t.pm_connections.update().where(t.pm_connections.c.id == connection_id).values(**values)
+            )
+            if result.rowcount == 0:
+                return None
+        return await self.get_pm_connection(connection_id)
+
+    async def get_pm_inbox_event(self, event_id: UUID) -> dict[str, Any] | None:
+        return await self._get_table_row(t.pm_inbox_events, t.pm_inbox_events.c.id, event_id)
+
+    async def create_pm_external_actor_mapping(
+        self,
+        *,
+        connection_id: UUID,
+        provider_kind: str,
+        tenant_key: str,
+        external_actor_id: str,
+        actor_snapshot: dict[str, Any],
+        aiat_identity_id: str,
+        authorized_scopes: list[str],
+        created_by: str,
+        approved_by: str,
+        evidence_refs: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Create one trusted immutable actor mapping and its audit atomically."""
+        if not external_actor_id or not aiat_identity_id:
+            raise ValueError("external actor and AIAT identity IDs are required")
+        if not authorized_scopes:
+            raise ValueError("actor mapping requires at least one authorized command scope")
+        now = datetime.now(tz=UTC)
+        values = {
+            "id": uuid4(), "connection_id": connection_id, "provider_kind": provider_kind,
+            "tenant_key": tenant_key, "external_actor_id": external_actor_id,
+            "actor_snapshot": self._pm_json_safe(actor_snapshot), "aiat_identity_id": aiat_identity_id,
+            "status": "TRUSTED", "authorized_scopes": sorted({str(item) for item in authorized_scopes}),
+            "created_by": created_by, "approved_by": approved_by, "created_at": now, "approved_at": now,
+            "revision": 1, "updated_at": now,
+        }
+        async with self.engine.begin() as conn:
+            existing = (await conn.execute(
+                t.pm_external_actor_mappings.select()
+                .where(t.pm_external_actor_mappings.c.connection_id == connection_id)
+                .where(t.pm_external_actor_mappings.c.tenant_key == tenant_key)
+                .where(t.pm_external_actor_mappings.c.external_actor_id == external_actor_id)
+                .with_for_update()
+            )).mappings().first()
+            if existing is not None:
+                if str(existing.get("status")) == "TRUSTED" and str(existing.get("aiat_identity_id")) == aiat_identity_id:
+                    audit = {
+                        "id": uuid4(), "mapping_id": existing["id"], "action": "IDEMPOTENT_RECONFIRM",
+                        "actor": approved_by, "before_state": self._pm_json_safe(dict(existing)),
+                        "after_state": self._pm_json_safe(dict(existing)), "evidence_refs": self._pm_json_safe(evidence_refs),
+                        "occurred_at": now,
+                    }
+                    await conn.execute(t.pm_external_actor_mapping_audits.insert().values(**audit))
+                    return dict(existing), audit
+                raise ValueError("an actor mapping already exists for this immutable provider identity")
+            await conn.execute(t.pm_external_actor_mappings.insert().values(**values))
+            audit = {
+                "id": uuid4(), "mapping_id": values["id"], "action": "CREATED_AND_APPROVED",
+                "actor": approved_by, "before_state": {}, "after_state": self._pm_json_safe(values),
+                "evidence_refs": self._pm_json_safe(evidence_refs), "occurred_at": now,
+            }
+            await conn.execute(t.pm_external_actor_mapping_audits.insert().values(**audit))
+        return values, audit
+
+    async def get_pm_external_actor_mapping(
+        self, *, connection_id: UUID, external_actor_id: str, tenant_key: str | None = None
+    ) -> dict[str, Any] | None:
+        query = t.pm_external_actor_mappings.select().where(
+            t.pm_external_actor_mappings.c.connection_id == connection_id
+        ).where(t.pm_external_actor_mappings.c.external_actor_id == external_actor_id)
+        if tenant_key is not None:
+            query = query.where(t.pm_external_actor_mappings.c.tenant_key == tenant_key)
+        async with self.engine.connect() as conn:
+            row = (await conn.execute(query)).mappings().first()
+        return dict(row) if row else None
+
+    async def get_pm_external_actor_mapping_by_id(self, mapping_id: UUID) -> dict[str, Any] | None:
+        return await self._get_table_row(t.pm_external_actor_mappings, t.pm_external_actor_mappings.c.id, mapping_id)
+
+    async def list_pm_external_actor_mappings(
+        self, *, connection_id: UUID, status: str | None = None, limit: int = 1000
+    ) -> list[dict[str, Any]]:
+        """List durable actor mappings for lifecycle policy snapshots.
+
+        Lifecycle plans must record the exact trusted actor scope that will be
+        exposed by an ACTIVE binding.  Keep this read path bounded and expose
+        only persisted mapping rows; callers remain responsible for redacting
+        sensitive actor snapshots from evidence.
+        """
+        query = (
+            t.pm_external_actor_mappings.select()
+            .where(t.pm_external_actor_mappings.c.connection_id == connection_id)
+            .order_by(t.pm_external_actor_mappings.c.created_at)
+            .limit(limit)
+        )
+        if status is not None:
+            query = query.where(t.pm_external_actor_mappings.c.status == status)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def count_trusted_pm_external_actor_mappings(self, connection_id: UUID) -> int:
+        async with self.engine.connect() as conn:
+            value = await conn.scalar(
+                sa.select(sa.func.count()).select_from(t.pm_external_actor_mappings).where(
+                    t.pm_external_actor_mappings.c.connection_id == connection_id
+                ).where(t.pm_external_actor_mappings.c.status == "TRUSTED")
+            )
+        return int(value or 0)
+
+    async def revoke_pm_external_actor_mapping(
+        self, mapping_id: UUID, *, connection_id: UUID, actor: str, reason: str
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        now = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            current = (await conn.execute(
+                t.pm_external_actor_mappings.select()
+                .where(t.pm_external_actor_mappings.c.id == mapping_id)
+                .where(t.pm_external_actor_mappings.c.connection_id == connection_id)
+                .with_for_update()
+            )).mappings().first()
+            if current is None:
+                return None, None
+            values = {
+                "status": "REVOKED", "revoked_by": actor, "revoked_at": now,
+                "revocation_reason": reason, "revision": t.pm_external_actor_mappings.c.revision + 1, "updated_at": now,
+            }
+            await conn.execute(t.pm_external_actor_mappings.update().where(t.pm_external_actor_mappings.c.id == mapping_id).values(**values))
+            updated = (await conn.execute(t.pm_external_actor_mappings.select().where(t.pm_external_actor_mappings.c.id == mapping_id))).mappings().first()
+            audit = {"id": uuid4(), "mapping_id": mapping_id, "action": "REVOKED", "actor": actor,
+                     "before_state": self._pm_json_safe(dict(current)), "after_state": self._pm_json_safe(dict(updated)),
+                     "evidence_refs": {"reason": reason}, "occurred_at": now}
+            await conn.execute(t.pm_external_actor_mapping_audits.insert().values(**audit))
+        return dict(updated), audit
+
+    async def create_pm_inbound_canary_plan(self, plan: Any, *, digest: str) -> dict[str, Any]:
+        """Persist a bounded canary before it can be reviewed or armed."""
+        now = datetime.now(tz=UTC)
+        values = {
+            "id": plan.plan_id, "connection_id": plan.connection_id, "binding_id": plan.binding_id,
+            "project_id": plan.project_id, "canonical_issue_id": plan.canonical_issue_id,
+            "external_issue_id": plan.external_issue_id, "mapping_id": plan.mapping_id,
+            "actor_mapping_id": plan.actor_mapping_id,
+            "expected_connection_status": plan.expected_connection_status,
+            "expected_binding_status": plan.expected_binding_status,
+            "expected_connection_revision": plan.expected_connection_revision,
+            "expected_binding_revision": plan.expected_binding_revision,
+            "expected_canonical_revision": plan.expected_canonical_revision,
+            "current_priority": plan.current_priority, "target_priority": plan.target_priority,
+            "max_command_count": plan.max_command_count, "accepted_command_count": 0,
+            "operations": self._pm_json_safe(plan.operations), "gate_results": self._pm_json_safe(plan.gate_results),
+            "evidence_refs": self._pm_json_safe(plan.evidence_refs),
+            "rollback_operations": self._pm_json_safe(plan.rollback_operations),
+            "created_by": plan.created_by, "created_at": plan.created_at, "expires_at": plan.expires_at,
+            "digest": digest, "status": "PLANNED", "updated_at": now,
+        }
+        async with self.engine.begin() as conn:
+            # Expiry is terminal evidence, not a rollback.  Record it before
+            # considering a successor so a new plan can never rewrite an old
+            # pending plan's history as if an operator had disarmed it.
+            await conn.execute(
+                t.pm_inbound_canary_plans.update()
+                .where(t.pm_inbound_canary_plans.c.binding_id == plan.binding_id)
+                .where(t.pm_inbound_canary_plans.c.status.in_(["PLANNED", "APPROVED", "ARMED"]))
+                .where(t.pm_inbound_canary_plans.c.expires_at <= now)
+                .values(status="EXPIRED", error="expired before command acceptance", updated_at=now)
+            )
+            await conn.execute(
+                t.pm_inbound_canary_plans.update()
+                .where(t.pm_inbound_canary_plans.c.binding_id == plan.binding_id)
+                .where(t.pm_inbound_canary_plans.c.status.in_(["PLANNED", "APPROVED", "ARMED", "RUNNING"]))
+                .values(status="ROLLED_BACK", error="superseded by a newer canary plan", updated_at=now)
+            )
+            await conn.execute(t.pm_inbound_canary_plans.insert().values(**values))
+        return values
+
+    async def get_pm_inbound_canary_plan(self, plan_id: UUID) -> dict[str, Any] | None:
+        return await self._get_table_row(t.pm_inbound_canary_plans, t.pm_inbound_canary_plans.c.id, plan_id)
+
+    async def list_pm_inbound_canary_plans(
+        self, *, connection_id: UUID | None = None, binding_id: UUID | None = None, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        query = t.pm_inbound_canary_plans.select().order_by(t.pm_inbound_canary_plans.c.created_at.desc()).limit(limit)
+        if connection_id is not None:
+            query = query.where(t.pm_inbound_canary_plans.c.connection_id == connection_id)
+        if binding_id is not None:
+            query = query.where(t.pm_inbound_canary_plans.c.binding_id == binding_id)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def approve_pm_inbound_canary_plan(self, plan_id: UUID, *, digest: str, actor: str) -> dict[str, Any]:
+        now = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            row = (await conn.execute(t.pm_inbound_canary_plans.select().where(
+                t.pm_inbound_canary_plans.c.id == plan_id
+            ).with_for_update())).mappings().first()
+            if row is None:
+                raise ValueError("canary plan not found")
+            if str(row["digest"]) != digest:
+                raise ValueError("canary plan digest mismatch")
+            if row["expires_at"] <= now:
+                raise ValueError("canary plan has expired")
+            if str(row["status"]) != "PLANNED":
+                raise ValueError(f"canary plan is not approvable from {row['status']}")
+            await conn.execute(t.integration_evidence_records.insert().values(
+                id=uuid4(), connection_id=row["connection_id"], binding_id=row["binding_id"], project_id=row["project_id"],
+                evidence_type="pm_inbound_canary_approval", external_id=str(plan_id), repository=None,
+                payload=self._pm_json_safe({"plan_id": str(plan_id), "digest": digest, "actor": actor, "occurred_at": now.isoformat()}),
+                idempotency_key=f"pm-inbound-canary:{plan_id}:approval:{digest}", created_at=now,
+            ))
+            await conn.execute(t.pm_inbound_canary_plans.update().where(
+                t.pm_inbound_canary_plans.c.id == plan_id
+            ).values(status="APPROVED", approved_by=actor, approved_at=now, updated_at=now))
+            updated = (await conn.execute(t.pm_inbound_canary_plans.select().where(
+                t.pm_inbound_canary_plans.c.id == plan_id
+            ))).mappings().one()
+        return dict(updated)
+
+    async def expire_pm_inbound_canary_plan(self, plan_id: UUID, *, digest: str, actor: str) -> dict[str, Any]:
+        """Record expiry without altering immutable plan inputs or evidence."""
+        now = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            row = (await conn.execute(t.pm_inbound_canary_plans.select().where(
+                t.pm_inbound_canary_plans.c.id == plan_id
+            ).with_for_update())).mappings().first()
+            if row is None:
+                raise ValueError("canary plan not found")
+            if str(row["digest"]) != digest:
+                raise ValueError("canary plan digest mismatch")
+            if str(row["status"]) == "EXPIRED":
+                return dict(row)
+            if row["expires_at"] > now:
+                raise ValueError("canary plan has not expired")
+            if str(row["status"]) not in {"PLANNED", "APPROVED", "ARMED"}:
+                raise ValueError(f"canary plan cannot expire from {row['status']}")
+            await conn.execute(t.pm_inbound_canary_plans.update().where(
+                t.pm_inbound_canary_plans.c.id == plan_id
+            ).values(
+                status="EXPIRED",
+                expired_by=actor,
+                expired_at=now,
+                error="expired before command acceptance",
+                updated_at=now,
+            ))
+            updated = (await conn.execute(t.pm_inbound_canary_plans.select().where(
+                t.pm_inbound_canary_plans.c.id == plan_id
+            ))).mappings().one()
+        return dict(updated)
+
+    async def arm_pm_inbound_canary_plan(self, plan_id: UUID, *, digest: str, actor: str) -> dict[str, Any]:
+        now = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            row = (await conn.execute(t.pm_inbound_canary_plans.select().where(
+                t.pm_inbound_canary_plans.c.id == plan_id
+            ).with_for_update())).mappings().first()
+            if row is None:
+                raise ValueError("canary plan not found")
+            if str(row["digest"]) != digest or str(row["status"]) != "APPROVED" or row["expires_at"] <= now:
+                raise ValueError("canary plan is not an unexpired approved exact plan")
+            await conn.execute(t.integration_evidence_records.insert().values(
+                id=uuid4(), connection_id=row["connection_id"], binding_id=row["binding_id"], project_id=row["project_id"],
+                evidence_type="pm_inbound_canary_arming", external_id=str(plan_id), repository=None,
+                payload=self._pm_json_safe({"plan_id": str(plan_id), "digest": digest, "actor": actor, "occurred_at": now.isoformat()}),
+                idempotency_key=f"pm-inbound-canary:{plan_id}:arming:{digest}", created_at=now,
+            ))
+            await conn.execute(t.pm_inbound_canary_plans.update().where(
+                t.pm_inbound_canary_plans.c.id == plan_id
+            ).values(status="ARMED", armed_by=actor, armed_at=now, updated_at=now))
+            updated = (await conn.execute(t.pm_inbound_canary_plans.select().where(
+                t.pm_inbound_canary_plans.c.id == plan_id
+            ))).mappings().one()
+        return dict(updated)
+
+    async def get_armed_pm_inbound_canary_plan(self, binding_id: UUID) -> dict[str, Any] | None:
+        now = datetime.now(tz=UTC)
+        async with self.engine.connect() as conn:
+            row = (await conn.execute(t.pm_inbound_canary_plans.select().where(
+                t.pm_inbound_canary_plans.c.binding_id == binding_id
+            ).where(t.pm_inbound_canary_plans.c.status.in_(["ARMED", "RUNNING"])).where(
+                t.pm_inbound_canary_plans.c.expires_at > now
+            ).order_by(t.pm_inbound_canary_plans.c.created_at.desc()).limit(1))).mappings().first()
+        return dict(row) if row else None
+
+    async def disarm_pm_inbound_canary_plan(self, plan_id: UUID, *, digest: str, actor: str, reason: str) -> dict[str, Any]:
+        """Atomically fail-closed a canary and write its immutable evidence."""
+        now = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            row = (await conn.execute(t.pm_inbound_canary_plans.select().where(
+                t.pm_inbound_canary_plans.c.id == plan_id
+            ).with_for_update())).mappings().first()
+            if row is None or str(row["digest"]) != digest:
+                raise ValueError("canary plan not found or digest mismatch")
+            if str(row["status"]) in {"SUCCEEDED", "ROLLED_BACK", "FAILED"}:
+                return dict(row)
+            evidence = {
+                "id": uuid4(), "connection_id": row["connection_id"], "binding_id": row["binding_id"],
+                "project_id": row["project_id"], "evidence_type": "pm_inbound_canary_disarm",
+                "external_id": str(plan_id), "repository": None,
+                "payload": self._pm_json_safe({"plan_id": str(plan_id), "digest": digest, "actor": actor, "reason": reason, "occurred_at": now.isoformat()}),
+                "idempotency_key": f"pm-inbound-canary:{plan_id}:disarm:{digest}", "created_at": now,
+            }
+            await conn.execute(
+                pg_insert(t.integration_evidence_records)
+                .values(**evidence)
+                .on_conflict_do_nothing(index_elements=[t.integration_evidence_records.c.idempotency_key])
+            )
+            if str(row["status"]) == "EXPIRED":
+                return dict(row)
+            await conn.execute(t.pm_inbound_canary_plans.update().where(
+                t.pm_inbound_canary_plans.c.id == plan_id
+            ).values(status="FAILED", error=reason, completed_at=now, updated_at=now))
+            updated = (await conn.execute(t.pm_inbound_canary_plans.select().where(
+                t.pm_inbound_canary_plans.c.id == plan_id
+            ))).mappings().one()
+        return dict(updated)
+
+    async def claim_pm_inbound_canary_command(self, plan_id: UUID, *, inbox_id: UUID) -> dict[str, Any] | None:
+        now = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            row = (await conn.execute(t.pm_inbound_canary_plans.select().where(
+                t.pm_inbound_canary_plans.c.id == plan_id
+            ).with_for_update())).mappings().first()
+            if row is None or str(row["status"]) != "ARMED" or row["expires_at"] <= now or int(row["accepted_command_count"]) >= int(row["max_command_count"]):
+                return None
+            result = {"inbox_id": str(inbox_id), "claimed_at": now.isoformat()}
+            await conn.execute(t.pm_inbound_canary_plans.update().where(
+                t.pm_inbound_canary_plans.c.id == plan_id
+            ).values(status="RUNNING", accepted_command_count=int(row["accepted_command_count"]) + 1, result=result, updated_at=now))
+            updated = (await conn.execute(t.pm_inbound_canary_plans.select().where(
+                t.pm_inbound_canary_plans.c.id == plan_id
+            ))).mappings().one()
+        return dict(updated)
+
+    async def complete_pm_inbound_canary_plan(self, plan_id: UUID, *, success: bool, result: dict[str, Any]) -> dict[str, Any] | None:
+        now = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            row = (await conn.execute(t.pm_inbound_canary_plans.select().where(
+                t.pm_inbound_canary_plans.c.id == plan_id
+            ).with_for_update())).mappings().first()
+            if row is None:
+                return None
+            if str(row["status"]) not in {"RUNNING", "ARMED"}:
+                return dict(row)
+            await conn.execute(t.pm_inbound_canary_plans.update().where(
+                t.pm_inbound_canary_plans.c.id == plan_id
+            ).values(status="SUCCEEDED" if success else "FAILED", completed_at=now,
+                     result=self._pm_json_safe(result), error=None if success else str(result.get("error") or "canary command failed")[:1000], updated_at=now))
+            updated = (await conn.execute(t.pm_inbound_canary_plans.select().where(
+                t.pm_inbound_canary_plans.c.id == plan_id
+            ))).mappings().one()
+        return dict(updated)
+
+    async def apply_pm_inbound_canary_priority(
+        self, *, plan_id: UUID, issue_id: UUID, expected_revision: int, target_priority: str,
+        connection_id: UUID, inbox_id: UUID, command_key: str,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """Atomically apply the single canary command, evidence, outbox, and disarm."""
+        now = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            plan = (await conn.execute(t.pm_inbound_canary_plans.select().where(
+                t.pm_inbound_canary_plans.c.id == plan_id
+            ).with_for_update())).mappings().first()
+            if plan is None or str(plan["status"]) != "ARMED" or int(plan["accepted_command_count"]) >= int(plan["max_command_count"]) or plan["expires_at"] <= now:
+                raise ValueError("canary is not armed or has already accepted a command")
+            issue = (await conn.execute(t.issues.select().where(t.issues.c.id == issue_id).with_for_update())).mappings().first()
+            if issue is None or int(issue.get("revision") or 1) != expected_revision or str(issue.get("priority") or "") == target_priority:
+                raise ValueError("canary issue revision or target priority is stale")
+            evidence = {
+                "id": uuid4(), "connection_id": connection_id, "binding_id": plan["binding_id"], "project_id": plan["project_id"],
+                "evidence_type": "pm_inbound_canary_command", "external_id": str(issue_id), "repository": None,
+                "payload": self._pm_json_safe({"plan_id": str(plan_id), "inbox_id": str(inbox_id), "command_key": command_key, "from": issue.get("priority"), "to": target_priority}),
+                "idempotency_key": f"pm-inbound-canary:command:{command_key}", "created_at": now,
+            }
+            await conn.execute(t.integration_evidence_records.insert().values(**evidence))
+            await conn.execute(t.issues.update().where(t.issues.c.id == issue_id).values(
+                priority=target_priority, revision=t.issues.c.revision + 1, updated_at=now
+            ))
+            refreshed = (await conn.execute(t.issues.select().where(t.issues.c.id == issue_id))).mappings().one()
+            queued = await self._enqueue_issue_projections_tx(conn, dict(refreshed), exclude_connection_id=connection_id)
+            await conn.execute(t.pm_inbound_canary_plans.update().where(t.pm_inbound_canary_plans.c.id == plan_id).values(
+                status="SUCCEEDED", accepted_command_count=1, completed_at=now,
+                result=self._pm_json_safe({"inbox_id": str(inbox_id), "canonical_revision": refreshed["revision"], "outbox_count": len(queued)}), updated_at=now
+            ))
+        return dict(refreshed), queued
+
+    async def create_pm_binding(
+        self,
+        *,
+        project_id: UUID,
+        connection_id: UUID,
+        external_project_id: str | None = None,
+        external_project_key: str | None = None,
+        external_repository: str | None = None,
+        mapping_profile: str = "default",
+        direction: str = "outbound",
+        status: str = "DISABLED",
+        binding_id: UUID | None = None,
+        provisioning_state: str = "UNPROVISIONED",
+        provisioning_plan_id: UUID | None = None,
+        provisioning_plan_digest: str | None = None,
+        activation_blockers: list[str] | None = None,
+    ) -> dict[str, Any]:
+        from mas_core.integrations.contracts import normalize_project_mapping_profile
+
+        mapping_profile = normalize_project_mapping_profile(mapping_profile)
+        if mapping_profile == "dedicated_project" and not external_project_id:
+            raise ValueError("dedicated_project bindings require an explicit external project selector")
+        if mapping_profile == "umbrella_issues" and not (external_project_id or external_repository):
+            raise ValueError("umbrella_issues bindings require an explicit provider project or repository selector")
+        now = datetime.now(tz=UTC)
+        values = {
+            "id": binding_id or uuid4(),
+            "project_id": project_id,
+            "connection_id": connection_id,
+            "external_project_id": external_project_id,
+            "external_project_key": external_project_key,
+            "external_repository": external_repository,
+            "mapping_profile": mapping_profile,
+            "direction": direction,
+            "status": status,
+            "revision": 1,
+            "provisioning_state": provisioning_state,
+            "provisioning_plan_id": provisioning_plan_id,
+            "provisioning_plan_digest": provisioning_plan_digest,
+            "activation_blockers": list(activation_blockers or []),
+            "webhook_events": [],
+            "created_at": now,
+            "updated_at": now,
+        }
+        async with self.engine.begin() as conn:
+            connection = await self._mapping_first(
+                await conn.execute(
+                    t.pm_connections.select().where(t.pm_connections.c.id == connection_id)
+                )
+            )
+            if connection is None:
+                raise ValueError("integration connection not found")
+            if status == "ACTIVE":
+                self._assert_pm_binding_activation_ready(values, connection)
+            if direction not in {"outbound", "inbound", "both"}:
+                raise ValueError("invalid PM binding direction")
+            if status not in {"DISABLED", "SHADOW", "READ_ONLY", "ACTIVE", "DRAINING"}:
+                raise ValueError("invalid PM binding status")
+            if mapping_profile == "dedicated_project" and external_project_id:
+                duplicate = await self._mapping_first(
+                    await conn.execute(
+                        t.pm_project_bindings.select()
+                        .where(t.pm_project_bindings.c.connection_id == connection_id)
+                        .where(t.pm_project_bindings.c.external_project_id == external_project_id)
+                        .where(t.pm_project_bindings.c.mapping_profile.in_(["default", "dedicated_project"]))
+                    )
+                )
+                if duplicate is not None:
+                    raise ValueError("a dedicated provider project is already bound to another canonical project")
+            if direction in {"inbound", "both"} and status == "ACTIVE":
+                await conn.execute(
+                    t.pm_project_bindings.update()
+                    .where(t.pm_project_bindings.c.project_id == project_id)
+                    .where(t.pm_project_bindings.c.direction.in_(["inbound", "both"]))
+                    .where(t.pm_project_bindings.c.status == "ACTIVE")
+                    .values(
+                        status="DRAINING",
+                        revision=t.pm_project_bindings.c.revision + 1,
+                        updated_at=now,
+                    )
+                )
+            await conn.execute(t.pm_project_bindings.insert().values(**values))
+            # A newly-created outbound binding must be immediately usable for
+            # existing canonical work. Queue its current project, iterations,
+            # issues, and comments in the same transaction so a one-shot
+            # provider setup cannot silently omit pre-existing records.
+            await self._enqueue_binding_backfill_tx(conn, values)
+        return values
+
+    async def list_pm_bindings(
+        self, *, project_id: UUID | None = None, connection_id: UUID | None = None
+    ) -> list[dict[str, Any]]:
+        query = t.pm_project_bindings.select().order_by(t.pm_project_bindings.c.created_at)
+        if project_id is not None:
+            query = query.where(t.pm_project_bindings.c.project_id == project_id)
+        if connection_id is not None:
+            query = query.where(t.pm_project_bindings.c.connection_id == connection_id)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def update_pm_binding(self, binding_id: UUID, **kwargs: Any) -> dict[str, Any] | None:
+        from mas_core.integrations.contracts import normalize_project_mapping_profile
+
+        requested_keys = set(kwargs)
+        allowed = {
+            "external_project_id", "external_project_key", "external_repository", "mapping_profile", "direction",
+            "sync_cursor", "status", "last_reconciled_at", "provisioning_state", "provisioning_plan_id",
+            "provisioning_plan_digest", "activation_blockers", "webhook_verified_at", "projection_verified_at",
+            "reconciliation_verified_at", "webhook_events",
+        }
+        values = {key: value for key, value in kwargs.items() if key in allowed}
+        values["updated_at"] = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            current = await self._mapping_first(
+                await conn.execute(
+                    t.pm_project_bindings.select().where(t.pm_project_bindings.c.id == binding_id).with_for_update()
+                )
+            )
+            if current is None:
+                return None
+            connection = await self._mapping_first(
+                await conn.execute(
+                    t.pm_connections.select().where(t.pm_connections.c.id == current["connection_id"])
+                )
+            )
+            next_direction = str(values.get("direction", current["direction"]))
+            next_status = str(values.get("status", current["status"]))
+            next_profile = normalize_project_mapping_profile(values.get("mapping_profile", current.get("mapping_profile")))
+            values["mapping_profile"] = next_profile
+            next_selector = values.get("external_project_id", current.get("external_project_id"))
+            next_repository = values.get("external_repository", current.get("external_repository"))
+            if next_profile == "dedicated_project" and not next_selector:
+                raise ValueError("dedicated_project bindings require an explicit external project selector")
+            if next_profile == "umbrella_issues" and not (next_selector or next_repository):
+                raise ValueError("umbrella_issues bindings require an explicit provider project or repository selector")
+            if next_direction not in {"outbound", "inbound", "both"}:
+                raise ValueError("invalid PM binding direction")
+            if next_status not in {"DISABLED", "SHADOW", "READ_ONLY", "ACTIVE", "DRAINING"}:
+                raise ValueError("invalid PM binding status")
+            next_external_project_id = values.get("external_project_id", current.get("external_project_id"))
+            if next_profile == "dedicated_project" and next_external_project_id:
+                duplicate = await self._mapping_first(
+                    await conn.execute(
+                        t.pm_project_bindings.select()
+                        .where(t.pm_project_bindings.c.connection_id == current["connection_id"])
+                        .where(t.pm_project_bindings.c.external_project_id == next_external_project_id)
+                        .where(t.pm_project_bindings.c.mapping_profile.in_(["default", "dedicated_project"]))
+                        .where(t.pm_project_bindings.c.id != binding_id)
+                    )
+                )
+                if duplicate is not None:
+                    raise ValueError("a dedicated provider project is already bound to another canonical project")
+            if next_status == "ACTIVE":
+                candidate = {**current, **values}
+                self._assert_pm_binding_activation_ready(candidate, connection)
+            if next_status == "ACTIVE" and next_direction in {"inbound", "both"}:
+                await conn.execute(
+                    t.pm_project_bindings.update()
+                    .where(t.pm_project_bindings.c.project_id == current["project_id"])
+                    .where(t.pm_project_bindings.c.id != binding_id)
+                    .where(t.pm_project_bindings.c.direction.in_(["inbound", "both"]))
+                    .where(t.pm_project_bindings.c.status == "ACTIVE")
+                    .values(
+                        status="DRAINING",
+                        revision=t.pm_project_bindings.c.revision + 1,
+                        updated_at=values["updated_at"],
+                    )
+                )
+            # Cursor/evidence timestamps are operational synchronization
+            # metadata, not lifecycle identity.  They must not make an
+            # already-reviewed transition plan stale merely because a gate
+            # reconciliation ran.  Lifecycle-relevant selector, direction,
+            # provisioning, blocker, or status changes still advance the CAS
+            # revision.
+            revision_fields = {
+                "external_project_id",
+                "external_project_key",
+                "external_repository",
+                "mapping_profile",
+                "direction",
+                "status",
+                "provisioning_state",
+                "provisioning_plan_id",
+                "provisioning_plan_digest",
+                "activation_blockers",
+            }
+            if requested_keys.intersection(revision_fields):
+                values["revision"] = t.pm_project_bindings.c.revision + 1
+            result = await conn.execute(
+                t.pm_project_bindings.update().where(t.pm_project_bindings.c.id == binding_id).values(**values)
+            )
+            if result.rowcount == 0:
+                return None
+        async with self.engine.connect() as conn:
+            row = (
+                await conn.execute(t.pm_project_bindings.select().where(t.pm_project_bindings.c.id == binding_id))
+            ).mappings().first()
+        return dict(row) if row else None
+
+    @staticmethod
+    def _assert_pm_binding_activation_ready(
+        binding: Mapping[str, Any],
+        connection: Mapping[str, Any] | None,
+    ) -> None:
+        """Fail closed until provider setup and all three runtime gates pass."""
+        if connection is None or connection.get("status") != "ACTIVE":
+            raise ValueError("an active binding requires an active integration connection")
+        mapping_profile = str(binding.get("mapping_profile") or "default").strip().lower()
+        if mapping_profile in {"umbrella_issues", "single_project_issues"}:
+            if not (binding.get("external_project_id") or binding.get("external_repository")):
+                raise ValueError("an active umbrella_issues binding requires an explicit provider project or repository selector")
+        elif not binding.get("external_project_id"):
+            raise ValueError("an active binding requires an explicit provider project selector")
+        blockers = [str(item) for item in (binding.get("activation_blockers") or []) if item]
+        if blockers:
+            raise ValueError("binding activation is blocked: " + "; ".join(blockers))
+        events = {str(item).lower() for item in (binding.get("webhook_events") or [])}
+        missing_events = sorted({"issue", "comment"} - events)
+        if not binding.get("webhook_verified_at") or missing_events:
+            suffix = f" (missing events: {', '.join(missing_events)})" if missing_events else ""
+            raise ValueError("binding activation requires authenticated issue/comment webhook evidence" + suffix)
+        if not binding.get("projection_verified_at"):
+            raise ValueError("binding activation requires a successful projection evidence")
+        if not binding.get("reconciliation_verified_at"):
+            raise ValueError("binding activation requires a successful reconciliation evidence")
+
+    async def record_pm_binding_evidence(
+        self,
+        binding_id: UUID,
+        *,
+        webhook_event: str | None = None,
+        webhook_verified: bool = False,
+        projection_verified: bool = False,
+        reconciliation_verified: bool = False,
+        activation_blockers: list[str] | None = None,
+        provisioning_state: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Record monotonic activation evidence without granting activation."""
+        now = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            current = (
+                await conn.execute(
+                    t.pm_project_bindings.select().where(t.pm_project_bindings.c.id == binding_id).with_for_update()
+                )
+            ).mappings().first()
+            if current is None:
+                return None
+            events = {str(item).lower() for item in (current.get("webhook_events") or []) if item}
+            if webhook_event:
+                events.add(str(webhook_event).lower())
+            values: dict[str, Any] = {"webhook_events": sorted(events), "updated_at": now}
+            if webhook_verified:
+                values["webhook_verified_at"] = current.get("webhook_verified_at") or now
+                if {"issue", "comment"}.issubset(events) and activation_blockers is None:
+                    # The persisted manual-action blocker is cleared only by
+                    # two authenticated, in-scope event classes.  A caller
+                    # cannot clear it by submitting metadata alone.
+                    values["activation_blockers"] = []
+                    if str(current.get("provisioning_state") or "") == "WAITING_MANUAL_WEBHOOK":
+                        values["provisioning_state"] = "WEBHOOK_VERIFIED"
+            if projection_verified:
+                values["projection_verified_at"] = current.get("projection_verified_at") or now
+                if str(current.get("provisioning_state") or "") in {"WEBHOOK_VERIFIED", "PROVISIONED"}:
+                    values["provisioning_state"] = "PROJECTED"
+            if reconciliation_verified:
+                values["reconciliation_verified_at"] = current.get("reconciliation_verified_at") or now
+                if str(current.get("provisioning_state") or "") in {"PROJECTED", "WEBHOOK_VERIFIED", "PROVISIONED"}:
+                    values["provisioning_state"] = "VERIFIED"
+            if activation_blockers is not None:
+                values["activation_blockers"] = list(activation_blockers)
+            if provisioning_state is not None:
+                values["provisioning_state"] = provisioning_state
+            await conn.execute(
+                t.pm_project_bindings.update()
+                .where(t.pm_project_bindings.c.id == binding_id)
+                .values(**values)
+            )
+        async with self.engine.connect() as conn:
+            row = (
+                await conn.execute(t.pm_project_bindings.select().where(t.pm_project_bindings.c.id == binding_id))
+            ).mappings().first()
+        return dict(row) if row else None
+
+    async def upsert_pm_mapping(
+        self,
+        *,
+        connection_id: UUID,
+        object_type: str,
+        aiat_object_id: UUID,
+        external_id: str,
+        external_key: str | None = None,
+        provider_version: str | None = None,
+        content_hash: str | None = None,
+        imported_revision: int | None = None,
+        exported_revision: int | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        now = datetime.now(tz=UTC)
+        values = {
+            "id": uuid4(),
+            "connection_id": connection_id,
+            "object_type": object_type,
+            "aiat_object_id": aiat_object_id,
+            "external_id": external_id,
+            "external_key": external_key,
+            "provider_version": provider_version,
+            "content_hash": content_hash,
+            "last_import_revision": imported_revision,
+            "last_export_revision": exported_revision,
+            "last_imported_at": now if imported_revision is not None else None,
+            "last_exported_at": now if exported_revision is not None else None,
+            "metadata": metadata or {},
+            "created_at": now,
+            "updated_at": now,
+        }
+        async with self.engine.begin() as conn:
+            existing_external = await self._mapping_first(
+                await conn.execute(
+                    t.pm_object_mappings.select()
+                    .where(t.pm_object_mappings.c.connection_id == connection_id)
+                    .where(t.pm_object_mappings.c.object_type == object_type)
+                    .where(t.pm_object_mappings.c.external_id == external_id)
+                    .where(t.pm_object_mappings.c.aiat_object_id != aiat_object_id)
+                )
+            )
+            if existing_external is not None:
+                raise ValueError(
+                    f"PM mapping conflict: external object {external_id!r} is already mapped"
+                )
+            # Do not overwrite metadata owned by the opposite synchronization
+            # direction with ``None``.  An outbound projection normally only
+            # knows export state; an inbound event normally only knows import
+            # state.  Preserve the other side's revision/hash/version history.
+            update_values: dict[str, Any] = {"updated_at": now}
+            if external_key is not None:
+                update_values["external_key"] = external_key
+            if provider_version is not None:
+                update_values["provider_version"] = provider_version
+            if content_hash is not None:
+                update_values["content_hash"] = content_hash
+            if imported_revision is not None:
+                update_values["last_import_revision"] = imported_revision
+                update_values["last_imported_at"] = now
+            if exported_revision is not None:
+                update_values["last_export_revision"] = exported_revision
+                update_values["last_exported_at"] = now
+            if metadata is not None:
+                update_values["metadata"] = metadata
+            stmt = pg_insert(t.pm_object_mappings).values(**values).on_conflict_do_update(
+                constraint="uq_pm_mapping_aiat",
+                set_=update_values,
+            ).returning(t.pm_object_mappings)
+            row = (await conn.execute(stmt)).mappings().first()
+        return dict(row) if row else values
+
+    async def create_pm_inbox_event(
+        self,
+        *,
+        connection_id: UUID,
+        provider_delivery_id: str,
+        event_type: str,
+        payload: dict[str, Any],
+        verified: bool,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+        raw_body: bytes | None = None,
+        headers: dict[str, str] | None = None,
+        payload_hash: str | None = None,
+        normalized_type: str | None = None,
+        result: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], bool]:
+        if raw_body is not None and len(raw_body) > _PM_RAW_BODY_MAX_BYTES:
+            raise ValueError("provider webhook body exceeds 1 MiB retention limit")
+        computed_hash = hashlib.sha256(
+            raw_body
+            if raw_body is not None
+            else json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        values = {
+            "id": uuid4(),
+            "connection_id": connection_id,
+            "provider_delivery_id": provider_delivery_id,
+            "event_type": event_type,
+            "payload": payload,
+            "raw_body": raw_body,
+            "headers": self._pm_json_safe(headers or {}),
+            "payload_hash": payload_hash or computed_hash,
+            "verified": verified,
+            "normalized_type": normalized_type,
+            "result": self._pm_json_safe(result) if result is not None else None,
+            "correlation_id": correlation_id,
+            "causation_id": causation_id,
+            "received_at": datetime.now(tz=UTC),
+        }
+        async with self.engine.begin() as conn:
+            stmt = (
+                pg_insert(t.pm_inbox_events)
+                .values(**values)
+                .on_conflict_do_nothing(constraint="uq_pm_inbox_delivery")
+                .returning(t.pm_inbox_events)
+            )
+            row = (await conn.execute(stmt)).mappings().first()
+        if row:
+            return dict(row), True
+        async with self.engine.connect() as conn:
+            existing = (
+                await conn.execute(
+                    t.pm_inbox_events.select()
+                    .where(t.pm_inbox_events.c.connection_id == connection_id)
+                    .where(t.pm_inbox_events.c.provider_delivery_id == provider_delivery_id)
+                )
+            ).mappings().first()
+        return (dict(existing) if existing else values), False
+
+    async def enqueue_pm_outbox(
+        self,
+        *,
+        connection_id: UUID,
+        aggregate_type: str,
+        aggregate_id: UUID,
+        canonical_revision: int,
+        operation: str,
+        idempotency_key: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        values = {
+            "id": uuid4(),
+            "connection_id": connection_id,
+            "aggregate_type": aggregate_type,
+            "aggregate_id": aggregate_id,
+            "canonical_revision": canonical_revision,
+            "operation": operation,
+            "idempotency_key": idempotency_key,
+            "payload": payload,
+            "created_at": datetime.now(tz=UTC),
+        }
+        async with self.engine.begin() as conn:
+            stmt = (
+                pg_insert(t.pm_outbox_events)
+                .values(**values)
+                .on_conflict_do_nothing(index_elements=[t.pm_outbox_events.c.idempotency_key])
+                .returning(t.pm_outbox_events)
+            )
+            row = (await conn.execute(stmt)).mappings().first()
+        return dict(row) if row else values
+
+    async def list_pm_outbox(
+        self, *, connection_id: UUID | None = None, status: str = "PENDING", limit: int = 100
+    ) -> list[dict[str, Any]]:
+        if status == "PENDING":
+            await self.recover_stale_pm_outbox()
+        query = (
+            t.pm_outbox_events.select()
+            .where(t.pm_outbox_events.c.status == status)
+            .where(
+                sa.or_(
+                    t.pm_outbox_events.c.next_attempt_at.is_(None),
+                    t.pm_outbox_events.c.next_attempt_at <= datetime.now(tz=UTC),
+                )
+            )
+            .order_by(t.pm_outbox_events.c.created_at)
+            .limit(limit)
+        )
+        if connection_id is not None:
+            query = query.where(t.pm_outbox_events.c.connection_id == connection_id)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def list_pm_outbox_dispositions(
+        self, *, connection_id: UUID | None = None, limit: int = 1000
+    ) -> list[dict[str, Any]]:
+        query = t.pm_outbox_dispositions.select().order_by(t.pm_outbox_dispositions.c.created_at.desc()).limit(limit)
+        if connection_id is not None:
+            query = query.where(t.pm_outbox_dispositions.c.connection_id == connection_id)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def get_pm_outbox_dead_letter_counts(
+        self, *, connection_id: UUID
+    ) -> dict[str, int]:
+        """Return exhaustive active and historical dead-letter counts.
+
+        The lifecycle gate must not infer safety from capped API pages.  This
+        anti-join counts the entire connection-scoped terminal set in the
+        database, where a disposition is guaranteed to be unique per outbox
+        event.
+        """
+        outbox = t.pm_outbox_events
+        dispositions = t.pm_outbox_dispositions
+        statement = (
+            sa.select(
+                sa.func.count(outbox.c.id).label("total"),
+                sa.func.count(outbox.c.id)
+                .filter(dispositions.c.outbox_id.is_(None))
+                .label("active"),
+            )
+            .select_from(
+                outbox.outerjoin(
+                    dispositions,
+                    dispositions.c.outbox_id == outbox.c.id,
+                )
+            )
+            .where(
+                outbox.c.connection_id == connection_id,
+                outbox.c.status == "DEAD_LETTER",
+            )
+        )
+        async with self.engine.connect() as conn:
+            row = (await conn.execute(statement)).mappings().one()
+        total = int(row.get("total") or 0)
+        active = int(row.get("active") or 0)
+        return {"active": active, "historical": total - active, "total": total}
+
+    async def dispose_pm_outbox_dead_letter(
+        self,
+        outbox_id: UUID,
+        *,
+        disposition: str,
+        reason: str,
+        provider_state: dict[str, Any],
+        actor: str,
+    ) -> dict[str, Any]:
+        """Persist a governed, immutable disposition without rewriting forensics."""
+        if disposition not in {"RESOLVED", "SUPERSEDED"}:
+            raise ValueError("invalid PM outbox disposition")
+        now = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            outbox = (await conn.execute(
+                t.pm_outbox_events.select().where(t.pm_outbox_events.c.id == outbox_id).with_for_update()
+            )).mappings().first()
+            if outbox is None:
+                raise ValueError("PM outbox event not found")
+            if str(outbox["status"]) != "DEAD_LETTER":
+                raise ValueError("only terminal DEAD_LETTER events may be dispositioned")
+            existing = (await conn.execute(
+                t.pm_outbox_dispositions.select().where(t.pm_outbox_dispositions.c.outbox_id == outbox_id)
+            )).mappings().first()
+            if existing is not None:
+                return {"disposition": dict(existing), "evidence_id": str(existing["evidence_id"])}
+            payload = outbox.get("payload") or {}
+            binding_id = payload.get("binding_id")
+            item = payload.get("item") or {}
+            project_id = item.get("project_id")
+            evidence = {
+                "id": uuid4(),
+                "connection_id": outbox["connection_id"],
+                "binding_id": binding_id,
+                "project_id": project_id,
+                "evidence_type": "pm_outbox_disposition",
+                "external_id": str(outbox_id),
+                "repository": None,
+                "payload": self._pm_json_safe({
+                    "outbox_id": str(outbox_id), "disposition": disposition,
+                    "reason": reason, "actor": actor, "provider_state": provider_state,
+                    "occurred_at": now.isoformat(),
+                }),
+                "idempotency_key": f"pm-outbox-disposition:{outbox_id}:{disposition}",
+                "created_at": now,
+            }
+            await conn.execute(t.integration_evidence_records.insert().values(**evidence))
+            row = {
+                "id": uuid4(), "outbox_id": outbox_id, "connection_id": outbox["connection_id"],
+                "binding_id": binding_id, "disposition": disposition, "reason": reason,
+                "actor": actor, "provider_state": self._pm_json_safe(provider_state),
+                "evidence_id": evidence["id"], "created_at": now,
+            }
+            await conn.execute(t.pm_outbox_dispositions.insert().values(**row))
+        return {"disposition": row, "evidence_id": str(evidence["id"])}
+
+    async def recover_stale_pm_outbox(self, *, lease_seconds: int = 300) -> int:
+        """Return abandoned PROCESSING deliveries to the retry queue.
+
+        A gateway crash after claiming an event must not strand it forever.
+        The lease is deliberately bounded and the provider call remains
+        idempotency-keyed, so replay after an uncertain crash window is safe.
+        """
+        cutoff = datetime.now(tz=UTC) - timedelta(seconds=max(30, lease_seconds))
+        async with self.engine.begin() as conn:
+            result = await conn.execute(
+                t.pm_outbox_events.update()
+                .where(t.pm_outbox_events.c.status == "PROCESSING")
+                .where(t.pm_outbox_events.c.claimed_at <= cutoff)
+                .values(status="PENDING", claimed_at=None, next_attempt_at=datetime.now(tz=UTC))
+            )
+        return int(result.rowcount or 0)
+
+    async def claim_pm_outbox(self, outbox_id: UUID) -> dict[str, Any] | None:
+        """Claim one pending delivery so two drainers cannot send it twice."""
+        async with self.engine.begin() as conn:
+            row = (
+                await conn.execute(
+                    t.pm_outbox_events.select()
+                    .where(t.pm_outbox_events.c.id == outbox_id)
+                    .where(t.pm_outbox_events.c.status == "PENDING")
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if row is None:
+                return None
+            now = datetime.now(tz=UTC)
+            await conn.execute(
+                t.pm_outbox_events.update()
+                .where(t.pm_outbox_events.c.id == outbox_id)
+                .values(status="PROCESSING", claimed_at=now)
+            )
+            claimed = dict(row)
+            claimed["status"] = "PROCESSING"
+            claimed["claimed_at"] = now
+            return claimed
+
+    async def record_pm_delivery_attempt(
+        self,
+        outbox_id: UUID,
+        *,
+        status: str,
+        provider_status: int | None = None,
+        response_metadata: dict[str, Any] | None = None,
+        error: str | None = None,
+        retry_after_seconds: int | None = None,
+    ) -> dict[str, Any] | None:
+        """Append an attempt ledger row and schedule bounded exponential retry."""
+        now = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            row = (
+                await conn.execute(
+                    t.pm_outbox_events.select().where(t.pm_outbox_events.c.id == outbox_id).with_for_update()
+                )
+            ).mappings().first()
+            if row is None:
+                return None
+            attempt = int(row.get("attempts") or 0) + 1
+            delay = (
+                retry_after_seconds
+                if retry_after_seconds is not None
+                else max(1, int(min(3600, (2 ** min(attempt, 10)) * random.uniform(0.8, 1.2))))
+            )
+            await conn.execute(
+                t.pm_delivery_attempts.insert().values(
+                    outbox_id=outbox_id,
+                    attempt=attempt,
+                    status=status,
+                    provider_status=provider_status,
+                    response_metadata=response_metadata or {},
+                    error=error,
+                    attempted_at=now,
+                )
+            )
+            await conn.execute(
+                t.pm_outbox_events.update()
+                .where(t.pm_outbox_events.c.id == outbox_id)
+                .values(
+                    attempts=attempt,
+                    next_attempt_at=now + timedelta(seconds=delay),
+                    last_error=error,
+                    status="PENDING" if status in {"FAILED", "RETRYING"} else row["status"],
+                    claimed_at=None if status in {"FAILED", "RETRYING"} else row.get("claimed_at"),
+                )
+            )
+        # The caller owns the terminal transition (SYNCED, PENDING, or
+        # DEAD_LETTER).  Returning the updated row here must not accidentally
+        # re-claim a failed delivery as PROCESSING.
+        async with self.engine.connect() as conn:
+            updated = (
+                await conn.execute(
+                    t.pm_outbox_events.select().where(t.pm_outbox_events.c.id == outbox_id)
+                )
+            ).mappings().first()
+        return dict(updated) if updated else None
+
+    async def mark_pm_outbox(
+        self, outbox_id: UUID, *, status: str, error: str | None = None
+    ) -> dict[str, Any] | None:
+        values: dict[str, Any] = {"status": status, "last_error": error}
+        if status in {"SYNCED", "FAILED", "DEAD_LETTER"}:
+            values["processed_at"] = datetime.now(tz=UTC)
+        if status != "PROCESSING":
+            values["claimed_at"] = None
+        async with self.engine.begin() as conn:
+            await conn.execute(
+                t.pm_outbox_events.update().where(t.pm_outbox_events.c.id == outbox_id).values(**values)
+            )
+        async with self.engine.connect() as conn:
+            row = (await conn.execute(t.pm_outbox_events.select().where(t.pm_outbox_events.c.id == outbox_id))).mappings().first()
+        return dict(row) if row else None
+
+    async def create_pm_conflict(
+        self,
+        *,
+        connection_id: UUID,
+        reason: str,
+        object_type: str,
+        aiat_object_id: UUID | None = None,
+        external_id: str | None = None,
+        binding_id: UUID | None = None,
+        canonical_snapshot: dict[str, Any] | None = None,
+        external_snapshot: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        values = {
+            "id": uuid4(),
+            "connection_id": connection_id,
+            "binding_id": binding_id,
+            "object_type": object_type,
+            "aiat_object_id": aiat_object_id,
+            "external_id": external_id,
+            "reason": reason,
+            # JSONB cannot encode UUID/datetime objects that come directly
+            # from canonical storage rows or normalized provider DTOs.  Keep
+            # conflict recording a durable failure boundary instead of
+            # turning an otherwise valid webhook into a 500 response.
+            "canonical_snapshot": self._pm_json_safe(canonical_snapshot) if canonical_snapshot is not None else None,
+            "external_snapshot": self._pm_json_safe(external_snapshot) if external_snapshot is not None else None,
+            "created_at": datetime.now(tz=UTC),
+        }
+        async with self.engine.begin() as conn:
+            await conn.execute(t.pm_conflicts.insert().values(**values))
+        return values
+
+    async def list_pm_conflicts(
+        self, *, connection_id: UUID | None = None, status: str | None = "OPEN", limit: int = 100
+    ) -> list[dict[str, Any]]:
+        query = t.pm_conflicts.select().order_by(t.pm_conflicts.c.created_at.desc()).limit(limit)
+        if status is not None:
+            query = query.where(t.pm_conflicts.c.status == status)
+        if connection_id is not None:
+            query = query.where(t.pm_conflicts.c.connection_id == connection_id)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def resolve_pm_conflict(
+        self,
+        conflict_id: UUID,
+        *,
+        resolution: dict[str, Any],
+        status: str = "RESOLVED",
+    ) -> dict[str, Any] | None:
+        """Record an operator decision without deleting forensic snapshots."""
+        if status not in {"RESOLVED", "IGNORED", "REOPENED"}:
+            raise ValueError("invalid PM conflict resolution status")
+        values: dict[str, Any] = {"status": status, "resolution": resolution}
+        values["resolved_at"] = None if status == "REOPENED" else datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            result = await conn.execute(
+                t.pm_conflicts.update()
+                .where(t.pm_conflicts.c.id == conflict_id)
+                .values(**values)
+            )
+            if result.rowcount == 0:
+                return None
+        async with self.engine.connect() as conn:
+            row = (
+                await conn.execute(t.pm_conflicts.select().where(t.pm_conflicts.c.id == conflict_id))
+            ).mappings().first()
+        return dict(row) if row else None
+
+    async def cutover_pm_binding(self, project_id: UUID, binding_id: UUID) -> dict[str, Any] | None:
+        """Atomically promote one inbound binding and drain its predecessor."""
+        now = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            target = (
+                await conn.execute(
+                    t.pm_project_bindings.select()
+                    .where(t.pm_project_bindings.c.id == binding_id)
+                    .where(t.pm_project_bindings.c.project_id == project_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if target is None:
+                return None
+            if target["direction"] not in {"inbound", "both"}:
+                raise ValueError("only inbound or bidirectional bindings can be cut over")
+            target_connection = (
+                await conn.execute(
+                    t.pm_connections.select().where(t.pm_connections.c.id == target["connection_id"])
+                )
+            ).mappings().first()
+            # Cutover promotes the target connection in the same transaction;
+            # validate all binding evidence against that intended ACTIVE
+            # state before committing either side of the transition.
+            gate_connection = dict(target_connection or {})
+            if gate_connection.get("status") in {"SHADOW", "READ_ONLY"}:
+                gate_connection["status"] = "ACTIVE"
+            self._assert_pm_binding_activation_ready(target, gate_connection)
+            prior_bindings = (
+                await conn.execute(
+                    t.pm_project_bindings.select()
+                    .where(t.pm_project_bindings.c.project_id == project_id)
+                    .where(t.pm_project_bindings.c.direction.in_(["inbound", "both"]))
+                    .where(t.pm_project_bindings.c.status == "ACTIVE")
+                    .where(t.pm_project_bindings.c.id != binding_id)
+                )
+            ).mappings().all()
+            await conn.execute(
+                t.pm_project_bindings.update()
+                .where(t.pm_project_bindings.c.project_id == project_id)
+                .where(t.pm_project_bindings.c.direction.in_(["inbound", "both"]))
+                .where(t.pm_project_bindings.c.status == "ACTIVE")
+                .where(t.pm_project_bindings.c.id != binding_id)
+                .values(
+                    status="DRAINING",
+                    revision=t.pm_project_bindings.c.revision + 1,
+                    updated_at=now,
+                )
+            )
+            await conn.execute(
+                t.pm_project_bindings.update()
+                .where(t.pm_project_bindings.c.id == binding_id)
+                .values(
+                    status="ACTIVE",
+                    revision=t.pm_project_bindings.c.revision + 1,
+                    updated_at=now,
+                )
+            )
+            await conn.execute(
+                t.pm_connections.update()
+                .where(t.pm_connections.c.id == target["connection_id"])
+                .values(
+                    status="ACTIVE",
+                    revision=t.pm_connections.c.revision + 1,
+                    updated_at=now,
+                )
+            )
+            prior_connection_ids = [row["connection_id"] for row in prior_bindings if row["connection_id"] != target["connection_id"]]
+            if prior_connection_ids:
+                await conn.execute(
+                    t.pm_connections.update()
+                    .where(t.pm_connections.c.id.in_(prior_connection_ids))
+                    .values(
+                        status="DRAINING",
+                        revision=t.pm_connections.c.revision + 1,
+                        updated_at=now,
+                    )
+                )
+        return await self.get_pm_connection(target["connection_id"])
+
+    async def create_pm_reconciliation_run(
+        self,
+        *,
+        connection_id: UUID,
+        binding_id: UUID | None = None,
+        mode: str = "audit",
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        values = {
+            "id": uuid4(),
+            "connection_id": connection_id,
+            "binding_id": binding_id,
+            "mode": mode,
+            "status": "RUNNING",
+            "cursor": cursor,
+            "counts": {},
+            "started_at": datetime.now(tz=UTC),
+        }
+        async with self.engine.begin() as conn:
+            await conn.execute(t.pm_reconciliation_runs.insert().values(**values))
+        return values
+
+    async def finish_pm_reconciliation_run(
+        self,
+        run_id: UUID,
+        *,
+        status: str,
+        counts: dict[str, Any],
+        next_cursor: str | None = None,
+        error: str | None = None,
+    ) -> dict[str, Any] | None:
+        values = {
+            "status": status,
+            "counts": counts,
+            "next_cursor": next_cursor,
+            "error": error,
+            "completed_at": datetime.now(tz=UTC),
+        }
+        async with self.engine.begin() as conn:
+            result = await conn.execute(
+                t.pm_reconciliation_runs.update().where(t.pm_reconciliation_runs.c.id == run_id).values(**values)
+            )
+            if result.rowcount == 0:
+                return None
+        async with self.engine.connect() as conn:
+            row = (
+                await conn.execute(t.pm_reconciliation_runs.select().where(t.pm_reconciliation_runs.c.id == run_id))
+            ).mappings().first()
+        return dict(row) if row else None
+
+    async def list_pm_reconciliation_runs(
+        self,
+        *,
+        connection_id: UUID | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        query = t.pm_reconciliation_runs.select().order_by(t.pm_reconciliation_runs.c.started_at.desc()).limit(limit)
+        if connection_id is not None:
+            query = query.where(t.pm_reconciliation_runs.c.connection_id == connection_id)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def create_pm_cutover(
+        self,
+        *,
+        project_id: UUID,
+        from_binding_id: UUID | None,
+        to_binding_id: UUID,
+        confirmation: dict[str, Any],
+    ) -> dict[str, Any]:
+        values = {
+            "id": uuid4(),
+            "project_id": project_id,
+            "from_binding_id": from_binding_id,
+            "to_binding_id": to_binding_id,
+            "status": "RUNNING",
+            "confirmation": confirmation,
+            "rollback_ready": True,
+            "created_at": datetime.now(tz=UTC),
+        }
+        async with self.engine.begin() as conn:
+            await conn.execute(t.pm_cutovers.insert().values(**values))
+        return values
+
+    async def finish_pm_cutover(
+        self,
+        cutover_id: UUID,
+        *,
+        status: str,
+        error: str | None = None,
+    ) -> dict[str, Any] | None:
+        values = {"status": status, "error": error, "completed_at": datetime.now(tz=UTC)}
+        async with self.engine.begin() as conn:
+            result = await conn.execute(
+                t.pm_cutovers.update().where(t.pm_cutovers.c.id == cutover_id).values(**values)
+            )
+            if result.rowcount == 0:
+                return None
+        async with self.engine.connect() as conn:
+            row = (
+                await conn.execute(t.pm_cutovers.select().where(t.pm_cutovers.c.id == cutover_id))
+            ).mappings().first()
+        return dict(row) if row else None
+
+    async def list_pm_cutovers(self, *, project_id: UUID | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        query = t.pm_cutovers.select().order_by(t.pm_cutovers.c.created_at.desc()).limit(limit)
+        if project_id is not None:
+            query = query.where(t.pm_cutovers.c.project_id == project_id)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def create_pm_lifecycle_plan(
+        self,
+        plan: Any,
+        *,
+        digest: str,
+    ) -> dict[str, Any]:
+        """Persist one immutable lifecycle plan and supersede older previews."""
+        from mas_core.integrations.contracts import LifecyclePlanError
+
+        if plan.digest() != digest:
+            raise LifecyclePlanError("digest_mismatch", "lifecycle plan digest does not match its canonical payload")
+        values = {
+            "id": plan.plan_id,
+            "plan_kind": plan.plan_kind,
+            "schema_version": plan.schema_version,
+            "target_type": plan.target_type,
+            "target_id": plan.target_id,
+            "connection_id": plan.connection_id,
+            "binding_id": plan.binding_id,
+            "expected_connection_status": plan.expected_connection_status,
+            "expected_binding_status": plan.expected_binding_status,
+            "expected_connection_revision": plan.expected_connection_revision,
+            "expected_binding_revision": plan.expected_binding_revision,
+            "desired_connection_status": plan.desired_connection_status,
+            "desired_binding_status": plan.desired_binding_status,
+            "observed_versions": self._pm_json_safe(plan.observed_versions),
+            "operations": self._pm_json_safe(plan.operations),
+            "gate_results": self._pm_json_safe(plan.gate_results),
+            "evidence_refs": self._pm_json_safe(plan.evidence_refs),
+            "blockers": self._pm_json_safe(plan.blockers),
+            "rollback_operations": self._pm_json_safe(plan.rollback_operations),
+            "created_by": plan.created_by,
+            "created_at": plan.created_at,
+            "expires_at": plan.expires_at,
+            "digest": digest,
+            "status": "PLANNED",
+            "updated_at": plan.created_at,
+        }
+        async with self.engine.begin() as conn:
+            await conn.execute(
+                t.pm_lifecycle_plans.update()
+                .where(t.pm_lifecycle_plans.c.target_type == plan.target_type)
+                .where(t.pm_lifecycle_plans.c.target_id == plan.target_id)
+                .where(t.pm_lifecycle_plans.c.status.in_(["PLANNED", "APPROVED"]))
+                .values(status="SUPERSEDED", error="superseded by a newer lifecycle plan", updated_at=plan.created_at)
+            )
+            try:
+                await conn.execute(t.pm_lifecycle_plans.insert().values(**values))
+            except Exception as exc:
+                # Do not expose database details or accidentally return a
+                # second plan when a UUID/digest was already persisted.
+                raise LifecyclePlanError("persistence_failed", "could not persist lifecycle plan") from exc
+        return values
+
+    async def get_pm_lifecycle_plan(self, plan_id: UUID) -> dict[str, Any] | None:
+        async with self.engine.connect() as conn:
+            row = (
+                await conn.execute(t.pm_lifecycle_plans.select().where(t.pm_lifecycle_plans.c.id == plan_id))
+            ).mappings().first()
+        return dict(row) if row else None
+
+    async def list_pm_lifecycle_plans(
+        self,
+        *,
+        connection_id: UUID | None = None,
+        target_id: UUID | None = None,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        query = t.pm_lifecycle_plans.select().order_by(t.pm_lifecycle_plans.c.created_at.desc()).limit(limit)
+        if connection_id is not None:
+            query = query.where(t.pm_lifecycle_plans.c.connection_id == connection_id)
+        if target_id is not None:
+            query = query.where(t.pm_lifecycle_plans.c.target_id == target_id)
+        if status is not None:
+            query = query.where(t.pm_lifecycle_plans.c.status == status)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def approve_pm_lifecycle_plan(
+        self,
+        plan_id: UUID,
+        *,
+        digest: str,
+        actor: str,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        from mas_core.integrations.contracts import LifecyclePlanError
+
+        now = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            row = (
+                await conn.execute(
+                    t.pm_lifecycle_plans.select().where(t.pm_lifecycle_plans.c.id == plan_id).with_for_update()
+                )
+            ).mappings().first()
+            if row is None:
+                raise LifecyclePlanError("missing_plan", "lifecycle plan was not found")
+            current = dict(row)
+            if str(current.get("digest")) != digest:
+                raise LifecyclePlanError("digest_mismatch", "lifecycle plan digest does not match the persisted plan")
+            if current.get("status") == "APPROVED":
+                return current
+            if current.get("status") != "PLANNED":
+                raise LifecyclePlanError("invalid_status", f"lifecycle plan is {current.get('status')}, not PLANNED")
+            if current.get("expires_at") and current["expires_at"] <= now:
+                await conn.execute(
+                    t.pm_lifecycle_plans.update()
+                    .where(t.pm_lifecycle_plans.c.id == plan_id)
+                    .values(status="EXPIRED", error="lifecycle plan expired before approval", updated_at=now)
+                )
+                raise LifecyclePlanError("expired_plan", "lifecycle plan has expired")
+
+            binding = None
+            if current.get("binding_id") is not None:
+                binding = (
+                    await conn.execute(
+                        t.pm_project_bindings.select()
+                        .where(t.pm_project_bindings.c.id == current["binding_id"])
+                    )
+                ).mappings().first()
+
+            # Approval is itself an immutable governed transition.  Keep the
+            # evidence and lifecycle history in this transaction with the
+            # APPROVED state so an evidence write failure cannot authorize a
+            # plan without a durable approval record.
+            transaction_id = str(uuid4())
+            approval_evidence_id = uuid4()
+            approval_evidence = {
+                "id": approval_evidence_id,
+                "connection_id": current["connection_id"],
+                "binding_id": current.get("binding_id"),
+                "project_id": binding.get("project_id") if binding is not None else None,
+                "evidence_type": "pm_lifecycle_approval",
+                "external_id": str(plan_id),
+                "repository": None,
+                "payload": self._pm_json_safe(
+                    {
+                        "plan_id": str(plan_id),
+                        "digest": digest,
+                        "plan_kind": current.get("plan_kind"),
+                        "target_type": current.get("target_type"),
+                        "target_id": str(current.get("target_id")),
+                        "expected_connection_status": current.get("expected_connection_status"),
+                        "expected_binding_status": current.get("expected_binding_status"),
+                        "desired_connection_status": current.get("desired_connection_status"),
+                        "desired_binding_status": current.get("desired_binding_status"),
+                        "actor": actor,
+                        "reason": reason,
+                    }
+                ),
+                "idempotency_key": f"pm-lifecycle:approval:{plan_id}:{digest}",
+                "created_at": now,
+            }
+            evidence_stmt = (
+                pg_insert(t.integration_evidence_records)
+                .values(**approval_evidence)
+                .on_conflict_do_nothing(constraint="uq_integration_evidence_idempotency")
+                .returning(t.integration_evidence_records)
+            )
+            evidence_row = await self._mapping_first(await conn.execute(evidence_stmt))
+            if evidence_row is None:
+                evidence_row = (
+                    await conn.execute(
+                        t.integration_evidence_records.select().where(
+                            t.integration_evidence_records.c.idempotency_key
+                            == approval_evidence["idempotency_key"]
+                        )
+                    )
+                ).mappings().first()
+            if evidence_row is None:
+                raise LifecyclePlanError("approval_evidence_failed", "could not persist lifecycle approval evidence")
+
+            before_state = {
+                "plan_status": "PLANNED",
+                "connection_status": current.get("expected_connection_status"),
+                "binding_status": current.get("expected_binding_status"),
+            }
+            after_state = {**before_state, "plan_status": "APPROVED"}
+            await conn.execute(
+                t.pm_lifecycle_audits.insert().values(
+                    id=uuid4(),
+                    plan_id=plan_id,
+                    connection_id=current["connection_id"],
+                    binding_id=current.get("binding_id"),
+                    action="APPROVE",
+                    before_state=self._pm_json_safe(before_state),
+                    after_state=self._pm_json_safe(after_state),
+                    actor=actor,
+                    approval_reference=self._pm_json_safe(
+                        {
+                            "plan_id": str(plan_id),
+                            "digest": digest,
+                            "approval_actor": actor,
+                            "approval_reason": reason,
+                        }
+                    ),
+                    evidence_refs={"approval_evidence_id": str(evidence_row["id"])},
+                    transaction_id=transaction_id,
+                    rollback_operations=self._pm_json_safe(current.get("rollback_operations") or []),
+                    occurred_at=now,
+                )
+            )
+            await conn.execute(
+                t.pm_lifecycle_plans.update()
+                .where(t.pm_lifecycle_plans.c.id == plan_id)
+                .values(
+                    status="APPROVED",
+                    approval_actor=actor,
+                    approved_at=now,
+                    approval_reason=reason,
+                    updated_at=now,
+                    error=None,
+                )
+            )
+        refreshed = await self.get_pm_lifecycle_plan(plan_id)
+        if refreshed is None:
+            raise LifecyclePlanError("missing_plan", "lifecycle plan disappeared after approval")
+        return refreshed
+
+    async def reject_pm_lifecycle_plan(
+        self,
+        plan_id: UUID,
+        *,
+        digest: str,
+        actor: str,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        from mas_core.integrations.contracts import LifecyclePlanError
+
+        now = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            row = (
+                await conn.execute(
+                    t.pm_lifecycle_plans.select().where(t.pm_lifecycle_plans.c.id == plan_id).with_for_update()
+                )
+            ).mappings().first()
+            if row is None:
+                raise LifecyclePlanError("missing_plan", "lifecycle plan was not found")
+            current = dict(row)
+            if str(current.get("digest")) != digest:
+                raise LifecyclePlanError("digest_mismatch", "lifecycle plan digest does not match the persisted plan")
+            if current.get("status") == "REJECTED":
+                return current
+            if current.get("status") not in {"PLANNED", "APPROVED"}:
+                raise LifecyclePlanError("invalid_status", f"lifecycle plan is {current.get('status')} and cannot be rejected")
+            if current.get("expires_at") and current["expires_at"] <= now:
+                await conn.execute(
+                    t.pm_lifecycle_plans.update()
+                    .where(t.pm_lifecycle_plans.c.id == plan_id)
+                    .values(status="EXPIRED", error="lifecycle plan expired before rejection", updated_at=now)
+                )
+                raise LifecyclePlanError("expired_plan", "lifecycle plan has expired")
+            await conn.execute(
+                t.pm_lifecycle_plans.update()
+                .where(t.pm_lifecycle_plans.c.id == plan_id)
+                .values(
+                    status="REJECTED",
+                    approval_actor=actor,
+                    approved_at=now,
+                    approval_reason=reason or "rejected by operator",
+                    updated_at=now,
+                )
+            )
+        refreshed = await self.get_pm_lifecycle_plan(plan_id)
+        if refreshed is None:
+            raise LifecyclePlanError("missing_plan", "lifecycle plan disappeared after rejection")
+        return refreshed
+
+    async def apply_pm_lifecycle_plan(
+        self,
+        plan_id: UUID,
+        *,
+        digest: str,
+        actor: str,
+    ) -> dict[str, Any]:
+        """Apply an approved plan with row locks, CAS, and one audit insert."""
+        from mas_core.integrations.contracts import LifecyclePlanError
+
+        now = datetime.now(tz=UTC)
+        transaction_id = str(uuid4())
+        async with self.engine.begin() as conn:
+            row = (
+                await conn.execute(
+                    t.pm_lifecycle_plans.select().where(t.pm_lifecycle_plans.c.id == plan_id).with_for_update()
+                )
+            ).mappings().first()
+            if row is None:
+                raise LifecyclePlanError("missing_plan", "lifecycle plan was not found")
+            plan = dict(row)
+            if str(plan.get("digest")) != digest:
+                raise LifecyclePlanError("digest_mismatch", "lifecycle plan digest does not match the persisted plan")
+            if plan.get("status") == "APPLIED":
+                return {
+                    "status": "APPLIED",
+                    "plan": plan,
+                    "result": plan.get("application_result") or {},
+                    "idempotent": True,
+                }
+            if plan.get("status") != "APPROVED":
+                raise LifecyclePlanError("not_approved", "lifecycle plan must be APPROVED before apply")
+            if plan.get("expires_at") and plan["expires_at"] <= now:
+                await conn.execute(
+                    t.pm_lifecycle_plans.update()
+                    .where(t.pm_lifecycle_plans.c.id == plan_id)
+                    .values(status="EXPIRED", error="lifecycle plan expired before apply", updated_at=now)
+                )
+                raise LifecyclePlanError("expired_plan", "lifecycle plan has expired")
+
+            connection = (
+                await conn.execute(
+                    t.pm_connections.select().where(t.pm_connections.c.id == plan["connection_id"]).with_for_update()
+                )
+            ).mappings().first()
+            if connection is None:
+                raise LifecyclePlanError("stale_state", "target connection no longer exists")
+            binding = None
+            if plan.get("binding_id") is not None:
+                binding = (
+                    await conn.execute(
+                        t.pm_project_bindings.select()
+                        .where(t.pm_project_bindings.c.id == plan["binding_id"])
+                        .with_for_update()
+                    )
+                ).mappings().first()
+                if binding is None:
+                    raise LifecyclePlanError("stale_state", "target binding no longer exists")
+
+            stale_reasons: list[str] = []
+            if plan.get("expected_connection_status") is not None and connection["status"] != plan["expected_connection_status"]:
+                stale_reasons.append("connection state changed")
+            if plan.get("expected_connection_revision") is not None and int(connection.get("revision") or 1) != int(plan["expected_connection_revision"]):
+                stale_reasons.append("connection revision changed")
+            if binding is not None:
+                if plan.get("expected_binding_status") is not None and binding["status"] != plan["expected_binding_status"]:
+                    stale_reasons.append("binding state changed")
+                if plan.get("expected_binding_revision") is not None and int(binding.get("revision") or 1) != int(plan["expected_binding_revision"]):
+                    stale_reasons.append("binding revision changed")
+            if stale_reasons:
+                await conn.execute(
+                    t.pm_lifecycle_plans.update()
+                    .where(t.pm_lifecycle_plans.c.id == plan_id)
+                    .values(status="STALE", error="; ".join(stale_reasons), updated_at=now)
+                )
+                return {
+                    "status": "STALE",
+                    "plan": {**plan, "status": "STALE", "error": "; ".join(stale_reasons)},
+                    "result": {"code": "stale_state", "reasons": stale_reasons},
+                    "idempotent": False,
+                }
+
+            before_state = {
+                "connection_status": connection.get("status"),
+                "connection_revision": int(connection.get("revision") or 1),
+                "binding_status": binding.get("status") if binding is not None else None,
+                "binding_revision": int(binding.get("revision") or 1) if binding is not None else None,
+            }
+            if plan.get("target_type") == "pm_binding":
+                if (
+                    binding is None
+                    or plan.get("desired_binding_status") is None
+                    or plan.get("expected_binding_status") is None
+                    or plan.get("expected_binding_revision") is None
+                ):
+                    raise LifecyclePlanError(
+                        "invalid_plan",
+                        "binding lifecycle plan is missing its expected or desired state",
+                    )
+                if str(plan.get("desired_binding_status") or "").upper() == "ACTIVE":
+                    try:
+                        self._assert_pm_binding_activation_ready(
+                            {**dict(binding), "status": "ACTIVE"},
+                            connection,
+                        )
+                    except ValueError as exc:
+                        raise LifecyclePlanError("activation_not_ready", str(exc)) from exc
+                binding_update = await conn.execute(
+                    t.pm_project_bindings.update()
+                    .where(t.pm_project_bindings.c.id == binding["id"])
+                    .where(t.pm_project_bindings.c.status == plan.get("expected_binding_status"))
+                    .where(t.pm_project_bindings.c.revision == plan.get("expected_binding_revision"))
+                    .values(
+                        status=plan["desired_binding_status"],
+                        revision=t.pm_project_bindings.c.revision + 1,
+                        updated_at=now,
+                    )
+                )
+                if binding_update.rowcount != 1:
+                    raise LifecyclePlanError("stale_state", "target binding changed during compare-and-swap")
+                after_binding_status = plan["desired_binding_status"]
+                after_binding_revision = before_state["binding_revision"] + 1
+            elif plan.get("target_type") == "pm_connection":
+                if (
+                    plan.get("desired_connection_status") is None
+                    or plan.get("expected_connection_status") is None
+                    or plan.get("expected_connection_revision") is None
+                ):
+                    raise LifecyclePlanError(
+                        "invalid_plan",
+                        "connection lifecycle plan is missing its expected or desired state",
+                    )
+                connection_update = await conn.execute(
+                    t.pm_connections.update()
+                    .where(t.pm_connections.c.id == connection["id"])
+                    .where(t.pm_connections.c.status == plan.get("expected_connection_status"))
+                    .where(t.pm_connections.c.revision == plan.get("expected_connection_revision"))
+                    .values(
+                        status=plan["desired_connection_status"],
+                        revision=t.pm_connections.c.revision + 1,
+                        updated_at=now,
+                    )
+                )
+                if connection_update.rowcount != 1:
+                    raise LifecyclePlanError("stale_state", "target connection changed during compare-and-swap")
+                after_binding_status = before_state["binding_status"]
+                after_binding_revision = before_state["binding_revision"]
+            else:
+                raise LifecyclePlanError("invalid_plan", "unsupported lifecycle plan target type")
+
+            after_state = {
+                "connection_status": plan.get("desired_connection_status") or before_state["connection_status"],
+                "connection_revision": before_state["connection_revision"] + (1 if plan.get("target_type") == "pm_connection" else 0),
+                "binding_status": after_binding_status,
+                "binding_revision": after_binding_revision,
+            }
+            audit_id = uuid4()
+            application_result = {
+                "audit_id": str(audit_id),
+                "transaction_id": transaction_id,
+                "before_state": before_state,
+                "after_state": after_state,
+                "actor": actor,
+                "applied_at": now.isoformat(),
+                "rollback_operations": plan.get("rollback_operations") or [],
+            }
+            await conn.execute(
+                t.pm_lifecycle_audits.insert().values(
+                    id=audit_id,
+                    plan_id=plan_id,
+                    connection_id=plan["connection_id"],
+                    binding_id=plan.get("binding_id"),
+                    action=plan["plan_kind"],
+                    before_state=self._pm_json_safe(before_state),
+                    after_state=self._pm_json_safe(after_state),
+                    actor=actor,
+                    approval_reference={
+                        "plan_id": str(plan_id),
+                        "digest": digest,
+                        "approval_actor": plan.get("approval_actor"),
+                        "approved_at": plan.get("approved_at").isoformat() if plan.get("approved_at") else None,
+                    },
+                    evidence_refs=self._pm_json_safe(plan.get("evidence_refs") or {}),
+                    transaction_id=transaction_id,
+                    rollback_operations=self._pm_json_safe(plan.get("rollback_operations") or []),
+                    occurred_at=now,
+                )
+            )
+            await conn.execute(
+                t.pm_lifecycle_plans.update()
+                .where(t.pm_lifecycle_plans.c.id == plan_id)
+                .values(
+                    status="APPLIED",
+                    applied_actor=actor,
+                    applied_at=now,
+                    application_result=self._pm_json_safe(application_result),
+                    updated_at=now,
+                    error=None,
+                )
+            )
+        applied_plan = await self.get_pm_lifecycle_plan(plan_id)
+        return {
+            "status": "APPLIED",
+            "plan": applied_plan or plan,
+            "result": application_result,
+            "idempotent": False,
+        }
+
+    async def get_pm_lifecycle_audit(self, audit_id: UUID) -> dict[str, Any] | None:
+        async with self.engine.connect() as conn:
+            row = (
+                await conn.execute(t.pm_lifecycle_audits.select().where(t.pm_lifecycle_audits.c.id == audit_id))
+            ).mappings().first()
+        return dict(row) if row else None
+
+    async def list_pm_lifecycle_audits(
+        self,
+        *,
+        connection_id: UUID | None = None,
+        binding_id: UUID | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        query = t.pm_lifecycle_audits.select().order_by(t.pm_lifecycle_audits.c.occurred_at.desc()).limit(limit)
+        if connection_id is not None:
+            query = query.where(t.pm_lifecycle_audits.c.connection_id == connection_id)
+        if binding_id is not None:
+            query = query.where(t.pm_lifecycle_audits.c.binding_id == binding_id)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def get_pm_mapping(
+        self,
+        *,
+        connection_id: UUID,
+        object_type: str,
+        aiat_object_id: UUID | None = None,
+        external_id: str | None = None,
+        external_key: str | None = None,
+    ) -> dict[str, Any] | None:
+        query = (
+            t.pm_object_mappings.select()
+            .where(t.pm_object_mappings.c.connection_id == connection_id)
+            .where(t.pm_object_mappings.c.object_type == object_type)
+        )
+        if aiat_object_id is not None:
+            query = query.where(t.pm_object_mappings.c.aiat_object_id == aiat_object_id)
+        if external_id is not None:
+            query = query.where(t.pm_object_mappings.c.external_id == external_id)
+        if external_key is not None:
+            query = query.where(t.pm_object_mappings.c.external_key == external_key)
+        async with self.engine.connect() as conn:
+            row = (await conn.execute(query)).mappings().first()
+        return dict(row) if row else None
+
+    async def mark_pm_inbox_event(
+        self,
+        event_id: UUID,
+        *,
+        status: str,
+        error: str | None = None,
+        normalized_type: str | None = None,
+        result: dict[str, Any] | None = None,
+    ) -> None:
+        values: dict[str, Any] = {"status": status, "error": error}
+        if normalized_type is not None:
+            values["normalized_type"] = normalized_type
+        if result is not None:
+            values["result"] = self._pm_json_safe(result)
+        if status in {"PROCESSED", "CONFLICT", "FAILED"}:
+            values["processed_at"] = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            await conn.execute(t.pm_inbox_events.update().where(t.pm_inbox_events.c.id == event_id).values(**values))
+
+    async def create_work_item_comment(
+        self,
+        *,
+        issue_id: UUID,
+        body: str,
+        actor_id: str,
+        run_id: UUID | None = None,
+        approval_id: UUID | None = None,
+        evidence_id: str | None = None,
+        body_blob_ref: str | None = None,
+        origin: str = "aiat",
+    ) -> dict[str, Any]:
+        now = datetime.now(tz=UTC)
+        values = {"id": uuid4(), "issue_id": issue_id, "body": body, "actor_id": actor_id, "run_id": run_id, "approval_id": approval_id, "evidence_id": evidence_id, "body_blob_ref": body_blob_ref, "origin": origin, "created_at": now, "updated_at": now}
+        async with self.engine.begin() as conn:
+            await conn.execute(t.work_item_comments.insert().values(**values))
+            issue = await self._mapping_first(
+                await conn.execute(t.issues.select().where(t.issues.c.id == issue_id))
+            )
+            if issue is not None:
+                await self._enqueue_comment_projections_tx(conn, dict(issue), values)
+        return values
+
+    async def list_work_item_comments(self, issue_id: UUID, *, limit: int = 100) -> list[dict[str, Any]]:
+        query = t.work_item_comments.select().where(t.work_item_comments.c.issue_id == issue_id).order_by(t.work_item_comments.c.created_at).limit(limit)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def create_work_item_link(
+        self,
+        *,
+        issue_id: UUID,
+        link_type: str,
+        target_type: str,
+        target_id: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        values = {"id": uuid4(), "issue_id": issue_id, "link_type": link_type, "target_type": target_type, "target_id": target_id, "metadata": metadata or {}, "created_at": datetime.now(tz=UTC)}
+        async with self.engine.begin() as conn:
+            stmt = pg_insert(t.work_item_links).values(**values).on_conflict_do_nothing(constraint="uq_work_item_link").returning(t.work_item_links)
+            row = await self._mapping_first(await conn.execute(stmt))
+            if row is None:
+                return values
+            issue = await self._mapping_first(
+                await conn.execute(t.issues.select().where(t.issues.c.id == issue_id))
+            )
+            if issue is not None:
+                await self._enqueue_link_projections_tx(conn, dict(issue), dict(row))
+        return dict(row) if row else values
+
+    async def list_work_item_links(self, issue_id: UUID, *, limit: int = 100) -> list[dict[str, Any]]:
+        query = t.work_item_links.select().where(t.work_item_links.c.issue_id == issue_id).order_by(t.work_item_links.c.created_at).limit(limit)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def record_integration_evidence(
+        self,
+        *,
+        connection_id: UUID,
+        evidence_type: str,
+        external_id: str | None = None,
+        repository: str | None = None,
+        project_id: UUID | None = None,
+        binding_id: UUID | None = None,
+        payload: dict[str, Any] | None = None,
+        idempotency_key: str,
+        trace_id: str | None = None,
+        span_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Persist source-control facts without making them canonical state.
+
+        PRs, checks, reviews, and commit metadata are evidence consumed by
+        governance and release gates.  They intentionally remain separate
+        from PM object mappings so a source-control provider can be replaced
+        without rewriting canonical work items.
+        """
+        trace_id = trace_id or current_trace_id()
+        effective_span_id = (span_id or current_span_id() or new_span_id()) if trace_id else span_id
+        created_at_value = datetime.now(tz=UTC)
+        values = {
+            "id": uuid4(),
+            "connection_id": connection_id,
+            "binding_id": binding_id,
+            "project_id": project_id,
+            "evidence_type": evidence_type,
+            "external_id": external_id,
+            "repository": repository,
+            "payload": self._pm_json_safe(payload or {}),
+            "idempotency_key": idempotency_key,
+            "trace_id": trace_id,
+            "span_id": effective_span_id,
+            "created_at": created_at_value,
+        }
+        async with self.engine.begin() as conn:
+            stmt = (
+                pg_insert(t.integration_evidence_records)
+                .values(**values)
+                .on_conflict_do_update(
+                    constraint="uq_integration_evidence_idempotency",
+                    set_={
+                        "payload": values["payload"],
+                        "external_id": values["external_id"],
+                        "repository": values["repository"],
+                        "trace_id": sa.func.coalesce(
+                            values["trace_id"],
+                            t.integration_evidence_records.c.trace_id,
+                        ),
+                        "span_id": sa.func.coalesce(
+                            values["span_id"],
+                            t.integration_evidence_records.c.span_id,
+                        ),
+                    },
+                )
+                .returning(t.integration_evidence_records)
+            )
+            row = await self._mapping_first(await conn.execute(stmt))
+            if trace_id:
+                await self._insert_native_trace_span_tx(
+                    conn,
+                    trace_id=trace_id,
+                    span_id=new_span_id(),
+                    parent_span_id=effective_span_id,
+                    source_kind="integration",
+                    operation=evidence_type,
+                    service="integration_evidence",
+                    status="success",
+                    started_at=created_at_value,
+                    ended_at=created_at_value,
+                    attributes={
+                        "evidence_type": evidence_type,
+                        "repository": repository,
+                    },
+                )
+        return dict(row) if row else values
+
+    async def list_integration_evidence(
+        self,
+        *,
+        connection_id: UUID | None = None,
+        project_id: UUID | None = None,
+        evidence_type: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        query = t.integration_evidence_records.select().order_by(
+            t.integration_evidence_records.c.created_at.desc()
+        ).limit(limit)
+        if connection_id is not None:
+            query = query.where(t.integration_evidence_records.c.connection_id == connection_id)
+        if project_id is not None:
+            query = query.where(t.integration_evidence_records.c.project_id == project_id)
+        if evidence_type is not None:
+            query = query.where(t.integration_evidence_records.c.evidence_type == evidence_type)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
 
     # ═══════════════════════════════════════════════════════════════════════════
     # KPI snapshots
@@ -1688,33 +5293,111 @@ class AgentStorage:
         details: dict[str, Any] | None = None,
         occurred_at: datetime | None = None,
         event_id: UUID | None = None,
+        company_id: UUID | None = None,
+        run_id: UUID | None = None,
+        worker_id: UUID | None = None,
+        provider_id: str | None = None,
+        billing_code: str | None = None,
+        pricing_snapshot: dict[str, Any] | None = None,
+        resource_json: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        """Append one immutable, project-scoped LLM or tool usage event."""
+        """Append one immutable, project-scoped LLM or tool usage event.
+
+        Usage events are deliberately idempotent.  Worker retries, gateway
+        reconnects, and queue recovery must not double-charge a project.  The
+        database uniqueness constraint is the final arbiter; the read-before-
+        write below also makes the common replay path cheap and deterministic.
+        """
+        trace_id = trace_id or current_trace_id()
         if event_type not in {"llm", "tool"}:
             raise ValueError("event_type must be 'llm' or 'tool'")
         normalized_project_id = (
             project_id if isinstance(project_id, UUID) else UUID(str(project_id))
         )
+        if company_id is None:
+            async with self.engine.connect() as conn:
+                company_id = (
+                    await conn.execute(
+                        sa.select(t.projects.c.company_id).where(
+                            t.projects.c.id == normalized_project_id
+                        )
+                    )
+                ).scalar_one_or_none()
+        occurred_at_value = occurred_at or datetime.now(tz=UTC)
+        effective_span_id = (span_id or current_span_id() or new_span_id()) if trace_id else span_id
         values = {
             "id": event_id or uuid4(),
             "project_id": normalized_project_id,
+            "company_id": company_id,
+            "run_id": run_id,
+            "worker_id": worker_id,
             "event_type": event_type,
             "agent_id": agent_id,
             "team_id": team_id,
             "model": model,
+            "provider_id": provider_id,
             "tool_name": tool_name,
+            "billing_code": billing_code,
+            "pricing_snapshot": pricing_snapshot,
+            "resource_json": resource_json,
+            "idempotency_key": idempotency_key,
             "status": status,
             "prompt_tokens": max(0, int(prompt_tokens or 0)),
             "completion_tokens": max(0, int(completion_tokens or 0)),
             "cost_usd": max(0.0, float(cost_usd or 0.0)),
             "duration_ms": duration_ms,
             "trace_id": trace_id,
-            "span_id": span_id,
+            "span_id": effective_span_id,
             "details": details,
-            "occurred_at": occurred_at or datetime.now(tz=UTC),
+            "occurred_at": occurred_at_value,
         }
         async with self.engine.begin() as conn:
-            await conn.execute(t.project_usage_events.insert().values(**values))
+            if idempotency_key:
+                existing = (
+                    await conn.execute(
+                        t.project_usage_events.select().where(
+                            t.project_usage_events.c.idempotency_key == idempotency_key
+                        )
+                    )
+                ).mappings().first()
+                if existing is not None:
+                    return dict(existing)
+                try:
+                    await conn.execute(t.project_usage_events.insert().values(**values))
+                except sa.exc.IntegrityError:
+                    # A concurrent writer won the unique idempotency race.
+                    existing = (
+                        await conn.execute(
+                            t.project_usage_events.select().where(
+                                t.project_usage_events.c.idempotency_key == idempotency_key
+                            )
+                        )
+                    ).mappings().first()
+                    if existing is None:
+                        raise
+                    return dict(existing)
+            else:
+                await conn.execute(t.project_usage_events.insert().values(**values))
+            if trace_id:
+                await self._insert_native_trace_span_tx(
+                    conn,
+                    trace_id=trace_id,
+                    span_id=new_span_id(),
+                    parent_span_id=effective_span_id,
+                    source_kind="model" if event_type == "llm" else "tool",
+                    operation=model or tool_name or event_type,
+                    service="project_usage",
+                    status=status,
+                    started_at=occurred_at_value - timedelta(milliseconds=float(duration_ms or 0)),
+                    ended_at=occurred_at_value,
+                    duration_ms=duration_ms or 0,
+                    attributes={
+                        "event_type": event_type,
+                        "agent_id": agent_id,
+                        "team_id": team_id,
+                    },
+                )
         return values
 
     async def get_project_usage(self, project_id: UUID) -> dict[str, Any]:
@@ -1750,6 +5433,630 @@ class AgentStorage:
         result["available"] = True
         result["source"] = "project_usage_events"
         return result
+
+    async def list_project_usage_aggregates(
+        self,
+        *,
+        company_id: UUID | None = None,
+        since: datetime | None = None,
+        limit: int = 10_000,
+    ) -> list[dict[str, Any]]:
+        """Return bounded per-project usage aggregates for operations forecasts.
+
+        The query deliberately returns aggregates rather than raw provider or
+        tool payloads.  ``project_usage_events`` remains the accounting
+        authority while this read model supplies enough counts, cost, token,
+        duration, and time-span data for SLO/capacity projections.
+        """
+
+        events = t.project_usage_events
+        projects = t.projects
+        event_type = events.c.event_type
+        status = events.c.status
+        project_join = events.join(projects, events.c.project_id == projects.c.id)
+        clauses = []
+        if company_id is not None:
+            clauses.append(projects.c.company_id == company_id)
+        if since is not None:
+            clauses.append(events.c.occurred_at >= since)
+        query = sa.select(
+            events.c.project_id.label("project_id"),
+            projects.c.company_id.label("company_id"),
+            sa.func.count().label("event_count"),
+            sa.func.count().filter(event_type == "llm").label("llm_calls"),
+            sa.func.count().filter(event_type == "tool").label("tool_calls"),
+            sa.func.count().filter(status != "success").label("failed_calls"),
+            sa.func.count().filter(sa.and_(event_type == "llm", status != "success")).label("llm_failed_calls"),
+            sa.func.count().filter(sa.and_(event_type == "tool", status != "success")).label("tool_failed_calls"),
+            sa.func.coalesce(sa.func.sum(events.c.prompt_tokens), 0).label("prompt_tokens"),
+            sa.func.coalesce(sa.func.sum(events.c.completion_tokens), 0).label("completion_tokens"),
+            sa.func.coalesce(sa.func.sum(events.c.cost_usd), 0).label("total_cost_usd"),
+            sa.func.coalesce(sa.func.sum(events.c.duration_ms).filter(event_type == "llm"), 0).label("llm_duration_sum_ms"),
+            sa.func.coalesce(sa.func.sum(events.c.duration_ms).filter(event_type == "tool"), 0).label("tool_duration_sum_ms"),
+            sa.func.count().filter(sa.and_(event_type == "llm", events.c.duration_ms.is_not(None))).label("llm_duration_count"),
+            sa.func.count().filter(sa.and_(event_type == "tool", events.c.duration_ms.is_not(None))).label("tool_duration_count"),
+            sa.func.min(events.c.occurred_at).label("first_event_at"),
+            sa.func.max(events.c.occurred_at).label("last_event_at"),
+        ).select_from(project_join)
+        if clauses:
+            query = query.where(sa.and_(*clauses))
+        query = query.group_by(events.c.project_id, projects.c.company_id).order_by(
+            sa.func.max(events.c.occurred_at).desc()
+        ).limit(max(1, min(int(limit), 10_000)))
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        aggregates: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["event_count"] = int(item.get("event_count") or 0)
+            item["llm_calls"] = int(item.get("llm_calls") or 0)
+            item["tool_calls"] = int(item.get("tool_calls") or 0)
+            item["failed_calls"] = int(item.get("failed_calls") or 0)
+            item["llm_failed_calls"] = int(item.get("llm_failed_calls") or 0)
+            item["tool_failed_calls"] = int(item.get("tool_failed_calls") or 0)
+            item["prompt_tokens"] = int(item.get("prompt_tokens") or 0)
+            item["completion_tokens"] = int(item.get("completion_tokens") or 0)
+            item["total_tokens"] = item["prompt_tokens"] + item["completion_tokens"]
+            item["total_cost_usd"] = float(item.get("total_cost_usd") or 0.0)
+            for kind in ("llm", "tool"):
+                sum_key = f"{kind}_duration_sum_ms"
+                count_key = f"{kind}_duration_count"
+                item[f"{kind}_duration_avg_ms"] = (
+                    float(item.get(sum_key) or 0.0) / int(item.get(count_key) or 1)
+                    if int(item.get(count_key) or 0) > 0
+                    else None
+                )
+            aggregates.append(item)
+        return aggregates
+
+    async def list_project_usage_events(
+        self,
+        project_id: UUID,
+        *,
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        query = (
+            t.project_usage_events.select()
+            .where(t.project_usage_events.c.project_id == project_id)
+            .order_by(t.project_usage_events.c.occurred_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def get_project_usage_event(self, event_id: UUID) -> dict[str, Any] | None:
+        """Fetch one durable usage event by its canonical evidence ID."""
+        query = t.project_usage_events.select().where(t.project_usage_events.c.id == event_id)
+        async with self.engine.connect() as conn:
+            row = (await conn.execute(query)).mappings().first()
+        return dict(row) if row else None
+
+    async def list_pm_slo_observations(
+        self,
+        *,
+        company_id: UUID | None = None,
+        since: datetime | None = None,
+        limit: int = 10_000,
+    ) -> list[dict[str, Any]]:
+        """Return safe PM/SCM delivery observations for the SLO read model.
+
+        The projection reads delivery state and bounded timestamps only. It
+        never returns provider payloads, headers, credentials, or error
+        bodies. A company filter is applied through project bindings when the
+        connection is associated with a project; unscoped operator reads may
+        aggregate all configured PM connections.
+        """
+
+        connections = t.pm_connections
+        bindings = t.pm_project_bindings
+        projects = t.projects
+        connection_company_match = sa.exists(
+            sa.select(1)
+            .select_from(bindings.join(projects, bindings.c.project_id == projects.c.id))
+            .where(bindings.c.connection_id == connections.c.id)
+            .where(projects.c.company_id == company_id)
+        ) if company_id is not None else None
+
+        observations: list[dict[str, Any]] = []
+        inbox = t.pm_inbox_events
+        since_clause = inbox.c.received_at >= since if since is not None else None
+        inbox_clauses: list[Any] = []
+        if since_clause is not None:
+            inbox_clauses.append(since_clause)
+        if connection_company_match is not None:
+            inbox_clauses.append(connection_company_match)
+        inbox_query = sa.select(
+            inbox.c.id.label("id"),
+            inbox.c.status.label("status"),
+            inbox.c.received_at.label("occurred_at"),
+            inbox.c.processed_at.label("completed_at"),
+            sa.literal("pm_inbox_events").label("source"),
+        ).select_from(inbox.join(connections, inbox.c.connection_id == connections.c.id))
+        if inbox_clauses:
+            inbox_query = inbox_query.where(sa.and_(*inbox_clauses))
+
+        outbox = t.pm_outbox_events
+        outbox_since_clause = outbox.c.created_at >= since if since is not None else None
+        outbox_clauses: list[Any] = []
+        if outbox_since_clause is not None:
+            outbox_clauses.append(outbox_since_clause)
+        if connection_company_match is not None:
+            outbox_clauses.append(connection_company_match)
+        outbox_query = sa.select(
+            outbox.c.id.label("id"),
+            outbox.c.status.label("status"),
+            outbox.c.created_at.label("occurred_at"),
+            outbox.c.processed_at.label("completed_at"),
+            sa.literal("pm_outbox_events").label("source"),
+        ).select_from(outbox.join(connections, outbox.c.connection_id == connections.c.id))
+        if outbox_clauses:
+            outbox_query = outbox_query.where(sa.and_(*outbox_clauses))
+
+        combined = sa.union_all(inbox_query, outbox_query).subquery("pm_slo_observations")
+        query = sa.select(combined).order_by(combined.c.occurred_at.asc()).limit(max(1, min(int(limit), 10_000)))
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        for row in rows:
+            item = dict(row)
+            occurred_at = item.get("occurred_at")
+            completed_at = item.get("completed_at")
+            duration_ms = None
+            if isinstance(occurred_at, datetime) and isinstance(completed_at, datetime):
+                duration_ms = max(0.0, (completed_at - occurred_at).total_seconds() * 1000)
+            status = str(item.get("status") or "unknown").strip().upper()
+            item["status"] = "success" if status in {"PROCESSED", "SENT", "DELIVERED", "SUCCESS", "RESOLVED"} else "failed"
+            item["duration_ms"] = duration_ms
+            item.pop("completed_at", None)
+            observations.append(item)
+        return observations
+
+    async def list_recovery_slo_observations(
+        self,
+        *,
+        company_id: UUID | None = None,
+        since: datetime | None = None,
+        limit: int = 10_000,
+    ) -> list[dict[str, Any]]:
+        """Return bounded worker-run recovery transition observations."""
+
+        transitions = t.worker_run_transitions
+        runs = t.worker_runs
+        projects = t.projects
+        clauses: list[Any] = [
+            sa.or_(
+                transitions.c.actor == "worker-run-recovery",
+                transitions.c.reason.ilike("%recover%"),
+                transitions.c.reason.ilike("%lease expired%"),
+            )
+        ]
+        if since is not None:
+            clauses.append(transitions.c.created_at >= since)
+        if company_id is not None:
+            clauses.append(projects.c.company_id == company_id)
+        query = sa.select(
+            transitions.c.id.label("id"),
+            transitions.c.from_state.label("from_state"),
+            transitions.c.to_state.label("to_state"),
+            transitions.c.actor.label("actor"),
+            transitions.c.reason.label("reason"),
+            transitions.c.created_at.label("occurred_at"),
+        ).select_from(
+            transitions.join(runs, transitions.c.run_id == runs.c.id).outerjoin(
+                projects, runs.c.project_id == projects.c.id
+            )
+        ).where(sa.and_(*clauses)).order_by(transitions.c.created_at.asc()).limit(max(1, min(int(limit), 10_000)))
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [
+            {
+                "id": str(row.get("id")),
+                "status": "success" if str(row.get("to_state") or "").upper() == "QUEUED" else "failed",
+                "occurred_at": row.get("occurred_at"),
+                "source": "worker_run_transitions",
+            }
+            for row in rows
+        ]
+
+    async def list_project_usage_events_by_trace(
+        self,
+        trace_id: str,
+        *,
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        """List bounded project usage rows for one trace ID."""
+
+        query = (
+            t.project_usage_events.select()
+            .where(t.project_usage_events.c.trace_id == trace_id)
+            .order_by(t.project_usage_events.c.occurred_at.asc())
+            .limit(limit)
+        )
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def list_worker_usage_records_by_trace(
+        self,
+        trace_id: str,
+        *,
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        """List direct worker model-usage rows with a legacy run fallback."""
+
+        usage = t.worker_usage_records
+        events = t.project_usage_events
+        # A run can emit multiple model/tool usage events.  Use an EXISTS
+        # correlation instead of a join so one durable worker usage row is
+        # never duplicated merely because its run has several spans.
+        trace_match = sa.exists(
+            sa.select(1)
+            .select_from(events)
+            .where(events.c.run_id == usage.c.run_id)
+            .where(events.c.trace_id == trace_id)
+        )
+        query = (
+            sa.select(
+                usage.c.id,
+                usage.c.run_id,
+                usage.c.prompt_tokens,
+                usage.c.completion_tokens,
+                usage.c.total_tokens,
+                usage.c.cost_usd,
+                usage.c.duration_ms,
+                usage.c.provider_id,
+                usage.c.exact_model_id,
+                usage.c.created_at,
+                usage.c.trace_id,
+                usage.c.span_id,
+            )
+            .where(sa.or_(usage.c.trace_id == trace_id, trace_match))
+            .order_by(usage.c.created_at.asc())
+            .limit(max(1, min(int(limit), 1000)))
+        )
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def list_worker_artifacts_by_trace(
+        self,
+        trace_id: str,
+        *,
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        """List direct worker artifact metadata with a legacy run fallback."""
+
+        artifacts = t.worker_artifacts
+        events = t.project_usage_events
+        trace_match = sa.exists(
+            sa.select(1)
+            .select_from(events)
+            .where(events.c.run_id == artifacts.c.run_id)
+            .where(events.c.trace_id == trace_id)
+        )
+        query = (
+            sa.select(
+                artifacts.c.id,
+                artifacts.c.run_id,
+                artifacts.c.artifact_id,
+                artifacts.c.kind,
+                artifacts.c.sha256,
+                artifacts.c.size_bytes,
+                artifacts.c.created_at,
+                artifacts.c.trace_id,
+                artifacts.c.span_id,
+            )
+            .where(sa.or_(artifacts.c.trace_id == trace_id, trace_match))
+            .order_by(artifacts.c.created_at.asc())
+            .limit(max(1, min(int(limit), 1000)))
+        )
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def list_pm_inbox_events_by_correlation(
+        self,
+        correlation_id: str,
+        *,
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        """List bounded PM inbound metadata correlated to a trace/message ID."""
+
+        query = (
+            t.pm_inbox_events.select()
+            .where(t.pm_inbox_events.c.correlation_id == correlation_id)
+            .order_by(t.pm_inbox_events.c.received_at.asc())
+            .limit(max(1, min(int(limit), 1000)))
+        )
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def list_integration_evidence_by_trace(
+        self,
+        trace_id: str,
+        *,
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        """List payload-free integration evidence rows for one trace."""
+
+        query = (
+            sa.select(
+                t.integration_evidence_records.c.id,
+                t.integration_evidence_records.c.connection_id,
+                t.integration_evidence_records.c.project_id,
+                t.integration_evidence_records.c.evidence_type,
+                t.integration_evidence_records.c.created_at,
+                t.integration_evidence_records.c.trace_id,
+                t.integration_evidence_records.c.span_id,
+            )
+            .where(t.integration_evidence_records.c.trace_id == trace_id)
+            .order_by(t.integration_evidence_records.c.created_at.asc())
+            .limit(max(1, min(int(limit), 1000)))
+        )
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def reserve_budget(
+        self,
+        *,
+        company_id: UUID,
+        budget_key: str,
+        amount: Decimal | float | int,
+        idempotency_key: str,
+        project_id: UUID | None = None,
+        worker_id: UUID | None = None,
+        run_id: UUID | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Reserve a company budget atomically.
+
+        ``None`` means the company has no configured limit for this key.  A
+        configured limit is fail-closed: reservations are locked and summed
+        inside one transaction so concurrent workers cannot oversubscribe it.
+        """
+        normalized_amount = Decimal(str(amount))
+        if not normalized_amount.is_finite() or normalized_amount < 0:
+            raise ValueError("budget reservation amount must be finite and non-negative")
+        if not budget_key.strip() or not idempotency_key.strip():
+            raise ValueError("budget_key and idempotency_key are required")
+        async with self.engine.begin() as conn:
+            existing = (
+                await conn.execute(
+                    t.budget_reservations.select().where(
+                        t.budget_reservations.c.idempotency_key == idempotency_key
+                    )
+                )
+            ).mappings().first()
+            if existing is not None:
+                return dict(existing)
+            budget = (
+                await conn.execute(
+                    t.company_budgets.select()
+                    .where(
+                        sa.and_(
+                            t.company_budgets.c.company_id == company_id,
+                            t.company_budgets.c.budget_key == budget_key,
+                        )
+                    )
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if budget is None:
+                return None
+            reserved = (
+                await conn.execute(
+                    sa.select(sa.func.coalesce(sa.func.sum(t.budget_reservations.c.amount), 0))
+                    .where(
+                        sa.and_(
+                            t.budget_reservations.c.company_id == company_id,
+                            t.budget_reservations.c.budget_key == budget_key,
+                            t.budget_reservations.c.state.in_(("RESERVED", "COMMITTED")),
+                        )
+                    )
+                )
+            ).scalar_one()
+            limit_value = Decimal(str(budget["limit_value"]))
+            if Decimal(str(reserved or 0)) + normalized_amount > limit_value:
+                raise ValueError(
+                    f"BUDGET_EXCEEDED:{budget_key}:limit={limit_value}:"
+                    f"used={reserved}:requested={normalized_amount}"
+                )
+            values = {
+                "id": uuid4(),
+                "company_id": company_id,
+                "project_id": project_id,
+                "worker_id": worker_id,
+                "run_id": run_id,
+                "budget_key": budget_key,
+                "amount": normalized_amount,
+                "currency": str(budget.get("currency") or "USD"),
+                "state": "RESERVED",
+                "idempotency_key": idempotency_key,
+                "metadata": metadata or {},
+            }
+            await conn.execute(t.budget_reservations.insert().values(**values))
+        return values
+
+    async def settle_budget_reservation(
+        self,
+        reservation_id: UUID,
+        *,
+        state: str,
+        amount: Decimal | float | int | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Commit actual usage or release a reservation exactly once.
+
+        Cost settlement is serialized with new reservations by locking the
+        company budget row before summing every other active reservation.  If
+        reported usage exceeds the remaining cap, only the remaining amount is
+        committed; the full billed amount and capped overage stay in metadata
+        for audit/reconciliation without ever making the budget ledger exceed
+        its configured limit.
+        """
+        if state not in {"COMMITTED", "RELEASED"}:
+            raise ValueError("budget reservation state must be COMMITTED or RELEASED")
+        committed_amount = Decimal(str(amount)) if amount is not None else None
+        if committed_amount is not None and (
+            state != "COMMITTED" or not committed_amount.is_finite() or committed_amount < 0
+        ):
+            raise ValueError("committed budget amount must be finite and non-negative")
+        async with self.engine.begin() as conn:
+            reservation_snapshot = (
+                await conn.execute(
+                    t.budget_reservations.select().where(t.budget_reservations.c.id == reservation_id)
+                )
+            ).mappings().first()
+            if reservation_snapshot is None:
+                return None
+            if reservation_snapshot["state"] in {"COMMITTED", "RELEASED"}:
+                return dict(reservation_snapshot)
+
+            # Reserve and settle take this lock first, which prevents a
+            # concurrent reservation from passing its cap check while this
+            # settlement is reducing or committing the current amount.
+            budget = (
+                await conn.execute(
+                    t.company_budgets.select()
+                    .where(
+                        sa.and_(
+                            t.company_budgets.c.company_id == reservation_snapshot["company_id"],
+                            t.company_budgets.c.budget_key == reservation_snapshot["budget_key"],
+                        )
+                    )
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if budget is None and state == "COMMITTED":
+                raise ValueError(
+                    f"BUDGET_EXCEEDED:{reservation_snapshot['budget_key']}:configured budget is missing"
+                )
+
+            row = (
+                await conn.execute(
+                    t.budget_reservations.select()
+                    .where(t.budget_reservations.c.id == reservation_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if row is None:
+                return None
+            if row["state"] in {"COMMITTED", "RELEASED"}:
+                return dict(row)
+
+            now = datetime.now(tz=UTC)
+            values: dict[str, Any] = {"state": state}
+            if committed_amount is not None:
+                # The current reservation is excluded because its original
+                # requested amount is being replaced by actual usage.
+                other_reserved = (
+                    await conn.execute(
+                        sa.select(sa.func.coalesce(sa.func.sum(t.budget_reservations.c.amount), 0))
+                        .where(
+                            sa.and_(
+                                t.budget_reservations.c.company_id == row["company_id"],
+                                t.budget_reservations.c.budget_key == row["budget_key"],
+                                t.budget_reservations.c.id != reservation_id,
+                                t.budget_reservations.c.state.in_(
+                                    ("RESERVED", "COMMITTED")
+                                ),
+                            )
+                        )
+                    )
+                ).scalar_one()
+                limit_value = Decimal(str(budget["limit_value"]))
+                available = max(Decimal("0"), limit_value - Decimal(str(other_reserved or 0)))
+                settled_amount = min(committed_amount, available)
+                values["amount"] = settled_amount
+                settlement_metadata = dict(row.get("metadata") or {})
+                settlement_metadata.update(metadata or {})
+                settlement_metadata["actual_cost_usd"] = str(committed_amount)
+                if committed_amount > settled_amount:
+                    settlement_metadata["budget_overage_usd"] = str(
+                        committed_amount - settled_amount
+                    )
+                    settlement_metadata["budget_settlement"] = "CAP_EXCEEDED"
+                values["metadata"] = settlement_metadata
+            elif metadata:
+                values["metadata"] = {**dict(row.get("metadata") or {}), **metadata}
+            values["committed_at" if state == "COMMITTED" else "released_at"] = now
+            await conn.execute(
+                t.budget_reservations.update()
+                .where(t.budget_reservations.c.id == reservation_id)
+                .values(**values)
+            )
+            refreshed = (
+                await conn.execute(
+                    t.budget_reservations.select().where(t.budget_reservations.c.id == reservation_id)
+                )
+            ).mappings().first()
+        return dict(refreshed) if refreshed is not None else None
+
+    async def list_budget_reservations(
+        self,
+        *,
+        run_id: UUID | None = None,
+        company_id: UUID | None = None,
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        query = (
+            t.budget_reservations.select()
+            .order_by(t.budget_reservations.c.created_at.asc())
+            .limit(limit)
+        )
+        clauses = []
+        if run_id is not None:
+            clauses.append(t.budget_reservations.c.run_id == run_id)
+        if company_id is not None:
+            clauses.append(t.budget_reservations.c.company_id == company_id)
+        if clauses:
+            query = query.where(sa.and_(*clauses))
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def get_budget_state(self, company_id: UUID, budget_key: str) -> dict[str, Any]:
+        """Return the authoritative limit, usage, and available balance."""
+        async with self.engine.connect() as conn:
+            budget = (
+                await conn.execute(
+                    t.company_budgets.select().where(
+                        sa.and_(
+                            t.company_budgets.c.company_id == company_id,
+                            t.company_budgets.c.budget_key == budget_key,
+                        )
+                    )
+                )
+            ).mappings().first()
+            if budget is None:
+                return {"configured": False, "company_id": company_id, "budget_key": budget_key}
+            total = (
+                await conn.execute(
+                    sa.select(sa.func.coalesce(sa.func.sum(t.budget_reservations.c.amount), 0)).where(
+                        sa.and_(
+                            t.budget_reservations.c.company_id == company_id,
+                            t.budget_reservations.c.budget_key == budget_key,
+                            t.budget_reservations.c.state.in_(("RESERVED", "COMMITTED")),
+                        )
+                    )
+                )
+            ).scalar_one()
+        limit_value = Decimal(str(budget["limit_value"]))
+        used = Decimal(str(total or 0))
+        return {
+            "configured": True,
+            "company_id": company_id,
+            "budget_key": budget_key,
+            "limit": limit_value,
+            "used": used,
+            "available": max(Decimal("0"), limit_value - used),
+            "currency": budget.get("currency") or "USD",
+            "period": budget.get("period") or "lifetime",
+        }
 
     # ═══════════════════════════════════════════════════════════════════════════
     # Task log (task execution audit trail)
@@ -1832,6 +6139,130 @@ class AgentStorage:
             await conn.execute(
                 t.task_log.update().where(t.task_log.c.task_id == task_id).values(**kwargs)
             )
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Native payload-free trace spans
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    async def _insert_native_trace_span_tx(
+        self,
+        conn: Any,
+        **fields: Any,
+    ) -> dict[str, Any]:
+        """Insert or finish one native span inside an existing transaction."""
+
+        values = build_native_trace_span(**fields)
+        values["attributes_json"] = values.pop("attributes", {})
+        statement = (
+            pg_insert(t.native_trace_spans)
+            .values(**values)
+            .on_conflict_do_update(
+                constraint="uq_native_trace_span",
+                set_={
+                    "parent_span_id": values["parent_span_id"],
+                    "source_kind": values["source_kind"],
+                    "operation": values["operation"],
+                    "service": values["service"],
+                    "status": values["status"],
+                    "started_at": values["started_at"],
+                    "ended_at": values["ended_at"],
+                    "duration_ms": values["duration_ms"],
+                    "sampled": values["sampled"],
+                    "retention_until": values["retention_until"],
+                    "attributes_json": values["attributes_json"],
+                },
+            )
+        )
+        await conn.execute(statement)
+        return values
+
+    async def create_native_trace_span(self, **fields: Any) -> dict[str, Any]:
+        """Persist one normalized native span without accepting payload data."""
+
+        async with self.engine.begin() as conn:
+            return await self._insert_native_trace_span_tx(conn, **fields)
+
+    async def list_native_trace_spans_by_trace(
+        self,
+        trace_id: str,
+        *,
+        limit: int = 1_000,
+    ) -> list[dict[str, Any]]:
+        """List bounded native spans for one trace in causal time order."""
+
+        query = (
+            t.native_trace_spans.select()
+            .where(t.native_trace_spans.c.trace_id == str(trace_id).strip())
+            .order_by(
+                t.native_trace_spans.c.started_at.asc(),
+                t.native_trace_spans.c.span_id.asc(),
+            )
+            .limit(max(1, min(int(limit), 2_000)))
+        )
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Bounded API request observations
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    async def record_api_request_observation(self, **fields: Any) -> dict[str, Any]:
+        """Persist one payload-free API request observation.
+
+        The observability normalizer is the single boundary for route, status,
+        duration, trace, and principal bounds.  No request/response payload,
+        headers, query strings, credentials, or exception text can enter this
+        table through this method.
+        """
+
+        from mas_core.observability.api_observations import build_api_observation
+
+        values = build_api_observation(**fields)
+        async with self.engine.begin() as conn:
+            await conn.execute(t.api_request_observations.insert().values(**values))
+            if values.get("trace_id"):
+                await self._insert_native_trace_span_tx(
+                    conn,
+                    trace_id=values["trace_id"],
+                    span_id=new_span_id(),
+                    parent_span_id=current_span_id(),
+                    source_kind="transport",
+                    operation=values["route"],
+                    service=values.get("source") or "orchestrator_api",
+                    status=values["outcome"],
+                    started_at=values["occurred_at"] - timedelta(milliseconds=float(values["duration_ms"])),
+                    ended_at=values["occurred_at"],
+                    duration_ms=values["duration_ms"],
+                    attributes={
+                        "method": values["method"],
+                        "route": values["route"],
+                        "status_code": values["status_code"],
+                        "outcome": values["outcome"],
+                    },
+                )
+        return values
+
+    async def list_api_request_observations(
+        self,
+        *,
+        trace_id: str | None = None,
+        since: datetime | None = None,
+        limit: int = 10_000,
+    ) -> list[dict[str, Any]]:
+        """List bounded API observations for trace and operational read models."""
+
+        query = t.api_request_observations.select()
+        if trace_id:
+            query = query.where(t.api_request_observations.c.trace_id == trace_id)
+        if since is not None:
+            query = query.where(t.api_request_observations.c.occurred_at >= since)
+        query = query.order_by(t.api_request_observations.c.occurred_at.asc()).limit(
+            max(1, min(int(limit), 20_000))
+        )
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
 
     # ═══════════════════════════════════════════════════════════════════════════
     # Artifacts (blob metadata)
@@ -3017,6 +7448,42 @@ class AgentStorage:
                 )
             )
 
+    async def supersede_flow_node_executions(
+        self,
+        instance_id: UUID,
+        *,
+        reason: str = "Superseded by explicit flow retry",
+    ) -> int:
+        """Retain prior node attempts while removing them from traversal authority.
+
+        Retry is an evidence-preserving operation.  Historical inputs,
+        outputs, errors, and timestamps remain queryable; only the status is
+        changed to ``SUPERSEDED`` so a newly created retry execution is the
+        sole active attempt for that node.  ``COALESCE`` preserves an
+        authoritative failure message when one already exists.
+        """
+
+        now = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            result = await conn.execute(
+                t.flow_node_executions.update()
+                .where(
+                    sa.and_(
+                        t.flow_node_executions.c.instance_id == instance_id,
+                        t.flow_node_executions.c.status != "SUPERSEDED",
+                    )
+                )
+                .values(
+                    status="SUPERSEDED",
+                    error=sa.func.coalesce(t.flow_node_executions.c.error, reason),
+                    completed_at=sa.func.coalesce(
+                        t.flow_node_executions.c.completed_at,
+                        now,
+                    ),
+                )
+            )
+        return int(result.rowcount or 0)
+
     async def update_flow_instance_context(
         self,
         instance_id: UUID,
@@ -3116,7 +7583,13 @@ class AgentStorage:
         self,
         instance_id: UUID,
     ) -> dict[str, Any] | None:
-        """Retry a failed flow instance by resetting to NOT_STARTED."""
+        """Retry a failed flow instance without deleting execution evidence.
+
+        The API's recorded-safe-node path creates a new active execution after
+        superseding the previous attempts.  The no-safe-node fallback must keep
+        the same evidence boundary: historical node rows remain queryable and
+        are removed from traversal authority by the ``SUPERSEDED`` status.
+        """
         instance = await self.get_flow_instance(instance_id)
         if instance is None:
             return None
@@ -3132,7 +7605,7 @@ class AgentStorage:
             started_at=None,
             completed_at=None,
         )
-        await self.clear_flow_node_executions(instance_id)
+        await self.supersede_flow_node_executions(instance_id)
 
         return await self.get_flow_instance(instance_id)
 
@@ -3190,6 +7663,48 @@ class AgentStorage:
             node_label=node_label,
             input_json=context_json,
         )
+        return await self.get_flow_instance(instance_id)
+
+    async def migrate_flow_instance(
+        self,
+        instance_id: UUID,
+        new_flow_id: UUID,
+        *,
+        active_node_ids: list[str],
+        preserve_context: bool = True,
+        migration_record: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Migrate a running instance while retaining compatible executions.
+
+        The caller performs compatibility validation against both definitions.
+        This storage operation only changes the pinned flow/version and records
+        a bounded migration marker in context; unlike ``switch_flow_instance``
+        it never deletes historical node executions.
+        """
+
+        instance = await self.get_flow_instance(instance_id)
+        if instance is None:
+            return None
+        new_flow = await self.get_flow(new_flow_id)
+        if new_flow is None:
+            return None
+
+        context_json = dict(instance.get("context_json") or {}) if preserve_context else {}
+        if migration_record:
+            context_json["last_flow_migration"] = migration_record
+        now = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            await conn.execute(
+                t.flow_instances.update()
+                .where(t.flow_instances.c.id == instance_id)
+                .values(
+                    flow_id=new_flow_id,
+                    flow_version=new_flow["version"],
+                    active_node_ids=active_node_ids,
+                    context_json=context_json,
+                    updated_at=now,
+                )
+            )
         return await self.get_flow_instance(instance_id)
 
     # ═══════════════════════════════════════════════════════════════════════════
@@ -3455,6 +7970,52 @@ class AgentStorage:
         if steward_id is not None:
             query = query.where(t.capability_snapshots.c.steward_id == steward_id)
         query = query.order_by(t.capability_snapshots.c.created_at.asc()).limit(limit)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def create_compatibility_matrix(
+        self,
+        *,
+        worker_id: UUID,
+        runtime_version: str,
+        adapter_version: str,
+        contract_version: str,
+        model_profiles: dict[str, Any] | None = None,
+        capabilities: dict[str, Any] | None = None,
+        fixtures: list[str] | None = None,
+        passed: bool = False,
+        matrix_id: UUID | None = None,
+    ) -> dict[str, Any]:
+        """Persist one steward-owned runtime/adapter compatibility result."""
+        values = {
+            "id": matrix_id or uuid4(),
+            "worker_id": worker_id,
+            "runtime_version": runtime_version,
+            "adapter_version": adapter_version,
+            "contract_version": contract_version,
+            "model_profiles_json": model_profiles or {},
+            "capabilities_json": capabilities or {},
+            "fixtures": fixtures or [],
+            "passed": passed,
+        }
+        async with self.engine.begin() as conn:
+            await conn.execute(t.compatibility_matrices.insert().values(**values))
+        return values
+
+    async def list_compatibility_matrices(
+        self,
+        worker_id: UUID,
+        *,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """List compatibility evidence newest-first for operator inspection."""
+        query = (
+            t.compatibility_matrices.select()
+            .where(t.compatibility_matrices.c.worker_id == worker_id)
+            .order_by(t.compatibility_matrices.c.created_at.desc())
+            .limit(limit)
+        )
         async with self.engine.connect() as conn:
             rows = (await conn.execute(query)).mappings().all()
         return [dict(row) for row in rows]
@@ -3991,14 +8552,149 @@ class AgentStorage:
     async def get_model_resolution_snapshot(self, snapshot_id: UUID) -> dict[str, Any] | None:
         return await self._get_table_row(t.model_resolution_snapshots, t.model_resolution_snapshots.c.id, snapshot_id)
 
-    async def create_worker_run(self, *, run_id: UUID, worker_id: UUID, idempotency_key: str, task_type: str, request: dict[str, Any], project_id: UUID | None = None, flow_id: UUID | None = None, flow_instance_id: UUID | None = None, flow_node_execution_id: int | None = None, worker_shell_version_id: UUID | None = None, adapter_id: UUID | None = None, steward_id: UUID | None = None, model_resolution_snapshot_id: UUID | None = None, state: str = "CREATED") -> dict[str, Any]:
+    async def create_worker_run(self, *, run_id: UUID, worker_id: UUID, idempotency_key: str, task_type: str, request: dict[str, Any], project_id: UUID | None = None, flow_id: UUID | None = None, flow_instance_id: UUID | None = None, flow_node_execution_id: int | None = None, worker_shell_version_id: UUID | None = None, adapter_id: UUID | None = None, skill_bundle_id: UUID | None = None, steward_id: UUID | None = None, model_resolution_snapshot_id: UUID | None = None, state: str = "CREATED", queue_priority: int = 0, next_attempt_at: datetime | None = None) -> dict[str, Any]:
         async with self.engine.begin() as conn:
             existing = (await conn.execute(t.worker_runs.select().where(sa.and_(t.worker_runs.c.worker_id == worker_id, t.worker_runs.c.idempotency_key == idempotency_key)).with_for_update())).mappings().first()
             if existing:
                 return dict(existing)
-            values = {"id": run_id, "worker_id": worker_id, "idempotency_key": idempotency_key, "task_type": task_type, "request_json": request, "project_id": project_id, "flow_id": flow_id, "flow_instance_id": flow_instance_id, "flow_node_execution_id": flow_node_execution_id, "worker_shell_version_id": worker_shell_version_id, "adapter_id": adapter_id, "steward_id": steward_id, "model_resolution_snapshot_id": model_resolution_snapshot_id, "state": state}
+            worker = (
+                await conn.execute(
+                    t.worker_registry.select()
+                    .where(t.worker_registry.c.id == worker_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if worker is None:
+                raise ValueError("worker registry record is required before creating a durable run")
+            effective_skill_bundle_id = skill_bundle_id or worker.get("active_skill_bundle_id")
+            if effective_skill_bundle_id is not None:
+                bundle = (
+                    await conn.execute(
+                        t.skill_bundles.select()
+                        .where(
+                            sa.and_(
+                                t.skill_bundles.c.id == effective_skill_bundle_id,
+                                t.skill_bundles.c.worker_id == worker_id,
+                            )
+                        )
+                    )
+                ).mappings().first()
+                if bundle is None:
+                    raise ValueError("skill bundle pin must belong to the worker registry record")
+                if steward_id is not None and bundle["steward_id"] != steward_id:
+                    raise ValueError("skill bundle pin must belong to the selected steward")
+            values = {"id": run_id, "worker_id": worker_id, "idempotency_key": idempotency_key, "task_type": task_type, "request_json": request, "project_id": project_id, "flow_id": flow_id, "flow_instance_id": flow_instance_id, "flow_node_execution_id": flow_node_execution_id, "worker_shell_version_id": worker_shell_version_id, "adapter_id": adapter_id, "skill_bundle_id": effective_skill_bundle_id, "steward_id": steward_id, "model_resolution_snapshot_id": model_resolution_snapshot_id, "state": state, "queue_priority": queue_priority, "next_attempt_at": next_attempt_at}
             await conn.execute(t.worker_runs.insert().values(**values))
         return await self.get_worker_run(run_id)  # type: ignore[return-value]
+
+    async def claim_worker_run(
+        self,
+        *,
+        owner: str,
+        lease_seconds: int = 300,
+        run_id: UUID | None = None,
+    ) -> dict[str, Any] | None:
+        """Atomically claim one queued run, or a specified queued run."""
+
+        now = datetime.now(tz=UTC)
+        lease_until = now + timedelta(seconds=max(1, lease_seconds))
+        async with self.engine.begin() as conn:
+            clauses = [
+                t.worker_runs.c.state == "QUEUED",
+                sa.or_(t.worker_runs.c.next_attempt_at.is_(None), t.worker_runs.c.next_attempt_at <= now),
+                sa.or_(t.worker_runs.c.lease_expires_at.is_(None), t.worker_runs.c.lease_expires_at <= now),
+            ]
+            if run_id is not None:
+                clauses.append(t.worker_runs.c.id == run_id)
+            query = t.worker_runs.select().where(sa.and_(*clauses)).order_by(
+                t.worker_runs.c.queue_priority.desc(),
+                t.worker_runs.c.created_at.asc(),
+            ).limit(1).with_for_update(skip_locked=True)
+            row = (await conn.execute(query)).mappings().first()
+            if row is None:
+                return None
+            await conn.execute(
+                t.worker_runs.update().where(t.worker_runs.c.id == row["id"]).values(
+                    state="CLAIMED",
+                    claim_owner=owner,
+                    claimed_at=now,
+                    heartbeat_at=now,
+                    lease_expires_at=lease_until,
+                    attempt_count=int(row.get("attempt_count") or 0) + 1,
+                    recovery_reason=None,
+                )
+            )
+            await conn.execute(
+                t.worker_run_transitions.insert().values(
+                    id=uuid4(),
+                    run_id=row["id"],
+                    from_state="QUEUED",
+                    to_state="CLAIMED",
+                    actor=owner,
+                    reason="worker run claimed",
+                    metadata={"lease_expires_at": lease_until.isoformat()},
+                )
+            )
+            updated = (await conn.execute(t.worker_runs.select().where(t.worker_runs.c.id == row["id"]))).mappings().first()
+        return dict(updated) if updated else None
+
+    async def heartbeat_worker_run(self, run_id: UUID, *, owner: str, lease_seconds: int = 300) -> dict[str, Any] | None:
+        now = datetime.now(tz=UTC)
+        result = None
+        async with self.engine.begin() as conn:
+            result = await conn.execute(
+                t.worker_runs.update()
+                .where(sa.and_(t.worker_runs.c.id == run_id, t.worker_runs.c.claim_owner == owner, t.worker_runs.c.state.notin_(TERMINAL_WORKER_RUN_STATES)))
+                .values(heartbeat_at=now, lease_expires_at=now + timedelta(seconds=max(1, lease_seconds)))
+            )
+        return await self.get_worker_run(run_id) if result.rowcount else None
+
+    async def request_worker_run_cancel(self, run_id: UUID) -> dict[str, Any] | None:
+        now = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            await conn.execute(t.worker_runs.update().where(t.worker_runs.c.id == run_id).values(cancel_requested_at=now))
+        return await self.get_worker_run(run_id)
+
+    async def recover_expired_worker_runs(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        now = datetime.now(tz=UTC)
+        recovered: list[dict[str, Any]] = []
+        async with self.engine.begin() as conn:
+            rows = (
+                await conn.execute(
+                    t.worker_runs.select().where(
+                        sa.and_(
+                            t.worker_runs.c.state.in_(("CLAIMED", "VALIDATING", "READY", "DISPATCHING", "RUNNING", "PAUSING", "RESUMING")),
+                            t.worker_runs.c.lease_expires_at.is_not(None),
+                            t.worker_runs.c.lease_expires_at < now,
+                        )
+                    ).order_by(t.worker_runs.c.lease_expires_at.asc()).limit(limit).with_for_update(skip_locked=True)
+                )
+            ).mappings().all()
+            for row in rows:
+                await conn.execute(
+                    t.worker_runs.update().where(t.worker_runs.c.id == row["id"]).values(
+                        state="QUEUED",
+                        claim_owner=None,
+                        claimed_at=None,
+                        heartbeat_at=None,
+                        lease_expires_at=None,
+                        next_attempt_at=now,
+                        recovery_reason="worker run lease expired; requeued by recovery loop",
+                    )
+                )
+                await conn.execute(
+                    t.worker_run_transitions.insert().values(
+                        id=uuid4(),
+                        run_id=row["id"],
+                        from_state=str(row["state"]),
+                        to_state="QUEUED",
+                        actor="worker-run-recovery",
+                        reason="lease expired",
+                        metadata={"attempt_count": int(row.get("attempt_count") or 0)},
+                    )
+                )
+                recovered.append({**dict(row), "state": "QUEUED", "recovery_reason": "worker run lease expired; requeued by recovery loop"})
+        return recovered
 
     async def get_worker_run(self, run_id: UUID) -> dict[str, Any] | None:
         return await self._get_table_row(t.worker_runs, t.worker_runs.c.id, run_id)
@@ -4035,7 +8731,7 @@ class AgentStorage:
         correlation_id: str | None = None,
         transition_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
-        allowed = {"CREATED": {"VALIDATING", "CANCELLED", "FAILED"}, "VALIDATING": {"READY", "FAILED", "CANCELLED"}, "READY": {"DISPATCHING", "FAILED", "CANCELLED"}, "DISPATCHING": {"RUNNING", "FAILED", "CANCELLED", "TIMED_OUT"}, "RUNNING": {"PAUSING", "SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT"}, "PAUSING": {"PAUSED", "SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT"}, "PAUSED": {"RESUMING", "CANCELLED", "FAILED"}, "RESUMING": {"RUNNING", "FAILED", "CANCELLED"}, "SUCCEEDED": set(), "FAILED": set(), "CANCELLED": set(), "TIMED_OUT": set()}
+        allowed = {"CREATED": {"QUEUED", "VALIDATING", "CANCELLED", "FAILED"}, "QUEUED": {"VALIDATING", "CANCELLED", "FAILED"}, "CLAIMED": {"VALIDATING", "QUEUED", "CANCELLED", "FAILED"}, "VALIDATING": {"READY", "FAILED", "CANCELLED", "QUEUED"}, "READY": {"DISPATCHING", "FAILED", "CANCELLED", "QUEUED"}, "DISPATCHING": {"RUNNING", "FAILED", "CANCELLED", "TIMED_OUT", "QUEUED"}, "RUNNING": {"PAUSING", "SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT", "QUEUED"}, "PAUSING": {"PAUSED", "SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT", "QUEUED"}, "PAUSED": {"RESUMING", "CANCELLED", "FAILED", "QUEUED"}, "RESUMING": {"RUNNING", "FAILED", "CANCELLED", "QUEUED"}, "SUCCEEDED": set(), "FAILED": set(), "CANCELLED": set(), "TIMED_OUT": set()}
         now = datetime.now(tz=UTC)
         async with self.engine.begin() as conn:
             current = (await conn.execute(t.worker_runs.select().where(t.worker_runs.c.id == run_id).with_for_update())).mappings().first()
@@ -4050,6 +8746,7 @@ class AgentStorage:
                 values["started_at"] = now
             if new_state in {"SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT"}:
                 values["completed_at"] = now
+                values.update({"claim_owner": None, "lease_expires_at": None, "heartbeat_at": None})
             if result is not None:
                 values["result_json"] = result
             if error is not None:
@@ -4130,6 +8827,24 @@ class AgentStorage:
             rows = (await conn.execute(q)).mappings().all()
         return [dict(row) for row in rows]
 
+    async def list_worker_run_transitions_by_correlation(
+        self,
+        correlation_id: str,
+        *,
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        """List worker-run transitions correlated to one trace/message ID."""
+
+        q = (
+            t.worker_run_transitions.select()
+            .where(t.worker_run_transitions.c.correlation_id == correlation_id)
+            .order_by(t.worker_run_transitions.c.created_at.asc())
+            .limit(limit)
+        )
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(q)).mappings().all()
+        return [dict(row) for row in rows]
+
     async def create_worker_artifact(
         self,
         *,
@@ -4140,7 +8855,12 @@ class AgentStorage:
         sha256: str,
         size_bytes: int | None,
         metadata: dict[str, Any] | None = None,
+        trace_id: str | None = None,
+        span_id: str | None = None,
     ) -> dict[str, Any]:
+        trace_id = trace_id or current_trace_id()
+        effective_span_id = (span_id or current_span_id() or new_span_id()) if trace_id else span_id
+        created_at_value = datetime.now(tz=UTC)
         values = {
             "id": uuid4(),
             "run_id": run_id,
@@ -4150,9 +8870,29 @@ class AgentStorage:
             "sha256": sha256,
             "size_bytes": size_bytes,
             "metadata": metadata or {},
+            "trace_id": trace_id,
+            "span_id": effective_span_id,
+            "created_at": created_at_value,
         }
         async with self.engine.begin() as conn:
             await conn.execute(t.worker_artifacts.insert().values(**values))
+            if trace_id:
+                await self._insert_native_trace_span_tx(
+                    conn,
+                    trace_id=trace_id,
+                    span_id=new_span_id(),
+                    parent_span_id=effective_span_id,
+                    source_kind="audit",
+                    operation=f"artifact.{kind}",
+                    service="worker_evidence",
+                    status="success",
+                    started_at=created_at_value,
+                    ended_at=created_at_value,
+                    attributes={
+                        "kind": kind,
+                        "size_bytes": size_bytes or 0,
+                    },
+                )
         return values
 
     async def list_worker_artifacts(self, run_id: UUID, *, limit: int = 1_000) -> list[dict[str, Any]]:
@@ -4167,9 +8907,32 @@ class AgentStorage:
         return [dict(row) for row in rows]
 
     async def create_worker_usage(self, *, run_id: UUID, usage: dict[str, Any]) -> dict[str, Any]:
-        values = {"id": uuid4(), "run_id": run_id, "prompt_tokens": usage.get("prompt_tokens", 0), "completion_tokens": usage.get("completion_tokens", 0), "total_tokens": usage.get("total_tokens", 0), "cost_usd": usage.get("cost_usd", 0), "duration_ms": usage.get("duration_ms", 0), "resource_json": usage.get("resource_json") or {}, "provider_id": usage.get("provider_id"), "exact_model_id": usage.get("exact_model_id")}
+        trace_id = usage.get("trace_id") or current_trace_id()
+        effective_span_id = (usage.get("span_id") or current_span_id() or new_span_id()) if trace_id else usage.get("span_id")
+        created_at_value = datetime.now(tz=UTC)
+        values = {"id": uuid4(), "run_id": run_id, "prompt_tokens": usage.get("prompt_tokens", 0), "completion_tokens": usage.get("completion_tokens", 0), "total_tokens": usage.get("total_tokens", 0), "cost_usd": usage.get("cost_usd", 0), "duration_ms": usage.get("duration_ms", 0), "resource_json": usage.get("resource_json") or {}, "provider_id": usage.get("provider_id"), "exact_model_id": usage.get("exact_model_id"), "trace_id": trace_id, "span_id": effective_span_id, "created_at": created_at_value}
         async with self.engine.begin() as conn:
             await conn.execute(t.worker_usage_records.insert().values(**values))
+            if trace_id:
+                duration_ms = usage.get("duration_ms") or 0
+                await self._insert_native_trace_span_tx(
+                    conn,
+                    trace_id=trace_id,
+                    span_id=new_span_id(),
+                    parent_span_id=effective_span_id,
+                    source_kind="model",
+                    operation=usage.get("exact_model_id") or "worker.model",
+                    service="worker_evidence",
+                    status="success",
+                    started_at=created_at_value - timedelta(milliseconds=float(duration_ms or 0)),
+                    ended_at=created_at_value,
+                    duration_ms=duration_ms,
+                    attributes={
+                        "run_id": str(run_id),
+                        "prompt_tokens": usage.get("prompt_tokens", 0),
+                        "completion_tokens": usage.get("completion_tokens", 0),
+                    },
+                )
         return values
 
     async def list_worker_usage(self, run_id: UUID, *, limit: int = 1_000) -> list[dict[str, Any]]:
@@ -4203,10 +8966,37 @@ class AgentStorage:
         return await self.get_project_repository_record(project_id)
 
     async def create_project_evidence_package(self, *, project_id: UUID, policy_id: str, policy_version: str, status: str, checks: dict[str, Any], evidence_refs: dict[str, Any], completeness_score: float) -> dict[str, Any]:
-        values = {"id": uuid4(), "project_id": project_id, "policy_id": policy_id, "policy_version": policy_version, "status": status, "checks": checks, "evidence_refs": evidence_refs, "completeness_score": completeness_score}
+        """Upsert the latest operator-generated package for one policy version."""
+
+        values = {
+            "id": uuid4(),
+            "project_id": project_id,
+            "policy_id": policy_id,
+            "policy_version": policy_version,
+            "status": status,
+            "checks": checks,
+            "evidence_refs": evidence_refs,
+            "completeness_score": completeness_score,
+            "generated_at": datetime.now(tz=UTC),
+        }
         async with self.engine.begin() as conn:
-            await conn.execute(t.project_evidence_packages.insert().values(**values))
-        return values
+            stmt = (
+                pg_insert(t.project_evidence_packages)
+                .values(**values)
+                .on_conflict_do_update(
+                    constraint="uq_project_evidence_policy",
+                    set_={
+                        "status": values["status"],
+                        "checks": values["checks"],
+                        "evidence_refs": values["evidence_refs"],
+                        "completeness_score": values["completeness_score"],
+                        "generated_at": values["generated_at"],
+                    },
+                )
+                .returning(t.project_evidence_packages)
+            )
+            row = await self._mapping_first(await conn.execute(stmt))
+        return dict(row) if row else values
 
     async def get_project_evidence_package(self, project_id: UUID, *, policy_id: str | None = None) -> dict[str, Any] | None:
         q = t.project_evidence_packages.select().where(t.project_evidence_packages.c.project_id == project_id).order_by(t.project_evidence_packages.c.generated_at.desc()).limit(1)

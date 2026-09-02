@@ -25,7 +25,11 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-WORKSPACE = Path("/mnt/c/projects/AIAT")
+# Resolve the repository from this checked-in script instead of assuming a
+# case-sensitive host path.  The previous hard-coded `/mnt/c/projects/AIAT`
+# path caused safe traceback projection to discard every frame on the actual
+# `/mnt/c/projects/aiat` workspace and omitted required line metadata.
+WORKSPACE = Path(__file__).resolve().parents[4]
 GATEWAY = WORKSPACE / "mas/infra/smtp-gateway"
 PROFILE = GATEWAY / "profiles/oci-e2.1-micro-host.env.active"
 ROUTE_SCRIPT = GATEWAY / "scripts/configure-stalwart-resend-route.sh"
@@ -38,7 +42,7 @@ ROUTE_METADATA_FILE = Path("/etc/aiat/stalwart-route-lifecycle.meta")
 CERTIFICATION_SECRET_FILE = Path("/etc/aiat/resend-certification.env")
 RELAY_SECRET_FILE = Path("/etc/aiat/stalwart-resend.env")
 BACKUP_FILE = Path("/secure/rollback/stalwart-resend-route-20260731T205925Z.json")
-ADMIN_SOURCE_FILE = WORKSPACE / ".env"
+ADMIN_SOURCE_FILE = Path("/etc/aiat/stalwart-admin-source.env")
 EVIDENCE_PARENT = Path("/secure/rollback")
 LOCK_FILE = Path("/run/lock/aiat-resend-route-finish.lock")
 STALWART_CONTAINER = "mas-stalwart-1"
@@ -77,6 +81,8 @@ REQUIRED_FALSE_CONTROLS = {
 }
 ENV_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
 CONTROL_LINE = re.compile(r"^([A-Z][A-Z0-9_]*)=(true|false)$")
+SAFE_ARTIFACT_NAME = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
+SAFE_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 
 
 def _load_module(name: str, filename: str) -> Any:
@@ -92,12 +98,28 @@ CREDENTIALS = _load_module(
     "stalwart_route_lifecycle_credentials_for_finish",
     "stalwart_route_lifecycle_credentials.py",
 )
+ADMIN_SOURCE = _load_module(
+    "stalwart_admin_source_for_finish",
+    "stalwart_admin_source.py",
+)
 PROVISIONING = CREDENTIALS.PROVISIONING
 JMAP_RESPONSE = CREDENTIALS.JMAP_RESPONSE
 
 
 class FinishRefused(RuntimeError):
     """A fail-closed refusal that is safe to show to the operator."""
+
+
+class CertificationAuthenticationRefused(FinishRefused):
+    """A sanitized certification-key authentication refusal."""
+
+    safe_context = {
+        "operation": "route-inspect",
+        "endpoint_path": "/jmap/session",
+        "http_status": 401,
+        "authentication_mechanism": "bearer-certification-api-key",
+        "exception_class": "JmapEndpointError",
+    }
 
 
 def _safe_message(value: Any) -> str:
@@ -161,45 +183,18 @@ def parse_control_file(path: Path) -> dict[str, bool]:
 
 
 def parse_env_file(path: Path) -> dict[str, str]:
-    """Parse a data-only env file without shell evaluation."""
-    value = _read_protected_text(path)
-    if not value.endswith("\n"):
-        raise FinishRefused(f"source file {path.name} must end with a newline")
-    parsed: dict[str, str] = {}
-    for raw_line in value.splitlines():
-        if not raw_line or raw_line.startswith("#"):
-            continue
-        key, separator, item = raw_line.partition("=")
-        if separator != "=" or ENV_KEY.fullmatch(key) is None or key in parsed:
-            raise FinishRefused(f"source file {path.name} contains a malformed line")
-        if not item:
-            raise FinishRefused(f"source file {path.name} contains an empty value")
-        parsed[key] = item
-    return parsed
+    """Validate the dedicated source without shell evaluation."""
+    try:
+        return ADMIN_SOURCE.read_protected_admin_source(path)
+    except ADMIN_SOURCE.AdminSourceRefused as exc:
+        raise FinishRefused("protected admin source is invalid") from exc
 
 
 def read_permanent_admin_password(source: Path) -> str:
-    values = parse_env_file(source)
-    required = {"STALWART_RECOVERY_ADMIN", "admin-st", "guest"}
-    if not required.issubset(values):
-        raise FinishRefused("admin source is missing one of the required credential keys")
-    recovery_value = values["STALWART_RECOVERY_ADMIN"]
-    if recovery_value.count(":") != 1:
-        raise FinishRefused("STALWART_RECOVERY_ADMIN has an invalid source format")
-    source_principal, password = recovery_value.split(":", 1)
-    if (
-        source_principal != "admin"
-        or not password
-        or any(character.isspace() for character in password)
-    ):
-        raise FinishRefused(
-            "admin source must provide the password component for the local admin principal"
-        )
-    # The source principal is intentionally ignored for authentication. The
-    # password component is used only with the fixed permanent directory
-    # administrator identity above; recovery/admin-st/guest identities are
-    # never selected as an authentication principal.
-    return password
+    try:
+        return ADMIN_SOURCE.read_permanent_admin_password(source)
+    except ADMIN_SOURCE.AdminSourceRefused as exc:
+        raise FinishRefused("protected admin source is invalid") from exc
 
 
 def _parse_profile(path: Path) -> dict[str, str]:
@@ -277,10 +272,63 @@ def _artifact_snapshot(path: Path) -> dict[str, Any]:
     }
 
 
+def _safe_artifact_name(path: Path) -> str:
+    name = path.name
+    if name not in {".", ".."} and SAFE_ARTIFACT_NAME.fullmatch(name) is not None:
+        return name
+    return "temporary-artifact"
+
+
 def _assert_absent(*paths: Path) -> None:
     for path in paths:
-        if path.lexists():
-            raise FinishRefused(f"refusing to overwrite existing temporary artifact {path.name}")
+        name = _safe_artifact_name(path)
+        try:
+            path.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise FinishRefused(f"could not inspect temporary artifact {name}") from exc
+        raise FinishRefused(f"refusing to overwrite existing temporary artifact {name}")
+
+
+def _repository_source_filename(filename: str) -> str | None:
+    try:
+        candidate = Path(filename)
+        if not candidate.is_absolute():
+            candidate = WORKSPACE / candidate
+        relative = candidate.absolute().relative_to(WORKSPACE)
+    except (OSError, ValueError):
+        return None
+    name = relative.name
+    if name in {".", ".."} or SAFE_ARTIFACT_NAME.fullmatch(name) is None:
+        return None
+    return name
+
+
+def _unexpected_exception_evidence(exc: BaseException) -> dict[str, Any]:
+    exception_type = type(exc).__name__
+    if SAFE_IDENTIFIER.fullmatch(exception_type) is None:
+        exception_type = "Exception"
+    evidence: dict[str, Any] = {"exception_type": exception_type}
+    traceback = exc.__traceback__
+    while traceback is not None:
+        code = traceback.tb_frame.f_code
+        source_filename = _repository_source_filename(code.co_filename)
+        function_name = code.co_name
+        if (
+            source_filename is not None
+            and SAFE_IDENTIFIER.fullmatch(function_name) is not None
+            and traceback.tb_lineno > 0
+        ):
+            evidence.update(
+                {
+                    "source_filename": source_filename,
+                    "line_number": traceback.tb_lineno,
+                    "function_name": function_name,
+                }
+            )
+        traceback = traceback.tb_next
+    return evidence
 
 
 def _write_exclusive(path: Path, value: str) -> None:
@@ -354,6 +402,12 @@ def _run(label: str, command: Sequence[str], *, timeout: int = 180) -> None:
     except (OSError, subprocess.SubprocessError) as exc:
         raise FinishRefused(f"{label} could not be executed") from exc
     if result.returncode != 0:
+        if label == "route inspect" and re.search(
+            r"(?:^|\s)HTTP_STATUS=401(?:\s|$)", result.stderr
+        ):
+            raise CertificationAuthenticationRefused(
+                "certification API key authentication failed during route inspection"
+            )
         raise FinishRefused(f"{label} failed with exit status {result.returncode}")
 
 
@@ -377,10 +431,13 @@ def _capture(command: Sequence[str], *, timeout: int = 30) -> str:
 
 
 def _git_snapshot() -> dict[str, Any]:
-    commit = _capture(["git", "rev-parse", "HEAD"])
+    safe_directory = f"safe.directory={WORKSPACE}"
+    commit = _capture(["git", "-c", safe_directory, "rev-parse", "HEAD"])
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
         raise FinishRefused("repository HEAD is not a valid commit identifier")
-    status = _capture(["git", "status", "--porcelain", "--untracked-files=no"])
+    status = _capture(
+        ["git", "-c", safe_directory, "status", "--porcelain", "--untracked-files=no"]
+    )
     return {"commit": commit, "worktree_dirty": bool(status)}
 
 
@@ -606,7 +663,10 @@ def _remove_create_permission(password: str) -> None:
         diagnostic.sensitive_values.clear()
 
 
-def _run_finish(control_file: Path) -> tuple[dict[str, Any], Path]:
+def _run_finish(
+    control_file: Path,
+    admin_source_file: Path,
+) -> tuple[dict[str, Any], Path]:
     controls = parse_control_file(control_file)
     lock_parent = LOCK_FILE.parent
     try:
@@ -637,7 +697,7 @@ def _run_finish(control_file: Path) -> tuple[dict[str, Any], Path]:
 
         evidence_dir = _create_evidence_dir()
         profile = _parse_profile(PROFILE)
-        admin_password = read_permanent_admin_password(ADMIN_SOURCE_FILE)
+        admin_password = read_permanent_admin_password(admin_source_file)
         certification_values = _read_certification_values(CERTIFICATION_SECRET_FILE)
         _read_relay_secret(RELAY_SECRET_FILE)
         _require_root_file(BACKUP_FILE)
@@ -749,22 +809,32 @@ def _run_finish(control_file: Path) -> tuple[dict[str, Any], Path]:
     except FinishRefused as exc:
         if evidence_dir is not None:
             with contextlib.suppress(FinishRefused):
+                failure = {
+                    "version": 1,
+                    "final_status": "BLOCKED",
+                    "reason": _safe_message(exc),
+                }
+                if isinstance(exc, CertificationAuthenticationRefused):
+                    failure.update(exc.safe_context)
+                    failure.update(_unexpected_exception_evidence(exc))
                 _write_evidence(
                     evidence_dir,
                     "failure.json",
-                    {"version": 1, "final_status": "BLOCKED", "reason": _safe_message(exc)},
+                    failure,
                 )
         raise
     except Exception as exc:
         if evidence_dir is not None:
             with contextlib.suppress(FinishRefused):
+                unexpected = _unexpected_exception_evidence(exc)
                 _write_evidence(
                     evidence_dir,
                     "failure.json",
                     {
                         "version": 1,
                         "final_status": "BLOCKED",
-                        "reason": f"unexpected {type(exc).__name__}",
+                        "reason": f"unexpected {unexpected['exception_type']}",
+                        **unexpected,
                     },
                 )
         raise
@@ -780,6 +850,11 @@ def _run_finish(control_file: Path) -> tuple[dict[str, Any], Path]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--control-file", type=Path, required=True)
+    parser.add_argument(
+        "--admin-source-file",
+        type=Path,
+        default=ADMIN_SOURCE_FILE,
+    )
     return parser
 
 
@@ -791,7 +866,10 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     evidence_dir: Path | None = None
     try:
-        result, evidence_dir = _run_finish(args.control_file.absolute())
+        result, evidence_dir = _run_finish(
+            args.control_file.absolute(),
+            args.admin_source_file.absolute(),
+        )
     except FinishRefused as exc:
         print("FINAL_STATUS=BLOCKED")
         print(f"BLOCK_REASON={_safe_message(exc)}")
@@ -804,8 +882,9 @@ def main(argv: list[str] | None = None) -> int:
                 )
         return 1
     except Exception as exc:  # pragma: no cover - last-resort fail-closed guard
+        unexpected = _unexpected_exception_evidence(exc)
         print("FINAL_STATUS=BLOCKED")
-        print(f"BLOCK_REASON=unexpected {type(exc).__name__}")
+        print(f"BLOCK_REASON=unexpected {unexpected['exception_type']}")
         return 1
     print("ROUTE_ACTIVATION=PASS")
     print("READ_ONLY_ROUTE_VERIFICATION=PASS")

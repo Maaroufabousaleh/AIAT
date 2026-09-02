@@ -15,6 +15,7 @@ team_id: office_cso
 
 admin:
   agent_id: cso
+  worker_manifest_ref: cso
   role: c_suite
   class: CSuiteAgent
   display_name: "Chief Security Officer"
@@ -29,6 +30,7 @@ admin:
 
 workers:
   - agent_id: security_analyst
+    worker_manifest_ref: security_analyst
     role: worker
     class: WorkerAgent
     display_name: "Security Analyst"
@@ -44,6 +46,7 @@ workers:
       - blob.upload
 
   - agent_id: security_evaluator
+    worker_manifest_ref: security_evaluator
     role: worker
     class: WorkerAgent
     display_name: "Security Evaluator"
@@ -59,6 +62,7 @@ workers:
       - blob.upload
 
   - agent_id: sandbox_evaluator
+    worker_manifest_ref: sandbox_evaluator
     role: worker
     class: WorkerAgent
     display_name: "Sandbox Evaluator"
@@ -74,6 +78,7 @@ workers:
       - blob.upload
 
   - agent_id: license_provenance_evaluator
+    worker_manifest_ref: license_provenance_evaluator
     role: worker
     class: WorkerAgent
     display_name: "License Provenance Evaluator"
@@ -89,6 +94,7 @@ workers:
       - blob.upload
 
   - agent_id: policy_grant_reviewer
+    worker_manifest_ref: policy_grant_reviewer
     role: worker
     class: WorkerAgent
     display_name: "Policy Grant Reviewer"

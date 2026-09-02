@@ -54,6 +54,7 @@ class AutoGenAdapter:
         )
         self._runtime = None
         self._initialized = False
+        self._availability_reason: str | None = None
 
     async def initialize(self) -> None:
         """Set up the AutoGen runtime from manifest.runtime_config."""
@@ -65,41 +66,28 @@ class AutoGenAdapter:
             importlib.import_module("autogen_agentchat")
             importlib.import_module("autogen_core")
         except ImportError:
-            logger.warning(
-                "AutoGenAdapter %s: autogen-agentchat not installed; running in stub mode",
-                self.manifest.metadata.id,
-            )
-            self._initialized = True
+            self._availability_reason = "autogen-agentchat/autogen-core packages are not installed"
+            logger.warning("AutoGenAdapter %s unavailable: %s", self.manifest.metadata.id, self._availability_reason)
             return
 
         cfg = self.capabilities.group_chat_config or {}
         if not cfg:
             logger.warning(
-                "AutoGenAdapter %s: no group_chat_config in runtime_config; running in stub mode",
+                "AutoGenAdapter %s unavailable: no group_chat_config in runtime_config",
                 self.manifest.metadata.id,
             )
-            self._initialized = True
+            self._availability_reason = "group_chat_config is required for an executable AutoGen worker"
             return
 
         try:
-            # AutoGen group chat setup would go here when autogen-agentchat is available
-            # For now, record the configuration for later activation
-            self._runtime = {
-                "config": cfg,
-                "max_round": self.capabilities.max_round,
-                "termination": self.capabilities.termination_strategy,
-                "allowed_speakers": self.capabilities.allowed_speakers,
-            }
-            self._initialized = True
-            logger.info(
-                "AutoGenAdapter %s initialized: max_round=%d, speakers=%s",
-                self.manifest.metadata.id,
-                self.capabilities.max_round,
-                self.capabilities.allowed_speakers,
-            )
+            # AutoGen's rapidly changing group-chat API is intentionally not
+            # guessed here.  Until a certified adapter implementation is
+            # configured, report unavailable instead of returning a fabricated
+            # successful/configured result.
+            self._availability_reason = "no certified AutoGen group-chat executor is configured"
         except Exception as exc:
-            logger.error("Failed to initialize AutoGen runtime for %s: %s", self.manifest.metadata.id, exc)
-            self._initialized = True
+            self._availability_reason = f"AutoGen initialization failed: {exc}"
+            logger.exception("Failed to initialize AutoGen runtime for %s", self.manifest.metadata.id)
 
     async def send_task(self, envelope: Any) -> dict[str, Any]:
         """Execute a task through the AutoGen group chat."""
@@ -110,11 +98,12 @@ class AutoGenAdapter:
 
         if self._runtime is None:
             return {
-                "status": "stub",
+                "status": "unavailable",
                 "input": task_input,
                 "output": None,
                 "runtime": "autogen",
                 "worker_id": self.manifest.metadata.id,
+                "reason": self._availability_reason or "runtime is not initialized",
             }
 
         try:
@@ -122,13 +111,14 @@ class AutoGenAdapter:
             # For Epsilon, the adapter is registered and the config is validated;
             # live execution requires autogen-agentchat runtime to be available
             return {
-                "status": "configured",
+                "status": "unavailable",
                 "input": task_input,
                 "output": None,
                 "runtime": "autogen",
                 "worker_id": self.manifest.metadata.id,
                 "max_round": self._runtime["max_round"],
-                "note": "AutoGen group chat ready for activation via tool-service",
+                "note": "AutoGen package detected but no certified executor is configured",
+                "reason": self._availability_reason or "no certified executor",
             }
         except Exception as exc:
             logger.error("AutoGen execution failed for %s: %s", self.manifest.metadata.id, exc)
@@ -146,6 +136,7 @@ class AutoGenAdapter:
     async def shutdown(self) -> None:
         self._runtime = None
         self._initialized = False
+        self._availability_reason = None
         logger.info("AutoGenAdapter %s shut down", self.manifest.metadata.id)
 
     def _translate_input(self, envelope: Any) -> dict[str, Any]:

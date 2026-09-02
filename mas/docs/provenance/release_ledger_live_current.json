@@ -1,0 +1,98 @@
+{
+  "schema_version": "aiat.release-ledger-live-current-summary.v1",
+  "programme_scope": "personal-internal-only",
+  "observed_at": "2026-08-19T04:47:35.302736Z",
+  "profile": "live-current-local",
+  "status": "blocked",
+  "release_decision": "NO-RELEASE",
+  "counts": {
+    "total": 85,
+    "pass": 71,
+    "fail": 0,
+    "blocked": 14
+  },
+  "pending_evidence_count": 4,
+  "decision_reasons": [
+    "14 check(s) are externally blocked",
+    "4 pending evidence item(s) remain",
+    "worktree is dirty"
+  ],
+  "git": {
+    "revision": "57504a799f3611f1ef120ac92f30683d55394936",
+    "working_tree_clean": false
+  },
+  "manifest_digest": "2146c929b340370ff12c0d5a56c5b55ec2d07218884ef925c52299196865a8c3",
+  "live_configuration": {
+    "orchestrator_url_configured": false,
+    "credentials_printed": false,
+    "scope": "bounded local evidence aggregation; no deployment mutation or credential output"
+  },
+  "native_release_preflight": {
+    "status": "blocked",
+    "native_linux": false,
+    "kernel": "6.6.87.2-microsoft-standard-WSL2",
+    "docker_engine_available": true,
+    "compose_v2_available": true,
+    "runsc_registered": false,
+    "configured_image_ref_count": 0,
+    "digest_pinned_image_ref_count": 0,
+    "required_image_ref_count": 10,
+    "blockers": [
+      "host is not a native Linux release host",
+      "gVisor runsc runtime is not registered",
+      "working tree is dirty",
+      "deployment-supplied immutable image refs are absent"
+    ]
+  },
+  "blocked_checks": [
+    "release_environment:live",
+    "trace_evidence:live",
+    "live_trace_observability:live",
+    "live_tool_trace:live",
+    "slo_capacity:live",
+    "worker_reconciliation:live",
+    "image_provenance:live",
+    "metric_series_budget:live",
+    "sandbox_runtime_readiness:live",
+    "firecracker_worker_pool_readiness:live",
+    "runtime_benchmarks:live",
+    "model_profile_catalogue:live",
+    "outbound_mail_lifecycle:live",
+    "self_improvement_candidate_detection:live"
+  ],
+  "pending_evidence": [
+    "coding_worker security scan findings require review in static and live reconciliation rows",
+    "tester security scan findings require review in static and live reconciliation rows"
+  ],
+  "historical_configured_profile": {
+    "ref": "release_ledger_live.json",
+    "observed_at": "2026-08-18T16:58:17Z",
+    "total": 81,
+    "pass": 76,
+    "fail": 0,
+    "blocked": 5,
+    "pending": 4,
+    "note": "Latest configured Compose aggregation with operator environment supplied without output; model/profile alias reconciliation is refreshed separately and the aggregate remains descriptive rather than a release approval."
+  },
+  "licence_metadata_is_gate": false,
+  "bounded_resource_profile_evidence": {
+    "status": "pass",
+    "evidence_ref": "object_store_resource_profile_provider_diverse_evidence.json",
+    "providers": ["minio", "seaweedfs"],
+    "case_count_per_provider": 8,
+    "measurement_source": "procfs",
+    "cleanup_verified": true,
+    "invalid_run_excluded": true,
+    "aggregate_live_child_status": "pass"
+  },
+  "secret_management_live_evidence": {
+    "status": "pass",
+    "evidence_ref": "credentials_manager_live_evidence.json",
+    "boundary": "aiat_owned_postgres_credentials_manager",
+    "checks_passed": 12,
+    "cleanup_verified": true,
+    "provider_managed_kms_status": "not_configured",
+    "aggregate_live_child_status": "pass"
+  },
+  "secret_policy": "credentials, image values, URLs, and dependency payloads are never retained"
+}

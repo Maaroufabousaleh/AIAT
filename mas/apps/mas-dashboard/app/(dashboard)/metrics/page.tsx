@@ -1,18 +1,19 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { clsx } from "clsx";
 import {
-  LineChart, Line, BarChart, Bar, AreaChart, Area,
+  BarChart, Bar, AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip,
   Legend, ResponsiveContainer,
   type TooltipProps,
 } from "recharts";
 import { formatInTz, formatLocaleInTz } from "@/lib/datetime";
-import { RefreshCw, AlertCircle } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { KpiCard } from "@/components/ui/KpiCard";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { ErrorBanner } from "@/components/ui/ErrorBanner";
 
 const RANGES = [
   { label: "15m", minutes: 15, step: 30 },
@@ -36,16 +37,24 @@ async function fetchMetric(
   step: number
 ): Promise<PrometheusResult[]> {
   const url = `/api/metrics?type=range&query=${encodeURIComponent(query)}&start=${start}&end=${end}&step=${step}`;
-  const res = await fetch(url);
-  if (!res.ok) return [];
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) {
+    const error = new Error(`HTTP ${res.status}`) as Error & { status?: number };
+    error.status = res.status;
+    throw error;
+  }
   const { results } = await res.json();
   return results ?? [];
 }
 
 async function fetchInstant(query: string): Promise<PrometheusResult[]> {
   const url = `/api/metrics?query=${encodeURIComponent(query)}`;
-  const res = await fetch(url);
-  if (!res.ok) return [];
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) {
+    const error = new Error(`HTTP ${res.status}`) as Error & { status?: number };
+    error.status = res.status;
+    throw error;
+  }
   const { results } = await res.json();
   return results ?? [];
 }
@@ -66,6 +75,16 @@ function toTimeSeries(results: PrometheusResult[], labelKey = "model"): DataPoin
 
 function seriesKeys(results: PrometheusResult[], labelKey = "model"): string[] {
   return Array.from(new Set(results.map((r) => r.metric[labelKey] ?? r.metric.team ?? r.metric.tool_name ?? "value")));
+}
+
+function isAccessDenied(reason: unknown): boolean {
+  return (
+    typeof reason === "object" &&
+    reason !== null &&
+    "status" in reason &&
+    (((reason as { status?: unknown }).status === 401) ||
+      (reason as { status?: unknown }).status === 403)
+  );
 }
 
 // Chart palette — slate-friendly with high contrast on dark surfaces.
@@ -133,6 +152,11 @@ export default function MetricsPage() {
   const [mounted, setMounted] = useState(false);
   const [rangeIdx, setRangeIdx] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [stale, setStale] = useState(false);
+  const [accessDenied, setAccessDenied] = useState(false);
+  const [hasReadContext, setHasReadContext] = useState(false);
+  const hasLoadedRef = useRef(false);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const [llmData, setLlmData] = useState<DataPoint[]>([]);
   const [llmKeys, setLlmKeys] = useState<string[]>([]);
@@ -147,6 +171,7 @@ export default function MetricsPage() {
   const range = RANGES[rangeIdx];
 
   const load = useCallback(async () => {
+    if (accessDenied) return;
     setLoading(true);
     const now = Math.floor(Date.now() / 1000);
     const start = now - range.minutes * 60;
@@ -162,41 +187,75 @@ export default function MetricsPage() {
         fetchInstant(`mas_tool_circuit_state`),
       ]);
 
+      if ([llm, tools, msgs, dlq, budget, circuits].some(
+        (result) => result.status === "rejected" && isAccessDenied(result.reason),
+      )) {
+        setAccessDenied(true);
+        setHasReadContext(hasLoadedRef.current);
+        setError(null);
+        setStale(false);
+        return;
+      }
+
       if (llm.status === "fulfilled") {
+        hasLoadedRef.current = true;
         setLlmKeys(seriesKeys(llm.value));
         setLlmData(toTimeSeries(llm.value));
       }
       if (tools.status === "fulfilled") {
+        hasLoadedRef.current = true;
         setToolKeys(seriesKeys(tools.value, "tool_name"));
         setToolData(toTimeSeries(tools.value, "tool_name"));
       }
       if (msgs.status === "fulfilled") {
+        hasLoadedRef.current = true;
         setMsgKeys(seriesKeys(msgs.value, "direction"));
         setMsgData(toTimeSeries(msgs.value, "direction"));
       }
       if (dlq.status === "fulfilled") {
+        hasLoadedRef.current = true;
         setDlqData(dlq.value.map((r) => ({
           stream: r.metric.stream ?? "unknown",
           depth: parseFloat(r.value?.[1] ?? "0"),
         })));
       }
       if (budget.status === "fulfilled") {
+        hasLoadedRef.current = true;
         setBudgetData(budget.value
           .map((r) => ({ agent: r.metric.agent_id ?? "?", exhaustions: parseFloat(r.value?.[1] ?? "0") }))
           .filter((d) => d.exhaustions > 0)
         );
       }
       if (circuits.status === "fulfilled") {
+        hasLoadedRef.current = true;
         setCircuitData(circuits.value.map((r) => ({
           tool: r.metric.tool_name ?? "?",
           state: parseFloat(r.value?.[1] ?? "0"),
         })).filter((d) => d.state > 0));
       }
-      setLastUpdated(Date.now());
+      const metricResults: Array<[string, PromiseSettledResult<PrometheusResult[]>]> = [
+        ["LLM calls", llm],
+        ["tool calls", tools],
+        ["messages", msgs],
+        ["DLQ depth", dlq],
+        ["budget alerts", budget],
+        ["circuit breakers", circuits],
+      ];
+      const failures = metricResults
+        .filter(([, result]) => result.status === "rejected")
+        .map(([name]) => name);
+      if (failures.length > 0) {
+        setError(`Metrics refresh failed for ${failures.join(", ")}.`);
+        setStale(hasLoadedRef.current);
+      } else {
+        setError(null);
+        setStale(false);
+        setLastUpdated(Date.now());
+      }
     } finally {
       setLoading(false);
     }
-  }, [range]);
+  }, [accessDenied, range]);
 
   useEffect(() => { setMounted(true); }, []);
   useEffect(() => { load(); }, [load]);
@@ -204,6 +263,11 @@ export default function MetricsPage() {
     const t = setInterval(load, 30000);
     return () => clearInterval(t);
   }, [load]);
+
+  const requestRefresh = () => {
+    if (loading || accessDenied) return;
+    void load();
+  };
 
   const totalDlqDepth = dlqData.reduce((sum, d) => sum + d.depth, 0);
 
@@ -216,7 +280,7 @@ export default function MetricsPage() {
     dlqData.length === 0;
 
   return (
-    <div className="dashboard-page">
+    <main className="dashboard-page" aria-label="Metrics dashboard">
       <PageHeader
         icon="bar-chart"
         title="Metrics"
@@ -225,7 +289,7 @@ export default function MetricsPage() {
             Prometheus · refreshes every 30s
             {lastUpdated && (
               <span className="ml-2 text-slate-500">
-                · last updated{" "}
+                · last successful refresh{" "}
                 <time
                   dateTime={new Date(lastUpdated).toISOString()}
                   className="text-slate-400 font-mono"
@@ -240,7 +304,7 @@ export default function MetricsPage() {
             )}
           </>
         }
-        actions={
+        actions={!accessDenied ? (
           <>
             {/* Time-range segmented control */}
             <div
@@ -251,10 +315,11 @@ export default function MetricsPage() {
               {RANGES.map((r, i) => (
                 <button
                   key={r.label}
+                  type="button"
                   onClick={() => setRangeIdx(i)}
                   aria-pressed={i === rangeIdx}
                   className={clsx(
-                    "px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none",
+                    "min-h-11 min-w-11 px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none",
                     i === rangeIdx
                       ? "bg-blue-500/20 text-blue-100 border-blue-400/40 shadow-inner shadow-blue-950/40"
                       : "text-slate-400 hover:text-slate-100 hover:bg-slate-800/70 border-transparent",
@@ -266,19 +331,50 @@ export default function MetricsPage() {
               ))}
             </div>
             <button
-              onClick={load}
+              type="button"
+              onClick={requestRefresh}
               disabled={loading}
               aria-label="Refresh metrics"
               title="Refresh"
-              className="p-2 rounded-lg border border-slate-700 text-slate-400 hover:text-slate-100 hover:bg-slate-800/70 hover:border-slate-500 transition-colors disabled:opacity-50"
+              className="min-h-11 min-w-11 p-2 rounded-lg border border-slate-700 text-slate-400 hover:text-slate-100 hover:bg-slate-800/70 hover:border-slate-500 transition-colors disabled:opacity-50"
             >
               <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
             </button>
           </>
-        }
+        ) : undefined}
       />
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      {accessDenied && (
+        <section
+          className="dashboard-surface border border-amber-500/30 bg-amber-500/5 px-4 py-3"
+          role="region"
+          aria-label="Metrics access status"
+          aria-live="polite"
+        >
+          <p className="text-sm font-medium text-amber-200">Metrics access denied</p>
+          <p className="mt-1 text-xs text-amber-200/80">
+            {hasReadContext
+              ? "Previously loaded metric series remain visible for reference. Refresh, retry, range, and reconnect controls are hidden until authorization is restored."
+              : "No live metric state is available while authorization is unavailable. Metrics controls are hidden until authorization is restored."}
+          </p>
+        </section>
+      )}
+
+      {error && !accessDenied && (
+        <ErrorBanner
+          tone={stale ? "warning" : "error"}
+          title={stale ? "Showing last known metrics" : "Metrics unavailable"}
+          action={(
+            <button type="button" onClick={requestRefresh} disabled={loading} className="min-h-11 px-3 rounded border border-current text-xs font-medium hover:bg-white/10 disabled:opacity-50">
+              Retry
+            </button>
+          )}
+        >
+          {stale ? `${error} Retained series remain visible while the metrics source recovers.` : error}
+        </ErrorBanner>
+      )}
+
+      <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Metric summaries">
         <KpiCard
           label="Series loaded"
           value={llmKeys.length + toolKeys.length + msgKeys.length}
@@ -307,9 +403,16 @@ export default function MetricsPage() {
           icon="zap"
           tone={circuitData.length > 0 ? "negative" : "positive"}
         />
-      </div>
+      </section>
 
-      {noData && (
+      {accessDenied && noData && (
+        <EmptyState
+          icon="key"
+          title="No live metrics are available"
+          description="Authorization is required before metric series can be loaded."
+        />
+      )}
+      {noData && !accessDenied && (
         <EmptyState
           icon="alert"
           tone="neutral"
@@ -317,9 +420,10 @@ export default function MetricsPage() {
           description={`The Prometheus query returned no data for the ${range.label} window. The metrics endpoint may be down, or the operator has not reported any series yet.`}
           action={
             <button
-              onClick={load}
+              type="button"
+              onClick={requestRefresh}
               disabled={loading}
-              className="inline-flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium shadow-sm shadow-blue-500/20 transition-colors disabled:opacity-50"
+              className="min-h-11 inline-flex items-center gap-2 px-3 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium shadow-sm shadow-blue-500/20 transition-colors disabled:opacity-50"
             >
               <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
               Reconnect
@@ -327,7 +431,7 @@ export default function MetricsPage() {
           }
         />
       )}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+      <section className="grid grid-cols-1 xl:grid-cols-2 gap-4" aria-label="Metric charts">
         {!mounted ? (
           <div className="col-span-2 h-48 flex items-center justify-center text-slate-500 text-sm">
             Loading charts...
@@ -594,7 +698,7 @@ export default function MetricsPage() {
           </MetricCard>
         )}
         </>)}
-      </div>
-    </div>
+      </section>
+    </main>
   );
 }

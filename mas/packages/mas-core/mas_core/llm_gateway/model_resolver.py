@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 from .model_profiles import (
     ModelPolicyConstraints,
@@ -105,7 +108,7 @@ class ModelProfileResolver:
                     order = list(type(version.privacy_class))
                     if order.index(version.privacy_class) > order.index(constraints.privacy_class_at_most):
                         reasons.append("privacy class exceeds policy")
-                if version.context_window < max(constraints.minimum_context_window, request.prompt_tokens + request.expected_output_tokens):
+                if version.context_window and version.context_window < max(constraints.minimum_context_window, request.prompt_tokens + request.expected_output_tokens):
                     reasons.append("context window is too small")
                 if constraints.maximum_tokens is not None and request.expected_output_tokens > constraints.maximum_tokens:
                     reasons.append("expected output exceeds token policy")
@@ -130,15 +133,6 @@ class ModelProfileResolver:
                 candidates.append(((profile_rank, model_rank, profile.profile_id, version.version), profile, version))
 
         if not candidates:
-            snapshot = ModelResolutionSnapshot(
-                requested_profile_id=request.requested_profile_id,
-                effective_constraints=constraints,
-                required_capabilities=frozenset(sorted(required)),
-                rejected_candidates=tuple(rejected),
-                override_approval_id=request.override_approval_id,
-                selection_reason="No approved model satisfies the policy intersection",
-                policy_failure_code="NO_COMPLIANT_MODEL",
-            )
             raise ModelResolutionError(
                 "NO_COMPLIANT_MODEL",
                 "No approved Model Profile satisfies the effective policy and capability requirements",

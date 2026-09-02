@@ -7,6 +7,7 @@ team_id: office_cfo
 
 admin:
   agent_id: cfo
+  worker_manifest_ref: cfo
   role: c_suite
   class: CSuiteAgent
   display_name: "Chief Financial Officer"
@@ -26,6 +27,7 @@ admin:
 
 workers:
   - agent_id: financial_analyst
+    worker_manifest_ref: financial_analyst
     role: worker
     class: WorkerAgent
     display_name: "Financial Analyst"
@@ -42,6 +44,7 @@ workers:
       - blob.upload
 
   - agent_id: budget_evaluator
+    worker_manifest_ref: budget_evaluator
     role: worker
     class: WorkerAgent
     display_name: "Budget Evaluator"

@@ -1,0 +1,77 @@
+{
+  "schema_version": "aiat.openhands-certification-historical-run.v1",
+  "immutable": true,
+  "run": {
+    "run_id": "32759419116",
+    "job_id": "97534411574",
+    "workflow_ref": "agent/fix-review-p1",
+    "candidate_sha": "34dc8ce793b123b888145035e8947eb262fcfc08",
+    "artifact_id": "9532490327",
+    "artifact_digest": "sha256:e421cafd863cdfbcf1af89de2b56af2f3af2797c274aec5459180539b5437fe9"
+  },
+  "candidate": {
+    "release": "v1.43.0",
+    "source_commit": "4c1237f391fe394e9f67505fe3a0bd2d81f84188",
+    "image_digest": "sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97",
+    "activation": "inactive"
+  },
+  "classification": {
+    "final_status": "BLOCKED_LIFECYCLE",
+    "retrospective_status": "BLOCKED_OPENHANDS_LIVE_EXECUTION_CONTRACT",
+    "failure_class": "FAILED_CERTIFICATION_IMPLEMENTATION",
+    "root_cause_status": "OPENHANDS_V143_CONVERSATION_TAG_VALIDATION_MISMATCH",
+    "root_cause": "The AIAT adapter sent correlation tag keys containing underscores. OpenHands SDK v1.43.0 validates ConversationTags with the exact lowercase-alphanumeric key contract (^[a-z0-9]+$), so POST /api/conversations returned HTTP 422 before a conversation identifier was created. The adapter's lifecycle probes then timed out waiting for a conversation that could not exist.",
+    "failure_stage": "conversation_creation_request_validation",
+    "upstream_source": "openhands-sdk/openhands/sdk/conversation/types.py at 4c1237f391fe394e9f67505fe3a0bd2d81f84188",
+    "provider_failure": false,
+    "gateway_failure": false,
+    "gvisor_failure": false,
+    "runtime_startup_failure": false,
+    "security_finding": false,
+    "response_payload_retained": false,
+    "credentials_retained": false
+  },
+  "execution_diagnostics": {
+    "conversation_create_status": "FAILED",
+    "conversation_create_http_status": 422,
+    "conversation_id_present": false,
+    "run_start_status": "NOT_RUN",
+    "run_identifier_present": false,
+    "event_stream_status": "NOT_RUN",
+    "event_count": 3,
+    "final_response_present": false,
+    "model_error_observed": true,
+    "model_error_class": "CONVERSATION_CREATE_HTTP_422",
+    "model_error_http_status": 422,
+    "pause_resume": "TimeoutError",
+    "interrupt": "TimeoutError",
+    "timeout_probe": "TimeoutError",
+    "payloads_retained": false
+  },
+  "evidence": {
+    "infrastructure_gateway_path": "PASS",
+    "provider_baseline": "PASS",
+    "auto_coding_route": "PASS",
+    "tool_service": "PASS",
+    "openhands_runsc_start": "PASS",
+    "profile_mcp": "PASS",
+    "secret_nondisclosure": "PASS",
+    "real_coding_task": "FAILED_MODEL_EXECUTION",
+    "file_modifications": "FAILED_FILE_MODIFICATIONS",
+    "test_execution": "FAILED_TEST_EXECUTION",
+    "live_event_count": 3,
+    "live_final_response": "ABSENT",
+    "live_changed_path_count": 0,
+    "artifact_count": 0,
+    "live_status": "BLOCKED_LIFECYCLE",
+    "zero_residue": "PASS",
+    "security_scanner_blocker": "BLOCKED_SCANNER_COVERAGE",
+    "scanner_gate_independent_of_live_task": true
+  },
+  "retention": {
+    "credentials_retained": false,
+    "model_payloads_retained": false,
+    "raw_response_payload_retained": false,
+    "unnecessary_logs_retained": false
+  }
+}

@@ -1,0 +1,152 @@
+{
+  "schema_version": "aiat.image-sbom-local-observation.v1",
+  "programme_scope": "personal-internal-only",
+  "observed_at": "2026-08-19T00:18:56Z",
+  "source_command": "DOCKER_API_VERSION=1.44 docker sbom --quiet --format cyclonedx-json <local-image-ref>",
+  "environment": {
+    "host_class": "WSL2 with Docker Desktop Linux engine",
+    "engine_available": true,
+    "docker_sbom_version": "0.6.0",
+    "syft_version": "0.43.0",
+    "measurement_scope": "local image-store SBOM observation; not a native-Linux release build",
+    "raw_sbom_retained": false,
+    "credentials_printed": false
+  },
+  "status": "observed",
+  "images": [
+    {
+      "id": "team-runner",
+      "image_ref": "mas/team-runner:dev",
+      "bom_format": "CycloneDX",
+      "spec_version": "1.4",
+      "component_count": 169,
+      "artifact_bytes": 566884,
+      "artifact_sha256": "d5beda7aa095226cf67ecb4ee861cf25ba770530cb434abf4e5864737c93471d",
+      "status": "pass"
+    },
+    {
+      "id": "redis-acl-init",
+      "image_ref": "mas/redis-acl-init:dev",
+      "bom_format": "CycloneDX",
+      "spec_version": "1.4",
+      "component_count": 20,
+      "artifact_bytes": 45838,
+      "artifact_sha256": "208fa7144fc2691a16df88aeaeb22f1dc1679c656f4a665eeda671f7b5750bbb",
+      "status": "pass"
+    },
+    {
+      "id": "message-router",
+      "image_ref": "mas/message-router:dev",
+      "bom_format": "CycloneDX",
+      "spec_version": "1.4",
+      "component_count": 171,
+      "artifact_bytes": 581343,
+      "artifact_sha256": "fc898e660bdeea7b33d74bc6f2cfde1f81ebc764592eecbf73ad53692bb6361a",
+      "status": "pass"
+    },
+    {
+      "id": "tool-service-core",
+      "image_ref": "mas/tool-service:dev",
+      "bom_format": "CycloneDX",
+      "spec_version": "1.4",
+      "component_count": 476,
+      "artifact_bytes": 1094171,
+      "artifact_sha256": "4ee9a9fdf7207324dd5b744271a1503c018696a5793e8ad28ce7ff27c78191a3",
+      "status": "pass"
+    },
+    {
+      "id": "opencode-runtime",
+      "image_ref": "mas/opencode-runtime:dev",
+      "bom_format": "CycloneDX",
+      "spec_version": "1.4",
+      "component_count": 294,
+      "artifact_bytes": 639907,
+      "artifact_sha256": "369cb5cad6038fe89c6736e10a2ff3fdec11bb03be203211eb4dd1bd76fa6ee9",
+      "status": "pass"
+    },
+    {
+      "id": "orchestrator-api",
+      "image_ref": "mas/orchestrator-api:dev",
+      "bom_format": "CycloneDX",
+      "spec_version": "1.4",
+      "component_count": 388,
+      "artifact_bytes": 1652832,
+      "artifact_sha256": "4c0938f795b47acaf6da2f91f75c183d650ff45937630465e6719e302ef5c2a8",
+      "status": "pass"
+    },
+    {
+      "id": "pm-gateway",
+      "image_ref": "mas/pm-gateway:dev",
+      "bom_format": "CycloneDX",
+      "spec_version": "1.4",
+      "component_count": 135,
+      "artifact_bytes": 427710,
+      "artifact_sha256": "91b7a1e9f8c37a13d44fb31fcb5b442529ea754b47091e6b6fb85542f72a878e",
+      "status": "pass"
+    },
+    {
+      "id": "dashboard",
+      "image_ref": "mas/dashboard:dev",
+      "bom_format": "CycloneDX",
+      "spec_version": "1.4",
+      "component_count": 246,
+      "artifact_bytes": 509791,
+      "artifact_sha256": "6183769c3774afa8faf7d6377c5846de88c4c00d028f0e56cbdfb326793075cd",
+      "status": "pass"
+    },
+    {
+      "id": "omniroute",
+      "image_ref": "diegosouzapw/omniroute:3.8.38",
+      "bom_format": "CycloneDX",
+      "spec_version": "1.4",
+      "component_count": 304,
+      "artifact_bytes": 666241,
+      "artifact_sha256": "dd628792db134efe2c7aac0f2704574aa5bcd28231338a0e8923d6fc2992ec8d",
+      "status": "pass"
+    },
+    {
+      "id": "litellm",
+      "image_ref": "ghcr.io/berriai/litellm:main-stable",
+      "bom_format": "CycloneDX",
+      "spec_version": "1.4",
+      "component_count": 227,
+      "artifact_bytes": 1096566,
+      "artifact_sha256": "50478d43f2d40ac33015d274ca61d4a8e45dabff74ac5ecac040ba2d85303319",
+      "status": "pass"
+    }
+  ],
+  "summary": {
+    "image_count": 10,
+    "passed_image_count": 10,
+    "failed_image_count": 0,
+    "total_component_count": 2430,
+    "sbom_schema_status": "pass",
+    "scan_status": "blocked_operator_auth",
+    "scan_tool_note": "Docker Scout is installed but its local CVE command requires operator login; no offline scanner is installed. No scan output is retained.",
+    "source_revision_status": "not_checked",
+    "lock_hash_status": "not_checked",
+    "native_clean_build_status": "not_checked",
+    "deployment_artifact_status": "not_checked"
+  },
+  "failure_classification": {
+    "harness_configuration_failure": "not_observed",
+    "provider_functional_failure": "not_observed",
+    "provider_resource_limit_failure": "not_tested",
+    "infrastructure_environment_failure": "not_observed",
+    "operator_prerequisite": "vulnerability-scan authentication or an offline scanner is required for the remaining scan evidence"
+  },
+  "evidence_boundary": {
+    "proves": "All ten local images produced parseable CycloneDX 1.4 SBOM observations with scalar component counts and content hashes.",
+    "does_not_prove": "A clean native build, deployment artifact provenance, source/lock reconciliation, vulnerability scan disposition, or native release-host readiness.",
+    "release_gate_status": "blocked_pending_deployment_artifacts_and_scan",
+    "licence_metadata_is_gate": false,
+    "payloads_credentials_logs_retained": false
+  },
+  "cleanup": {
+    "containers_created": 0,
+    "networks_created": 0,
+    "volumes_created": 0,
+    "cleanup_required": false
+  },
+  "mutation_performed": false
+}

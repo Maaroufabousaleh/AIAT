@@ -142,4 +142,6 @@ req = CreateContextItemRequest(
 - **Controller authority**: Only `WorkflowController` writes workflow state
 - **Checkpoint resume**: Agent state persisted for shutdown-safe resume
 - **DLQ handling**: Failed messages stored in `dead_letters` for inspection
-
+- **PM ACTIVE readiness**: Binding-wide inbound mutation requires both sides of
+  the connection/binding lifecycle to be ACTIVE and is governed by a persisted
+  digest-bound lifecycle plan; see [PM_ACTIVE_READINESS.md](PM_ACTIVE_READINESS.md)

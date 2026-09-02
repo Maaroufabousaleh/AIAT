@@ -1,0 +1,10 @@
+{
+  "candidate_sha_bound": true,
+  "errors": [],
+  "exact_image_pins": true,
+  "manual_only": true,
+  "schema_version": "aiat.openhands-certification-workflow-validation.v1",
+  "secrets_or_payloads_retained": false,
+  "status": "PASS",
+  "workflow": ".github/workflows/openhands-candidate-certification.yml"
+}

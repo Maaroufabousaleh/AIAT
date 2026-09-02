@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import json
+import time
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -36,7 +39,7 @@ class FakeStalwart:
         return {"correlation_id": "alias"}
 
     async def read_message(self, _account_id, message_id):
-        return {"correlation_id": "provider-read", "result": {"list": [{"id": message_id, "bodyValues": {"x": {"value": "Code 481516"}}}]}}
+        return {"correlation_id": "provider-read", "result": {"list": [{"id": message_id, "receivedAt": "2026-07-28T20:00:00Z", "bodyValues": {"x": {"value": "Code 481516"}}}]}}
 
     async def list_messages(self, _account_id, *, limit, query=None):
         return {"result": {"ids": ["message-a"], "limit": limit, "query": query}, "correlation_id": "provider-list"}
@@ -91,6 +94,8 @@ async def identity_client():
             "worker-a": ["identity:delegate", "identity:browser-broker"],
             "worker-b": ["identity:delegate"],
         }),
+        outbound_relay_certified=True,
+        resend_webhook_signing_secret="whsec_" + base64.b64encode(b"resend-webhook-secret").decode(),
     )
     app = create_app(settings=settings, store=InMemoryIdentityStore())
     async with app.router.lifespan_context(app):
@@ -282,7 +287,11 @@ async def test_outbound_requires_human_approval(identity_client):
     assert denied.status_code == 403
     approval = request_payload["approval"]["id"]
     assert (await _post(client, signers["operator"], f"/v1/approvals/{approval}/decision", {"actor": {"actor_id": "operator", "purpose": "human approval"}, "approved": True})).status_code == 200
-    sent = await _post(client, signers["worker-a"], "/v1/outbound/send-approved", {"worker_id": str(worker), "actor": {"actor_id": str(worker), "purpose": "external contact"}, "outbound_request_id": request_payload["request"]["id"], "idempotency_key": f"submit:{worker}:1"})
+    submit_body = {"worker_id": str(worker), "actor": {"actor_id": str(worker), "purpose": "external contact"}, "outbound_request_id": request_payload["request"]["id"], "idempotency_key": f"submit:{worker}:1"}
+    submit_raw = json.dumps(submit_body, separators=(",", ":"), sort_keys=True).encode()
+    submit_headers = signers["worker-a"].sign_headers("POST", "/v1/outbound/send-approved", submit_raw)
+    submit_headers["X-AIAT-Trace-ID"] = "trace-mail-001"
+    sent = await _post(client, signers["worker-a"], "/v1/outbound/send-approved", submit_body, headers=submit_headers)
     assert sent.status_code == 200
     assert sent.json()["state"] == "SUBMITTED"
     repeated = await _post(client, signers["worker-a"], "/v1/outbound/send-approved", {"worker_id": str(worker), "actor": {"actor_id": str(worker), "purpose": "external contact"}, "outbound_request_id": request_payload["request"]["id"], "idempotency_key": f"submit:{worker}:1"})
@@ -291,6 +300,162 @@ async def test_outbound_requires_human_approval(identity_client):
     store = client._transport.app.state.identity_store  # type: ignore[attr-defined]
     assert store.delivery_attempts[-1]["outcome"] == "QUEUED"
     assert store.delivery_attempts[-1]["provider_correlation_id"] == "provider-submit"
+    assert store.delivery_attempts[-1]["trace_id"] == "trace-mail-001"
+    assert len(store.delivery_attempts[-1]["span_id"]) == 16
+    assert "recipient@example.net" not in str(store.delivery_attempts[-1])
+
+
+@pytest.mark.anyio
+async def test_verified_provider_webhook_is_idempotent_payload_free_and_projected(identity_client):
+    client, signers = identity_client
+    worker_id = uuid4()
+    body = {
+        "provider": "resend",
+        "payload": {
+            "id": "provider-event-1",
+            "type": "email.bounced",
+            "created_at": "2026-08-17T12:00:00Z",
+            "data": {
+                "email_id": "provider-message-1",
+                "status": "bounced",
+                "reason_code": "550",
+                "to": "recipient@example.net",
+                "body": "must-not-persist",
+            },
+        },
+        "worker_id": str(worker_id),
+        "signature_verified": True,
+        "actor": {"actor_id": "orchestrator-api", "purpose": "persist verified provider event"},
+        "trace_id": "trace-mail-edge-001",
+    }
+    first = await _post(client, signers["operator"], "/v1/mail-edge/provider-webhook", body)
+    repeated = await _post(client, signers["operator"], "/v1/mail-edge/provider-webhook", body)
+    assert first.status_code == repeated.status_code == 200
+    assert first.json()["event_type"] == "bounced"
+    assert first.json()["failure_class"] == "permanent"
+    assert first.json()["id"] == repeated.json()["id"]
+    assert "must-not-persist" not in first.text
+    assert "recipient@example.net" not in first.text
+    assert first.json()["metadata"] == {
+        "provider_event_type": "email.bounced",
+        "provider_reason_code": "550",
+        "provider_status": "bounced",
+    }
+
+    store = client._transport.app.state.identity_store  # type: ignore[attr-defined]
+    assert len(store.mail_edge_observations) == 1
+    assert "must-not-persist" not in str(store.mail_edge_observations)
+    projection = await store.dashboard_rows("mail-relay")
+    assert projection[-1]["source"] == "provider_webhook"
+    assert projection[-1]["event_type"] == "bounced"
+    assert projection[-1]["trace_id"] == "trace-mail-edge-001"
+
+    conflict = {**body, "payload": {**body["payload"], "type": "email.delivered"}}
+    conflicting = await _post(client, signers["operator"], "/v1/mail-edge/provider-webhook", conflict)
+    assert conflicting.status_code == 409
+    unsigned = {**body, "signature_verified": False, "payload": {**body["payload"], "id": "provider-event-2"}}
+    rejected = await _post(client, signers["operator"], "/v1/mail-edge/provider-webhook", unsigned)
+    assert rejected.status_code == 403
+
+
+@pytest.mark.anyio
+async def test_resend_provider_ingress_verifies_raw_body_and_persists_normalized_event(identity_client):
+    client, _signers = identity_client
+    body = json.dumps({
+        "id": "resend-ingress-event-1",
+        "type": "email.bounced",
+        "data": {"email_id": "resend-message-1", "status": "bounced", "body": "drop-me"},
+    }, separators=(",", ":"), sort_keys=True).encode()
+    timestamp = int(time.time())
+    signed = f"resend-msg-1.{timestamp}.".encode() + body
+    signature = base64.b64encode(hmac.new(b"resend-webhook-secret", signed, hashlib.sha256).digest()).decode()
+    headers = {
+        "Content-Type": "application/json",
+        "svix-id": "resend-msg-1",
+        "svix-timestamp": str(timestamp),
+        "svix-signature": f"v1,{signature}",
+    }
+    response = await client.post("/v1/mail-edge/provider-webhook/resend", content=body, headers=headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["event_type"] == "bounced"
+    assert "drop-me" not in response.text
+
+    tampered = await client.post(
+        "/v1/mail-edge/provider-webhook/resend",
+        content=body + b" ",
+        headers=headers,
+    )
+    assert tampered.status_code == 401
+
+
+@pytest.mark.anyio
+async def test_resend_provider_ingress_correlates_durable_attempt_trace(identity_client):
+    client, _signers = identity_client
+    store = client._transport.app.state.identity_store  # type: ignore[attr-defined]
+    worker_id = uuid4()
+    identity, _ = await store.provision_identity(
+        company_id=uuid4(),
+        worker_id=worker_id,
+        address=f"worker-{worker_id}@agents.identity.invalid",
+        alias=None,
+        domain="agents.identity.invalid",
+        idempotency_key=f"mailbox:{worker_id}:raw-correlation",
+        quota_mb=100,
+    )
+    outbound, _ = await store.create_outbound_request(
+        worker_id=worker_id,
+        identity_id=identity["id"],
+        sender=identity["address"],
+        recipients=["provider-target@example.invalid"],
+        subject="fixture",
+        body="payload never enters the observation",
+        recipient_class="fixture",
+        idempotency_key=f"outbound:{worker_id}:raw-correlation",
+    )
+    await store.update_outbound_request(
+        outbound["id"],
+        state="SUBMITTED",
+        provider_message_id="resend-message-correlated",
+    )
+    await store.record_delivery_attempt(
+        outbound_request_id=outbound["id"],
+        provider_correlation_id="resend-correlation",
+        provider_message_id="resend-message-correlated",
+        outcome="QUEUED",
+        trace_id="trace-raw-correlation",
+        span_id="span-raw-correlation",
+    )
+
+    body = json.dumps(
+        {
+            "id": "resend-correlated-event",
+            "type": "email.delivered",
+            "data": {"email_id": "resend-message-correlated", "status": "delivered"},
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    timestamp = int(time.time())
+    signed = f"resend-correlated.{timestamp}.".encode() + body
+    signature = base64.b64encode(
+        hmac.new(b"resend-webhook-secret", signed, hashlib.sha256).digest()
+    ).decode()
+    response = await client.post(
+        "/v1/mail-edge/provider-webhook/resend",
+        content=body,
+        headers={
+            "Content-Type": "application/json",
+            "svix-id": "resend-correlated",
+            "svix-timestamp": str(timestamp),
+            "svix-signature": f"v1,{signature}",
+        },
+    )
+    assert response.status_code == 200, response.text
+    projected = response.json()
+    assert projected["worker_id"] == str(worker_id)
+    assert projected["outbound_request_id"] == str(outbound["id"])
+    assert projected["trace_id"] == "trace-raw-correlation"
+    assert projected["span_id"] == "span-raw-correlation"
 
 
 @pytest.mark.anyio
@@ -366,6 +531,72 @@ async def test_mailbox_grant_and_external_credential_lease_are_durable_and_secre
     assert {event["kind"] for event in store.usage_events} >= {
         "mailbox_provisioning", "mailbox_storage_mb", "signup_attempt", "browser_minute"
     }
+
+
+@pytest.mark.anyio
+async def test_external_account_high_risk_actions_pause_for_human_policy(identity_client):
+    client, signers = identity_client
+    policy_path = "/v1/external-accounts/action-policy"
+    policy = await client.get(policy_path, headers=signers["operator"].sign_headers("GET", policy_path, b""))
+    assert policy.status_code == 200
+    assert policy.json()["schema_version"] == "aiat.external-account-action-policy.v1"
+    actions = {item["action"]: item for item in policy.json()["actions"]}
+    assert actions["rotate_credentials"]["approval_required"] is True
+    assert actions["close"]["approval_kind"] == "external_account_close"
+    assert actions["suspend"]["approval_required"] is False
+
+    company_id, worker = uuid4(), uuid4()
+    provision = await _post(client, signers["operator"], "/v1/worker-identities/provision", {
+        "company_id": str(company_id), "worker_id": str(worker),
+        "actor": {"actor_id": "orchestrator-api", "purpose": "approved hiring"},
+        "idempotency_key": f"mailbox:{company_id}:{worker}",
+    })
+    verify = await _post(client, signers["operator"], f"/v1/worker-identities/{worker}/verify", {
+        "actor": {"actor_id": "orchestrator-api", "purpose": "delivery verification"},
+        "provider_message_id": "high-risk-policy-message",
+    })
+    assert provision.status_code == 200, provision.text
+    assert verify.status_code == 200, verify.text
+    account = await _post(client, signers["worker-a"], "/v1/external-accounts/signup-request", {
+        "worker_id": str(worker), "actor": {"actor_id": str(worker), "purpose": "approved test account"},
+        "service": "github", "service_category": "development_test",
+        "idempotency_key": f"account:{worker}:high-risk",
+    })
+    assert account.status_code == 200
+    account_id = account.json()["id"]
+    session = await _post(client, signers["worker-a"], "/v1/sessions/create", {
+        "worker_id": str(worker), "actor": {"actor_id": str(worker), "purpose": "local browser login"},
+        "service": "github", "external_account_id": account_id,
+        "idempotency_key": f"session:{worker}:high-risk",
+    })
+    lease = await _post(client, signers["worker-a"], "/v1/sessions/lease", {
+        "worker_id": str(worker), "actor": {"actor_id": str(worker), "purpose": "local browser broker"},
+        "session_id": session.json()["id"],
+    })
+
+    close_path = f"/v1/external-accounts/{account_id}/close"
+    pending = await _post(client, signers["worker-a"], close_path, {
+        "worker_id": str(worker), "actor": {"actor_id": str(worker), "purpose": "close external account"},
+        "service": "github", "service_category": "development_test",
+        "idempotency_key": f"close:{worker}:high-risk",
+    })
+    assert pending.status_code == 200
+    assert pending.json()["state"] == "PENDING_APPROVAL"
+    approval_id = pending.json()["approval"]["id"]
+    store = client._transport.app.state.identity_store  # type: ignore[attr-defined]
+    assert str(store.external_accounts[UUID(account_id)]["state"]) == "ACTIVE"
+
+    decided = await _post(client, signers["operator"], f"/v1/approvals/{approval_id}/decision", {
+        "actor": {"actor_id": "operator", "purpose": "human external-account closure approval"},
+        "approved": True,
+    })
+    assert decided.status_code == 200
+    assert str(store.external_accounts[UUID(account_id)]["state"]) == "CLOSED"
+    denied = await _post(client, signers["worker-a"], "/v1/sessions/use", {
+        "worker_id": str(worker), "actor": {"actor_id": str(worker), "purpose": "closed account must be revoked"},
+        "session_id": session.json()["id"], "lease_token": lease.json()["lease_token"],
+    })
+    assert denied.status_code == 403
 
 
 @pytest.mark.anyio
@@ -518,6 +749,36 @@ def test_production_policy_rejects_direct_mx_and_missing_crypto() -> None:
         IdentitySettings(direct_mx_outbound_enabled=True)
     with pytest.raises(ValueError, match="missing required production identity configuration"):
         IdentitySettings(MAS_ENVIRONMENT="production")
+
+
+def test_development_profile_can_disable_all_external_relay_paths() -> None:
+    settings = IdentitySettings(
+        MAS_ENVIRONMENT="development",
+        outbound_relay_provider="disabled",
+        outbound_relay_host="",
+        outbound_relay_port=0,
+        outbound_relay_tls_mode="disabled",
+    )
+    assert settings.outbound_relay_provider == "disabled"
+    assert settings.direct_mx_outbound_enabled is False
+    assert settings.default_outbound_enabled is False
+    assert settings.outbound_relay_certified is False
+
+
+def test_profile_domains_are_explicit_and_isolated() -> None:
+    development = IdentitySettings(
+        IDENTITY_PROFILE="development",
+        MAS_ENVIRONMENT="development",
+        agent_mail_domain="agents.aiat.local",
+    )
+    assert development.agent_mail_domain == "agents.aiat.local"
+    with pytest.raises(ValueError, match="agents.aiat.ca"):
+        IdentitySettings(
+            IDENTITY_PROFILE="production",
+            MAS_ENVIRONMENT="production",
+            agent_mail_domain="agents.aiat.local",
+            mail_hostname="mail.localhost",
+        )
 
 
 @pytest.mark.anyio

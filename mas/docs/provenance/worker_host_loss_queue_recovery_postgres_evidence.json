@@ -1,0 +1,124 @@
+{
+  "artifact_count": 1,
+  "commit": "2bc7ca5",
+  "binding_recovery_schema": "aiat.worker-run-host-recovery.v1",
+  "binding_schema": "aiat.worker-run-host-binding.v1",
+  "binding_state": "RELEASED",
+  "certification_boundary": {
+    "alternate_worker_host_retry": "checked",
+    "durable_binding_reassignment": "checked",
+    "external_provider_or_remote_runtime": "not_checked",
+    "host_lease_fencing": "checked",
+    "independent_deployed_hosts": "not_checked",
+    "payload_free_usage_artifact_trace_evidence": "checked",
+    "postgres_connection_reopen": "checked",
+    "provider_backed_recovery": "not_checked",
+    "sandbox_runtime_gvisor_or_firecracker": "not_checked",
+    "stale_lost_host_execution_rejection": "checked",
+    "worker_run_claim_lease_requeue": "checked"
+  },
+  "cleanup_deleted_counts": {
+    "artifacts": 1,
+    "bindings": 1,
+    "hosts": 0,
+    "reservations": 2,
+    "spans": 3,
+    "worker_artifacts": 1,
+    "worker_runs": 1,
+    "workers": 1
+  },
+  "coverage_schema": "aiat.worker-trace-coverage.v1",
+  "durable_reopen": {
+    "artifact_count": 1,
+    "binding_host_id": "aiat-cert-host-loss-queue-recovery-worker-v1-b",
+    "binding_state": "RELEASED",
+    "healthy": true,
+    "native_span_count": 3,
+    "run_present": true,
+    "usage_count": 1
+  },
+  "event_count": 2,
+  "execution_schema": "aiat.worker-host-execution.v1",
+  "expected_migration": "0042_worker_run_host_binding",
+  "external_network_access_performed": false,
+  "external_provider_mutation_performed": false,
+  "host_ids": [
+    "aiat-cert-host-loss-queue-recovery-worker-v1-a",
+    "aiat-cert-host-loss-queue-recovery-worker-v1-b"
+  ],
+  "host_recovery": {
+    "expired_reservation_count": 1,
+    "host_filter": [
+      "aiat-cert-host-loss-queue-recovery-worker-v1-a"
+    ],
+    "lost_host_id": "aiat-cert-host-loss-queue-recovery-worker-v1-a",
+    "lost_host_status_after": "OFFLINE",
+    "recovered_host_count": 1,
+    "status": "RECOVERED"
+  },
+  "host_recovery_schema": "aiat.worker-host-recovery.v1",
+  "initial_fixture_counts": {
+    "bindings": 0,
+    "hosts": 0,
+    "reservations": 0,
+    "runs": 0,
+    "spans": 0,
+    "workers": 0
+  },
+  "licence_metadata_is_gate": false,
+  "local_database_access_performed": true,
+  "migration_version": "0042_worker_run_host_binding",
+  "mode": "local-postgres-worker-host-loss-queue-recovery",
+  "mutation_performed": true,
+  "native_span_count": 3,
+  "network_access_performed": true,
+  "observed_at": "2026-08-18T20:09:17.891658Z",
+  "payload_free": true,
+  "remaining_fixture_counts": {
+    "bindings": 0,
+    "hosts": 0,
+    "reservations": 0,
+    "runs": 0,
+    "spans": 0,
+    "workers": 0
+  },
+  "reservation_state": "RELEASED",
+  "run_state": "SUCCEEDED",
+  "schema_version": "aiat.worker-host-loss-queue-recovery-postgres-certification.v1",
+  "scope": "fenced host loss, canonical Worker Run requeue, stale executor rejection, alternate-host reassignment, native retry, durable reopen, and scoped cleanup",
+  "status": "pass",
+  "trace_coverage": {
+    "licence_metadata_is_gate": false,
+    "missing_required_sources": [],
+    "optional_sources": {
+      "integration_evidence": "empty",
+      "native_audit_spans": "observed",
+      "native_integration_spans": "empty",
+      "native_mail_spans": "empty"
+    },
+    "require_integration": false,
+    "required_sources": {
+      "native_model_spans": "observed",
+      "native_worker_spans": "observed",
+      "worker_artifacts": "observed",
+      "worker_usage_records": "observed"
+    },
+    "schema_version": "aiat.worker-trace-coverage.v1",
+    "status": "pass",
+    "trace_status": "observed",
+    "worker_run_scope": "model-backed worker source coverage; integration/mail-edge and live retention are separate gates"
+  },
+  "transition_count": 8,
+  "usage_count": 1,
+  "worker_dispatch_performed": true,
+  "worker_run_recovery": {
+    "attempt_count": 2,
+    "claimed_before_loss": "CLAIMED",
+    "reassigned_binding_state": "COMMITTED",
+    "reassigned_host_id": "aiat-cert-host-loss-queue-recovery-worker-v1-b",
+    "requeued_count": 1,
+    "requeued_state_before_reassignment": "QUEUED",
+    "retry_claim_state": "CLAIMED",
+    "stale_executor_rejection": "run_host_reservation_not_committed"
+  }
+}

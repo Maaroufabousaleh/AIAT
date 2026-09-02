@@ -1,0 +1,16 @@
+# Optional development overlay for hosts that intentionally install a local
+# enterprise/antivirus inspection CA.  Keep this file out of the normal dev
+# stack: local-ca/ is ignored and is absent on a clean checkout.
+#
+# Usage:
+#   docker compose -f docker-compose.yml \
+#     -f docker-compose.dev.yml -f docker-compose.dev-ca.yml up -d
+
+name: mas
+
+services:
+  orchestrator-api:
+    volumes:
+      - ./local-ca/norton-webmail-shield-root.crt:/run/aiat-ca/norton-webmail-shield-root.crt:ro
+    environment:
+      AIAT_PROVIDER_CA_BUNDLE: /run/aiat-ca/norton-webmail-shield-root.crt

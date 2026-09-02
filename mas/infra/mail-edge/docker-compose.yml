@@ -1,6 +1,6 @@
 name: aiat-mail-edge
 
-# Portable Oracle/paid-VPS profile. Only SMTP/25 and HTTPS/443 are published.
+# Provider-neutral self-hosted profile. Only SMTP/25 and HTTPS/443 are published.
 # Postgres, Stalwart administration, and identity-service stay on mail_private.
 services:
   identity-postgres:
@@ -31,6 +31,7 @@ services:
     restart: unless-stopped
     environment:
       MAS_ENVIRONMENT: production
+      IDENTITY_PROFILE: production
       IDENTITY_DATABASE_HOST: identity-postgres
       IDENTITY_DATABASE_PORT: "5432"
       IDENTITY_DATABASE_NAME: identity
@@ -55,6 +56,8 @@ services:
       OUTBOUND_RELAY_HOST: smtp.resend.com
       OUTBOUND_RELAY_PORT: "465"
       OUTBOUND_RELAY_TLS_MODE: implicit
+      OUTBOUND_RELAY_CERTIFIED: ${OUTBOUND_RELAY_CERTIFIED:-false}
+      DEFAULT_OUTBOUND_ENABLED: "false"
     depends_on:
       identity-postgres:
         condition: service_healthy
@@ -113,7 +116,7 @@ services:
     ports:
       - "25:25"
       # Private bootstrap/recovery path only. Reach it through an SSH tunnel;
-      # it is bound to loopback and is never exposed by the VPS firewall.
+      # it is bound to loopback and is never exposed by the host firewall.
       - "127.0.0.1:18080:8080"
     security_opt: [no-new-privileges:true]
     mem_limit: 768m

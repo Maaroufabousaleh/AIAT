@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import logging
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -32,7 +33,9 @@ logger = logging.getLogger(__name__)
 
 TERMINAL_RUN_STATES = frozenset({"SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT"})
 RUN_TRANSITIONS: dict[str, frozenset[str]] = {
-    "CREATED": frozenset({"VALIDATING", "FAILED", "CANCELLED"}),
+    "CREATED": frozenset({"QUEUED", "VALIDATING", "FAILED", "CANCELLED"}),
+    "QUEUED": frozenset({"VALIDATING", "FAILED", "CANCELLED"}),
+    "CLAIMED": frozenset({"VALIDATING", "QUEUED", "FAILED", "CANCELLED"}),
     "VALIDATING": frozenset({"READY", "FAILED", "CANCELLED"}),
     "READY": frozenset({"DISPATCHING", "FAILED", "CANCELLED"}),
     "DISPATCHING": frozenset({"RUNNING", "FAILED", "CANCELLED", "TIMED_OUT"}),
@@ -87,6 +90,7 @@ class WorkerRunController:
         worker_registry_id: UUID | None = None,
         worker_shell_version_id: UUID | None = None,
         adapter_id: UUID | None = None,
+        skill_bundle_id: UUID | None = None,
         steward_id: UUID | None = None,
         model_resolution_snapshot_id: UUID | None = None,
     ) -> dict[str, Any]:
@@ -103,6 +107,7 @@ class WorkerRunController:
                 flow_node_execution_id=request.flow_node_execution_id,
                 worker_shell_version_id=worker_shell_version_id,
                 adapter_id=adapter_id,
+                skill_bundle_id=skill_bundle_id,
                 steward_id=steward_id,
                 model_resolution_snapshot_id=model_resolution_snapshot_id,
             )
@@ -117,6 +122,7 @@ class WorkerRunController:
             "state": "CREATED",
             "request_json": request.model_dump(mode="json"),
             "project_id": request.project_id,
+            "skill_bundle_id": skill_bundle_id,
             "created_at": datetime.now(UTC),
         }
         self._memory_runs[request.run_id] = row
@@ -219,6 +225,8 @@ class WorkerRunController:
                 sha256=artifact.sha256,
                 size_bytes=artifact.size_bytes,
                 metadata=metadata,
+                trace_id=request.trace_id,
+                span_id=request.span_id,
             )
         usage = result.usage
         await self.storage.create_worker_usage(
@@ -235,8 +243,111 @@ class WorkerRunController:
                 },
                 "provider_id": usage.provider,
                 "exact_model_id": usage.exact_model_id,
+                "trace_id": request.trace_id,
+                "span_id": request.span_id,
             },
         )
+        # The worker-specific record preserves the exact runtime payload;
+        # project_usage_events is the cross-tool/LLM accounting surface used
+        # by budgets and dashboards.  Keep this best-effort for lightweight
+        # storage doubles, but make the durable AgentStorage path idempotent.
+        project_id = request.project_id
+        record_usage = getattr(self.storage, "record_project_usage", None)
+        if project_id is not None and callable(record_usage):
+            worker_id: UUID | None = None
+            with suppress(TypeError, ValueError):
+                worker_id = UUID(str(request.worker_id))
+            try:
+                await record_usage(
+                    project_id=project_id,
+                    event_type="llm",
+                    run_id=request.run_id,
+                    worker_id=worker_id,
+                    model=usage.exact_model_id,
+                    provider_id=usage.provider,
+                    prompt_tokens=usage.prompt_tokens,
+                    completion_tokens=usage.completion_tokens,
+                    cost_usd=usage.cost_usd,
+                    duration_ms=usage.duration_ms,
+                    resource_json={
+                        "cpu_seconds": usage.cpu_seconds,
+                        "memory_bytes": usage.memory_bytes,
+                    },
+                    idempotency_key=f"worker-run:{request.run_id}:usage",
+                    details={"source": "worker_result", "runtime_worker_id": request.worker_id},
+                )
+            except Exception:
+                # The worker-specific usage record above remains authoritative
+                # if a legacy storage double or a telemetry-only backend does
+                # not yet expose the project ledger columns.
+                logger.exception("project_usage_ledger_write_failed", extra={"run_id": str(request.run_id)})
+
+    async def _validate_result_model_attribution(
+        self,
+        request: WorkerRunRequest,
+        result: WorkerResult,
+        model_resolution_snapshot_id: UUID | None,
+    ) -> None:
+        """Require model usage to match the immutable resolution snapshot.
+
+        A governed worker may return arbitrary runtime output, but its
+        provider/model usage is part of AIAT-owned accounting.  When a run
+        carries a resolution snapshot, the result must report the exact
+        provider and model selected by that snapshot before usage or terminal
+        state is persisted.  Legacy/native runs without a snapshot retain
+        their existing compatibility path.
+        """
+        if self.storage is None:
+            return
+        reference = request.resolved_model_profile
+        effective_snapshot_id = model_resolution_snapshot_id or (
+            reference.resolution_snapshot_id if reference is not None else None
+        )
+        if effective_snapshot_id is None:
+            return
+        try:
+            normalized_snapshot_id = (
+                effective_snapshot_id
+                if isinstance(effective_snapshot_id, UUID)
+                else UUID(str(effective_snapshot_id))
+            )
+        except (TypeError, ValueError) as exc:
+            raise WorkerRunError(
+                "MODEL_USAGE_ATTRIBUTION_INVALID",
+                "model resolution snapshot ID is invalid",
+            ) from exc
+        getter = getattr(self.storage, "get_model_resolution_snapshot", None)
+        if not callable(getter):
+            raise WorkerRunError(
+                "MODEL_USAGE_ATTRIBUTION_UNAVAILABLE",
+                "model resolution snapshot storage is unavailable",
+            )
+        snapshot = await getter(normalized_snapshot_id)
+        if not isinstance(snapshot, dict):
+            raise WorkerRunError(
+                "MODEL_USAGE_ATTRIBUTION_SNAPSHOT_NOT_FOUND",
+                "model resolution snapshot was not found for result attribution",
+            )
+        expected_provider = str(snapshot.get("provider_id") or "").strip()
+        expected_model = str(snapshot.get("exact_model_id") or "").strip()
+        if not expected_provider or not expected_model:
+            raise WorkerRunError(
+                "MODEL_USAGE_ATTRIBUTION_SNAPSHOT_INCOMPLETE",
+                "model resolution snapshot lacks provider/model attribution",
+            )
+        observed_provider = str(result.usage.provider or "").strip()
+        observed_model = str(result.usage.exact_model_id or "").strip()
+        if observed_provider != expected_provider or observed_model != expected_model:
+            raise WorkerRunError(
+                "MODEL_USAGE_ATTRIBUTION_MISMATCH",
+                "worker result usage does not match the resolved model snapshot",
+                details={
+                    "expected_provider_id": expected_provider,
+                    "expected_exact_model_id": expected_model,
+                    "observed_provider_id": observed_provider or None,
+                    "observed_exact_model_id": observed_model or None,
+                },
+            )
 
     async def _mediate_tool_request(
         self,
@@ -331,6 +442,7 @@ class WorkerRunController:
         worker_registry_id: UUID | None = None,
         worker_shell_version_id: UUID | None = None,
         adapter_id: UUID | None = None,
+        skill_bundle_id: UUID | None = None,
         steward_id: UUID | None = None,
         model_resolution_snapshot_id: UUID | None = None,
     ) -> WorkerRunOutcome:
@@ -339,6 +451,7 @@ class WorkerRunController:
             worker_registry_id=worker_registry_id,
             worker_shell_version_id=worker_shell_version_id,
             adapter_id=adapter_id,
+            skill_bundle_id=skill_bundle_id,
             steward_id=steward_id,
             model_resolution_snapshot_id=model_resolution_snapshot_id,
         )
@@ -373,7 +486,8 @@ class WorkerRunController:
         readiness: WorkerReadiness | None = None
         result: WorkerResult | None = None
         try:
-            await self.transition(request.run_id, "VALIDATING", expected="CREATED")
+            current_state = str((await self.get_run(request.run_id) or {}).get("state") or "CREATED")
+            await self.transition(request.run_id, "VALIDATING", expected=current_state)
             if (
                 bool((request.checkpoint_policy or {}).get("required"))
                 and adapter.capabilities.checkpoint_mode == CheckpointMode.UNSUPPORTED
@@ -412,12 +526,11 @@ class WorkerRunController:
                 async for event in adapter.events(request.run_id):
                     if event.run_id != request.run_id or event.worker_id != request.worker_id:
                         raise WorkerRunError("EVENT_SCOPE_MISMATCH", "worker event does not match the requested run")
-                    if events and event.sequence <= events[-1].sequence:
+                    if events and event.sequence < events[-1].sequence:
                         # Duplicate events are persisted idempotently only when
                         # their content is identical; the store enforces that.
-                        if event.sequence < events[-1].sequence:
-                            await self.append_event(event)
-                            continue
+                        await self.append_event(event)
+                        continue
                     events.append(event)
                     await self.append_event(event)
                     if event.event_type == EventType.TOOL_REQUEST:
@@ -445,6 +558,11 @@ class WorkerRunController:
             await asyncio.wait_for(collect_events(), timeout=timeout)
             if result is None:
                 raise WorkerRunError("MISSING_RESULT", "worker stream ended without a normalized result")
+            await self._validate_result_model_attribution(
+                request,
+                result,
+                model_resolution_snapshot_id,
+            )
             terminal = "SUCCEEDED" if result.success else "CANCELLED" if result.error and result.error.code == "CANCELLED" else "FAILED"
             if terminal != "CANCELLED":
                 await self._persist_result_evidence(request, result)
@@ -506,9 +624,12 @@ class WorkerRunController:
             return None
         if row.get("state") in TERMINAL_RUN_STATES:
             return row
-        await adapter.cancel(WorkerCancellation(run_id=run_id, reason=reason, requested_by=requested_by, force=force))
         current = str(row.get("state"))
-        if current in {"RUNNING", "DISPATCHING", "READY", "VALIDATING", "CREATED"}:
+        if current in {"QUEUED", "CLAIMED", "CREATED"}:
+            await self.transition(run_id, "CANCELLED", expected=current, error={"code": "CANCELLED", "message": reason})
+            return await self.get_run(run_id)
+        await adapter.cancel(WorkerCancellation(run_id=run_id, reason=reason, requested_by=requested_by, force=force))
+        if current in {"RUNNING", "DISPATCHING", "READY", "VALIDATING"}:
             await self.transition(run_id, "CANCELLED", expected=current, error={"code": "CANCELLED", "message": reason})
         return await self.get_run(run_id)
 

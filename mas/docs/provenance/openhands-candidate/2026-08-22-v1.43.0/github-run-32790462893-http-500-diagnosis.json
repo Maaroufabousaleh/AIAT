@@ -1,0 +1,73 @@
+{
+  "schema_version": "aiat.openhands-historical-http-diagnosis.v1",
+  "immutable_historical_record": true,
+  "run": {
+    "run_id": "32790462893",
+    "candidate_sha": "77cc0ce36d3f2c5698b86c0f38ee13c724cb1dcf",
+    "artifact_id": "9543213994",
+    "artifact_digest": "sha256:52c8d3f26530c4d6b5b976abe3fc9050eadc0262ce0919a75eb08b994c7831b5"
+  },
+  "candidate": {
+    "release": "v1.43.0",
+    "source_commit": "4c1237f391fe394e9f67505fe3a0bd2d81f84188",
+    "image_digest": "sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97"
+  },
+  "historical_observation": {
+    "conversation_tag_422_defect": "FIXED",
+    "conversation_create_http_status": 500,
+    "conversation_id_present": false,
+    "run_request": "NOT_REACHED",
+    "model_execution": "NOT_REACHED",
+    "agent_server_event_count": 0,
+    "normalized_aiat_event_count": 3,
+    "causal_blocker_gate": "real_coding_task",
+    "zero_residue": "PASS",
+    "final_status": "BLOCKED_OPENHANDS_LIVE_EXECUTION_CONTRACT"
+  },
+  "local_exact_image_reproduction": {
+    "status": "REPRODUCED",
+    "http_status": 500,
+    "upstream_exception_class": "KeyError",
+    "upstream_exception_message_sanitized": "ToolDefinition 'TerminalTool' is not registered",
+    "upstream_exception_file": "openhands/sdk/tool/registry.py",
+    "upstream_exception_function": "resolve_tool",
+    "upstream_exception_line": 156,
+    "failure_stage": "agent_initialization_during_conversation_create",
+    "trigger_field_or_state": "explicit agent profile tools used Python implementation class names instead of v1.43.0 wire names",
+    "invalid_profile_tool_names": [
+      "TerminalTool",
+      "FileEditorTool"
+    ],
+    "required_profile_tool_names": [
+      "terminal",
+      "file_editor"
+    ],
+    "request_schema_validation": "PASS",
+    "raw_request_retained": false,
+    "raw_response_retained": false,
+    "secret_values_retained": false
+  },
+  "upstream_contract_evidence": {
+    "default_tool_names": [
+      "terminal",
+      "file_editor",
+      "task_tracker"
+    ],
+    "registry_resolution_contract": "resolve_tool raises KeyError when an explicit name is not registered",
+    "source_revision": "4c1237f391fe394e9f67505fe3a0bd2d81f84188"
+  },
+  "controls": {
+    "minimal_create_with_canonical_tool_names": "HTTP_2XX_WITH_CONVERSATION_ID",
+    "wrong_explicit_tool_names": "HTTP_500_REPRODUCED",
+    "workspace_uid_hazard": "FOUND_AND_HARDENED_SEPARATELY",
+    "mcp_local_control": "LOCAL_TOOL_SERVICE_SECRET_MISMATCH_ONLY",
+    "provider_route": "NOT_INVOLVED",
+    "scanner_blocker": "BLOCKED_SCANNER_COVERAGE"
+  },
+  "implementation_change": {
+    "aiat_profile_materialization": "use v1.43.0 terminal/file_editor wire names",
+    "workspace_mount": "verify pinned image UID/GID 10001:10001 and chown disposable workspace",
+    "diagnostics": "retain value-free request shape and sanitized create exception classification",
+    "lifecycle": "skip lifecycle polling when conversation creation has no conversation ID"
+  }
+}

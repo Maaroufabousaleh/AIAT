@@ -1,0 +1,49 @@
+{
+  "schema_version": "aiat.openhands-certification-historical-run.v1",
+  "immutable": true,
+  "run": {
+    "run_id": "32691538177",
+    "job_id": "97325987032",
+    "candidate_sha": "1fcaf6cb62c6583efdf0ea1396e3d52329453fc3",
+    "workflow_head_sha": "c50ea6ff9e551d6b5d44ecaed7ad599b37c25886",
+    "artifact_id": "9507466404",
+    "artifact_digest": "sha256:831f2ecfb5a4d4ce04694c8bbe42f391e062faee1efc0d50aaac49f1f660baaa"
+  },
+  "classification": {
+    "final_status": "BLOCKED_INCOMPLETE_MANDATORY_GATES",
+    "failure_class": "FAILED_CERTIFICATION_IMPLEMENTATION",
+    "root_cause_status": "CANDIDATE_WORKFLOW_HELPER_VERSION_SKEW",
+    "root_cause": "The exact candidate checkout invoked check_openhands_provider_baseline.py, which was absent from that candidate, and passed --auto-routing-output to check_openhands_certification_gateway.py, which did not define the option. Argparse exited before route evidence was produced. The disposable gateway path had already passed its provider configuration and LiteLLM startup checks.",
+    "failure_stage": "gateway_route_probe",
+    "response_payload_retained": false
+  },
+  "evidence": {
+    "groq_provider_preflight": "PASS",
+    "candidate_preflight": "READY_FOR_CERTIFICATION_AUTHORIZATION",
+    "openhands_image_pull": "PASS",
+    "litellm_image_pull": "PASS",
+    "omniroute_image_pull": "PASS",
+    "image_platform_verification": "PASS",
+    "gateway_provenance": "PASS",
+    "network_create": "PASS",
+    "omniroute_container_start": "PASS",
+    "omniroute_management_health": "PASS",
+    "omniroute_api_auth_boundary": "PASS",
+    "provider_route_configuration": "PASS",
+    "provider_baseline": "FAILED_CERTIFICATION_IMPLEMENTATION",
+    "provider_baseline_failure_reason": "MISSING_CANDIDATE_HELPER",
+    "litellm_start": "PASS",
+    "litellm_provider_route": "FAILED_CERTIFICATION_IMPLEMENTATION",
+    "litellm_provider_route_failure_reason": "UNSUPPORTED_ROUTE_PROBE_CLI_OPTION",
+    "tool_service": "NOT_RUN",
+    "openhands": "NOT_RUN",
+    "live_gate_wave": "NOT_RUN",
+    "zero_residue": "PASS",
+    "evidence_schema": "PASS"
+  },
+  "retention": {
+    "credentials_retained": false,
+    "model_payloads_retained": false,
+    "unnecessary_logs_retained": false
+  }
+}

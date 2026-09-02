@@ -1,0 +1,83 @@
+{
+  "schema_version": "aiat.dashboard-e2e-live.v1",
+  "programme_scope": "personal-internal-only",
+  "observed_at": "2026-08-11T20:09:15Z",
+  "environment": {
+    "host_class": "WSL2 with Docker Desktop Linux engine",
+    "base_url": "http://127.0.0.1:4000",
+    "credentials_printed": false,
+    "compose_volumes_removed": false
+  },
+  "command": "npm run test:e2e -- --workers=1",
+  "suite": {
+    "total": 59,
+    "passed": 58,
+    "failed": 0,
+    "skipped": 1,
+    "status": "pass_with_explicit_skip",
+    "groups": {
+      "operational_ui_smoke": {"total": 9, "passed": 9},
+      "ceo_chat": {"total": 5, "passed": 5},
+      "ceo_live_feed": {"total": 1, "passed": 1},
+      "credentials_states": {"total": 1, "passed": 1},
+      "evidence_detail": {"total": 9, "passed": 9},
+      "shell_accessibility": {"total": 2, "passed": 2},
+      "theme_preference": {"total": 2, "passed": 2},
+      "dlq_states": {"total": 1, "passed": 1},
+      "first_run": {"total": 1, "passed": 1},
+      "flow_builder": {"total": 1, "passed": 1},
+      "flow_runtime": {"total": 8, "passed": 8},
+      "flows_states": {"total": 1, "passed": 1},
+      "governance_states": {"total": 1, "passed": 1},
+      "hiring_board": {"total": 1, "passed": 1},
+      "identity_states": {"total": 1, "passed": 1},
+      "live_dlq": {"total": 1, "skipped": 1},
+      "logs_states": {"total": 1, "passed": 1},
+      "metrics_states": {"total": 1, "passed": 1},
+      "projects_states": {"total": 1, "passed": 1},
+      "runtime_status": {"total": 7, "passed": 7},
+      "streams_states": {"total": 1, "passed": 1},
+      "system_status_states": {"total": 1, "passed": 1},
+      "tools_states": {"total": 1, "passed": 1},
+      "workers_states": {"total": 1, "passed": 1}
+    }
+  },
+  "covered_product_paths": [
+    "credential masking and deletion",
+    "worker registration and lifecycle controls",
+    "tool discovery and expansion",
+    "system visualization partial-data warning and retry path",
+    "system visualization offline hierarchy state",
+    "system visualization communication-policy overlay and path tracing",
+    "hiring-board evaluation gates and retained evaluation details",
+    "identity tables preserve last-known records with a stale-data warning and retry path",
+    "PM integrations preserve conflict data with a stale-data warning and retry path",
+    "project detail preserves last-known canonical state with a stale-data warning and retry path",
+    "project workspace creation, audit, artifacts, and cost views",
+    "CEO directive, hiring context, confirmation, and operational controls",
+    "dashboard skip-link focus and mobile navigation keyboard recovery",
+    "schema-driven flow editing and legacy compatibility controls",
+    "flow branch, rejection, retry, timeout/escalation, override denial, and waiting-approval paths",
+    "first-run and runtime status panels"
+  ],
+  "implementation_fixes_verified": [
+    "WSL/DrvFS project Git workspaces initialize without git config.lock chmod failures",
+    "accessible credential action labels and multi-evidence CEO responses",
+    "explicitly opened legacy flow compatibility controls and stable option loading",
+    "shell landmarks, 44px mobile navigation target, Escape close, and focus restoration",
+    "system visualization retains partial data with a visible retry warning and handles network failures without an infinite loading state",
+    "system visualization E2E selectors use stable accessible names and explicit trace-control IDs",
+    "hiring-board evaluation details remain expanded after a candidate evaluation",
+    "identity refresh failures retain records and expose an explicit stale-data retry state",
+    "integration refresh failures retain conflict data and expose an explicit stale-data retry state",
+    "project detail refresh failures retain project state and expose an explicit stale-data retry state"
+  ],
+  "notices": [
+    "This is an authenticated local Compose-stack UI run against mas/dashboard:overlay, not native-Linux release certification.",
+    "The dashboard image was rebuilt from a clean explicit context because the normal WSL Docker context still traverses protected .tmp-* paths; generalized exclusions are recorded in b3a2e8e.",
+    "The live DLQ replay case is intentionally skipped because it requires an operator-owned safe message fixture.",
+    "Compose startup logged a non-blocking CLIProxyAPI/OmniRoute HTTP 503 fast-crash warning; the dashboard, API, LiteLLM, and OmniRoute endpoints still started and the UI matrix completed.",
+    "Provider credentials, native-Linux browser/accessibility coverage, visual regression, and external mail/provider paths remain separate evidence work.",
+    "No licence or resource metadata was evaluated as a gate; provenance remains metadata-only."
+  ]
+}

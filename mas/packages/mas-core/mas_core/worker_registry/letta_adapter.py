@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import importlib
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from mas_core.protocols.worker_manifest import WorkerManifest
+if TYPE_CHECKING:
+    from mas_core.protocols.worker_manifest import WorkerManifest
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +28,7 @@ class LettaCapabilities:
         self.memory_block_types = memory_block_types or ["human", "persona", "archival"]
 
     @classmethod
-    def from_config(cls, config: dict[str, Any]) -> "LettaCapabilities":
+    def from_config(cls, config: dict[str, Any]) -> LettaCapabilities:
         return cls(
             persona=config.get("persona", ""),
             embedding_model=config.get("embedding_model", "text-embedding-ada-002"),
@@ -55,6 +57,7 @@ class LettaAdapter:
         self._client = None
         self._agent_id = None
         self._initialized = False
+        self._availability_reason: str | None = None
 
     async def initialize(self) -> None:
         """Connect to the Letta server or embed the Letta runtime."""
@@ -62,80 +65,66 @@ class LettaAdapter:
             return
 
         try:
-            import importlib
             importlib.import_module("letta")
         except ImportError:
-            logger.warning(
-                "LettaAdapter %s: letta package not installed; running in stub mode",
-                self.manifest.metadata.id,
-            )
-            self._initialized = True
+            self._availability_reason = "letta package is not installed"
+            logger.warning("LettaAdapter %s unavailable: %s", self.manifest.metadata.id, self._availability_reason)
+            return
+        except Exception:
+            self._availability_reason = "letta_import_failed"
+            logger.exception("Letta import failed for %s", self.manifest.metadata.id)
             return
 
         if not self.capabilities.persona:
             logger.warning(
-                "LettaAdapter %s: no persona defined in runtime_config; running in stub mode",
+                "LettaAdapter %s unavailable: no persona defined in runtime_config",
                 self.manifest.metadata.id,
             )
-            self._initialized = True
+            self._availability_reason = "persona is required for an executable Letta worker"
             return
 
         try:
-            # Letta client setup would connect to a Letta server here
-            # For Epsilon, the adapter is registered and persona is validated
-            self._client = {
-                "persona": self.capabilities.persona,
-                "embedding_model": self.capabilities.embedding_model,
-                "persistence_store": self.capabilities.persistence_store,
-                "memory_block_types": self.capabilities.memory_block_types,
-            }
-            self._initialized = True
-            logger.info(
-                "LettaAdapter %s initialized: persona=%s, store=%s",
-                self.manifest.metadata.id,
-                self.capabilities.persona[:50],
-                self.capabilities.persistence_store,
-            )
-        except Exception as exc:
-            logger.error("Failed to initialize Letta agent for %s: %s", self.manifest.metadata.id, exc)
-            self._initialized = True
+            # A client must be explicitly configured with an approved endpoint
+            # and credential.  Do not turn package presence into a fake agent.
+            self._availability_reason = "no certified Letta client endpoint is configured"
+        except Exception:
+            self._availability_reason = "letta_initialization_failed"
+            logger.exception("Failed to initialize Letta agent for %s", self.manifest.metadata.id)
 
     async def send_task(self, envelope: Any) -> dict[str, Any]:
         """Send a task to the Letta agent."""
         if not self._initialized:
             await self.initialize()
 
-        task_input = self._translate_input(envelope)
+        input_summary = self._summarize_input(envelope)
 
         if self._client is None:
             return {
-                "status": "stub",
-                "input": task_input,
-                "output": None,
+                "status": "unavailable",
                 "runtime": "letta",
                 "worker_id": self.manifest.metadata.id,
+                "input_summary": input_summary,
+                "reason": self._availability_reason or "runtime is not initialized",
             }
 
         try:
             # Letta agent execution would send to the Letta server here
             return {
-                "status": "configured",
-                "input": task_input,
-                "output": None,
+                "status": "unavailable",
                 "runtime": "letta",
                 "worker_id": self.manifest.metadata.id,
-                "persona": self.capabilities.persona[:50],
-                "memory_blocks": self.capabilities.memory_block_types,
-                "note": "Letta agent ready for activation; memory audit required",
+                "input_summary": input_summary,
+                "note": "Letta package detected but no certified client endpoint is configured",
+                "reason": self._availability_reason or "no certified client",
             }
         except Exception as exc:
             logger.error("Letta execution failed for %s: %s", self.manifest.metadata.id, exc)
             return {
                 "status": "error",
-                "input": task_input,
-                "error": str(exc),
                 "runtime": "letta",
                 "worker_id": self.manifest.metadata.id,
+                "input_summary": input_summary,
+                "reason": "letta_execution_failed",
             }
 
     async def health_check(self) -> bool:
@@ -145,11 +134,23 @@ class LettaAdapter:
         self._client = None
         self._agent_id = None
         self._initialized = False
+        self._availability_reason = None
         logger.info("LettaAdapter %s shut down", self.manifest.metadata.id)
 
-    def _translate_input(self, envelope: Any) -> dict[str, Any]:
+    def _summarize_input(self, envelope: Any) -> dict[str, Any]:
         payload = getattr(envelope, "payload", {}) or {}
         return {
-            "task": payload.get("task", ""),
-            "context": payload.get("context", ""),
+            "task_present": bool(payload.get("task")),
+            "context_present": bool(payload.get("context")),
+            "task_chars": _bounded_length(payload.get("task")),
+            "context_chars": _bounded_length(payload.get("context")),
         }
+
+
+def _bounded_length(value: Any, *, maximum: int = 100_000) -> int:
+    """Return only bounded scalar input metadata; never retain the value."""
+    if value is None:
+        return 0
+    if isinstance(value, str):
+        return min(len(value), maximum)
+    return 0

@@ -43,6 +43,15 @@ test("CEO chat keeps worker context through a hiring follow-up", async ({ page }
   await expect(
     page.getByText(new RegExp(`opened a Hiring Board ticket for .*${workerName}`, "i")),
   ).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("ceo-evidence").first()).toBeVisible({ timeout: 5_000 });
+  await expect(page.getByTestId("ceo-evidence-link").first()).toHaveAttribute(
+    "href",
+    /workers\?evidence_kind=worker&evidence_id=/,
+  );
+  await expect(page.getByTestId("ceo-evidence-record-link").first()).toHaveAttribute(
+    "href",
+    /\/evidence\/worker\//,
+  );
   await expect(input).toBeEnabled();
 
   await input.fill("why production dep?");

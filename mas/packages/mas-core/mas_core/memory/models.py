@@ -29,7 +29,9 @@ projects = sa.Table(
     sa.Column("failed_from_state", sa.Text()),
     sa.Column("created_by", sa.Text(), nullable=False),
     sa.Column("human_requester", sa.Text()),
+    sa.Column("company_id", sa.UUID(), sa.ForeignKey("companies.id", ondelete="RESTRICT"), nullable=False),
     sa.Column("config", JSONB()),
+    sa.Column("revision", sa.BigInteger(), nullable=False, server_default="1"),
     sa.Column(
         "created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
     ),
@@ -170,6 +172,8 @@ sprints = sa.Table(
     sa.Column("end_date", sa.TIMESTAMP(timezone=True)),
     sa.Column("infra_requested_at", sa.TIMESTAMP(timezone=True)),
     sa.Column("infra_ready_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("revision", sa.BigInteger(), nullable=False, server_default="1"),
+    sa.Column("updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
     sa.Column(
         "created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
     ),
@@ -196,10 +200,94 @@ issues = sa.Table(
     sa.Column("actual_hours", sa.Numeric(10, 2)),
     sa.Column("story_points", sa.Integer()),
     sa.Column("dependencies", sa.ARRAY(sa.UUID())),
+    sa.Column("revision", sa.BigInteger(), nullable=False, server_default="1"),
     sa.Column(
         "created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
     ),
+    sa.Column(
+        "updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
+    ),
     sa.Column("completed_at", sa.TIMESTAMP(timezone=True)),
+)
+
+# ── 1a. companies and versioned manifests ───────────────────────────────────
+companies = sa.Table(
+    "companies",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("slug", sa.Text(), nullable=False, unique=True),
+    sa.Column("name", sa.Text(), nullable=False),
+    sa.Column("description", sa.Text(), nullable=False, server_default=""),
+    sa.Column("status", sa.Text(), nullable=False, server_default="ACTIVE"),
+    sa.Column("active_manifest_version_id", sa.UUID(), sa.ForeignKey("company_manifest_versions.id", ondelete="SET NULL")),
+    sa.Column("created_by", sa.Text(), nullable=False),
+    sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
+    sa.Column("updated_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
+)
+
+company_manifest_versions = sa.Table(
+    "company_manifest_versions",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("company_id", sa.UUID(), sa.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False),
+    sa.Column("schema_version", sa.Text(), nullable=False),
+    sa.Column("manifest_version", sa.Integer(), nullable=False),
+    sa.Column("digest", sa.String(64), nullable=False),
+    sa.Column("source", sa.Text(), nullable=False),
+    sa.Column("manifest_json", JSONB(), nullable=False),
+    sa.Column("compiler_version", sa.Text(), nullable=False),
+    sa.Column("status", sa.Text(), nullable=False, server_default="APPLIED"),
+    sa.Column("compiled_by", sa.Text(), nullable=False),
+    sa.Column("compiled_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
+    sa.Column("error", sa.Text()),
+)
+
+company_departments = sa.Table(
+    "company_departments",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("company_id", sa.UUID(), sa.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False),
+    sa.Column("department_key", sa.Text(), nullable=False),
+    sa.Column("name", sa.Text(), nullable=False),
+    sa.Column("chief_worker_id", sa.UUID(), sa.ForeignKey("worker_registry.id", ondelete="SET NULL")),
+    sa.Column("approval_policy", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("metadata", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("status", sa.Text(), nullable=False, server_default="ACTIVE"),
+    sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
+    sa.Column("updated_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
+)
+
+company_worker_assignments = sa.Table(
+    "company_worker_assignments",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("company_id", sa.UUID(), sa.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False),
+    sa.Column("worker_id", sa.UUID(), sa.ForeignKey("worker_registry.id", ondelete="RESTRICT"), nullable=False),
+    sa.Column("department_id", sa.UUID(), sa.ForeignKey("company_departments.id", ondelete="RESTRICT"), nullable=False),
+    sa.Column("manifest_version_id", sa.UUID(), sa.ForeignKey("company_manifest_versions.id", ondelete="RESTRICT")),
+    sa.Column("status", sa.Text(), nullable=False, server_default="ACTIVE"),
+    sa.Column("tool_grants", sa.ARRAY(sa.Text()), nullable=False, server_default="{}"),
+    sa.Column("permission_grants", sa.ARRAY(sa.Text()), nullable=False, server_default="{}"),
+    sa.Column("model_profile_id", sa.Text()),
+    sa.Column("budget", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("approval_required", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+    sa.Column("metadata", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
+    sa.Column("updated_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
+)
+
+company_budgets = sa.Table(
+    "company_budgets",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("company_id", sa.UUID(), sa.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False),
+    sa.Column("budget_key", sa.Text(), nullable=False),
+    sa.Column("limit_value", sa.Numeric(20, 8), nullable=False),
+    sa.Column("currency", sa.Text(), nullable=False, server_default="USD"),
+    sa.Column("period", sa.Text(), nullable=False, server_default="lifetime"),
+    sa.Column("metadata", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
+    sa.Column("updated_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
 )
 
 # ── 9. kpi_snapshots ─────────────────────────────────────────────────────────
@@ -419,6 +507,61 @@ task_log = sa.Table(
     ),
 )
 
+# Bounded API request observations feed operational SLO/trace read models.
+# Bodies, headers, query strings, credentials, and exception text are never
+# persisted here.
+api_request_observations = sa.Table(
+    "api_request_observations",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("method", sa.Text(), nullable=False),
+    sa.Column("route", sa.Text(), nullable=False),
+    sa.Column("status_code", sa.Integer(), nullable=False),
+    sa.Column("outcome", sa.Text(), nullable=False),
+    sa.Column("duration_ms", sa.Numeric(14, 3), nullable=False),
+    sa.Column("trace_id", sa.Text()),
+    sa.Column("principal", sa.Text()),
+    sa.Column("dashboard_section", sa.Text()),
+    sa.Column(
+        "occurred_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
+    ),
+    sa.Column("source", sa.Text(), nullable=False, server_default="orchestrator_api"),
+    sa.CheckConstraint("status_code >= 100 AND status_code <= 599", name="ck_api_obs_status_code"),
+    sa.CheckConstraint("outcome IN ('success', 'failure')", name="ck_api_obs_outcome"),
+)
+
+# Native, payload-free spans emitted by AIAT service boundaries.  This is a
+# bounded operational ledger, not a request/body or provider-payload store.
+native_trace_spans = sa.Table(
+    "native_trace_spans",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("trace_id", sa.Text(), nullable=False),
+    sa.Column("span_id", sa.Text(), nullable=False),
+    sa.Column("parent_span_id", sa.Text()),
+    sa.Column("source_kind", sa.Text(), nullable=False),
+    sa.Column("operation", sa.Text(), nullable=False),
+    sa.Column("service", sa.Text(), nullable=False),
+    sa.Column("status", sa.Text(), nullable=False, server_default="unknown"),
+    sa.Column("started_at", sa.TIMESTAMP(timezone=True), nullable=False),
+    sa.Column("ended_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("duration_ms", sa.Numeric(14, 3), nullable=False, server_default="0"),
+    sa.Column("sampled", sa.Boolean(), nullable=False, server_default="true"),
+    sa.Column("retention_until", sa.TIMESTAMP(timezone=True)),
+    sa.Column("attributes_json", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+    sa.UniqueConstraint("trace_id", "span_id", name="uq_native_trace_span"),
+    sa.CheckConstraint(
+        "source_kind IN ('transport', 'model', 'tool', 'mail', 'audit', 'worker', 'integration')",
+        name="ck_native_trace_span_source_kind",
+    ),
+    sa.CheckConstraint(
+        "status IN ('success', 'failure', 'unknown')",
+        name="ck_native_trace_span_status",
+    ),
+    sa.CheckConstraint("duration_ms >= 0", name="ck_native_trace_span_duration"),
+)
+
 # ── 16. artifacts ─────────────────────────────────────────────────────────────
 artifacts = sa.Table(
     "artifacts",
@@ -514,6 +657,65 @@ worker_registry = sa.Table(
     sa.UniqueConstraint("name", name="uq_worker_registry_name"),
 )
 
+# ── 19a. worker_hosts ─────────────────────────────────────────────────────────
+# Host registration is a control-plane concern, separate from worker identity.
+# The registration credential is stored only as a SHA-256 digest; callers never
+# receive it back through the public row projection.
+worker_hosts = sa.Table(
+    "worker_hosts",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("host_id", sa.Text(), nullable=False),
+    sa.Column("status", sa.Text(), nullable=False, server_default="REGISTERING"),
+    sa.Column("host_plane", sa.Text(), nullable=False, server_default="worker"),
+    sa.Column("auth_token_sha256", sa.String(64), nullable=False),
+    sa.Column("labels", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("capabilities", JSONB(), nullable=False, server_default="[]"),
+    sa.Column("sandbox_profile", sa.Text(), nullable=False, server_default="standard"),
+    sa.Column("isolation_mode", sa.Text(), nullable=False, server_default="native"),
+    sa.Column("capacity", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("priority", sa.Integer(), nullable=False, server_default="0"),
+    sa.Column("lease_generation", sa.BigInteger(), nullable=False, server_default="1"),
+    sa.Column("lease_owner", sa.Text()),
+    sa.Column("lease_expires_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("heartbeat_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("last_seen_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("metadata", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+    sa.Column("updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+    sa.UniqueConstraint("host_id", name="uq_worker_hosts_host_id"),
+    sa.CheckConstraint(
+        "status IN ('REGISTERING', 'READY', 'DRAINING', 'OFFLINE', 'REVOKED')",
+        name="ck_worker_hosts_status",
+    ),
+    sa.CheckConstraint("priority >= 0", name="ck_worker_hosts_priority"),
+)
+
+# ── 19b. worker_host_reservations ────────────────────────────────────────────
+# Reservations are separate from host capacity totals so commit/release can
+# remain auditable and idempotent without rewriting the host's reported facts.
+worker_host_reservations = sa.Table(
+    "worker_host_reservations",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("host_id", sa.UUID(), sa.ForeignKey("worker_hosts.id", ondelete="CASCADE"), nullable=False),
+    sa.Column("host_lease_generation", sa.BigInteger(), nullable=False, server_default="1"),
+    sa.Column("reservation_key", sa.Text(), nullable=False),
+    sa.Column("owner", sa.Text(), nullable=False),
+    sa.Column("resource_json", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("state", sa.Text(), nullable=False, server_default="RESERVED"),
+    sa.Column("lease_expires_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("metadata", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+    sa.Column("committed_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("released_at", sa.TIMESTAMP(timezone=True)),
+    sa.UniqueConstraint("reservation_key", name="uq_worker_host_reservation_key"),
+    sa.CheckConstraint(
+        "state IN ('RESERVED', 'COMMITTED', 'RELEASED', 'EXPIRED')",
+        name="ck_worker_host_reservation_state",
+    ),
+)
+
 # ── 20a. evaluation_reports ──────────────────────────────────────────────────
 evaluation_reports = sa.Table(
     "evaluation_reports",
@@ -552,11 +754,19 @@ project_usage_events = sa.Table(
     sa.Column(
         "project_id", sa.UUID(), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
     ),
+    sa.Column("company_id", sa.UUID(), sa.ForeignKey("companies.id", ondelete="RESTRICT")),
+    sa.Column("run_id", sa.UUID(), sa.ForeignKey("worker_runs.id", ondelete="SET NULL")),
+    sa.Column("worker_id", sa.UUID(), sa.ForeignKey("worker_registry.id", ondelete="SET NULL")),
     sa.Column("event_type", sa.Text(), nullable=False),
     sa.Column("agent_id", sa.Text()),
     sa.Column("team_id", sa.Text()),
     sa.Column("model", sa.Text()),
+    sa.Column("provider_id", sa.Text()),
     sa.Column("tool_name", sa.Text()),
+    sa.Column("billing_code", sa.Text()),
+    sa.Column("pricing_snapshot", JSONB()),
+    sa.Column("resource_json", JSONB()),
+    sa.Column("idempotency_key", sa.Text()),
     sa.Column("status", sa.Text(), nullable=False, server_default="success"),
     sa.Column("prompt_tokens", sa.Integer(), nullable=False, server_default="0"),
     sa.Column("completion_tokens", sa.Integer(), nullable=False, server_default="0"),
@@ -570,6 +780,30 @@ project_usage_events = sa.Table(
     ),
     sa.CheckConstraint(
         "event_type IN ('llm', 'tool')", name="ck_project_usage_events_event_type"
+    ),
+)
+
+budget_reservations = sa.Table(
+    "budget_reservations",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("company_id", sa.UUID(), sa.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False),
+    sa.Column("project_id", sa.UUID(), sa.ForeignKey("projects.id", ondelete="CASCADE")),
+    sa.Column("worker_id", sa.UUID(), sa.ForeignKey("worker_registry.id", ondelete="SET NULL")),
+    sa.Column("run_id", sa.UUID(), sa.ForeignKey("worker_runs.id", ondelete="SET NULL")),
+    sa.Column("budget_key", sa.Text(), nullable=False),
+    sa.Column("amount", sa.Numeric(20, 8), nullable=False),
+    sa.Column("currency", sa.Text(), nullable=False, server_default="USD"),
+    sa.Column("state", sa.Text(), nullable=False, server_default="RESERVED"),
+    sa.Column("idempotency_key", sa.Text(), nullable=False, unique=True),
+    sa.Column("metadata", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
+    sa.Column("committed_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("released_at", sa.TIMESTAMP(timezone=True)),
+    sa.CheckConstraint("amount >= 0", name="ck_budget_reservation_amount"),
+    sa.CheckConstraint(
+        "state IN ('RESERVED', 'COMMITTED', 'RELEASED')",
+        name="ck_budget_reservation_state",
     ),
 )
 
@@ -745,6 +979,391 @@ certification_runs = sa.Table(
     sa.Column("completed_at", sa.TIMESTAMP(timezone=True)),
 )
 
+# ── PM integration control plane ─────────────────────────────────────────────
+# These tables record provider configuration and delivery state only.  The
+# orchestrator remains the sole writer of canonical projects/sprints/issues.
+pm_connections = sa.Table(
+    "pm_connections",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("provider_kind", sa.Text(), nullable=False),
+    sa.Column("display_name", sa.Text(), nullable=False),
+    sa.Column("base_url", sa.Text(), nullable=False),
+    sa.Column("credential_ref", sa.Text(), nullable=False),
+    sa.Column("capability_profile", sa.Text(), nullable=False, server_default="pm"),
+    sa.Column("config", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("schema_version", sa.Integer(), nullable=False, server_default="1"),
+    sa.Column("status", sa.Text(), nullable=False, server_default="DISABLED"),
+    sa.Column("revision", sa.BigInteger(), nullable=False, server_default="1"),
+    sa.Column("created_by", sa.Text(), nullable=False),
+    sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+    sa.Column("updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+    sa.Column("last_health_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("last_health_status", sa.Text()),
+    sa.Column("last_health_error", sa.Text()),
+)
+
+pm_project_bindings = sa.Table(
+    "pm_project_bindings",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("project_id", sa.UUID(), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False),
+    sa.Column("connection_id", sa.UUID(), sa.ForeignKey("pm_connections.id", ondelete="CASCADE"), nullable=False),
+    sa.Column("external_project_id", sa.Text()),
+    sa.Column("external_project_key", sa.Text()),
+    sa.Column("external_repository", sa.Text()),
+    sa.Column("mapping_profile", sa.Text(), nullable=False, server_default="default"),
+    sa.Column("direction", sa.Text(), nullable=False, server_default="outbound"),
+    sa.Column("sync_cursor", sa.Text()),
+    sa.Column("status", sa.Text(), nullable=False, server_default="DISABLED"),
+    sa.Column("revision", sa.BigInteger(), nullable=False, server_default="1"),
+    sa.Column("last_reconciled_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("provisioning_state", sa.Text(), nullable=False, server_default="UNPROVISIONED"),
+    sa.Column("provisioning_plan_id", sa.UUID()),
+    sa.Column("provisioning_plan_digest", sa.Text()),
+    sa.Column("activation_blockers", JSONB(), nullable=False, server_default="[]"),
+    sa.Column("webhook_verified_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("projection_verified_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("reconciliation_verified_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("webhook_events", JSONB(), nullable=False, server_default="[]"),
+    sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+    sa.Column("updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+)
+
+pm_object_mappings = sa.Table(
+    "pm_object_mappings",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("connection_id", sa.UUID(), sa.ForeignKey("pm_connections.id", ondelete="CASCADE"), nullable=False),
+    sa.Column("object_type", sa.Text(), nullable=False),
+    sa.Column("aiat_object_id", sa.UUID(), nullable=False),
+    sa.Column("external_id", sa.Text(), nullable=False),
+    sa.Column("external_key", sa.Text()),
+    sa.Column("provider_version", sa.Text()),
+    sa.Column("content_hash", sa.Text()),
+    sa.Column("last_import_revision", sa.BigInteger()),
+    sa.Column("last_export_revision", sa.BigInteger()),
+    sa.Column("last_imported_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("last_exported_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("metadata", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+    sa.Column("updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+    sa.UniqueConstraint("connection_id", "object_type", "aiat_object_id", name="uq_pm_mapping_aiat"),
+    sa.UniqueConstraint("connection_id", "object_type", "external_id", name="uq_pm_mapping_external"),
+)
+
+pm_inbox_events = sa.Table(
+    "pm_inbox_events",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("connection_id", sa.UUID(), sa.ForeignKey("pm_connections.id", ondelete="CASCADE"), nullable=False),
+    sa.Column("provider_delivery_id", sa.Text(), nullable=False),
+    sa.Column("event_type", sa.Text(), nullable=False),
+    sa.Column("payload", JSONB(), nullable=False),
+    sa.Column("raw_body", sa.LargeBinary()),
+    sa.Column("headers", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("payload_hash", sa.Text(), nullable=False),
+    sa.Column("verified", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+    sa.Column("status", sa.Text(), nullable=False, server_default="RECEIVED"),
+    sa.Column("normalized_type", sa.Text()),
+    sa.Column("result", JSONB()),
+    sa.Column("error", sa.Text()),
+    sa.Column("correlation_id", sa.Text()),
+    sa.Column("causation_id", sa.Text()),
+    sa.Column("received_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+    sa.Column("processed_at", sa.TIMESTAMP(timezone=True)),
+    sa.UniqueConstraint("connection_id", "provider_delivery_id", name="uq_pm_inbox_delivery"),
+)
+
+pm_outbox_events = sa.Table(
+    "pm_outbox_events",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("connection_id", sa.UUID(), sa.ForeignKey("pm_connections.id", ondelete="CASCADE"), nullable=False),
+    sa.Column("aggregate_type", sa.Text(), nullable=False),
+    sa.Column("aggregate_id", sa.UUID(), nullable=False),
+    sa.Column("canonical_revision", sa.BigInteger(), nullable=False),
+    sa.Column("operation", sa.Text(), nullable=False),
+    sa.Column("idempotency_key", sa.Text(), nullable=False),
+    sa.Column("payload", JSONB(), nullable=False),
+    sa.Column("status", sa.Text(), nullable=False, server_default="PENDING"),
+    sa.Column("attempts", sa.Integer(), nullable=False, server_default="0"),
+    sa.Column("claimed_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("next_attempt_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+    sa.Column("last_error", sa.Text()),
+    sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+    sa.Column("processed_at", sa.TIMESTAMP(timezone=True)),
+    sa.UniqueConstraint("idempotency_key", name="uq_pm_outbox_idempotency"),
+)
+
+pm_delivery_attempts = sa.Table(
+    "pm_delivery_attempts",
+    metadata,
+    sa.Column("id", sa.BigInteger(), primary_key=True, autoincrement=True),
+    sa.Column("outbox_id", sa.UUID(), sa.ForeignKey("pm_outbox_events.id", ondelete="CASCADE"), nullable=False),
+    sa.Column("attempt", sa.Integer(), nullable=False),
+    sa.Column("status", sa.Text(), nullable=False),
+    sa.Column("provider_status", sa.Integer()),
+    sa.Column("response_metadata", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("error", sa.Text()),
+    sa.Column("attempted_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+)
+
+pm_outbox_dispositions = sa.Table(
+    "pm_outbox_dispositions",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("outbox_id", sa.UUID(), sa.ForeignKey("pm_outbox_events.id", ondelete="CASCADE"), nullable=False),
+    sa.Column("connection_id", sa.UUID(), sa.ForeignKey("pm_connections.id", ondelete="CASCADE"), nullable=False),
+    sa.Column("binding_id", sa.UUID(), sa.ForeignKey("pm_project_bindings.id", ondelete="SET NULL")),
+    sa.Column("disposition", sa.Text(), nullable=False),
+    sa.Column("reason", sa.Text(), nullable=False),
+    sa.Column("actor", sa.Text(), nullable=False),
+    sa.Column("provider_state", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("evidence_id", sa.UUID(), sa.ForeignKey("integration_evidence_records.id", ondelete="RESTRICT"), nullable=False),
+    sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
+    sa.UniqueConstraint("outbox_id", name="uq_pm_outbox_disposition"),
+    sa.CheckConstraint("disposition IN ('RESOLVED', 'SUPERSEDED')", name="ck_pm_outbox_disposition_kind"),
+)
+
+pm_conflicts = sa.Table(
+    "pm_conflicts",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("connection_id", sa.UUID(), sa.ForeignKey("pm_connections.id", ondelete="CASCADE"), nullable=False),
+    sa.Column("binding_id", sa.UUID(), sa.ForeignKey("pm_project_bindings.id", ondelete="CASCADE")),
+    sa.Column("object_type", sa.Text(), nullable=False),
+    sa.Column("aiat_object_id", sa.UUID()),
+    sa.Column("external_id", sa.Text()),
+    sa.Column("reason", sa.Text(), nullable=False),
+    sa.Column("canonical_snapshot", JSONB()),
+    sa.Column("external_snapshot", JSONB()),
+    sa.Column("status", sa.Text(), nullable=False, server_default="OPEN"),
+    sa.Column("resolution", JSONB()),
+    sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+    sa.Column("resolved_at", sa.TIMESTAMP(timezone=True)),
+)
+
+pm_reconciliation_runs = sa.Table(
+    "pm_reconciliation_runs",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("connection_id", sa.UUID(), sa.ForeignKey("pm_connections.id", ondelete="CASCADE"), nullable=False),
+    sa.Column("binding_id", sa.UUID(), sa.ForeignKey("pm_project_bindings.id", ondelete="SET NULL")),
+    sa.Column("mode", sa.Text(), nullable=False, server_default="audit"),
+    sa.Column("status", sa.Text(), nullable=False, server_default="RUNNING"),
+    sa.Column("cursor", sa.Text()),
+    sa.Column("next_cursor", sa.Text()),
+    sa.Column("counts", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("error", sa.Text()),
+    sa.Column("started_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+    sa.Column("completed_at", sa.TIMESTAMP(timezone=True)),
+)
+
+pm_cutovers = sa.Table(
+    "pm_cutovers",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("project_id", sa.UUID(), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False),
+    sa.Column("from_binding_id", sa.UUID(), sa.ForeignKey("pm_project_bindings.id", ondelete="SET NULL")),
+    sa.Column("to_binding_id", sa.UUID(), sa.ForeignKey("pm_project_bindings.id", ondelete="SET NULL"), nullable=False),
+    sa.Column("status", sa.Text(), nullable=False, server_default="RUNNING"),
+    sa.Column("confirmation", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("rollback_ready", sa.Boolean(), nullable=False, server_default=sa.text("true")),
+    sa.Column("error", sa.Text()),
+    sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+    sa.Column("completed_at", sa.TIMESTAMP(timezone=True)),
+)
+
+pm_lifecycle_plans = sa.Table(
+    "pm_lifecycle_plans",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("plan_kind", sa.Text(), nullable=False),
+    sa.Column("schema_version", sa.Integer(), nullable=False, server_default="1"),
+    sa.Column("target_type", sa.Text(), nullable=False),
+    sa.Column("target_id", sa.UUID(), nullable=False),
+    sa.Column("connection_id", sa.UUID(), sa.ForeignKey("pm_connections.id", ondelete="CASCADE"), nullable=False),
+    sa.Column("binding_id", sa.UUID(), sa.ForeignKey("pm_project_bindings.id", ondelete="CASCADE")),
+    sa.Column("expected_connection_status", sa.Text()),
+    sa.Column("expected_binding_status", sa.Text()),
+    sa.Column("expected_connection_revision", sa.BigInteger()),
+    sa.Column("expected_binding_revision", sa.BigInteger()),
+    sa.Column("desired_connection_status", sa.Text()),
+    sa.Column("desired_binding_status", sa.Text()),
+    sa.Column("observed_versions", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("operations", JSONB(), nullable=False, server_default="[]"),
+    sa.Column("gate_results", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("evidence_refs", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("blockers", JSONB(), nullable=False, server_default="[]"),
+    sa.Column("rollback_operations", JSONB(), nullable=False, server_default="[]"),
+    sa.Column("created_by", sa.Text(), nullable=False),
+    sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
+    sa.Column("expires_at", sa.TIMESTAMP(timezone=True), nullable=False),
+    sa.Column("digest", sa.Text(), nullable=False),
+    sa.Column("status", sa.Text(), nullable=False, server_default="PLANNED"),
+    sa.Column("approval_actor", sa.Text()),
+    sa.Column("approved_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("approval_reason", sa.Text()),
+    sa.Column("applied_actor", sa.Text()),
+    sa.Column("applied_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("application_result", JSONB()),
+    sa.Column("error", sa.Text()),
+    sa.Column("updated_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
+    sa.UniqueConstraint("digest", name="uq_pm_lifecycle_plan_digest"),
+)
+
+pm_lifecycle_audits = sa.Table(
+    "pm_lifecycle_audits",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("plan_id", sa.UUID(), sa.ForeignKey("pm_lifecycle_plans.id", ondelete="RESTRICT"), nullable=False),
+    sa.Column("connection_id", sa.UUID(), sa.ForeignKey("pm_connections.id", ondelete="CASCADE"), nullable=False),
+    sa.Column("binding_id", sa.UUID(), sa.ForeignKey("pm_project_bindings.id", ondelete="SET NULL")),
+    sa.Column("action", sa.Text(), nullable=False),
+    sa.Column("before_state", JSONB(), nullable=False),
+    sa.Column("after_state", JSONB(), nullable=False),
+    sa.Column("actor", sa.Text(), nullable=False),
+    sa.Column("approval_reference", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("evidence_refs", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("transaction_id", sa.Text(), nullable=False),
+    sa.Column("rollback_operations", JSONB(), nullable=False, server_default="[]"),
+    sa.Column("occurred_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
+)
+
+# Immutable provider identities are kept outside connection configuration so a
+# human authorization cannot be forged by editing JSON metadata.  The mapping
+# key is the provider's immutable actor ID, scoped to one connection/tenant.
+pm_external_actor_mappings = sa.Table(
+    "pm_external_actor_mappings",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("connection_id", sa.UUID(), sa.ForeignKey("pm_connections.id", ondelete="CASCADE"), nullable=False),
+    sa.Column("provider_kind", sa.Text(), nullable=False),
+    sa.Column("tenant_key", sa.Text(), nullable=False),
+    sa.Column("external_actor_id", sa.Text(), nullable=False),
+    sa.Column("actor_snapshot", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("aiat_identity_id", sa.Text(), nullable=False),
+    sa.Column("status", sa.Text(), nullable=False, server_default="TRUSTED"),
+    sa.Column("authorized_scopes", JSONB(), nullable=False, server_default="[]"),
+    sa.Column("created_by", sa.Text(), nullable=False),
+    sa.Column("approved_by", sa.Text(), nullable=False),
+    sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
+    sa.Column("approved_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
+    sa.Column("revoked_by", sa.Text()),
+    sa.Column("revoked_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("revocation_reason", sa.Text()),
+    sa.Column("revision", sa.BigInteger(), nullable=False, server_default="1"),
+    sa.Column("updated_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
+    sa.UniqueConstraint("connection_id", "tenant_key", "external_actor_id", name="uq_pm_external_actor_connection"),
+)
+
+pm_external_actor_mapping_audits = sa.Table(
+    "pm_external_actor_mapping_audits",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("mapping_id", sa.UUID(), sa.ForeignKey("pm_external_actor_mappings.id", ondelete="RESTRICT"), nullable=False),
+    sa.Column("action", sa.Text(), nullable=False),
+    sa.Column("actor", sa.Text(), nullable=False),
+    sa.Column("before_state", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("after_state", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("evidence_refs", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("occurred_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
+)
+
+# A canary never widens a binding to ACTIVE.  It is an independently scoped,
+# short-lived authorization to accept one exact inbound command while the
+# binding remains READ_ONLY.
+pm_inbound_canary_plans = sa.Table(
+    "pm_inbound_canary_plans",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("connection_id", sa.UUID(), sa.ForeignKey("pm_connections.id", ondelete="CASCADE"), nullable=False),
+    sa.Column("binding_id", sa.UUID(), sa.ForeignKey("pm_project_bindings.id", ondelete="CASCADE"), nullable=False),
+    sa.Column("project_id", sa.UUID(), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False),
+    sa.Column("canonical_issue_id", sa.UUID(), sa.ForeignKey("issues.id", ondelete="CASCADE"), nullable=False),
+    sa.Column("external_issue_id", sa.Text(), nullable=False),
+    sa.Column("mapping_id", sa.UUID(), sa.ForeignKey("pm_object_mappings.id", ondelete="RESTRICT"), nullable=False),
+    sa.Column("actor_mapping_id", sa.UUID(), sa.ForeignKey("pm_external_actor_mappings.id", ondelete="RESTRICT"), nullable=False),
+    sa.Column("expected_connection_status", sa.Text(), nullable=False),
+    sa.Column("expected_binding_status", sa.Text(), nullable=False),
+    sa.Column("expected_connection_revision", sa.BigInteger(), nullable=False),
+    sa.Column("expected_binding_revision", sa.BigInteger(), nullable=False),
+    sa.Column("expected_canonical_revision", sa.BigInteger(), nullable=False),
+    sa.Column("current_priority", sa.Text(), nullable=False),
+    sa.Column("target_priority", sa.Text(), nullable=False),
+    sa.Column("max_command_count", sa.Integer(), nullable=False, server_default="1"),
+    sa.Column("accepted_command_count", sa.Integer(), nullable=False, server_default="0"),
+    sa.Column("operations", JSONB(), nullable=False, server_default="[]"),
+    sa.Column("gate_results", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("evidence_refs", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("rollback_operations", JSONB(), nullable=False, server_default="[]"),
+    sa.Column("created_by", sa.Text(), nullable=False),
+    sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
+    sa.Column("expires_at", sa.TIMESTAMP(timezone=True), nullable=False),
+    sa.Column("digest", sa.Text(), nullable=False, unique=True),
+    sa.Column("status", sa.Text(), nullable=False, server_default="PLANNED"),
+    sa.Column("approved_by", sa.Text()),
+    sa.Column("approved_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("armed_by", sa.Text()),
+    sa.Column("armed_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("expired_by", sa.Text()),
+    sa.Column("expired_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("completed_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("result", JSONB()),
+    sa.Column("error", sa.Text()),
+    sa.Column("updated_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
+)
+
+work_item_comments = sa.Table(
+    "work_item_comments",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("issue_id", sa.UUID(), sa.ForeignKey("issues.id", ondelete="CASCADE"), nullable=False),
+    sa.Column("body", sa.Text(), nullable=False),
+    sa.Column("actor_id", sa.Text(), nullable=False),
+    sa.Column("run_id", sa.UUID()),
+    sa.Column("approval_id", sa.UUID()),
+    sa.Column("evidence_id", sa.Text()),
+    sa.Column("body_blob_ref", sa.Text()),
+    sa.Column("origin", sa.Text(), nullable=False, server_default="aiat"),
+    sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
+    sa.Column("updated_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
+)
+
+work_item_links = sa.Table(
+    "work_item_links",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("issue_id", sa.UUID(), sa.ForeignKey("issues.id", ondelete="CASCADE"), nullable=False),
+    sa.Column("link_type", sa.Text(), nullable=False),
+    sa.Column("target_type", sa.Text(), nullable=False),
+    sa.Column("target_id", sa.Text(), nullable=False),
+    sa.Column("metadata", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
+    sa.UniqueConstraint("issue_id", "link_type", "target_type", "target_id", name="uq_work_item_link"),
+)
+
+integration_evidence_records = sa.Table(
+    "integration_evidence_records",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column("connection_id", sa.UUID(), sa.ForeignKey("pm_connections.id", ondelete="CASCADE"), nullable=False),
+    sa.Column("binding_id", sa.UUID(), sa.ForeignKey("pm_project_bindings.id", ondelete="SET NULL")),
+    sa.Column("project_id", sa.UUID(), sa.ForeignKey("projects.id", ondelete="SET NULL")),
+    sa.Column("evidence_type", sa.Text(), nullable=False),
+    sa.Column("external_id", sa.Text()),
+    sa.Column("repository", sa.Text()),
+    sa.Column("payload", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("idempotency_key", sa.Text(), nullable=False),
+    # Trace correlation is a safe index field; the provider payload remains
+    # an evidence authority and is never projected through trace reads.
+    sa.Column("trace_id", sa.Text()),
+    sa.Column("span_id", sa.Text()),
+    sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text("now()")),
+    sa.UniqueConstraint("idempotency_key", name="uq_integration_evidence_idempotency"),
+)
+
 skill_bundles = sa.Table(
     "skill_bundles",
     metadata,
@@ -910,10 +1529,22 @@ worker_runs = sa.Table(
     sa.Column("flow_node_execution_id", sa.BigInteger(), sa.ForeignKey("flow_node_executions.id", ondelete="SET NULL")),
     sa.Column("worker_shell_version_id", sa.UUID(), sa.ForeignKey("worker_shell_versions.id", ondelete="RESTRICT")),
     sa.Column("adapter_id", sa.UUID(), sa.ForeignKey("runtime_adapters.id", ondelete="RESTRICT")),
+    # Immutable execution pin copied from the worker's active governed bundle
+    # at run creation.  NULL is retained only for legacy/un-governed runs.
+    sa.Column("skill_bundle_id", sa.UUID(), sa.ForeignKey("skill_bundles.id", ondelete="RESTRICT")),
     sa.Column("steward_id", sa.UUID(), sa.ForeignKey("steward_agents.id", ondelete="SET NULL")),
     sa.Column("model_resolution_snapshot_id", sa.UUID(), sa.ForeignKey("model_resolution_snapshots.id", ondelete="SET NULL")),
     sa.Column("task_type", sa.Text(), nullable=False),
     sa.Column("state", sa.Text(), nullable=False, server_default="CREATED"),
+    sa.Column("queue_priority", sa.Integer(), nullable=False, server_default="0"),
+    sa.Column("attempt_count", sa.Integer(), nullable=False, server_default="0"),
+    sa.Column("claim_owner", sa.Text()),
+    sa.Column("claimed_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("lease_expires_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("heartbeat_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("next_attempt_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("cancel_requested_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("recovery_reason", sa.Text()),
     sa.Column("request_json", JSONB(), nullable=False),
     sa.Column("negotiation_json", JSONB(), nullable=False, server_default="{}"),
     sa.Column("result_json", JSONB()),
@@ -923,6 +1554,67 @@ worker_runs = sa.Table(
     sa.Column("started_at", sa.TIMESTAMP(timezone=True)),
     sa.Column("completed_at", sa.TIMESTAMP(timezone=True)),
     sa.UniqueConstraint("worker_id", "idempotency_key", name="uq_worker_run_idempotency"),
+)
+
+# ── 19f. worker_run_host_bindings ────────────────────────────────────────────
+# A host reservation is not by itself a dispatch assignment.  This table
+# binds one durable Worker Run to the AIAT-owned worker-host reservation and
+# preserves the host lease generation used for that assignment.  Legacy runs
+# remain unbound until a later dispatch path explicitly creates a binding.
+worker_run_host_bindings = sa.Table(
+    "worker_run_host_bindings",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column(
+        "run_id",
+        sa.UUID(),
+        sa.ForeignKey("worker_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    sa.Column(
+        "worker_id",
+        sa.UUID(),
+        sa.ForeignKey("worker_registry.id", ondelete="RESTRICT"),
+        nullable=False,
+    ),
+    sa.Column(
+        "host_id",
+        sa.UUID(),
+        sa.ForeignKey("worker_hosts.id", ondelete="RESTRICT"),
+        nullable=False,
+    ),
+    sa.Column(
+        "reservation_id",
+        sa.UUID(),
+        sa.ForeignKey("worker_host_reservations.id", ondelete="RESTRICT"),
+        nullable=False,
+    ),
+    sa.Column("host_lease_generation", sa.BigInteger(), nullable=False, server_default="1"),
+    sa.Column("assignment_key", sa.Text(), nullable=False),
+    sa.Column("owner", sa.Text(), nullable=False),
+    sa.Column("state", sa.Text(), nullable=False, server_default="ASSIGNED"),
+    sa.Column("metadata", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+    sa.Column("committed_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("released_at", sa.TIMESTAMP(timezone=True)),
+    sa.UniqueConstraint("run_id", name="uq_worker_run_host_binding_run"),
+    sa.UniqueConstraint("assignment_key", name="uq_worker_run_host_binding_key"),
+    sa.UniqueConstraint("reservation_id", name="uq_worker_run_host_binding_reservation"),
+    sa.CheckConstraint(
+        "state IN ('ASSIGNED', 'COMMITTED', 'RELEASED')",
+        name="ck_worker_run_host_binding_state",
+    ),
+)
+
+sa.Index(
+    "ix_worker_run_host_bindings_worker_state",
+    worker_run_host_bindings.c.worker_id,
+    worker_run_host_bindings.c.state,
+)
+sa.Index(
+    "ix_worker_run_host_bindings_host_state",
+    worker_run_host_bindings.c.host_id,
+    worker_run_host_bindings.c.state,
 )
 
 worker_run_transitions = sa.Table(
@@ -976,6 +1668,8 @@ worker_artifacts = sa.Table(
     sa.Column("sha256", sa.Text(), nullable=False),
     sa.Column("size_bytes", sa.BigInteger()),
     sa.Column("metadata", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("trace_id", sa.Text()),
+    sa.Column("span_id", sa.Text()),
     sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
 )
 
@@ -992,6 +1686,8 @@ worker_usage_records = sa.Table(
     sa.Column("resource_json", JSONB(), nullable=False, server_default="{}"),
     sa.Column("provider_id", sa.Text()),
     sa.Column("exact_model_id", sa.Text()),
+    sa.Column("trace_id", sa.Text()),
+    sa.Column("span_id", sa.Text()),
     sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
 )
 

@@ -1,0 +1,82 @@
+{
+  "schema_version": "aiat.openhands-model-resolution-local-control.v1",
+  "evidence_kind": "offline_exact_image_synthetic_gateway_control",
+  "recorded_at": "2026-08-30",
+  "candidate_aiat_sha": "10bac36de23b99d85f8c0689fc20dabf9445b0ac",
+  "openhands": {
+    "release": "v1.43.0",
+    "source_commit": "4c1237f391fe394e9f67505fe3a0bd2d81f84188",
+    "image_digest": "sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97"
+  },
+  "configuration": {
+    "logical_model_id": "omniroute-coding",
+    "old_openhands_wire_model_id": "omniroute-coding",
+    "required_openhands_wire_model_id": "openai/omniroute-coding",
+    "provider_prefix_required_for_v143_custom_openai_route": true,
+    "gateway_base_url": "http://litellm:4000",
+    "gateway_base_url_class": "internal_litellm",
+    "litellm_alias": "omniroute-coding"
+  },
+  "controls": [
+    {
+      "control": "unqualified_logical_alias",
+      "profile_model": "omniroute-coding",
+      "conversation_create_http_status": 201,
+      "conversation_id_present": true,
+      "run_http_status": 200,
+      "terminal_state": "error",
+      "model_resolution_status": "FAIL",
+      "error_class": "LLMBadRequestError",
+      "error_classification": "LITELLM_PROVIDER_NOT_PROVIDED",
+      "error_message_sanitized": "LLM provider was not provided for the unqualified model",
+      "gateway_request_observed": false,
+      "raw_payload_retained": false
+    },
+    {
+      "control": "qualified_openai_wire_model",
+      "profile_model": "openai/omniroute-coding",
+      "conversation_create_http_status": 201,
+      "conversation_id_present": true,
+      "run_http_status": 200,
+      "run_accepted": true,
+      "run_identifier_present": false,
+      "execution_identity": "conversation_id",
+      "event_count": 6,
+      "event_types": [
+        "ConversationStateUpdateEvent",
+        "MessageEvent",
+        "StreamingDeltaEvent"
+      ],
+      "terminal_state": "finished",
+      "model_resolution_status": "PASS",
+      "gateway_request_observed": true,
+      "gateway_request": {
+        "method": "POST",
+        "path": "/chat/completions",
+        "model": "omniroute-coding",
+        "auth_header_present": true,
+        "request_body_sha256": "7123a9e715b4d3f82314317fcb86d93a8aad8631f0d226f6a3ba1d942e4b9715"
+      },
+      "synthetic_response_accepted": true,
+      "raw_payload_retained": false
+    }
+  ],
+  "scope": {
+    "environment": "local exact pinned image with disposable synthetic gateway",
+    "host_runtime": "Docker runc under WSL2; native runsc evidence remains in CI",
+    "provider_call": "not performed",
+    "certification_status": "offline control only; does not certify the candidate"
+  },
+  "retention": {
+    "secret_values_retained": false,
+    "raw_prompts_retained": false,
+    "raw_responses_retained": false,
+    "raw_gateway_request_retained": false
+  },
+  "source_evidence": [
+    "https://github.com/OpenHands/software-agent-sdk/tree/v1.43.0/openhands-sdk/openhands/sdk/llm/utils/litellm_provider.py",
+    "https://github.com/OpenHands/software-agent-sdk/tree/v1.43.0/openhands-sdk/openhands/sdk/llm/utils/openhands_provider.py",
+    "https://github.com/OpenHands/software-agent-sdk/tree/v1.43.0/openhands-sdk/openhands/sdk/llm/llm.py"
+  ],
+  "conclusion": "OpenHands v1.43 sends the profile model through LiteLLM. The governed AIAT alias remains provider-agnostic, while the fixed openai/ wire prefix is required at the OpenHands profile boundary so LiteLLM can resolve the internal OpenAI-compatible gateway."
+}

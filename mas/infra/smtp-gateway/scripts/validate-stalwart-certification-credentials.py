@@ -44,25 +44,27 @@ def endpoint_path(url: str) -> str:
 
 
 def resolve_jmap_api_url(base_url: str, advertised_url: str) -> str:
-    """Keep the session's path/query while using the explicitly configured authority."""
+    """Resolve only the expected loopback JMAP endpoint."""
     base = parse.urlsplit(base_url)
     advertised = parse.urlsplit(advertised_url)
     if (
-        base.scheme not in {"http", "https"}
-        or not base.hostname
+        base.scheme != "http"
+        or base.hostname not in {"127.0.0.1", "localhost"}
         or base.username is not None
         or base.password is not None
-        or advertised.scheme not in {"http", "https"}
-        or not advertised.hostname
+        or base.query
+        or base.fragment
+        or advertised.scheme != "http"
+        or advertised.hostname not in {"127.0.0.1", "localhost"}
         or advertised.username is not None
         or advertised.password is not None
-        or not advertised.path.startswith("/")
+        or advertised.port != base.port
+        or advertised.path.rstrip("/") != "/jmap"
+        or advertised.query
         or advertised.fragment
     ):
         raise Refused("Stalwart advertised an invalid JMAP apiUrl")
-    return parse.urlunsplit(
-        (base.scheme, base.netloc, advertised.path, advertised.query, "")
-    )
+    return parse.urlunsplit((base.scheme, base.netloc, "/jmap/", "", ""))
 
 
 def sanitize_diagnostic(value: Any, sensitive_values: list[str], limit: int = 180) -> str:
@@ -328,7 +330,7 @@ def validate_live(
     transport: HttpTransport,
     *,
     base_url: str = EXPECTED_URL,
-) -> None:
+) -> int:
     if base_url != EXPECTED_URL:
         raise Refused(f"credential validation must remain local at {EXPECTED_URL}")
     if not account_id:
@@ -337,7 +339,6 @@ def validate_live(
     if resolved_account_id != account_id:
         raise Refused(f"accountId does not belong to {EXPECTED_ADDRESS}")
     mail_auth = basic_mail_authorization(credentials["STALWART_JMAP_SERVICE_TOKEN"])
-
     mail_account = transport.json(
         f"{base_url}/api/account",
         mail_auth,
@@ -345,6 +346,40 @@ def validate_live(
     )
     require_exact_permissions(mail_account.get("permissions"), MAIL_PERMISSIONS, "mail credential")
     jmap_url = discover_jmap_api_url(credentials, transport, base_url=base_url)
+    return validate_mail_access(
+        credentials["STALWART_JMAP_SERVICE_TOKEN"],
+        account_id,
+        transport,
+        base_url=base_url,
+        jmap_url=jmap_url,
+        account_already_validated=True,
+    )
+
+
+def validate_mail_access(
+    service_token: str,
+    account_id: str,
+    transport: HttpTransport,
+    *,
+    base_url: str,
+    jmap_url: str,
+    account_already_validated: bool = False,
+) -> int:
+    """Prove the gateway service credential is read-only and has zero submissions."""
+    if base_url != EXPECTED_URL or jmap_url != f"{EXPECTED_URL}/jmap/":
+        raise Refused("mail credential validation must remain at local /jmap/")
+    if not account_id:
+        raise Refused("mail credential validation requires an accountId")
+    mail_auth = basic_mail_authorization(service_token)
+    if not account_already_validated:
+        mail_account = transport.json(
+            f"{base_url}/api/account",
+            mail_auth,
+            jmap_method="GET /api/account",
+        )
+        require_exact_permissions(
+            mail_account.get("permissions"), MAIL_PERMISSIONS, "mail credential"
+        )
     mail_response = transport.json(
         jmap_url,
         mail_auth,
@@ -370,6 +405,42 @@ def validate_live(
         for identity in identities
     ):
         raise Refused(f"mail credential does not own {EXPECTED_ADDRESS}")
+    submission_response = transport.json(
+        jmap_url,
+        mail_auth,
+        payload={
+            "using": [
+                "urn:ietf:params:jmap:core",
+                "urn:ietf:params:jmap:submission",
+            ],
+            "methodCalls": [
+                [
+                    "EmailSubmission/query",
+                    {"accountId": account_id, "limit": 100},
+                    "submissions",
+                ]
+            ],
+        },
+        jmap_method="EmailSubmission/query",
+    )
+    submission_result = method_result(
+        submission_response,
+        "EmailSubmission/query",
+        transport=transport,
+    )
+    submission_ids = submission_result.get("ids")
+    submission_total = submission_result.get("total")
+    if (
+        not isinstance(submission_ids, list)
+        or any(not isinstance(item, str) for item in submission_ids)
+        or not isinstance(submission_total, int)
+        or isinstance(submission_total, bool)
+        or submission_total != len(submission_ids)
+    ):
+        raise Refused("EmailSubmission inventory is malformed or incomplete")
+    if submission_total != 0:
+        raise Refused("EmailSubmission inventory is not zero")
+    return submission_total
 
 
 def lookup_account_id(
@@ -463,7 +534,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if not args.account_id:
             raise Refused("--account-id is required")
-        validate_live(credentials, args.account_id, transport, base_url=args.url)
+        submission_count = validate_live(
+            credentials, args.account_id, transport, base_url=args.url
+        )
     finally:
         credentials.clear()
         transport.sensitive_values.clear()
@@ -472,6 +545,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"ACCOUNT_ID={args.account_id}")
     print("MANAGEMENT_PERMISSIONS=LEAST_PRIVILEGE")
     print("MAILBOX_ACCESS=PASS")
+    print(f"EMAIL_SUBMISSION_COUNT={submission_count}")
     print("SECRET_VALUES_PRINTED=NONE")
     return 0
 

@@ -1,5 +1,7 @@
 export type FlowNodeType = "start" | "end" | "task" | "approval" | "condition" | "parallel" | "join" | "switch" | "escalate";
 
+export const FLOW_NODE_SCHEMA_VERSION = "1.0" as const;
+
 export type FlowInstanceStatus = 
   | "NOT_STARTED" 
   | "RUNNING" 
@@ -62,6 +64,8 @@ export interface FlowEdgeDefinition {
 }
 
 export interface FlowDefinition {
+  schema_version?: string;
+  metadata?: Record<string, unknown>;
   nodes: FlowNodeDefinition[];
   edges: FlowEdgeDefinition[];
 }
@@ -77,6 +81,13 @@ export interface Flow {
   metadata_json?: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+}
+
+export interface FlowTemplate {
+  template_id: string;
+  name: string;
+  description: string;
+  definition_json: FlowDefinition;
 }
 
 export interface FlowInstance {

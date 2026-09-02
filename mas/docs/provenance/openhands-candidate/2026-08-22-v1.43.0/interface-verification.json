@@ -1,0 +1,144 @@
+{
+  "schema_version": "aiat.openhands-interface-verification.v1",
+  "report_id": "openhands-agent-server-v1.43.0-2026-08-22",
+  "runtime": "OpenHands Software Agent SDK + Agent Server",
+  "observed_at": "2026-08-22",
+  "approval_status": "PENDING",
+  "approved": false,
+  "pin": {
+    "repository": "https://github.com/OpenHands/software-agent-sdk.git",
+    "release": "v1.43.0",
+    "commit_sha": "4c1237f391fe394e9f67505fe3a0bd2d81f84188",
+    "packages": {
+      "openhands-sdk": "1.43.0",
+      "openhands-tools": "1.43.0",
+      "openhands-workspace": "1.43.0",
+      "openhands-agent-server": "1.43.0"
+    },
+    "pyproject_sha256": "6e7b7f7cfc5e29bbed704269bb63615cc4776569a25b8ce89f6f4265124ea9ca",
+    "uv_lock_sha256": "553caab1d6936ef86559f93eb7e6cc464a84810df832bc6070a5c456052df57f"
+  },
+  "image": {
+    "ref": "ghcr.io/openhands/agent-server:1.43.0-python",
+    "digest": "sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97",
+    "amd64_digest": "sha256:c826bcfa6455267d8f99fe277d97d00806bc0f90bf263b94268cab29fa7be529",
+    "arm64_digest": "sha256:cc002e5b3dbfc65a9934e47b4f6b66f61c7b90a662c8dd375c09844367784984"
+  },
+  "auth": {
+    "http": "X-Session-API-Key",
+    "websocket": "first-message {type: auth, session_api_key: ...}",
+    "secret_source": "AIAT AdapterContext secret boundary",
+    "raw_secret_persistence": false
+  },
+  "endpoints": {
+    "health": {"method": "GET", "path": "/health"},
+    "readiness": {"method": "GET", "path": "/ready"},
+    "server_info": {"method": "GET", "path": "/server_info"},
+    "conversation_create": {"method": "POST", "path": "/api/conversations"},
+    "conversation_get": {"method": "GET", "path": "/api/conversations/{conversation_id}"},
+    "conversation_message": {"method": "POST", "path": "/api/conversations/{conversation_id}/events"},
+    "conversation_run": {"method": "POST", "path": "/api/conversations/{conversation_id}/run"},
+    "conversation_pause": {"method": "POST", "path": "/api/conversations/{conversation_id}/pause"},
+    "conversation_interrupt": {"method": "POST", "path": "/api/conversations/{conversation_id}/interrupt"},
+    "conversation_delete": {"method": "DELETE", "path": "/api/conversations/{conversation_id}"},
+    "agent_final_response": {"method": "GET", "path": "/api/conversations/{conversation_id}/agent_final_response"},
+    "events_search": {"method": "GET", "path": "/api/conversations/{conversation_id}/events/search"},
+    "git_changes": {"method": "GET", "path": "/api/git/changes"},
+    "file_download": {"method": "GET", "path": "/api/file/download"},
+    "settings_mcp": {"method": "POST|DELETE", "path": "/api/settings/mcp/{settings_key}"},
+    "events_socket": {"protocol": "WebSocket", "path": "/sockets/events/{conversation_id}"}
+  },
+  "aiat_mapping": {
+    "start_task": "POST /api/conversations with server-side agent_profile_id and AIAT workspace (without initial_message)",
+    "queue_task": "POST /api/conversations/{conversation_id}/events with run=false",
+    "execute": "POST /api/conversations/{conversation_id}/run after the queued task message",
+    "status": "GET /api/conversations/{conversation_id}.execution_status",
+    "graceful_cancellation": "POST /api/conversations/{conversation_id}/pause",
+    "immediate_cancellation": "POST /api/conversations/{conversation_id}/interrupt",
+    "resume": "POST /api/conversations/{conversation_id}/run after paused state",
+    "result": "GET /api/conversations/{conversation_id}/agent_final_response plus scalar metrics",
+    "event_stream": "WebSocket /sockets/events/{conversation_id}; normalize scalar event identity only",
+    "workspace": "LocalWorkspace.working_dir set only by AIAT AdapterContext",
+    "artifacts": "GET /api/git/changes and streamed /api/file/download, hash/register without retaining payload",
+    "mcp_bridge": "POST and DELETE one disposable /api/settings/mcp/{settings_key} entry; fixed AIAT URL only",
+    "health": "GET /health",
+    "readiness": "GET /ready and GET /server_info"
+  },
+  "governance": {
+    "authority_owner": "AIAT control plane",
+    "activation": "AIAT steward and certification only",
+    "model": "server-side OpenHands profile must resolve to AIAT exact model snapshot",
+    "tools": "sandbox-local terminal/file editing/tests only; one fixed AIAT MCP bridge; no arbitrary external MCP registration",
+    "profile_controls": "public skills, plugins, browser, subagents, direct credentials, and model switching disabled by operator profile",
+    "client_tools": "not used as privileged bridge because the official executor acknowledges without server-side execution",
+    "credentials": "AIAT secret boundary; no task-supplied credentials or profile data",
+    "budgets": "AIAT BudgetTracker is authoritative; OpenHands metrics are evidence only",
+    "sandbox": "AIAT-provisioned gVisor workspace/container; live compatibility not yet certified",
+    "audit": "AIAT normalized events and audit sink; raw OpenHands payloads are not retained"
+  },
+  "evidence_refs": [
+    "mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/certification-authorization-model.json",
+    "https://github.com/OpenHands/software-agent-sdk/tree/v1.43.0",
+    "https://github.com/OpenHands/software-agent-sdk/blob/v1.43.0/openhands-agent-server/openhands/agent_server/conversation_router.py",
+    "https://github.com/OpenHands/software-agent-sdk/blob/v1.43.0/openhands-agent-server/openhands/agent_server/event_router.py",
+    "https://github.com/OpenHands/software-agent-sdk/blob/v1.43.0/openhands-agent-server/openhands/agent_server/settings_router.py",
+    "https://github.com/OpenHands/software-agent-sdk/blob/v1.43.0/openhands-sdk/openhands/sdk/conversation/impl/remote_conversation.py",
+    "https://github.com/OpenHands/software-agent-sdk/releases/tag/v1.43.0"
+  ],
+  "certification": {
+    "status": "NOT_RUN",
+    "authorization": {
+      "status": "NOT_ISSUED",
+      "scope": "isolated pinned candidate certification only",
+      "issuer": "AIAT trusted certification controller",
+      "required_bindings": [
+        "exact candidate commit",
+        "exact OCI image digest",
+        "disposable workspace",
+        "gvisor sandbox",
+        "runsc runtime",
+        "aiat-github-actions controller run ID",
+        "candidate worker identity coding-worker-openhands-candidate"
+      ],
+      "does_not_grant": [
+        "activation approval",
+        "worker registry activation",
+        "production rollout"
+      ]
+    },
+    "activation_approval": {
+      "status": "PENDING",
+      "requires_passed_certification": true,
+      "worker_activation": "INACTIVE"
+    },
+    "worker_activation": "INACTIVE",
+    "required_gates": [
+      "sbom",
+      "security_scan_with_retained_evidence",
+      "aiat_local_boundary",
+      "gvisor_execution",
+      "isolated_workspace",
+      "real_coding_task",
+      "file_modifications",
+      "test_execution",
+      "artifact_capture",
+      "graceful_pause",
+      "immediate_interrupt",
+      "resume",
+      "forced_failure",
+      "recovery",
+      "timeout",
+      "budget_enforcement",
+      "forbidden_tool_attempt",
+      "cross_workspace_isolation",
+      "secret_non_disclosure",
+      "zero_residue_cleanup"
+    ]
+  },
+  "license_metadata": {
+    "license": "MIT",
+    "license_evidence": "https://github.com/OpenHands/software-agent-sdk/blob/v1.43.0/LICENSE",
+    "treatment": "metadata-only; not an activation or certification gate",
+    "excluded_components": ["OpenHands Cloud", "OpenHands enterprise components", "enterprise directory"]
+  }
+}

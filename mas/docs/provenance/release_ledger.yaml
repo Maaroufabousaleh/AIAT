@@ -1,0 +1,315 @@
+schema_version: "1"
+programme_scope: personal-internal-only
+decision_policy:
+  release_requires:
+    - all_required_checks_pass
+    - no_pending_evidence
+    - clean_worktree
+    - live_profile_included
+  blocked_live_evidence_is_not_a_pass: true
+  licence_metadata_is_not_a_gate: true
+
+# The checker executes these existing, bounded verifiers without a shell.  A
+# live_args entry is optional because some static contracts have no live mode.
+# The report records only safe status/count/reason fields from their output.
+checks:
+  - id: provenance
+    category: static
+    script: scripts/check_provenance.py
+    args: []
+  - id: documentation_index
+    category: documentation
+    script: scripts/check_docs_index.py
+    args: [--json]
+  - id: release_environment
+    category: release
+    script: scripts/check_release_environment.py
+    args: [--json]
+    live_args: [--require-native-linux, --json]
+  - id: api_contract
+    category: contract
+    script: scripts/check_api_contract.py
+    args: [--json]
+  - id: api_observability
+    category: contract
+    script: scripts/check_api_observability.py
+    args: [--json]
+  - id: trace_evidence
+    category: contract
+    script: scripts/check_trace_evidence.py
+    args: [--json]
+    # Reuse the bounded trace emitted by the live transport probe.  This keeps
+    # the aggregate read-back deterministic without creating project/worker
+    # state; the trace endpoint returns `not_found` on a fresh deployment.
+    live_args: [--live, --json, --trace-id, aiat-live-trace-20260811-phase]
+  - id: live_trace_observability
+    category: integration
+    script: scripts/check_live_trace_observability.py
+    args: [--json]
+    live_args: [--live, --json]
+  - id: live_tool_trace
+    category: integration
+    script: scripts/check_live_tool_trace.py
+    args: [--json]
+    live_args: [--live, --json]
+  - id: native_trace_spans
+    category: contract
+    script: scripts/check_native_trace_spans.py
+    args: [--json]
+  - id: trace_retention_plan
+    category: contract
+    script: scripts/check_trace_retention.py
+    args: [--json]
+  - id: slo_capacity
+    category: contract
+    script: scripts/check_slo_capacity.py
+    args: [--json]
+    live_args: [--live, --json]
+  - id: prompt_tool_reconciliation
+    category: static
+    script: scripts/check_prompt_tool_reconciliation.py
+    args: [--json]
+  - id: worker_reconciliation
+    category: static
+    script: scripts/check_worker_reconciliation.py
+    args: [--json]
+    live_args: [--live, --json]
+  - id: default_worker_bindings
+    category: contract
+    script: scripts/check_default_worker_bindings.py
+    args: [--json]
+    live_args: [--live, --json]
+    retained_live_evidence:
+      path: docs/provenance/worker_reconciliation_live.json
+      schema_version: aiat.worker-reconciliation-live-evidence.v1
+  - id: worker_run_lifecycle
+    category: recovery
+    script: scripts/check_worker_run_lifecycle.py
+    args: [--json]
+  - id: network_boundary
+    category: static
+    script: scripts/check_network_boundary.py
+    args: [--json]
+    live_args: [--live, --json]
+  - id: image_provenance
+    category: static
+    script: scripts/check_image_provenance.py
+    args: [--json]
+    live_args: [--live, --json]
+  - id: image_budgets
+    category: static
+    script: scripts/check_image_budgets.py
+    args: []
+  - id: metric_series_budget
+    category: operations
+    script: scripts/check_metric_series_budget.py
+    args: [--json]
+    live_args: [--live, --json]
+  - id: sandbox_runtime_readiness
+    category: static
+    script: scripts/check_sandbox_runtime_readiness.py
+    args: [--json]
+    live_args: [--live, --json]
+    retained_live_evidence:
+      path: docs/provenance/native_gvisor_certification_live.json
+      schema_version: aiat.native-gvisor-certification-live.v1
+  - id: firecracker_worker_pool_readiness
+    category: integration
+    script: scripts/check_firecracker_worker_pool.py
+    args: [--json]
+    live_args: [--live, --json]
+  - id: worker_runtime_readiness
+    category: static
+    script: scripts/check_worker_runtime_readiness.py
+    args: [--json]
+    live_args: [--live, --json, --compose-local]
+  - id: runtime_benchmarks
+    category: integration
+    script: scripts/check_runtime_benchmarks.py
+    args: [--json]
+    live_args: [--live, --json]
+  - id: model_profile_catalogue
+    category: packaging
+    script: scripts/check_model_profile_catalogue.py
+    args: [--json]
+    live_args: [--live, --json, --require-approved]
+  - id: runtime_install_profile
+    category: packaging
+    script: scripts/check_runtime_install_profile.py
+    args: [--json]
+  - id: operator_pins
+    category: packaging
+    script: scripts/check_operator_pins.py
+    args: [--json]
+  - id: runtime_compatibility
+    category: packaging
+    script: scripts/check_runtime_compatibility.py
+    args: [--json]
+  - id: code_review_adapters
+    category: contract
+    script: scripts/check_code_review_adapters.py
+    args: [--json]
+  - id: security_adapters
+    category: contract
+    script: scripts/check_security_adapters.py
+    args: [--json]
+  - id: security_scan_review
+    category: security
+    script: scripts/check_security_scan_review.py
+    args: [--json]
+  - id: opencode_candidate_certification
+    category: security
+    script: scripts/check_opencode_candidate_certification.py
+    args: [--json]
+  - id: worker_steward_contract
+    category: governance
+    script: scripts/check_worker_steward_contract.py
+    args: [--json]
+  - id: object_store_conformance
+    category: contract
+    script: scripts/check_object_store_conformance.py
+    args: [--json]
+    live_args: [--live, --json, --compose-local]
+  - id: object_store_oci_sse_kms_contract
+    category: contract
+    script: scripts/check_object_store_oci_sse_kms.py
+    args: [--json]
+  - id: object_store_multipart
+    category: contract
+    script: scripts/check_object_store_multipart.py
+    args: [--json]
+    live_args: [--live, --json]
+    retained_live_evidence:
+      path: docs/provenance/object_store_multipart_provider_diverse_evidence.json
+      schema_version: aiat.object-store-multipart.v1
+  - id: object_store_resource_profile
+    category: operations
+    script: scripts/check_object_store_resource_profile.py
+    args: [--json]
+    live_args: [--live, --json]
+    retained_live_evidence:
+      path: docs/provenance/object_store_resource_profile_provider_diverse_evidence.json
+      schema_version: aiat.object-store-resource-profile.v1
+  - id: object_store_provider_outage
+    category: recovery
+    script: scripts/check_object_store_provider_outage.py
+    args: [--json]
+    live_args: [--live, --json]
+    retained_live_evidence:
+      path: docs/provenance/object_store_provider_outage_live_evidence.json
+      schema_version: aiat.object-store-provider-outage.v1
+  - id: object_store_lifecycle
+    category: recovery
+    script: scripts/check_object_store_lifecycle.py
+    args: [--json]
+  - id: trace_retention_execution
+    category: recovery
+    script: scripts/check_trace_retention_execution.py
+    args: [--json]
+  - id: credentials_manager_live
+    category: security
+    script: scripts/check_credentials_manager_live.py
+    args: [--json]
+    live_args: [--live, --json, --compose-local]
+  - id: provider_conformance
+    category: contract
+    script: scripts/check_provider_conformance.py
+    args: [--json]
+  - id: provider_adapter_declarations
+    category: contract
+    script: scripts/check_provider_adapter_declarations.py
+    args: [--json]
+  - id: provider_adapter_http_conformance
+    category: contract
+    script: scripts/check_provider_adapter_http_conformance.py
+    args: [--json]
+  - id: identity_provider_conformance
+    category: contract
+    script: scripts/check_identity_provider_conformance.py
+    args: [--json]
+  - id: gateway_provider_recovery
+    category: recovery
+    script: scripts/check_gateway_provider_recovery.py
+    args: [--json]
+    live_args: [--live, --json]
+    retained_live_evidence:
+      path: docs/provenance/gateway_worker_provider_recovery_live.json
+      schema_version: aiat.gateway-worker-provider-recovery-live.v1
+  - id: external_account_action_policy
+    category: governance
+    script: scripts/check_external_account_action_policy.py
+    args: [--json]
+  - id: external_account_lifecycle
+    category: governance
+    script: scripts/check_external_account_lifecycle.py
+    args: [--json]
+  - id: outbound_mail_lifecycle
+    category: governance
+    script: scripts/check_outbound_mail_lifecycle.py
+    args: [--json]
+    live_args: [--live, --json]
+  - id: flow_instance_recovery
+    category: recovery
+    script: scripts/check_flow_instance_recovery.py
+    args: [--json]
+  - id: flow_topology
+    category: contract
+    script: scripts/check_flow_topology.py
+    args: [--json]
+  - id: flow_execution_semantics
+    category: contract
+    script: scripts/check_flow_execution_semantics.py
+    args: [--json]
+  - id: flow_runtime_live
+    category: recovery
+    script: scripts/check_flow_runtime_live.py
+    args: [--json]
+    live_args: [--live, --confirm, --json]
+    retained_live_evidence:
+      path: docs/provenance/flow_runtime_live_evidence.json
+      schema_version: aiat.flow-runtime-live.v1
+  - id: flow_worker_binding
+    category: contract
+    script: scripts/check_flow_worker_binding.py
+    args: [--json]
+  - id: workflow_watchdog_recovery
+    category: recovery
+    script: scripts/check_workflow_watchdog_recovery.py
+    args: [--json]
+  - id: project_evidence_package
+    category: evidence
+    script: scripts/check_project_evidence_package.py
+    args: [--json]
+  - id: evidence_policy_resolution
+    category: evidence
+    script: scripts/check_evidence_policy_resolution.py
+    args: [--json]
+  - id: object_store_copy
+    category: recovery
+    script: scripts/check_object_store_copy.py
+    args: [--json]
+  - id: object_store_backup_restore
+    category: recovery
+    script: scripts/check_object_store_backup_restore.py
+    args: [--json]
+  - id: object_store_encryption
+    category: recovery
+    script: scripts/check_object_store_encryption.py
+    args: [--json]
+  - id: object_store_clean_environment_restore
+    category: recovery
+    script: scripts/check_object_store_clean_environment_restore.py
+    args: [--json]
+  - id: object_store_migration
+    category: recovery
+    script: scripts/check_object_store_migration.py
+    args: [--json]
+  - id: self_improvement_lifecycle
+    category: governance
+    script: scripts/check_self_improvement_lifecycle.py
+    args: [--json]
+  - id: self_improvement_candidate_detection
+    category: governance
+    script: scripts/check_self_improvement_candidates.py
+    args: [--json]
+    live_args: [--live, --json]

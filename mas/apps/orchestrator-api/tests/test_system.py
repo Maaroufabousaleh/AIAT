@@ -120,6 +120,35 @@ async def test_seed_default_company_is_idempotent(client, monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_seed_default_company_fails_when_manifest_is_missing(client, monkeypatch):
+    monkeypatch.setenv("WORKERS_DIR", "__missing_workers_for_seed_test__")
+    monkeypatch.setenv("COMPANY_MANIFEST_PATH", "__missing_company_manifest__.yaml")
+    storage = _make_storage(system_state="RUNNING", projects=[])
+    _patch_state(storage)
+
+    resp = await client.post("/system/seed-default-company")
+
+    assert resp.status_code == 500
+    assert "default company manifest not found" in resp.json()["detail"]
+    storage.set_config.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_default_company_bootstrap_resolves_image_and_source_tree_layouts(monkeypatch):
+    """Manifest discovery must not assume a fixed ``__file__`` parent depth."""
+    monkeypatch.delenv("COMPANY_MANIFEST_PATH", raising=False)
+    from orchestrator_api.main import _apply_default_company_manifest
+
+    storage = MagicMock()
+    storage.apply_company_manifest = AsyncMock(return_value={"id": "default-company"})
+
+    result = await _apply_default_company_manifest(storage)
+
+    assert result == {"id": "default-company"}
+    storage.apply_company_manifest.assert_awaited_once()
+
+
+@pytest.mark.anyio
 async def test_company_overview_returns_department_health(client):
     """GET /system/company returns seeded company and department health summaries."""
     storage = MagicMock()
@@ -580,6 +609,25 @@ async def test_update_schedule_defaults(client):
     _patch_state(_make_storage())
     resp = await client.put("/system/schedule", json={})
     assert resp.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_update_schedule_defaults_to_active_company_timezone(client):
+    """An omitted schedule timezone inherits the active manifest policy."""
+    storage = _make_storage()
+    storage.get_company_manifest = AsyncMock(
+        return_value={"manifest_json": {"timezone": "America/Toronto"}}
+    )
+    _patch_state(storage)
+
+    with patch("orchestrator_api.main._configure_schedule_cron"):
+        resp = await client.put("/system/schedule", json={"enabled": True})
+
+    assert resp.status_code == 200
+    assert (
+        "schedule_timezone",
+        "America/Toronto",
+    ) in [call.args for call in storage.set_config.await_args_list]
 
 
 @pytest.mark.anyio

@@ -1,0 +1,20 @@
+{
+  "schema_version": "aiat.object-store-live-conformance.v1",
+  "observed_at": "2026-08-11T20:42:36Z",
+  "mode": "local-live",
+  "adapter_type": "s3-compatible",
+  "adapter_version": "aioboto3",
+  "provider": "minio",
+  "container_network": "mas_internal",
+  "project_prefix": "aiat-conformance-live",
+  "case_count": 8,
+  "passed_cases": 8,
+  "failed_cases": 0,
+  "cleanup_verified": true,
+  "secret_values_printed": false,
+  "notes": [
+    "Executed with mas/infra/compose/scripts/check-minio-conformance.sh inside mas-orchestrator-api-1 against the running MinIO service.",
+    "The bounded run passed all eight cases with scoped cleanup; no credential values or object payloads were retained."
+  ],
+  "scope": "Local deployed MinIO conformance only; this is not SeaweedFS, provider-pair migration, encryption, backup/restore, benchmark, or disaster-recovery evidence."
+}

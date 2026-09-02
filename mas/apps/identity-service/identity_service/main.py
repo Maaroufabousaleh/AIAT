@@ -24,7 +24,13 @@ def create_app(*, settings: IdentitySettings | None = None, store: IdentityStore
         else:
             store = InMemoryIdentityStore()
     stalwart = StalwartAdapter(base_url=settings.stalwart_public_url, api_key=settings.stalwart_api_key, jmap_service_token=settings.stalwart_jmap_service_token, timeout_seconds=settings.request_timeout_seconds)
-    resend = ResendRelayAdapter(api_key=settings.resend_api_key, sending_domain=settings.agent_mail_domain, timeout_seconds=settings.request_timeout_seconds)
+    resend = ResendRelayAdapter(
+        api_key=settings.resend_api_key,
+        sending_domain=settings.agent_mail_domain,
+        timeout_seconds=settings.request_timeout_seconds,
+        webhook_signing_secret=settings.resend_webhook_signing_secret,
+        webhook_tolerance_seconds=settings.resend_webhook_tolerance_seconds,
+    )
     service = IdentityService(settings=settings, store=store, stalwart=stalwart, resend=resend)
 
     @asynccontextmanager

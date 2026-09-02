@@ -1,0 +1,47 @@
+{
+  "schema_version": "aiat.openhands-certification-historical-run.v1",
+  "immutable": true,
+  "run": {
+    "run_id": "32697052939",
+    "job_id": "97341057124",
+    "candidate_sha": "e0f18915a45268c8b5af14af7091cade4abd2c42",
+    "artifact_id": "9509401175",
+    "artifact_digest": "sha256:1638001c19fe9e708c0ac8d5340ca6311f3a952ebe73f4cafa9369203fa0db3e"
+  },
+  "classification": {
+    "final_status": "BLOCKED_SCANNER_COVERAGE",
+    "failure_class": "FAILED_CERTIFICATION_IMPLEMENTATION",
+    "root_cause_status": "EVIDENCE_SCHEMA_FAILURE_AFTER_RUNNER_DISK_EXHAUSTION",
+    "root_cause": "The pinned images, gateway, provider route, runsc Agent Server, run-scoped profile, MCP materialization, adapter wave, and cleanup completed. Syft image SBOM extraction then exhausted the ephemeral runner filesystem and left a zero-byte image-sbom artifact; the validator also treated valid TruffleHog JSON Lines output as one JSON document. The scanner evidence was therefore not interpretable and the fail-closed gate wave stopped with no provider-backed coding/lifecycle gate claim.",
+    "provider_failure": false,
+    "runtime_failure": false,
+    "security_verdict": "not_inferred_from_raw_scanner_hits"
+  },
+  "evidence": {
+    "provider_preflight": "PASS",
+    "candidate_preflight": "READY_FOR_CERTIFICATION_AUTHORIZATION",
+    "gateway_provenance": "PASS",
+    "network_and_provider_path": "PASS",
+    "omniroute_health_and_auth": "PASS",
+    "litellm_route": "PASS",
+    "tool_service": "PASS",
+    "openhands_runsc_start": "PASS",
+    "runsc_to_litellm": "PASS",
+    "profile_and_mcp_materialization": "PASS",
+    "adapter_wave": "PASS",
+    "security_scan": "BLOCKED_SCANNER_COVERAGE",
+    "image_sbom": "SBOM_FAILURE_RUNNER_DISK_EXHAUSTED",
+    "trufflehog_output": "VALID_JSON_LINES_MISREAD_BY_SCHEMA_VALIDATOR",
+    "mandatory_gate_wave": "NOT_RUN",
+    "mandatory_gates_passed": 3,
+    "mandatory_gate_count": 20,
+    "zero_residue": "PASS",
+    "evidence_schema": "FAILED_CERTIFICATION_IMPLEMENTATION"
+  },
+  "retention": {
+    "raw_logs_retained": false,
+    "credentials_retained": false,
+    "model_payloads_retained": false,
+    "source_payloads_retained": false
+  }
+}

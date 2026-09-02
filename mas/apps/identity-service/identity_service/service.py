@@ -10,6 +10,8 @@ from datetime import UTC, datetime
 from typing import Any, TypeVar
 from uuid import UUID, uuid4
 
+from mas_core.observability.mail_edge import normalize_provider_webhook
+
 from .approvals.service import ApprovalService
 from .config import IdentitySettings
 from .credentials.leases import issue_opaque_lease
@@ -47,7 +49,17 @@ class IdentityService:
         self.approvals = ApprovalService(store)
         self.mailboxes = MailboxService(store=store, provider=stalwart, outbox=self.outbox, usage=self.usage, agent_mail_domain=settings.agent_mail_domain, quota_mb=settings.default_mailbox_quota_mb, retention_days=settings.default_mail_retention_days, provider_rate_limit=settings.provider_rate_limit_per_minute)
         self.domains = DomainService(store=store, provider=stalwart, outbox=self.outbox)
-        self.outbound = OutboundService(store=store, provider=stalwart, approvals=self.approvals, usage=self.usage, outbox=self.outbox, policy=OutboundPolicy(), agent_domain=settings.agent_mail_domain, provider_rate_limit=settings.outbound_rate_limit_per_minute)
+        self.outbound = OutboundService(
+            store=store,
+            provider=stalwart,
+            approvals=self.approvals,
+            usage=self.usage,
+            outbox=self.outbox,
+            policy=OutboundPolicy(),
+            agent_domain=settings.agent_mail_domain,
+            provider_rate_limit=settings.outbound_rate_limit_per_minute,
+            outbound_relay_certified=settings.outbound_relay_certified,
+        )
         self.stalwart = stalwart
         self.resend = resend
         self.external_policy = ExternalAccountPolicy()
@@ -358,11 +370,144 @@ class IdentityService:
         await self.store.create_audit(actor_id=actor_id, action="mail.send_request", target_type="outbound_mail_request", target_id=str(request["id"]), outcome="pending_approval", metadata={"approval_id": str(approval["id"]), "recipient_count": len(recipients)})
         return request, approval
 
-    async def send_approved(self, client: AuthenticatedClient, *, worker_id: UUID, actor_id: str, request_id: UUID, idempotency_key: str) -> dict[str, Any]:
+    async def send_approved(self, client: AuthenticatedClient, *, worker_id: UUID, actor_id: str, request_id: UUID, idempotency_key: str, trace_id: str | None = None) -> dict[str, Any]:
         await self.owned_identity(client, actor_id=actor_id, worker_id=worker_id)
-        request = await self.outbound.send_approved(worker_id=worker_id, outbound_request_id=request_id, idempotency_key=idempotency_key)
+        request = await self.outbound.send_approved(worker_id=worker_id, outbound_request_id=request_id, idempotency_key=idempotency_key, trace_id=trace_id)
         await self.store.create_audit(actor_id=actor_id, action="mail.send_approved", target_type="outbound_mail_request", target_id=str(request_id), outcome="submitted", metadata={"provider_correlation_id": request.get("provider_correlation_id")})
         return request
+
+    async def record_provider_webhook(
+        self,
+        client: AuthenticatedClient,
+        *,
+        provider: str,
+        payload: dict[str, Any],
+        actor_id: str,
+        event_id: str | None = None,
+        signature_verified: bool = False,
+        worker_id: UUID | None = None,
+        outbound_request_id: UUID | None = None,
+        trace_id: str | None = None,
+        span_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Persist one verified provider event without retaining its body.
+
+        Provider-specific signature verification belongs to the ingress
+        adapter.  This signed control-plane endpoint accepts only its explicit
+        boolean result; an unverified webhook can never become an AIAT
+        observation.
+        """
+
+        if not client.has("identity:delegate"):
+            raise PermissionError("provider mail-edge projection requires delegated scope")
+        if not signature_verified:
+            raise PermissionError("verified provider signature is required")
+        return await self._persist_provider_webhook(
+            provider=provider,
+            payload=payload,
+            actor_id=actor_id,
+            event_id=event_id,
+            worker_id=worker_id,
+            outbound_request_id=outbound_request_id,
+            trace_id=trace_id,
+            span_id=span_id,
+        )
+
+    async def record_verified_provider_webhook(
+        self,
+        *,
+        provider: str,
+        payload: dict[str, Any],
+        actor_id: str,
+        event_id: str | None = None,
+        worker_id: UUID | None = None,
+        outbound_request_id: UUID | None = None,
+        trace_id: str | None = None,
+        span_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Persist an event after a provider adapter verified its raw body."""
+
+        return await self._persist_provider_webhook(
+            provider=provider,
+            payload=payload,
+            actor_id=actor_id,
+            event_id=event_id,
+            worker_id=worker_id,
+            outbound_request_id=outbound_request_id,
+            trace_id=trace_id,
+            span_id=span_id,
+        )
+
+    async def _persist_provider_webhook(
+        self,
+        *,
+        provider: str,
+        payload: dict[str, Any],
+        actor_id: str,
+        event_id: str | None,
+        worker_id: UUID | None,
+        outbound_request_id: UUID | None,
+        trace_id: str | None,
+        span_id: str | None,
+    ) -> dict[str, Any]:
+        observation = normalize_provider_webhook(
+            provider,
+            payload,
+            event_id=event_id,
+            signature_verified=True,
+            worker_id=str(worker_id) if worker_id else None,
+            outbound_request_id=str(outbound_request_id) if outbound_request_id else None,
+            trace_id=trace_id,
+            span_id=span_id,
+        )
+
+        target: dict[str, Any] | None = None
+        if outbound_request_id is not None:
+            target = await self.store.get_outbound_request_metadata(outbound_request_id)
+            if target is None:
+                raise ValueError("outbound request for provider event was not found")
+        elif observation.provider_message_ref:
+            target = await self.store.find_outbound_request_by_provider_message_id(
+                observation.provider_message_ref
+            )
+        if target is not None:
+            target_worker = str(target.get("worker_id") or "")
+            if worker_id is not None and target_worker != str(worker_id):
+                raise PermissionError("provider event worker correlation is inconsistent")
+            target_trace = str(target.get("trace_id") or "") or None
+            if target_trace and observation.trace_id and target_trace != observation.trace_id:
+                raise ValueError("provider event trace correlation is inconsistent")
+            stored_message_ref = str(target.get("provider_message_id") or "")
+            if (
+                stored_message_ref
+                and observation.provider_message_ref
+                and stored_message_ref != observation.provider_message_ref
+            ):
+                raise ValueError("provider event message correlation is inconsistent")
+            observation = observation.model_copy(
+                update={
+                    "worker_id": target_worker or observation.worker_id,
+                    "outbound_request_id": str(target["id"]),
+                    "provider_message_ref": observation.provider_message_ref or stored_message_ref or None,
+                    "trace_id": observation.trace_id or target_trace,
+                    "span_id": observation.span_id or target.get("span_id"),
+                }
+            )
+        row = await self.store.record_mail_edge_observation(observation)
+        await self.store.create_audit(
+            actor_id=actor_id,
+            action="mail.provider_event",
+            target_type="mail_edge_observation",
+            target_id=str(row["id"]),
+            outcome=observation.event_type,
+            metadata={
+                "provider": observation.provider,
+                "event_id": observation.event_id,
+                "source": observation.source,
+                "signature_verified": observation.signature_verified,
+            },
+        )
+        return row
 
     async def cancel_queued_outbound(self, client: AuthenticatedClient, *, worker_id: UUID, actor_id: str, request_id: UUID) -> dict[str, Any]:
         await self.owned_identity(client, actor_id=actor_id, worker_id=worker_id)
@@ -411,6 +556,21 @@ class IdentityService:
                     # authorization for this worker. New sessions are issued
                     # only after the local broker observes the new reference.
                     await self.store.revoke_browser_sessions(account["worker_id"])
+            elif str(decision.get("kind")) == "external_account_close" and approved:
+                account = await self.store.get_external_account(decision["target_id"])
+                if account is not None:
+                    await self.store.update_external_account(
+                        account["id"], ExternalAccountState.CLOSED
+                    )
+                    revoked_sessions = await self.store.revoke_browser_sessions(account["worker_id"])
+                    await self.store.create_audit(
+                        actor_id=actor_id,
+                        action="identity.external.close",
+                        target_type="external_account",
+                        target_id=str(account["id"]),
+                        outcome="CLOSED",
+                        metadata={"revoked_browser_sessions": revoked_sessions, "approval_id": str(approval_id)},
+                    )
             await self.store.create_audit(actor_id=actor_id, action="identity.approval.decide", target_type="identity_approval", target_id=str(approval_id), outcome="approved" if approved else "rejected", metadata={})
         return decision
 
@@ -482,6 +642,8 @@ class IdentityService:
         return account
 
     async def set_external_account_state(self, client: AuthenticatedClient, *, worker_id: UUID, actor_id: str, account_id: UUID, state: ExternalAccountState) -> dict[str, Any]:
+        if state is ExternalAccountState.CLOSED:
+            raise PermissionError("closing an external account requires a human approval")
         account = await self.external_account_status(client, worker_id=worker_id, actor_id=actor_id, account_id=account_id)
         updated = await self.store.update_external_account(account_id, state)
         if updated is None:
@@ -502,6 +664,42 @@ class IdentityService:
         )
         return updated
 
+    async def request_external_account_close(
+        self,
+        client: AuthenticatedClient,
+        *,
+        worker_id: UUID,
+        actor_id: str,
+        account_id: UUID,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        """Create the explicit human gate for irreversible account closure."""
+
+        self.external_policy.action_rule("close")
+        account = await self.external_account_status(
+            client, worker_id=worker_id, actor_id=actor_id, account_id=account_id
+        )
+        if str(account.get("state")) == ExternalAccountState.CLOSED:
+            return {"account_id": str(account_id), "state": ExternalAccountState.CLOSED, "approval": None}
+        approval = await self.approvals.request(
+            worker_id=worker_id,
+            kind="external_account_close",
+            target_id=account_id,
+            idempotency_key=f"external-account-close:{idempotency_key}",
+        )
+        await self.store.create_audit(
+            actor_id=actor_id,
+            action="identity.external.close_request",
+            target_type="external_account",
+            target_id=str(account_id),
+            outcome="pending_approval",
+            metadata={"approval_id": str(approval["id"]), "risk": "high"},
+        )
+        return {"account_id": str(account_id), "state": "PENDING_APPROVAL", "approval": approval}
+
+    def external_account_action_catalog(self) -> dict[str, object]:
+        return self.external_policy.action_catalog()
+
     async def request_external_credential_rotation(
         self,
         client: AuthenticatedClient,
@@ -511,6 +709,7 @@ class IdentityService:
         account_id: UUID,
         idempotency_key: str,
     ) -> dict[str, Any]:
+        self.external_policy.action_rule("rotate_credentials")
         account = await self.external_account_status(
             client, worker_id=worker_id, actor_id=actor_id,
             account_id=account_id,
@@ -617,7 +816,7 @@ class IdentityService:
             return rows
         health: dict[str, Any] = {
             "record_type": "relay_health",
-            "relay_provider": "resend",
+            "relay_provider": self.settings.outbound_relay_provider,
             "relay_host": self.settings.outbound_relay_host,
             "relay_port": self.settings.outbound_relay_port,
             "relay_tls_mode": self.settings.outbound_relay_tls_mode,
@@ -630,13 +829,16 @@ class IdentityService:
         except Exception as exc:
             health["stalwart_health"] = "unavailable"
             health["stalwart_error"] = type(exc).__name__
-        try:
-            health["resend_health"] = (await self.resend.health_check()).get(
-                "valid", False
-            )
-        except Exception as exc:
-            health["resend_health"] = "unavailable"
-            health["resend_error"] = type(exc).__name__
+        if str(self.settings.outbound_relay_provider).strip().lower() in {"disabled", "none", "off"}:
+            health["resend_health"] = "disabled"
+        else:
+            try:
+                health["resend_health"] = (await self.resend.health_check()).get(
+                    "valid", False
+                )
+            except Exception as exc:
+                health["resend_health"] = "unavailable"
+                health["resend_error"] = type(exc).__name__
         safe_attempts: list[dict[str, Any]] = []
         for stored in rows:
             row = dict(stored)

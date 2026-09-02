@@ -3,7 +3,8 @@
 AIAT sends model requests through this chain:
 
 ```text
-AIAT workers -> LiteLLM (:4001) -> OmniRoute (:20128) -> model provider
+AIAT workers -> LiteLLM (:4001) -> OmniRoute API (:20129) -> model provider
+                                      └─ dashboard/management (:20128)
 ```
 
 LiteLLM keeps the stable AIAT model aliases and request analytics. OmniRoute
@@ -84,8 +85,18 @@ python3 configure_omniroute.py --test-providers
 Useful pages:
 
 - LiteLLM analytics: `http://localhost:4001/ui/`
-- OmniRoute analytics: `http://localhost:20128/dashboard/analytics`
+- OmniRoute analytics/management: `http://localhost:20128/dashboard/analytics`
+- OmniRoute OpenAI-compatible API: `http://localhost:20129/v1`
 - OmniRoute embedded services: `http://localhost:20128/dashboard/providers/services`
 
 Provider secrets stay in `.env` and OmniRoute's encrypted local storage. Never
 commit them or paste bootstrap/debug output that contains credentials.
+
+### Host TLS interception
+
+Some endpoint-security products and enterprise proxies re-sign outbound HTTPS
+traffic. If OmniRoute reports `UNABLE_TO_VERIFY_LEAF_SIGNATURE`, export the
+trusted interception root CA as a PEM bundle and set `AIAT_EXTRA_CA_CERT` to
+its host path before starting Compose. AIAT mounts that file read-only and
+sets Node's `NODE_EXTRA_CA_CERTS`; it never uses
+`NODE_TLS_REJECT_UNAUTHORIZED=0`.

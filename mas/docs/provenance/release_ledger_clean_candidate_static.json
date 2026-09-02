@@ -1,0 +1,24 @@
+{
+  "schema_version": "aiat.release-ledger-clean-candidate.v1",
+  "observed_at": "2026-08-24T01:37:18Z",
+  "candidate_sha": "69f5fb4309189ff7e7cbe62ea756364dff03109f",
+  "candidate_branch": "agent/fix-review-p1",
+  "clone_method": "fresh local git clone from the candidate commit",
+  "worktree_clean": true,
+  "changed_path_count": 0,
+  "protected_operator_files_included": false,
+  "static_ledger": {
+    "status": "pass",
+    "release_decision": "NO-RELEASE",
+    "checks_passed": 63,
+    "checks_failed": 0,
+    "checks_blocked": 0,
+    "checks_total": 63,
+    "pending_evidence_count": 2,
+    "live_profile_included": false
+  },
+  "payloads_retained": false,
+  "credentials_retained": false,
+  "disposable_clone_retained": false,
+  "scope": "clean-candidate static ledger only; native, provider, live, and activation gates remain separate"
+}

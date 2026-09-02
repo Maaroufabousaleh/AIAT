@@ -1,0 +1,57 @@
+{
+  "schema_version": "aiat.gateway-worker-provider-live.v1",
+  "commit": "90c3e5d",
+  "observed_at": "2026-08-18T07:20:59.149452Z",
+  "status": "pass",
+  "mode": "selected-worker-plane-provider",
+  "operator_opt_in": true,
+  "selected_model_id": "llama-3.3-70b-versatile",
+  "provider_id": "litellm",
+  "gateway_model_listing": {
+    "endpoint": "/v1/models",
+    "model_count": 9,
+    "selected_model_present": true
+  },
+  "worker_host": {
+    "host_id": "gateway-worker-host-fixture",
+    "host_plane": "worker",
+    "binding_before": "COMMITTED",
+    "binding_after": "RELEASED",
+    "reservation_before": "COMMITTED",
+    "reservation_after": "RELEASED"
+  },
+  "gateway_dispatch": {
+    "call_count": 1,
+    "provider_dispatch_attempted": true,
+    "external_provider_call_performed": true,
+    "controller_terminal_state": "SUCCEEDED",
+    "usage": {
+      "prompt_tokens": 2255,
+      "completion_tokens": 31,
+      "total_tokens": 2286,
+      "provider_id": "litellm",
+      "exact_model_id": "llama-3.3-70b-versatile"
+    }
+  },
+  "network_access_performed": true,
+  "external_network_access_performed": true,
+  "mutation_performed": true,
+  "external_mutation_performed": false,
+  "generated_text_retained": false,
+  "credentials_retained": false,
+  "durable_postgres_evidence": false,
+  "mail_edge_callback_evidence": false,
+  "sandbox_execution_performed": false,
+  "certification_boundary": {
+    "selected_model_listing": "checked",
+    "worker_host_admission_and_release": "checked",
+    "gateway_provider_dispatch": "checked",
+    "durable_postgres_worker_evidence": "not_checked",
+    "independent_host": "not_checked",
+    "sandbox_runtime_gvisor_or_firecracker": "not_checked",
+    "provider_backed_recovery": "not_checked",
+    "provider_mail_callback_and_bounce": "not_checked"
+  },
+  "scope": "one bounded live AIAT GatewayWorkerAdapter/WorkerHostExecutor dispatch through the configured LiteLLM/OmniRoute route; no generated content persisted",
+  "licence_metadata_is_gate": false
+}

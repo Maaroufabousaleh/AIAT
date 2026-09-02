@@ -41,7 +41,8 @@ test.describe('Epsilon Runtime Status Panel', () => {
     expect(resp.status()).toBe(200);
     const data = await resp.json();
     expect(data.runtimes).toBeDefined();
-    expect(data.runtimes.length).toBe(4);
+    expect(data.runtimes.length).toBeGreaterThanOrEqual(4);
+    expect(data.runtimes.some((runtime: { id?: string }) => runtime.id === 'microsoft_agent_framework')).toBe(true);
   });
 
   test('evaluations vault endpoint returns deferred', async ({ page }) => {

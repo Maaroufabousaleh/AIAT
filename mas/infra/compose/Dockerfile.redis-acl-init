@@ -1,7 +1,7 @@
 # ── Dockerfile.redis-acl-init ──────────────────────────────────────────────────
 # One-shot init container: configures Redis ACL users.
 # Avoids WSL2 file bind-mount bug by copying the script into the image.
-FROM redis:7.2-alpine
+FROM redis:7.2-alpine@sha256:05a97a479bc73de66f087dc05b569010772880f778cc8671fa6b8aadee32e5c6
 
 COPY redis-acl-init.sh /usr/local/bin/redis-acl-init.sh
 

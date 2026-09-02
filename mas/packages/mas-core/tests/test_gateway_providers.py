@@ -21,6 +21,7 @@ import pytest
 
 from mas_core.llm_gateway import model_selector
 from mas_core.llm_gateway.client import (
+    RETRYABLE_LLM_STATUS_CODES,
     LLMGatewayClient,
     LLMGatewayError,
 )
@@ -41,6 +42,7 @@ from mas_core.llm_gateway.providers.api.openrouter import (
 from mas_core.llm_gateway.providers.api.openrouter import (
     _register as register_openrouter_model,
 )
+from mas_core.llm_gateway.rate_limits import RateLimitTracker
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -119,6 +121,16 @@ def _make_registry() -> ModelRegistry:
         )
     )
     return reg
+
+
+@pytest.mark.parametrize("status_code", sorted(RETRYABLE_LLM_STATUS_CODES))
+def test_llm_gateway_uses_explicit_transient_status_vocabulary(status_code: int) -> None:
+    assert LLMGatewayClient._is_retryable_status(status_code) is True
+
+
+@pytest.mark.parametrize("status_code", [400, 401, 403, 404, 422])
+def test_llm_gateway_does_not_retry_permanent_client_failures(status_code: int) -> None:
+    assert LLMGatewayClient._is_retryable_status(status_code) is False
 
 
 def _make_legacy_config(**overrides) -> LLMConfig:
@@ -268,6 +280,15 @@ class TestGlobalRegistry:
         assert "gpt-4o" not in MODEL_REGISTRY
         assert "minimax-2.7" not in MODEL_REGISTRY
         assert MODEL_REGISTRY.get_provider("minimax") is None
+
+    def test_retired_groq_model_is_not_selectable(self):
+        """Retired Groq models must not remain in active routing catalogs."""
+        retired = "groq/llama-3.3-70b-versatile"
+        assert retired not in MODEL_REGISTRY
+        assert retired not in model_selector.FREE_MODELS_GENERAL
+        assert retired not in model_selector.FREE_MODELS_TOOLS
+        assert retired not in model_selector.FREE_MODELS_CODE
+        assert "groq/openai/gpt-oss-120b" in MODEL_REGISTRY
 
     def test_gemini25_is_chat_completions(self):
         entry = MODEL_REGISTRY.get("gemini-2.5-flash")
@@ -939,6 +960,78 @@ class TestCLIModel:
 
 
 class TestFallback:
+    @pytest.mark.asyncio
+    async def test_fallback_recovers_from_transport_outage(self):
+        reg = _make_registry()
+        config = _make_legacy_config()
+        client = LLMGatewayClient(
+            config,
+            registry=reg,
+            rate_limit_tracker=RateLimitTracker(cooldown_base_s=60),
+        )
+        seen: list[str] = []
+
+        async def mock_post(_self, url, **kwargs):
+            del kwargs
+            seen.append(url)
+            if len(seen) == 1:
+                raise httpx.ConnectError("provider unavailable")
+            return _ok_chat_response("recovered reply", "test-gpt4o")
+
+        with (
+            patch.object(httpx.AsyncClient, "post", new=mock_post),
+            patch.object(
+                client.model_selector,
+                "fallback_chain",
+                return_value=["test-pickle", "test-gpt4o"],
+            ),
+        ):
+            async with client:
+                resp = await client.chat_completion_with_fallback(
+                    [{"role": "user", "content": "hi"}],
+                    model="test-pickle",
+                )
+
+        assert resp.text == "recovered reply"
+        assert len(seen) == 2
+        assert client.rate_limits.is_in_cooldown("test-pickle", provider="test_zen")
+
+    @pytest.mark.asyncio
+    async def test_fallback_skips_cooling_model_and_uses_sibling(self):
+        reg = _make_registry()
+        config = _make_legacy_config()
+        client = LLMGatewayClient(
+            config,
+            registry=reg,
+            rate_limit_tracker=RateLimitTracker(cooldown_base_s=60),
+        )
+        client.rate_limits.record_transient_failure(
+            "test-pickle", provider="test_zen", status_code=503
+        )
+        seen: list[str] = []
+
+        async def mock_post(_self, url, **kwargs):
+            seen.append(url)
+            return _ok_chat_response("sibling reply", "test-gpt4o")
+
+        with (
+            patch.object(httpx.AsyncClient, "post", new=mock_post),
+            patch.object(
+                client.model_selector,
+                "fallback_chain",
+                return_value=["test-pickle", "test-gpt4o"],
+            ),
+        ):
+            async with client:
+                resp = await client.chat_completion_with_fallback(
+                    [{"role": "user", "content": "hi"}],
+                    model="test-pickle",
+                )
+
+        assert resp.text == "sibling reply"
+        assert seen == ["https://api.openai.com/v1/chat/completions"]
+        assert client.rate_limits.is_in_cooldown("test-pickle", provider="test_zen")
+
     @pytest.mark.asyncio
     async def test_unknown_model_uses_default_client(self):
         """Models not in the registry fall back to the default LLMConfig endpoint."""

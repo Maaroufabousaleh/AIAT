@@ -60,6 +60,7 @@ class LangGraphAdapter:
         )
         self._graph = None
         self._initialized = False
+        self._availability_reason: str | None = None
 
     async def initialize(self) -> None:
         """Load the LangGraph state graph from manifest.runtime_config."""
@@ -69,12 +70,8 @@ class LangGraphAdapter:
         try:
             graph_def = self.capabilities.graph_definition
             if not graph_def:
-                logger.warning(
-                    "LangGraphAdapter %s: no graph_definition in runtime_config; "
-                    "running in passthrough mode",
-                    self.manifest.metadata.id,
-                )
-                self._initialized = True
+                self._availability_reason = "graph_definition is required for an executable LangGraph worker"
+                logger.warning("LangGraphAdapter %s unavailable: %s", self.manifest.metadata.id, self._availability_reason)
                 return
 
             # Dynamically import langgraph when available
@@ -110,6 +107,9 @@ class LangGraphAdapter:
 
                 self._graph = builder.compile(checkpointer=checkpointer)
 
+            if self._graph is None:
+                self._availability_reason = f"unsupported LangGraph graph type: {graph_type}"
+                return
             self._initialized = True
             logger.info(
                 "LangGraphAdapter %s initialized with checkpointer=%s",
@@ -118,11 +118,13 @@ class LangGraphAdapter:
             )
         except ImportError:
             logger.warning(
-                "LangGraphAdapter %s: langgraph package not installed; "
-                "running in stub mode",
+                "LangGraphAdapter %s unavailable: langgraph package not installed",
                 self.manifest.metadata.id,
             )
-            self._initialized = True
+            self._availability_reason = "langgraph package is not installed"
+        except Exception as exc:
+            self._availability_reason = f"LangGraph graph initialization failed: {exc}"
+            logger.exception("LangGraphAdapter %s initialization failed", self.manifest.metadata.id)
 
     async def send_task(self, envelope: Any) -> dict[str, Any]:
         """Send a task through the LangGraph graph.
@@ -136,13 +138,13 @@ class LangGraphAdapter:
         task_input = self._translate_input(envelope)
 
         if self._graph is None:
-            # Passthrough/stub mode when langgraph is not available
             return {
-                "status": "stub",
+                "status": "unavailable",
                 "input": task_input,
                 "output": None,
                 "runtime": "langgraph",
                 "worker_id": self.manifest.metadata.id,
+                "reason": self._availability_reason or "runtime is not initialized",
             }
 
         try:
@@ -172,14 +174,16 @@ class LangGraphAdapter:
         """Clean up resources."""
         self._graph = None
         self._initialized = False
+        self._availability_reason = None
         logger.info("LangGraphAdapter %s shut down", self.manifest.metadata.id)
 
     def _translate_input(self, envelope: Any) -> dict[str, Any]:
         """Convert AIAT MessageEnvelope to LangGraph-compatible input."""
         payload = getattr(envelope, "payload", {}) or {}
+        project_id = getattr(envelope, "project_id", None)
         return {
             "task": payload.get("task", ""),
             "context": payload.get("context", ""),
-            "project_id": str(getattr(envelope, "project_id", "")) or None,
+            "project_id": str(project_id) if project_id else None,
             "messages": payload.get("messages", []),
         }

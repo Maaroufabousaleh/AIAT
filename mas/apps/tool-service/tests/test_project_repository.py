@@ -90,3 +90,42 @@ async def test_project_repository_initializes_idempotent_managed_workspace(tmp_p
     assert initialized["clean"] is True
     assert initialized["head"]
     assert repeated["head"] == initialized["head"]
+
+
+@pytest.mark.anyio
+async def test_project_repository_uses_inline_identity_for_bind_mount_init(tmp_path, monkeypatch):
+    """Git identity setup must not require a bind-mounted .git/config chmod."""
+    monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(tmp_path))
+    calls: list[list[str]] = []
+
+    async def fake_git_command(argv, *, cwd, timeout=120, check=True):
+        calls.append(list(argv))
+        return {"available": True, "returncode": 0, "stdout": "", "stderr": ""}
+
+    async def fake_git_status(*, workspace, project_id, remote_name):
+        return {
+            "initialized": True,
+            "project_id": project_id,
+            "workspace_path": str(workspace),
+            "branch": "main",
+            "head": "inline-identity",
+            "clean": True,
+        }
+
+    monkeypatch.setattr(project, "_git_command", fake_git_command)
+    monkeypatch.setattr(project, "_git_status", fake_git_status)
+
+    result = await ProjectRepositoryTool().execute(operation="init", project_id="bind-mounted")
+
+    assert result["head"] == "inline-identity"
+    assert ["config", "user.name", "AIAT"] not in calls
+    assert ["config", "user.email", "aiat@local.invalid"] not in calls
+    assert [
+        "-c",
+        "user.name=AIAT",
+        "-c",
+        "user.email=aiat@local.invalid",
+        "commit",
+        "-m",
+        "Initialize AIAT project workspace",
+    ] in calls

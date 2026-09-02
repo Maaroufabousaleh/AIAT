@@ -1,0 +1,19 @@
+FROM python:3.11-slim@sha256:90744cff8f32887f075c47d747a173ff333e9e98801667af93c357fa9f5e28ff
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Keep pip's normal HTTPS certificate verification enabled.  The slim base
+# image is deliberately made explicit here so build isolation can use the
+# system trust store without trusting arbitrary package hosts.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY apps/pm-gateway/ /tmp/pm-gateway/
+
+RUN pip install --no-cache-dir /tmp/pm-gateway
+
+WORKDIR /app
+EXPOSE 8010
+
+CMD ["uvicorn", "pm_gateway.main:app", "--host", "0.0.0.0", "--port", "8010"]

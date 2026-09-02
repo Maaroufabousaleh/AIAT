@@ -1,0 +1,125 @@
+metadata:
+  id: coding_worker_openhands_candidate
+  name: Coding Worker (OpenHands candidate)
+  version: "0.1-candidate"
+  description: Inactive parallel candidate for the AIAT coding-worker shell.
+  source_repo: https://github.com/OpenHands/software-agent-sdk.git
+  source_revision: v1.43.0
+  version_pin: "v1.43.0+4c1237f391fe394e9f67505fe3a0bd2d81f84188"
+  tags: [worker, dept_qa, candidate, inactive]
+  update_policy: manual
+  evaluation_status: pending
+runtime:
+  transport: openhands_agent_server
+  timeout_seconds: 300
+  stop_grace_seconds: 60
+  adapter_config:
+    adapter_type: openhands_agent_server
+    entrypoint: OpenHandsAgentServerAdapter
+    base_url: ${AIAT_OPENHANDS_AGENT_SERVER_URL}
+    interface_verification_ref: mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/interface-verification.json
+    image_ref: ghcr.io/openhands/agent-server:1.43.0-python@sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97
+    image_platform_digest: sha256:c826bcfa6455267d8f99fe277d97d00806bc0f90bf263b94268cab29fa7be529
+    session_api_key_ref: AIAT secret boundary (not persisted)
+    aiat_tool_secret_ref: workflow-run-generated AIAT_TOOL_SECRET (not a persistent GitHub Actions secret)
+    agent_profile_ref: workflow-run-scoped Agent Server UUID (OPENHANDS_AGENT_PROFILE_ID output)
+    aiat_mcp_profile_ref: OPENHANDS_MCP_SETTINGS_KEY logical name; settings entry is created and deleted per run
+    model_gateway_url_ref: OPENHANDS_MODEL_GATEWAY_URL (workflow-run-fixed internal target http://litellm:4000)
+    model_gateway_api_key_ref: OPENHANDS_MODEL_GATEWAY_API_KEY (workflow-run-generated AIAT gateway secret boundary)
+    aiat_mcp_bridge_url: http://tool-service:8002/openhands/mcp
+    governed_profile_spec_ref: mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/agent-profile-spec.yaml
+    model_profile_ref: opencode-phase0b-coding
+    # AIAT retains the provider-agnostic model alias.  The v1.43 Agent Server
+    # profile uses this fixed OpenAI wire form so LiteLLM can resolve the
+    # custom OpenAI-compatible gateway; callers cannot override the mapping.
+    model_logical_id: omniroute-coding
+    openhands_wire_model_id: openai/omniroute-coding
+    model_name_translation: governed_aiat_alias_to_v143_openai_wire_model
+    governance:
+      authority: aiat_control_plane
+      workspace_policy: isolated_run_scoped
+      allowed_local_tools: [terminal, file_editor, repository_inspection, git_diff_status, test_execution]
+      aiat_mcp_bridge:
+        url: http://tool-service:8002/openhands/mcp
+        settings_key_env: OPENHANDS_MCP_SETTINGS_KEY
+        allowlist: [aiat_tool]
+      network_policy: egress_allowlist
+      budget_policy:
+        timeout_seconds: 300
+        max_iterations: 20
+      cancellation_policy:
+        graceful: pause
+        immediate: interrupt
+        resume: run
+      recovery_policy:
+        authority: aiat_control_plane
+        idempotency: required
+        restart_recovery: required
+      audit_policy:
+        sink: aiat_durable_audit
+        payload_retention: scalar_only
+    profile_controls:
+      public_skills_disabled: true
+      public_skills_control: profile_deny_list_materialized_from_server_catalog
+      user_skills_disabled: true
+      project_skills_disabled_by_certification_workspace: true
+      plugins_disabled: true
+      plugins_control: empty_server_home_and_no_plugin_request
+      browser_disabled: true
+      vscode_disabled: true
+      desktop_disabled: true
+      subagents_disabled: true
+      direct_credentials_disabled: true
+      model_switching_disabled: true
+    cleanup: AIAT-controlled disposable conversation cleanup
+integration:
+  adapter_entrypoint: OpenHandsAgentServerAdapter
+  adapter_module: mas_core.worker_registry.openhands_agent_server_adapter
+  isolation_mode: wrapper
+  certified_adapter_version: null
+runtime_tier: external
+model_mode: aiat_gateway
+model_profile_id: opencode-phase0b-coding
+model_requirements: [tool_calling, streaming]
+certification_status: pending
+worker_activation: inactive
+permission_grants: [repository.read, repository.write, tests.execute]
+tool_grants: [aiat.repository.read, aiat.repository.write, aiat.tests.execute]
+limits:
+  max_concurrent_tasks: 1
+  max_instances: 1
+  rate_limit_per_minute: 6
+  max_payload_size_bytes: 10485760
+checkpointing:
+  enabled: true
+  strategy: on-signal
+  every_n_calls: 1
+  store:
+    owner: aiat_control_plane
+    payload_retention: scalar_only
+observability:
+  logs_format: json
+  metrics_enabled: true
+  traces_enabled: true
+source_provenance:
+  source_provider: github
+  exact_release: "v1.43.0"
+  source_commit: 4c1237f391fe394e9f67505fe3a0bd2d81f84188
+  transport_type: openhands_agent_server
+  license_id: MIT
+  license_metadata_only: true
+  security_scan_status: coverage_incomplete_review_only
+  security_scan_evidence_ref: mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/offline-security-triage-32594885180.md
+  sbom_status: passed
+  sbom_evidence_ref: OpenHands candidate certification artifact 32594885180
+  interface_evidence_ref: mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/interface-verification.json
+capabilities:
+  - name: qa.code_implement
+    description: Perform bounded coding work through the AIAT-governed OpenHands candidate adapter.
+    required_tools: [aiat.repository.read, aiat.repository.write, aiat.tests.execute]
+sandbox:
+  profile: gvisor
+  network_mode: egress-allowlist
+  # The disposable certification network provides these canonical service
+  # identities.  The gateway URL is never a laptop/WSL/host endpoint.
+  egress_allowlist: [litellm:4000, tool-service:8002]

@@ -3,7 +3,9 @@
 All secrets are encrypted with AES-128-CBC via the ``cryptography`` Fernet
 symmetric key scheme before writing to the database.  The encryption key
 itself comes from the environment variable ``CREDENTIALS_ENCRYPTION_KEY``
-(32-byte URL-safe base64 value, generated once and stored outside the DB).
+(preferably a Fernet-generated 32-byte URL-safe base64 value, generated once
+and stored outside the DB). Existing high-entropy base64 material is
+deterministically normalized so deployments can rotate without losing rows.
 
 API
 ---
@@ -21,6 +23,7 @@ The manager exposes:
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import json
 import logging
@@ -38,6 +41,42 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Encryption helpers (pure-Python AES via cryptography.fernet)
 # ---------------------------------------------------------------------------
+
+
+def _configured_fernet(raw: str):
+    """Build a Fernet instance from a configured production key.
+
+    The canonical value is a Fernet-generated URL-safe base64 key.  A few
+    existing deployments stored high-entropy base64 material instead (for
+    example, a 48-byte random value).  Accept that material without exposing
+    or logging it by deriving the required 32-byte Fernet key with SHA-256.
+    This keeps key rotation deterministic while still rejecting short or
+    malformed values.
+    """
+    from cryptography.fernet import Fernet
+
+    candidate = str(raw).strip()
+    try:
+        return Fernet(candidate.encode())
+    except (TypeError, ValueError):
+        pass
+
+    # Decode both standard and URL-safe base64 forms.  Padding is optional in
+    # environment files, so restore it before strict decoding.
+    padded = candidate + ("=" * ((-len(candidate)) % 4))
+    try:
+        material = base64.b64decode(padded.encode(), altchars=b"-_", validate=True)
+    except (binascii.Error, ValueError, TypeError) as exc:
+        raise RuntimeError(
+            "CREDENTIALS_ENCRYPTION_KEY must be a Fernet key or base64-encoded "
+            "high-entropy material of at least 32 bytes"
+        ) from exc
+    if len(material) < 32:
+        raise RuntimeError(
+            "CREDENTIALS_ENCRYPTION_KEY must contain at least 32 bytes of key material"
+        )
+    normalized = base64.urlsafe_b64encode(hashlib.sha256(material).digest())
+    return Fernet(normalized)
 
 
 def _get_fernet():
@@ -65,7 +104,7 @@ def _get_fernet():
             "CREDENTIALS_ENCRYPTION_KEY not set — using derived dev key. "
             "Set a strong random key in production."
         )
-    return Fernet(raw.encode() if isinstance(raw, str) else raw)
+    return _configured_fernet(raw)
 
 
 def _encrypt(value: str) -> str:

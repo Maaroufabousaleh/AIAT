@@ -33,8 +33,14 @@ export function useCeoStream(
 ) {
   const [entries, setEntries] = useState<FeedEntry[]>([]);
   const [connected, setConnected] = useState(false);
+  const [stale, setStale] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [accessDenied, setAccessDenied] = useState(false);
+  const [retryAttempt, setRetryAttempt] = useState(0);
   const cancelledRef = useRef(false);
   const filterRef = useRef(filter);
+  const entriesRef = useRef<FeedEntry[]>([]);
+  const connectionIdRef = useRef(0);
 
   useEffect(() => {
     filterRef.current = filter;
@@ -42,14 +48,72 @@ export function useCeoStream(
 
   useEffect(() => {
     cancelledRef.current = false;
+    const connectionId = ++connectionIdRef.current;
+    const controller = new AbortController();
+    let historyError: string | null = null;
+    let streamError: string | null = null;
+    let accessDeniedForConnection = false;
+    let eventSource: EventSource | null = null;
+
+    const isCurrent = () =>
+      !cancelledRef.current && connectionIdRef.current === connectionId;
+
+    const describeError = (cause: unknown, fallback: string): string => {
+      if (cause instanceof Error && cause.message) return cause.message;
+      return fallback;
+    };
+
+    const refreshFailureState = () => {
+      if (!isCurrent()) return;
+      const nextError = streamError ?? historyError;
+      setError(nextError);
+      setStale(Boolean(nextError) && entriesRef.current.length > 0);
+    };
+
+    const markAccessDenied = (detail: string) => {
+      if (!isCurrent()) return;
+      accessDeniedForConnection = true;
+      historyError = detail;
+      streamError = null;
+      setAccessDenied(true);
+      setConnected(false);
+      setError(detail);
+      setStale(entriesRef.current.length > 0);
+      eventSource?.close();
+    };
+
+    setConnected(false);
+    setError(null);
+    setStale(false);
+    setAccessDenied(false);
 
     fetch(
       `/api/streams/${encodeURIComponent(teamId)}?history=1&limit=${limit}`,
-      { cache: "no-store" },
+      { cache: "no-store", signal: controller.signal },
     )
-      .then((res) => (res.ok ? res.json() : null))
+      .then(async (res) => {
+        if (!res.ok) {
+          let detail = `CEO conversation history failed with HTTP ${res.status}`;
+          try {
+            const body = (await res.json()) as { error?: unknown; detail?: unknown };
+            const message = body.error ?? body.detail;
+            if (typeof message === "string" && message.trim()) detail = message;
+          } catch {
+            // Keep the bounded HTTP fallback when the error body is not JSON.
+          }
+          if (res.status === 401 || res.status === 403) {
+            markAccessDenied(detail);
+            return null;
+          }
+          throw new Error(detail);
+        }
+        return res.json();
+      })
       .then((data: { entries?: RecentStreamEntry[] } | null) => {
-        if (cancelledRef.current || !data?.entries) return;
+        if (!isCurrent() || data === null) return;
+        if (!data || !Array.isArray(data.entries)) {
+          throw new Error("CEO conversation history returned an invalid response");
+        }
         const parsed = data.entries.map((e) => entryFromRaw(e.envelope));
         const filtered = filterRef.current
           ? parsed.filter(filterRef.current)
@@ -63,42 +127,90 @@ export function useCeoStream(
               merged.push(existing);
             }
           }
-          return merged.sort((a, b) => a.ts - b.ts).slice(-300);
+          const next = merged.sort((a, b) => a.ts - b.ts).slice(-300);
+          entriesRef.current = next;
+          return next;
         });
+        historyError = null;
+        refreshFailureState();
       })
-      .catch(() => {});
+      .catch((cause: unknown) => {
+        if (controller.signal.aborted || !isCurrent()) return;
+        historyError = describeError(cause, "CEO conversation history is unavailable");
+        refreshFailureState();
+      });
 
-    const es = new EventSource(`/api/streams/${encodeURIComponent(teamId)}`);
-    es.addEventListener("connected", () => setConnected(true));
-    es.addEventListener("error", () => setConnected(false));
-    es.onmessage = (e) => {
+    eventSource = new EventSource(`/api/streams/${encodeURIComponent(teamId)}`);
+    eventSource.addEventListener("connected", () => {
+      if (!isCurrent() || accessDeniedForConnection) return;
+      streamError = null;
+      setConnected(true);
+      refreshFailureState();
+    });
+    eventSource.addEventListener("error", (event) => {
+      const raw = event instanceof MessageEvent ? event.data : undefined;
+      let detail = "CEO live conversation stream disconnected";
+      let status: number | null = null;
+      if (typeof raw === "string" && raw.trim()) {
+        try {
+          const payload = JSON.parse(raw) as { error?: unknown; detail?: unknown; status?: unknown };
+          if (typeof payload.status === "number") status = payload.status;
+          const message = payload.error ?? payload.detail;
+          if (typeof message === "string" && message.trim()) detail = message;
+        } catch {
+          // EventSource error payloads are often empty or non-JSON.
+        }
+      }
+      if (!isCurrent() || accessDeniedForConnection) return;
+      if (status === 401 || status === 403) {
+        markAccessDenied(detail);
+        return;
+      }
+      streamError = detail;
+      setConnected(false);
+      refreshFailureState();
+    });
+    eventSource.onmessage = (e) => {
+      if (!isCurrent() || accessDeniedForConnection) return;
       const entry = entryFromRaw(e.data);
       if (!filterRef.current || filterRef.current(entry)) {
         setEntries((prev) => {
           if (prev.some((existing) => entriesEqual(existing, entry))) {
             return prev;
           }
-          return [...prev.slice(-300), entry];
+          const next = [...prev.slice(-300), entry];
+          entriesRef.current = next;
+          return next;
         });
       }
     };
 
     return () => {
       cancelledRef.current = true;
-      es.close();
+      controller.abort();
+      eventSource?.close();
     };
-  }, [teamId, limit]);
+  }, [retryAttempt, teamId, limit]);
 
-  const clear = useCallback(() => setEntries([]), []);
+  const retry = useCallback(() => {
+    setRetryAttempt((attempt) => attempt + 1);
+  }, []);
+
+  const clear = useCallback(() => {
+    entriesRef.current = [];
+    setEntries([]);
+  }, []);
 
   const append = useCallback((entry: FeedEntry) => {
     setEntries((prev) => {
       if (prev.some((existing) => entriesEqual(existing, entry))) {
         return prev;
       }
-      return [...prev.slice(-299), entry];
+      const next = [...prev.slice(-299), entry];
+      entriesRef.current = next;
+      return next;
     });
   }, []);
 
-  return { entries, connected, clear, append };
+  return { entries, connected, stale, error, accessDenied, retry, clear, append };
 }

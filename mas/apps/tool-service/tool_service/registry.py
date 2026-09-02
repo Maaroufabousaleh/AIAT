@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 import httpx
+from pydantic import ValidationError
 
 from mas_core.observability.metrics import (
     MAS_TOOL_CALLS_TOTAL,
@@ -172,6 +173,8 @@ class ToolRegistry:
         duration_ms: float | None = None,
         trace_id: str | None = None,
         span_id: str | None = None,
+        idempotency_key: str | None = None,
+        run_id: UUID | None = None,
     ) -> None:
         """Append to the live ring and durably account project-scoped usage."""
         timestamp = datetime.now(tz=UTC)
@@ -209,6 +212,8 @@ class ToolRegistry:
                 span_id=span_id,
                 details={"error": error} if error else None,
                 occurred_at=timestamp,
+                idempotency_key=idempotency_key,
+                run_id=run_id,
             )
         except Exception:
             # Usage persistence must never turn an otherwise valid tool result
@@ -285,6 +290,10 @@ class ToolRegistry:
             )
         is_alias = resolved_tool_name != tool_name
         t0 = time.monotonic()
+        audit_context = {
+            "idempotency_key": str(request.idempotency_key) if request.idempotency_key else None,
+            "run_id": request.worker_run_id,
+        }
 
         tool = self._tools.get(resolved_tool_name)
         if tool is None:
@@ -337,6 +346,7 @@ class ToolRegistry:
                 error=f"Access denied: {result}",
                 trace_id=request.trace_id,
                 span_id=request.span_id,
+                **audit_context,
             )
             return self._error_response(
                 request,
@@ -363,6 +373,7 @@ class ToolRegistry:
                 error=deny_msg,
                 trace_id=request.trace_id,
                 span_id=request.span_id,
+                **audit_context,
             )
             return self._error_response(
                 request,
@@ -389,6 +400,7 @@ class ToolRegistry:
                 error=f"Circuit breaker OPEN for '{tool_name}'.",
                 trace_id=request.trace_id,
                 span_id=request.span_id,
+                **audit_context,
             )
             return self._error_response(
                 request,
@@ -417,6 +429,7 @@ class ToolRegistry:
                     error=f"Rate limit exceeded for group '{group.value}'.",
                     trace_id=request.trace_id,
                     span_id=request.span_id,
+                    **audit_context,
                 )
                 return self._error_response(
                     request,
@@ -435,6 +448,11 @@ class ToolRegistry:
         # storage (for example ``blob.download``) without changing the caller
         # contract.  An explicit tool argument remains authoritative.
         kwargs = dict(request.tool_kwargs)
+        # Scanner aliases resolve to the shared bounded security adapter. Keep
+        # the requested alias visible to that adapter so each scanner uses its
+        # own executable instead of silently falling back to Semgrep.
+        if tool_name in {"skillspector", "trufflehog"} and "scanner" not in kwargs:
+            kwargs["scanner"] = tool_name
         # Caller identity comes from the protocol request after gateway auth;
         # overwrite any user-supplied reserved context so a worker cannot forge
         # another worker's identity inside governed identity tools.
@@ -448,6 +466,32 @@ class ToolRegistry:
         }
         if request.project_id and "project_id" not in kwargs:
             kwargs["project_id"] = request.project_id
+        try:
+            kwargs = tool.validate_input(kwargs)
+        except (ValidationError, ValueError, TypeError) as exc:
+            duration = (time.monotonic() - t0) * 1000
+            message = f"Tool input validation failed: {exc}"
+            await self._record_audit(
+                actor=request.caller_id,
+                project_id=request.project_id,
+                tool_name=tool_name,
+                status="validation_error",
+                team_id=request.caller_team,
+                error=message,
+                duration_ms=round(duration, 2),
+                trace_id=request.trace_id,
+                span_id=request.span_id,
+                **audit_context,
+            )
+            return self._error_response(
+                request,
+                error=message,
+                error_code="VALIDATION_ERROR",
+                circuit_state=self._breakers[resolved_tool_name].state,
+                duration_ms=round(duration, 2),
+                rate_limit_remaining=remaining,
+                rate_limit_reset_at=reset_at,
+            )
         if tool.idempotent and tool.cache_ttl_seconds > 0 and self._cache:
             cached = await self._cache.get(resolved_tool_name, kwargs)
             if cached is not None:
@@ -468,6 +512,7 @@ class ToolRegistry:
                     duration_ms=round(duration, 2),
                     trace_id=request.trace_id,
                     span_id=request.span_id,
+                    **audit_context,
                 )
                 return ToolResponse(
                     tool_name=tool_name,
@@ -490,6 +535,7 @@ class ToolRegistry:
                     result_val = await self._execute_tool(tool, resolved_tool_name, kwargs)
             else:
                 result_val = await self._execute_tool(tool, resolved_tool_name, kwargs)
+            result_val = tool.validate_output(result_val)
         except Exception as exc:
             await breaker.record_failure()
             duration = (time.monotonic() - t0) * 1000
@@ -521,6 +567,7 @@ class ToolRegistry:
                 duration_ms=round(duration, 2),
                 trace_id=request.trace_id,
                 span_id=request.span_id,
+                **audit_context,
             )
             return self._error_response(
                 request,
@@ -567,6 +614,7 @@ class ToolRegistry:
             duration_ms=round(duration, 2),
             trace_id=request.trace_id,
             span_id=request.span_id,
+            **audit_context,
         )
 
         return ToolResponse(

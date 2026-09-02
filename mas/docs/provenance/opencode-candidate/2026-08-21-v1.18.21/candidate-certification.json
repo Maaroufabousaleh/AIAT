@@ -1,0 +1,257 @@
+{
+  "active_worker_status": "inactive_until_certification_passes",
+  "aiat_candidate_commit": "2f633f747713985234b31b2f03144e3c96f3372b",
+  "aiat_local_boundary": {
+    "logs_sanitized": true,
+    "returncode": 0,
+    "status": "pass",
+    "stderr_path": "aiat-boundary.stderr.log",
+    "stdout_path": "aiat-boundary.stdout.log"
+  },
+  "aiat_local_findings": 0,
+  "blockers": [
+    "one_or_more_scanners_unavailable_or_failed"
+  ],
+  "candidate_commit": "826d9ad46a22bef0294998e08daa3c4904fea28f",
+  "candidate_image_digest": "56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb",
+  "candidate_image_ref": "ghcr.io/anomalyco/opencode:1.18.21@sha256:56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb",
+  "candidate_tag": "v1.18.21",
+  "candidate_version": "1.18.21",
+  "evidence_policy": {
+    "credentials_persisted": false,
+    "immutable_provenance_retained": true,
+    "licence_metadata_is_gate": false,
+    "payloads_persisted": false,
+    "raw_scanner_outputs_retained_sanitized": true,
+    "source_clone_retained": false
+  },
+  "failure_classes": [
+    "SCANNER_EXECUTION_FAILURE",
+    "SECURITY_FINDING"
+  ],
+  "findings_by_severity": {
+    "ERROR": 19,
+    "HIGH": 122,
+    "INFO": 22,
+    "MEDIUM": 188,
+    "WARNING": 293
+  },
+  "fork_required": false,
+  "programme_scope": "personal-internal-only",
+  "raw_findings_count": 644,
+  "remediation_required": true,
+  "sbom": {
+    "available": true,
+    "component_count": 2609,
+    "credentials_persisted": false,
+    "exit_status": 0,
+    "invocation": [
+      "/home/runner/work/_temp/aiat-opencode-tools/bin/syft",
+      "dir:/tmp/aiat-opencode-candidate-xzur2ndh/scan-source",
+      "cyclonedx-json=/home/runner/work/AIAT/AIAT/artifacts/opencode-candidate/sbom.cdx.json"
+    ],
+    "path": "sbom.cdx.json",
+    "sha256": "91b2fb3903524fb473d0ad35b03f57c47e73e71f7fbb42e3bcbaeb68ae6c5bbc",
+    "status": "pass",
+    "stderr_path": "syft.stderr.log",
+    "stdout_path": "syft.stdout.log",
+    "version": "syft 1.51.0"
+  },
+  "scanner_errors": 54,
+  "scanners": [
+    {
+      "available": true,
+      "exit_status": 0,
+      "failure_class": "SCANNER_EXECUTION_FAILURE",
+      "finding_count": 335,
+      "invocation": [
+        "/home/runner/work/_temp/aiat-opencode-tools/venv/bin/semgrep",
+        "--config",
+        "auto",
+        "--json",
+        "--no-git-ignore",
+        "<source>"
+      ],
+      "name": "semgrep",
+      "raw_json_path": "semgrep.json",
+      "raw_json_sha256": "be778431664e15d5220438550f507e3036edb4a676a3beb4ec0a5dd3c642ff1c",
+      "raw_output_retained": true,
+      "raw_output_sanitized": true,
+      "scanner_error_count": 54,
+      "scanner_errors": [],
+      "severity_counts": {
+        "ERROR": 19,
+        "INFO": 22,
+        "MEDIUM": 1,
+        "WARNING": 293
+      },
+      "status": "blocked",
+      "stderr_log_path": "semgrep.stderr.log"
+    },
+    {
+      "available": true,
+      "exit_status": 0,
+      "failure_class": "SECURITY_FINDING",
+      "finding_count": 55,
+      "invocation": [
+        "/home/runner/work/_temp/aiat-opencode-tools/bin/trufflehog",
+        "filesystem",
+        "--json",
+        "--no-update",
+        "<source>"
+      ],
+      "name": "trufflehog",
+      "raw_json_path": "trufflehog.json",
+      "raw_json_sha256": "aac4ed97ef90176325186079f38e691046416a9ce492c01153fe92f303bf8b39",
+      "raw_output_retained": true,
+      "raw_output_sanitized": true,
+      "scanner_error_count": 0,
+      "scanner_errors": [],
+      "severity_counts": {
+        "HIGH": 55
+      },
+      "status": "pass",
+      "stderr_log_path": "trufflehog.stderr.log"
+    },
+    {
+      "available": true,
+      "exit_status": 1,
+      "failure_class": "SECURITY_FINDING",
+      "finding_count": 254,
+      "invocation": [
+        "/home/runner/work/_temp/aiat-opencode-tools/venv/bin/skillspector",
+        "scan",
+        "<source>",
+        "--no-llm",
+        "--format",
+        "json"
+      ],
+      "name": "skillspector",
+      "raw_json_path": "skillspector.json",
+      "raw_json_sha256": "e39a391e3dc703de6abc05b8d2c1d2916f5a46208ee15636057f9f898e5a4da5",
+      "raw_output_retained": true,
+      "raw_output_sanitized": true,
+      "scanner_error_count": 0,
+      "scanner_errors": [],
+      "severity_counts": {
+        "HIGH": 67,
+        "MEDIUM": 187
+      },
+      "status": "pass",
+      "stderr_log_path": "skillspector.stderr.log"
+    }
+  ],
+  "schema_version": "aiat.opencode-candidate-certification.v1",
+  "scope": "fresh pinned OpenCode source/SBOM/scanner candidate certification; no activation or release decision",
+  "security_findings_interpretable": false,
+  "source": {
+    "archive_sha256": "77b8cee43c3f74d94ad4651c375ec02bcd55a20aff06f9aac8e7be59c70811a0",
+    "clone_retained": false,
+    "commit": "826d9ad46a22bef0294998e08daa3c4904fea28f",
+    "commit_url": "https://github.com/anomalyco/opencode/commit/826d9ad46a22bef0294998e08daa3c4904fea28f",
+    "file_count": 6520,
+    "immutable_provenance_ref": true,
+    "release": "1.18.21",
+    "repository": "https://github.com/anomalyco/opencode.git",
+    "scan_tree_git_metadata_excluded": true,
+    "tag": "v1.18.21"
+  },
+  "status": "blocked",
+  "tool_versions": {
+    "semgrep": {
+      "available": true,
+      "name": "semgrep",
+      "version": "1.168.0"
+    },
+    "skillspector": {
+      "available": true,
+      "name": "skillspector",
+      "version": "SkillSpector v2.9.6"
+    },
+    "syft": {
+      "available": true,
+      "name": "syft",
+      "version": "syft 1.51.0"
+    },
+    "trufflehog": {
+      "available": true,
+      "name": "trufflehog",
+      "version": "trufflehog 3.97.0"
+    }
+  },
+  "tooling_provisioning": {
+    "credentials_persisted": false,
+    "failure_classes": [],
+    "installation_errors": [],
+    "licence_metadata_is_gate": false,
+    "path_entries": [
+      "/home/runner/work/_temp/aiat-opencode-tools/venv/bin",
+      "/home/runner/work/_temp/aiat-opencode-tools/bin"
+    ],
+    "payloads_persisted": false,
+    "required_tools": [
+      "semgrep",
+      "skillspector",
+      "trufflehog",
+      "syft"
+    ],
+    "schema_version": "aiat.opencode-tool-provisioning.v1",
+    "status": "pass",
+    "tools": [
+      {
+        "executable": "/home/runner/work/_temp/aiat-opencode-tools/venv/bin/semgrep",
+        "exit_status": 0,
+        "kind": "python-package",
+        "name": "semgrep",
+        "pip_report_path": "semgrep.pip-report.json",
+        "requirement": "semgrep==1.168.0",
+        "source": "https://pypi.org/project/semgrep/1.168.0/",
+        "status": "pass",
+        "stderr_path": "semgrep.install.stderr.log",
+        "stdout_path": "semgrep.install.stdout.log",
+        "version": "1.168.0",
+        "version_exit_status": 0
+      },
+      {
+        "executable": "/home/runner/work/_temp/aiat-opencode-tools/venv/bin/skillspector",
+        "exit_status": 0,
+        "kind": "git-package",
+        "name": "skillspector",
+        "pip_report_path": "skillspector.pip-report.json",
+        "requirement": "skillspector @ git+https://github.com/NVIDIA/skillspector@698e2bf29c7d32aa8211ada677382460c01900d7",
+        "source": "https://github.com/NVIDIA/skillspector/tree/698e2bf29c7d32aa8211ada677382460c01900d7",
+        "status": "pass",
+        "stderr_path": "skillspector.install.stderr.log",
+        "stdout_path": "skillspector.install.stdout.log",
+        "version": "SkillSpector v2.9.6",
+        "version_exit_status": 0
+      },
+      {
+        "actual_sha256": "62224de2f9dd7cd418800feb953760a302ed2f82a7c547fe1146a4874fb179e4",
+        "executable": "/home/runner/work/_temp/aiat-opencode-tools/bin/trufflehog",
+        "expected_sha256": "62224de2f9dd7cd418800feb953760a302ed2f82a7c547fe1146a4874fb179e4",
+        "kind": "release-archive",
+        "name": "trufflehog",
+        "reported_version": "trufflehog 3.97.0",
+        "source": "https://github.com/trufflesecurity/trufflehog/releases/download/v3.97.0/trufflehog_3.97.0_linux_amd64.tar.gz",
+        "status": "pass",
+        "version": "3.97.0",
+        "version_probe_exit_status": 0
+      },
+      {
+        "actual_sha256": "2a2e837a2c8d59ec9af5472ee22d3b04ee463c4e44476ecf993fd1e5ab6ebc7f",
+        "executable": "/home/runner/work/_temp/aiat-opencode-tools/bin/syft",
+        "expected_sha256": "2a2e837a2c8d59ec9af5472ee22d3b04ee463c4e44476ecf993fd1e5ab6ebc7f",
+        "kind": "release-archive",
+        "name": "syft",
+        "reported_version": "Application:   syft",
+        "source": "https://github.com/anchore/syft/releases/download/v1.51.0/syft_1.51.0_linux_amd64.tar.gz",
+        "status": "pass",
+        "version": "1.51.0",
+        "version_probe_exit_status": 0
+      }
+    ]
+  },
+  "upstream_findings": 644,
+  "upstream_repository": "https://github.com/anomalyco/opencode.git"
+}

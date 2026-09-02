@@ -1,0 +1,294 @@
+{
+  "budget": "PASS",
+  "coding_task": "PASS",
+  "details": {
+    "conversation_history": [
+      "start",
+      "pause",
+      "resume",
+      "interrupt",
+      "resume",
+      "crash",
+      "recover",
+      "start",
+      "timeout"
+    ],
+    "forbidden_tools": [
+      {
+        "allowed": false,
+        "denied": true,
+        "raw_request_retained": false,
+        "tool": "external_mcp.register"
+      },
+      {
+        "allowed": false,
+        "denied": true,
+        "raw_request_retained": false,
+        "tool": "github.write"
+      },
+      {
+        "allowed": false,
+        "denied": true,
+        "raw_request_retained": false,
+        "tool": "cloud.deploy"
+      },
+      {
+        "allowed": false,
+        "denied": true,
+        "raw_request_retained": false,
+        "tool": "browser.open"
+      },
+      {
+        "allowed": false,
+        "denied": true,
+        "raw_request_retained": false,
+        "tool": "desktop.control"
+      },
+      {
+        "allowed": false,
+        "denied": true,
+        "raw_request_retained": false,
+        "tool": "provider.credentials.read"
+      },
+      {
+        "allowed": false,
+        "denied": true,
+        "raw_request_retained": false,
+        "tool": "model.switch"
+      },
+      {
+        "allowed": false,
+        "denied": true,
+        "raw_request_retained": false,
+        "tool": "gateway.override"
+      },
+      {
+        "allowed": false,
+        "denied": true,
+        "raw_request_retained": false,
+        "tool": "host.filesystem.read"
+      }
+    ],
+    "lifecycle_races": {
+      "completion_wins": true,
+      "pause_timeout_reconciled": true,
+      "payloads_retained": false,
+      "status": "PASS",
+      "timeout_wins_over_pending_tool": true
+    },
+    "model_override": {
+      "accepted_task_fields": [
+        "prompt"
+      ],
+      "attempted_governed_fields": [
+        "agent_profile_id",
+        "api_key",
+        "base_url",
+        "credentials",
+        "mcp_servers",
+        "model",
+        "provider",
+        "provider_model",
+        "tools",
+        "workspace"
+      ],
+      "denied": true,
+      "task_payload_retained": false
+    },
+    "partial_startup_cleanup": {
+      "payloads_retained": false,
+      "scenarios": {
+        "agent_without_mcp": {
+          "cleanup": {
+            "payloads_retained": false,
+            "remaining": [],
+            "removed_resources": [
+              "agent-server",
+              "litellm",
+              "omniroute",
+              "tool-service"
+            ],
+            "started_resources": [
+              "agent-server",
+              "litellm",
+              "omniroute",
+              "tool-service"
+            ],
+            "status": "PASS",
+            "unknown_resources": []
+          },
+          "started_resources": [
+            "agent-server",
+            "litellm",
+            "omniroute",
+            "tool-service"
+          ]
+        },
+        "gateway_without_agent": {
+          "cleanup": {
+            "payloads_retained": false,
+            "remaining": [],
+            "removed_resources": [
+              "litellm",
+              "omniroute"
+            ],
+            "started_resources": [
+              "litellm",
+              "omniroute"
+            ],
+            "status": "PASS",
+            "unknown_resources": []
+          },
+          "started_resources": [
+            "litellm",
+            "omniroute"
+          ]
+        },
+        "mcp_after_failed_task": {
+          "cleanup": {
+            "payloads_retained": false,
+            "remaining": [],
+            "removed_resources": [
+              "agent-server",
+              "litellm",
+              "mcp-entry",
+              "omniroute",
+              "tool-service"
+            ],
+            "started_resources": [
+              "agent-server",
+              "litellm",
+              "mcp-entry",
+              "omniroute",
+              "tool-service"
+            ],
+            "status": "PASS",
+            "unknown_resources": []
+          },
+          "started_resources": [
+            "agent-server",
+            "litellm",
+            "mcp-entry",
+            "omniroute",
+            "tool-service"
+          ]
+        },
+        "nothing_started": {
+          "cleanup": {
+            "payloads_retained": false,
+            "remaining": [],
+            "removed_resources": [],
+            "started_resources": [],
+            "status": "PASS",
+            "unknown_resources": []
+          },
+          "started_resources": []
+        },
+        "omniroute_only": {
+          "cleanup": {
+            "payloads_retained": false,
+            "remaining": [],
+            "removed_resources": [
+              "omniroute"
+            ],
+            "started_resources": [
+              "omniroute"
+            ],
+            "status": "PASS",
+            "unknown_resources": []
+          },
+          "started_resources": [
+            "omniroute"
+          ]
+        }
+      },
+      "status": "PASS"
+    },
+    "pause_interrupt_semantics": "pause is resumable; interrupt is immediate and resumable only by governed policy",
+    "payloads_retained": false,
+    "recovery_idempotency": "PASS",
+    "secret_scan": {
+      "matched_fingerprints": [],
+      "matches": 0,
+      "raw_values_retained": false,
+      "secret_count": 4,
+      "status": "PASS"
+    },
+    "workspace_attacks": {
+      "attempt_count": 6,
+      "denied_count": 6,
+      "operations": [
+        {
+          "denied": true,
+          "operation": "terminal"
+        },
+        {
+          "denied": true,
+          "operation": "file.read"
+        },
+        {
+          "denied": true,
+          "operation": "file.write"
+        },
+        {
+          "denied": true,
+          "operation": "file.list"
+        },
+        {
+          "denied": true,
+          "operation": "file.download"
+        },
+        {
+          "denied": true,
+          "operation": "git.inspect"
+        }
+      ],
+      "raw_paths_retained": false,
+      "status": "PASS",
+      "symlink_traversal_tested": true
+    }
+  },
+  "fixture_gate_results": {
+    "aiat_local_boundary": "PASS",
+    "artifact_capture": "NOT_RUN",
+    "budget_enforcement": "PASS",
+    "cross_workspace_isolation": "PASS",
+    "file_modifications": "NOT_RUN",
+    "forbidden_tool_attempt": "PASS",
+    "forced_failure": "PASS",
+    "graceful_pause": "PASS",
+    "gvisor_execution": "NOT_RUN",
+    "immediate_interrupt": "PASS",
+    "isolated_workspace": "PASS",
+    "real_coding_task": "NOT_RUN",
+    "recovery": "PASS",
+    "resume": "PASS",
+    "sbom": "NOT_RUN",
+    "secret_non_disclosure": "PASS",
+    "security_scan_with_retained_evidence": "NOT_RUN",
+    "test_execution": "NOT_RUN",
+    "timeout": "PASS",
+    "zero_residue_cleanup": "PASS"
+  },
+  "forbidden_tool": "PASS",
+  "forced_failure": "PASS",
+  "interrupt": "PASS",
+  "live_certification_required": true,
+  "mandatory_gate_count": 20,
+  "mcp_override_denial": "PASS",
+  "mode": "offline_fixture_only",
+  "model_override_denial": "PASS",
+  "ordinary_completion_not_resumable": "PASS",
+  "pause": "PASS",
+  "recovery": "PASS",
+  "resume": "PASS",
+  "schema_version": "aiat.openhands-offline-harness.v1",
+  "secret_isolation": "PASS",
+  "timeout": "PASS",
+  "workspace_isolation": "PASS",
+  "zero_residue": {
+    "payloads_retained": false,
+    "remaining": [],
+    "status": "PASS"
+  }
+}

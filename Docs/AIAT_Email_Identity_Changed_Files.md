@@ -39,6 +39,7 @@ inaccessible `mas/.tmp-*` test directories and unrelated root-level files.
 - `mas/apps/identity-service/identity_service/sessions/__init__.py`
 - `mas/apps/identity-service/identity_service/sessions/browser_sessions.py`
 - `mas/apps/identity-service/identity_service/store.py`
+- `mas/apps/identity-service/identity_service/observability.py`
 - `mas/apps/identity-service/identity_service/sync/__init__.py`
 - `mas/apps/identity-service/identity_service/sync/outbox.py`
 - `mas/apps/identity-service/identity_service/usage/__init__.py`
@@ -46,6 +47,7 @@ inaccessible `mas/.tmp-*` test directories and unrelated root-level files.
 - `mas/apps/identity-service/migrations/env.py`
 - `mas/apps/identity-service/migrations/script.py.mako`
 - `mas/apps/identity-service/migrations/versions/0001_identity_control_plane.py`
+- `mas/apps/identity-service/migrations/versions/0002_mail_trace_correlation.py`
 - `mas/apps/identity-service/pyproject.toml`
 - `mas/apps/identity-service/tests/conftest.py`
 - `mas/apps/identity-service/tests/test_identity_service.py`

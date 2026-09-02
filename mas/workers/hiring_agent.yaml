@@ -18,7 +18,7 @@ integration:
 runtime_tier: builtin
 capabilities:
   - name: hiring.coordinate
-    description: Coordinate license, policy, budget, adapter, and sandbox review for candidate workers.
+    description: Coordinate technical policy, budget, adapter, and sandbox review for candidate workers; record licence/notices as optional metadata only.
     required_tools: [capability.search, capability.list_workers, kpi.query_history, blob.upload]
 sandbox:
   profile: restricted

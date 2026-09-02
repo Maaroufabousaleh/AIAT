@@ -27,22 +27,29 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from contextlib import asynccontextmanager, suppress
+from contextlib import AsyncExitStack, asynccontextmanager, suppress
 
 import prometheus_client
 import redis.asyncio as aioredis
 from fastapi import FastAPI, Request, Response
 
-from mas_core.observability import configure_logging
+from mas_core.observability import (
+    bind_trace_id,
+    clear_trace_context,
+    configure_logging,
+    current_trace_id,
+    resolve_trace_id,
+)
 from mas_core.observability.metrics import TOOL_ERRORS_TOTAL, TOOL_INVOCATIONS_TOTAL
 
 from .cache import ToolCache
 from .config import Settings, get_settings
 from .opencode_mcp import create_opencode_mcp_app
+from .openhands_mcp import create_openhands_mcp_app
 from .rate_limiter import RateLimiterPool
 from .registry import ToolRegistry
-from .tool_grants import ToolGrantStore
 from .routes import router
+from .tool_grants import ToolGrantStore
 from .tools.all_tools import get_all_tools
 
 logger = logging.getLogger(__name__)
@@ -214,11 +221,20 @@ async def lifespan(app: FastAPI):
             name="project-usage-recovery",
         )
 
-    bridge_lifespan = getattr(app.state, "opencode_mcp_lifespan", None)
-    if bridge_lifespan is None:
+    bridge_lifespans = [
+        bridge
+        for bridge in (
+            getattr(app.state, "opencode_mcp_lifespan", None),
+            getattr(app.state, "openhands_mcp_lifespan", None),
+        )
+        if bridge is not None
+    ]
+    if not bridge_lifespans:
         yield
     else:
-        async with bridge_lifespan():
+        async with AsyncExitStack() as bridge_stack:
+            for bridge_lifespan in bridge_lifespans:
+                await bridge_stack.enter_async_context(bridge_lifespan())
             yield
 
     cache_recovery_task.cancel()
@@ -253,10 +269,32 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
+@app.middleware("http")
+async def propagate_trace_context(request: Request, call_next):  # type: ignore[no-untyped-def]
+    """Bind and return one bounded trace ID for every tool HTTP request."""
+
+    trace_id = resolve_trace_id(
+        request.headers.get("x-aiat-trace-id"),
+        request.headers.get("traceparent"),
+    )
+    bind_trace_id(trace_id)
+    request.state.aiat_trace_id = trace_id
+    try:
+        response = await call_next(request)
+        response.headers["X-AIAT-Trace-ID"] = current_trace_id() or trace_id
+        return response
+    finally:
+        clear_trace_context()
+
 app.include_router(router)
 _opencode_mcp_app = create_opencode_mcp_app(app)
 app.state.opencode_mcp_lifespan = _opencode_mcp_app.aiat_lifespan
 app.mount("/opencode", _opencode_mcp_app)
+
+_openhands_mcp_app = create_openhands_mcp_app(app)
+app.state.openhands_mcp_lifespan = _openhands_mcp_app.aiat_lifespan
+app.mount("/openhands", _openhands_mcp_app)
 
 _prom_app = prometheus_client.make_asgi_app()
 

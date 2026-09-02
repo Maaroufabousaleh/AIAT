@@ -1,0 +1,56 @@
+{
+  "schema_version": "aiat.network-boundary-live.v1",
+  "programme_scope": "personal-internal-only",
+  "observed_at": "2026-08-18T09:26:00Z",
+  "contract_commit": "96fb71f",
+  "checker": "scripts/check_network_boundary.py --live --json",
+  "policy": "mas/docs/provenance/network_boundary_policy.yaml",
+  "policy_schema": "aiat.network-boundary-policy.v1",
+  "environment": {
+    "host_class": "WSL2 with Docker Desktop Linux engine",
+    "platform": "linux/amd64",
+    "compose_profile": "mas.sh development overlay",
+    "volumes_removed": false,
+    "credentials_printed": false
+  },
+  "matrix": {
+    "status": "pass",
+    "runner_count": 11,
+    "runner_statuses": {
+      "pass": 11,
+      "fail": 0
+    },
+    "logical_networks": ["workers"],
+    "internal_networks": ["internal", "workers"],
+    "allowed_gateways": [
+      "message-router:8001",
+      "tool-service:8002",
+      "orchestrator-api:8000",
+      "litellm:4000"
+    ],
+    "allowed_gateway_reachability": "all_pass",
+    "protected_service_denials": "all_pass",
+    "internet_denial": "all_pass",
+    "control_plane_storage_health": "all_pass",
+    "forbidden_environment_names": [],
+    "docker_socket_mounts": "none"
+  },
+  "services": [
+    "team-dept-devops",
+    "team-dept-production",
+    "team-dept-qa",
+    "team-dept-system",
+    "team-exec-ceo",
+    "team-exec-coo",
+    "team-office-cfo",
+    "team-office-chrm",
+    "team-office-cio",
+    "team-office-cso",
+    "team-office-cto"
+  ],
+  "notices": [
+    "This local Linux-engine result is descriptive and does not replace the native-Linux release-host matrix.",
+    "The pm-gateway host port 127.0.0.1:8010 was already occupied during recreation; it is outside the runner boundary matrix and was not used to claim this pass.",
+    "No licence or resource metadata was evaluated as a gate."
+  ]
+}

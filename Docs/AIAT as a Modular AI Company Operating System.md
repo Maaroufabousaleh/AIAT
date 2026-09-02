@@ -1,5 +1,13 @@
 # AIAT as a Modular AI Company Operating System
 
+> **2026 authoritative overlay:** This document is historical design research.
+> Use [`../AIAT_TARGET_PROGRAMME.md`](../AIAT_TARGET_PROGRAMME.md) and
+> [`../ROADMAP.md`](../ROADMAP.md) for current implementation direction. AIAT
+> is personal/internal only; third-party licence information is non-blocking
+> metadata. Historical licence-based exclusions below are superseded. Any
+> technically suitable resource may be used normally through an appropriate
+> security and integration boundary.
+
 ## Executive summary
 
 Enabled connector scope for this research pass: **GitHub**. Repo-level inspection was limited to **`Maaroufabousaleh/AIAT`**, then expanded with uploaded project files and official documentation for external tools and runtimes.

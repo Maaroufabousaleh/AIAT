@@ -1,0 +1,110 @@
+{
+  "schema_version": "aiat.openhands-governed-runtime-object-readback.v1",
+  "recorded_at": "2026-08-22T22:00:00Z",
+  "candidate": {
+    "release": "v1.43.0",
+    "source_commit": "4c1237f391fe394e9f67505fe3a0bd2d81f84188",
+    "image_digest": "sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97",
+    "activation": "inactive"
+  },
+  "source_of_truth": {
+    "store": "OpenHands Agent Server authenticated API",
+    "snapshot_scope": "historical local preflight readback; not a portable certification object",
+    "profile_store": "local disposable Agent Server persistence at /workspace/.openhands (host bind /tmp/aiat-openhands-profile-state; preflight only)",
+    "certification_store": "fresh Agent Server instance created by each GitHub run",
+    "same_authoritative_store": false,
+    "profile_id_portable": false,
+    "profile_materialization_supported": true,
+    "profile_id_source": "server-generated UUID",
+    "profile_readback": "GET /api/agent-profiles/aiat-openhands-v1-43-0-coding",
+    "settings_readback": "GET /api/settings",
+    "materialize_readback": "POST /api/agent-profiles/aiat-openhands-v1-43-0-coding/materialize",
+    "secrets_retained": false
+  },
+  "agent_server_profile": {
+    "name": "aiat-openhands-v1-43-0-coding",
+    "id": "0f964e63-2e3b-46cb-88de-922f199d89cf",
+    "id_scope": "local disposable instance; not a CI input",
+    "revision": 0,
+    "agent_kind": "openhands",
+    "agent": "CodeActAgent",
+    "llm_profile_ref": "aiat-openhands-omniroute-coding",
+    "mcp_server_refs": ["aiat-openhands-v1-43-0-coding"],
+    "tools": ["TerminalTool", "FileEditorTool"],
+    "enable_sub_agents": false,
+    "enable_switch_llm_tool": false,
+    "disabled_skills": [],
+    "tool_concurrency_limit": 1
+  },
+  "llm_profile": {
+    "name": "aiat-openhands-omniroute-coding",
+    "model": "omniroute-coding",
+    "provider_connection_configured": true,
+    "api_key_set": true,
+    "credential_values_retained": false
+  },
+  "mcp_settings": {
+    "key": "aiat-openhands-v1-43-0-coding",
+    "key_scope": "logical static name; entry is run-scoped",
+    "precreated_entry_after_cleanup": false,
+    "lifecycle": "create-after-start, redacted-readback, use, delete-always, verify-absent",
+    "url": "http://tool-service:8002/openhands/mcp",
+    "transport": "streamable-http",
+    "grant_header": "X-AIAT-OpenHands-Grant",
+    "grant_value_retained": false,
+    "arbitrary_external_servers": false
+  },
+  "materialize": {
+    "snapshot_before_mcp_preclean": true,
+    "valid": true,
+    "llm_profile_resolved": true,
+    "llm_model": "omniroute-coding",
+    "llm_base_url": "http://litellm:4000",
+    "mcp_refs_resolved": true,
+    "dangling_mcp_server_refs": [],
+    "errors": [],
+    "resolved_tools": ["TerminalTool", "FileEditorTool"],
+    "load_public_skills": false,
+    "load_user_skills": false,
+    "load_project_skills": true,
+    "resolved_skills_count": 0
+  },
+  "bridge_probe": {
+    "mcp_tools_listed": ["aiat_tool"],
+    "allowlisted_call": {
+      "requested_grant_label": "aiat.repository.read",
+      "status": "PASS",
+      "audit_status": "success"
+    },
+    "denied_call": {
+      "requested_tool": "approval.override_cso",
+      "status": "FORBIDDEN"
+    },
+    "worker_identity_source": "signed AIAT grant",
+    "project_context_recorded": true,
+    "secret_value_returned": false,
+    "probe_workspace_cleanup": "PASS"
+  },
+  "runtime_bindings": {
+    "model_authority": "AIAT approved model profile",
+    "sandbox_profile": "gvisor; next workflow retains native runsc proof",
+    "network_policy": "AIAT egress allowlist",
+    "workspace_policy": "AIAT assigned isolated workspace",
+    "audit_policy": "scalar durable audit; payloads and credentials excluded"
+  },
+  "gvisor": {
+    "external_prerequisite_required": false,
+    "existing_live_evidence_run": "32594885180",
+    "existing_evidence": [
+      "native Ubuntu",
+      "runsc runtime",
+      "OpenHands Agent Server health/readiness under runsc"
+    ],
+    "next_workflow_requirement": "run the disposable Agent Server under runsc and retain scalar runtime evidence"
+  },
+  "pending_gates": [
+    "steward approval of interface-verification.json",
+    "operator wiring of CI variables/secrets and AIAT_TOOL_SECRET",
+    "next certification must materialize a fresh profile and run-scoped MCP entry"
+  ]
+}

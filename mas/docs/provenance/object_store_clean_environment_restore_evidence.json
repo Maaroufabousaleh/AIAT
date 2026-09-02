@@ -1,0 +1,72 @@
+{
+  "schema_version": "aiat.object-store-clean-environment-restore.v1",
+  "evidence_commit": "bb31b59",
+  "observed_at": "2026-08-18T23:24:22Z",
+  "status": "pass",
+  "mode": "local-fresh-process-encrypted-bundle",
+  "parent_process_pid": 53745,
+  "child_process_pid": 53748,
+  "child_process_distinct": true,
+  "child_return_code": 0,
+  "bundle_manifest_sha256": "263c71e32ed2113ff5a927f06665cf38e0d21a5048642cefe5ce6bd69792fdb0",
+  "bundle_object_count": 2,
+  "bundle_removed_after_restore": true,
+  "encryption_algorithm": "AES-256-GCM",
+  "key_id": "aiat-clean-restore-fixture-key-v1",
+  "child_restore": {
+    "schema_version": "aiat.object-store-clean-environment-restore.v1",
+    "status": "pass",
+    "fresh_adapter_restore": true,
+    "manifest_sha256": "263c71e32ed2113ff5a927f06665cf38e0d21a5048642cefe5ce6bd69792fdb0",
+    "object_count": 2,
+    "plaintext_keys_absent": true,
+    "backup_verification": {
+      "schema_version": "aiat.object-store-encrypted-restore.v1",
+      "target_bucket": "fresh-encrypted-backup",
+      "object_count": 2,
+      "checked_object_count": 2,
+      "clean_target_verified": true,
+      "status": "pass"
+    },
+    "restore_verification": {
+      "schema_version": "aiat.object-store-encrypted-restore.v1",
+      "target_bucket": "fresh-encrypted-restore",
+      "object_count": 2,
+      "checked_object_count": 2,
+      "clean_target_verified": true,
+      "status": "pass"
+    },
+    "cleanup_deleted_counts": {
+      "fresh_backup": 2,
+      "fresh_restore": 2
+    },
+    "remaining_fixture_counts": {
+      "fresh_backup": 0,
+      "fresh_restore": 0
+    }
+  },
+  "payload_free": true,
+  "key_material_retained": false,
+  "external_network_access_performed": false,
+  "external_provider_mutation_performed": false,
+  "provider_managed_sse_or_kms_checked": false,
+  "licence_metadata_is_gate": false,
+  "certification_boundary": {
+    "persisted_ciphertext_and_scalar_manifest_bundle": "checked",
+    "fresh_python_process": "checked",
+    "fresh_object_store_adapters": "checked",
+    "production_encrypted_restore_helper": "checked",
+    "clean_target_before_restore": "checked",
+    "bundle_cleanup": "checked",
+    "plaintext_or_key_material_in_report": "not_observed",
+    "clean_host_or_filesystem_disaster_recovery": "not_checked",
+    "provider_pair_or_external_backend": "not_checked",
+    "provider_managed_sse_or_kms": "not_checked",
+    "independent_machine_or_outage_recovery": "not_checked"
+  },
+  "notes": [
+    "The parent persisted only ciphertext and scalar manifest metadata; plaintext and key material were absent from the evidence projection.",
+    "The child process loaded fresh in-memory adapters, verified the encrypted backup, replicated through the production encrypted restore helper, and removed all fixture objects.",
+    "This is a local clean-process prerequisite, not clean-host, provider-pair, KMS, outage, or disaster-recovery evidence."
+  ]
+}

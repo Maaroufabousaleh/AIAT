@@ -19,11 +19,11 @@ Persistence     flow definition (nodes/edges/config/switch_cases) survives seria
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, call
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
-from conftest import PROJECT_ID, NOW_ISO
+from conftest import NOW_ISO, PROJECT_ID
 
 # ── constants ────────────────────────────────────────────────────────────────
 
@@ -527,7 +527,7 @@ async def test_retry_failed_instance_restores_last_safe_node(client):
     storage = MagicMock()
     storage.get_flow_instance = AsyncMock(side_effect=[failed_inst, restored])
     storage.get_flow = AsyncMock(return_value=_flow_row())
-    storage.clear_flow_node_executions = AsyncMock(return_value=None)
+    storage.supersede_flow_node_executions = AsyncMock(return_value=1)
     storage.update_flow_instance = AsyncMock(return_value=restored)
     storage.create_flow_node_execution = AsyncMock(return_value={"id": 7})
     storage.create_approval_gate = AsyncMock(return_value={"id": uuid4()})
@@ -989,23 +989,24 @@ async def test_full_flow_sequence_create_attach_start_approve_read_back(client):
     assert final["status"] == "RUNNING"
 
 
-# ── 14. TODO: Browser E2E / UI operator flow ─────────────────────────────────
+# ── 14. Browser E2E / UI operator flow ───────────────────────────────────────
 
 
 @pytest.mark.skip(
-    reason="TODO: No browser e2e harness exists yet. "
-    "The operator UI flow (flow builder → project → approval action → refresh → verify visible state) "
-    "remains unverified by automated browser tests. "
-    "Implement a Playwright harness against http://localhost:4000 to cover this gap."
+    reason="Covered by the source-built Playwright spec at "
+    "apps/mas-dashboard/e2e/flow-runtime-test2.spec.ts; run the dashboard "
+    "e2e suite against a live operator environment for UI evidence."
 )
 def test_ui_operator_flow_approval_visible_after_refresh():
     """
-    Operator-level UI flow (unverified — TODO):
+    Operator-level UI flow (covered by the dashboard Playwright suite):
     1. Open flow builder at /flows/new, create flow with required nodes.
     2. Open project, attach flow, start it.
     3. Navigate to approval page, submit decision=approved.
     4. Refresh page, verify active node shows Branch A.
     5. Verify state-history panel shows flow_node transitions.
-    This test marks an explicit production gap: UI e2e coverage is missing.
+    This Python test remains skipped because the orchestrator API suite does
+    not own a browser runtime. The dashboard spec is the authoritative UI
+    implementation of this scenario.
     """
-    raise NotImplementedError("Browser e2e harness not implemented")
+    pytest.skip("Browser execution belongs to the dashboard Playwright suite")

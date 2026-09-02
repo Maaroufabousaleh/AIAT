@@ -26,6 +26,7 @@ DOCUMENTED_DEFAULT_TOOLS = {
     "review.submit",
     "review.aggregate",
     "review.submit_veto",
+    "privileged_ops.request",
     "sprint.create",
     "sprint.activate",
     "issue.create",
@@ -112,7 +113,9 @@ def test_manifest_reports_unconfigured_adapters_as_unavailable(make_registry, mo
 
     assert manifest["security.scan"]["available"] is False
     assert manifest["security.scan"]["configured"] is False
-    assert manifest["code.review"]["available"] is False
+    assert manifest["code.review"]["available"] is True
+    assert manifest["code.review"]["backend"] == "aiat_deterministic_diff_review"
+    assert manifest["code.review"]["configured"] is False
     assert manifest["document.ingest"]["available"] is True
 
 
@@ -125,8 +128,12 @@ async def test_tools_endpoint_exposes_documented_defaults(client):
 
 
 def test_oss_compatibility_aliases_resolve_to_guarded_wrappers():
+    assert resolve_tool_name("aiat.repository.read") == "repo.read"
+    assert resolve_tool_name("aiat.repository.write") == "file_write"
+    assert resolve_tool_name("aiat.tests.execute") == "test.run"
     assert resolve_tool_name("semgrep") == "security.scan"
     assert resolve_tool_name("skillspector") == "security.scan"
+    assert resolve_tool_name("trufflehog") == "security.scan"
     assert resolve_tool_name("docling") == "document.ingest"
     assert resolve_tool_name("playwright.test") == "test.run"
     assert resolve_tool_name("opentofu.plan") == "iac.plan"
@@ -210,6 +217,50 @@ async def test_command_run_safe_delegates_worker_command_to_gvisor_adapter(
     assert captured["payload"]["profile"] == "gvisor"
     assert captured["payload"]["network_mode"] == "egress-deny-all"
     assert response.result["sandbox_profile"] == "gvisor"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("stdout", "reason"),
+    [
+        ("", "sandbox_adapter_empty_output"),
+        ("not-json", "sandbox_adapter_invalid_json"),
+        ("[]", "sandbox_adapter_invalid_result_shape"),
+    ],
+)
+async def test_command_run_safe_reports_degraded_sandbox_output(
+    make_registry, tmp_path, monkeypatch, stdout, reason
+):
+    async def fake_run_process(argv, **kwargs):
+        return {
+            "available": True,
+            "returncode": 0,
+            "stdout": stdout,
+            "stderr": "",
+        }
+
+    monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("TOOL_SANDBOX_COMMAND", "sandbox-runner --json-stdin")
+    monkeypatch.setattr("tool_service.tools.adapters._run_process", fake_run_process)
+    response = await make_registry().execute(
+        ToolRequest(
+            caller_id="worker-alpha",
+            caller_role=AgentRole.WORKER,
+            caller_team="dept_qa",
+            tool_name="command.run_safe",
+            kwargs={"command": ["pytest", "tests"]},
+        )
+    )
+
+    assert response.success is True
+    assert response.result == {
+        "available": False,
+        "configured": True,
+        "backend": "sandbox_adapter",
+        "sandbox_profile": "gvisor",
+        "degraded": True,
+        "reason": reason,
+    }
 
 
 @pytest.mark.anyio
@@ -355,6 +406,143 @@ async def test_security_scan_delegates_semgrep_to_gvisor_adapter(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("stdout", "reason"),
+    [
+        ("", "semgrep_empty_output"),
+        ("[]", "semgrep_invalid_result_shape"),
+        ("not-json", "semgrep_invalid_json"),
+    ],
+)
+async def test_security_scan_reports_invalid_semgrep_shape_without_raising(
+    make_registry, tmp_path, monkeypatch, stdout, reason
+):
+    async def fake_run_sandboxed_process(argv, **kwargs):
+        return {"available": True, "returncode": 0, "stdout": stdout}
+
+    monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setattr(
+        "tool_service.tools.adapters._run_sandboxed_process", fake_run_sandboxed_process
+    )
+    response = await make_registry().execute(
+        ToolRequest(
+            caller_id="worker-alpha",
+            caller_role=AgentRole.WORKER,
+            caller_team="office_cso",
+            tool_name="security.scan",
+            kwargs={"path": ".", "scanner": "semgrep"},
+        )
+    )
+
+    assert response.success is True
+    assert response.result["backend"] == "semgrep"
+    assert response.result["scanner"] == "semgrep"
+    assert response.result["degraded"] is True
+    assert response.result["reason"] == reason
+    assert response.result["findings_count"] is None
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("stdout", "reason"),
+    [("", "skillspector_empty_output"), ('{"status":"ok"}', "skillspector_invalid_result_shape")],
+)
+async def test_security_scan_reports_degraded_skillspector_output(
+    make_registry, tmp_path, monkeypatch, stdout, reason
+):
+    async def fake_run_sandboxed_process(argv, **kwargs):
+        return {"available": True, "returncode": 0, "stdout": stdout}
+
+    monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("TOOL_SKILLSPECTOR_COMMAND", "skillspector scan --json .")
+    monkeypatch.setattr(
+        "tool_service.tools.adapters._run_sandboxed_process", fake_run_sandboxed_process
+    )
+    response = await make_registry().execute(
+        ToolRequest(
+            caller_id="worker-alpha",
+            caller_role=AgentRole.WORKER,
+            caller_team="office_cso",
+            tool_name="security.scan",
+            kwargs={"path": ".", "scanner": "skillspector"},
+        )
+    )
+
+    assert response.success is True
+    assert response.result["backend"] == "skillspector"
+    assert response.result["scanner"] == "skillspector"
+    assert response.result["degraded"] is True
+    assert response.result["reason"] == reason
+    assert response.result["findings_count"] is None
+
+
+@pytest.mark.anyio
+async def test_trufflehog_alias_delegates_to_the_shared_bounded_adapter(
+    make_registry, tmp_path, monkeypatch
+):
+    captured = {}
+
+    async def fake_run_sandboxed_process(argv, **kwargs):
+        captured["argv"] = argv
+        captured.update(kwargs)
+        return {"available": True, "returncode": 0, "stdout": '{"path":"secret"}\n'}
+
+    monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setattr(
+        "tool_service.tools.adapters._run_sandboxed_process", fake_run_sandboxed_process
+    )
+    response = await make_registry().execute(
+        ToolRequest(
+            caller_id="worker-alpha",
+            caller_role=AgentRole.WORKER,
+            caller_team="office_cso",
+            tool_name="trufflehog",
+            kwargs={"path": "."},
+        )
+    )
+
+    assert response.success is True
+    assert "trufflehog filesystem --json ." in captured["argv"][2]
+    assert response.result["backend"] == "trufflehog"
+    assert response.result["scanner"] == "trufflehog"
+    assert response.result["findings_count"] == 1
+
+
+@pytest.mark.anyio
+async def test_skillspector_alias_delegates_to_the_shared_bounded_adapter(
+    make_registry, tmp_path, monkeypatch
+):
+    captured = {}
+
+    async def fake_run_sandboxed_process(argv, **kwargs):
+        captured["argv"] = argv
+        captured.update(kwargs)
+        return {"available": True, "returncode": 0, "stdout": '{"findings": [{"rule": "fixture"}]}' }
+
+    monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("TOOL_SKILLSPECTOR_COMMAND", "skillspector scan --json .")
+    monkeypatch.setattr(
+        "tool_service.tools.adapters._run_sandboxed_process", fake_run_sandboxed_process
+    )
+    response = await make_registry().execute(
+        ToolRequest(
+            caller_id="worker-alpha",
+            caller_role=AgentRole.WORKER,
+            caller_team="office_cso",
+            tool_name="skillspector",
+            kwargs={"path": "."},
+        )
+    )
+
+    assert response.success is True
+    assert captured["argv"] == ["skillspector", "scan", "--json", "."]
+    assert response.result["backend"] == "skillspector"
+    assert response.result["scanner"] == "skillspector"
+    assert response.result["findings_count"] == 1
+    assert response.result["command_configured"] is True
+
+
+@pytest.mark.anyio
 async def test_configured_infra_adapter_bounds_output_while_streaming(monkeypatch):
     from tool_service.tools.infra import _run_configured_adapter
 
@@ -391,8 +579,11 @@ async def test_document_ingest_falls_back_to_text_when_docling_missing(
     )
 
     assert response.success is True
-    assert response.result["available"] is False
-    assert response.result["backend"] == "docling"
+    assert response.result["available"] is True
+    assert response.result["configured"] is True
+    assert response.result["degraded"] is True
+    assert response.result["backend"] == "plain_text_fallback"
+    assert response.result["reason"] == "docling_binary_not_found"
     assert "Body" in response.result["text"]
 
 
@@ -431,6 +622,155 @@ async def test_document_ingest_uses_docling_runner_when_installed(
     assert response.success is True
     assert response.result["backend"] == "docling"
     assert response.result["document"]["text"] == "# Notes"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("stdout", "reason"),
+    [
+        ("not-json", "docling_invalid_json"),
+        ("[]", "docling_invalid_result_shape"),
+        ("", "docling_empty_output"),
+    ],
+)
+async def test_document_ingest_reports_invalid_docling_output_without_raising(
+    make_registry, tmp_path, monkeypatch, stdout, reason
+):
+    source = tmp_path / "notes.md"
+    source.write_text("# Notes", encoding="utf-8")
+    monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setattr(
+        "tool_service.tools.adapters.shutil.which",
+        lambda name: "/usr/local/bin/docling" if name == "docling" else None,
+    )
+
+    async def fake_run_process(argv, **kwargs):
+        return {
+            "available": True,
+            "returncode": 0,
+            "stdout": stdout,
+            "stderr": "",
+        }
+
+    monkeypatch.setattr("tool_service.tools.adapters._run_process", fake_run_process)
+    response = await make_registry().execute(
+        ToolRequest(
+            caller_id="writer",
+            caller_role=AgentRole.WORKER,
+            caller_team="dept_system",
+            tool_name="document.ingest",
+            kwargs={"path": "notes.md"},
+        )
+    )
+
+    assert response.success is True
+    assert response.result["backend"] == "docling"
+    assert response.result["available"] is True
+    assert response.result["configured"] is True
+    assert response.result["degraded"] is True
+    assert response.result["reason"] == reason
+    assert response.result["document"] is None
+
+
+@pytest.mark.anyio
+async def test_diagram_render_reports_successful_artifact_metadata(
+    make_registry, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setattr(
+        "tool_service.tools.adapters.shutil.which",
+        lambda name: "/usr/local/bin/mmdc" if name == "mmdc" else None,
+    )
+
+    async def fake_run_process(argv, **kwargs):
+        output = Path(argv[-1])
+        output.write_bytes(b"<svg></svg>")
+        return {"available": True, "returncode": 0, "stdout": "", "stderr": ""}
+
+    monkeypatch.setattr("tool_service.tools.adapters._run_process", fake_run_process)
+    response = await make_registry().execute(
+        ToolRequest(
+            caller_id="diagram-worker",
+            caller_role=AgentRole.WORKER,
+            caller_team="dept_system",
+            tool_name="diagram.render",
+            kwargs={"source": "flowchart TD\n  A --> B", "output": "diagram.svg"},
+        )
+    )
+
+    assert response.success is True
+    assert response.result["backend"] == "mermaid"
+    assert response.result["configured"] is True
+    assert response.result["rendered"] is True
+    assert response.result["output_exists"] is True
+    assert response.result["output_size_bytes"] == len(b"<svg></svg>")
+
+
+@pytest.mark.anyio
+async def test_diagram_render_does_not_report_success_without_artifact(
+    make_registry, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setattr(
+        "tool_service.tools.adapters.shutil.which",
+        lambda name: "/usr/local/bin/mmdc" if name == "mmdc" else None,
+    )
+
+    async def fake_run_process(argv, **kwargs):
+        return {"available": True, "returncode": 0, "stdout": "", "stderr": ""}
+
+    monkeypatch.setattr("tool_service.tools.adapters._run_process", fake_run_process)
+    response = await make_registry().execute(
+        ToolRequest(
+            caller_id="diagram-worker",
+            caller_role=AgentRole.WORKER,
+            caller_team="dept_system",
+            tool_name="diagram.render",
+            kwargs={"source": "flowchart TD\n  A --> B", "output": "missing.svg"},
+        )
+    )
+
+    assert response.success is True
+    assert response.result["backend"] == "mermaid"
+    assert response.result["configured"] is True
+    assert response.result["degraded"] is True
+    assert response.result["rendered"] is False
+    assert response.result["output_exists"] is False
+    assert response.result["reason"] == "mermaid_output_missing"
+
+
+@pytest.mark.anyio
+async def test_external_code_review_reports_invalid_output_without_raising(
+    make_registry, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("TOOL_CODE_REVIEW_COMMAND", "review-adapter")
+
+    async def fake_run_process(argv, **kwargs):
+        return {
+            "available": True,
+            "returncode": 0,
+            "stdout": "not-json",
+            "stderr": "",
+        }
+
+    monkeypatch.setattr("tool_service.tools.adapters._run_process", fake_run_process)
+    response = await make_registry().execute(
+        ToolRequest(
+            caller_id="review-worker",
+            caller_role=AgentRole.WORKER,
+            caller_team="dept_qa",
+            tool_name="code.review",
+            kwargs={"mode": "diff"},
+        )
+    )
+
+    assert response.success is True
+    assert response.result["backend"] == "aiat_code_review"
+    assert response.result["configured"] is True
+    assert response.result["degraded"] is True
+    assert response.result["reason"] == "code_review_invalid_json"
+    assert response.result["review"] is None
 
 
 @pytest.mark.anyio

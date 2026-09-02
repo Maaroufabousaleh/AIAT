@@ -1,0 +1,60 @@
+{
+  "schema_version": "aiat.object-store-migration.v1",
+  "evidence_commit": "ecbef00",
+  "observed_at": "2026-08-18T13:02:14Z",
+  "status": "pass",
+  "mode": "live-bounded-rehearsal",
+  "project_id": "aiat-migration-live-20260818",
+  "provider_topology": {
+    "source": "Compose MinIO endpoint",
+    "target": "disposable SeaweedFS 4.42 endpoint",
+    "provider_diversity": "different S3-compatible implementations; operator-observed topology"
+  },
+  "source_bucket": "mas-agents",
+  "target_bucket": "mas-migration-live-20260818",
+  "final_workflow_status": "ROLLED_BACK",
+  "workflow_transition_count": 5,
+  "inventory_object_count": 3,
+  "copy_case_count": 3,
+  "copy_and_readback_passed": true,
+  "dual_write_case_count": 1,
+  "dual_write_passed": true,
+  "operator_confirmed_cutover": true,
+  "operator_confirmed_rollback": true,
+  "deployment_routing_mutated": false,
+  "retention_parity": "not_checked",
+  "cleanup_deleted_counts": {
+    "source": 4,
+    "target": 4
+  },
+  "remaining_fixture_counts": {
+    "source": 0,
+    "target": 0
+  },
+  "mutation_scope": "reserved project prefixes only; no deployment routing, production authority, or retention policy was changed",
+  "mutation_performed": true,
+  "local_database_access_performed": false,
+  "external_network_access_performed": true,
+  "external_provider_mutation_performed": true,
+  "payload_free": true,
+  "licence_metadata_is_gate": false,
+  "certification_boundary": {
+    "checksum_inventory": "checked",
+    "provider_copy_and_clean_target_readback": "checked",
+    "dual_write": "checked",
+    "human_confirmed_cutover_record": "checked",
+    "human_confirmed_rollback_record": "checked",
+    "scoped_cleanup": "checked",
+    "deployment_routing_mutation": "not_checked",
+    "retention_policy_parity": "not_checked",
+    "actual_provider_process_or_network_outage": "not_checked",
+    "clean_host_or_disaster_recovery": "not_checked",
+    "provider_managed_encryption_or_kms": "not_checked"
+  },
+  "notes": [
+    "The rehearsal writes only a reserved project prefix, records the AIAT-owned workflow cutover and rollback transitions, and removes every fixture object before completion.",
+    "Cutover and rollback are workflow evidence; deployment routing and active provider configuration remain unchanged.",
+    "No endpoint URL, credential, object body, generated content, or raw provider response is retained.",
+    "Licence and restriction data remains informational metadata and is not an activation, execution, or release gate."
+  ]
+}

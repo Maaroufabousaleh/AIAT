@@ -105,7 +105,7 @@ async def _test_transport_compatibility(
 ) -> dict:
     """Verify the worker's transport mode is supported."""
     adapter_type = worker.get("adapter_type", "process")
-    supported = {"process", "http", "oci", "mcp", "human"}
+    supported = {"process", "http", "oci", "mcp", "openhands", "openhands_agent_server", "human"}
 
     if adapter_type not in supported:
         return {

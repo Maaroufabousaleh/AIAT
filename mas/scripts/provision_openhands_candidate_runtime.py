@@ -1,0 +1,595 @@
+"""Materialize the governed OpenHands runtime objects for one Agent Server run.
+
+The Agent Server persistence directory is disposable in CI.  This command
+therefore creates deterministic named LLM/agent profiles and one run-scoped
+MCP settings entry after the server starts, then emits only the server-created
+agent profile UUID and other non-secret correlation values.  It never prints or
+persists provider keys or the signed bridge grant.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import time
+from pathlib import Path
+from typing import Any
+from uuid import UUID, uuid4
+
+import httpx
+
+from mas_core.worker_contract.openhands_bridge import (
+    OpenHandsToolGrantError,
+    issue_openhands_tool_grant,
+    verify_openhands_tool_grant,
+)
+from mas_core.worker_contract.openhands_model import (
+    AIAT_OPENHANDS_MODEL_ID,
+    OPENHANDS_WIRE_MODEL_ID,
+    wire_model_id_for,
+)
+
+SCHEMA = "aiat.openhands-run-scoped-runtime-provisioning.v1"
+CANDIDATE_RELEASE = "v1.43.0"
+CANDIDATE_COMMIT = "4c1237f391fe394e9f67505fe3a0bd2d81f84188"
+CANDIDATE_IMAGE_DIGEST = "sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97"
+EXPECTED_MODEL_ID = AIAT_OPENHANDS_MODEL_ID
+EXPECTED_OPENHANDS_WIRE_MODEL_ID = OPENHANDS_WIRE_MODEL_ID
+EXPECTED_GATEWAY_URL = "http://litellm:4000"
+EXPECTED_MCP_KEY = "aiat-openhands-v1-43-0-coding"
+LLM_PROFILE_NAME = "aiat-openhands-omniroute-coding"
+AGENT_PROFILE_NAME = "aiat-openhands-v1-43-0-coding"
+GATEWAY_PROVIDER = "aiat-gateway"
+GATEWAY_DISPLAY_NAME = "AIAT governed model gateway (OpenHands certification)"
+MCP_KEY_PREFIX = "aiat-openhands-"
+BRIDGE_URL = "http://tool-service:8002/openhands/mcp"
+WORKER_ID = "coding-worker-openhands-candidate"
+TOOL_GRANTS = ("aiat.repository.read", "aiat.repository.write", "aiat.tests.execute")
+# OpenHands SDK v1.43.0 registers the built-in tool definitions under their
+# wire names (``terminal`` and ``file_editor``).  Python implementation class
+# names are not valid profile references: the Agent Server resolves explicit
+# profile entries through its tool registry while creating the conversation.
+# Keeping the canonical wire names here prevents a server-side 500 during
+# initial agent setup.
+EXPECTED_AGENT_TOOLS = {"terminal", "file_editor"}
+AGENT_SERVER_REDACTED_MCP_GRANT = "**********"
+
+
+class ProvisioningError(RuntimeError):
+    """A required governed object could not be materialized or verified."""
+
+
+def _json_body(response: httpx.Response, *, expected: set[int] | None = None) -> Any:
+    if expected is not None and response.status_code not in expected:
+        raise ProvisioningError(f"agent_server_http_{response.status_code}")
+    if response.status_code >= 400:
+        raise ProvisioningError(f"agent_server_http_{response.status_code}")
+    if not response.content:
+        return {}
+    try:
+        return response.json()
+    except ValueError as exc:
+        raise ProvisioningError("agent_server_invalid_json") from exc
+
+
+def _profile_object(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ProvisioningError("agent_profile_readback_not_an_object")
+    profile = value.get("profile")
+    if isinstance(profile, dict):
+        return profile
+    return value
+
+
+def _mcp_config(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ProvisioningError("agent_settings_readback_not_an_object")
+    # Agent Server releases may expose a direct envelope alongside the v1.43
+    # ``agent_settings`` envelope.  Merge every supported mapping so an empty
+    # compatibility field cannot hide a nested residual entry.  Any unexpected
+    # extra entry is then rejected by ``_validate_mcp_entry`` rather than being
+    # silently ignored.
+    envelopes: list[dict[str, Any]] = [value]
+    agent_settings = value.get("agent_settings")
+    if isinstance(agent_settings, dict):
+        envelopes.append(agent_settings)
+    merged: dict[str, Any] = {}
+    found = False
+    for envelope in envelopes:
+        for field in ("mcp_config", "mcp_servers"):
+            config = envelope.get(field)
+            if isinstance(config, dict):
+                merged.update(config)
+                found = True
+    if found:
+        return merged
+    raise ProvisioningError("agent_settings_readback_has_no_mcp_configuration")
+
+
+def _provider_connection_object(value: Any) -> dict[str, Any]:
+    """Extract one redacted Agent Server provider-connection readback."""
+
+    if not isinstance(value, dict):
+        raise ProvisioningError("provider_connection_readback_not_an_object")
+    connection = value.get("connection", value)
+    if not isinstance(connection, dict):
+        raise ProvisioningError("provider_connection_readback_not_an_object")
+    return connection
+
+
+def _validate_gateway_connection(connection: dict[str, Any], *, gateway_url: str) -> None:
+    """Prove the profile's connection points at this run's internal gateway."""
+
+    if connection.get("provider") != GATEWAY_PROVIDER:
+        raise ProvisioningError("provider_connection_provider_readback_mismatch")
+    if connection.get("display_name") != GATEWAY_DISPLAY_NAME:
+        raise ProvisioningError("provider_connection_display_name_readback_mismatch")
+    if connection.get("base_url") != gateway_url:
+        raise ProvisioningError("provider_connection_base_url_readback_mismatch")
+    if connection.get("api_key_set") is not True:
+        raise ProvisioningError("provider_connection_secret_readback_missing")
+    if not connection.get("id"):
+        raise ProvisioningError("provider_connection_id_missing")
+
+
+def _write_github_output(path: Path | None, values: dict[str, str]) -> None:
+    if path is None:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        for key, value in values.items():
+            handle.write(f"{key}={value}\n")
+
+
+def _validate_mcp_entry(config: dict[str, Any], key: str) -> None:
+    if set(config) != {key}:
+        raise ProvisioningError("run_scoped_mcp_configuration_contains_unapproved_entries")
+    entry = config.get(key)
+    if not isinstance(entry, dict):
+        raise ProvisioningError("run_scoped_mcp_entry_missing_after_create")
+    if entry.get("url") != BRIDGE_URL:
+        raise ProvisioningError("run_scoped_mcp_bridge_url_mismatch")
+    if entry.get("transport") != "streamable-http" or entry.get("enabled") is not True:
+        raise ProvisioningError("run_scoped_mcp_transport_or_enabled_mismatch")
+    headers = entry.get("headers")
+    if not isinstance(headers, dict) or "X-AIAT-OpenHands-Grant" not in headers:
+        raise ProvisioningError("run_scoped_mcp_grant_header_missing")
+
+
+def _agent_profile_payload(*, mcp_key: str, disabled_skills: list[str]) -> dict[str, Any]:
+    """Return the only profile shape the certification path may persist.
+
+    OpenHands v1.43.0 exposes skill selection as a deny-list.  We therefore
+    materialize once, read the server's discovered catalog, and persist that
+    exact catalog as ``disabled_skills`` before the live conversation starts.
+    This keeps the profile compatible with the pinned upstream schema while
+    failing closed if the server reports a skill that was not denied.
+    """
+
+    return {
+        "agent_kind": "openhands",
+        "agent": "CodeActAgent",
+        "llm_profile_ref": LLM_PROFILE_NAME,
+        "mcp_server_refs": [mcp_key],
+        "tools": [
+            {"name": "terminal", "params": {}},
+            {"name": "file_editor", "params": {}},
+        ],
+        "enable_sub_agents": False,
+        "enable_switch_llm_tool": False,
+        "disabled_skills": disabled_skills,
+        "tool_concurrency_limit": 1,
+    }
+
+
+def _validate_skill_readback(profile: dict[str, Any], expected: list[str]) -> None:
+    disabled = profile.get("disabled_skills")
+    if not isinstance(disabled, list) or any(not isinstance(item, str) or not item for item in disabled):
+        raise ProvisioningError("agent_profile_disabled_skills_readback_invalid")
+    if sorted(set(disabled)) != sorted(set(expected)):
+        raise ProvisioningError("agent_profile_disabled_skills_readback_mismatch")
+
+
+def provision(
+    *,
+    base_url: str,
+    session_api_key: str,
+    aiat_tool_secret: str,
+    model_id: str,
+    gateway_url: str,
+    gateway_api_key: str,
+    mcp_key: str,
+    candidate_commit: str = CANDIDATE_COMMIT,
+    image_digest: str = CANDIDATE_IMAGE_DIGEST,
+    run_id: UUID | None = None,
+    project_id: UUID | None = None,
+    client: httpx.Client | None = None,
+) -> dict[str, Any]:
+    """Create/read/validate the governed objects on one Agent Server instance."""
+
+    if not session_api_key:
+        raise ProvisioningError("session_api_key_missing")
+    if model_id != EXPECTED_MODEL_ID:
+        raise ProvisioningError("model_id_is_not_the_approved_omniroute_coding_alias")
+    wire_model_id = wire_model_id_for(model_id)
+    if gateway_url != EXPECTED_GATEWAY_URL:
+        raise ProvisioningError("model_gateway_url_must_equal_http://litellm:4000")
+    if not gateway_api_key:
+        raise ProvisioningError("model_gateway_credential_missing")
+    if not aiat_tool_secret:
+        raise ProvisioningError("aiat_tool_secret_missing")
+    if mcp_key != EXPECTED_MCP_KEY:
+        raise ProvisioningError("mcp_key_must_equal_the_governed_openhands_certification_key")
+    if candidate_commit != CANDIDATE_COMMIT:
+        raise ProvisioningError("candidate_commit_mismatch")
+    if image_digest != CANDIDATE_IMAGE_DIGEST:
+        raise ProvisioningError("candidate_image_digest_mismatch")
+
+    run_id = run_id or uuid4()
+    project_id = project_id or uuid4()
+    created_client = client is None
+    client = client or httpx.Client(
+        base_url=base_url.rstrip("/"),
+        headers={"X-Session-API-Key": session_api_key, "Accept": "application/json"},
+        timeout=httpx.Timeout(60.0, connect=10.0),
+        follow_redirects=False,
+    )
+    try:
+        connections = _json_body(client.get("/api/llm/provider-connections"))
+        if not isinstance(connections, list):
+            raise ProvisioningError("provider_connection_readback_not_a_list")
+        # The Agent Server readback deliberately exposes only ``api_key_set``;
+        # it cannot prove that an existing connection contains this run's
+        # freshly generated gateway secret.  Reusing one would therefore make
+        # the profile's authentication boundary unauthoritative (and could
+        # silently bind a disposable run to stale/operator state).  CI starts
+        # a fresh Agent Server, so any persisted connection is a hard failure
+        # rather than a reason to fall back to an unverifiable credential.
+        if connections:
+            raise ProvisioningError("agent_server_provider_connection_store_not_empty")
+        connection = _json_body(
+            client.post(
+                "/api/llm/provider-connections",
+                json={
+                    "display_name": GATEWAY_DISPLAY_NAME,
+                    "provider": GATEWAY_PROVIDER,
+                    "api_key": gateway_api_key,
+                    "base_url": gateway_url,
+                },
+            ),
+            expected={201},
+        )
+        connection = _provider_connection_object(connection)
+        _validate_gateway_connection(connection, gateway_url=gateway_url)
+        connection_id = str(connection["id"])
+        connection_readback = _json_body(client.get("/api/llm/provider-connections"))
+        if not isinstance(connection_readback, list):
+            raise ProvisioningError("provider_connection_readback_not_a_list")
+        selected_connection = next(
+            (
+                item
+                for item in connection_readback
+                if isinstance(item, dict) and str(item.get("id")) == connection_id
+            ),
+            None,
+        )
+        if selected_connection is None:
+            raise ProvisioningError("provider_connection_missing_after_create_readback")
+        _validate_gateway_connection(selected_connection, gateway_url=gateway_url)
+
+        llm_response = client.post(
+            f"/api/profiles/{LLM_PROFILE_NAME}",
+            json={
+                "llm": {
+                    # AIAT keeps the provider-agnostic logical alias, while
+                    # OpenHands v1.43/LiteLLM requires an explicit OpenAI
+                    # provider prefix to resolve a custom OpenAI-compatible
+                    # gateway.  This is a fixed compatibility mapping, not
+                    # provider selection authority for the worker.
+                    "model": wire_model_id,
+                    "provider_connection_id": connection_id,
+                    "auth_type": "api_key",
+                    "timeout": 300,
+                    "num_retries": 3,
+                    "temperature": 0.0,
+                },
+                "include_secrets": False,
+            },
+        )
+        _json_body(llm_response, expected={200, 201})
+        llm_readback = _json_body(client.get(f"/api/profiles/{LLM_PROFILE_NAME}"))
+        # Agent Server v1.43.0 returns the persisted LLM profile under
+        # ``config`` (the write response only contains a name/message).  Keep
+        # the older ``llm`` envelope as a compatibility read path for mocked
+        # or future server versions, but never accept a missing/ambiguous
+        # configuration.
+        llm = None
+        if isinstance(llm_readback, dict):
+            candidate = llm_readback.get("llm")
+            if not isinstance(candidate, dict):
+                candidate = llm_readback.get("config")
+            if isinstance(candidate, dict):
+                llm = candidate
+        if not isinstance(llm, dict) or llm.get("model") != wire_model_id:
+            raise ProvisioningError("llm_profile_model_readback_mismatch")
+        if llm.get("provider_connection_id") != connection_id:
+            raise ProvisioningError("llm_profile_provider_connection_readback_mismatch")
+
+        grant = issue_openhands_tool_grant(
+            aiat_tool_secret,
+            worker_id=WORKER_ID,
+            run_id=run_id,
+            project_id=project_id,
+            tool_names=TOOL_GRANTS,
+            ttl_seconds=300,
+        )
+        try:
+            verified_grant = verify_openhands_tool_grant(
+                grant,
+                aiat_tool_secret,
+                now=int(time.time()),
+            )
+        except (OpenHandsToolGrantError, TypeError, ValueError) as exc:
+            raise ProvisioningError("run_scoped_mcp_grant_self_verification_failed") from exc
+        if (
+            verified_grant.worker_id != WORKER_ID
+            or verified_grant.run_id != run_id
+            or verified_grant.project_id != project_id
+            or verified_grant.tool_names != frozenset(TOOL_GRANTS)
+        ):
+            raise ProvisioningError("run_scoped_mcp_grant_binding_mismatch")
+        # Certification MCP settings are disposable and must never silently
+        # overwrite an existing operator entry.  Delete the run-scoped key
+        # through the authenticated Agent Server API, then prove it is absent
+        # before creating the fresh grant-bearing configuration.
+        preclean_response = client.delete(f"/api/settings/mcp/{mcp_key}")
+        # Agent Server versions may use either an empty successful response
+        # (204), an explicit success response (200), or idempotent absence
+        # (404) for this run-scoped delete. All three preserve the required
+        # pre-clean invariant; any other response is a real provisioning
+        # failure.
+        if preclean_response.status_code not in {200, 204, 404}:
+            raise ProvisioningError("run_scoped_mcp_preclean_delete_failed")
+        preclean_settings = _json_body(client.get("/api/settings"))
+        preclean_config = _mcp_config(preclean_settings)
+        if mcp_key in preclean_config:
+            raise ProvisioningError("run_scoped_mcp_entry_present_after_preclean")
+        mcp_response = client.post(
+            f"/api/settings/mcp/{mcp_key}",
+            json={
+                "url": BRIDGE_URL,
+                "transport": "streamable-http",
+                "headers": {"X-AIAT-OpenHands-Grant": grant},
+                "enabled": True,
+                "timeout": 60.0,
+            },
+        )
+        _json_body(mcp_response, expected={201})
+        settings = _json_body(client.get("/api/settings"))
+        config = _mcp_config(settings)
+        _validate_mcp_entry(config, mcp_key)
+        mcp_grant_readback = (
+            "REDACTED_BY_AGENT_SERVER"
+            if config[mcp_key]["headers"]["X-AIAT-OpenHands-Grant"] == AGENT_SERVER_REDACTED_MCP_GRANT
+            else "PRESENT_UNVERIFIED"
+        )
+
+        disabled_skills: list[str] = []
+        agent_response = client.post(
+            f"/api/agent-profiles/{AGENT_PROFILE_NAME}",
+            json=_agent_profile_payload(mcp_key=mcp_key, disabled_skills=disabled_skills),
+        )
+        _json_body(agent_response, expected={201})
+        agent_readback = _json_body(client.get(f"/api/agent-profiles/{AGENT_PROFILE_NAME}"))
+        profile = _profile_object(agent_readback)
+        profile_id = str(profile.get("id") or "")
+        try:
+            UUID(profile_id)
+        except (TypeError, ValueError) as exc:
+            raise ProvisioningError("agent_profile_readback_has_no_server_generated_uuid") from exc
+        if profile.get("llm_profile_ref") != LLM_PROFILE_NAME:
+            raise ProvisioningError("agent_profile_llm_binding_readback_mismatch")
+        if profile.get("mcp_server_refs") != [mcp_key]:
+            raise ProvisioningError("agent_profile_mcp_binding_readback_mismatch")
+        tools = profile.get("tools")
+        names = {str(item.get("name")) for item in tools if isinstance(item, dict)} if isinstance(tools, list) else set()
+        if names != EXPECTED_AGENT_TOOLS:
+            raise ProvisioningError("agent_profile_tool_surface_readback_mismatch")
+        if profile.get("enable_sub_agents") is not False or profile.get("enable_switch_llm_tool") is not False:
+            raise ProvisioningError("agent_profile_disabled_controls_readback_mismatch")
+        _validate_skill_readback(profile, disabled_skills)
+
+        materialized = _json_body(client.post(f"/api/agent-profiles/{AGENT_PROFILE_NAME}/materialize"))
+        if not isinstance(materialized, dict) or materialized.get("valid") is not True:
+            raise ProvisioningError("agent_profile_materialize_invalid")
+        if materialized.get("llm_profile_resolved") is not True or materialized.get("llm_profile_ref") != LLM_PROFILE_NAME:
+            raise ProvisioningError("agent_profile_materialize_llm_unresolved")
+        resolved_keys = materialized.get("resolved_mcp_config_keys") or []
+        if resolved_keys != [mcp_key] or materialized.get("dangling_mcp_server_refs"):
+            raise ProvisioningError("agent_profile_materialize_mcp_unresolved")
+
+        # v1.43.0 discovers public/user skills independently of the profile
+        # payload and uses a deny-list rather than an allow-list.  Deny the
+        # complete discovered catalog, then read back/materialize again.  This
+        # is intentionally fail-closed: a missing or malformed catalog cannot
+        # silently become an enabled skill surface.
+        discovered_skills = materialized.get("resolved_skills")
+        if not isinstance(discovered_skills, list) or any(
+            not isinstance(item, str) or not item for item in discovered_skills
+        ):
+            raise ProvisioningError("agent_profile_skill_catalog_readback_invalid")
+        disabled_skills = sorted(set(discovered_skills))
+        if disabled_skills:
+            agent_response = client.post(
+                f"/api/agent-profiles/{AGENT_PROFILE_NAME}",
+                json=_agent_profile_payload(
+                    mcp_key=mcp_key,
+                    disabled_skills=disabled_skills,
+                ),
+            )
+            _json_body(agent_response, expected={201})
+            agent_readback = _json_body(client.get(f"/api/agent-profiles/{AGENT_PROFILE_NAME}"))
+            profile = _profile_object(agent_readback)
+            _validate_skill_readback(profile, disabled_skills)
+            materialized = _json_body(client.post(f"/api/agent-profiles/{AGENT_PROFILE_NAME}/materialize"))
+            if not isinstance(materialized, dict) or materialized.get("valid") is not True:
+                raise ProvisioningError("agent_profile_materialize_after_skill_deny_invalid")
+        final_resolved_skills = materialized.get("resolved_skills")
+        if not isinstance(final_resolved_skills, list) or final_resolved_skills:
+            raise ProvisioningError("agent_profile_skill_surface_readback_mismatch")
+
+        result = {
+            "schema_version": SCHEMA,
+            "status": "PASS",
+            "candidate": {
+                "release": CANDIDATE_RELEASE,
+                "source_commit": candidate_commit,
+                "image_digest": image_digest,
+            },
+            "store_authority": {
+                "profile_store": "this authenticated Agent Server instance",
+                "certification_store": "this fresh workflow Agent Server instance",
+                "same_authoritative_store": True,
+                "profile_id_portable": False,
+                "profile_id_server_generated": True,
+                "profile_materialization_supported": True,
+            },
+            "agent_profile": {
+                "name": AGENT_PROFILE_NAME,
+                "id": profile_id,
+                "llm_profile_ref": LLM_PROFILE_NAME,
+                "model_id": model_id,
+                "wire_model_id": wire_model_id,
+                "mcp_settings_key": mcp_key,
+                "tools": sorted(EXPECTED_AGENT_TOOLS),
+                "subagents": False,
+                "llm_switching": False,
+                "disabled_skills_count": len(disabled_skills),
+                "resolved_skills_count": len(final_resolved_skills),
+            },
+            "mcp": {
+                "logical_key": mcp_key,
+                "preclean": "PASS",
+                "created": True,
+                "url": BRIDGE_URL,
+                "transport": "streamable-http",
+                "grant_header": "X-AIAT-OpenHands-Grant",
+                "grant_readback": mcp_grant_readback,
+                "grant_value_retained": False,
+                "arbitrary_external_servers": False,
+                "cleanup_owner": "workflow-always-cleanup",
+            },
+            "materialize": {
+                "valid": True,
+                "llm_profile_resolved": True,
+                "model_id": model_id,
+                "wire_model_id": wire_model_id,
+                "resolved_mcp_config_keys": [mcp_key],
+                "dangling_mcp_server_refs": [],
+                "disabled_skills_count": len(disabled_skills),
+                "resolved_skills_count": len(final_resolved_skills),
+            },
+            "governance": {
+                "authority": "AIAT control plane",
+                "model_id": model_id,
+                "openhands_wire_model_id": wire_model_id,
+                "wire_provider_prefix": "openai",
+                "workspace_policy": "assigned isolated workspace only",
+                "sandbox_profile": "gvisor",
+                "network_policy": "AIAT egress allowlist",
+                "budget_policy": {"timeout_seconds": 300, "max_iterations": 20},
+                "cancellation_policy": {"graceful": "pause", "immediate": "interrupt", "resume": "run"},
+                "audit_policy": "durable scalar events; payloads and credentials excluded",
+                "disabled_capabilities": [
+                    "public_skills_marketplace",
+                    "arbitrary_plugins",
+                    "arbitrary_external_mcp",
+                    "browser",
+                    "desktop",
+                    "vscode",
+                    "subagents",
+                    "direct_provider_credentials",
+                    "direct_cloud_or_deployment_authority",
+                ],
+            },
+            "run": {
+                "run_id": str(run_id),
+                "project_id": str(project_id),
+                "worker_id": WORKER_ID,
+            },
+            "cleanup": {
+                "profile": "container_disposal",
+                "mcp": "workflow-always-cleanup-then-verify-absent",
+                "secrets_retained": False,
+            },
+        }
+        return result
+    finally:
+        if created_client:
+            client.close()
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--base-url", default=os.getenv("OPENHANDS_AGENT_SERVER_URL", ""))
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--github-output", type=Path)
+    parser.add_argument("--candidate-commit", default=CANDIDATE_COMMIT)
+    parser.add_argument("--image-digest", default=CANDIDATE_IMAGE_DIGEST)
+    args = parser.parse_args(argv)
+    values = {
+        "session_api_key": os.getenv("OPENHANDS_SESSION_API_KEY", ""),
+        "aiat_tool_secret": os.getenv("AIAT_TOOL_SECRET", ""),
+        "model_id": os.getenv("OPENHANDS_MODEL_ID", ""),
+        "gateway_url": os.getenv("OPENHANDS_MODEL_GATEWAY_URL", ""),
+        "gateway_api_key": os.getenv("OPENHANDS_MODEL_GATEWAY_API_KEY", ""),
+        "mcp_key": os.getenv("OPENHANDS_MCP_SETTINGS_KEY", ""),
+    }
+    try:
+        if not args.base_url:
+            raise ProvisioningError("agent_server_url_missing")
+        report = provision(base_url=args.base_url, candidate_commit=args.candidate_commit, image_digest=args.image_digest, **values)
+        _write_github_output(
+            args.github_output,
+            {
+                "profile_id": report["agent_profile"]["id"],
+                "mcp_key": report["mcp"]["logical_key"],
+                "run_id": report["run"]["run_id"],
+                "project_id": report["run"]["project_id"],
+                "materialized": "true",
+            },
+        )
+    except ProvisioningError as exc:
+        report = {
+            "schema_version": SCHEMA,
+            "status": "BLOCKED",
+            "failure": str(exc),
+            "secrets_retained": False,
+        }
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+        print(json.dumps({"status": "BLOCKED", "failure": str(exc)}, sort_keys=True))
+        return 2
+    except (httpx.HTTPError, ValueError) as exc:
+        # Keep transport/provider parsing failures fail-closed without ever
+        # echoing a URL, credential, or response body into evidence.
+        failure = f"{type(exc).__name__}_during_runtime_provisioning"
+        report = {
+            "schema_version": SCHEMA,
+            "status": "BLOCKED",
+            "failure": failure,
+            "secrets_retained": False,
+        }
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+        print(json.dumps({"status": "BLOCKED", "failure": failure}, sort_keys=True))
+        return 2
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps({"status": report["status"], "profile_id_materialized": True}, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

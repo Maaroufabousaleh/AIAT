@@ -1,7 +1,7 @@
 """FastAPI routes for LLM gateway observability.
 
 Mount these in any FastAPI application that has an ``LLMGatewayClient``
-to expose audit, metrics, rate-limit, and routing dashboards via HTTP,
+to expose audit, metrics, rate-limit/cooldown, and routing dashboards via HTTP,
 plus a live HTML dashboard UI.
 
 Usage::
@@ -51,7 +51,7 @@ def create_observability_router(client: Any) -> APIRouter:
 
     @router.get("/dashboard")
     async def llm_dashboard() -> dict[str, Any]:
-        """Combined audit + metrics + rate-limits + routing dashboard."""
+        """Combined audit + metrics + rate-limits/cooldowns + routing dashboard."""
         return client.observability_dashboard()
 
     # ------------------------------------------------------------------
@@ -191,7 +191,7 @@ def create_observability_router(client: Any) -> APIRouter:
 
     @router.get("/rate-limits")
     async def rate_limits_dashboard() -> dict[str, Any]:
-        """Full rate-limit dashboard for all tracked models."""
+        """Full rate-limit and transient model/provider cooldown dashboard."""
         return client.rate_limits.dashboard()
 
     @router.get("/rate-limits/{model}")
@@ -212,6 +212,12 @@ def create_observability_router(client: Any) -> APIRouter:
             "limits": limits.to_dict(),
             "current_usage": usage,
             "headroom_score": client.rate_limits.headroom_score(model),
+            "cooldown": client.rate_limits.cooldown_status(
+                model,
+                provider=client._provider_id_for_model(model)
+                if hasattr(client, "_provider_id_for_model")
+                else None,
+            ),
         }
 
     # ------------------------------------------------------------------

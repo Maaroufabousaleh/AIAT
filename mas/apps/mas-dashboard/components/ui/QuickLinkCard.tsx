@@ -65,17 +65,17 @@ export function QuickLinkCard({ href, label, desc, icon, tone }: QuickLinkCardPr
       href={href}
       prefetch={false}
       className={clsx(
-        "group flex items-start gap-3 rounded-xl border border-slate-800 bg-slate-950/45 p-3 transition-all",
+        "group flex min-h-11 items-start gap-3 rounded-xl border border-slate-800 bg-slate-950/45 p-3 transition-all",
         "hover:border-slate-700 hover:bg-slate-900/90 hover:shadow-sm hover:shadow-black/20"
       )}
     >
       <div className={clsx("flex-shrink-0 w-9 h-9 rounded-md border flex items-center justify-center transition-colors", TONE[tone])}>
-        <Icon size={16} />
+        <Icon size={16} aria-hidden="true" />
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1 text-sm text-gray-100 group-hover:text-white">
           <span className="truncate">{label}</span>
-          <ArrowUpRight size={12} className="opacity-0 -ml-3 group-hover:opacity-100 group-hover:ml-0 transition-all text-gray-500" />
+          <ArrowUpRight size={12} aria-hidden="true" className="opacity-0 -ml-3 group-hover:opacity-100 group-hover:ml-0 transition-all text-gray-500" />
         </div>
         <div className="text-xs text-slate-500 mt-1 line-clamp-2 leading-5">{desc}</div>
       </div>

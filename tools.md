@@ -1,77 +1,88 @@
-Yes — the **tools** need the same split as the workers:
+# AIAT Tool Catalogue and Integration Boundary
 
-1. **AIAT authority tools** stay custom, because they mutate AIAT state, permissions, approvals, documents, projects, issues, or KPIs.
-2. **OSS capability tools** sit *behind* AIAT wrappers, so AIAT still controls permission, audit, rate limits, sandboxing, and approvals. Your architecture already says the tool-service should be role-gated, expose 6 tool groups, enforce permissions, rate-limit calls, cache duplicate calls, and use circuit breakers. 
+> **Current policy (2026-08-10):** licence, notice, and stated-use data are
+> informational metadata only for this personal/internal programme. They are
+> recorded when known, but never form an AIAT allowlist, prohibited-component
+> list, hiring gate, activation gate, or execution gate. Technical safety,
+> privacy, compatibility, provenance, resource, and approval controls remain
+> authoritative. See [`AIAT_TARGET_PROGRAMME.md`](AIAT_TARGET_PROGRAMME.md) and
+> [`ROADMAP.md`](ROADMAP.md).
 
-## 1. Tools you can ship in AIAT default/product
+AIAT owns the authority boundary. An OSS or external capability is a replaceable
+implementation behind an AIAT tool adapter; it does not become a second
+control plane. The tool service owns typed input/output, permission checks,
+rate limits, budgets, audit records, caching, circuit breaking, and sandbox or
+network policy.
 
-| Tool area              | AIAT tool names / capability                                                                          | Ship default backend                                                           | Final decision                                                                      |
-| ---------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
-| Tool-service shell     | `POST /tools/{tool_name}/run`, `GET /tools`, `GET /health`                                            | AIAT custom FastAPI tool-service                                               | ✅ Ship custom. This is the policy/audit/rate-limit boundary.                        |
-| Workflow authority     | `project.create`, `project.status`, `project.transition`, `project.list`                              | AIAT orchestrator + deterministic workflow controller + Postgres               | ✅ Ship custom only. Do not outsource project state authority.                       |
-| Human approval         | `approval.*`, human decision gates                                                                    | AIAT orchestrator + approval tables                                            | ✅ Ship custom only.                                                                 |
-| Document lifecycle     | `document.create_draft`, `document.submit`, `document.revise`, `document.get_latest`, `document.list` | AIAT document tables + object storage + Docling/GitHub Spec Kit behind wrapper | ✅ Ship. AIAT owns lifecycle; OSS helps parse/write docs.                            |
-| Review workflow        | `review.start_session`, `review.submit`, `review.aggregate`, `review.submit_veto`                     | AIAT review/session tables + C-Suite review agents                             | ✅ Ship custom. Review authority stays in AIAT.                                      |
-| Sprint/issue authority | `sprint.create`, `sprint.activate`, `issue.create`, `issue.update_status`, `issue.list`               | AIAT Postgres + GitHub Issues/ccpm adapter                                     | ✅ Ship. Prefer GitHub Issues/ccpm over Plane/OpenProject by default.                |
-| KPI/learning           | `kpi.compute`, `kpi.compute_project`, `kpi.query_history`, `kpi.update_agent_profile`                 | AIAT KPI tables + Postgres history + LangGraph worker logic                    | ✅ Ship custom wrapper.                                                              |
-| Blob/artifacts         | `blob.upload`, `blob.download`, `blob.list`, `blob.delete`                                            | S3-compatible wrapper                                                          | ✅ Ship wrapper. Use a license-safe S3-compatible backend for external distribution. |
-| Safe command boundary  | `command.run_safe`                                                                                    | AIAT-gated subprocess/sandbox wrapper                                          | ✅ Ship, but only with allowlists, budgets, logs, and sandboxing.                    |
-| File/repo boundary     | `file.patch`, `repo.read`, `repo.search`                                                              | AIAT-gated wrappers over workspace/GitHub                                      | ✅ Ship. Never let workers access raw filesystem or GitHub unrestricted.             |
-| Document/PDF ingestion | Doc parsing, OCR, Markdown/JSON extraction                                                            | Docling                                                                        | ✅ Ship default.                                                                     |
-| Research/web fetch     | Search/fetch/scrape                                                                                   | Scrapling; normal web fetch adapter                                            | ✅ Ship Scrapling/fetch. Keep browser agents optional.                               |
-| Coding/test execution  | Coding worker, test worker                                                                            | OpenCode/OpenHands core + pytest + Playwright                                  | ✅ Ship only after adapter certification.                                            |
-| Code review            | PR/code review worker                                                                                 | pr-agent, open-code-review, stage-cli                                          | ✅ Ship, but pin exact repos because some names are generic.                         |
-| Security scan          | Static/code/security checks                                                                           | Semgrep CLI + SkillSpector                                                     | ✅ Ship. Do **not** ship TruffleHog as default.                                      |
-| QA/browser testing     | E2E tests, UI flows                                                                                   | Playwright                                                                     | ✅ Ship default.                                                                     |
-| DevOps/IaC             | Infra provisioning, CI/CD                                                                             | OpenTofu + GitHub Actions adapter                                              | ✅ Ship. Keep Ansible as user-installed optional adapter.                            |
-| Monitoring             | Metrics, health checks, SRE checks                                                                    | Prometheus + VictoriaMetrics + Playwright/API checks                           | ✅ Ship. Do not embed Grafana by default.                                            |
-| Diagrams/docs          | Architecture diagrams, exports                                                                        | Mermaid                                                                        | ✅ Ship default.                                                                     |
-| Visual UI tools        | Flow builder, org graph, capability graph                                                             | React Flow + Cytoscape.js + Mermaid                                            | ✅ Ship. Extend dashboard, do not replace it.                                        |
-| Worker/tool protocol   | Tool interoperability                                                                                 | MCP SDKs/bridge                                                                | ✅ Ship as adapter mode, but verify each MCP server separately.                      |
-| Sandbox                | Worker/tool isolation                                                                                 | gVisor default; Firecracker optional                                           | ✅ Ship gVisor. Firecracker can be optional high-risk mode.                          |
+## Authority tools and capability adapters
 
-Your own pasted tool list already separates custom authority tools from OSS capability implementations: project/document/review/sprint/KPI/blob/policy tools stay custom, while Docling, Scrapling, OpenCode/OpenHands, pr-agent, Semgrep, Playwright, OpenTofu, ccpm, Mermaid, MCP, and sandboxes sit behind AIAT wrappers. 
+| Tool area | AIAT-owned contract | Current implementation profile |
+| --- | --- | --- |
+| Tool-service shell | `POST /tools/{tool_name}/run`, catalog, health, audit | AIAT FastAPI service and SDK |
+| Workflow/project authority | project state, transitions, flows, approvals, evidence | AIAT orchestrator and Postgres |
+| Documents and reviews | draft/submit/revise, review sessions, comments, evidence | AIAT records with Docling/GitHub Spec Kit adapters; `document.ingest` falls back to explicit degraded plain-text output when Docling is absent |
+| Planning and issues | sprints, issues, KPIs, canonical mappings | AIAT records with ccpm/GitHub Issues/YouTrack adapters |
+| Blob and artifact boundary | upload/download/list/delete, hashes, retention | AIAT object-storage wrapper |
+| Safe commands and repositories | `command.run_safe`, file/repo search and patch | AIAT permission, workspace, sandbox, and egress wrappers |
+| Coding and testing | governed worker/tool requests and normalized results | OpenCode/OpenHands core, pytest, Playwright adapters |
+| Research and web fetch | bounded search, fetch, scrape, browser sessions | Scrapling and browser adapters with identity/network/action limits |
+| Code review | normalized review findings and status | AIAT deterministic diff reviewer by default; external pr-agent/open-code-review/stage-cli candidates use the exact-pin catalogue |
+| Security evaluation | scan results and security evidence | `security.scan` with Semgrep/SkillSpector/TruffleHog aliases and sandbox tests; additional scanners use the same adapter boundary |
+| DevOps and IaC | plan/apply requests, CI/CD evidence, health checks | OpenTofu, GitHub Actions, monitoring adapters |
+| Diagrams and specifications | Mermaid and document/spec exports | Mermaid, Docling, GitHub Spec Kit |
+| Protocol bridge | typed external tool/worker calls | MCP SDKs and certified server adapters |
+| Isolation | worker/tool execution boundary | gVisor baseline; Firecracker optional for high-risk work |
 
-## 2. Tools you can personally add after, but not ship as AIAT default
+## Default personal-instance profile
 
-| Tool                      | Personal/local use |               AIAT default? | How to use safely                                                                                         |
-| ------------------------- | -----------------: | --------------------------: | --------------------------------------------------------------------------------------------------------- |
-| TruffleHog                |              ✅ Yes |                        ❌ No | Use as isolated optional scanner or commercial/license-cleared scanner. Not default because of AGPL risk. |
-| Plane                     |              ✅ Yes |                        ❌ No | Use as separate self-hosted PM integration only. Do not embed as AIAT PM module.                          |
-| OpenProject               |              ✅ Yes |            ⚠️ External only | Good personal/self-hosted PM platform, but keep separate because GPL risk.                                |
-| Grafana                   |              ✅ Yes |                        ❌ No | Use as local/self-hosted monitoring dashboard. Do not embed as AIAT’s default dashboard.                  |
-| ZITADEL                   |              ✅ Yes |                        ❌ No | Optional external identity provider after license review.                                                 |
-| Vault                     |              ✅ Yes |                        ❌ No | Use personally or commercially cleared. For shipped default, prefer OpenBao/cloud KMS/secrets manager.    |
-| Ansible                   |              ✅ Yes |             ⚠️ Adapter only | AIAT can call user-installed Ansible externally; do not bundle tightly.                                   |
-| Neo4j Community           |              ✅ Yes | ⚠️ External/commercial only | Optional graph analytics read-model, not default embedded DB.                                             |
-| browser-use unrestricted  |              ✅ Yes |         ⚠️ Guardrailed only | Use only with domain allowlists, no stealth/CAPTCHA/proxy abuse, full logs, and approval gates.           |
-| AutoGen                   |              ✅ Yes |        ⚠️ Experimental only | License is okay, but Microsoft Agent Framework is better for new default Microsoft-style workers.         |
-| OpenClaw                  |              ✅ Yes |        ⚠️ Experimental only | Do not use as CEO/default authority runtime. Optional isolated assistant only.                            |
-| Firecracker advanced mode |              ✅ Yes |                  ✅ Optional | License is okay, but operationally more complex. Keep for high-risk workers.                              |
-| n8n                       |              ✅ Yes |     ⚠️ Edge automation only | Use for external automations/webhooks, not as AIAT’s core workflow runtime.                               |
-| Garage / SeaweedFS        |              ✅ Yes |     ⚠️ Later storage option | Good candidates if you replace MinIO/S3 backend later; audit before switching.                            |
+The default profile is chosen for technical fit and operational simplicity, not
+licence classification. The current baseline is LangGraph/CrewAI/Microsoft
+Agent Framework for worker runtimes; OpenCode/OpenHands core, Playwright, and
+pytest for coding/testing; Docling, GitHub Spec Kit, and Mermaid for documents;
+Semgrep and SkillSpector for security; OpenTofu and GitHub Actions for DevOps;
+ccpm/GitHub Issues for planning; LiteLLM and OmniRoute for model/routing
+analytics; and Letta, Qdrant, Temporal, and MCP where their integration
+contracts are enabled.
 
-The license-corrected stack from the previous review already says to remove TruffleHog from default security, remove Plane/OpenProject from default PM, remove Grafana from embedded monitoring, and make license/provenance checks mandatory. 
+Heavier dependencies (browser, Docling, Semgrep, and Mermaid/Node) are built in
+the separately budgeted tool-service `extensions` profile. The general
+`core` image stays small enough for ordinary orchestration and delegates
+extension work through explicit adapter or sidecar policy. The document path
+remains usable in the core profile: when Docling is missing, `document.ingest`
+returns source text with `available: true`, `configured: true`,
+`degraded: true`, and `backend: plain_text_fallback` rather than a false
+unavailable result.
 
-## 3. Final tool-service manifest I would implement
+## Optional or replaceable integrations
 
-| Group        | Tools                                                                                                                                       | Allowed by default                                        |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| Workflow     | `project.create`, `project.status`, `project.transition`, `project.list`                                                                    | CEO/orchestrator; limited status access for chiefs        |
-| Document     | `document.create_draft`, `document.submit`, `document.revise`, `document.get_latest`, `document.list`                                       | COO, C-Suite, PMs, workers with read-only limits          |
-| Review       | `review.start_session`, `review.submit`, `review.aggregate`, `review.submit_veto`                                                           | COO starts/aggregates; C-Suite submits; CSO can veto      |
-| Sprint/Issue | `sprint.create`, `sprint.activate`, `issue.create`, `issue.decompose`, `issue.update_status`, `issue.list`                                  | CTO creates/activates; PMs/workers update assigned issues |
-| DevOps       | `infra.provision`, `cicd.configure`, `monitoring.setup`, `secrets.manage`, `infra.ready_signal`                                             | DevOps PM and DevOps workers only                         |
-| KPI/Utility  | `kpi.compute`, `kpi.query_history`, `kpi.update_agent_profile`, `velocity.report`, `estimation.adjust`, `blob.*`, `web_search`, `web_fetch` | CTO for KPI; most roles for limited blob/web access       |
+TruffleHog, Plane, OpenProject, ZITADEL, Vault, Ansible, Neo4j, Grafana,
+AutoGen, OpenClaw, browser-use, Firecracker, n8n, Garage, SeaweedFS, and other
+tools may be used normally in this personal instance when their technical
+boundary is useful. They are optional because of architecture, operations,
+resource cost, maturity, or deployment choice—not because AIAT applies a
+licence prohibition. They must still respect the AIAT control plane, identity,
+network, workspace, sandbox, approval, and audit contracts.
 
-This matches the architecture plan’s 6 tool groups and role-gated tool-service design. Workers should be blocked from dangerous authority tools like `project.transition`, `approval.*`, `review.start_session`, `sprint.create`, and `sprint.activate`. 
+## Tool-service groups
 
-## Bottom line
+| Group | Representative tools | Typical authority |
+| --- | --- | --- |
+| Workflow | `project.*`, `flow.*`, `approval.*`, `privileged_ops.request` | CEO/orchestrator; request is audited by `/ceo/privileged-action` and may require human approval |
+| Document | `document.*`, context, artifact references | chiefs, PMs, and workers according to project grants |
+| Review | `review.*` | review leads and designated C-suite roles |
+| Planning/issue | `sprint.*`, `issue.*`, `kpi.*` | CTO/PM roles with project-scoped grants |
+| DevOps/security | `infra.*`, `cicd.*`, `monitoring.*`, scan adapters | DevOps/security workers through sandboxed adapters |
+| Utility | bounded web, repository, blob, search, and reporting tools | explicit per-worker capability grants |
 
-**Ship AIAT’s tool-service and authority tools custom.**
-**Ship safe OSS capability tools behind wrappers.**
-**Keep AGPL/GPL/BUSL or high-risk tools personal/optional/external.**
+Every invocation records the caller, capability, project/run reference when
+available, adapter/version, normalized result, resource usage, and audit
+outcome. A tool may be added or replaced without changing AIAT's authority
+model; the adapter manifest and evidence ledger are the compatibility record.
 
-The clean default tool stack is:
+## Metadata record
 
-**Docling, GitHub Spec Kit, Scrapling, OpenCode/OpenHands after certification, pr-agent, open-code-review/stage-cli after repo pinning, Semgrep CLI, SkillSpector, Playwright, OpenTofu, GitHub Actions, ccpm, GitHub Issues, Mermaid, React Flow, Cytoscape.js, MCP, Prometheus, VictoriaMetrics, gVisor, optional Firecracker.**
+The provenance catalogue may retain source URL, exact version or digest,
+repository revision, dependency/image lock, SBOM and scan references, licence
+identifier, notices, and any stated use/modification/redistribution language.
+Those fields help the operator understand what is running. They do not change
+the technical activation predicate for this personal/internal programme.

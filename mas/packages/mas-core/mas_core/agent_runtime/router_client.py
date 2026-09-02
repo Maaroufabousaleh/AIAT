@@ -35,6 +35,7 @@ import httpx
 
 from ..protocols.envelope import MessageEnvelope
 from ..protocols.ws import WSAckFrame, WSMessageFrame, WSNackFrame, WSPingFrame, WSPongFrame
+from ..observability.tracing import current_trace_id
 
 logger = logging.getLogger(__name__)
 
@@ -134,13 +135,16 @@ class RouterClient:
             For any other non-2xx response.
         """
         client = self._require_http()
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self._agent_id}:{self._agent_secret}",
+        }
+        if trace_id := current_trace_id():
+            headers["X-AIAT-Trace-ID"] = trace_id
         response = await client.post(
             "/messages/publish",
             content=envelope.model_dump_json(),
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self._agent_id}:{self._agent_secret}",
-            },
+            headers=headers,
         )
         if response.status_code == 409:
             raise RouterDuplicateMessage(409, response.text)
@@ -155,13 +159,16 @@ class RouterClient:
         Returns a dict mapping team_id → entry_id.
         """
         client = self._require_http()
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self._agent_id}:{self._agent_secret}",
+        }
+        if trace_id := current_trace_id():
+            headers["X-AIAT-Trace-ID"] = trace_id
         response = await client.post(
             "/messages/broadcast",
             content=envelope.model_dump_json(),
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self._agent_id}:{self._agent_secret}",
-            },
+            headers=headers,
         )
         if response.status_code not in (200, 201):
             raise RouterError(response.status_code, response.text)

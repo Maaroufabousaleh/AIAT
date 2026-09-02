@@ -6,12 +6,14 @@ Type: API / integration / security
 The AIAT MAS operational control is built into the orchestrator-api routes:
   GET  /health
   GET  /system/status
+  GET  /system/diagnostics
   POST /system/shutdown
   POST /system/resume
   GET  /system/logs/{container}
   PUT  /system/schedule
 
-No separate scripts directory exists — ops is fully API-driven.
+The API-facing operator wrapper is `scripts/mas-ctl`; Compose and systemd
+service lifecycle commands remain in their host-owned wrappers.
 """
 
 from __future__ import annotations
@@ -424,42 +426,167 @@ async def test_system_status_diagnostic_fields(client):
 
 
 # ---------------------------------------------------------------------------
-# 10. Production gaps documented as TODO tests
+# 10. Host-owned lifecycle boundary
 # ---------------------------------------------------------------------------
 
 
-def test_todo_no_bootstrap_script():
-    """
-    TODO (production gap): No standalone bootstrap/startup CLI script exists.
-    All operational control is via REST API. For a production MAS, a CLI wrapper
-    (e.g. `mas-ctl bootstrap`, `mas-ctl status`) that wraps these API calls
-    would improve operability. Currently, ops must be done via curl/httpx.
-    """
-    pytest.skip(
-        "TODO: No mas-ctl bootstrap script exists. "
-        "Ops is fully API-driven via orchestrator-api routes."
+def test_mas_ctl_bootstrap_script_exists():
+    """The operator-facing API wrapper is present and executable."""
+    from pathlib import Path
+
+    script = Path(__file__).resolve().parents[3] / "scripts" / "mas-ctl"
+    assert script.is_file()
+    assert script.stat().st_mode & 0o111
+
+
+def test_service_restart_remains_host_boundary():
+    """Per-service restart stays in the Compose/systemd host boundary."""
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[3]
+    compose_wrapper = repo_root / "infra" / "compose" / "mas.sh"
+    systemd_wrapper = repo_root / "infra" / "systemd" / "masctl"
+    assert compose_wrapper.is_file()
+    assert systemd_wrapper.is_file()
+    assert 'restart)' in compose_wrapper.read_text(encoding="utf-8")
+    systemd_text = systemd_wrapper.read_text(encoding="utf-8")
+    assert 'restart)' in systemd_text
+    assert '"${compose[@]}" restart "$SERVICE_NAME"' in systemd_text
+
+
+@pytest.mark.anyio
+async def test_system_diagnostics_reports_dependency_health(client, monkeypatch):
+    """Diagnostics reports safe health facts without exposing dependency payloads."""
+    from orchestrator_api import main
+
+    storage = _base_storage("RUNNING")
+    _patch(storage)
+    monkeypatch.setattr(
+        main,
+        "_probe_http_health",
+        AsyncMock(
+            side_effect=[
+                {"status": "ok", "http_status": 200, "redis_connected": True},
+                {
+                    "status": "ok",
+                    "http_status": 200,
+                    "cache_connected": True,
+                    "tools_registered": 24,
+                },
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        main,
+        "_probe_object_store_health",
+        AsyncMock(return_value={"status": "ok", "configured": True}),
     )
 
+    response = await client.get("/system/diagnostics")
 
-def test_todo_no_service_restart_endpoint():
-    """
-    TODO (production gap): No /system/restart endpoint for individual service restart.
-    The /system/shutdown + /system/resume cycle restarts the whole system.
-    Individual service restart (e.g. just the tool-service) is not exposed via API.
-    """
-    pytest.skip(
-        "TODO: No per-service restart endpoint. "
-        "Full system shutdown/resume is the only restart path."
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["state"] == "RUNNING"
+    assert set(body["dependencies"]) == {
+        "database",
+        "message_router",
+        "tool_service",
+        "object_store",
+    }
+    assert body["dependencies"]["database"]["status"] == "ok"
+    assert body["dependencies"]["message_router"]["redis_connected"] is True
+    assert body["dependencies"]["tool_service"]["tools_registered"] == 24
+    assert "error" not in body["dependencies"]["message_router"]
+
+
+@pytest.mark.anyio
+async def test_system_diagnostics_reports_degraded_dependency(client, monkeypatch):
+    """A failed dependency makes the aggregate degraded without raising 5xx."""
+    from orchestrator_api import main
+
+    storage = _base_storage("RUNNING")
+    _patch(storage)
+    monkeypatch.setattr(
+        main,
+        "_probe_http_health",
+        AsyncMock(
+            side_effect=[
+                {"status": "degraded", "http_status": 200, "reported_status": "degraded"},
+                {"status": "error", "error_type": "ConnectError"},
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        main,
+        "_probe_object_store_health",
+        AsyncMock(return_value={"status": "not_configured", "configured": False}),
     )
 
+    response = await client.get("/system/diagnostics")
 
-def test_todo_no_diagnostics_endpoint():
-    """
-    TODO (production gap): No /system/diagnostics endpoint with DB/Redis/MinIO
-    connection health. The /system/status only reports system_state and project counts.
-    A /system/diagnostics endpoint should check and report all service dependencies.
-    """
-    pytest.skip(
-        "TODO: No /system/diagnostics endpoint. "
-        "/system/status does not check DB/Redis/MinIO connectivity."
-    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "degraded"
+    assert body["dependencies"]["message_router"]["reported_status"] == "degraded"
+    assert body["dependencies"]["tool_service"]["error_type"] == "ConnectError"
+    assert body["dependencies"]["object_store"]["status"] == "not_configured"
+
+
+@pytest.mark.anyio
+async def test_http_diagnostic_probe_redacts_dependency_payload(client, monkeypatch):
+    """HTTP probes retain safe flags, never raw dependency error text."""
+    from orchestrator_api import main
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def get(self, _url):
+            import httpx
+
+            return httpx.Response(
+                200,
+                json={"status": "degraded", "redis": "error: redis-password=secret-value"},
+            )
+
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **_kwargs: FakeClient())
+    result = await main._probe_http_health("http://router")
+
+    assert result["status"] == "degraded"
+    assert result["redis_connected"] is False
+    assert "error_type" not in result
+    assert "secret-value" not in str(result)
+
+
+@pytest.mark.anyio
+async def test_object_store_diagnostic_probe_reports_unconfigured(client, monkeypatch):
+    """Absent object-store credentials are reported without attempting a call."""
+    from orchestrator_api import main
+
+    for name in (
+        "MINIO_ENDPOINT",
+        "BLOB_ENDPOINT_URL",
+        "MINIO_ACCESS_KEY",
+        "AWS_ACCESS_KEY_ID",
+        "MINIO_SECRET_KEY",
+        "AWS_SECRET_ACCESS_KEY",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    result = await main._probe_object_store_health()
+
+    assert result == {"status": "not_configured", "configured": False}
+
+
+@pytest.mark.anyio
+async def test_system_diagnostics_without_storage_returns_503(client):
+    """The route cannot report a database check without control-plane storage."""
+    from orchestrator_api.main import app
+
+    app.state.storage = None
+    response = await client.get("/system/diagnostics")
+    assert response.status_code == 503

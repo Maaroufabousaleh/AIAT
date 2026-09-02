@@ -7,6 +7,7 @@ team_id: office_cio
 
 admin:
   agent_id: cio
+  worker_manifest_ref: cio
   role: c_suite
   class: CSuiteAgent
   display_name: "Chief Information Officer"
@@ -21,6 +22,7 @@ admin:
 
 workers:
   - agent_id: tech_analyst
+    worker_manifest_ref: tech_analyst
     role: worker
     class: WorkerAgent
     display_name: "Tech Analyst"
@@ -35,6 +37,7 @@ workers:
       - web_search
 
   - agent_id: tool_interface_auditor
+    worker_manifest_ref: tool_interface_auditor
     role: worker
     class: WorkerAgent
     display_name: "Tool Interface Auditor"
@@ -51,6 +54,7 @@ workers:
       - blob.upload
 
   - agent_id: adapter_certifier
+    worker_manifest_ref: adapter_certifier
     role: worker
     class: WorkerAgent
     display_name: "Adapter Certifier"

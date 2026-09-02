@@ -1,6 +1,13 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  useRef,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
@@ -84,6 +91,16 @@ interface StateHistoryEntry {
   payload?: Record<string, unknown>;
 }
 
+type HttpError = Error & { status?: number };
+
+type WorkspaceSubTab = "activity" | "resources" | "cost";
+
+const WORKSPACE_SUB_TABS: readonly WorkspaceSubTab[] = [
+  "activity",
+  "resources",
+  "cost",
+];
+
 interface Decision {
   id: string;
   decision_type?: string;
@@ -143,6 +160,23 @@ interface ProjectEvidence {
   completeness_score: number;
   checks: EvidenceCheck[];
   evidence_refs: Record<string, string[]>;
+}
+
+interface EvidencePackageCategory {
+  category: string;
+  status: string;
+  required: boolean;
+  item_count: number;
+  evidence_refs: string[];
+  reason?: string | null;
+}
+
+interface ProjectEvidencePackage {
+  schema_version: string;
+  status: string;
+  completeness_score: number;
+  categories: EvidencePackageCategory[];
+  notices: Array<{ artifact_id: string; field: string; value: string }>;
 }
 
 interface RepositorySummary {
@@ -268,6 +302,14 @@ export default function ProjectDetailPage() {
   const [decisions, setDecisions] = useState<Decision[]>([]);
   const [allowedTransitions, setAllowedTransitions] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+  const [projectStale, setProjectStale] = useState(false);
+  const [projectRefreshError, setProjectRefreshError] = useState<string | null>(
+    null,
+  );
+  const [projectLoadError, setProjectLoadError] = useState<string | null>(null);
+  const hasProjectRef = useRef(false);
+  const [accessDenied, setAccessDenied] = useState(false);
+  const accessDeniedRef = useRef(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [expandedDecision, setExpandedDecision] = useState<string | null>(null);
 
@@ -277,11 +319,45 @@ export default function ProjectDetailPage() {
   // Sub-tabs within the workspace view let operators jump between the most
   // important slices (next action, project activity, live resources, spend)
   // without scrolling through every card on a tall screen.
-  const [workspaceSubTab, setWorkspaceSubTab] = useState<
-    "activity" | "resources" | "cost"
-  >("activity");
+  const [workspaceSubTab, setWorkspaceSubTab] =
+    useState<WorkspaceSubTab>("activity");
+
+  const handleWorkspaceSubTabKeyDown = useCallback(
+    (
+      event: ReactKeyboardEvent<HTMLButtonElement>,
+      current: WorkspaceSubTab,
+    ) => {
+      const currentIndex = WORKSPACE_SUB_TABS.indexOf(current);
+      let nextIndex: number | null = null;
+
+      if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+        nextIndex = (currentIndex + 1) % WORKSPACE_SUB_TABS.length;
+      } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+        nextIndex =
+          (currentIndex - 1 + WORKSPACE_SUB_TABS.length) %
+          WORKSPACE_SUB_TABS.length;
+      } else if (event.key === "Home") {
+        nextIndex = 0;
+      } else if (event.key === "End") {
+        nextIndex = WORKSPACE_SUB_TABS.length - 1;
+      }
+
+      if (nextIndex === null) return;
+
+      event.preventDefault();
+      const nextTab = WORKSPACE_SUB_TABS[nextIndex];
+      setWorkspaceSubTab(nextTab);
+      window.requestAnimationFrame(() => {
+        document.getElementById(`workspace-tab-${nextTab}`)?.focus();
+      });
+    },
+    [],
+  );
   const [workspace, setWorkspace] = useState<WorkspaceSummary | null>(null);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
+  const [workspaceStale, setWorkspaceStale] = useState(false);
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const workspaceRef = useRef<WorkspaceSummary | null>(null);
   const [repositoryError, setRepositoryError] = useState<string | null>(null);
   const [flowInstance, setFlowInstance] = useState<FlowInstance | null>(null);
   const [flowDefinition, setFlowDefinition] = useState<FlowDefinition | null>(
@@ -301,6 +377,8 @@ export default function ProjectDetailPage() {
   const [contextItems, setContextItems] = useState<ContextItem[]>([]);
   const [contextLoading, setContextLoading] = useState(false);
   const [evidence, setEvidence] = useState<ProjectEvidence | null>(null);
+  const [evidencePackage, setEvidencePackage] =
+    useState<ProjectEvidencePackage | null>(null);
   const [evidenceLoading, setEvidenceLoading] = useState(false);
   const [showContextUpload, setShowContextUpload] = useState(false);
   const [newContextName, setNewContextName] = useState("");
@@ -320,6 +398,20 @@ export default function ProjectDetailPage() {
     [contextItems],
   );
   const contextSelection = useBulkSelection(contextItemIds);
+  const clearContextSelection = contextSelection.clear;
+  const handleAccessDenied = useCallback(() => {
+    accessDeniedRef.current = true;
+    setAccessDenied(true);
+    setProjectStale(false);
+    setProjectRefreshError(null);
+    setProjectLoadError(null);
+    setActionLoading(null);
+    setShowFlowSwitch(false);
+    setShowFlowActionsMenu(false);
+    setShowContextUpload(false);
+    setBulkContextError("");
+    clearContextSelection();
+  }, [clearContextSelection]);
   const generatedDocumentCount = useMemo(
     () => contextItems.filter((item) => item.read_only).length,
     [contextItems],
@@ -330,12 +422,34 @@ export default function ProjectDetailPage() {
   }, [contextItemIds.join(",")]);
 
   const load = useCallback(async () => {
+    if (accessDeniedRef.current) return;
     setLoading(true);
+    setProjectRefreshError(null);
     try {
       const [proj, hist, dec, trans] = await Promise.allSettled([
-        fetch(`/api/projects/${id}`)
-          .then((r) => (r.ok ? r.json() : null))
-          .catch(() => null),
+        fetch(`/api/projects/${id}`).then(async (r) => {
+          const payload = await r.json().catch(() => null);
+          if (!r.ok) {
+            const detail =
+              payload && typeof payload === "object"
+                ? ((payload as { detail?: unknown; error?: unknown }).detail ??
+                  (payload as { detail?: unknown; error?: unknown }).error)
+                : null;
+            if (r.status === 404) {
+              throw new Error(
+                "Project was not found. It may have been deleted, archived, or this link may be stale.",
+              );
+            }
+            const error = new Error(
+              typeof detail === "string" && detail.trim()
+                ? `Project request failed: ${detail}`
+                : `Project request failed (HTTP ${r.status})`,
+            ) as HttpError;
+            error.status = r.status;
+            throw error;
+          }
+          return payload;
+        }),
         fetch(`/api/projects/${id}/state-history`)
           .then((r) => (r.ok ? r.json() : []))
           .catch(() => []),
@@ -346,7 +460,36 @@ export default function ProjectDetailPage() {
           .then((r) => (r.ok ? r.json() : []))
           .catch(() => []),
       ]);
-      if (proj.status === "fulfilled" && proj.value) setProject(proj.value);
+      if (proj.status === "fulfilled" && proj.value) {
+        setProject(proj.value);
+        hasProjectRef.current = true;
+        setProjectStale(false);
+        setProjectRefreshError(null);
+        setProjectLoadError(null);
+      } else {
+        if (
+          proj.status === "rejected" &&
+          proj.reason instanceof Error &&
+          ((proj.reason as HttpError).status === 401 ||
+            (proj.reason as HttpError).status === 403)
+        ) {
+          handleAccessDenied();
+          return;
+        }
+        const failure =
+          proj.status === "rejected" && proj.reason instanceof Error
+            ? proj.reason.message
+            : "The project could not be loaded from the control plane.";
+        if (hasProjectRef.current) {
+          setProjectStale(true);
+          setProjectRefreshError(
+            failure ||
+              "The latest project refresh failed; this page may be out of date.",
+          );
+        } else {
+          setProjectLoadError(failure);
+        }
+      }
       if (hist.status === "fulfilled")
         setHistory(
           Array.isArray(hist.value) ? hist.value : (hist.value?.history ?? []),
@@ -361,13 +504,22 @@ export default function ProjectDetailPage() {
             ? trans.value
             : (trans.value?.transitions ?? []),
         );
-    } catch {
+    } catch (cause) {
+      if (hasProjectRef.current) {
+        setProjectStale(true);
+        setProjectRefreshError(
+          cause instanceof Error
+            ? cause.message
+            : "The latest project refresh failed; this page may be out of date.",
+        );
+      }
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [handleAccessDenied, id]);
 
   const loadFlowData = useCallback(async () => {
+    if (accessDeniedRef.current) return;
     setFlowLoading(true);
     try {
       const instanceRes = await fetch(`/api/projects/${id}/flow-instance`);
@@ -428,6 +580,7 @@ export default function ProjectDetailPage() {
   }, [id, setNodes, setEdges]);
 
   const loadContextData = useCallback(async () => {
+    if (accessDeniedRef.current) return;
     setContextLoading(true);
     try {
       const res = await fetch(`/api/projects/${id}/context`);
@@ -445,49 +598,129 @@ export default function ProjectDetailPage() {
   }, [id]);
 
   const loadEvidence = useCallback(async () => {
+    if (accessDeniedRef.current) return;
     setEvidenceLoading(true);
     try {
-      const response = await fetch(`/api/projects/${id}/evidence`);
+      const [response, packageResponse] = await Promise.all([
+        fetch(`/api/projects/${id}/evidence`),
+        fetch(`/api/projects/${id}/evidence/package`),
+      ]);
       setEvidence(response.ok ? await response.json() : null);
+      setEvidencePackage(
+        packageResponse.ok ? await packageResponse.json() : null,
+      );
     } catch {
       setEvidence(null);
+      setEvidencePackage(null);
     } finally {
       setEvidenceLoading(false);
     }
   }, [id]);
 
   const loadWorkspace = useCallback(async () => {
+    if (accessDeniedRef.current) return;
     setWorkspaceLoading(true);
     try {
       const [res, repositoryRes] = await Promise.all([
         fetch(`/api/projects/${id}/workspace`),
         fetch(`/api/projects/${id}/repository`),
       ]);
-      if (res.ok) {
-        const data = await res.json();
+      const workspacePayload = await res.json().catch(() => null);
+      const repositoryPayload = repositoryRes.ok
+        ? await repositoryRes.json().catch(() => null)
+        : null;
+      const failures: string[] = [];
+
+      if (!res.ok) {
+        const detail =
+          workspacePayload && typeof workspacePayload === "object"
+            ? ((workspacePayload as { detail?: unknown; error?: unknown })
+                .detail ??
+              (workspacePayload as { detail?: unknown; error?: unknown }).error)
+            : null;
+        failures.push(
+          typeof detail === "string" && detail.trim()
+            ? `Workspace request failed: ${detail}`
+            : `Workspace request failed (HTTP ${res.status})`,
+        );
+      }
+      if (!repositoryRes.ok) {
+        const detail =
+          repositoryPayload && typeof repositoryPayload === "object"
+            ? ((repositoryPayload as { detail?: unknown; error?: unknown })
+                .detail ??
+              (repositoryPayload as { detail?: unknown; error?: unknown })
+                .error)
+            : null;
+        failures.push(
+          typeof detail === "string" && detail.trim()
+            ? `Repository request failed: ${detail}`
+            : `Repository request failed (HTTP ${repositoryRes.status})`,
+        );
+      }
+
+      if (
+        res.ok &&
+        workspacePayload &&
+        typeof workspacePayload === "object" &&
+        "recent_activity" in workspacePayload
+      ) {
+        const data = { ...(workspacePayload as WorkspaceSummary) };
         if (repositoryRes.ok) {
-          const repositoryData = await repositoryRes.json();
-          data.repository = repositoryData.workspace ?? null;
+          data.repository =
+            repositoryPayload && typeof repositoryPayload === "object"
+              ? ((repositoryPayload as { workspace?: RepositorySummary | null })
+                  .workspace ?? null)
+              : null;
+        } else if (workspaceRef.current) {
+          data.repository = workspaceRef.current.repository;
         }
-        // Validate workspace data structure - ensure required fields exist
-        if (data && typeof data === "object" && "recent_activity" in data) {
-          setWorkspace(data);
-        } else {
-          console.error("Invalid workspace data structure:", data);
-          setWorkspace(null);
-        }
+        setWorkspace(data);
+        workspaceRef.current = data;
+        setWorkspaceStale(failures.length > 0);
+        setWorkspaceError(failures.length > 0 ? failures.join(" ") : null);
       } else {
-        setWorkspace(null);
+        const failure =
+          failures[0] ??
+          "Workspace response was missing the required activity data.";
+        if (workspaceRef.current) {
+          setWorkspaceStale(true);
+          setWorkspaceError(failure);
+        } else {
+          setWorkspace(null);
+          setWorkspaceStale(false);
+          setWorkspaceError(failure);
+        }
       }
     } catch (err) {
       console.error("Failed to load workspace:", err);
-      setWorkspace(null);
+      const failure =
+        err instanceof Error
+          ? err.message
+          : "The project workspace could not be loaded from the control plane.";
+      if (workspaceRef.current) {
+        setWorkspaceStale(true);
+        setWorkspaceError(failure);
+      } else {
+        setWorkspace(null);
+        setWorkspaceStale(false);
+        setWorkspaceError(failure);
+      }
     } finally {
       setWorkspaceLoading(false);
     }
   }, [id]);
 
+  function handleDeniedResponse(response: Response) {
+    if (response.status === 401 || response.status === 403) {
+      handleAccessDenied();
+      return true;
+    }
+    return false;
+  }
+
   async function handleRepositoryAction(operation: "sync" | "status") {
+    if (accessDeniedRef.current) return;
     setActionLoading(`repository-${operation}`);
     setRepositoryError(null);
     try {
@@ -497,6 +730,7 @@ export default function ProjectDetailPage() {
         body: JSON.stringify({ operation }),
       });
       if (!res.ok) {
+        if (handleDeniedResponse(res)) return;
         const data = await res.json().catch(() => ({}));
         setRepositoryError(data.error || `Git ${operation} failed`);
       } else {
@@ -611,10 +845,11 @@ export default function ProjectDetailPage() {
     decisionId: string,
     decision: "APPROVED" | "REJECTED" | "EDITS",
   ) {
+    if (accessDeniedRef.current) return;
     const loadingKey = `${decisionId}-${decision}`;
     setActionLoading(loadingKey);
     try {
-      await fetch(`/api/projects/${id}/decisions`, {
+      const res = await fetch(`/api/projects/${id}/decisions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -623,6 +858,7 @@ export default function ProjectDetailPage() {
           comments: `Submitted from project workspace: ${decision.toLowerCase()}`,
         }),
       });
+      if (handleDeniedResponse(res)) return;
       await Promise.all([load(), loadWorkspace()]);
     } finally {
       setActionLoading(null);
@@ -630,9 +866,11 @@ export default function ProjectDetailPage() {
   }
 
   async function handleAction(action: "retry" | "archive") {
+    if (accessDeniedRef.current) return;
     setActionLoading(action);
     try {
-      await fetch(`/api/projects/${id}/${action}`, { method: "POST" });
+      const res = await fetch(`/api/projects/${id}/${action}`, { method: "POST" });
+      if (handleDeniedResponse(res)) return;
       await load();
     } finally {
       setActionLoading(null);
@@ -640,13 +878,15 @@ export default function ProjectDetailPage() {
   }
 
   async function handleTransition(event: string) {
+    if (accessDeniedRef.current) return;
     setActionLoading(event);
     try {
-      await fetch(`/api/projects/${id}/transition`, {
+      const res = await fetch(`/api/projects/${id}/transition`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ event }),
       });
+      if (handleDeniedResponse(res)) return;
       await load();
     } finally {
       setActionLoading(null);
@@ -654,14 +894,15 @@ export default function ProjectDetailPage() {
   }
 
   async function handleFlowAction(action: string) {
-    if (!flowInstance) return;
+    if (!flowInstance || accessDeniedRef.current) return;
     setActionLoading(action);
     try {
-      await fetch(`/api/flows/instances/${flowInstance.id}/action`, {
+      const res = await fetch(`/api/flows/instances/${flowInstance.id}/action`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action }),
       });
+      if (handleDeniedResponse(res)) return;
       await loadFlowData();
     } finally {
       setActionLoading(null);
@@ -673,7 +914,7 @@ export default function ProjectDetailPage() {
     action: string,
     options?: { approved?: boolean; decision?: string; error?: string },
   ) {
-    if (!flowInstance) return;
+    if (!flowInstance || accessDeniedRef.current) return;
     setActionLoading(`node-${nodeId}`);
     try {
       const res = await fetch(
@@ -687,6 +928,7 @@ export default function ProjectDetailPage() {
       if (res.ok) {
         await Promise.all([loadFlowData(), load()]);
       } else {
+        if (handleDeniedResponse(res)) return;
         const data = await res.json().catch(() => ({}));
         setFlowError(data.error || `Failed to ${action} node`);
       }
@@ -696,7 +938,7 @@ export default function ProjectDetailPage() {
   }
 
   async function handleSwitchFlow(newFlowId: string) {
-    if (!flowInstance) return;
+    if (!flowInstance || accessDeniedRef.current) return;
     setActionLoading("switch-flow");
     try {
       const res = await fetch(
@@ -711,6 +953,7 @@ export default function ProjectDetailPage() {
         await loadFlowData();
         setShowFlowSwitch(false);
       } else {
+        if (handleDeniedResponse(res)) return;
         const d = await res.json();
         setFlowError(d.error || "Failed to switch flow");
       }
@@ -720,7 +963,7 @@ export default function ProjectDetailPage() {
   }
 
   async function handleRetry() {
-    if (!flowInstance) return;
+    if (!flowInstance || accessDeniedRef.current) return;
     setActionLoading("retry");
     try {
       const res = await fetch(`/api/flows/instances/${flowInstance.id}/retry`, {
@@ -729,6 +972,7 @@ export default function ProjectDetailPage() {
       if (res.ok) {
         await loadFlowData();
       } else {
+        if (handleDeniedResponse(res)) return;
         const d = await res.json();
         setFlowError(d.error || "Failed to retry flow");
       }
@@ -738,12 +982,15 @@ export default function ProjectDetailPage() {
   }
 
   async function openFlowSwitchModal() {
+    if (accessDeniedRef.current) return;
     setActionLoading("load-flows");
     try {
       const res = await fetch("/api/flows?is_active=true");
       if (res.ok) {
         const flows = await res.json();
         setAvailableFlows(flows || []);
+      } else if (handleDeniedResponse(res)) {
+        return;
       }
     } catch {
       setAvailableFlows([]);
@@ -754,6 +1001,7 @@ export default function ProjectDetailPage() {
   }
 
   async function handleAssignFlow(flowId: string) {
+    if (accessDeniedRef.current) return;
     setActionLoading("assign-flow");
     try {
       const res = await fetch(`/api/projects/${id}/flow-instance`, {
@@ -764,6 +1012,7 @@ export default function ProjectDetailPage() {
       if (res.ok) {
         await loadFlowData();
       } else {
+        if (handleDeniedResponse(res)) return;
         const d = await res.json();
         setFlowError(d.error || "Failed to assign flow");
       }
@@ -775,7 +1024,7 @@ export default function ProjectDetailPage() {
   }
 
   async function handleOverrideFlowNode() {
-    if (!flowInstance || !overrideNodeId) return;
+    if (!flowInstance || !overrideNodeId || accessDeniedRef.current) return;
     setActionLoading("override-flow-node");
     setFlowError(null);
     try {
@@ -796,6 +1045,7 @@ export default function ProjectDetailPage() {
         await Promise.all([loadFlowData(), load()]);
         setOverrideReason("");
       } else {
+        if (handleDeniedResponse(res)) return;
         const data = await res.json().catch(() => ({}));
         setFlowError(data.error || "Failed to override flow node");
       }
@@ -805,7 +1055,7 @@ export default function ProjectDetailPage() {
   }
 
   async function handleAddContextItem() {
-    if (!newContextName.trim()) return;
+    if (!newContextName.trim() || accessDeniedRef.current) return;
     setActionLoading("add-context");
     try {
       const body: Record<string, unknown> = {
@@ -833,6 +1083,8 @@ export default function ProjectDetailPage() {
         setNewContextText("");
         setNewContextTags("");
         setShowContextUpload(false);
+      } else {
+        handleDeniedResponse(res);
       }
     } finally {
       setActionLoading(null);
@@ -840,6 +1092,7 @@ export default function ProjectDetailPage() {
   }
 
   async function handleDeleteContextItem(itemId: string) {
+    if (accessDeniedRef.current) return;
     if (!confirm("Delete this context item?")) return;
     setActionLoading(`delete-${itemId}`);
     try {
@@ -848,6 +1101,8 @@ export default function ProjectDetailPage() {
       });
       if (res.ok) {
         await loadContextData();
+      } else {
+        handleDeniedResponse(res);
       }
     } finally {
       setActionLoading(null);
@@ -855,7 +1110,7 @@ export default function ProjectDetailPage() {
   }
 
   async function handleBulkDeleteContextItems() {
-    if (contextSelection.selectedCount === 0) return;
+    if (accessDeniedRef.current || contextSelection.selectedCount === 0) return;
     const ids = Array.from(contextSelection.selected);
     setBulkContextDeleting(true);
     setBulkContextError("");
@@ -866,9 +1121,27 @@ export default function ProjectDetailPage() {
           const res = await fetch(`/api/projects/${id}/context/${itemId}`, {
             method: "DELETE",
           });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          if (!res.ok) {
+            if (res.status === 401 || res.status === 403) {
+              throw Object.assign(new Error("Authorization denied"), {
+                status: res.status,
+              });
+            }
+            throw new Error(`HTTP ${res.status}`);
+          }
         }),
       );
+      const denied = results.some(
+        (result) =>
+          result.status === "rejected" &&
+          (result.reason as HttpError)?.status !== undefined &&
+          ((result.reason as HttpError).status === 401 ||
+            (result.reason as HttpError).status === 403),
+      );
+      if (denied) {
+        handleAccessDenied();
+        return;
+      }
       for (const r of results) if (r.status === "rejected") failed++;
       if (failed > 0) {
         setBulkContextError(
@@ -882,28 +1155,84 @@ export default function ProjectDetailPage() {
     }
   }
 
-  if (loading) {
+  if (loading && !project) {
     return (
-      <div className="dashboard-page flex items-center justify-center h-full">
-        <div className="text-slate-500 text-sm">Loading project…</div>
-      </div>
+      <main
+        aria-label="Project detail"
+        className="dashboard-page flex items-center justify-center h-full"
+      >
+        <div
+          role="status"
+          aria-live="polite"
+          aria-label="Loading project"
+          className="text-slate-500 text-sm"
+        >
+          Loading project…
+        </div>
+      </main>
+    );
+  }
+
+  if (accessDenied && !project) {
+    return (
+      <main aria-label="Project detail" className="dashboard-page">
+        <section
+          role="region"
+          aria-label="Project access status"
+          className="mx-4 mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-4 text-sm text-amber-100"
+        >
+          <h1 className="text-lg font-medium text-amber-50">
+            Project access denied
+          </h1>
+          <p className="mt-1 text-amber-100/80">
+            The project definition cannot be read while authorization is
+            unavailable. Refresh and project controls remain hidden until
+            access is restored.
+          </p>
+        </section>
+        <Link
+          href="/projects"
+          className="mt-4 inline-flex min-h-11 items-center gap-1 text-sm text-blue-400 hover:text-blue-300"
+        >
+          <ArrowLeft size={14} aria-hidden="true" /> Back to projects
+        </Link>
+      </main>
     );
   }
 
   if (!project) {
     return (
-      <div className="dashboard-page">
-        <ErrorBanner tone="error" title="Project not found">
-          We could not locate this project. It may have been deleted, archived,
-          or you may be following a stale link.
+      <main aria-label="Project detail" className="dashboard-page">
+        <ErrorBanner
+          tone="error"
+          title="Project unavailable"
+          action={
+            <button
+              type="button"
+              onClick={() => void load()}
+              disabled={loading}
+              aria-busy={loading}
+              className="inline-flex min-h-11 items-center gap-2 rounded-md border border-red-700/70 bg-red-950/40 px-3 py-2 text-xs font-medium text-red-100 transition-colors hover:bg-red-900/50 disabled:cursor-wait disabled:opacity-60"
+            >
+              <RefreshCw
+                size={14}
+                className={loading ? "animate-spin" : ""}
+                aria-hidden="true"
+              />
+              Retry
+            </button>
+          }
+        >
+          {projectLoadError ??
+            "The project could not be loaded from the control plane. Retry to try again."}
         </ErrorBanner>
         <Link
           href="/projects"
-          className="text-sm text-blue-400 hover:text-blue-300 inline-flex items-center gap-1"
+          className="inline-flex min-h-11 items-center gap-1 text-sm text-blue-400 hover:text-blue-300"
         >
           <ArrowLeft size={14} /> Back to projects
         </Link>
-      </div>
+      </main>
     );
   }
 
@@ -913,17 +1242,28 @@ export default function ProjectDetailPage() {
   // Refresh handler respects the active tab so operators get fresh data
   // for whichever surface they're currently inspecting.
   const handleRefresh = () => {
-    if (activeTab === "flow") return loadFlowData();
-    if (activeTab === "workspace") return loadWorkspace();
-    if (activeTab === "context") return loadContextData();
-    if (activeTab === "evidence") return loadEvidence();
-    return load();
+    if (accessDeniedRef.current) return Promise.resolve();
+    const surfaceRefresh =
+      activeTab === "flow"
+        ? loadFlowData()
+        : activeTab === "workspace"
+          ? loadWorkspace()
+          : activeTab === "context"
+            ? loadContextData()
+            : activeTab === "evidence"
+              ? loadEvidence()
+              : Promise.resolve();
+    return Promise.all([load(), surfaceRefresh]);
   };
   const isRefreshing =
-    loading || flowLoading || workspaceLoading || contextLoading || evidenceLoading;
+    loading ||
+    flowLoading ||
+    workspaceLoading ||
+    contextLoading ||
+    evidenceLoading;
 
   return (
-    <div className="dashboard-page">
+    <main aria-label="Project detail" className="dashboard-page">
       <PageHeader
         icon="folder-kanban"
         title={project.name}
@@ -945,46 +1285,93 @@ export default function ProjectDetailPage() {
             </span>
           </span>
         }
-        actions={
+        actions={!accessDenied ? (
           <>
             <span
               className={clsx(
                 "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium text-white border border-white/10",
                 STATE_COLORS[project.state] ?? "bg-slate-600",
               )}
+              role="status"
               aria-label={`Project state: ${project.state.replace(/_/g, " ")}`}
             >
               <span className="w-1.5 h-1.5 rounded-full bg-white/70" />
               {project.state?.replace(/_/g, " ")}
             </span>
             <button
+              type="button"
               onClick={handleRefresh}
               title="Refresh"
               aria-label="Refresh project data"
-              className="p-2 rounded-lg border border-slate-800 bg-slate-950/40 text-slate-400 hover:text-slate-100 hover:border-slate-600 hover:bg-slate-900 transition-colors disabled:opacity-50"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg border border-slate-800 bg-slate-950/40 text-slate-400 hover:text-slate-100 hover:border-slate-600 hover:bg-slate-900 transition-colors disabled:opacity-50"
             >
               <RefreshCw
                 size={15}
                 className={isRefreshing ? "animate-spin" : ""}
+                aria-hidden="true"
               />
             </button>
           </>
-        }
+        ) : undefined}
       />
 
-      <div
+      {accessDenied && (
+        <section
+          role="region"
+          aria-label="Project access status"
+          className="mx-4 mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100"
+        >
+          <h2 className="font-medium text-amber-50">Project access denied</h2>
+          <p className="mt-1 text-amber-100/80">
+            This last-known project header is retained for reference only.
+            Refresh, retry, workflow, flow, context, evidence, repository,
+            approval, transition, and other mutation controls are hidden until
+            authorization is restored.
+          </p>
+        </section>
+      )}
+
+      {projectStale && projectRefreshError && !accessDenied && (
+        <ErrorBanner
+          tone="warning"
+          title="Showing last known project state"
+          action={
+            <button
+              type="button"
+              onClick={() => void handleRefresh()}
+              disabled={isRefreshing}
+              aria-busy={isRefreshing}
+              className="inline-flex min-h-11 items-center gap-2 rounded-md border border-slate-700 bg-slate-900/60 px-3 py-2 text-xs font-medium text-slate-100 transition-colors hover:bg-slate-800 disabled:cursor-wait disabled:opacity-60"
+            >
+              <RefreshCw
+                size={14}
+                className={isRefreshing ? "animate-spin" : ""}
+                aria-hidden="true"
+              />
+              Retry
+            </button>
+          }
+        >
+          {projectRefreshError} The project controls remain visible, but the
+          canonical state may have changed.
+        </ErrorBanner>
+      )}
+
+      {!accessDenied && <div
         className="flex flex-wrap gap-1 border-b border-slate-800"
         role="tablist"
         aria-label="Project views"
+        aria-orientation="horizontal"
       >
         <button
+          type="button"
           onClick={() => setActiveTab("workspace")}
           data-testid="project-tab-workspace"
           role="tab"
           aria-selected={activeTab === "workspace"}
           aria-controls="project-panel-workspace"
           className={clsx(
-            "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors flex items-center gap-2",
+            "min-h-11 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors flex items-center gap-2",
             activeTab === "workspace"
               ? "border-blue-400 text-blue-300"
               : "border-transparent text-slate-400 hover:text-slate-200",
@@ -993,13 +1380,14 @@ export default function ProjectDetailPage() {
           Workspace
         </button>
         <button
+          type="button"
           onClick={() => setActiveTab("workflow")}
           data-testid="project-tab-workflow"
           role="tab"
           aria-selected={activeTab === "workflow"}
           aria-controls="project-panel-workflow"
           className={clsx(
-            "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors flex items-center gap-2",
+            "min-h-11 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors flex items-center gap-2",
             activeTab === "workflow"
               ? "border-blue-400 text-blue-300"
               : "border-transparent text-slate-400 hover:text-slate-200",
@@ -1013,13 +1401,14 @@ export default function ProjectDetailPage() {
           )}
         </button>
         <button
+          type="button"
           onClick={() => setActiveTab("flow")}
           data-testid="project-tab-flow"
           role="tab"
           aria-selected={activeTab === "flow"}
           aria-controls="project-panel-flow"
           className={clsx(
-            "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors flex items-center gap-2",
+            "min-h-11 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors flex items-center gap-2",
             activeTab === "flow"
               ? "border-blue-400 text-blue-300"
               : "border-transparent text-slate-400 hover:text-slate-200",
@@ -1039,13 +1428,14 @@ export default function ProjectDetailPage() {
           )}
         </button>
         <button
+          type="button"
           onClick={() => setActiveTab("context")}
           data-testid="project-tab-context"
           role="tab"
           aria-selected={activeTab === "context"}
           aria-controls="project-panel-context"
           className={clsx(
-            "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors flex items-center gap-2",
+            "min-h-11 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors flex items-center gap-2",
             activeTab === "context"
               ? "border-blue-400 text-blue-300"
               : "border-transparent text-slate-400 hover:text-slate-200",
@@ -1060,13 +1450,14 @@ export default function ProjectDetailPage() {
           )}
         </button>
         <button
+          type="button"
           onClick={() => setActiveTab("evidence")}
           data-testid="project-tab-evidence"
           role="tab"
           aria-selected={activeTab === "evidence"}
           aria-controls="project-panel-evidence"
           className={clsx(
-            "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors flex items-center gap-2",
+            "min-h-11 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors flex items-center gap-2",
             activeTab === "evidence"
               ? "border-blue-400 text-blue-300"
               : "border-transparent text-slate-400 hover:text-slate-200",
@@ -1074,29 +1465,78 @@ export default function ProjectDetailPage() {
         >
           Evidence
           {evidence && (
-            <span className={clsx(
-              "px-1.5 py-0.5 rounded text-xxs",
-              evidence.status === "complete"
-                ? "bg-emerald-950/60 text-emerald-300"
-                : "bg-amber-950/60 text-amber-300",
-            )}>
+            <span
+              className={clsx(
+                "px-1.5 py-0.5 rounded text-xxs",
+                evidence.status === "complete"
+                  ? "bg-emerald-950/60 text-emerald-300"
+                  : "bg-amber-950/60 text-amber-300",
+              )}
+            >
               {Math.round(evidence.completeness_score * 100)}%
             </span>
           )}
         </button>
-      </div>
+      </div>}
 
-      {activeTab === "workspace" && (
+      {!accessDenied && activeTab === "workspace" && (
         <div
           id="project-panel-workspace"
           role="tabpanel"
           aria-labelledby="project-tab-workspace"
+          aria-busy={workspaceLoading}
           className="space-y-4"
         >
+          {workspaceStale && workspaceError && (
+            <div data-testid="project-workspace-stale">
+              <ErrorBanner
+                tone="warning"
+                title="Showing last known workspace"
+                action={
+                  <button
+                    type="button"
+                    onClick={() => void loadWorkspace()}
+                    disabled={workspaceLoading}
+                    aria-busy={workspaceLoading}
+                    className="inline-flex min-h-11 items-center gap-2 rounded-md border border-slate-700 bg-slate-900/60 px-3 py-2 text-xs font-medium text-slate-100 transition-colors hover:bg-slate-800 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    <RefreshCw
+                      size={14}
+                      className={workspaceLoading ? "animate-spin" : ""}
+                      aria-hidden="true"
+                    />
+                    Retry
+                  </button>
+                }
+              >
+                {workspaceError} Retained workspace data remains visible while
+                the latest refresh is retried.
+              </ErrorBanner>
+            </div>
+          )}
           {workspace === null && !workspaceLoading && (
-            <ErrorBanner tone="error" title="Workspace data unavailable">
-              The project workspace API may be unavailable or the project may
-              not exist. Please try refreshing the page.
+            <ErrorBanner
+              tone="error"
+              title="Workspace data unavailable"
+              action={
+                <button
+                  type="button"
+                  onClick={() => void loadWorkspace()}
+                  disabled={workspaceLoading}
+                  aria-busy={workspaceLoading}
+                  className="inline-flex min-h-11 items-center gap-2 rounded-md border border-red-700/70 bg-red-950/40 px-3 py-2 text-xs font-medium text-red-100 transition-colors hover:bg-red-900/50 disabled:cursor-wait disabled:opacity-60"
+                >
+                  <RefreshCw
+                    size={14}
+                    className={workspaceLoading ? "animate-spin" : ""}
+                    aria-hidden="true"
+                  />
+                  Retry
+                </button>
+              }
+            >
+              {workspaceError ??
+                "The project workspace API may be unavailable or the project may not exist. Retry to try again."}
             </ErrorBanner>
           )}
 
@@ -1106,13 +1546,21 @@ export default function ProjectDetailPage() {
             className="flex flex-wrap gap-1 dashboard-toolbar"
             role="tablist"
             aria-label="Workspace sections"
+            aria-orientation="horizontal"
           >
             <button
+              type="button"
+              id="workspace-tab-activity"
               onClick={() => setWorkspaceSubTab("activity")}
+              onKeyDown={(event) =>
+                handleWorkspaceSubTabKeyDown(event, "activity")
+              }
               role="tab"
               aria-selected={workspaceSubTab === "activity"}
+              aria-controls="workspace-panel-activity"
+              tabIndex={workspaceSubTab === "activity" ? 0 : -1}
               className={clsx(
-                "px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors flex items-center gap-1.5",
+                "min-h-11 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors flex items-center gap-1.5",
                 workspaceSubTab === "activity"
                   ? "bg-blue-500/15 text-blue-200 border-blue-400/40"
                   : "bg-slate-900/40 text-slate-400 border-slate-800 hover:text-slate-200 hover:border-slate-700",
@@ -1121,11 +1569,18 @@ export default function ProjectDetailPage() {
               <Activity size={12} /> Activity
             </button>
             <button
+              type="button"
+              id="workspace-tab-resources"
               onClick={() => setWorkspaceSubTab("resources")}
+              onKeyDown={(event) =>
+                handleWorkspaceSubTabKeyDown(event, "resources")
+              }
               role="tab"
               aria-selected={workspaceSubTab === "resources"}
+              aria-controls="workspace-panel-resources"
+              tabIndex={workspaceSubTab === "resources" ? 0 : -1}
               className={clsx(
-                "px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors flex items-center gap-1.5",
+                "min-h-11 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors flex items-center gap-1.5",
                 workspaceSubTab === "resources"
                   ? "bg-blue-500/15 text-blue-200 border-blue-400/40"
                   : "bg-slate-900/40 text-slate-400 border-slate-800 hover:text-slate-200 hover:border-slate-700",
@@ -1134,11 +1589,16 @@ export default function ProjectDetailPage() {
               <ListChecks size={12} /> Resources
             </button>
             <button
+              type="button"
+              id="workspace-tab-cost"
               onClick={() => setWorkspaceSubTab("cost")}
+              onKeyDown={(event) => handleWorkspaceSubTabKeyDown(event, "cost")}
               role="tab"
               aria-selected={workspaceSubTab === "cost"}
+              aria-controls="workspace-panel-cost"
+              tabIndex={workspaceSubTab === "cost" ? 0 : -1}
               className={clsx(
-                "px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors flex items-center gap-1.5",
+                "min-h-11 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors flex items-center gap-1.5",
                 workspaceSubTab === "cost"
                   ? "bg-blue-500/15 text-blue-200 border-blue-400/40"
                   : "bg-slate-900/40 text-slate-400 border-slate-800 hover:text-slate-200 hover:border-slate-700",
@@ -1181,7 +1641,13 @@ export default function ProjectDetailPage() {
           </div>
 
           {workspaceSubTab === "activity" && (
-            <div className="space-y-4">
+            <div
+              id="workspace-panel-activity"
+              role="tabpanel"
+              aria-labelledby="workspace-tab-activity"
+              tabIndex={0}
+              className="space-y-4"
+            >
               <div className="dashboard-surface p-4">
                 <h2 className="text-sm font-medium text-white mb-3">
                   Next Operator Action
@@ -1319,7 +1785,13 @@ export default function ProjectDetailPage() {
           )}
 
           {workspaceSubTab === "resources" && (
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div
+              id="workspace-panel-resources"
+              role="tabpanel"
+              aria-labelledby="workspace-tab-resources"
+              tabIndex={0}
+              className="grid grid-cols-1 gap-4 md:grid-cols-2"
+            >
               <div className="dashboard-surface p-4 md:col-span-2">
                 <div className="flex items-start justify-between gap-3 mb-3">
                   <div>
@@ -1327,7 +1799,8 @@ export default function ProjectDetailPage() {
                       Git Workspace
                     </h2>
                     <p className="text-xs text-slate-500 mt-1">
-                      Source code lives in the project-scoped tool workspace and is managed through the Git adapter.
+                      Source code lives in the project-scoped tool workspace and
+                      is managed through the Git adapter.
                     </p>
                   </div>
                   {workspace?.repository && (
@@ -1342,7 +1815,9 @@ export default function ProjectDetailPage() {
                       className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-blue-300 border border-blue-700/60 bg-blue-500/10 rounded-lg hover:bg-blue-500/20 disabled:opacity-50"
                     >
                       <RefreshCw size={12} />
-                      {actionLoading === "repository-sync" ? "Syncing…" : "Sync"}
+                      {actionLoading === "repository-sync"
+                        ? "Syncing…"
+                        : "Sync"}
                     </button>
                   )}
                 </div>
@@ -1360,27 +1835,34 @@ export default function ProjectDetailPage() {
                     <div>
                       <div className="text-slate-500">Location</div>
                       <div className="text-slate-200 mt-1 break-all">
-                        {workspace.repository.workspace_path || workspace.repository.workspace_relative_path || "pending"}
+                        {workspace.repository.workspace_path ||
+                          workspace.repository.workspace_relative_path ||
+                          "pending"}
                       </div>
                     </div>
                     <div>
                       <div className="text-slate-500">Status</div>
                       <div className="text-slate-200 mt-1">
                         {workspace.repository.status || "unknown"}
-                        {workspace.repository.clean === false && " · uncommitted changes"}
+                        {workspace.repository.clean === false &&
+                          " · uncommitted changes"}
                       </div>
                     </div>
                     <div>
                       <div className="text-slate-500">Remote</div>
                       <div className="text-slate-200 mt-1 break-all">
-                        {workspace.repository.remote || workspace.repository.repository_url || "local repository"}
+                        {workspace.repository.remote ||
+                          workspace.repository.repository_url ||
+                          "local repository"}
                       </div>
                     </div>
                     <div>
                       <div className="text-slate-500">Branch / commit</div>
                       <div className="text-slate-200 mt-1 break-all">
                         {workspace.repository.branch || "unknown"}
-                        {workspace.repository.head ? ` · ${workspace.repository.head.slice(0, 12)}` : ""}
+                        {workspace.repository.head
+                          ? ` · ${workspace.repository.head.slice(0, 12)}`
+                          : ""}
                       </div>
                     </div>
                   </div>
@@ -1477,7 +1959,13 @@ export default function ProjectDetailPage() {
           )}
 
           {workspaceSubTab === "cost" && (
-            <div className="dashboard-surface p-4">
+            <div
+              id="workspace-panel-cost"
+              role="tabpanel"
+              aria-labelledby="workspace-tab-cost"
+              tabIndex={0}
+              className="dashboard-surface p-4"
+            >
               <h2 className="text-sm font-medium text-white mb-3">
                 Cost And Usage
               </h2>
@@ -1538,7 +2026,7 @@ export default function ProjectDetailPage() {
         </div>
       )}
 
-      {activeTab === "evidence" && (
+      {!accessDenied && activeTab === "evidence" && (
         <div
           id="project-panel-evidence"
           role="tabpanel"
@@ -1552,37 +2040,52 @@ export default function ProjectDetailPage() {
           )}
           {!evidenceLoading && evidence === null && (
             <ErrorBanner tone="error" title="Evidence data unavailable">
-              The evidence service did not return a project-scoped policy result.
+              The evidence service did not return a project-scoped policy
+              result.
             </ErrorBanner>
           )}
           {evidence && (
             <>
               <div className="dashboard-surface p-4 flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-sm font-medium text-white">Completion Evidence</h2>
+                  <h2 className="text-sm font-medium text-white">
+                    Completion Evidence
+                  </h2>
                   <p className="mt-1 text-xs text-slate-500">
-                    Policy {evidence.policy_id} v{evidence.policy_version} · {Math.round(evidence.completeness_score * 100)}% complete
+                    Policy {evidence.policy_id} v{evidence.policy_version} ·{" "}
+                    {Math.round(evidence.completeness_score * 100)}% complete
                   </p>
                 </div>
-                <span className={clsx(
-                  "rounded-full border px-3 py-1 text-xs font-medium",
-                  evidence.status === "complete"
-                    ? "border-emerald-700/70 bg-emerald-950/40 text-emerald-300"
-                    : "border-amber-700/70 bg-amber-950/40 text-amber-200",
-                )}>
+                <span
+                  className={clsx(
+                    "rounded-full border px-3 py-1 text-xs font-medium",
+                    evidence.status === "complete"
+                      ? "border-emerald-700/70 bg-emerald-950/40 text-emerald-300"
+                      : "border-amber-700/70 bg-amber-950/40 text-amber-200",
+                  )}
+                >
                   {evidence.status}
                 </span>
               </div>
               <div className="space-y-2">
                 {evidence.checks.map((check) => (
-                  <div key={check.name} className={clsx(
-                    "dashboard-surface flex items-start gap-3 p-4",
-                    check.required && !check.passed && "border-amber-800/70",
-                  )}>
+                  <div
+                    key={check.name}
+                    className={clsx(
+                      "dashboard-surface flex items-start gap-3 p-4",
+                      check.required && !check.passed && "border-amber-800/70",
+                    )}
+                  >
                     {check.passed ? (
-                      <CheckCircle size={18} className="mt-0.5 shrink-0 text-emerald-400" />
+                      <CheckCircle
+                        size={18}
+                        className="mt-0.5 shrink-0 text-emerald-400"
+                      />
                     ) : (
-                      <XCircle size={18} className="mt-0.5 shrink-0 text-amber-400" />
+                      <XCircle
+                        size={18}
+                        className="mt-0.5 shrink-0 text-amber-400"
+                      />
                     )}
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-100">
@@ -1591,7 +2094,11 @@ export default function ProjectDetailPage() {
                           {check.required ? "required" : "optional"}
                         </span>
                       </div>
-                      {check.reason && <p className="mt-1 text-xs text-amber-200">{check.reason}</p>}
+                      {check.reason && (
+                        <p className="mt-1 text-xs text-amber-200">
+                          {check.reason}
+                        </p>
+                      )}
                       {check.evidence_refs.length > 0 && (
                         <p className="mt-2 break-all text-xxs text-slate-500">
                           Evidence: {check.evidence_refs.join(", ")}
@@ -1601,12 +2108,83 @@ export default function ProjectDetailPage() {
                   </div>
                 ))}
               </div>
+              {evidencePackage && (
+                <section
+                  className="dashboard-surface p-4"
+                  aria-labelledby="evidence-package-heading"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h3
+                        id="evidence-package-heading"
+                        className="text-sm font-medium text-white"
+                      >
+                        Evidence package coverage
+                      </h3>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {evidencePackage.schema_version} · grouped read-only
+                        views over canonical project records
+                      </p>
+                    </div>
+                    <span className="text-xs text-slate-400">
+                      {
+                        evidencePackage.categories.filter(
+                          (category) => category.status === "present",
+                        ).length
+                      }
+                      /{evidencePackage.categories.length} categories present
+                    </span>
+                  </div>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    {evidencePackage.categories.map((category) => (
+                      <div
+                        key={category.category}
+                        className="rounded-lg border border-slate-800 bg-slate-950/40 p-3"
+                      >
+                        <div className="flex items-center justify-between gap-2 text-xs">
+                          <span className="font-medium capitalize text-slate-200">
+                            {category.category}
+                          </span>
+                          <span
+                            className={clsx(
+                              "rounded-full px-2 py-0.5",
+                              category.status === "present"
+                                ? "bg-emerald-950/50 text-emerald-300"
+                                : category.status === "missing"
+                                  ? "bg-amber-950/50 text-amber-200"
+                                  : "bg-slate-800 text-slate-400",
+                            )}
+                          >
+                            {category.status}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xxs text-slate-500">
+                          {category.item_count} item
+                          {category.item_count === 1 ? "" : "s"}
+                          {category.required ? " · required" : " · optional"}
+                        </p>
+                        {category.reason && (
+                          <p className="mt-1 text-xxs text-amber-200">
+                            {category.reason}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  {evidencePackage.notices.length > 0 && (
+                    <p className="mt-3 text-xxs text-slate-500">
+                      Resource licence/restriction values are retained as
+                      metadata notices only and do not change package status.
+                    </p>
+                  )}
+                </section>
+              )}
             </>
           )}
         </div>
       )}
 
-      {activeTab === "workflow" && (
+      {!accessDenied && activeTab === "workflow" && (
         <>
           <div className="flex flex-wrap gap-2">
             {allowedTransitions.map((event) => (
@@ -1843,7 +2421,7 @@ export default function ProjectDetailPage() {
         </>
       )}
 
-      {activeTab === "flow" && (
+      {!accessDenied && activeTab === "flow" && (
         <div className="space-y-4">
           {flowError && (
             <div className="rounded-xl border border-red-800 bg-red-950/40 px-4 py-3 text-sm text-red-300">
@@ -2359,7 +2937,7 @@ export default function ProjectDetailPage() {
         </div>
       )}
 
-      {activeTab === "context" && (
+      {!accessDenied && activeTab === "context" && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -2535,13 +3113,16 @@ export default function ProjectDetailPage() {
               {contextItems.map((item) => {
                 const isSelected = contextSelection.selected.has(item.id);
                 const itemType = String(item.item_type || "TEXT").toUpperCase();
-                const isGeneratedDocument = Boolean(item.read_only || item.source === "document");
+                const isGeneratedDocument = Boolean(
+                  item.read_only || item.source === "document",
+                );
                 return (
                   <div
                     key={item.id}
                     className={clsx(
                       "bg-slate-900 border rounded-xl p-4 transition-colors",
-                      isGeneratedDocument && "border-indigo-800/80 bg-indigo-950/10",
+                      isGeneratedDocument &&
+                        "border-indigo-800/80 bg-indigo-950/10",
                       isSelected
                         ? "border-blue-500/60 bg-blue-950/30"
                         : !isGeneratedDocument && "border-slate-800",
@@ -2571,10 +3152,10 @@ export default function ProjectDetailPage() {
                           itemType === "DOCUMENT"
                             ? "bg-indigo-900/30 text-indigo-300"
                             : itemType === "FILE"
-                            ? "bg-blue-900/30 text-blue-400"
-                            : itemType === "URL"
-                              ? "bg-purple-900/30 text-purple-400"
-                              : "bg-amber-900/30 text-amber-400",
+                              ? "bg-blue-900/30 text-blue-400"
+                              : itemType === "URL"
+                                ? "bg-purple-900/30 text-purple-400"
+                                : "bg-amber-900/30 text-amber-400",
                         )}
                       >
                         {itemType === "URL" ? (
@@ -2617,7 +3198,10 @@ export default function ProjectDetailPage() {
                           </div>
                         )}
                         {isGeneratedDocument && item.blob_key && (
-                          <div className="mt-2 truncate text-xxs text-indigo-300/70" title={item.blob_key}>
+                          <div
+                            className="mt-2 truncate text-xxs text-indigo-300/70"
+                            title={item.blob_key}
+                          >
                             {item.blob_key}
                           </div>
                         )}
@@ -2690,7 +3274,7 @@ export default function ProjectDetailPage() {
           </div>
         </div>
       )}
-    </div>
+    </main>
   );
 }
 

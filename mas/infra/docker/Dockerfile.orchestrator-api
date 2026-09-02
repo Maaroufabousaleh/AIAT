@@ -1,5 +1,5 @@
 # ── Dockerfile.orchestrator-api ───────────────────────────────────────────────
-FROM python:3.11-slim
+FROM python:3.11-slim@sha256:90744cff8f32887f075c47d747a173ff333e9e98801667af93c357fa9f5e28ff
 
 # Install docker CLI for log streaming (newer version for API compatibility)
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 ENV PIP_TRUSTED_HOST="pypi.org files.pythonhosted.org"
 
-RUN pip install --no-cache-dir uv==0.4.*
+RUN pip install --no-cache-dir uv==0.4.30
 
 COPY packages/mas-core/ /tmp/mas-core/
 COPY packages/mas-tools-sdk/ /tmp/mas-tools-sdk/
@@ -37,6 +37,7 @@ RUN pip install --no-deps /tmp/mas-core && \
         psutil \
         aiolimiter \
         apscheduler \
+        pyyaml \
         alembic \
         psycopg2-binary \
         cryptography
@@ -49,6 +50,12 @@ COPY apps/orchestrator-api/orchestrator_api/ /app/orchestrator_api/
 COPY migrations/ /app/migrations/
 COPY alembic.ini /app/alembic.ini
 COPY workers/ /app/workers/
+COPY companies/ /app/companies/
+# Keep the committed external-worker approval evidence available to the
+# fail-closed runtime factory. The API image does not include the repository
+# checkout, so source-relative worker manifest refs are normalized to /app/docs.
+COPY docs/provenance/openhands-candidate/ /app/docs/provenance/openhands-candidate/
+COPY scripts/check_runtime_adapter_conformance.py /app/scripts/check_runtime_adapter_conformance.py
 COPY apps/tool-service/tool_service/semgrep-default.yml /app/semgrep-default.yml
 
 WORKDIR /app

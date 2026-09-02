@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import Link from "next/link";
 import {
   RefreshCw,
   Users,
@@ -183,11 +184,13 @@ function WorkerRow({
   onStatusChange,
   selected,
   onSelectChange,
+  accessDenied,
 }: {
   worker: Worker;
   onStatusChange: () => void;
   selected: boolean;
   onSelectChange: (checked: boolean) => void;
+  accessDenied: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [transitioning, setTransitioning] = useState(false);
@@ -292,10 +295,19 @@ function WorkerRow({
     <>
       <tr
         className={clsx(
-          "border-b border-slate-800 hover:bg-slate-800/35 cursor-pointer transition-colors",
+          "border-b border-slate-800 hover:bg-slate-800/35 cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400/70",
           selected && "bg-blue-950/30 hover:bg-blue-950/40",
         )}
+        tabIndex={0}
+        aria-label={`${worker.worker_id} worker row`}
+        aria-expanded={expanded}
         onClick={() => void toggleExpanded()}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            void toggleExpanded();
+          }
+        }}
       >
         <td className="px-4 py-3 w-10" onClick={(e) => e.stopPropagation()}>
           <RowCheckbox
@@ -340,18 +352,18 @@ function WorkerRow({
         </td>
         <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center gap-1">
-            {worker.source_repo && (
+            {!accessDenied && worker.source_repo && (
               <button
                 onClick={evaluateWorker}
                 disabled={evaluating}
                 title="Evaluate"
                 aria-label={`Evaluate ${worker.worker_id}`}
-                className="p-1.5 rounded text-slate-500 hover:text-blue-400 hover:bg-blue-400/10 transition-colors disabled:opacity-40"
+                className="inline-flex min-h-11 min-w-11 items-center justify-center rounded text-blue-300/70 hover:text-blue-200 hover:bg-blue-500/10 transition-colors disabled:opacity-40"
               >
                 <ClipboardCheck size={14} />
               </button>
             )}
-            <button
+            {!accessDenied && <button
               onClick={toggleStatus}
               disabled={transitioning}
               title={worker.status === "ACTIVE" ? "Deactivate" : "Activate"}
@@ -361,23 +373,23 @@ function WorkerRow({
                   : `Activate ${worker.worker_id}`
               }
               className={clsx(
-                "p-1.5 rounded transition-colors disabled:opacity-40",
+                "inline-flex min-h-11 min-w-11 items-center justify-center rounded transition-colors disabled:opacity-40",
                 worker.status === "ACTIVE"
-                  ? "text-emerald-400 hover:text-rose-400 hover:bg-rose-400/10"
-                  : "text-slate-500 hover:text-emerald-400 hover:bg-emerald-400/10",
+                  ? "text-emerald-400 hover:text-rose-300 hover:bg-rose-500/10"
+                  : "text-emerald-300/70 hover:text-emerald-200 hover:bg-emerald-500/10",
               )}
             >
               <Power size={14} />
-            </button>
-            <button
+            </button>}
+            {!accessDenied && <button
               onClick={drainWorker}
               disabled={transitioning || worker.status !== "ACTIVE"}
               title="Drain"
               aria-label={`Drain ${worker.worker_id}`}
-              className="p-1.5 rounded text-slate-500 hover:text-cyan-400 hover:bg-cyan-400/10 transition-colors disabled:opacity-30"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded text-cyan-300/70 hover:text-cyan-200 hover:bg-cyan-500/10 transition-colors disabled:opacity-30"
             >
               <RefreshCw size={14} />
-            </button>
+            </button>}
           </div>
         </td>
       </tr>
@@ -694,11 +706,13 @@ function RegisterWorkerModal({
           )}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs text-slate-400 mb-1">
+              <label htmlFor="register-worker-id" className="block text-xs text-slate-400 mb-1">
                 Worker ID *
               </label>
               <input
-                className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
+                id="register-worker-id"
+                required
+                className="w-full min-h-11 bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
                 value={form.worker_id}
                 onChange={(e) =>
                   setForm({ ...form, worker_id: e.target.value })
@@ -707,11 +721,13 @@ function RegisterWorkerModal({
               />
             </div>
             <div>
-              <label className="block text-xs text-slate-400 mb-1">
+              <label htmlFor="register-worker-name" className="block text-xs text-slate-400 mb-1">
                 Name *
               </label>
               <input
-                className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
+                id="register-worker-name"
+                required
+                className="w-full min-h-11 bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
                 placeholder="My Worker Agent"
@@ -719,11 +735,12 @@ function RegisterWorkerModal({
             </div>
           </div>
           <div>
-            <label className="block text-xs text-slate-400 mb-1">
+            <label htmlFor="register-worker-description" className="block text-xs text-slate-400 mb-1">
               Description
             </label>
             <input
-              className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
+              id="register-worker-description"
+              className="w-full min-h-11 bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
               value={form.description}
               onChange={(e) =>
                 setForm({ ...form, description: e.target.value })
@@ -733,22 +750,24 @@ function RegisterWorkerModal({
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs text-slate-400 mb-1">
+              <label htmlFor="register-worker-team" className="block text-xs text-slate-400 mb-1">
                 Team ID
               </label>
               <input
-                className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
+                id="register-worker-team"
+                className="w-full min-h-11 bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
                 value={form.team_id}
                 onChange={(e) => setForm({ ...form, team_id: e.target.value })}
                 placeholder="office_chrm"
               />
             </div>
             <div>
-              <label className="block text-xs text-slate-400 mb-1">
+              <label htmlFor="register-worker-transport" className="block text-xs text-slate-400 mb-1">
                 Transport Mode
               </label>
               <select
-                className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
+                id="register-worker-transport"
+                className="w-full min-h-11 bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
                 value={form.transport_mode}
                 onChange={(e) =>
                   setForm({ ...form, transport_mode: e.target.value })
@@ -763,11 +782,13 @@ function RegisterWorkerModal({
             </div>
           </div>
           <div>
-            <label className="block text-xs text-slate-400 mb-1">
+            <label htmlFor="register-worker-repository" className="block text-xs text-slate-400 mb-1">
               GitHub Repository URL
             </label>
             <input
-              className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
+              id="register-worker-repository"
+              type="url"
+              className="w-full min-h-11 bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
               value={form.source_repo}
               onChange={(e) =>
                 setForm({ ...form, source_repo: e.target.value })
@@ -780,11 +801,12 @@ function RegisterWorkerModal({
             </p>
           </div>
           <div>
-            <label className="block text-xs text-slate-400 mb-1">
+            <label htmlFor="register-worker-version-pin" className="block text-xs text-slate-400 mb-1">
               Immutable Version Pin
             </label>
             <input
-              className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
+              id="register-worker-version-pin"
+              className="w-full min-h-11 bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
               value={form.version_pin}
               onChange={(e) =>
                 setForm({ ...form, version_pin: e.target.value })
@@ -799,11 +821,12 @@ function RegisterWorkerModal({
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs text-slate-400 mb-1">
+              <label htmlFor="register-worker-adapter" className="block text-xs text-slate-400 mb-1">
                 Adapter Entrypoint
               </label>
               <input
-                className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
+                id="register-worker-adapter"
+                className="w-full min-h-11 bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
                 value={form.adapter_entrypoint}
                 onChange={(e) =>
                   setForm({ ...form, adapter_entrypoint: e.target.value })
@@ -812,11 +835,12 @@ function RegisterWorkerModal({
               />
             </div>
             <div>
-              <label className="block text-xs text-slate-400 mb-1">
+              <label htmlFor="register-worker-sandbox" className="block text-xs text-slate-400 mb-1">
                 Sandbox Profile
               </label>
               <select
-                className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
+                id="register-worker-sandbox"
+                className="w-full min-h-11 bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm text-white"
                 value={form.sandbox_profile}
                 onChange={(e) =>
                   setForm({ ...form, sandbox_profile: e.target.value })
@@ -835,13 +859,15 @@ function RegisterWorkerModal({
         </div>
         <div className="p-5 border-t border-slate-700 flex justify-end gap-3">
           <button
-            className="px-4 py-2 text-sm text-slate-300 hover:text-white"
+            type="button"
+            className="min-h-11 px-4 py-2 text-sm text-slate-300 hover:text-white"
             onClick={onClose}
           >
             Cancel
           </button>
           <button
-            className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg disabled:opacity-50 transition-colors"
+            type="button"
+            className="min-h-11 px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg disabled:opacity-50 transition-colors"
             onClick={submit}
             disabled={loading}
           >
@@ -957,10 +983,15 @@ function IntegrationReadinessPanel() {
     ["Docling document ingestion", "Adapter certification"],
     ["GitHub REST metadata and task API", "Repository intake"],
     ["server-side named credentials", "Credential boundary"],
-    ["trufflehog", "Excluded default"],
+    ["trufflehog", "Available scanner adapter"],
+    ["plane / openproject", "Available PM adapters"],
+    ["ansible", "Available CLI adapter"],
   ];
   return (
-    <section className="rounded-lg border border-slate-800 bg-slate-900/60 p-4">
+    <section
+      className="rounded-lg border border-slate-800 bg-slate-900/60 p-4"
+      aria-label="Hiring board integration readiness"
+    >
       <div className="flex flex-wrap gap-2">
         {checks.map(([name, status]) => (
           <span
@@ -981,6 +1012,10 @@ export default function WorkersPage() {
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [stale, setStale] = useState(false);
+  const [accessDenied, setAccessDenied] = useState(false);
+  const [hasReadContext, setHasReadContext] = useState(false);
+  const hasLoadedRef = useRef(false);
   // Filter state — initialized from localStorage so user choices persist
   // across page reloads. Falls back to empty/ALL on first visit.
   const [search, setSearch] = useState<string>(() => {
@@ -1016,13 +1051,25 @@ export default function WorkersPage() {
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
+    setStale(false);
     try {
       const workersRes = await fetch("/api/workers");
+      if (workersRes.status === 401 || workersRes.status === 403) {
+        setAccessDenied(true);
+        setError("This operator identity is not authorized to read or change the Hiring Board.");
+        setStale(hasLoadedRef.current);
+        return;
+      }
       if (!workersRes.ok) throw new Error(await workersRes.text());
       const workersData = await workersRes.json();
       setWorkers(Array.isArray(workersData) ? workersData : []);
+      hasLoadedRef.current = true;
+      setAccessDenied(false);
+      setHasReadContext(true);
     } catch (e: unknown) {
-      setError(String(e));
+      setAccessDenied(false);
+      setError(e instanceof Error ? e.message : "Workers could not be loaded");
+      setStale(hasLoadedRef.current);
     } finally {
       setLoading(false);
     }
@@ -1058,19 +1105,19 @@ export default function WorkersPage() {
         searchRef.current?.select();
         return;
       }
-      if (e.key === "r" || e.key === "R") {
+      if ((e.key === "r" || e.key === "R") && !accessDenied) {
         e.preventDefault();
         void load();
         return;
       }
-      if (e.key === "n" || e.key === "N") {
+      if ((e.key === "n" || e.key === "N") && !accessDenied) {
         e.preventDefault();
         setShowRegister(true);
       }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [load]);
+  }, [accessDenied, load]);
 
   const filtered = workers.filter((w) => {
     const workerId = w.worker_id ?? "";
@@ -1159,36 +1206,62 @@ export default function WorkersPage() {
   ).length;
 
   return (
-    <div className="dashboard-page">
+    <main className="dashboard-page" aria-label="Hiring Board">
       <PageHeader
         icon="users"
         title="Hiring Board"
         description="Evaluate worker candidates, inspect guarded checks, and control activation state."
-        actions={
+        actions={!accessDenied ? (
           <>
             <button
+              type="button"
               onClick={load}
               title="Refresh (R)"
               aria-label="Refresh workers"
-              className="p-2 rounded-lg border border-slate-700 hover:bg-slate-800 text-slate-400 hover:text-slate-100 hover:border-slate-500 transition-colors"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg border border-slate-700 hover:bg-slate-800 text-slate-400 hover:text-slate-100 hover:border-slate-500 transition-colors"
             >
               <RefreshCw
                 className={clsx("w-4 h-4", loading && "animate-spin")}
               />
             </button>
             <button
+              type="button"
               onClick={() => setShowRegister(true)}
               title="Register Worker (N)"
-              className="inline-flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium shadow-sm shadow-blue-500/10 transition-colors"
+              className="inline-flex min-h-11 items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium shadow-sm shadow-blue-500/10 transition-colors"
             >
               <Plus className="w-4 h-4" />
               Register Worker
             </button>
           </>
-        }
+        ) : undefined}
       />
 
-      <div className="flex items-start gap-3 p-4 rounded-lg border border-blue-500/30 bg-blue-500/5">
+      {accessDenied && (
+        <section
+          role="region"
+          aria-label="Hiring Board access status"
+          className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-5 py-6 shadow-sm shadow-amber-950/10"
+        >
+          <h2 className="text-base font-semibold text-amber-100">Hiring Board access denied</h2>
+          <p className="mt-2 max-w-2xl text-sm text-amber-200/80">
+            {hasReadContext
+              ? "The current operator identity can no longer read or change workers. Last-known worker rows remain visible, but Refresh, Retry, registration, evaluation, status, drain, and deletion controls are hidden until authorization is restored."
+              : "The current operator identity is not authorized to read or change workers. No live worker state is being inferred or displayed."}
+          </p>
+          <Link
+            href="/"
+            className="mt-5 inline-flex min-h-11 items-center rounded-md border border-amber-400/40 px-3 py-2 text-sm font-medium text-amber-100 transition-colors hover:bg-amber-400/10 focus-visible:ring-2 focus-visible:ring-amber-300/70"
+          >
+            Return to dashboard
+          </Link>
+        </section>
+      )}
+
+      <section
+        className="flex items-start gap-3 p-4 rounded-lg border border-blue-500/30 bg-blue-500/5"
+        aria-label="Hiring board adapter policy"
+      >
         <Settings className="w-5 h-5 text-blue-400 mt-0.5 shrink-0" />
         <div className="text-sm text-blue-200/90 space-y-1">
           <p>
@@ -1225,13 +1298,13 @@ export default function WorkersPage() {
             clear search
           </p>
         </div>
-      </div>
+      </section>
 
       <IntegrationReadinessPanel />
       <RuntimeStatusPanel />
 
       {/* Stats — use KpiCard for visual consistency with the rest of the dashboard */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Hiring board summary">
         <KpiCard
           label="Candidates"
           value={workers.length}
@@ -1263,17 +1336,31 @@ export default function WorkersPage() {
           tone={errorCount > 0 ? "negative" : "neutral"}
           hint={errorCount > 0 ? "Investigate before drain" : "All healthy"}
         />
-      </div>
+      </section>
 
-      {error && (
-        <ErrorBanner tone="error" title="Workers load failed">
-          {error}
+      {error && !accessDenied && (
+        <ErrorBanner
+          tone={stale ? "warning" : "error"}
+          title={stale ? "Showing last known workers" : "Workers unavailable"}
+          action={(
+            <button
+              type="button"
+              onClick={() => void load()}
+              className="min-h-11 px-3 rounded border border-current text-xs font-medium hover:bg-white/10"
+            >
+              Retry
+            </button>
+          )}
+        >
+          {stale
+            ? `${error} Retained workers remain visible while the refresh is retried.`
+            : error}
         </ErrorBanner>
       )}
 
       {bulkError && <ErrorBanner tone="warning">{bulkError}</ErrorBanner>}
 
-      {selection.selectedCount > 0 && (
+      {!accessDenied && selection.selectedCount > 0 && (
         <BulkActionBar
           selectedCount={selection.selectedCount}
           totalCount={filtered.length}
@@ -1287,23 +1374,23 @@ export default function WorkersPage() {
       )}
 
       {/* Filters */}
-      <div className="dashboard-toolbar flex flex-col sm:flex-row gap-3">
+      <section className="dashboard-toolbar flex flex-col sm:flex-row gap-3" aria-label="Hiring board filters">
         <div className="relative flex-1 min-w-0">
           <input
             ref={searchRef}
-            type="text"
+            type="search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search workers by id, name, or team…"
             aria-label="Search workers"
-            className="w-full px-4 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 transition-colors"
+            className="w-full min-h-11 px-4 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 transition-colors"
           />
           {search && (
             <button
               type="button"
               onClick={() => setSearch("")}
               aria-label="Clear search"
-              className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-slate-500 hover:text-slate-200 hover:bg-slate-800 transition-colors"
+              className="absolute right-2 top-1/2 min-h-11 min-w-11 -translate-y-1/2 rounded text-slate-500 hover:text-slate-200 hover:bg-slate-800 transition-colors"
             >
               <XCircle size={14} />
             </button>
@@ -1321,20 +1408,27 @@ export default function WorkersPage() {
               onClick={() => setStatusFilter(s.id)}
               activeTone={s.tone}
               count={statusCounts[s.id] ?? 0}
+              className="min-h-11"
             >
               {s.label}
             </FilterChip>
           ))}
         </div>
-      </div>
+      </section>
 
       {/* Table */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+      <section
+        className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden"
+        role="region"
+        aria-label="Registered workers"
+        aria-busy={loading}
+      >
         <div className="overflow-x-auto">
           <table className="dashboard-table">
+            <caption className="sr-only">Registered AIAT workers</caption>
             <thead>
               <tr className="border-b border-slate-800 text-slate-400 text-xs uppercase tracking-wider">
-                <th className="w-10 px-4 py-3">
+                <th scope="col" className="w-10 px-4 py-3">
                   <SelectAllCheckbox
                     checked={selection.isAllSelected}
                     indeterminate={selection.isIndeterminate}
@@ -1342,20 +1436,20 @@ export default function WorkersPage() {
                     ariaLabel="Select all workers"
                   />
                 </th>
-                <th className="w-8 px-4 py-3" aria-label="Expand" />
-                <th className="text-left px-4 py-3">Worker ID</th>
-                <th className="text-left px-4 py-3">Name</th>
-                <th className="text-left px-4 py-3">Team</th>
-                <th className="text-left px-4 py-3">Status</th>
-                <th className="text-left px-4 py-3">Evaluation</th>
-                <th className="text-left px-4 py-3">Version</th>
-                <th className="w-12 px-4 py-3">
+                <th scope="col" className="w-8 px-4 py-3" aria-label="Expand" />
+                <th scope="col" className="text-left px-4 py-3">Worker ID</th>
+                <th scope="col" className="text-left px-4 py-3">Name</th>
+                <th scope="col" className="text-left px-4 py-3">Team</th>
+                <th scope="col" className="text-left px-4 py-3">Status</th>
+                <th scope="col" className="text-left px-4 py-3">Evaluation</th>
+                <th scope="col" className="text-left px-4 py-3">Version</th>
+                <th scope="col" className="w-12 px-4 py-3">
                   <span className="sr-only">Actions</span>
                 </th>
               </tr>
             </thead>
             <tbody>
-              {loading ? (
+              {loading && workers.length === 0 ? (
                 <tr>
                   <td
                     colSpan={9}
@@ -1363,6 +1457,18 @@ export default function WorkersPage() {
                   >
                     <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2" />
                     Loading workers…
+                  </td>
+                </tr>
+              ) : accessDenied && workers.length === 0 ? (
+                <tr>
+                  <td colSpan={9} className="px-4 py-10 text-center text-slate-500">
+                    No live worker state is inferred while authorization is unavailable.
+                  </td>
+                </tr>
+              ) : error && workers.length === 0 ? (
+                <tr>
+                  <td colSpan={9} className="px-4 py-10 text-center text-slate-500">
+                    Workers are unavailable. Use Retry above to try again.
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
@@ -1375,8 +1481,9 @@ export default function WorkersPage() {
                         description="Workers are seeded from YAML manifests on startup, or you can register one manually."
                         action={
                           <button
+                            type="button"
                             onClick={() => setShowRegister(true)}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
+                            className="inline-flex min-h-11 items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
                           >
                             <Plus size={14} />
                             Register Worker
@@ -1391,11 +1498,12 @@ export default function WorkersPage() {
                         description="Try a broader status filter or clear the search."
                         action={
                           <button
+                            type="button"
                             onClick={() => {
                               setStatusFilter("ALL");
                               setSearch("");
                             }}
-                            className="text-xs text-blue-400 hover:text-blue-300"
+                            className="min-h-11 px-3 text-xs text-blue-400 hover:text-blue-300"
                           >
                             Clear filters
                           </button>
@@ -1415,20 +1523,21 @@ export default function WorkersPage() {
                     onSelectChange={() =>
                       w.id != null && selection.toggle(w.id)
                     }
+                    accessDenied={accessDenied}
                   />
                 ))
               )}
             </tbody>
           </table>
         </div>
-      </div>
+      </section>
 
-      {showRegister && (
+      {showRegister && !accessDenied && (
         <RegisterWorkerModal
           onClose={() => setShowRegister(false)}
           onCreated={load}
         />
       )}
-    </div>
+    </main>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useCallback, useState, useEffect, useRef, useMemo } from "react";
 import { clsx } from "clsx";
 import {
   TEAM_STREAMS,
@@ -13,12 +13,14 @@ import {
   Pause,
   Play,
   Radio,
+  RefreshCw,
   Search,
   Trash2,
   X,
   Check,
 } from "lucide-react";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { FilterChip } from "@/components/ui/FilterChips";
 
@@ -92,50 +94,140 @@ export default function StreamsPage() {
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [groupByType, setGroupByType] = useState(false);
   const [copiedKey, setCopiedKey] = useState<number | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [stale, setStale] = useState(false);
+  const [accessDenied, setAccessDenied] = useState(false);
+  const [hasReadContext, setHasReadContext] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const pausedRef = useRef(false);
   const esRef = useRef<EventSource | null>(null);
+  const entriesRef = useRef<FeedEntry[]>([]);
+  const connectionIdRef = useRef(0);
+  const streamFailedRef = useRef(false);
+  const hasReadContextRef = useRef(false);
 
   useEffect(() => {
     pausedRef.current = paused;
   }, [paused]);
 
-  useEffect(() => {
-    setEntries([]);
+  const handleAccessDenied = useCallback(() => {
+    connectionIdRef.current += 1;
+    esRef.current?.close();
+    esRef.current = null;
+    streamFailedRef.current = true;
+    const hadReadContext = hasReadContextRef.current || entriesRef.current.length > 0;
+    setAccessDenied(true);
+    setHasReadContext(hadReadContext);
     setConnected(false);
-    setTypeFilter("all");
+    setLoadError(null);
+    setStale(false);
     setQuery("");
+    setTypeFilter("all");
+    setGroupByType(false);
+  }, []);
 
-    let cancelled = false;
-    fetch(`/api/streams/${teamId}?history=1&limit=50`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data: { entries?: RecentStreamEntry[] } | null) => {
-        if (cancelled || !data?.entries) return;
-        setEntries(data.entries.map((entry) => entryFromRaw(entry.envelope)));
+  const connect = useCallback((preserveEntries: boolean) => {
+    const connectionId = ++connectionIdRef.current;
+    const hadEntries = entriesRef.current.length > 0;
+    const isCurrent = () => connectionIdRef.current === connectionId;
+
+    esRef.current?.close();
+    esRef.current = null;
+    streamFailedRef.current = false;
+    setConnected(false);
+    setLoadError(null);
+    setStale(false);
+    setAccessDenied(false);
+    if (!preserveEntries) {
+      entriesRef.current = [];
+      setEntries([]);
+    }
+
+    const reportError = (message: string) => {
+      if (!isCurrent()) return;
+      streamFailedRef.current = true;
+      setConnected(false);
+      setLoadError(message);
+      setStale(entriesRef.current.length > 0 || hadEntries);
+      esRef.current?.close();
+      esRef.current = null;
+    };
+
+    fetch(`/api/streams/${teamId}?history=1&limit=50`, { cache: "no-store" })
+      .then(async (res) => {
+        if (res.status === 401 || res.status === 403) {
+          handleAccessDenied();
+          return null;
+        }
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return (await res.json()) as { entries?: RecentStreamEntry[] };
       })
-      .catch(() => {
-        // Live SSE still gives connection truth even if history is unavailable.
+      .then((data) => {
+        if (!data || !isCurrent()) return;
+        hasReadContextRef.current = true;
+        setHasReadContext(true);
+        if (!data.entries) return;
+        const history = data.entries.map((entry) => entryFromRaw(entry.envelope));
+        const liveEntries = entriesRef.current;
+        const liveRaw = new Set(liveEntries.map((entry) => entry.raw));
+        const next = [...history.filter((entry) => !liveRaw.has(entry.raw)), ...liveEntries].slice(-500);
+        entriesRef.current = next;
+        setEntries(next);
+        if (!streamFailedRef.current) setLoadError(null);
+      })
+      .catch((cause: unknown) => {
+        if (!isCurrent()) return;
+        reportError(cause instanceof Error ? `Stream history unavailable: ${cause.message}` : "Stream history unavailable");
       });
 
     const es = new EventSource(`/api/streams/${teamId}`);
     esRef.current = es;
 
-    es.addEventListener("connected", () => setConnected(true));
-    es.addEventListener("error", () => setConnected(false));
+    es.addEventListener("connected", () => {
+      if (!isCurrent()) return;
+      hasReadContextRef.current = true;
+      setHasReadContext(true);
+      setConnected(true);
+    });
+    es.addEventListener("error", (event) => {
+      const raw = (event as MessageEvent<string>).data;
+      let message = "Stream disconnected.";
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw) as { error?: string; status?: number };
+          if (parsed.status === 401 || parsed.status === 403) {
+            handleAccessDenied();
+            return;
+          }
+          if (parsed.error) message = parsed.error;
+        } catch {
+          message = raw;
+        }
+      }
+      reportError(message);
+    });
 
     es.onmessage = (e) => {
-      if (pausedRef.current) return;
+      if (!isCurrent() || pausedRef.current) return;
       setEntries((prev) => {
-        const next = [...prev, entryFromRaw(e.data)];
-        return next.slice(-500); // cap at 500
+        const next = [...prev, entryFromRaw(e.data)].slice(-500);
+        entriesRef.current = next;
+        return next;
       });
     };
+  }, [handleAccessDenied, teamId]);
 
-    return () => {
-      cancelled = true;
-      es.close();
-    };
-  }, [teamId]);
+  useEffect(() => {
+    setTypeFilter("all");
+    setQuery("");
+    connect(false);
+  }, [connect]);
+
+  useEffect(() => () => {
+    connectionIdRef.current += 1;
+    esRef.current?.close();
+    esRef.current = null;
+  }, []);
 
   // Auto-scroll
   useEffect(() => {
@@ -252,7 +344,15 @@ export default function StreamsPage() {
             isOpen && "bg-slate-800/30",
           )}
           onClick={() => setExpanded(isOpen ? null : index)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              setExpanded(isOpen ? null : index);
+            }
+          }}
+          tabIndex={0}
           aria-expanded={isOpen}
+          aria-label={`${type} message${entry.parsed?.sender_id ? ` from ${entry.parsed.sender_id}` : ""}`}
         >
           <td className="px-3 py-1.5 text-slate-500 whitespace-nowrap">
             {formatInTz(entry.ts, "yyyy-MM-dd HH:mm:ss.SSS")}
@@ -294,26 +394,28 @@ export default function StreamsPage() {
                 })()}
           </td>
           <td className="px-2 py-1.5 text-right w-12">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                copyEntry(entry, index);
-              }}
-              aria-label={
-                justCopied ? "Copied to clipboard" : "Copy message payload"
-              }
-              title={justCopied ? "Copied!" : "Copy payload"}
-              className={clsx(
-                "inline-flex items-center justify-center w-7 h-7 rounded-md border transition-colors",
-                "focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70",
-                justCopied
-                  ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-300"
-                  : "border-slate-700 text-slate-500 hover:text-slate-100 hover:border-slate-500 hover:bg-slate-800",
-              )}
-            >
-              {justCopied ? <Check size={12} /> : <Copy size={12} />}
-            </button>
+            {!accessDenied && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  copyEntry(entry, index);
+                }}
+                aria-label={
+                  justCopied ? "Copied to clipboard" : "Copy message payload"
+                }
+                title={justCopied ? "Copied!" : "Copy payload"}
+                className={clsx(
+                  "inline-flex min-h-11 min-w-11 items-center justify-center rounded-md border transition-colors",
+                  "focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70",
+                  justCopied
+                    ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-300"
+                    : "border-slate-700 text-slate-500 hover:text-slate-100 hover:border-slate-500 hover:bg-slate-800",
+                )}
+              >
+                {justCopied ? <Check size={12} /> : <Copy size={12} />}
+              </button>
+            )}
           </td>
         </tr>
         {isOpen && (
@@ -330,7 +432,10 @@ export default function StreamsPage() {
   }
 
   return (
-    <div className="flex h-full flex-col p-5 sm:p-6 lg:p-8 gap-4">
+    <main
+      className="flex h-full flex-col p-5 sm:p-6 lg:p-8 gap-4"
+      aria-label="Agent stream monitor"
+    >
       {/* Header */}
       <PageHeader
         icon="radio"
@@ -347,12 +452,18 @@ export default function StreamsPage() {
                 aria-hidden
               />
               <span className="text-slate-500">
-                {connected ? "connected" : "connecting…"}
+                {accessDenied
+                  ? "access denied"
+                  : connected
+                    ? "connected"
+                    : loadError
+                      ? "disconnected"
+                      : "connecting…"}
               </span>
             </span>
           </span>
         }
-        actions={
+        actions={!accessDenied ? (
           <>
             <div className="relative">
               <Search
@@ -366,14 +477,14 @@ export default function StreamsPage() {
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Filter messages…"
                 aria-label="Filter messages by text, sender, or project"
-                className="bg-slate-950/60 border border-slate-700 rounded-lg pl-8 pr-8 py-1.5 text-sm text-slate-200 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-400/60 focus:border-blue-400/40 w-56"
+                className="min-h-11 bg-slate-950/60 border border-slate-700 rounded-lg pl-8 pr-8 py-1.5 text-sm text-slate-200 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-400/60 focus:border-blue-400/40 w-56"
               />
               {query && (
                 <button
                   type="button"
                   onClick={() => setQuery("")}
                   aria-label="Clear search"
-                  className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 text-slate-500 hover:text-slate-200 rounded transition-colors"
+                  className="absolute right-1.5 top-1/2 min-h-11 min-w-11 -translate-y-1/2 text-slate-500 hover:text-slate-200 rounded transition-colors"
                 >
                   <X size={12} />
                 </button>
@@ -384,7 +495,7 @@ export default function StreamsPage() {
               value={teamId}
               onChange={(e) => setTeamId(e.target.value as TeamStreamId)}
               aria-label="Select team stream"
-              className="bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-400/60"
+              className="min-h-11 bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-400/60"
             >
               {TEAM_STREAMS.map((t) => (
                 <option key={t.id} value={t.id}>
@@ -393,12 +504,22 @@ export default function StreamsPage() {
               ))}
             </select>
 
-            <label className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-700 text-xs text-slate-300 cursor-pointer hover:bg-slate-800/50 transition-colors">
+            <button
+              type="button"
+              onClick={() => connect(true)}
+              aria-label="Reconnect stream"
+              className="inline-flex min-h-11 items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700 hover:text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60"
+            >
+              <RefreshCw size={12} />
+              Reconnect
+            </button>
+
+            <label className="inline-flex min-h-11 items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-700 text-xs text-slate-300 cursor-pointer hover:bg-slate-800/50 transition-colors">
               <input
                 type="checkbox"
                 checked={groupByType}
                 onChange={(e) => setGroupByType(e.target.checked)}
-                className="h-3 w-3 rounded border-slate-600 bg-slate-900 text-blue-500 focus:ring-blue-400/60"
+                className="min-h-11 min-w-11 rounded border-slate-600 bg-slate-900 text-blue-500 focus:ring-blue-400/60"
               />
               Group by type
             </label>
@@ -408,7 +529,7 @@ export default function StreamsPage() {
               aria-pressed={paused}
               aria-label={paused ? "Resume live feed" : "Pause live feed"}
               className={clsx(
-                "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
+                "flex min-h-11 items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
                 "focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60",
                 paused
                   ? "bg-amber-500/15 text-amber-300 border border-amber-500/40 hover:bg-amber-500/25"
@@ -420,65 +541,111 @@ export default function StreamsPage() {
             </button>
 
             <button
-              onClick={() => setEntries([])}
+              onClick={() => {
+                entriesRef.current = [];
+                setEntries([]);
+              }}
               aria-label="Clear message history"
               title="Clear history"
-              className="p-1.5 rounded-lg border border-slate-700 text-slate-500 hover:text-slate-100 hover:border-slate-500 hover:bg-slate-800 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60"
+              className="min-h-11 min-w-11 rounded-lg border border-slate-700 text-slate-500 hover:text-slate-100 hover:border-slate-500 hover:bg-slate-800 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60"
             >
               <Trash2 size={13} />
             </button>
           </>
-        }
+        ) : undefined}
       />
 
-      {/* Type filter chips */}
-      {availableTypes.length > 0 && (
-        <div
-          className="flex flex-wrap gap-1.5 items-center"
-          role="toolbar"
-          aria-label="Filter messages by type"
+      {accessDenied && (
+        <section
+          className="dashboard-surface border border-amber-500/30 bg-amber-500/5 px-4 py-3"
+          role="region"
+          aria-label="Stream access status"
+          aria-live="polite"
         >
-          <span className="text-xxs uppercase tracking-wider text-slate-500 font-semibold mr-1">
-            Type:
-          </span>
-          <FilterChip
-            active={typeFilter === "all"}
-            onClick={() => setTypeFilter("all")}
-            count={filteredEntries.length}
-            activeTone="blue"
+          <p className="text-sm font-medium text-amber-200">Stream access denied</p>
+          <p className="mt-1 text-xs text-amber-200/80">
+            {hasReadContext
+              ? "Previously loaded messages remain visible for reference. Reconnect, filters, pause, clear, and copy controls are hidden until authorization is restored."
+              : "No live stream data is available while authorization is unavailable. Stream controls are hidden until authorization is restored."}
+          </p>
+        </section>
+      )}
+
+      {loadError && !accessDenied && (
+        <ErrorBanner
+          tone={stale ? "warning" : "error"}
+          title={stale ? "Showing last known stream data" : "Stream unavailable"}
+          action={(
+            <button type="button" onClick={() => connect(true)} className="min-h-11 px-3 rounded border border-current text-xs font-medium hover:bg-white/10">
+              Retry
+            </button>
+          )}
+        >
+          {stale ? `${loadError} The latest stream refresh failed; retained messages remain visible.` : loadError}
+        </ErrorBanner>
+      )}
+
+      {/* Type filter chips */}
+      {availableTypes.length > 0 && !accessDenied && (
+        <section role="region" aria-label="Message type filters">
+          <div
+            className="flex flex-wrap gap-1.5 items-center"
+            role="toolbar"
+            aria-label="Filter messages by type"
           >
-            All
-          </FilterChip>
-          {availableTypes.map(({ type, count }) => (
+            <span className="text-xxs uppercase tracking-wider text-slate-500 font-semibold mr-1">
+              Type:
+            </span>
             <FilterChip
-              key={type}
-              active={typeFilter === type}
-              onClick={() => setTypeFilter(type)}
-              count={count}
+              active={typeFilter === "all"}
+              onClick={() => setTypeFilter("all")}
+              count={filteredEntries.length}
+              activeTone="blue"
+              className="min-h-11"
             >
-              {type}
+              All
             </FilterChip>
-          ))}
-        </div>
+            {availableTypes.map(({ type, count }) => (
+              <FilterChip
+                key={type}
+                active={typeFilter === type}
+                onClick={() => setTypeFilter(type)}
+                count={count}
+                className="min-h-11"
+              >
+                {type}
+              </FilterChip>
+            ))}
+          </div>
+        </section>
       )}
 
       {/* Feed */}
       <div
         className="dashboard-surface flex-1 overflow-y-auto font-mono"
         role="region"
-        aria-label="Live message feed"
+        aria-label={accessDenied ? "Last known agent message feed" : "Live message feed"}
+        aria-busy={!accessDenied && !connected && !loadError}
       >
         {entries.length === 0 ? (
           <div className="p-6">
-            <EmptyState
-              icon="radio"
-              title={
-                connected
-                  ? `No recent messages on stream:${teamId}`
-                  : "Connecting to stream…"
-              }
-              description="The live connection is open. New team messages will appear here immediately, and recent history is loaded when Redis has retained entries."
-            />
+            {accessDenied ? (
+              <EmptyState
+                icon="key"
+                title="No live stream data is available"
+                description="Authorization is required before agent messages can be loaded."
+              />
+            ) : (
+              <EmptyState
+                icon="radio"
+                title={
+                  connected
+                    ? `No recent messages on stream:${teamId}`
+                    : "Connecting to stream…"
+                }
+                description="The live connection is open. New team messages will appear here immediately, and recent history is loaded when Redis has retained entries."
+              />
+            )}
           </div>
         ) : filteredEntries.length === 0 ? (
           <div className="p-6">
@@ -502,6 +669,7 @@ export default function StreamsPage() {
           </div>
         ) : (
           <table className="w-full text-xs">
+            <caption className="sr-only">Agent message stream</caption>
             <thead className="sticky top-0 bg-slate-950/80 backdrop-blur border-b border-slate-800">
               <tr>
                 <th
@@ -579,7 +747,11 @@ export default function StreamsPage() {
       </div>
 
       {/* Footer */}
-      <div className="dashboard-toolbar text-xxs text-slate-500 flex flex-wrap items-center justify-between gap-2">
+      <section
+        className="dashboard-toolbar text-xxs text-slate-500 flex flex-wrap items-center justify-between gap-2"
+        aria-label="Stream status"
+        aria-live="polite"
+      >
         <span>
           {filteredEntries.length === entries.length
             ? `${entries.length} message${entries.length === 1 ? "" : "s"}`
@@ -589,7 +761,7 @@ export default function StreamsPage() {
         <span className="text-slate-600">
           Capped at 500 messages · auto-scroll {paused ? "off" : "on"}
         </span>
-      </div>
-    </div>
+      </section>
+    </main>
   );
 }

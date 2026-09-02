@@ -20,7 +20,9 @@ test.describe("Operational UI smoke flows", () => {
     await expect(
       page.getByRole("heading", { name: "Credentials Manager" }),
     ).toBeVisible();
-    await page.getByRole("button", { name: /new secret/i }).click();
+    // The visible label is "New Secret"; the accessible name is the
+    // descriptive action label exposed to keyboard/screen-reader users.
+    await page.getByRole("button", { name: /create new credential/i }).click();
     await page.getByPlaceholder("OPENAI_API_KEY").fill(name);
     await page.getByPlaceholder("sk-...").fill(value);
     await page
@@ -98,41 +100,491 @@ test.describe("Operational UI smoke flows", () => {
     await expect(
       page
         .getByText("Input Schema")
-        .or(page.getByText(/Circuit Breaker/i).first()),
+        .or(page.getByText(/Circuit Breaker/i).first())
+        .first(),
     ).toBeVisible();
   });
 
   test("system visualization exposes hierarchy, permissions, orchestration, and path tracing", async ({
     page,
   }) => {
+    await page.route("**/api/system/hierarchy**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          teams: [
+            {
+              teamId: "team-executive",
+              displayName: "Executive Team",
+              tier: "executive",
+              admin: {
+                agentId: "exec-admin",
+                displayName: "Executive Admin",
+                role: "admin",
+                class: "ExecutiveAdmin",
+                budget: { max_llm_calls: 10, max_tool_calls: 10, max_cost_usd: 1 },
+                tools: ["time_now"],
+              },
+              workers: [],
+            },
+            {
+              teamId: "team-admin",
+              displayName: "Admin Team",
+              tier: "admin",
+              admin: {
+                agentId: "admin-agent",
+                displayName: "Admin Agent",
+                role: "admin",
+                class: "AdminAgent",
+                budget: { max_llm_calls: 10, max_tool_calls: 10, max_cost_usd: 1 },
+                tools: ["time_now"],
+              },
+              workers: [],
+            },
+          ],
+          hierarchy: [
+            {
+              teamId: "team-executive",
+              displayName: "Executive Team",
+              role: "executive",
+              tier: "executive",
+              admin: {
+                agentId: "exec-admin",
+                displayName: "Executive Admin",
+                role: "admin",
+                tools: ["time_now"],
+              },
+              workers: [],
+              children: [
+                {
+                  teamId: "team-admin",
+                  displayName: "Admin Team",
+                  role: "admin",
+                  tier: "admin",
+                  admin: {
+                    agentId: "admin-agent",
+                    displayName: "Admin Agent",
+                    role: "admin",
+                    tools: ["time_now"],
+                  },
+                  workers: [],
+                  children: [],
+                },
+              ],
+            },
+          ],
+        }),
+      });
+    });
+    await page.route("**/api/system/permissions**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          policy: { worker: { allowed_tools: ["time_now"] } },
+          teamTiers: { "team-executive": "executive", "team-admin": "admin" },
+          messageTypes: { core: ["TASK", "RESULT"] },
+          communicationMatrix: {
+            worker: {
+              "team-executive": { allowed: true, msgTypes: ["TASK"] },
+              "team-admin": { allowed: false, msgTypes: [] },
+            },
+            executive: {
+              "team-executive": { allowed: true, msgTypes: ["DIRECTIVE"] },
+              "team-admin": { allowed: true, msgTypes: ["TASK"] },
+            },
+          },
+        }),
+      });
+    });
+    await page.route("**/api/system/orchestration**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          states: [
+            { id: "pending", label: "Pending", description: "Waiting" },
+            { id: "complete", label: "Complete", description: "Finished" },
+          ],
+          transitions: { pending: ["complete"] },
+          flows: [
+            {
+              id: "flow-review",
+              name: "Document Review Flow",
+              description: "Review a document",
+              nodes: [
+                { id: "start", type: "start", label: "Start", state: "pending" },
+                { id: "review", type: "task", label: "Review", state: "pending" },
+                { id: "end", type: "end", label: "End", state: "complete" },
+              ],
+              edges: [
+                { source: "start", target: "review" },
+                { source: "review", target: "end" },
+              ],
+            },
+          ],
+          dbFlows: [],
+        }),
+      });
+    });
+    await page.route("**/api/system/org-graph**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          nodes: [{ id: "team-executive" }, { id: "team-admin" }],
+          edges: [{ source: "team-executive", target: "team-admin" }],
+          capability_edges: [],
+          mermaid: "graph TD\n  team-executive --> team-admin",
+        }),
+      });
+    });
     await page.goto("/system-viz");
     await expect(
       page.getByRole("heading", { name: "System Visualization" }),
     ).toBeVisible();
+    await expect(
+      page.getByRole("main", { name: "System Visualization" }),
+    ).toBeVisible();
+    const breadcrumbs = page.getByRole("navigation", { name: "Breadcrumb" });
+    for (const breadcrumb of ["Dashboard", "System"]) {
+      await expect(
+        breadcrumbs.getByRole("link", { name: breadcrumb, exact: true }),
+      ).toHaveCSS("min-height", "44px");
+    }
+    await expect(
+      page.getByRole("button", { name: "Refresh visualization data" }),
+    ).toHaveCSS("min-height", "44px");
+    const visualizationTabs = page.getByRole("tablist", {
+      name: "Visualization views",
+    });
+    await expect(visualizationTabs).toHaveAttribute(
+      "aria-orientation",
+      "horizontal",
+    );
+    for (const [tabName, tabId] of [
+      ["Team Hierarchy", "hierarchy"],
+      ["Permissions", "permissions"],
+      ["Orchestration", "orchestration"],
+    ] as const) {
+      const tab = page.getByRole("tab", { name: tabName, exact: true });
+      await expect(tab).toHaveCSS("min-height", "44px");
+      await expect(tab).toHaveAttribute(
+        "aria-controls",
+        `viz-panel-${tabId}`,
+      );
+    }
     await expect(page.getByText("Mermaid Export")).toBeVisible();
     await expect(page.getByLabel("Mermaid export source")).toContainText(
       "graph TD",
     );
+    await expect(
+      page.getByRole("button", { name: "Copy mermaid definition to clipboard" }),
+    ).toHaveCSS("min-height", "44px");
+    await expect(
+      page.getByRole("link", { name: "Back to System Control" }),
+    ).toHaveCSS("min-height", "44px");
+
+    await page.getByRole("tab", { name: /team hierarchy/i }).click();
+    const policyToggle = page.getByRole("button", {
+      name: "Toggle communication policy overlay",
+    });
+    await expect(policyToggle).toHaveCSS("min-height", "44px");
+    await policyToggle.click();
+    await expect(policyToggle).toHaveAttribute("aria-pressed", "true");
+    await expect(
+      page.getByRole("region", { name: "Communication policy overlay controls" }),
+    ).toBeVisible();
+    const policyRole = page.getByRole("combobox", {
+      name: "Communication policy sender role",
+    });
+    await expect(policyRole).toHaveCSS("min-height", "44px");
+    await policyRole.selectOption("worker");
+    await expect(page.getByText("Allowed path").first()).toBeVisible();
+    await expect(page.getByText("Denied path").first()).toBeVisible();
+    await policyToggle.click();
+    await expect(policyToggle).toHaveAttribute("aria-pressed", "false");
 
     await page.getByRole("tab", { name: /permissions/i }).click();
+    await expect(
+      page.getByRole("combobox", { name: "Permission sender role" }),
+    ).toHaveCSS("min-height", "44px");
     await expect(page.getByText(/communication/i).first()).toBeVisible();
 
     await page.getByRole("tab", { name: /orchestration/i }).click();
     await expect(page.getByText(/select a flow/i)).toBeVisible();
-    await page
+    const flowChoice = page
+      .getByRole("button")
+      .filter({
+        hasText: /Document Review Flow|Escalation Flow|Simple Product Build Flow/i,
+      })
+      .first();
+    await expect(flowChoice).toHaveCSS("min-height", "44px");
+    await flowChoice
       .getByText(
         /Document Review Flow|Escalation Flow|Simple Product Build Flow/i,
       )
-      .first()
       .click();
     await expect(page.getByText("Flow Details")).toBeVisible();
+    for (const controlName of ["Graph", "States"]) {
+      await expect(
+        page.getByRole("button", { name: controlName, exact: true }),
+      ).toHaveCSS("min-height", "44px");
+    }
 
-    await page.getByRole("button", { name: /toggle path trace mode/i }).click();
-    const selects = page.locator("select");
-    await selects.nth(0).selectOption({ index: 1 });
-    await selects.nth(1).selectOption({ index: 2 });
-    await page.getByRole("button", { name: /find path/i }).click();
+    const traceModeToggle = page.getByRole("button", {
+      name: /toggle path trace mode/i,
+    });
+    await expect(traceModeToggle).toHaveCSS("min-height", "44px");
+    await traceModeToggle.click();
+    await expect(page.locator("#trace-start")).toHaveCSS("min-height", "44px");
+    await expect(page.locator("#trace-end")).toHaveCSS("min-height", "44px");
+    await page.locator("#trace-start").selectOption({ index: 1 });
+    await page.locator("#trace-end").selectOption({ index: 2 });
+    const findPath = page.getByRole("button", { name: /find path/i });
+    await expect(findPath).toHaveCSS("min-height", "44px");
+    await findPath.click();
+    await expect(page.getByRole("button", { name: /clear/i })).toHaveCSS(
+      "min-height",
+      "44px",
+    );
     await expect(page.getByRole("button", { name: /clear/i })).toBeVisible();
+  });
+
+  test("system visualization exposes partial data failures with a retry path", async ({
+    page,
+  }) => {
+    await page.route("**/api/system/permissions**", async (route) => {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "permissions fixture unavailable" }),
+      });
+    });
+
+    await page.goto("/system-viz");
+    await expect(
+      page.getByRole("heading", { name: "System Visualization" }),
+    ).toBeVisible();
+    const staleBanner = page
+      .locator('[role="status"]')
+      .filter({ hasText: "Some visualization data is stale or unavailable" });
+    await expect(staleBanner).toBeVisible();
+    await expect(staleBanner.locator("svg").first()).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+    await expect(page.getByText(/permissions failed to refresh/i)).toBeVisible();
+
+    await page.getByRole("tab", { name: /permissions/i }).click();
+    await expect(page.getByText("Permissions data unavailable")).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /^Retry$/i }).first(),
+    ).toBeVisible();
+  });
+
+  test("system visualization exposes an offline hierarchy state", async ({
+    page,
+  }) => {
+    await page.route("**/api/system/hierarchy**", async (route) => {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "hierarchy fixture unavailable" }),
+      });
+    });
+
+    await page.goto("/system-viz");
+    await expect(page.getByText("Visualization unavailable")).toBeVisible();
+    await expect(
+      page.getByText(/Failed to load system hierarchy/i),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /^Retry$/i }).first(),
+    ).toBeVisible();
+  });
+
+  test("system visualization exposes an access-denied hierarchy state", async ({
+    page,
+  }) => {
+    await page.route("**/api/system/hierarchy**", async (route) => {
+      await route.fulfill({
+        status: 403,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "hierarchy access denied" }),
+      });
+    });
+
+    await page.goto("/system-viz");
+    const status = page.getByRole("region", {
+      name: "Visualization access status",
+    });
+    await expect(status).toBeVisible();
+    await expect(
+      status.getByRole("heading", { name: "Visualization access denied" }),
+    ).toBeVisible();
+    await expect(status.getByText(/not authorized to read the system hierarchy/i)).toBeVisible();
+    await expect(
+      status.getByRole("link", { name: "Return to dashboard" }),
+    ).toHaveCSS("min-height", "44px");
+    await expect(status.getByRole("button", { name: /retry/i })).toHaveCount(0);
+  });
+
+  test("PM integrations preserve conflicts and expose a stale refresh retry", async ({
+    page,
+  }) => {
+    let requestCount = 0;
+    await page.route("**/api/integrations/pm**", async (route) => {
+      requestCount += 1;
+      if (requestCount === 1) {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            connections: [
+              {
+                id: "connection-e2e-001",
+                display_name: "E2E YouTrack",
+                provider_kind: "youtrack",
+                base_url: "https://example.invalid",
+                status: "ACTIVE",
+              },
+            ],
+            conflicts: [{ id: "conflict-e2e-001", status: "OPEN" }],
+            outbox: [],
+            runs: [],
+            lifecyclePlans: [],
+          }),
+        });
+        return;
+      }
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "integration fixture unavailable" }),
+      });
+    });
+
+    await page.goto("/integrations");
+    await expect(
+      page.getByRole("heading", { name: "PM integrations" }),
+    ).toBeVisible();
+    const integrations = page.getByRole("main", { name: "PM integrations" });
+    await expect(integrations).toBeVisible();
+    await expect(integrations).toHaveAttribute("aria-busy", "false");
+    await expect(
+      page.getByRole("button", { name: "Refresh", exact: true }),
+    ).toHaveCSS("min-height", "44px");
+    await expect(
+      page.getByRole("region", { name: "Integration summary" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Connections", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("region", { name: "Reconciliation state" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Governed lifecycle plans" }),
+    ).toBeVisible();
+    for (const fieldName of ["Connection UUID", "Binding UUID"]) {
+      await expect(page.getByRole("textbox", { name: fieldName })).toHaveCSS(
+        "min-height",
+        "44px",
+      );
+    }
+    await expect(
+      page.getByRole("button", { name: "Generate READ_ONLY plan" }),
+    ).toHaveCSS("min-height", "44px");
+    await expect(page.getByText("E2E YouTrack")).toBeVisible();
+    await expect(page.getByText("conflict-e2e-001")).toBeVisible();
+
+    await page.getByRole("button", { name: "Refresh" }).click();
+    await expect(
+      page.getByText("Showing last known integration state"),
+    ).toBeVisible();
+    await expect(page.getByText(/latest integration refresh failed/i)).toBeVisible();
+    await expect(page.getByText("conflict-e2e-001")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Retry" })).toHaveCSS(
+      "min-height",
+      "44px",
+    );
+  });
+
+  test("PM integrations expose a first-load access-denied state without retry or mutations", async ({
+    page,
+  }) => {
+    await page.route("**/api/integrations/pm**", async (route) => {
+      await route.fulfill({
+        status: 403,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "PM integrations access denied" }),
+      });
+    });
+
+    await page.goto("/integrations");
+    const integrations = page.getByRole("main", { name: "PM integrations" });
+    const access = integrations.getByRole("region", { name: "PM integrations access status" });
+    await expect(access).toBeVisible();
+    await expect(access.getByRole("heading", { name: "PM integrations access denied" })).toBeVisible();
+    await expect(access.getByText(/not authorized to read or change PM integrations/i)).toBeVisible();
+    await expect(access.getByRole("link", { name: "Return to dashboard" })).toHaveCSS("min-height", "44px");
+    await expect(integrations.getByRole("button", { name: "Refresh", exact: true })).toHaveCount(0);
+    await expect(integrations.getByRole("button", { name: "Retry" })).toHaveCount(0);
+    for (const action of ["Generate READ_ONLY plan", "Approve", "Apply exact plan"]) {
+      await expect(integrations.getByRole("button", { name: action })).toHaveCount(0);
+    }
+  });
+
+  test("PM integrations hide lifecycle mutations when access is lost after a successful read", async ({
+    page,
+  }) => {
+    let requestCount = 0;
+    await page.route("**/api/integrations/pm**", async (route) => {
+      requestCount += 1;
+      if (requestCount > 1) {
+        await route.fulfill({
+          status: 403,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: "PM integrations access revoked" }),
+        });
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          connections: [{ id: "connection-denial-001", display_name: "Denial fixture", provider_kind: "youtrack", base_url: "https://example.invalid", status: "ACTIVE" }],
+          conflicts: [{ id: "conflict-denial-001", status: "OPEN" }],
+          outbox: [],
+          runs: [],
+          lifecyclePlans: [{ id: "plan-denial-001", status: "PLANNED", plan_digest: "digest-denial-001", plan: { plan_id: "plan-denial-001", status: "PLANNED", operations: [], rollback_operations: [], blockers: [] } }],
+        }),
+      });
+    });
+
+    await page.goto("/integrations");
+    const integrations = page.getByRole("main", { name: "PM integrations" });
+    await expect(integrations.getByText("Denial fixture")).toBeVisible();
+    await expect(integrations.getByText("conflict-denial-001")).toBeVisible();
+    await expect(integrations.getByText("plan-denial-001")).toBeVisible();
+    await integrations.getByRole("button", { name: "Refresh", exact: true }).click();
+
+    const access = integrations.getByRole("region", { name: "PM integrations access status" });
+    await expect(access).toBeVisible();
+    await expect(access.getByText(/last-known reconciliation context remains visible/i)).toBeVisible();
+    await expect(integrations.getByText("Denial fixture")).toBeVisible();
+    await expect(integrations.getByText("plan-denial-001")).toBeVisible();
+    await expect(integrations.getByRole("button", { name: "Refresh", exact: true })).toHaveCount(0);
+    await expect(integrations.getByRole("button", { name: "Retry" })).toHaveCount(0);
+    await expect(integrations.getByRole("textbox", { name: "Connection UUID" })).toHaveCount(0);
+    await expect(integrations.getByRole("textbox", { name: "Binding UUID" })).toHaveCount(0);
+    await expect(integrations.getByRole("checkbox")).toHaveCount(0);
+    for (const action of ["Generate READ_ONLY plan", "Approve", "Apply exact plan"]) {
+      await expect(integrations.getByRole("button", { name: action })).toHaveCount(0);
+    }
   });
 
   test("project workspace exposes next actions, audit timeline, artifacts, and usage", async ({
@@ -195,6 +647,23 @@ test.describe("Operational UI smoke flows", () => {
       page.getByRole("heading", { name: "Completion Evidence" }),
     ).toBeVisible();
     await expect(page.getByText(/worker runs terminal/i)).toBeVisible();
+
+    const projectId = new URL(page.url()).pathname.split("/").pop();
+    if (!projectId) throw new Error("project id missing from detail URL");
+    await page.route(`**/api/projects/${projectId}`, async (route) => {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "project fixture unavailable" }),
+      });
+    });
+    await page.getByRole("button", { name: "Refresh project data" }).click();
+    await expect(
+      page.getByText("Showing last known project state"),
+    ).toBeVisible();
+    await expect(page.getByText(/latest project refresh failed/i)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
+    await expect(page.getByRole("heading", { name })).toBeVisible();
   });
 
   test("system, logs, metrics, and DLQ pages load operational controls", async ({

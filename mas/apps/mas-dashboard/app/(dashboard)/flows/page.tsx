@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import Link from "next/link";
 import { clsx } from "clsx";
 import { formatDistanceToNow } from "date-fns";
@@ -13,38 +13,86 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { FilterChip } from "@/components/ui/FilterChips";
 
+type HttpError = Error & { status?: number };
+
 export default function FlowsPage() {
   const [flows, setFlows] = useState<Flow[]>([]);
+  const flowsRef = useRef<Flow[] | null>(null);
+  const [hasLoaded, setHasLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<"all" | "active" | "inactive">("all");
   const [search, setSearch] = useState("");
   const [deleting, setDeleting] = useState<string | null>(null);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [bulkError, setBulkError] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [loadStale, setLoadStale] = useState(false);
+  const [accessDenied, setAccessDenied] = useState(false);
+  const [hasReadContext, setHasReadContext] = useState(false);
+  const hasReadContextRef = useRef(false);
+
+  const handleAccessDenied = useCallback(() => {
+    const hadReadContext = hasReadContextRef.current || flowsRef.current !== null;
+    setAccessDenied(true);
+    setHasReadContext(hadReadContext);
+    setLoadError("");
+    setLoadStale(false);
+    setBulkError("");
+    setSearch("");
+    setFilter("all");
+  }, []);
 
   const load = useCallback(async () => {
+    if (accessDenied) return;
     setLoading(true);
+    setLoadError("");
     try {
       const params = new URLSearchParams({ limit: "1000" });
       if (filter !== "all") params.set("is_active", String(filter === "active"));
-      const res = await fetch(`/api/flows?${params}`);
-      if (!res.ok) { setFlows([]); return; }
+      const res = await fetch(`/api/flows?${params}`, { cache: "no-store" });
+      if (!res.ok) {
+        const error = new Error(`HTTP ${res.status}`) as HttpError;
+        error.status = res.status;
+        throw error;
+      }
       const data = await res.json();
-      setFlows(Array.isArray(data) ? data : []);
-    } catch {
-      setFlows([]);
+      if (!Array.isArray(data)) throw new Error("Invalid flows response");
+      flowsRef.current = data;
+      hasReadContextRef.current = true;
+      setFlows(data);
+      setHasLoaded(true);
+      setHasReadContext(true);
+      setLoadStale(false);
+    } catch (cause) {
+      const status = cause instanceof Error ? (cause as HttpError).status : undefined;
+      if (status === 401 || status === 403) {
+        handleAccessDenied();
+        return;
+      }
+      setLoadError(cause instanceof Error ? cause.message : "Failed to load flows");
+      setLoadStale(flowsRef.current !== null);
     } finally {
       setLoading(false);
     }
-  }, [filter]);
+  }, [accessDenied, filter, handleAccessDenied]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { void load(); }, [load]);
+
+  const requestRefresh = () => {
+    if (loading || accessDenied) return;
+    void load();
+  };
 
   async function deleteFlow(id: string) {
+    if (accessDenied) return;
     setDeleting(id);
     try {
       const res = await fetch(`/api/flows/${id}`, { method: "DELETE" });
       if (!res.ok) {
+        if (res.status === 401 || res.status === 403) {
+          handleAccessDenied();
+          return;
+        }
         const detail = await res.text().catch(() => `HTTP ${res.status}`);
         setBulkError(`Failed to delete flow: ${detail}`);
         return;
@@ -56,7 +104,7 @@ export default function FlowsPage() {
   }
 
   async function handleBulkDelete() {
-    if (selection.selectedCount === 0) return;
+    if (accessDenied || selection.selectedCount === 0) return;
     const ids = Array.from(selection.selected);
     setBulkDeleting(true);
     setBulkError("");
@@ -65,9 +113,24 @@ export default function FlowsPage() {
       const results = await Promise.allSettled(
         ids.map(async (id) => {
           const res = await fetch(`/api/flows/${id}`, { method: "DELETE" });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          if (!res.ok) {
+            const error = new Error(`HTTP ${res.status}`) as HttpError;
+            error.status = res.status;
+            throw error;
+          }
         })
       );
+      const denied = results.some(
+        (result) =>
+          result.status === "rejected" &&
+          result.reason instanceof Error &&
+          ((result.reason as HttpError).status === 401 ||
+            (result.reason as HttpError).status === 403),
+      );
+      if (denied) {
+        handleAccessDenied();
+        return;
+      }
       for (const r of results) if (r.status === "rejected") failed++;
       if (failed > 0) {
         setBulkError(
@@ -115,6 +178,11 @@ export default function FlowsPage() {
     selection.prune();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flowIds.join(",")]);
+  useEffect(() => {
+    if (accessDenied) selection.clear();
+    // Selection is intentionally cleared only when the authority boundary is entered.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessDenied]);
 
   return (
     <div className="dashboard-page">
@@ -132,30 +200,46 @@ export default function FlowsPage() {
             )}
           </>
         }
-        actions={
+        actions={!accessDenied ? (
           <>
             <button
-              onClick={load}
+              type="button"
+              onClick={requestRefresh}
               disabled={loading}
               title="Refresh"
               aria-label="Refresh flows"
-              className="p-2 rounded-lg border border-slate-700 text-slate-400 hover:text-slate-100 hover:border-slate-500 hover:bg-slate-800/70 transition-colors disabled:opacity-50"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg border border-slate-700 text-slate-400 hover:text-slate-100 hover:border-slate-500 hover:bg-slate-800/70 transition-colors disabled:opacity-50"
             >
               <RefreshCw size={15} className={loading ? "animate-spin" : ""} />
             </button>
             <Link
               href="/flows/new"
               prefetch={false}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg shadow-sm shadow-blue-500/10 transition-colors"
+              className="inline-flex min-h-11 items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg shadow-sm shadow-blue-500/10 transition-colors"
             >
               <Plus size={14} />
               New Flow
             </Link>
           </>
-        }
+        ) : undefined}
       />
 
-      {flows.length > 0 && (
+      {accessDenied && (
+        <section
+          className="mx-4 mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100"
+          role="region"
+          aria-label="Flows access status"
+        >
+          <h2 className="font-medium text-amber-50">Flows access denied</h2>
+          <p className="mt-1 text-amber-100/80">
+            {hasReadContext
+              ? "Previously loaded flow definitions remain visible for reference. Refresh, retry, New Flow, search, status filters, selection, editing, and deletion controls are hidden until authorization is restored."
+              : "No live flow definitions are available while authorization is unavailable. Flow controls are hidden until authorization is restored."}
+          </p>
+        </section>
+      )}
+
+      {flows.length > 0 && !accessDenied && (
         <div className="dashboard-toolbar flex flex-wrap items-center gap-3">
           <div className="relative flex-1 min-w-[220px] max-w-md">
             <Search
@@ -169,7 +253,7 @@ export default function FlowsPage() {
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Filter by name or description…"
               aria-label="Filter flows by name or description"
-              className="w-full pl-8 pr-8 py-1.5 rounded-lg bg-slate-950/60 border border-slate-800 text-sm text-slate-200 placeholder:text-slate-500 focus:border-blue-500/60 focus:ring-1 focus:ring-blue-500/40 transition-colors"
+              className="min-h-11 w-full pl-8 pr-8 py-1.5 rounded-lg bg-slate-950/60 border border-slate-800 text-sm text-slate-200 placeholder:text-slate-500 focus:border-blue-500/60 focus:ring-1 focus:ring-blue-500/40 transition-colors"
             />
             {search && (
               <button
@@ -177,7 +261,7 @@ export default function FlowsPage() {
                 onClick={() => setSearch("")}
                 aria-label="Clear search"
                 title="Clear search"
-                className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded text-slate-500 hover:text-slate-200 hover:bg-slate-800/70 transition-colors"
+                className="absolute right-0.5 top-1/2 min-h-11 min-w-11 -translate-y-1/2 inline-flex items-center justify-center rounded text-slate-500 hover:text-slate-200 hover:bg-slate-800/70 transition-colors"
               >
                 <X size={12} />
               </button>
@@ -188,6 +272,7 @@ export default function FlowsPage() {
               active={filter === "all"}
               onClick={() => setFilter("all")}
               count={flows.length}
+              className="min-h-11"
             >
               All
             </FilterChip>
@@ -196,6 +281,7 @@ export default function FlowsPage() {
               onClick={() => setFilter("active")}
               count={activeCount}
               activeTone="emerald"
+              className="min-h-11"
             >
               Active
             </FilterChip>
@@ -203,6 +289,7 @@ export default function FlowsPage() {
               active={filter === "inactive"}
               onClick={() => setFilter("inactive")}
               count={inactiveCount}
+              className="min-h-11"
             >
               Inactive
             </FilterChip>
@@ -210,9 +297,23 @@ export default function FlowsPage() {
         </div>
       )}
 
-      {bulkError && <ErrorBanner tone="warning">{bulkError}</ErrorBanner>}
+      {loadError && !accessDenied && (
+        <ErrorBanner
+          tone={loadStale ? "warning" : "error"}
+          title={loadStale ? "Showing last known flows" : "Flows load failed"}
+          action={(
+            <button type="button" onClick={requestRefresh} disabled={loading} className="min-h-11 rounded border border-current px-3 py-2 text-xs font-medium hover:bg-white/10 disabled:opacity-50">
+              Retry
+            </button>
+          )}
+        >
+          {loadStale ? `${loadError}. The latest flows refresh failed; retained flow definitions remain visible.` : loadError}
+        </ErrorBanner>
+      )}
 
-      {selection.selectedCount > 0 && (
+      {bulkError && !accessDenied && <ErrorBanner tone="warning">{bulkError}</ErrorBanner>}
+
+      {!accessDenied && selection.selectedCount > 0 && (
         <BulkActionBar
           selectedCount={selection.selectedCount}
           totalCount={visibleFlows.length}
@@ -224,8 +325,18 @@ export default function FlowsPage() {
       )}
 
       <div className="dashboard-surface overflow-hidden">
-        {loading ? (
+        {loading && !hasLoaded ? (
           <div className="p-8 text-center text-slate-500 text-sm">Loading…</div>
+        ) : accessDenied && flows.length === 0 ? (
+          <div className="p-6">
+            <EmptyState
+              icon="key"
+              title="No live flow definitions are available"
+              description="Flow definitions cannot be read while authorization is unavailable. Controls remain hidden until access is restored."
+            />
+          </div>
+        ) : loadError && !hasLoaded ? (
+          <div className="p-8 text-center text-slate-400 text-sm">Unable to load flows. Use Retry to try again.</div>
         ) : flows.length === 0 ? (
           <div className="p-6">
             <EmptyState
@@ -236,7 +347,7 @@ export default function FlowsPage() {
                 <Link
                   href="/flows/new"
                   prefetch={false}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
+                  className="inline-flex min-h-11 items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
                 >
                   <Plus size={14} />
                   New Flow
@@ -254,7 +365,7 @@ export default function FlowsPage() {
                 <button
                   type="button"
                   onClick={() => setSearch("")}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-100 text-sm font-medium rounded-lg transition-colors"
+                  className="inline-flex min-h-11 items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-100 text-sm font-medium rounded-lg transition-colors"
                 >
                   <X size={14} />
                   Clear search
@@ -263,27 +374,34 @@ export default function FlowsPage() {
             />
           </div>
         ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-slate-800">
-                <th className="px-4 py-3 w-10">
-                  <SelectAllCheckbox
-                    checked={selection.isAllSelected}
-                    indeterminate={selection.isIndeterminate}
-                    onChange={selection.toggleAll}
-                    ariaLabel="Select all flows"
-                  />
-                </th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Name</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Version</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Status</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Nodes</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider hidden sm:table-cell">Updated</th>
-                <th className="px-4 py-3"></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800">
-              {visibleFlows.map((flow) => {
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm" aria-label="Flows list">
+              <caption className="sr-only">
+                Flows list. Use the search and status filters to change the displayed flows.
+              </caption>
+              <thead>
+                <tr className="border-b border-slate-800">
+                  <th scope="col" className="px-4 py-3 w-16">
+                    {!accessDenied && (
+                      <SelectAllCheckbox
+                        checked={selection.isAllSelected}
+                        indeterminate={selection.isIndeterminate}
+                        onChange={selection.toggleAll}
+                        ariaLabel="Select all flows"
+                        className="min-h-11 min-w-11"
+                      />
+                    )}
+                  </th>
+                  <th scope="col" className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Name</th>
+                  <th scope="col" className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Version</th>
+                  <th scope="col" className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Status</th>
+                  <th scope="col" className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Nodes</th>
+                  <th scope="col" className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider hidden sm:table-cell">Updated</th>
+                  <th scope="col" className="px-4 py-3"><span className="sr-only">Quick actions</span></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800">
+                {visibleFlows.map((flow) => {
                 const nodes = flow.definition_json?.nodes ?? [];
                 const nodeCount = nodes.length;
                 // Bucket nodes by type for the tooltip breakdown.
@@ -303,6 +421,9 @@ export default function FlowsPage() {
                 const hasOlderVersions = flow.version > 1 && siblingCount > 1;
                 const hasNewerSiblings = siblingCount > 1;
                 const isSelected = selection.selected.has(flow.id);
+                const statusClass = flow.is_active
+                  ? "bg-emerald-600/20 text-emerald-100 border border-emerald-600/30"
+                  : "bg-slate-700/40 text-slate-400 border border-slate-600/30";
                 return (
                   <tr
                     key={flow.id}
@@ -312,20 +433,29 @@ export default function FlowsPage() {
                     )}
                   >
                     <td className="px-4 py-3">
-                      <RowCheckbox
-                        checked={isSelected}
-                        onChange={() => selection.toggle(flow.id)}
-                        ariaLabel={`Select ${flow.name}`}
-                      />
+                      {!accessDenied && (
+                        <RowCheckbox
+                          checked={isSelected}
+                          onChange={() => selection.toggle(flow.id)}
+                          ariaLabel={`Select ${flow.name}`}
+                          className="min-h-11 min-w-11"
+                        />
+                      )}
                     </td>
                     <td className="px-4 py-3">
-                      <Link
-                        href={`/flows/${flow.id}`}
-                        prefetch={false}
-                        className="font-medium text-slate-100 group-hover:text-white"
-                      >
-                        {flow.name}
-                      </Link>
+                      {accessDenied ? (
+                        <span className="inline-flex min-h-11 items-center font-medium text-slate-100">
+                          {flow.name}
+                        </span>
+                      ) : (
+                        <Link
+                          href={`/flows/${flow.id}`}
+                          prefetch={false}
+                          className="inline-flex min-h-11 items-center font-medium text-slate-100 group-hover:text-white"
+                        >
+                          {flow.name}
+                        </Link>
+                      )}
                       {flow.description && (
                         <div className="text-xs text-slate-500 mt-0.5 truncate max-w-xs">{flow.description}</div>
                       )}
@@ -360,7 +490,7 @@ export default function FlowsPage() {
                     <td className="px-4 py-3">
                       <span className={clsx(
                         "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium",
-                        flow.is_active ? "bg-emerald-600/20 text-emerald-300 border border-emerald-600/30" : "bg-slate-700/40 text-slate-400 border border-slate-600/30"
+                        statusClass
                       )}>
                         <span className={clsx("w-1.5 h-1.5 rounded-full", flow.is_active ? "bg-emerald-400" : "bg-slate-500")} />
                         {flow.is_active ? "Active" : "Inactive"}
@@ -380,34 +510,39 @@ export default function FlowsPage() {
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex gap-1 justify-end items-center">
-                        <Link
-                          href={`/flows/${flow.id}`}
-                          prefetch={false}
-                          className="inline-flex items-center gap-1 px-2 py-1 text-xs text-slate-400 hover:text-white rounded transition-colors"
-                        >
-                          Edit
-                          <ArrowRight size={12} />
-                        </Link>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (!window.confirm(`Delete flow "${flow.name}" v${flow.version}? This cannot be undone.`)) return;
-                            deleteFlow(flow.id);
-                          }}
-                          disabled={deleting === flow.id}
-                          title="Delete flow"
-                          aria-label={`Delete flow ${flow.name} v${flow.version}`}
-                          className="p-1 text-slate-500 hover:text-red-400 rounded transition-colors disabled:opacity-40"
-                        >
-                          <Trash2 size={12} />
-                        </button>
+                        {!accessDenied && (
+                          <>
+                            <Link
+                              href={`/flows/${flow.id}`}
+                              prefetch={false}
+                              className="inline-flex min-h-11 items-center gap-1 px-2 py-2 text-xs text-slate-400 hover:text-white rounded transition-colors"
+                            >
+                              Edit
+                              <ArrowRight size={12} />
+                            </Link>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!window.confirm(`Delete flow "${flow.name}" v${flow.version}? This cannot be undone.`)) return;
+                                deleteFlow(flow.id);
+                              }}
+                              disabled={deleting === flow.id}
+                              title="Delete flow"
+                              aria-label={`Delete flow ${flow.name} v${flow.version}`}
+                              className="inline-flex min-h-11 min-w-11 items-center justify-center text-slate-500 hover:text-red-400 rounded transition-colors disabled:opacity-40"
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>
                 );
-              })}
-            </tbody>
-          </table>
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </div>

@@ -91,8 +91,10 @@ def _read_session(base_url: str, authorization: str, *, timeout: float) -> dict:
             payload = response.read(1_048_577)
     except JmapEndpointError:
         raise
-    except error.HTTPError:
-        raise JmapEndpointError("JMAP session request failed") from None
+    except error.HTTPError as exc:
+        raise JmapEndpointError(
+            f"JMAP session request failed: HTTP_STATUS={int(exc.code)}"
+        ) from None
     except (error.URLError, TimeoutError, OSError):
         raise JmapEndpointError("JMAP session request could not reach local Stalwart") from None
     if len(payload) > 1_048_576:

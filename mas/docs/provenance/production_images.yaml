@@ -1,0 +1,92 @@
+schema_version: "1"
+programme_scope: personal-internal-only
+image_identity: immutable-oci-digest
+
+# Application images are deliberately deployment-supplied: this repository
+# cannot invent a registry digest for an image that has not been built. The
+# release ledger fills `oci_digest`, SBOM, source revision, lock hash, and scan
+# fields from the clean native-Linux build/pull.
+images:
+  - id: team-runner
+    ref_env: AIAT_TEAM_RUNNER_IMAGE_REF
+    build_recipe: infra/docker/Dockerfile.team-runner
+    source_revision: pending-release-ledger
+    lock_hash: pending-release-ledger
+    oci_digest: pending-release-ledger
+    sbom: pending-release-ledger
+    scan: pending-release-ledger
+  - id: redis-acl-init
+    ref_env: AIAT_REDIS_ACL_INIT_IMAGE_REF
+    build_recipe: infra/compose/Dockerfile.redis-acl-init
+    source_revision: pending-release-ledger
+    lock_hash: pending-release-ledger
+    oci_digest: pending-release-ledger
+    sbom: pending-release-ledger
+    scan: pending-release-ledger
+  - id: message-router
+    ref_env: AIAT_MESSAGE_ROUTER_IMAGE_REF
+    build_recipe: infra/docker/Dockerfile.message-router
+    source_revision: pending-release-ledger
+    lock_hash: pending-release-ledger
+    oci_digest: pending-release-ledger
+    sbom: pending-release-ledger
+    scan: pending-release-ledger
+  - id: tool-service-core
+    ref_env: AIAT_TOOL_SERVICE_IMAGE_REF
+    build_recipe: infra/docker/Dockerfile.tool-service#core
+    source_revision: pending-release-ledger
+    lock_hash: pending-release-ledger
+    oci_digest: pending-release-ledger
+    sbom: pending-release-ledger
+    scan: pending-release-ledger
+  - id: opencode-runtime
+    ref_env: AIAT_OPENCODE_RUNTIME_IMAGE_REF
+    build_recipe: infra/docker/Dockerfile.opencode
+    source_revision: pending-release-ledger
+    lock_hash: pending-release-ledger
+    oci_digest: pending-release-ledger
+    sbom: pending-release-ledger
+    scan: pending-release-ledger
+  - id: orchestrator-api
+    ref_env: AIAT_ORCHESTRATOR_IMAGE_REF
+    build_recipe: infra/docker/Dockerfile.orchestrator-api
+    source_revision: pending-release-ledger
+    lock_hash: pending-release-ledger
+    oci_digest: pending-release-ledger
+    sbom: pending-release-ledger
+    scan: pending-release-ledger
+  - id: pm-gateway
+    ref_env: AIAT_PM_GATEWAY_IMAGE_REF
+    build_recipe: infra/docker/Dockerfile.pm-gateway
+    source_revision: pending-release-ledger
+    lock_hash: pending-release-ledger
+    oci_digest: pending-release-ledger
+    sbom: pending-release-ledger
+    scan: pending-release-ledger
+  - id: dashboard
+    ref_env: AIAT_DASHBOARD_IMAGE_REF
+    build_recipe: infra/docker/Dockerfile.dashboard
+    source_revision: pending-release-ledger
+    lock_hash: pending-release-ledger
+    oci_digest: pending-release-ledger
+    sbom: pending-release-ledger
+    scan: pending-release-ledger
+  - id: omniroute
+    ref_env: OMNIROUTE_IMAGE_REF
+    build_recipe: operator-selected immutable upstream image
+    source_revision: 7b139fdb5e42658a49f9d99ddf0eeeba9a994fd8
+    lock_hash: pending-release-ledger
+    oci_digest: sha256:ceae8d9da0acf075dbf5905b61c9ae32e749112650fcf7f4434c8d96ac6d3ebb
+    sbom: pending-release-ledger
+    scan: pending-release-ledger
+  - id: litellm
+    ref_env: LITELLM_IMAGE_REF
+    build_recipe: operator-selected immutable upstream image
+    source_revision: 6e8282d40655d47ed1557f030e53d6819e464e79
+    lock_hash: pending-release-ledger
+    oci_digest: sha256:a50b02a6056095da29308310bb608f0509e08ddcd1d105bae9c21007d82b0e95
+    sbom: pending-release-ledger
+    scan: pending-release-ledger
+
+# Licence and notices, when known, are recorded alongside each dependency or
+# image as metadata only. They are not an image admission predicate.

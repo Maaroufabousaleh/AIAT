@@ -1,0 +1,103 @@
+{
+  "schema_version": "aiat.openhands-github-certification-configuration-audit.v1",
+  "recorded_at": "2026-08-22",
+  "candidate": {
+    "release": "v1.43.0",
+    "source_commit": "4c1237f391fe394e9f67505fe3a0bd2d81f84188",
+    "image_digest": "sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97",
+    "activation": "inactive"
+  },
+  "workflow": {
+    "path": ".github/workflows/openhands-candidate-certification.yml",
+    "dispatch_mode": "workflow_dispatch_only",
+    "services_started": [
+      "aiat-tool-service",
+      "openhands-agent-server"
+    ],
+    "services_not_started": [
+      "litellm",
+      "omniroute"
+    ],
+    "candidate_sha_is_frozen_before_run": true
+  },
+  "model_gateway": {
+    "runtime": "not_started_by_workflow",
+    "network_path": "OpenHands under runsc has no gateway service or alias on the certification network",
+    "configured_url": null,
+    "configured_url_value_status": "not_safely_derivable",
+    "canonical_compose_service_target_if_gateway_is_added": "http://litellm:4000",
+    "reachable_from_runsc": false,
+    "provisioning_required": true,
+    "api_key_scope": "operator-managed authentication for the existing AIAT LiteLLM/gateway endpoint",
+    "api_key_run_scoped": false,
+    "provider_call_proven": false
+  },
+  "aiat_tool_secret": {
+    "scope": "github_workflow_run",
+    "generated_by": "workflow using Python secrets.token_urlsafe",
+    "injected_into": [
+      "disposable AIAT tool-service",
+      "OpenHands certification adapter"
+    ],
+    "persistent_github_secret_required": false,
+    "value_retained": false
+  },
+  "provider_credentials": {
+    "required_for_deterministic_live_model_call": true,
+    "owner": "OmniRoute deployment behind the AIAT gateway",
+    "workflow_receives_provider_credentials": false,
+    "possible_credential_names": [
+      "OPENAI_API_KEY",
+      "OPENROUTER_API_KEY",
+      "GROQ_API_KEY",
+      "GEMINI_API_KEY",
+      "CEREBRAS_API_KEY",
+      "MISTRAL_API_KEY",
+      "CLOUDFLARE_API_TOKEN",
+      "CLOUDFLARE_ACCOUNT_ID",
+      "NVIDIA_API_KEY",
+      "MINIMAX_API_KEY",
+      "DEEPSEEK_API_KEY"
+    ],
+    "selection": "deployment-owned OmniRoute route; no single provider is encoded by omniroute-coding",
+    "values_retained": false
+  },
+  "github_configuration": {
+    "variables": {
+      "OPENHANDS_MODEL_ID": "omniroute-coding",
+      "OPENHANDS_MCP_SETTINGS_KEY": "aiat-openhands-v1-43-0-coding",
+      "OPENHANDS_MODEL_GATEWAY_URL": "unresolved; do not set to a laptop, WSL, Docker-only, or fabricated endpoint"
+    },
+    "secrets": [
+      {
+        "name": "OPENHANDS_MODEL_GATEWAY_API_KEY",
+        "required_now": true,
+        "owner": "operator-managed AIAT gateway",
+        "value_retained": false
+      }
+    ],
+    "run_scoped_variables": [
+      "OPENHANDS_AGENT_PROFILE_ID",
+      "OPENHANDS_CERT_RUN_ID",
+      "OPENHANDS_PROJECT_ID",
+      "AIAT_TOOL_SECRET_SCOPE",
+      "Agent Server network/container names"
+    ],
+    "run_scoped_secrets": [
+      "AIAT_TOOL_SECRET",
+      "OpenHands SESSION_API_KEY"
+    ]
+  },
+  "network_preflight": {
+    "openhands_to_tool_service": "PASS",
+    "openhands_to_model_gateway": "BLOCKED",
+    "model_gateway_to_provider": "BLOCKED_NOT_STARTED",
+    "localhost_dependency": "not proven absent for the unresolved URL variable; workflow control-plane curls to runner loopback are not laptop dependencies"
+  },
+  "decision": {
+    "ready_for_operator_github_configuration": false,
+    "ready_to_dispatch": false,
+    "reason": "The workflow has no reachable LiteLLM/OmniRoute gateway. Supply a real reachable governed gateway or add pinned disposable gateway services and provider configuration before dispatch."
+  },
+  "secrets_retained": false
+}

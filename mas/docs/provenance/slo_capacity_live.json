@@ -1,0 +1,19 @@
+{
+  "schema_version": "aiat.slo-capacity-live.v1",
+  "observed_at": "2026-08-18T16:05:09Z",
+  "mode": "compose-live",
+  "service": "orchestrator-api",
+  "slo_status": "attention",
+  "capacity_status": "clear",
+  "capacity_confidence": "medium",
+  "slo_target_count": 9,
+  "observed_service_count": 5,
+  "observed_event_count": 46,
+  "notice_codes": [
+    "SLO_POLICY_IS_DESCRIPTIVE",
+    "SLO_SOURCES_NOT_OBSERVED"
+  ],
+  "url_configured": true,
+  "secret_values_printed": false,
+  "scope": "Compose operator-authenticated SLO/capacity read-back only; the report is descriptive and non-gating. Native model/tool/mail-edge, load/soak/chaos, and disaster-recovery evidence are not claimed."
+}

@@ -1,0 +1,34 @@
+schema_version: "aiat.runtime-compatibility.v1"
+programme_scope: personal-internal-only
+policy:
+  licence_metadata_is_gate: false
+  compatibility_is_technical_gate: true
+  installation_is_optional: true
+  activation_requires_ready_preflight: true
+runtimes:
+  - id: microsoft_agent_framework
+    distribution: agent-framework
+    import: agent_framework
+    locked_version: "1.13.0"
+    source: https://github.com/microsoft/agent-framework/tree/main/python
+    source_metadata_observed: "2026-08-10"
+    required_symbols: [Agent]
+    execution_methods: [run, invoke]
+    mcp:
+      distribution: mcp
+      version_specifier: ">=1.27,<2"
+      current_workspace_specifier: "==1.23.3"
+    status: locked-certified-isolated
+    activation_status: blocked_until_profile_selected_and_provider_bound
+    optional_profile:
+      requirements_file: mas/infra/runtime/maf/requirements.txt
+      locked_versions:
+        agent-framework: "1.13.0"
+        mcp: "1.29.0"
+      install_command: "uv pip install --prerelease=allow --python <isolated-venv>/bin/python -r mas/infra/runtime/maf/requirements.txt"
+      certification_evidence: mas/docs/provenance/maf_runtime_certification.json
+      certification_status: pass
+    notices:
+      - "The default workspace MCP pin is below the MAF compatibility floor; keep this certified dependency set isolated and do not activate it in the default profile."
+      - "The isolated profile certificate uses a deterministic fake client only; provider-backed canary and live worker activation remain open."
+      - "Licence and restriction fields remain informational metadata and are not part of this preflight."

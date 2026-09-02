@@ -27,7 +27,7 @@ Usage
         data=b'{"sections": [...]}',
         content_type="application/json",
     )
-    data = await blob.download(ref)
+    data = await blob.download(ref)  # verifies SHA-256 and declared size
     await blob.delete(ref)
     await blob.close()
 """
@@ -80,6 +80,23 @@ class BlobRef:
         )
 
 
+def verify_blob_readback(ref: BlobRef, data: bytes) -> bytes:
+    """Verify both checksum and byte count for a provider read-back."""
+
+    actual_sha = hashlib.sha256(data).hexdigest()
+    if actual_sha != ref.sha256:
+        raise ValueError(
+            f"SHA-256 mismatch for {ref.bucket}/{ref.key}: "
+            f"expected {ref.sha256}, got {actual_sha}"
+        )
+    if len(data) != ref.size_bytes:
+        raise ValueError(
+            f"size mismatch for {ref.bucket}/{ref.key}: "
+            f"expected {ref.size_bytes}, got {len(data)}"
+        )
+    return data
+
+
 class BlobClient:
     """Async S3-compatible blob storage client.
 
@@ -96,6 +113,11 @@ class BlobClient:
     region : str
         AWS region (ignored by MinIO but required by boto3).
     """
+
+    # These stable labels let the provider-neutral conformance report identify
+    # a real S3-compatible adapter without exposing endpoint credentials.
+    adapter_type = "s3-compatible"
+    adapter_version = "aioboto3"
 
     def __init__(
         self,
@@ -211,25 +233,100 @@ class BlobClient:
             content_type=content_type,
         )
 
+    async def create_multipart_upload(
+        self,
+        project_id: str,
+        key: str,
+        *,
+        content_type: str = "application/octet-stream",
+        bucket: str | None = None,
+    ) -> str:
+        """Start a provider-managed multipart upload and return its opaque ID."""
+
+        bkt = bucket or self._bucket
+        full_key = self._full_key(project_id, key)
+        response = await self.client.create_multipart_upload(
+            Bucket=bkt,
+            Key=full_key,
+            ContentType=content_type,
+        )
+        return str(response["UploadId"])
+
+    async def upload_multipart_part(
+        self,
+        project_id: str,
+        key: str,
+        upload_id: str,
+        part_number: int,
+        data: bytes,
+        *,
+        bucket: str | None = None,
+    ) -> str:
+        """Upload one numbered multipart part and return its provider ETag."""
+
+        if part_number < 1:
+            raise ValueError("part_number must be positive")
+        bkt = bucket or self._bucket
+        full_key = self._full_key(project_id, key)
+        response = await self.client.upload_part(
+            Bucket=bkt,
+            Key=full_key,
+            UploadId=upload_id,
+            PartNumber=part_number,
+            Body=data,
+        )
+        return str(response["ETag"])
+
+    async def complete_multipart_upload(
+        self,
+        project_id: str,
+        key: str,
+        upload_id: str,
+        parts: list[dict[str, Any]],
+        *,
+        bucket: str | None = None,
+    ) -> None:
+        """Commit an ordered list of provider ETags into one object."""
+
+        bkt = bucket or self._bucket
+        full_key = self._full_key(project_id, key)
+        await self.client.complete_multipart_upload(
+            Bucket=bkt,
+            Key=full_key,
+            UploadId=upload_id,
+            MultipartUpload={"Parts": parts},
+        )
+
+    async def abort_multipart_upload(
+        self,
+        project_id: str,
+        key: str,
+        upload_id: str,
+        *,
+        bucket: str | None = None,
+    ) -> None:
+        """Abort a provider-managed upload before it creates an object."""
+
+        bkt = bucket or self._bucket
+        full_key = self._full_key(project_id, key)
+        await self.client.abort_multipart_upload(
+            Bucket=bkt,
+            Key=full_key,
+            UploadId=upload_id,
+        )
+
     async def download(self, ref: BlobRef) -> bytes:
         """Download an object by its :class:`BlobRef`.
 
         Raises
         ------
         ValueError
-            If SHA-256 mismatch (integrity check).
+            If SHA-256 or declared byte-count mismatch (integrity check).
         """
         resp = await self.client.get_object(Bucket=ref.bucket, Key=ref.key)
         data = await resp["Body"].read()
 
-        # Integrity check
-        actual_sha = hashlib.sha256(data).hexdigest()
-        if actual_sha != ref.sha256:
-            raise ValueError(
-                f"SHA-256 mismatch for {ref.bucket}/{ref.key}: "
-                f"expected {ref.sha256}, got {actual_sha}"
-            )
-        return data
+        return verify_blob_readback(ref, data)
 
     async def download_by_key(
         self,

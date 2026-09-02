@@ -1,0 +1,46 @@
+{
+  "schema_version": "aiat.trace-retention-project-scope-check.v1",
+  "programme_scope": "personal-internal-only",
+  "evidence_commit": "61d2353",
+  "evaluated_at": "2026-08-19T03:51:46Z",
+  "status": "pass",
+  "mode": "deterministic-in-memory",
+  "project_scope": {
+    "scope": "project:project-1",
+    "explicit_project_id": true,
+    "complete_candidate_mapping_required": true,
+    "missing_project_id_rejected": true,
+    "incomplete_mapping_rejected": true,
+    "preview_mutation_performed": false,
+    "apply_mutation_performed": true
+  },
+  "holds": {
+    "typed_snapshot_verified": true,
+    "held_candidates_retained": 2,
+    "authority_snapshot_required_for_apply": true
+  },
+  "backup_parity": {
+    "typed_evidence_required_for_apply": true,
+    "verified": true,
+    "payloads_retained": false
+  },
+  "audit": {
+    "bounded_scalar_envelope": true,
+    "audit_records": 1
+  },
+  "failure_classification": {
+    "harness_or_configuration_failure": "not_observed",
+    "provider_functional_failure": "not_applicable_provider_neutral_fixture",
+    "provider_resource_limit_failure": "not_applicable_provider_neutral_fixture",
+    "infrastructure_or_environment_failure": "not_observed"
+  },
+  "external_network_access_performed": false,
+  "external_provider_mutation_performed": false,
+  "secret_free": true,
+  "payload_free": true,
+  "licence_metadata_is_gate": false,
+  "boundary": [
+    "This certificate hardens project-scope validation in the provider-neutral retention execution contract.",
+    "It does not certify a live authoritative hold registry, production erasure, durable audit storage, provider retention parity, or restore rollback."
+  ]
+}

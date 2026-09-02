@@ -36,6 +36,7 @@ from uuid import UUID
 from ..llm_gateway.client import LLMGatewayClient
 from ..llm_gateway.models import ToolDefinition
 from ..observability.metrics import MAS_BUDGET_EXHAUSTED_TOTAL, MAS_LLM_CALLS_TOTAL
+from ..observability.tracing import bind_trace_id, clear_trace_context
 from ..protocols.enums import AgentRole
 from ..protocols.envelope import MessageEnvelope
 from ..protocols.ws import WSMessageFrame
@@ -231,12 +232,16 @@ class AgentBase(ABC):
             return
 
         self._current_envelope = envelope
-        task_budget = (
-            envelope.budget if envelope.budget is not None else self.config.budget_defaults
+        bind_trace_id(
+            str(envelope.correlation_id or envelope.message_id),
+            span_id=str(envelope.message_id),
         )
-        self._budget = BudgetTracker.from_task_budget(task_budget)
 
         try:
+            task_budget = (
+                envelope.budget if envelope.budget is not None else self.config.budget_defaults
+            )
+            self._budget = BudgetTracker.from_task_budget(task_budget)
             await self.handle_message(envelope)
         except BudgetExhausted as exc:
             logger.warning(
@@ -259,6 +264,8 @@ class AgentBase(ABC):
         else:
             self._processed_lru.add(msg_id_str)
             self._current_envelope = None
+        finally:
+            clear_trace_context()
 
     # ------------------------------------------------------------------
     # Checkpoint helpers — used by concrete subclasses during think() loops

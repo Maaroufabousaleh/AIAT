@@ -39,6 +39,9 @@ from mas_core.agent_runtime.tool_catalog import tool_definitions_for_agent
 from mas_core.observability import configure_logging
 from mas_core.protocols import AgentRole, MessageEnvelope, MessageType, TaskBudget
 from mas_core.protocols.ws import WSMessageFrame
+from mas_core.worker_registry.team_manifest_refs import (
+    reconcile_team_worker_manifest_refs,
+)
 from mas_tools_sdk.client import ToolServiceClient
 from mas_tools_sdk.manifest import resolve_tool_name
 
@@ -88,11 +91,17 @@ class RunnerSettings(BaseModel):
     pgbouncer_dsn: str | None = None
     orchestrator_url: str = "http://orchestrator-api:8000"
     mas_api_key: str | None = None
+    # Explicit caller identity for control-plane acknowledgements.  The
+    # legacy ``mas_api_key`` field remains for local fixtures; deployed CEO
+    # and worker runners select their distinct credentials below.
+    control_plane_api_key: str | None = None
     health_host: str = "0.0.0.0"
     health_port: int = 8080
     llm_model: str = "auto"
+    company_timezone: str = "UTC"
     tool_manifest_startup_attempts: int = 30
     tool_manifest_retry_seconds: float = 1.0
+    worker_manifests_dir: Path | None = None
 
     @classmethod
     def from_env(cls) -> RunnerSettings:
@@ -103,8 +112,15 @@ class RunnerSettings(BaseModel):
         elif router_url.startswith("wss://"):
             router_url = "https://" + router_url.removeprefix("wss://")
 
+        team_config_path = Path(team_config)
+        team_id_hint = team_config_path.stem.strip().lower()
+        control_plane_api_key = (
+            os.environ.get("AIAT_CEO_API_KEY")
+            if team_id_hint == "exec_ceo"
+            else os.environ.get("AIAT_WORKER_API_KEY")
+        ) or os.environ.get("MAS_API_KEY")
         return cls(
-            team_config_path=Path(team_config),
+            team_config_path=team_config_path,
             router_url=router_url.rstrip("/"),
             router_secret=(
                 os.environ.get("AGENT_TOKEN_SECRET")
@@ -113,17 +129,27 @@ class RunnerSettings(BaseModel):
             ),
             tool_service_url=os.environ.get("TOOL_SERVICE_URL"),
             tool_secret=os.environ.get("TOOL_SECRET"),
+            # A direct DSN is intentionally a development-only escape hatch.
+            # Compose deployments omit it and use the typed control-plane
+            # storage client below.
             pgbouncer_dsn=os.environ.get("PGBOUNCER_DSN"),
             orchestrator_url=os.environ.get("ORCHESTRATOR_URL", "http://orchestrator-api:8000"),
             mas_api_key=os.environ.get("MAS_API_KEY"),
+            control_plane_api_key=control_plane_api_key,
             health_host=os.environ.get("HEALTH_HOST", "0.0.0.0"),
             health_port=int(os.environ.get("HEALTH_PORT", "8080")),
             llm_model=os.environ.get("LLM_DEFAULT_MODEL", "auto"),
+            company_timezone=os.environ.get("AIAT_COMPANY_TIMEZONE", "UTC"),
             tool_manifest_startup_attempts=int(
                 os.environ.get("TOOL_MANIFEST_STARTUP_ATTEMPTS", "30")
             ),
             tool_manifest_retry_seconds=float(
                 os.environ.get("TOOL_MANIFEST_RETRY_SECONDS", "1")
+            ),
+            worker_manifests_dir=(
+                Path(raw_workers_dir)
+                if (raw_workers_dir := os.environ.get("WORKER_MANIFESTS_DIR"))
+                else None
             ),
         )
 
@@ -175,7 +201,7 @@ class CheckpointAdapter:
         agent_id: str,
         project_id: str,
     ) -> dict[str, Any] | None:
-        row = await self._store.load(agent_id)
+        row = await self._store.load(agent_id, team_id=self._team_id)
         if row is None:
             return None
         task_json = row.get("task_envelope_json") or {}
@@ -194,10 +220,14 @@ class CheckpointAdapter:
         agent_id: str,
         project_id: str,
     ) -> None:
-        row = await self._store.load(agent_id)
+        row = await self._store.load(agent_id, team_id=self._team_id)
         if row is None:
             return
-        await self._store.delete(agent_id, row["task_message_id"])
+        await self._store.delete(
+            agent_id,
+            row["task_message_id"],
+            team_id=self._team_id,
+        )
 
     async def record_project_usage(self, **kwargs: Any) -> dict[str, Any] | None:
         """Expose the shared usage ledger through AgentBase's storage adapter."""
@@ -246,6 +276,21 @@ class TeamRuntime:
             self.storage = AgentStorage(self.settings.pgbouncer_dsn)
             await self.storage.connect()
             self.checkpoint_store = CheckpointStore(self.storage.engine)
+        elif self.settings.control_plane_api_key:
+            from team_runner.storage_client import ControlPlaneStorageClient
+
+            remote_storage = ControlPlaneStorageClient(
+                orchestrator_url=self.settings.orchestrator_url,
+                api_key=self.settings.control_plane_api_key,
+                team_id=self.team_config.team_id,
+            )
+            try:
+                await remote_storage.health_check()
+            except Exception:
+                await remote_storage.close()
+                raise
+            self.storage = remote_storage
+            self.checkpoint_store = remote_storage
 
         await self.router.start()
         self._instantiate_agents()
@@ -298,7 +343,9 @@ class TeamRuntime:
         if self.tool_client is not None:
             await self.tool_client.close()
         if self.storage is not None:
-            await self.storage.close()
+            close = getattr(self.storage, "close", None)
+            if close is not None:
+                await close()
         self._health_status = "stopped"
 
     async def run(self) -> None:
@@ -322,6 +369,10 @@ class TeamRuntime:
                 entry.get("available") is not False
                 for entry in (self._runtime_tool_manifest or [])
             ),
+            "agent_worker_manifest_refs": {
+                spec.agent_id: spec.worker_manifest_ref
+                for spec in [self.team_config.admin, *self.team_config.workers]
+            },
             "agent_tool_counts": {
                 agent_id: len(agent.available_tool_definitions())
                 for agent_id, agent in sorted(self.agents_by_id.items())
@@ -355,6 +406,7 @@ class TeamRuntime:
         config = AgentConfig.model_construct(
             agent_id=spec.agent_id,
             team_id=self.team_config.team_id,
+            worker_manifest_ref=spec.worker_manifest_ref,
             agent_role=spec.role,
             agent_secret=self.settings.router_secret,
             router_url=self.settings.router_url,
@@ -454,33 +506,36 @@ class TeamRuntime:
             path = repo_root / path
         if not path.is_file():
             return None
-        return self._prepend_time_block(path.read_text(encoding="utf-8"))
+        return self._prepend_time_block(
+            path.read_text(encoding="utf-8"), self.settings.company_timezone
+        )
 
     @staticmethod
-    def _prepend_time_block(prompt_body: str) -> str:
+    def _prepend_time_block(prompt_body: str, timezone_name: str = "UTC") -> str:
         """Stamp a 'current time' header on every loaded prompt so all
         agents in a team share a common time reference.
 
-        Mirrors ``mas/apps/mas-dashboard/lib/datetime.ts`` (and the
-        ``TZ=America/New_York`` env in the runtime Dockerfiles). The
-        zone auto-switches between EDT (summer) and EST (winter) with
-        daylight saving — currently EDT in June. Agents can refresh
-        mid-conversation by calling the ``time.now`` tool.
+        The company manifest/environment selects the IANA zone. Agents can
+        refresh mid-conversation by calling the canonical ``time_now`` tool.
         """
         from datetime import datetime
         from zoneinfo import ZoneInfo
 
-        tz = ZoneInfo("America/New_York")
+        try:
+            tz = ZoneInfo(timezone_name)
+        except (KeyError, ValueError):
+            tz = ZoneInfo("UTC")
+            timezone_name = "UTC"
         now = datetime.now(tz)
         offset = now.strftime("%z")  # e.g. "-0400"
         offset_str = f"UTC{offset[:3]}:{offset[3:]}"
         header = (
-            f"## Current Time (America/New_York)\n"
+            f"## Current Time ({timezone_name})\n"
             f"**{now.strftime('%Y-%m-%d %H:%M:%S %Z')}** "
             f"({offset_str})\n\n"
             f"_Session-start timestamp. All agents in this team share "
-            f"this time reference; coordinate using EDT/EST. Call the "
-            f"`time.now` tool if you need a fresh reading mid-task._\n\n"
+            f"this company-timezone reference. Call the "
+            f"`time_now` tool if you need a fresh reading mid-task._\n\n"
         )
         return header + prompt_body
 
@@ -590,9 +645,12 @@ class TeamRuntime:
         # G5: HTTP-call /system/shutdown-ack or /system/shutdown-nack on orchestrator
         orchestrator_url = self.settings.orchestrator_url
         admin_id = self.admin_agent.agent_id if self.admin_agent else "unknown"
-        api_key = self.settings.mas_api_key
+        api_key = self.settings.control_plane_api_key or self.settings.mas_api_key
         if not api_key:
-            log.error("team_runner.shutdown_ack_not_sent", reason="MAS_API_KEY is not configured")
+            log.error(
+                "team_runner.shutdown_ack_not_sent",
+                reason="control-plane API key is not configured",
+            )
             self._stop_event.set()
             return
         try:
@@ -788,11 +846,26 @@ class TeamRuntime:
         await agent._dispatch(frame)
 
 
-def load_team_config(path: Path) -> TeamConfig:
-    """Parse the configured YAML file into TeamConfig."""
+def load_team_config(path: Path, *, workers_dir: Path | None = None) -> TeamConfig:
+    """Parse one team YAML and optionally verify its mounted worker manifests.
+
+    ``workers_dir`` is supplied by the production entrypoint.  The reconciliation
+    is deliberately read-only and checks every mounted team declaration so a
+    runner cannot start with a missing, inferred, or mismatched manifest identity.
+    Tests and local callers may omit it when exercising isolated YAML parsing.
+    """
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     config = TeamConfig.model_validate(raw)
     _normalize_and_validate_team_tools(config)
+    if workers_dir is not None:
+        report = reconcile_team_worker_manifest_refs(
+            teams_dir=path.parent,
+            workers_dir=workers_dir,
+        )
+        if report["status"] != "pass":
+            errors = "; ".join(str(error) for error in report["errors"][:8])
+            suffix = "" if len(report["errors"]) <= 8 else "; ..."
+            raise ValueError(f"team worker-manifest reconciliation failed: {errors}{suffix}")
     return config
 
 
@@ -865,7 +938,8 @@ async def main() -> None:
     configure_logging("team-runner", json=os.environ.get("LOG_FORMAT") != "console")
 
     settings = RunnerSettings.from_env()
-    team_config = load_team_config(settings.team_config_path)
+    workers_dir = settings.worker_manifests_dir or settings.team_config_path.parent.parent / "workers"
+    team_config = load_team_config(settings.team_config_path, workers_dir=workers_dir)
     runtime = TeamRuntime(settings, team_config)
     health_app = build_health_app(runtime)
     stop_event = asyncio.Event()

@@ -5,6 +5,7 @@ description = "AIAT signed mail identity and external-account control plane"
 requires-python = ">=3.11"
 dependencies = [
     "anyio>=4.6",
+    "mas-core",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "httpx[http2]>=0.27",
@@ -16,6 +17,9 @@ dependencies = [
     "cryptography>=42",
     "structlog>=24.2",
 ]
+
+[tool.uv.sources]
+mas-core = { workspace = true }
 
 [project.optional-dependencies]
 dev = ["pytest>=8.3", "pytest-asyncio>=0.24", "respx>=0.21", "trio>=0.27"]

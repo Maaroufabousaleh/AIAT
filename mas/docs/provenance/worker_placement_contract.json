@@ -1,0 +1,45 @@
+{
+  "schema_version": "aiat.worker-placement-check.v1",
+  "evidence_at": "2026-08-18T01:56:27Z",
+  "commit": "3fb15db",
+  "mode": "deterministic-worker-placement-contract",
+  "status": "pass",
+  "command": "PYTHONPATH=packages/mas-core:scripts uv run --isolated python scripts/check_worker_placement.py --json",
+  "placement_schema": "aiat.worker-placement.v1",
+  "case_count": 3,
+  "eligible_case": {
+    "status": "pass",
+    "selected_host_id": "host-a",
+    "eligible_host_count": 2,
+    "decision_count": 4,
+    "passed": true
+  },
+  "blocked_capacity_and_constraint_case": {
+    "status": "blocked",
+    "selected_host_id": null,
+    "eligible_host_count": 0,
+    "passed": true
+  },
+  "duplicate_host_id_case": {
+    "status": "blocked",
+    "selected_host_id": null,
+    "eligible_host_count": 0,
+    "passed": true
+  },
+  "mutation_performed": false,
+  "external_network_access_performed": false,
+  "external_provider_mutation_performed": false,
+  "worker_dispatch_performed": false,
+  "licence_metadata_is_gate": false,
+  "scope": "deterministic placement constraints, host-plane separation, host health/lease filtering, and capacity ordering over explicit snapshots",
+  "boundary": {
+    "placement_predicate": "checked",
+    "capacity_ordering": "checked",
+    "duplicate_host_fail_closed": "checked",
+    "worker_host_plane_isolation": "checked",
+    "durable_host_registration": "not_checked",
+    "live_multi_host_scheduler": "not_checked",
+    "lease_reservation_commit": "not_checked",
+    "host_loss_or_split_brain": "not_checked"
+  }
+}

@@ -1,0 +1,66 @@
+{
+  "schema_version": "aiat.openhands-certification-historical-run.v1",
+  "immutable": true,
+  "run": {
+    "run_id": "32753965223",
+    "job_id": "97517118397",
+    "workflow_ref": "agent/fix-review-p1",
+    "workflow_head_sha": "4c73a56163f805db9d30a92559fea67aa5066a5a",
+    "candidate_sha": "4c73a56163f805db9d30a92559fea67aa5066a5a",
+    "artifact_id": "9530530634",
+    "artifact_digest": "sha256:90866105b8adc882cc34f28d5cd9063db3b48ea0bc895336cdd3a5ab4492d160"
+  },
+  "classification": {
+    "final_status": "BLOCKED_LIFECYCLE",
+    "normalized_blocker_status": "BLOCKED_TOOL_BRIDGE",
+    "failure_class": "FAILED_CERTIFICATION_IMPLEMENTATION",
+    "root_cause_status": "PINNED_AGENT_SERVER_MCP_HEADER_REDACTION_UNHANDLED",
+    "root_cause": "The pinned OpenHands Agent Server v1.43.0 returns configured MCP header values as the scalar redaction marker **********. The certification adapter attempted to HMAC-verify that marker as though it were the run-scoped grant, so the live adapter wave stopped before conversation creation. Certification-only rotation now accepts this exact server redaction only after trusted grant creation and local verification; ordinary production callers remain fail-closed.",
+    "failure_stage": "run_scoped_mcp_grant_consumption",
+    "mcp_grant_readback": "REDACTED_BY_PINNED_AGENT_SERVER",
+    "provider_failure": false,
+    "gateway_failure": false,
+    "gvisor_failure": false,
+    "runtime_startup_failure": false,
+    "security_finding": false,
+    "response_payload_retained": false,
+    "credentials_retained": false
+  },
+  "evidence": {
+    "groq_provider_preflight": "PASS",
+    "candidate_preflight": "READY_FOR_CERTIFICATION_AUTHORIZATION",
+    "openhands_image_pull": "PASS",
+    "litellm_image_pull": "PASS",
+    "omniroute_image_pull": "PASS",
+    "image_platform_verification": "PASS",
+    "gateway_provenance": "PASS",
+    "omniroute_management_health": "PASS",
+    "omniroute_api_auth_boundary": "PASS",
+    "provider_route_configuration": "PASS",
+    "provider_baseline": "PASS",
+    "litellm_start": "PASS",
+    "litellm_provider_route": "PASS",
+    "auto_routing": "PASS",
+    "tool_service": "PASS",
+    "openhands_runsc_start": "PASS",
+    "profile_materialization": "PASS",
+    "mcp_materialization": "PASS",
+    "mcp_effective_grant_use": "BLOCKED_TOOL_BRIDGE",
+    "live_certification": "BLOCKED_LIFECYCLE",
+    "gate_evaluation": {
+      "status": "FAILED_FILE_MODIFICATIONS",
+      "mandatory_gate_count": 20,
+      "passed": 5,
+      "failed": 3,
+      "not_run": 12
+    },
+    "zero_residue": "PASS",
+    "evidence_schema": "PASS_AFTER_VALIDATOR_FIX"
+  },
+  "retention": {
+    "credentials_retained": false,
+    "model_payloads_retained": false,
+    "raw_response_payload_retained": false,
+    "unnecessary_logs_retained": false
+  }
+}

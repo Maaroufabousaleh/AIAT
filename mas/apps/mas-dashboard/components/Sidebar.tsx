@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import type { RefObject } from "react";
 import { clsx } from "clsx";
 import {
   LayoutDashboard,
@@ -21,6 +22,7 @@ import {
   ShieldCheck,
   type LucideIcon,
 } from "lucide-react";
+import ThemeToggle from "@/components/ThemeToggle";
 
 type NavItem = {
   href: string;
@@ -77,17 +79,22 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
       { href: "/system", label: "System", icon: Settings },
       { href: "/tools",  label: "Tools",  icon: Wrench },
       { href: "/governance", label: "Governance", icon: ShieldCheck },
+      { href: "/integrations", label: "PM Integrations", icon: Network },
     ],
   },
 ];
 
+type SidebarProps = {
+  mobileOpen?: boolean;
+  onNavigate?: () => void;
+  sidebarRef?: RefObject<HTMLElement | null>;
+};
+
 export default function Sidebar({
   mobileOpen = false,
   onNavigate,
-}: {
-  mobileOpen?: boolean;
-  onNavigate?: () => void;
-}) {
+  sidebarRef,
+}: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
 
@@ -97,39 +104,43 @@ export default function Sidebar({
   }
 
   return (
-    <aside className={clsx(
-      "fixed inset-y-0 left-0 z-50 flex w-72 flex-shrink-0 flex-col border-r border-slate-800/90 bg-slate-950 shadow-2xl shadow-black/40 transition-transform duration-200 lg:static lg:z-auto lg:w-64 lg:translate-x-0 lg:bg-slate-950/80",
-      mobileOpen ? "translate-x-0" : "-translate-x-full",
-    )}>
+    <aside
+      ref={sidebarRef}
+      aria-label="Primary navigation"
+      className={clsx(
+        "fixed inset-y-0 left-0 z-50 flex w-72 flex-shrink-0 flex-col border-r border-[var(--aiat-border)] bg-[var(--aiat-bg-deep)] shadow-2xl shadow-black/20 transition-transform duration-200 lg:static lg:z-auto lg:w-64 lg:translate-x-0 lg:bg-[var(--aiat-bg-deep)]",
+        mobileOpen ? "translate-x-0" : "-translate-x-full",
+      )}
+    >
       {/* Logo */}
-      <div className="px-5 py-5 border-b border-slate-800/80">
+      <div className="border-b border-[var(--aiat-border)] px-5 py-5">
         <Link href="/" prefetch={false} onClick={onNavigate} className="flex items-center gap-3 group">
           <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 via-cyan-500 to-emerald-400 flex items-center justify-center shadow-lg shadow-blue-500/20">
             <span className="text-white text-sm font-bold">M</span>
           </div>
           <div className="leading-tight">
-            <div className="text-base font-semibold text-white tracking-tight">
+            <div className="text-base font-semibold tracking-tight text-[var(--aiat-text)]">
               AIAT
             </div>
-            <div className="text-xxs text-slate-400">MAS operator console</div>
+            <div className="text-xxs text-[var(--aiat-text-muted)]">MAS operator console</div>
           </div>
         </Link>
         <div className="mt-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2">
-          <div className="flex items-center gap-2 text-xs font-medium text-emerald-200">
-            <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.8)]" />
-            Control plane online
+          <div className="flex items-center gap-2 text-xs font-medium text-emerald-200" role="status" aria-live="polite">
+            <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.8)]" aria-hidden="true" />
+            <span>Control plane online</span>
           </div>
-          <div className="mt-1 text-xxs text-slate-400">
+          <div className="mt-1 text-xxs text-[var(--aiat-text-muted)]">
             Projects, workers, streams and tools stay governed here.
           </div>
         </div>
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 px-3 py-4 overflow-y-auto">
+      <nav id="primary-navigation" aria-label="Primary" className="flex-1 px-3 py-4 overflow-y-auto">
         {NAV_GROUPS.map((group) => (
           <div key={group.title} className="mb-5 last:mb-0">
-            <div className="px-2 mb-2 text-xxs font-semibold text-slate-500 uppercase tracking-wider">
+            <div className="mb-2 px-2 text-xxs font-semibold uppercase tracking-wider text-[var(--aiat-text-subtle)]">
               {group.title}
             </div>
             <div className="space-y-0.5">
@@ -146,17 +157,17 @@ export default function Sidebar({
                     prefetch={false}
                     onClick={onNavigate}
                     className={clsx(
-                      "group flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors border",
+                      "group flex min-h-11 items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors border",
                       active
                         ? "border-blue-500/40 bg-blue-500/15 text-blue-100 font-medium shadow-sm shadow-blue-500/10"
-                        : "border-transparent text-slate-400 hover:text-slate-100 hover:bg-slate-900/80 hover:border-slate-800"
+                        : "border-transparent text-[var(--aiat-text-muted)] hover:bg-[var(--aiat-surface)] hover:text-[var(--aiat-text)]"
                     )}
                   >
                     <Icon
                       size={15}
                       className={clsx(
                         "flex-shrink-0 transition-colors",
-                        active ? "text-blue-300" : "text-slate-500 group-hover:text-slate-300"
+                        active ? "text-blue-500" : "text-[var(--aiat-text-subtle)] group-hover:text-[var(--aiat-text)]"
                       )}
                     />
                     <span className="truncate">{label}</span>
@@ -169,15 +180,17 @@ export default function Sidebar({
       </nav>
 
       {/* Footer */}
-      <div className="px-3 py-3 border-t border-slate-800/80 space-y-2">
-        <div className="px-2 flex items-center gap-2 text-xxs text-slate-500">
+      <div className="space-y-2 border-t border-[var(--aiat-border)] px-3 py-3">
+        <ThemeToggle />
+        <div className="flex items-center gap-2 px-2 text-xxs text-[var(--aiat-text-subtle)]">
           <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
           <span>Operator session</span>
         </div>
         <button
+          type="button"
           onClick={handleLogout}
-          className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-sm
-                     text-slate-400 hover:text-slate-100 hover:bg-slate-900/80
+          className="flex min-h-11 items-center gap-2.5 px-2.5 py-1.5 rounded-md text-sm
+                     text-[var(--aiat-text-muted)] hover:bg-[var(--aiat-surface)] hover:text-[var(--aiat-text)]
                      transition-colors w-full"
         >
           <LogOut size={15} className="text-slate-500" />

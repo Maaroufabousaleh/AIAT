@@ -1,0 +1,235 @@
+{
+  "schema_version": "aiat.release-ledger-live-summary.v1",
+  "programme_scope": "personal-internal-only",
+  "observed_at": "2026-08-18T23:57:08.541404+00:00",
+  "profile": "live-configured-compose",
+  "status": "blocked",
+  "release_decision": "NO-RELEASE",
+  "counts": {
+    "total": 81,
+    "pass": 76,
+    "fail": 0,
+    "blocked": 5
+  },
+  "pending_evidence_count": 4,
+  "decision_reasons": [
+    "5 check(s) are externally blocked",
+    "4 pending evidence item(s) remain",
+    "worktree is dirty"
+  ],
+  "git": {
+    "revision": "296d89b7918f18032616bb35d83f179bcf46fa86",
+    "working_tree_clean": false,
+    "changed_path_count": 2
+  },
+  "aggregate_invocation": {
+    "live_orchestrator_url_configured": true,
+    "check_timeout_seconds": 120,
+    "credentials_printed": false,
+    "environment_source": "local operator environment passed to bounded child checks without output; operator key alias resolved from AIAT_OPERATOR_API_KEY",
+    "container": "mas-orchestrator-api-1",
+    "scope": "bounded release-evidence aggregation; no credential or dependency payload output"
+  },
+  "local_boundary_evidence": {
+    "status": "pass",
+    "ref": "network_boundary_live.json",
+    "runner_count": 11
+  },
+  "local_object_store_evidence": {
+    "status": "pass",
+    "conformance_ref": "object_store_live_conformance.json",
+    "backup_restore_ref": "object_store_backup_restore_live.json",
+    "execution_boundary": "orchestrator-container-on-mas_internal",
+    "case_count": 8,
+    "passed_case_count": 8,
+    "provider_diverse_live_evidence": {
+      "status": "pass",
+      "providers": ["minio", "seaweedfs"],
+      "resource_profile_ref": "object_store_resource_profile_provider_diverse_evidence.json",
+      "multipart_ref": "object_store_multipart_provider_diverse_evidence.json",
+      "provider_outage_ref": "object_store_provider_outage_live_evidence.json",
+      "invalid_run_excluded": true,
+      "cleanup_verified": true,
+      "note": "The release ledger validates these retained scalar certificates as live evidence; no payloads, credentials, logs, or disposable state are retained."
+    },
+    "note": "The configured aggregate MinIO conformance child passes, and the registered provider-diverse multipart, resource-profile, and outage certificates now validate through the retained-live evidence path."
+  },
+  "local_tool_trace_evidence": {
+    "status": "pass",
+    "aggregate_current_status": "pass",
+    "ref": "tool_trace_live.json",
+    "trace_id": "aiat-live-tool-20260818-r1",
+    "tool_name": "time_now",
+    "native_tool_span_count": 1,
+    "tool_usage_event_count": 1,
+    "note": "One bounded pure-tool call through the Compose tool service reads back one project-usage event and one tool-service native span; no project identifier or response payload is retained."
+  },
+  "local_image_identity_evidence": {
+    "status": "pass",
+    "ref": "image_provenance_local_identity.json",
+    "image_count": 10,
+    "matched_digest_count": 10,
+    "sbom_status": "observed_local",
+    "sbom_observation_ref": "image_sbom_local_observation.json",
+    "sbom_observed_image_count": 10,
+    "sbom_observed_component_count": 2430,
+    "scan_status": "blocked_operator_auth",
+    "source_revision_status": "not_checked",
+    "lock_hash_status": "not_checked",
+    "native_clean_build_status": "not_checked",
+    "note": "All ten supplied digest references match local Docker RepoDigests. A separate scalar-only local CycloneDX SBOM observation covers all ten image stores, but deployment SBOM, vulnerability scan, source/lock, clean-build, or native release evidence remains unproven."
+  },
+  "local_security_scan_reproduction": {
+    "status": "findings_review_required",
+    "ref": "security_scan_reproduction_local.json",
+    "source_commit": "10c894bdeef3618f5666fb506ef7f9491bb964d8",
+    "scanner": "semgrep 1.168.0 auto-ruleset",
+    "finding_count": 316,
+    "scanner_error_count": 55,
+    "aiat_boundary_regression": "pass",
+    "review_register_reproduction_binding": "pass",
+    "technical_gate_status": "blocked",
+    "note": "The exact pinned OpenCode source reproduces the recorded finding count; the review register is machine-bound to this source commit, finding/error counts, blocked technical status, and payload-free retention flags. Unresolved findings and scanner/parser errors remain operator-review work. AIAT run-scoped grants, workspace path rejection, sandbox contract, and review-register regressions pass."
+  },
+  "local_trace_transport_evidence": {
+    "status": "pass",
+    "aggregate_current_status": "pass",
+    "ref": "trace_observability_live.json",
+    "trace_id": "aiat-live-trace-20260818-r1",
+    "api_request_count": 1,
+    "native_span_count": 1,
+    "note": "One bounded /health request reads back one API-request row and one orchestrator_api native transport span; broader model, worker, mail-edge, and retention coverage remain separate."
+  },
+  "local_slo_capacity_evidence": {
+    "status": "observed",
+    "aggregate_current_status": "pass",
+    "ref": "slo_capacity_live.json",
+    "slo_status": "attention",
+    "capacity_status": "clear",
+    "capacity_confidence": "medium",
+    "observed_service_count": 5,
+    "observed_event_count": 46,
+    "notice_codes": ["SLO_POLICY_IS_DESCRIPTIVE", "SLO_SOURCES_NOT_OBSERVED"],
+    "note": "The API read models are reachable and schema-valid, but the SLO report remains descriptive/attention because native service sources are not observed."
+  },
+  "local_metric_series_evidence": {
+    "status": "pass",
+    "ref": "metric_series_live.json",
+    "total_series": 31,
+    "total_budget": 2000,
+    "project_id_label_present": false,
+    "violations": [],
+    "note": "The authenticated Compose scrape passes bounded AIAT-owned family and label policies."
+  },
+  "local_worker_reconciliation_evidence": {
+    "status": "pass",
+    "ref": "worker_reconciliation_live.json",
+    "persisted_worker_count": 50,
+    "default_worker_count": 39,
+    "matched_default_worker_count": 39,
+    "missing_default_worker_count": 0,
+    "binding_mismatch_count": 0,
+    "default_binding_gate": "pass",
+    "pending_security_findings": {
+      "workers": ["coding_worker", "tester"],
+      "finding_count": 316,
+      "status": "findings_review_required"
+    },
+    "note": "All 39 checked-in defaults match the live registry; the two security-review rows remain pending and are not waived by reconciliation."
+  },
+  "local_runtime_benchmark_evidence": {
+    "status": "pass",
+    "ref": "runtime_benchmarks_live.json",
+    "runtime_ids": ["langgraph", "crewai"],
+    "tasks_run": 2,
+    "tasks_passed": 2,
+    "note": "Both dependency-backed dry-runs completed in the Compose orchestrator image; sandbox, canary, live worker-run, and rollback remain separate."
+  },
+  "local_model_profile_evidence": {
+    "status": "pass",
+    "ref": "model_profile_catalogue_live.json",
+    "registry_model_count": 93,
+    "profile_version_count": 93,
+    "approved_profile_entry_count": 93,
+    "covered_profile_version_count": 93,
+    "profile_pending_model_count": 0,
+    "profile_not_registered_count": 0,
+    "finding_count": 0,
+    "profile_coverage": "complete",
+    "alias_reconciliation": "passed: aiat/omniroute-coding reconciles to the canonical litellm/omniroute-coding registry entry",
+    "stale_fixture_cleanup": {
+      "status": "applied",
+      "deleted_profile_count": 1,
+      "deleted_version_count": 1,
+      "active_reference_counts": {
+        "company_assignments": 0,
+        "model_overrides": 0,
+        "worker_registry": 0
+      }
+    },
+    "note": "The approved-coverage requirement is complete at 93/93. The exact unreferenced local smoke fixture was removed after a zero-reference preflight; no active worker or provider route was mutated, and the post-cleanup catalogue read-back recorded no findings."
+  },
+  "local_credentials_manager_evidence": {
+    "status": "pass",
+    "ref": "credentials_manager_live_evidence.json",
+    "evidence_commit": "1c1df03",
+    "observed_at": "2026-08-19T00:58:09Z",
+    "mode": "compose-local-live",
+    "checks_passed": 12,
+    "cleanup_verified": true,
+    "remaining_fixture_counts": 0,
+    "provider_managed_kms_status": "not_configured",
+    "note": "The AIAT-owned Postgres credentials boundary passes through the private Compose API container; provider-managed KMS remains a separate operator-selected gate."
+  },
+  "local_gateway_provider_recovery_evidence": {
+    "status": "pass",
+    "ref": "gateway_worker_provider_recovery_live.json",
+    "provider_id": "litellm",
+    "exact_model_id": "llama-3.3-70b-versatile",
+    "provider_attempts": 2,
+    "provider_retry_count": 1,
+    "external_provider_completion_attempt_count": 1,
+    "durable_reopen": true,
+    "provider_ingress_replay_conflict_tamper": "passed",
+    "cleanup_verified": true,
+    "note": "The retained live certificate is now validated by the release ledger. It proves one injected transient failure, one real provider completion, durable worker/identity reopen, payload-free scalar projection, and zero fixture residue; external provider outage/restore, callback/delivery confirmation, independent-host, and sandbox evidence remain open."
+  },
+  "local_identity_provider_evidence": {
+    "status": "pass",
+    "ref": "scripts/check_identity_provider_conformance.py",
+    "mode": "mocked-provider-conformance",
+    "providers": ["resend", "stalwart"],
+    "case_count": 11,
+    "passed_case_count": 11,
+    "external_network_access_performed": false,
+    "external_provider_mutation_performed": false,
+    "payload_free": true,
+    "note": "The bounded fixture drives the real Stalwart/Resend adapters through provider-shaped mocked HTTP. External account, delivery, outage, and restore evidence remain separate live gates."
+  },
+  "local_flow_runtime_evidence": {
+    "status": "pass",
+    "ref": "flow_runtime_live_evidence.json",
+    "mode": "live",
+    "case_count": 12,
+    "passed_case_count": 12,
+    "cleanup_verified": true,
+    "flow_fixture_count": 2,
+    "project_fixture_count": 3,
+    "projects_deleted": 3,
+    "flows_deleted": 2,
+    "remaining_fixture_count": 0,
+    "native_watchdog_status": "not_checked",
+    "cold_crash_recovery_status": "not_checked",
+    "note": "The local Compose API certificate covers parallel fan-out, join waiting/scheduling, switch activation/selection, terminal end handling, cancellation, timeout/escalation, and safe retry with scalar, payload-free, secret-free evidence. Native watchdog, cold-crash, worker-canary, sandbox, and provider recovery remain separate gates."
+  },
+  "notices": [
+    "Blocked live checks are not treated as passes.",
+    "The canonical host-loopback configured Compose profile was rerun at 2026-08-18T23:57:08Z against revision 296d89b with 76 passes, zero failures, and 5 externally blocked checks across 81 checks; image identity, trace, tool-trace, and SLO children pass locally, while native host, sandbox, Firecracker, outbound mail, and self-improvement source remain blocked. Live flow-runtime transition coverage and default-worker binding reconciliation pass, while native watchdog/cold-crash, worker canary, sandbox, and rollback certification remain separate.",
+    "An earlier host-run invocation using Compose-internal service URLs was excluded as a harness/environment URL configuration error; it did not change provider or release verdicts.",
+    "A subsequent aggregate invocation using MAS_API_KEY in place of the distinct AIAT_OPERATOR_API_KEY produced a 403 trace read-back and one failed child; that key-alias harness/configuration run is excluded. The corrected operator-key rerun above passed the trace, tool-trace, and SLO children.",
+    "The retained live gateway recovery certificate is validated as a separate pass for the bounded provider-retry gate; it does not waive the distinct external outage/restore gate.",
+    "The registered MinIO/SeaweedFS multipart, resource-profile, and outage certificates are validated as retained live evidence; the earlier nonexistent-alias harness attempt remains excluded and does not affect provider verdicts.",
+    "The model-profile catalogue now has complete 93/93 persisted coverage after bounded removal of one unreferenced local smoke fixture; this does not certify provider execution or alter any other gate.",
+    "Licence and resource notices remain metadata-only and are not a release gate."
+  ]
+}

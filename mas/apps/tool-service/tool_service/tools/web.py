@@ -54,7 +54,11 @@ def _validate_public_url(url: str) -> None:
                     f"URL blocked: {hostname} resolves to a private address ({info[4][0]})"
                 )
     except socket.gaierror:
-        pass
+        # Fail closed when the hostname cannot be resolved now.  Allowing the
+        # request to proceed would let a later DNS answer select a private
+        # address after this boundary check (the browser tool uses the same
+        # invariant).
+        raise ValueError(f"URL blocked: {hostname} could not be resolved") from None
 
 
 class WebSearchTool(BaseTool):

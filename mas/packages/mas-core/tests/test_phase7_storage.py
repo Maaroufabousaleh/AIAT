@@ -31,12 +31,14 @@ from mas_core.memory.models import (
     agent_profiles,
     approval_gates,
     capabilities,
+    compatibility_matrices,
     dead_letters,
     documents,
     infra_events,
     issues,
     kpi_snapshots,
     metadata,
+    native_trace_spans,
     project_state_history,
     projects,
     review_comments,
@@ -49,6 +51,15 @@ from mas_core.memory.models import (
 
 # ── Storage ───────────────────────────────────────────────────────────────────
 from mas_core.memory.storage import AgentStorage
+from mas_core.workflow import (
+    ImprovementArtifact,
+    ImprovementArtifactBundle,
+    ImprovementArtifactKind,
+    ImprovementOpportunity,
+    ImprovementOutcomeKind,
+    ImprovementRisk,
+    ImprovementStatus,
+)
 
 # ===========================================================================
 # Helpers
@@ -135,10 +146,14 @@ class TestModelsMetadata:
         "agent_checkpoints",
         "memory",
         "task_log",
+        "api_request_observations",
+        "native_trace_spans",
         "artifacts",
         "infra_events",
         "capabilities",
         "worker_registry",
+        "worker_hosts",
+        "worker_host_reservations",
         "evaluation_reports",
         "project_usage_events",
         "worker_shell_versions",
@@ -166,6 +181,7 @@ class TestModelsMetadata:
         "worker_checkpoints",
         "worker_artifacts",
         "worker_usage_records",
+        "worker_run_host_bindings",
         "hiring_pipeline_stages",
         "approval_records",
         "update_monitoring_jobs",
@@ -176,6 +192,30 @@ class TestModelsMetadata:
         "flows",
         "flow_instances",
         "flow_node_executions",
+        "pm_connections",
+        "pm_project_bindings",
+        "pm_object_mappings",
+        "pm_external_actor_mappings",
+        "pm_external_actor_mapping_audits",
+        "pm_inbox_events",
+        "pm_outbox_events",
+        "pm_outbox_dispositions",
+        "pm_delivery_attempts",
+        "pm_conflicts",
+        "pm_reconciliation_runs",
+        "pm_cutovers",
+        "pm_lifecycle_plans",
+        "pm_lifecycle_audits",
+        "pm_inbound_canary_plans",
+        "work_item_comments",
+        "work_item_links",
+        "integration_evidence_records",
+        "companies",
+        "company_manifest_versions",
+        "company_departments",
+        "company_worker_assignments",
+        "company_budgets",
+        "budget_reservations",
     ]
 
     def test_all_current_tables_present(self):
@@ -193,6 +233,7 @@ class TestModelsMetadata:
         cols = {c.name for c in projects.columns}
         expected = {
             "id",
+            "company_id",
             "name",
             "description",
             "state",
@@ -201,6 +242,7 @@ class TestModelsMetadata:
             "created_by",
             "human_requester",
             "config",
+            "revision",
             "created_at",
             "updated_at",
         }
@@ -212,6 +254,50 @@ class TestModelsMetadata:
         assert "to_state" in cols
         assert "event" in cols
         assert "project_id" in cols
+
+    def test_integration_evidence_columns(self):
+        from mas_core.memory.models import integration_evidence_records
+
+        cols = {c.name for c in integration_evidence_records.columns}
+        assert {"connection_id", "evidence_type", "payload", "idempotency_key", "trace_id", "span_id"} <= cols
+
+    def test_native_trace_span_columns_are_payload_free(self):
+        cols = {c.name for c in native_trace_spans.columns}
+        assert {
+            "trace_id",
+            "span_id",
+            "parent_span_id",
+            "source_kind",
+            "operation",
+            "service",
+            "status",
+            "started_at",
+            "ended_at",
+            "duration_ms",
+            "sampled",
+            "retention_until",
+            "attributes_json",
+        } <= cols
+        assert "payload" not in cols
+
+    def test_worker_evidence_columns_include_trace_context(self):
+        from mas_core.memory.models import worker_artifacts, worker_usage_records
+
+        assert {"trace_id", "span_id"} <= {c.name for c in worker_artifacts.columns}
+        assert {"trace_id", "span_id"} <= {c.name for c in worker_usage_records.columns}
+
+    def test_pm_forensics_columns(self):
+        from mas_core.memory.models import (
+            pm_inbound_canary_plans,
+            pm_inbox_events,
+            work_item_comments,
+        )
+
+        assert {"raw_body", "headers", "normalized_type", "result"} <= {c.name for c in pm_inbox_events.columns}
+        assert {"approval_id", "body_blob_ref"} <= {c.name for c in work_item_comments.columns}
+        assert {"expired_by", "expired_at"} <= {
+            c.name for c in pm_inbound_canary_plans.columns
+        }
 
     def test_documents_columns(self):
         cols = {c.name for c in documents.columns}
@@ -324,6 +410,61 @@ class TestAgentStorageCRUD:
         storage._dsn = "postgresql+asyncpg://test:test@localhost/test"
         return storage, engine
 
+    @pytest.mark.asyncio
+    async def test_compatibility_matrix_writer_persists_bounded_evidence(self):
+        storage, engine = self._make_storage()
+        conn = engine._mock_conn
+        conn.execute = AsyncMock()
+        worker_id = uuid4()
+
+        result = await storage.create_compatibility_matrix(
+            worker_id=worker_id,
+            runtime_version="1.17.13",
+            adapter_version="1.0.0",
+            contract_version="aiat.adapter.v1",
+            model_profiles={"worker": "opencode-phase0b-coding"},
+            capabilities={"task_types": ["code"]},
+            fixtures=["worker_contract", "canary"],
+            passed=False,
+        )
+
+        assert result["worker_id"] == worker_id
+        assert result["fixtures"] == ["worker_contract", "canary"]
+        assert result["passed"] is False
+        assert conn.execute.await_count == 1
+        assert compatibility_matrices.name == "compatibility_matrices"
+
+    @pytest.mark.asyncio
+    async def test_native_trace_span_writer_is_payload_free_and_queryable(self):
+        storage, engine = self._make_storage()
+        conn = engine._mock_conn
+        conn.execute = AsyncMock()
+        span = await storage.create_native_trace_span(
+            trace_id="trace-storage-001",
+            span_id="span-storage-001",
+            source_kind="tool",
+            operation="clock.now",
+            service="tool_service",
+            status="success",
+            duration_ms=3,
+            attributes={
+                "tool": "clock.now",
+                "request_body": "must-not-persist",
+            },
+        )
+        assert span["trace_id"] == "trace-storage-001"
+        assert span["span_id"] == "span-storage-001"
+        assert span["attributes_json"] == {"tool": "clock.now"}
+        assert conn.execute.await_count == 1
+
+        result_mock = MagicMock()
+        result_mock.mappings.return_value = _mock_mappings(
+            [{"id": span["id"], "trace_id": "trace-storage-001", "span_id": "span-storage-001"}]
+        )
+        conn.execute = AsyncMock(return_value=result_mock)
+        rows = await storage.list_native_trace_spans_by_trace("trace-storage-001", limit=4)
+        assert rows[0]["span_id"] == "span-storage-001"
+
     # ── Projects ──
 
     @pytest.mark.asyncio
@@ -342,7 +483,7 @@ class TestAgentStorageCRUD:
         assert result["state"] == "INIT"
         assert result["created_by"] == "ceo_agent"
         assert isinstance(result["id"], UUID)
-        conn.execute.assert_awaited_once()
+        assert conn.execute.await_count == 2
 
     @pytest.mark.asyncio
     async def test_create_project_with_initial_context_is_atomic(self):
@@ -365,7 +506,7 @@ class TestAgentStorageCRUD:
         )
 
         assert result["name"] == "Context Project"
-        assert conn.execute.await_count == 2
+        assert conn.execute.await_count == 3
 
     @pytest.mark.asyncio
     async def test_create_project_with_explicit_id(self):
@@ -380,6 +521,155 @@ class TestAgentStorageCRUD:
             project_id=pid,
         )
         assert result["id"] == pid
+
+    @pytest.mark.asyncio
+    async def test_create_self_improvement_project_uses_canonical_project_writer(self):
+        storage, engine = self._make_storage()
+        conn = engine._mock_conn
+        conn.execute = AsyncMock()
+        pid = uuid4()
+        opportunity = ImprovementOpportunity(
+            title="Storage-backed improvement",
+            description="Persist a governed improvement request.",
+            owner="cto",
+            risk=ImprovementRisk.MEDIUM,
+            budget_usd="3.50",
+            evidence_policy="software_delivery",
+            source="operator_goal",
+            created_by="operator",
+            created_by_kind="human",
+        )
+
+        result = await storage.create_self_improvement_project(opportunity, project_id=pid)
+
+        assert result["id"] == pid
+        assert result["name"] == "Improvement: Storage-backed improvement"
+        assert result["config"]["self_improvement"]["risk"] == "medium"
+        assert result["config"]["self_improvement"]["budget_usd"] == "3.50"
+        assert result["config"]["self_improvement"]["evidence_policy"] == "software_delivery"
+        lifecycle = result["config"]["self_improvement"]["lifecycle"]
+        assert lifecycle["status"] == "project_bound"
+        assert lifecycle["project_id"] == str(pid)
+        assert lifecycle["revision"] == 1
+        assert conn.execute.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_self_improvement_lifecycle_reads_from_project_config(self):
+        storage, engine = self._make_storage()
+        conn = engine._mock_conn
+        pid = uuid4()
+        opportunity = ImprovementOpportunity(
+            title="Read lifecycle",
+            description="Read durable lifecycle state.",
+            owner="operator",
+            risk=ImprovementRisk.LOW,
+            budget_usd="1.00",
+            evidence_policy="software_delivery",
+            source="test",
+            created_by="operator",
+            created_by_kind="human",
+        )
+        from mas_core.workflow import SelfImprovementLifecycle
+
+        lifecycle = SelfImprovementLifecycle.create(opportunity)
+        lifecycle.bind_project(pid, actor="operator", actor_kind="human")
+        row = {
+            "id": pid,
+            "config": {
+                "self_improvement": {"lifecycle": lifecycle.as_dict()},
+            },
+        }
+        result_mock = MagicMock()
+        result_mock.mappings.return_value = _mock_mappings([row])
+        conn.execute = AsyncMock(return_value=result_mock)
+
+        snapshot = await storage.get_self_improvement_lifecycle(pid)
+
+        assert snapshot is not None
+        assert snapshot["status"] == "project_bound"
+        assert snapshot["opportunity"]["description"] == "Read durable lifecycle state."
+
+    @pytest.mark.asyncio
+    async def test_self_improvement_lifecycle_update_uses_revision_and_history(self):
+        storage, engine = self._make_storage()
+        conn = engine._mock_conn
+        pid = uuid4()
+        opportunity = ImprovementOpportunity(
+            title="Update lifecycle",
+            description="Persist a linked worker run.",
+            owner="operator",
+            risk=ImprovementRisk.LOW,
+            budget_usd="1.00",
+            evidence_policy="software_delivery",
+            source="test",
+            created_by="operator",
+            created_by_kind="human",
+        )
+        from mas_core.workflow import SelfImprovementLifecycle
+
+        lifecycle = SelfImprovementLifecycle.create(opportunity)
+        lifecycle.bind_project(pid, actor="operator", actor_kind="human")
+        current_config = {"self_improvement": {"lifecycle": lifecycle.as_dict()}}
+        next_lifecycle = SelfImprovementLifecycle.from_dict(lifecycle.as_dict())
+        next_lifecycle.link_reference("worker_run", "run-1")
+        next_lifecycle.status = ImprovementStatus.REJECTED
+        next_lifecycle.record_outcome(
+            outcome=ImprovementOutcomeKind.FAILURE,
+            cost_usd="2.25",
+            incident_count=1,
+            kpi_learning={"recovery_minutes": 7.0},
+            evidence_refs=("evidence/outcome",),
+            actor="operator",
+            actor_kind="human",
+        )
+        next_lifecycle.record_artifact_bundle(
+            ImprovementArtifactBundle(
+                bundle_id=uuid4(),
+                candidate_version="v2",
+                generated_by="operator",
+                generated_by_kind="human",
+                artifacts=tuple(
+                    ImprovementArtifact(
+                        artifact_id=uuid4(),
+                        kind=kind,
+                        uri=f"artifact://storage-test/v2/{kind.value}",
+                        sha256=(format(index + 1, "x") * 64)[:64],
+                        size_bytes=index + 1,
+                        candidate_version="v2",
+                        source_revision="storage-test-v2",
+                    )
+                    for index, kind in enumerate(ImprovementArtifactKind)
+                ),
+            ),
+            actor="operator",
+            actor_kind="human",
+        )
+        next_config = {"self_improvement": {"lifecycle": next_lifecycle.as_dict()}}
+        current_row = {"id": pid, "config": current_config, "revision": 1}
+        updated_row = {"id": pid, "config": next_config, "revision": 2}
+        results = [
+            MagicMock(mappings=MagicMock(return_value=_mock_mappings([current_row]))),
+            MagicMock(rowcount=1),
+            MagicMock(),
+            MagicMock(mappings=MagicMock(return_value=_mock_mappings([updated_row]))),
+            MagicMock(mappings=MagicMock(return_value=_mock_mappings([]))),
+            MagicMock(mappings=MagicMock(return_value=_mock_mappings([updated_row]))),
+        ]
+        conn.execute = AsyncMock(side_effect=results)
+
+        result = await storage.update_self_improvement_lifecycle(
+            pid,
+            next_lifecycle,
+            actor="operator",
+        )
+
+        assert result is not None
+        assert next_lifecycle.revision == 2
+        assert next_lifecycle.as_dict()["outcomes"][0]["cost_usd"] == "2.25"
+        assert next_lifecycle.as_dict()["artifact_bundle"]["schema_version"] == (
+            "aiat.self-improvement-artifacts.v1"
+        )
+        assert conn.execute.await_count == 6
 
     @pytest.mark.asyncio
     async def test_get_project_returns_none_when_missing(self):
@@ -673,7 +963,7 @@ class TestAgentStorageCRUD:
         conn.execute = AsyncMock()
 
         await storage.update_issue(uuid4(), status="IN_PROGRESS", assigned_agent="worker_1")
-        conn.execute.assert_awaited_once()
+        assert conn.execute.await_count == 2
 
     # ── KPI Snapshots ──
 
@@ -710,6 +1000,130 @@ class TestAgentStorageCRUD:
             envelope_json={"msg_type": "TASK"},
         )
         conn.execute.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_settle_budget_reservation_caps_actual_usage_under_lock(self):
+        storage, engine = self._make_storage()
+        conn = engine._mock_conn
+        reservation_id = uuid4()
+        company_id = uuid4()
+        reservation = {
+            "id": reservation_id,
+            "company_id": company_id,
+            "budget_key": "max_cost_usd",
+            "amount": Decimal("2"),
+            "state": "RESERVED",
+            "metadata": {"source": "worker_dispatch"},
+        }
+        refreshed = {
+            **reservation,
+            "amount": Decimal("1"),
+            "state": "COMMITTED",
+            "metadata": {
+                "source": "worker_dispatch",
+                "actual_cost_usd": "5",
+                "budget_overage_usd": "4",
+                "budget_settlement": "CAP_EXCEEDED",
+            },
+        }
+
+        def result(*, row=None, scalar=None):
+            value = MagicMock()
+            value.mappings.return_value.first.return_value = row
+            value.scalar_one.return_value = scalar
+            return value
+
+        conn.execute = AsyncMock(
+            side_effect=[
+                result(row=reservation),
+                result(
+                    row={
+                        "company_id": company_id,
+                        "budget_key": "max_cost_usd",
+                        "limit_value": Decimal("10"),
+                    }
+                ),
+                result(row=reservation),
+                result(scalar=Decimal("9")),
+                result(),
+                result(row=refreshed),
+            ]
+        )
+
+        settled = await storage.settle_budget_reservation(
+            reservation_id,
+            state="COMMITTED",
+            amount=Decimal("5"),
+        )
+
+        assert settled == refreshed
+        assert settled["amount"] == Decimal("1")
+        assert settled["metadata"]["budget_settlement"] == "CAP_EXCEEDED"
+        assert conn.execute.await_count == 6
+
+    @pytest.mark.asyncio
+    async def test_settle_budget_reservation_replay_is_a_noop(self):
+        """A retry cannot commit or release a terminal reservation twice."""
+        storage, engine = self._make_storage()
+        conn = engine._mock_conn
+        reservation_id = uuid4()
+        company_id = uuid4()
+        reservation = {
+            "id": reservation_id,
+            "company_id": company_id,
+            "budget_key": "max_cost_usd",
+            "amount": Decimal("2"),
+            "state": "RESERVED",
+            "metadata": {"source": "worker_dispatch"},
+        }
+        committed = {
+            **reservation,
+            "amount": Decimal("1"),
+            "state": "COMMITTED",
+            "metadata": {
+                "source": "worker_dispatch",
+                "actual_cost_usd": "1",
+            },
+        }
+
+        def result(*, row=None, scalar=None):
+            value = MagicMock()
+            value.mappings.return_value.first.return_value = row
+            value.scalar_one.return_value = scalar
+            return value
+
+        conn.execute = AsyncMock(
+            side_effect=[
+                result(row=reservation),
+                result(
+                    row={
+                        "company_id": company_id,
+                        "budget_key": "max_cost_usd",
+                        "limit_value": Decimal("10"),
+                    }
+                ),
+                result(row=reservation),
+                result(scalar=Decimal("0")),
+                result(),
+                result(row=committed),
+                result(row=committed),
+            ]
+        )
+
+        first = await storage.settle_budget_reservation(
+            reservation_id,
+            state="COMMITTED",
+            amount=Decimal("1"),
+        )
+        replay = await storage.settle_budget_reservation(
+            reservation_id,
+            state="COMMITTED",
+            amount=Decimal("9"),
+        )
+
+        assert first == committed
+        assert replay == committed
+        assert conn.execute.await_count == 7
 
     # ── System Config ──
 
@@ -1175,21 +1589,199 @@ class TestMemoryInit:
 
     def test_public_exports(self):
         from mas_core.memory import (
+            DEFAULT_RESOURCE_PROFILE_CONCURRENCY,
+            DEFAULT_RESOURCE_PROFILE_PAYLOAD_SIZES,
+            ENCRYPTION_ALGORITHM,
+            MAX_MULTIPART_PARTS,
+            MAX_MULTIPART_PAYLOAD_BYTES,
+            MIN_PART_SIZE_BYTES,
+            OBJECT_STORE_BACKUP_SCHEMA,
+            OBJECT_STORE_CONFORMANCE_SCHEMA,
+            OBJECT_STORE_COPY_SCHEMA,
+            OBJECT_STORE_ENCRYPTED_BACKUP_SCHEMA,
+            OBJECT_STORE_ENCRYPTED_RESTORE_SCHEMA,
+            OBJECT_STORE_MULTIPART_SCHEMA,
+            OBJECT_STORE_RESOURCE_PROFILE_SCHEMA,
+            OBJECT_STORE_RESTORE_SCHEMA,
             AgentStorage,
+            BackupManifest,
+            BackupObject,
             BlobClient,
             BlobRef,
             CheckpointStore,
+            EncryptedBackupManifest,
+            EncryptedBackupObject,
+            EncryptedRestoreVerification,
+            InMemoryObjectStore,
+            MultipartObjectStoreAdapter,
+            MultipartUploadConfig,
+            MultipartUploadReport,
+            ObjectStoreAdapter,
+            ObjectStoreConformanceCase,
+            ObjectStoreConformanceReport,
+            ObjectStoreCopyCase,
+            ObjectStoreCopyReport,
+            ObjectStoreResourceProfileConfig,
+            ObjectStoreResourceProfileReport,
+            RestoreVerification,
+            assert_clean_restore_target,
+            build_backup_manifest,
+            build_encrypted_backup,
+            copy_manifest_objects,
             metadata,
+            replicate_encrypted_backup,
+            run_object_store_conformance,
+            run_object_store_multipart_probe,
+            run_object_store_resource_profile,
+            verify_and_copy_blobs,
+            verify_encrypted_backup,
+            verify_restored_manifest,
         )
 
         assert AgentStorage is not None
         assert BlobClient is not None
         assert BlobRef is not None
         assert CheckpointStore is not None
+        assert OBJECT_STORE_CONFORMANCE_SCHEMA
+        assert InMemoryObjectStore is not None
+        assert ObjectStoreAdapter is not None
+        assert ObjectStoreConformanceCase is not None
+        assert ObjectStoreConformanceReport is not None
+        assert run_object_store_conformance is not None
+        assert OBJECT_STORE_COPY_SCHEMA
+        assert ObjectStoreCopyCase is not None
+        assert ObjectStoreCopyReport is not None
+        assert verify_and_copy_blobs is not None
+        assert OBJECT_STORE_BACKUP_SCHEMA
+        assert OBJECT_STORE_RESTORE_SCHEMA
+        assert BackupManifest is not None
+        assert BackupObject is not None
+        assert RestoreVerification is not None
+        assert assert_clean_restore_target is not None
+        assert build_backup_manifest is not None
+        assert copy_manifest_objects is not None
+        assert verify_restored_manifest is not None
         assert metadata is not None
+        assert DEFAULT_RESOURCE_PROFILE_CONCURRENCY > 0
+        assert DEFAULT_RESOURCE_PROFILE_PAYLOAD_SIZES
+        assert MAX_MULTIPART_PARTS > 0
+        assert MAX_MULTIPART_PAYLOAD_BYTES > 0
+        assert MIN_PART_SIZE_BYTES > 0
+        assert ENCRYPTION_ALGORITHM
+        assert OBJECT_STORE_MULTIPART_SCHEMA
+        assert OBJECT_STORE_RESOURCE_PROFILE_SCHEMA
+        assert OBJECT_STORE_ENCRYPTED_BACKUP_SCHEMA
+        assert OBJECT_STORE_ENCRYPTED_RESTORE_SCHEMA
+        assert MultipartObjectStoreAdapter is not None
+        assert MultipartUploadConfig is not None
+        assert MultipartUploadReport is not None
+        assert run_object_store_multipart_probe is not None
+        assert ObjectStoreResourceProfileConfig is not None
+        assert ObjectStoreResourceProfileReport is not None
+        assert run_object_store_resource_profile is not None
+        assert EncryptedBackupManifest is not None
+        assert EncryptedBackupObject is not None
+        assert EncryptedRestoreVerification is not None
+        assert build_encrypted_backup is not None
+        assert replicate_encrypted_backup is not None
+        assert verify_encrypted_backup is not None
 
     def test_all_list(self):
         import mas_core.memory as mem
 
-        expected = {"AgentStorage", "BlobClient", "BlobRef", "CheckpointStore", "metadata"}
+        expected = {
+            "AgentStorage",
+            "BlobClient",
+            "BlobRef",
+            "CheckpointStore",
+            "OBJECT_STORE_CONFORMANCE_SCHEMA",
+            "InMemoryObjectStore",
+            "ObjectStoreAdapter",
+            "ObjectStoreConformanceCase",
+            "ObjectStoreConformanceReport",
+            "run_object_store_conformance",
+            "OBJECT_STORE_COPY_SCHEMA",
+            "ObjectStoreCopyCase",
+            "ObjectStoreCopyReport",
+            "verify_and_copy_blobs",
+            "MAX_MULTIPART_PARTS",
+            "MAX_MULTIPART_PAYLOAD_BYTES",
+            "MIN_PART_SIZE_BYTES",
+            "OBJECT_STORE_MULTIPART_SCHEMA",
+            "MultipartObjectStoreAdapter",
+            "MultipartUploadConfig",
+            "MultipartUploadReport",
+            "run_object_store_multipart_probe",
+            "DEFAULT_RESOURCE_PROFILE_CONCURRENCY",
+            "DEFAULT_RESOURCE_PROFILE_PAYLOAD_SIZES",
+            "OBJECT_STORE_RESOURCE_PROFILE_SCHEMA",
+            "ObjectStoreResourceProfileConfig",
+            "ObjectStoreResourceProfileReport",
+            "run_object_store_resource_profile",
+            "ENCRYPTION_ALGORITHM",
+            "OBJECT_STORE_ENCRYPTED_BACKUP_SCHEMA",
+            "OBJECT_STORE_ENCRYPTED_RESTORE_SCHEMA",
+            "EncryptedBackupManifest",
+            "EncryptedBackupObject",
+            "EncryptedRestoreVerification",
+            "build_encrypted_backup",
+            "replicate_encrypted_backup",
+            "verify_encrypted_backup",
+            "OBJECT_STORE_BACKUP_SCHEMA",
+            "OBJECT_STORE_RESTORE_SCHEMA",
+            "BackupManifest",
+            "BackupObject",
+            "RestoreVerification",
+            "assert_clean_restore_target",
+            "build_backup_manifest",
+            "copy_manifest_objects",
+            "verify_restored_manifest",
+            "OBJECT_STORE_MIGRATION_SCHEMA",
+            "DualWriteRecord",
+            "MigrationActorKind",
+            "MigrationStatus",
+            "MigrationTransition",
+            "ObjectStoreMigrationError",
+            "ObjectStoreMigrationWorkflow",
+            "MAX_LIFECYCLE_KEY_LENGTH",
+            "MAX_LIFECYCLE_OBJECTS",
+            "OBJECT_STORE_HOLD_SNAPSHOT_SCHEMA",
+            "OBJECT_STORE_LIFECYCLE_SCHEMA",
+            "LegalHoldSnapshot",
+            "LifecycleCanonicalObject",
+            "LifecycleInventoryObject",
+            "ObjectLifecycleDeleteAdapter",
+            "ObjectLifecycleError",
+            "ObjectLifecycleExecution",
+            "ObjectLifecyclePlan",
+            "execute_object_lifecycle",
+            "plan_object_lifecycle",
+            "OCI_OBJECT_STORE_SCHEMA",
+            "OCIEncryptionEvidenceError",
+            "OCIObjectStorageSdkTransport",
+            "OCIObjectStorageTransport",
+            "OCIObjectStoreAdapter",
+            "OCIObjectStoreConfig",
+            "OCIProviderUnavailable",
+            "OCITransportError",
+            "FakeOCIObjectStorageTransport",
+            "run_oci_sse_kms_probe",
+            "OPTIONAL_MEMORY_ADAPTER_SCHEMA",
+            "QDRANT_ADAPTER_SCHEMA",
+            "TEMPORAL_ADAPTER_SCHEMA",
+            "OptionalServiceContractError",
+            "OptionalServiceHealth",
+            "OptionalServiceUnavailable",
+            "QdrantBackend",
+            "QdrantVectorAdapter",
+            "TemporalBackend",
+            "TemporalWorkflowAdapter",
+            "VectorDeleteResult",
+            "VectorPoint",
+            "VectorSearchHit",
+            "VectorWriteResult",
+            "WorkflowCommand",
+            "WorkflowRunReference",
+            "metadata",
+        }
         assert set(mem.__all__) == expected

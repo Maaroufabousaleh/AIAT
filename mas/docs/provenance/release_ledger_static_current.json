@@ -1,0 +1,1420 @@
+{
+  "checked_at": "2026-08-24T01:52:13.543923+00:00",
+  "checks": [
+    {
+      "base_id": "provenance",
+      "category": "static",
+      "exit_code": 0,
+      "id": "provenance",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "summary": "provenance: validated 22 components"
+      }
+    },
+    {
+      "base_id": "documentation_index",
+      "category": "documentation",
+      "exit_code": 0,
+      "id": "documentation_index",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "errors": [],
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "release_environment",
+      "category": "release",
+      "exit_code": 0,
+      "id": "release_environment",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "available_tool_count": 6,
+        "configured_environment_input_count": 0,
+        "errors": [],
+        "git": {
+          "branch": "agent/fix-review-p1",
+          "changed_path_count": 6,
+          "revision": "92964a090f5608d45846f3b865e9000fdcc8ccc5",
+          "working_tree_clean": false
+        },
+        "manifest_digest": "e50eb2e4b225fae852a29f94c4a0f903d852cb4101f0f435ec3c7557f2623ced",
+        "status": "pass",
+        "tracked_input_count": 15
+      }
+    },
+    {
+      "base_id": "api_contract",
+      "category": "contract",
+      "exit_code": 0,
+      "id": "api_contract",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "errors": [],
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "api_observability",
+      "category": "contract",
+      "exit_code": 0,
+      "id": "api_observability",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "mode": "fixture",
+        "payload_free": true,
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "trace_evidence",
+      "category": "contract",
+      "exit_code": 0,
+      "id": "trace_evidence",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "coverage": {
+          "api_requests": "observed",
+          "integration_evidence": "observed",
+          "native_audit_spans": "empty",
+          "native_integration_spans": "empty",
+          "native_mail_spans": "empty",
+          "native_model_spans": "empty",
+          "native_spans": "observed",
+          "native_tool_spans": "empty",
+          "native_transport_spans": "observed",
+          "native_worker_spans": "empty",
+          "pm_inbox_events": "observed",
+          "project_usage_events": "observed",
+          "task_log": "observed",
+          "worker_artifacts": "observed",
+          "worker_run_transitions": "observed",
+          "worker_usage_records": "observed"
+        },
+        "mode": "fixture",
+        "notice_codes": [
+          "PARTIAL_TRACE_SOURCES"
+        ],
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "live_trace_observability",
+      "category": "integration",
+      "exit_code": 0,
+      "id": "live_trace_observability",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "mode": "fixture",
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "live_tool_trace",
+      "category": "integration",
+      "exit_code": 0,
+      "id": "live_tool_trace",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "mode": "fixture",
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "native_trace_spans",
+      "category": "contract",
+      "exit_code": 0,
+      "id": "native_trace_spans",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "trace_retention_plan",
+      "category": "contract",
+      "exit_code": 0,
+      "id": "trace_retention_plan",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "plan_schema": "aiat.trace-retention-plan.v1",
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "slo_capacity",
+      "category": "contract",
+      "exit_code": 0,
+      "id": "slo_capacity",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "capacity_status": "clear",
+        "mode": "fixture",
+        "slo_status": "healthy",
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "prompt_tool_reconciliation",
+      "category": "static",
+      "exit_code": 0,
+      "id": "prompt_tool_reconciliation",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "errors": [],
+        "manifest_tool_count": 114,
+        "prompt_count": 11,
+        "registered_tool_count": 114,
+        "status": "pass",
+        "warnings": []
+      }
+    },
+    {
+      "base_id": "worker_reconciliation",
+      "category": "static",
+      "exit_code": 0,
+      "id": "worker_reconciliation",
+      "mode": "static",
+      "pending_evidence_count": 2,
+      "status": "pass",
+      "summary": {
+        "errors": [],
+        "pending_evidence": [
+          {
+            "evidence": "security_scan_status",
+            "evidence_status": "findings_review_required",
+            "finding_count": 316,
+            "security_scan_evidence_ref": "mas/docs/provenance/security_scan_evidence.yaml#opencode-1.17.13-semgrep-2026-08-10",
+            "status": "findings_review_required",
+            "worker": "coding_worker"
+          },
+          {
+            "evidence": "security_scan_status",
+            "evidence_status": "findings_review_required",
+            "finding_count": 316,
+            "security_scan_evidence_ref": "mas/docs/provenance/security_scan_evidence.yaml#opencode-1.17.13-semgrep-2026-08-10",
+            "status": "findings_review_required",
+            "worker": "tester"
+          }
+        ],
+        "runtime_counts": {
+          "builtin": 15,
+          "crewai": 1,
+          "external": 10,
+          "langgraph": 13
+        },
+        "status": "pass",
+        "transport_counts": {
+          "human": 1,
+          "opencode": 2,
+          "process": 36
+        },
+        "warnings": [],
+        "worker_count": 39
+      }
+    },
+    {
+      "base_id": "default_worker_bindings",
+      "category": "contract",
+      "exit_code": 0,
+      "id": "default_worker_bindings",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "errors": [],
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "worker_run_lifecycle",
+      "category": "recovery",
+      "exit_code": 0,
+      "id": "worker_run_lifecycle",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "certification_boundary": {
+          "artifact_before_terminal": "checked",
+          "canary": "not_checked",
+          "checkpoint_persistence": "checked",
+          "cold_cancellation": "checked",
+          "cold_crash": "checked",
+          "controller_contract": "checked",
+          "database": "not_checked",
+          "lease_expiry_recovery": "checked",
+          "live_worker_run": "not_checked",
+          "pause_resume": "checked",
+          "rollback": "not_checked",
+          "sandbox": "not_checked"
+        },
+        "mode": "fixture",
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "network_boundary",
+      "category": "static",
+      "exit_code": 0,
+      "id": "network_boundary",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "errors": [],
+        "mode": "static",
+        "status": "pass",
+        "warnings": [
+          "optional identity database services are not in the base Compose profile: identity-postgres, identity-db"
+        ]
+      }
+    },
+    {
+      "base_id": "image_provenance",
+      "category": "static",
+      "exit_code": 0,
+      "id": "image_provenance",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "errors": [],
+        "mode": "static",
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "image_budgets",
+      "category": "static",
+      "exit_code": 0,
+      "id": "image_budgets",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "summary": "image-budget: tool-service-core PASS"
+      }
+    },
+    {
+      "base_id": "metric_series_budget",
+      "category": "operations",
+      "exit_code": 0,
+      "id": "metric_series_budget",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "budget": 2000,
+        "declared_label_inventory": {
+          "mas_agent_correction_factor": [
+            "agent_id"
+          ],
+          "mas_budget_exhausted": [
+            "agent_id",
+            "budget_type"
+          ],
+          "mas_dlq_depth": [
+            "stream"
+          ],
+          "mas_infra_lead_time": [
+            "le"
+          ],
+          "mas_llm_calls": [
+            "agent_id",
+            "model"
+          ],
+          "mas_messages": [
+            "direction",
+            "msg_type",
+            "team"
+          ],
+          "mas_project_state": [
+            "state"
+          ],
+          "mas_review_circuit_open": [],
+          "mas_tool_calls": [
+            "status",
+            "tool_name"
+          ],
+          "mas_tool_circuit_state": [
+            "tool_name"
+          ]
+        },
+        "family_budgets": {
+          "mas_infra_lead_time": 20,
+          "mas_project_state": 32,
+          "mas_review_circuit_open": 4
+        },
+        "family_counts": {
+          "mas_agent_correction_factor": 0,
+          "mas_budget_exhausted": 0,
+          "mas_dlq_depth": 0,
+          "mas_infra_lead_time": 12,
+          "mas_llm_calls": 0,
+          "mas_messages": 0,
+          "mas_project_state": 18,
+          "mas_review_circuit_open": 1,
+          "mas_tool_calls": 0,
+          "mas_tool_circuit_state": 0
+        },
+        "label_inventory": {
+          "mas_agent_correction_factor": [],
+          "mas_budget_exhausted": [],
+          "mas_dlq_depth": [],
+          "mas_infra_lead_time": [
+            "le"
+          ],
+          "mas_llm_calls": [],
+          "mas_messages": [],
+          "mas_project_state": [
+            "state"
+          ],
+          "mas_review_circuit_open": [],
+          "mas_tool_calls": [],
+          "mas_tool_circuit_state": []
+        },
+        "label_policies": {
+          "mas_agent_correction_factor": {
+            "agent_id": {
+              "basis": "active-worker-registry",
+              "classification": "bounded"
+            }
+          },
+          "mas_budget_exhausted": {
+            "agent_id": {
+              "basis": "active-worker-registry",
+              "classification": "bounded"
+            },
+            "budget_type": {
+              "basis": "budget-type-enum",
+              "classification": "bounded"
+            }
+          },
+          "mas_dlq_depth": {
+            "stream": {
+              "basis": "known-stream-catalogue",
+              "classification": "bounded"
+            }
+          },
+          "mas_infra_lead_time": {
+            "le": {
+              "basis": "declared-histogram-buckets",
+              "classification": "bounded"
+            }
+          },
+          "mas_llm_calls": {
+            "agent_id": {
+              "basis": "active-worker-registry",
+              "classification": "bounded"
+            },
+            "model": {
+              "basis": "approved-model-profile-catalogue",
+              "classification": "bounded"
+            }
+          },
+          "mas_messages": {
+            "direction": {
+              "basis": "message-direction-enum",
+              "classification": "bounded"
+            },
+            "msg_type": {
+              "basis": "message-type-enum",
+              "classification": "bounded"
+            },
+            "team": {
+              "basis": "known-team-catalogue",
+              "classification": "bounded"
+            }
+          },
+          "mas_project_state": {
+            "state": {
+              "basis": "project-state-enum",
+              "classification": "bounded"
+            }
+          },
+          "mas_review_circuit_open": {},
+          "mas_tool_calls": {
+            "status": {
+              "basis": "tool-outcome-enum",
+              "classification": "bounded"
+            },
+            "tool_name": {
+              "basis": "registered-tool-catalogue",
+              "classification": "bounded"
+            }
+          },
+          "mas_tool_circuit_state": {
+            "tool_name": {
+              "basis": "registered-tool-catalogue",
+              "classification": "bounded"
+            }
+          }
+        },
+        "mode": "fixture",
+        "project_id_label_present": false,
+        "status": "pass",
+        "synthetic_project_count": 10000,
+        "total": 31
+      }
+    },
+    {
+      "base_id": "sandbox_runtime_readiness",
+      "category": "static",
+      "exit_code": 0,
+      "id": "sandbox_runtime_readiness",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "errors": [],
+        "mode": "static",
+        "status": "pass",
+        "worker_count": 39
+      }
+    },
+    {
+      "base_id": "firecracker_worker_pool_readiness",
+      "category": "integration",
+      "exit_code": 0,
+      "id": "firecracker_worker_pool_readiness",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "mode": "static",
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "worker_runtime_readiness",
+      "category": "static",
+      "exit_code": 0,
+      "id": "worker_runtime_readiness",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "certification_boundary": {
+          "canary": "not_checked",
+          "live_worker_run": "not_checked",
+          "package_imports": "declared_only",
+          "rollback": "not_checked",
+          "sandbox": "not_checked",
+          "security_scan": "not_checked"
+        },
+        "errors": [],
+        "mode": "static",
+        "reason": null,
+        "status": "pass",
+        "worker_count": 39
+      }
+    },
+    {
+      "base_id": "runtime_benchmarks",
+      "category": "integration",
+      "exit_code": 0,
+      "id": "runtime_benchmarks",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "certification_boundary": {
+          "canary": "not_checked",
+          "live_worker_run": "not_checked",
+          "package_benchmark": "not_checked",
+          "rollback": "not_checked",
+          "sandbox": "not_checked"
+        },
+        "mode": "static",
+        "reason": "live mode was not requested",
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "model_profile_catalogue",
+      "category": "packaging",
+      "exit_code": 0,
+      "id": "model_profile_catalogue",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "covered_profile_version_count": 0,
+        "duplicate_profile_bindings": [],
+        "finding_count": 0,
+        "profile_count": 0,
+        "profile_coverage": "pending_persisted_profile_bindings",
+        "profile_pending_model_count": 93,
+        "profile_version_count": 0,
+        "registry_model_count": 93,
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "runtime_install_profile",
+      "category": "packaging",
+      "exit_code": 0,
+      "id": "runtime_install_profile",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "certification_boundary": {
+          "canary": "not_checked",
+          "live_worker_run": "not_checked",
+          "lock_resolution": "checked",
+          "production_image_install_command": "checked",
+          "rollback": "not_checked",
+          "runtime_imports": "not_checked",
+          "sandbox": "not_checked",
+          "security_scan": "not_checked",
+          "source_declaration": "checked"
+        },
+        "declared_dependencies": {
+          "crewai": "crewai==1.6.1",
+          "langgraph": "langgraph>=0.2,<1.0"
+        },
+        "dockerfile_installs_profile": true,
+        "errors": [],
+        "lock_profile": {
+          "crewai": "==1.6.1",
+          "langgraph": ">=0.2,<1.0"
+        },
+        "locked_versions": {
+          "crewai": "1.6.1",
+          "langgraph": "0.6.11"
+        },
+        "profile": "runtime-default",
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "operator_pins",
+      "category": "packaging",
+      "exit_code": 0,
+      "id": "operator_pins",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "errors": [],
+        "locked_count": 9,
+        "pin_count": 16,
+        "status": "pass",
+        "unavailable_count": 7
+      }
+    },
+    {
+      "base_id": "runtime_compatibility",
+      "category": "packaging",
+      "exit_code": 0,
+      "id": "runtime_compatibility",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "code_review_adapters",
+      "category": "contract",
+      "exit_code": 0,
+      "id": "code_review_adapters",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "errors": [],
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "security_adapters",
+      "category": "contract",
+      "exit_code": 0,
+      "id": "security_adapters",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "errors": [],
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "security_scan_review",
+      "category": "security",
+      "exit_code": 0,
+      "id": "security_scan_review",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "engine_warning_count": 54,
+        "errors": [],
+        "finding_count": 316,
+        "mode": "static",
+        "review_required_count": 1,
+        "scan_count": 1,
+        "status": "pass",
+        "technical_gate_status": "blocked"
+      }
+    },
+    {
+      "base_id": "opencode_candidate_certification",
+      "category": "security",
+      "exit_code": 0,
+      "id": "opencode_candidate_certification",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "errors": [],
+        "finding_count": 644,
+        "mode": "static",
+        "status": "pass",
+        "technical_gate_status": "blocked"
+      }
+    },
+    {
+      "base_id": "worker_steward_contract",
+      "category": "governance",
+      "exit_code": 0,
+      "id": "worker_steward_contract",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "errors": [],
+        "external_worker_count": 2,
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "object_store_conformance",
+      "category": "contract",
+      "exit_code": 0,
+      "id": "object_store_conformance",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "counts": {
+          "FAIL": 0,
+          "PASS": 8
+        },
+        "mode": "fixture",
+        "passed": true
+      }
+    },
+    {
+      "base_id": "object_store_oci_sse_kms_contract",
+      "category": "contract",
+      "exit_code": 0,
+      "id": "object_store_oci_sse_kms_contract",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "errors": [],
+        "mode": "fixture",
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "object_store_multipart",
+      "category": "contract",
+      "exit_code": 0,
+      "id": "object_store_multipart",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "abort_verified": true,
+        "cleanup_verified": true,
+        "error_count": 0,
+        "mode": "fixture",
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "object_store_resource_profile",
+      "category": "operations",
+      "exit_code": 0,
+      "id": "object_store_resource_profile",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "cleanup_verified": true,
+        "cpu_time_ms": 52.756,
+        "error_count": 0,
+        "measurement_source": "procfs",
+        "mode": "fixture",
+        "rss_after_bytes": 94060544,
+        "rss_before_bytes": 93843456,
+        "rss_peak_bytes": 131690496,
+        "status": "pass",
+        "wall_time_ms": 52.748
+      }
+    },
+    {
+      "base_id": "object_store_provider_outage",
+      "category": "recovery",
+      "exit_code": 0,
+      "id": "object_store_provider_outage",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "external_network_access_performed": false,
+        "external_provider_mutation_performed": false,
+        "mode": "fixture",
+        "payload_free": true,
+        "providers": [
+          {
+            "checksum_readback_verified": true,
+            "cleanup_deleted_count": 2,
+            "cleanup_verified": true,
+            "container_removed": "not_applicable",
+            "external_network_access_performed": false,
+            "external_provider_mutation_performed": false,
+            "failure_classification": {
+              "harness_or_configuration_failure": "not_observed",
+              "infrastructure_or_environment_failure": "not_checked",
+              "provider_functional_failure": "not_checked",
+              "provider_resource_limit_failure": "not_checked"
+            },
+            "licence_metadata_is_gate": false,
+            "local_database_access_performed": false,
+            "mode": "fixture",
+            "mutation_performed": false,
+            "network": "mas_internal",
+            "payload_free": true,
+            "process_outage_observed": "not_checked",
+            "provider": "minio",
+            "recovery_readback_verified": "not_checked",
+            "remaining_fixture_count": 0,
+            "reserved_project": "aiat-object-store-outage-fixture-v1",
+            "schema_version": "aiat.object-store-provider-outage.v1",
+            "scope": "fixture checksum/read-back and scoped cleanup; live process outage not asserted",
+            "secret_free": true,
+            "status": "pass",
+            "workload": {
+              "object_count": 2,
+              "payload_sizes_bytes": [
+                65536,
+                1048576
+              ],
+              "total_payload_bytes": 1114112
+            }
+          },
+          {
+            "checksum_readback_verified": true,
+            "cleanup_deleted_count": 2,
+            "cleanup_verified": true,
+            "container_removed": "not_applicable",
+            "external_network_access_performed": false,
+            "external_provider_mutation_performed": false,
+            "failure_classification": {
+              "harness_or_configuration_failure": "not_observed",
+              "infrastructure_or_environment_failure": "not_checked",
+              "provider_functional_failure": "not_checked",
+              "provider_resource_limit_failure": "not_checked"
+            },
+            "licence_metadata_is_gate": false,
+            "local_database_access_performed": false,
+            "mode": "fixture",
+            "mutation_performed": false,
+            "network": "mas_internal",
+            "payload_free": true,
+            "process_outage_observed": "not_checked",
+            "provider": "seaweedfs",
+            "recovery_readback_verified": "not_checked",
+            "remaining_fixture_count": 0,
+            "reserved_project": "aiat-object-store-outage-fixture-v1",
+            "schema_version": "aiat.object-store-provider-outage.v1",
+            "scope": "fixture checksum/read-back and scoped cleanup; live process outage not asserted",
+            "secret_free": true,
+            "status": "pass",
+            "workload": {
+              "object_count": 2,
+              "payload_sizes_bytes": [
+                65536,
+                1048576
+              ],
+              "total_payload_bytes": 1114112
+            }
+          }
+        ],
+        "reserved_project": "aiat-object-store-outage-fixture-v1",
+        "status": "pass",
+        "workload": {
+          "object_count": 2,
+          "payload_sizes_bytes": [
+            65536,
+            1048576
+          ],
+          "total_payload_bytes": 1114112
+        }
+      }
+    },
+    {
+      "base_id": "object_store_lifecycle",
+      "category": "recovery",
+      "exit_code": 0,
+      "id": "object_store_lifecycle",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "external_network_access_performed": false,
+        "external_provider_mutation_performed": false,
+        "failure_classification": {
+          "harness_configuration_failure": "not_observed",
+          "infrastructure_environment_failure": "not_checked",
+          "provider_functional_failure": "not_checked",
+          "provider_resource_limit_failure": "not_checked"
+        },
+        "mode": "fixture",
+        "payload_free": true,
+        "remaining_fixture_count": 0,
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "trace_retention_execution",
+      "category": "recovery",
+      "exit_code": 0,
+      "id": "trace_retention_execution",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "apply": {
+          "archived_count": 1,
+          "audit_count": 1,
+          "backup_parity_verified": true,
+          "deleted_count": 1,
+          "held_count": 2,
+          "legal_hold_snapshot_verified": true,
+          "mutation_performed": true,
+          "status": "applied"
+        },
+        "execution_schema": "aiat.trace-retention-execution.v1",
+        "plan_schema": "aiat.trace-retention-plan.v1",
+        "preview": {
+          "action_count": 2,
+          "held_count": 2,
+          "invalid_count": 1,
+          "mutation_performed": false,
+          "status": "preview"
+        },
+        "project_scope": {
+          "explicit_project_id": true,
+          "incomplete_mapping_rejected": true,
+          "missing_project_id_rejected": true,
+          "scope": "project:project-1"
+        },
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "credentials_manager_live",
+      "category": "security",
+      "exit_code": 0,
+      "id": "credentials_manager_live",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "external_network_access_performed": false,
+        "external_provider_mutation_performed": false,
+        "failure_classification": {
+          "harness_configuration_failure": "not_observed",
+          "infrastructure_environment_failure": "not_observed",
+          "provider_functional_failure": "not_applicable_aiat_owned_boundary",
+          "provider_resource_limit_failure": "not_checked"
+        },
+        "key_material_retained": false,
+        "mode": "fixture",
+        "payload_free": true,
+        "provider_managed_kms_checked": false,
+        "provider_managed_kms_status": "not_configured",
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "provider_conformance",
+      "category": "contract",
+      "exit_code": 0,
+      "id": "provider_conformance",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "mode": "fixture",
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "provider_adapter_declarations",
+      "category": "contract",
+      "exit_code": 0,
+      "id": "provider_adapter_declarations",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "errors": [],
+        "mode": "fixture",
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "provider_adapter_http_conformance",
+      "category": "contract",
+      "exit_code": 0,
+      "id": "provider_adapter_http_conformance",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "case_count": 8,
+        "errors": [],
+        "mode": "mocked_fixture",
+        "passed_case_count": 8,
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "identity_provider_conformance",
+      "category": "contract",
+      "exit_code": 0,
+      "id": "identity_provider_conformance",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "case_count": 11,
+        "error_count": 0,
+        "errors": [],
+        "external_network_access_performed": false,
+        "external_provider_mutation_performed": false,
+        "failure_classification": {
+          "external_network_access": "not_performed",
+          "external_provider_mutation": "not_performed",
+          "provider_permanent_failure": "checked",
+          "provider_transient_failure": "checked"
+        },
+        "mode": "mocked-provider-conformance",
+        "passed_case_count": 11,
+        "payload_free": true,
+        "providers": [
+          "resend",
+          "stalwart"
+        ],
+        "secret_safe_report": true,
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "gateway_provider_recovery",
+      "category": "recovery",
+      "exit_code": 0,
+      "id": "gateway_provider_recovery",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "external_provider_call_performed": false,
+        "mode": "fixture",
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "external_account_action_policy",
+      "category": "governance",
+      "exit_code": 0,
+      "id": "external_account_action_policy",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "errors": [],
+        "mode": "fixture",
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "external_account_lifecycle",
+      "category": "governance",
+      "exit_code": 0,
+      "id": "external_account_lifecycle",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "case_count": 8,
+        "errors": [],
+        "mode": "fixture",
+        "passed_case_count": 8,
+        "secret_safe_report": true,
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "outbound_mail_lifecycle",
+      "category": "governance",
+      "exit_code": 0,
+      "id": "outbound_mail_lifecycle",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "case_count": 6,
+        "errors": [],
+        "mode": "fixture",
+        "passed_case_count": 6,
+        "secret_safe_report": true,
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "flow_instance_recovery",
+      "category": "recovery",
+      "exit_code": 0,
+      "id": "flow_instance_recovery",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "mode": "static",
+        "reason": "live mode was not requested",
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "flow_topology",
+      "category": "contract",
+      "exit_code": 0,
+      "id": "flow_topology",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "flow_execution_semantics",
+      "category": "contract",
+      "exit_code": 0,
+      "id": "flow_execution_semantics",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "flow_runtime_live",
+      "category": "recovery",
+      "exit_code": 0,
+      "id": "flow_runtime_live",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "case_count": 8,
+        "cleanup_verified": false,
+        "cold_crash_recovery_status": "not_checked",
+        "external_network_access_performed": false,
+        "external_provider_mutation_performed": false,
+        "failed_case_count": 0,
+        "failure_classification": {
+          "harness_configuration_failure": "not_observed",
+          "infrastructure_environment_failure": "not_observed",
+          "provider_functional_failure": "not_observed",
+          "provider_resource_limit_failure": "not_checked"
+        },
+        "mode": "fixture",
+        "native_watchdog_status": "not_checked",
+        "passed_case_count": 8,
+        "payload_free": true,
+        "reason": "deterministic contract shape; live API was not requested",
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "flow_worker_binding",
+      "category": "contract",
+      "exit_code": 0,
+      "id": "flow_worker_binding",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "live": {
+          "reason": "static contract fixture",
+          "status": "not_checked"
+        },
+        "mode": "static",
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "workflow_watchdog_recovery",
+      "category": "recovery",
+      "exit_code": 0,
+      "id": "workflow_watchdog_recovery",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "live": {
+          "reason": "native watchdog and cold-recovery proof remains an operator gate",
+          "status": "not_checked"
+        },
+        "mode": "fixture",
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "project_evidence_package",
+      "category": "evidence",
+      "exit_code": 0,
+      "id": "project_evidence_package",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "mode": "fixture",
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "evidence_policy_resolution",
+      "category": "evidence",
+      "exit_code": 0,
+      "id": "evidence_policy_resolution",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "case_count": 7,
+        "errors": [],
+        "mode": "fixture",
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "object_store_copy",
+      "category": "recovery",
+      "exit_code": 0,
+      "id": "object_store_copy",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "counts": {
+          "FAIL": 0,
+          "PASS": 2
+        },
+        "passed": true
+      }
+    },
+    {
+      "base_id": "object_store_backup_restore",
+      "category": "recovery",
+      "exit_code": 0,
+      "id": "object_store_backup_restore",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "mode": "fixture",
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "object_store_encryption",
+      "category": "recovery",
+      "exit_code": 0,
+      "id": "object_store_encryption",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "certification_boundary": {
+          "aiat_owned_aes_256_gcm_envelope": "checked",
+          "ciphertext_checksum_and_readback": "checked",
+          "clean_environment_disaster_recovery": "not_checked",
+          "clean_target_preflight": "checked",
+          "external_garage_r2_b2_or_other_backend": "not_checked",
+          "independent_host_or_provider_outage": "not_checked",
+          "opaque_key_id_only_manifest": "checked",
+          "provider_managed_sse_or_kms": "not_checked",
+          "wrong_key_and_tamper_rejection": "checked"
+        },
+        "clean_target_rejected_before_mutation": true,
+        "encryption_algorithm": "AES-256-GCM",
+        "external_network_access_performed": false,
+        "external_provider_mutation_performed": false,
+        "manifest_secret_free": true,
+        "mode": "local-in-memory-encrypted-backup",
+        "payload_free": true,
+        "plaintext_keys_absent": true,
+        "provider_managed_sse_or_kms_checked": false,
+        "remaining_fixture_counts": {
+          "blocked_restore": 0,
+          "encrypted_backup": 0,
+          "encrypted_restore": 0,
+          "source": 0
+        },
+        "status": "pass",
+        "tamper_rejected": true,
+        "wrong_key_rejected": true
+      }
+    },
+    {
+      "base_id": "object_store_clean_environment_restore",
+      "category": "recovery",
+      "exit_code": 0,
+      "id": "object_store_clean_environment_restore",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "bundle_object_count": 2,
+        "bundle_removed_after_restore": true,
+        "certification_boundary": {
+          "bundle_cleanup": "checked",
+          "clean_host_or_filesystem_disaster_recovery": "not_checked",
+          "clean_target_before_restore": "checked",
+          "fresh_object_store_adapters": "checked",
+          "fresh_python_process": "checked",
+          "independent_machine_or_outage_recovery": "not_checked",
+          "persisted_ciphertext_and_scalar_manifest_bundle": "checked",
+          "plaintext_or_key_material_in_report": "not_observed",
+          "production_encrypted_restore_helper": "checked",
+          "provider_managed_sse_or_kms": "not_checked",
+          "provider_pair_or_external_backend": "not_checked"
+        },
+        "child_process_distinct": true,
+        "child_return_code": 0,
+        "external_network_access_performed": false,
+        "external_provider_mutation_performed": false,
+        "key_material_retained": false,
+        "mode": "local-fresh-process-encrypted-bundle",
+        "payload_free": true,
+        "provider_managed_sse_or_kms_checked": false,
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "object_store_migration",
+      "category": "recovery",
+      "exit_code": 0,
+      "id": "object_store_migration",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "mode": "fixture",
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "self_improvement_lifecycle",
+      "category": "governance",
+      "exit_code": 0,
+      "id": "self_improvement_lifecycle",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "mode": "fixture",
+        "status": "pass"
+      }
+    },
+    {
+      "base_id": "self_improvement_candidate_detection",
+      "category": "governance",
+      "exit_code": 0,
+      "id": "self_improvement_candidate_detection",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "case_count": 6,
+        "errors": [],
+        "mode": "fixture",
+        "passed_case_count": 6,
+        "secret_safe_report": true,
+        "status": "pass"
+      }
+    }
+  ],
+  "compose_local": false,
+  "counts": {
+    "blocked": 0,
+    "fail": 0,
+    "pass": 63,
+    "total": 63
+  },
+  "decision_reasons": [
+    "live profile was not included",
+    "2 pending evidence item(s) remain",
+    "worktree is dirty"
+  ],
+  "environment": {
+    "docker_cli_available": true,
+    "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+    "python": "3.11.15"
+  },
+  "git": {
+    "branch": "agent/fix-review-p1",
+    "changed_path_count": 6,
+    "clean": false,
+    "revision": "92964a090f5608d45846f3b865e9000fdcc8ccc5"
+  },
+  "pending_evidence_count": 2,
+  "policy": {
+    "blocked_live_evidence_is_pass": false,
+    "licence_metadata_is_gate": false,
+    "programme_scope": "personal-internal-only"
+  },
+  "profile": "static",
+  "release_decision": "NO-RELEASE",
+  "schema_version": "aiat.release-ledger.v1",
+  "scope": "bounded release-evidence aggregation; no deployment mutation or credential output",
+  "status": "pass"
+}

@@ -78,6 +78,146 @@ def _command_allowed(argv: list[str]) -> bool:
     return any(tuple(argv[: len(prefix)]) == prefix for prefix in _command_allowlist())
 
 
+def _decode_docling_output(result: dict[str, Any]) -> dict[str, Any]:
+    """Normalize the Docling runner boundary without leaking parser errors.
+
+    The runner is an optional external-process boundary.  A successful process
+    exit does not guarantee that its stdout is valid JSON, so malformed output
+    must be reported as a bounded degraded result rather than escaping through
+    the tool registry as an opaque ``TOOL_ERROR``.
+    """
+    result["configured"] = True
+    raw_output = result.get("stdout")
+    if result.get("returncode") != 0:
+        return result
+    if not isinstance(raw_output, str) or not raw_output.strip():
+        result.update(
+            {
+                "degraded": True,
+                "reason": "docling_empty_output",
+                "document": None,
+            }
+        )
+        return result
+    try:
+        parsed = json.loads(raw_output)
+    except (TypeError, json.JSONDecodeError):
+        result.update(
+            {
+                "degraded": True,
+                "reason": "docling_invalid_json",
+                "document": None,
+            }
+        )
+        return result
+    if not isinstance(parsed, dict):
+        result.update(
+            {
+                "degraded": True,
+                "reason": "docling_invalid_result_shape",
+                "document": None,
+            }
+        )
+        return result
+    result["document"] = parsed
+    return result
+
+
+def _normalize_diagram_result(
+    result: dict[str, Any], *, output_path: Path, output_name: str
+) -> dict[str, Any]:
+    """Expose only bounded Mermaid render metadata after the subprocess exits."""
+    result.update(
+        {
+            "backend": "mermaid",
+            "configured": True,
+            "output": output_name,
+            "rendered": False,
+            "output_exists": False,
+        }
+    )
+    if result.get("available") is False:
+        result.setdefault("degraded", True)
+        result.setdefault("reason", "mermaid_adapter_unavailable")
+        return result
+    returncode = result.get("returncode")
+    if returncode != 0:
+        result.update(
+            {
+                "degraded": True,
+                "reason": "mermaid_render_timed_out"
+                if result.get("timed_out")
+                else "mermaid_render_failed",
+            }
+        )
+        return result
+    try:
+        output_stat = output_path.stat()
+    except OSError:
+        result.update({"degraded": True, "reason": "mermaid_output_missing"})
+        return result
+    if not output_path.is_file():
+        result.update({"degraded": True, "reason": "mermaid_output_not_file"})
+        return result
+    if output_stat.st_size <= 0:
+        result.update(
+            {
+                "degraded": True,
+                "reason": "mermaid_output_empty",
+                "output_exists": True,
+                "output_size_bytes": output_stat.st_size,
+            }
+        )
+        return result
+    result.update(
+        {
+            "rendered": True,
+            "output_exists": True,
+            "output_size_bytes": output_stat.st_size,
+        }
+    )
+    return result
+
+
+def _decode_code_review_output(result: dict[str, Any]) -> dict[str, Any]:
+    """Normalize optional review-process JSON without tripping the registry."""
+    result["configured"] = True
+    if result.get("returncode") != 0:
+        return result
+    raw_output = result.get("stdout")
+    if not isinstance(raw_output, str) or not raw_output.strip():
+        result.update(
+            {
+                "degraded": True,
+                "reason": "code_review_empty_output",
+                "review": None,
+            }
+        )
+        return result
+    try:
+        parsed = json.loads(raw_output)
+    except (TypeError, json.JSONDecodeError):
+        result.update(
+            {
+                "degraded": True,
+                "reason": "code_review_invalid_json",
+                "review": None,
+            }
+        )
+        return result
+    if not isinstance(parsed, dict):
+        result.update(
+            {
+                "degraded": True,
+                "reason": "code_review_invalid_result_shape",
+                "review": None,
+            }
+        )
+        return result
+    result["review"] = parsed
+    return result
+
+
 def _workspace_cwd(project_id: str = "", path: str = ".") -> Path:
     root = _workspace_root()
     if path in ("", "."):
@@ -240,12 +380,36 @@ async def _run_sandboxed_process(
             "configured": True,
             "backend": "sandbox_adapter",
         }
+    raw_output = adapter_result.get("stdout")
+    if not isinstance(raw_output, str) or not raw_output.strip():
+        return {
+            "available": False,
+            "configured": True,
+            "backend": "sandbox_adapter",
+            "sandbox_profile": "gvisor",
+            "degraded": True,
+            "reason": "sandbox_adapter_empty_output",
+        }
     try:
-        result = json.loads(adapter_result.get("stdout") or "")
-    except json.JSONDecodeError as exc:
-        raise RuntimeError("Sandbox adapter returned invalid JSON") from exc
+        result = json.loads(raw_output)
+    except (TypeError, json.JSONDecodeError):
+        return {
+            "available": False,
+            "configured": True,
+            "backend": "sandbox_adapter",
+            "sandbox_profile": "gvisor",
+            "degraded": True,
+            "reason": "sandbox_adapter_invalid_json",
+        }
     if not isinstance(result, dict):
-        raise RuntimeError("Sandbox adapter response must be a JSON object")
+        return {
+            "available": False,
+            "configured": True,
+            "backend": "sandbox_adapter",
+            "sandbox_profile": "gvisor",
+            "degraded": True,
+            "reason": "sandbox_adapter_invalid_result_shape",
+        }
     result.setdefault("available", True)
     result["configured"] = True
     result["backend"] = "sandbox_adapter"
@@ -381,13 +545,13 @@ class DocumentIngestTool(BaseTool):
                 max_output_bytes=int(kwargs.get("max_output_bytes", 256_000)),
             )
             result["backend"] = "docling"
-            if result.get("returncode") == 0 and result.get("stdout"):
-                result["document"] = json.loads(result["stdout"])
-            return result
+            return _decode_docling_output(result)
         return {
-            "available": False,
-            "backend": "docling",
-            "reason": "binary_not_found",
+            "available": True,
+            "configured": True,
+            "degraded": True,
+            "backend": "plain_text_fallback",
+            "reason": "docling_binary_not_found",
             "path": path,
             "size_bytes": safe_path.stat().st_size,
             "text": safe_path.read_text(encoding="utf-8", errors="replace")[:50_000],
@@ -397,7 +561,7 @@ class DocumentIngestTool(BaseTool):
 class SecurityScanTool(BaseTool):
     name = "security.scan"
     group = ToolGroup.KPI_UTILITY
-    description = "Run Semgrep/SkillSpector-style static checks through a process adapter."
+    description = "Run configured Semgrep/SkillSpector/TruffleHog checks through a bounded process adapter."
     allowed_roles = _WORKER
     cache_ttl_seconds = 0
     idempotent = False
@@ -406,6 +570,90 @@ class SecurityScanTool(BaseTool):
     async def execute(self, **kwargs: Any) -> Any:
         project_id = kwargs.get("project_id", "")
         cwd = _workspace_cwd(project_id, kwargs.get("path", "."))
+        scanner = str(kwargs.get("scanner") or "semgrep").strip().lower()
+        if scanner not in {"semgrep", "skillspector", "trufflehog"}:
+            return {
+                "available": False,
+                "configured": False,
+                "scanner": scanner,
+                "reason": "unsupported_scanner",
+            }
+        if scanner == "skillspector":
+            # SkillSpector is an optional scanner selected through the same
+            # hardened sandbox boundary as the other security tools.  The
+            # command is operator-configurable because the upstream CLI
+            # surface varies by installation; its absence is an honest
+            # availability result, never a licence or provenance decision.
+            raw_command = os.getenv("TOOL_SKILLSPECTOR_COMMAND", "").strip()
+            argv = shlex.split(raw_command) if raw_command else ["skillspector", "scan", "--json", "."]
+            if not argv:
+                return {
+                    "available": False,
+                    "configured": False,
+                    "scanner": scanner,
+                    "reason": "TOOL_SKILLSPECTOR_COMMAND_empty",
+                }
+            result = await _run_sandboxed_process(
+                argv,
+                cwd=cwd,
+                timeout=float(kwargs.get("timeout_seconds", 90)),
+                max_output_bytes=int(kwargs.get("max_output_bytes", 512_000)),
+            )
+            findings_count: int | None = None
+            raw_value = result.get("stdout")
+            raw_output = raw_value if isinstance(raw_value, str) else ""
+            if result.get("returncode") == 0 and not raw_output.strip():
+                result["degraded"] = True
+                result["reason"] = "skillspector_empty_output"
+            elif raw_output:
+                try:
+                    parsed = json.loads(raw_output)
+                except json.JSONDecodeError:
+                    findings_count = len([line for line in raw_output.splitlines() if line.strip()])
+                else:
+                    if isinstance(parsed, dict):
+                        findings = parsed.get("findings")
+                        if isinstance(findings, list):
+                            findings_count = len(findings)
+                        else:
+                            result["degraded"] = True
+                            result["reason"] = "skillspector_invalid_result_shape"
+                    elif isinstance(parsed, list):
+                        findings_count = len(parsed)
+                    else:
+                        result["degraded"] = True
+                        result["reason"] = "skillspector_invalid_result_shape"
+            result["backend"] = "skillspector"
+            result["scanner"] = scanner
+            result["findings_count"] = findings_count
+            result["command_configured"] = bool(raw_command)
+            return result
+        if scanner == "trufflehog":
+            argv = [
+                "sh",
+                "-lc",
+                (
+                    "set -e; "
+                    "rm -rf /tmp/aiat-trufflehog-src; "
+                    "mkdir -p /tmp/aiat-trufflehog-src; "
+                    "cp -R . /tmp/aiat-trufflehog-src/; "
+                    "cd /tmp/aiat-trufflehog-src; "
+                    "trufflehog filesystem --json ."
+                ),
+            ]
+            result = await _run_sandboxed_process(
+                argv,
+                cwd=cwd,
+                timeout=float(kwargs.get("timeout_seconds", 90)),
+                max_output_bytes=int(kwargs.get("max_output_bytes", 512_000)),
+            )
+            findings = [
+                line for line in str(result.get("stdout") or "").splitlines() if line.strip()
+            ]
+            result["backend"] = "trufflehog"
+            result["scanner"] = scanner
+            result["findings_count"] = len(findings) if result.get("available") else None
+            return result
         config = kwargs.get("config", "auto")
         if config in ("", "auto"):
             config = "/workspace/mas/apps/tool-service/tool_service/semgrep-default.yml"
@@ -442,13 +690,29 @@ class SecurityScanTool(BaseTool):
             timeout=float(kwargs.get("timeout_seconds", 90)),
             max_output_bytes=int(kwargs.get("max_output_bytes", 512_000)),
         )
-        if result.get("stdout"):
+        raw_output = result.get("stdout")
+        if result.get("available") and result.get("returncode") == 0 and (
+            not isinstance(raw_output, str) or not raw_output.strip()
+        ):
+            result["findings_count"] = None
+            result["degraded"] = True
+            result["reason"] = "semgrep_empty_output"
+        elif result.get("available") and isinstance(raw_output, str) and raw_output.strip():
             try:
-                parsed = json.loads(result["stdout"])
-                result["findings_count"] = len(parsed.get("results", []))
+                parsed = json.loads(raw_output)
             except json.JSONDecodeError:
                 result["findings_count"] = None
+                result["degraded"] = True
+                result["reason"] = "semgrep_invalid_json"
+            else:
+                if isinstance(parsed, dict) and isinstance(parsed.get("results"), list):
+                    result["findings_count"] = len(parsed["results"])
+                else:
+                    result["findings_count"] = None
+                    result["degraded"] = True
+                    result["reason"] = "semgrep_invalid_result_shape"
         result["backend"] = "semgrep"
+        result["scanner"] = scanner
         return result
 
 
@@ -482,7 +746,7 @@ class TestRunTool(BaseTool):
 class CodeReviewTool(BaseTool):
     name = "code.review"
     group = ToolGroup.KPI_UTILITY
-    description = "Run a pinned external code-review adapter command when configured."
+    description = "Run the bounded local diff reviewer or a pinned external adapter."
     allowed_roles = _WORKER
     cache_ttl_seconds = 0
     idempotent = False
@@ -490,8 +754,6 @@ class CodeReviewTool(BaseTool):
 
     async def execute(self, **kwargs: Any) -> Any:
         raw = os.getenv("TOOL_CODE_REVIEW_COMMAND", "").strip()
-        if not raw:
-            return {"available": False, "reason": "TOOL_CODE_REVIEW_COMMAND_not_configured"}
         cwd = _workspace_cwd(kwargs.get("project_id", ""), kwargs.get("cwd", "."))
         payload = {
             "mode": str(kwargs.get("mode") or "diff"),
@@ -499,6 +761,23 @@ class CodeReviewTool(BaseTool):
             "head": str(kwargs.get("head") or "HEAD"),
             "severity_threshold": str(kwargs.get("severity_threshold") or "medium"),
         }
+        if not raw:
+            # The local deterministic reviewer is the default adapter.  An
+            # external command remains an optional, explicitly configured
+            # extension and never becomes an implicit network/provider call.
+            from ..code_review_runner import review
+
+            try:
+                result = review(cwd, payload)
+            except Exception as exc:
+                return {
+                    "available": False,
+                    "backend": "aiat_deterministic_diff_review",
+                    "reason": type(exc).__name__,
+                }
+            result["backend"] = "aiat_deterministic_diff_review"
+            result["external_adapter_configured"] = False
+            return result
         result = await _run_process(
             shlex.split(raw),
             cwd=cwd,
@@ -506,8 +785,7 @@ class CodeReviewTool(BaseTool):
             timeout=float(kwargs.get("timeout_seconds", 120)),
             max_output_bytes=int(kwargs.get("max_output_bytes", 256_000)),
         )
-        if result.get("returncode") == 0 and result.get("stdout"):
-            result["review"] = json.loads(result["stdout"])
+        result = _decode_code_review_output(result)
         result["backend"] = "aiat_code_review"
         return result
 
@@ -558,7 +836,7 @@ class DiagramRenderTool(BaseTool):
         cwd = _workspace_cwd(kwargs.get("project_id", ""), kwargs.get("cwd", "."))
         output = str(kwargs.get("output", "diagram.svg"))
         out_path = _safe_workspace_path(output, project_id=kwargs.get("project_id", ""))
-        return await _run_process(
+        result = await _run_process(
             [
                 mmdc,
                 "-p",
@@ -573,6 +851,7 @@ class DiagramRenderTool(BaseTool):
             timeout=float(kwargs.get("timeout_seconds", 30)),
             max_output_bytes=64_000,
         )
+        return _normalize_diagram_result(result, output_path=out_path, output_name=output)
 
 
 class MCPInvokeTool(BaseTool):

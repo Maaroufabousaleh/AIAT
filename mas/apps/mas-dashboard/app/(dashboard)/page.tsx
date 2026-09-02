@@ -16,6 +16,42 @@ interface StateVisual {
   dot: string;
 }
 
+interface ExecutiveReconciliation {
+  schema_version: string;
+  status: string;
+  coverage: { project_count: number; worker_run_count: number; budget_count: number };
+  projects: { active_count: number; usage: { total_cost_usd: number } };
+  delivery: { successful_run_count: number; failed_run_count: number; success_rate: number | null };
+  budgets: { available_usd: number; used_usd: number; overages: Array<unknown> };
+  models?: { profile_pending_model_count?: number };
+  findings: Array<{ code: string; severity?: string }>;
+  views?: {
+    cfo: {
+      status: string;
+      spend_usd: number;
+      budget_available_usd: number;
+      reservation_active_usd: number;
+      reservation_anomaly_count: number;
+    };
+    cto: {
+      status: string;
+      active_worker_runs: number;
+      success_rate: number | null;
+      failed_worker_runs: number;
+      profile_coverage: { pending_models: number };
+    };
+    ceo: {
+      status: string;
+      active_projects: number;
+      total_projects: number;
+      finding_count: number;
+      budget_available_usd: number;
+    };
+  };
+}
+
+type OverviewDataState = "healthy" | "partial" | "offline" | "denied";
+
 const STATE_VISUAL: Record<string, StateVisual> = {
   CREATED: { bg: "bg-slate-500/20", text: "text-slate-300", dot: "bg-slate-400" },
   PLANNING: { bg: "bg-blue-500/20", text: "text-blue-300", dot: "bg-blue-400" },
@@ -35,19 +71,36 @@ const STATE_VISUAL: Record<string, StateVisual> = {
  */
 async function timedPromQuery(
   query: string
-): Promise<{ results: Awaited<ReturnType<typeof promQuery>>; durationMs: number; ok: boolean }> {
+): Promise<{
+  results: Awaited<ReturnType<typeof promQuery>>;
+  durationMs: number;
+  ok: boolean;
+  status: number | null;
+}> {
   const started = Date.now();
   try {
     const results = await promQuery(query);
-    return { results, durationMs: Date.now() - started, ok: true };
-  } catch {
-    return { results: [], durationMs: Date.now() - started, ok: false };
+    return { results, durationMs: Date.now() - started, ok: true, status: null };
+  } catch (error) {
+    const status = getErrorStatus(error);
+    return { results: [], durationMs: Date.now() - started, ok: false, status };
   }
+}
+
+function getErrorStatus(error: unknown): number | null {
+  if (typeof error !== "object" || error === null) return null;
+  const status = (error as { status?: unknown }).status;
+  return typeof status === "number" ? status : null;
+}
+
+function isAccessDenied(error: unknown): boolean {
+  const status = getErrorStatus(error);
+  return status === 401 || status === 403;
 }
 
 async function getOverviewData() {
   // Time the prometheus calls so we can show a "query time" on the health card.
-  const [projects, systemStatus, companyOverview, dlq, llmRate, dlqDepth] = await Promise.allSettled([
+  const [projects, systemStatus, companyOverview, dlq, llmRate, dlqDepth, executiveReport] = await Promise.allSettled([
     orchestratorFetch<Array<{ state: string }>>("/projects?limit=1000"),
     orchestratorFetch("/system/status"),
     orchestratorFetch<{
@@ -64,6 +117,7 @@ async function getOverviewData() {
     orchestratorFetch<unknown[]>("/dead-letters"),
     timedPromQuery("sum(rate(mas_llm_calls_total[5m]))"),
     timedPromQuery("sum(mas_dlq_depth)"),
+    orchestratorFetch<ExecutiveReconciliation>("/executive/reconciliation"),
   ]);
 
   const projectList = projects.status === "fulfilled"
@@ -104,6 +158,37 @@ async function getOverviewData() {
     : "0";
 
   const company = companyOverview.status === "fulfilled" ? companyOverview.value : null;
+  const executive = executiveReport.status === "fulfilled" ? executiveReport.value : null;
+  const deniedSources = [
+    projects.status === "rejected" && isAccessDenied(projects.reason) ? "projects" : null,
+    systemStatus.status === "rejected" && isAccessDenied(systemStatus.reason) ? "system status" : null,
+    companyOverview.status === "rejected" && isAccessDenied(companyOverview.reason) ? "company" : null,
+    dlq.status === "rejected" && isAccessDenied(dlq.reason) ? "dead-letter queue" : null,
+    llmTimed?.status === 401 || llmTimed?.status === 403 ? "LLM metrics" : null,
+    dlqTimed?.status === 401 || dlqTimed?.status === 403 ? "queue metrics" : null,
+    executiveReport.status === "rejected" && isAccessDenied(executiveReport.reason)
+      ? "executive reconciliation"
+      : null,
+  ].filter((source): source is string => source !== null);
+  const failedSources = [
+    projects.status !== "fulfilled" && !isAccessDenied(projects.reason) ? "projects" : null,
+    systemStatus.status !== "fulfilled" && !isAccessDenied(systemStatus.reason) ? "system status" : null,
+    companyOverview.status !== "fulfilled" && !isAccessDenied(companyOverview.reason) ? "company" : null,
+    dlq.status !== "fulfilled" && !isAccessDenied(dlq.reason) ? "dead-letter queue" : null,
+    llmTimed?.ok === false && ![401, 403].includes(llmTimed.status ?? 0) ? "LLM metrics" : null,
+    dlqTimed?.ok === false && ![401, 403].includes(dlqTimed.status ?? 0) ? "queue metrics" : null,
+    executiveReport.status !== "fulfilled" && !isAccessDenied(executiveReport.reason)
+      ? "executive reconciliation"
+      : null,
+  ].filter((source): source is string => source !== null);
+  const overviewState: OverviewDataState =
+    deniedSources.length > 0
+      ? "denied"
+      : failedSources.length === 0
+      ? "healthy"
+      : failedSources.length === 7
+          ? "offline"
+          : "partial";
 
   return {
     projectList,
@@ -115,6 +200,10 @@ async function getOverviewData() {
     dlqDepthVal,
     promQueryMs,
     promOk,
+    executive,
+    overviewState,
+    failedSources,
+    deniedSources,
     lastRefreshedAt,
   };
 }
@@ -307,6 +396,10 @@ export default async function HomePage() {
     dlqDepthVal,
     promQueryMs,
     promOk,
+    executive,
+    overviewState,
+    failedSources,
+    deniedSources,
     lastRefreshedAt,
   } = await getOverviewData().catch(() => ({
     projectList: [] as Array<{ state: string }>,
@@ -318,6 +411,10 @@ export default async function HomePage() {
     dlqDepthVal: "0",
     promQueryMs: null as number | null,
     promOk: false,
+    executive: null as ExecutiveReconciliation | null,
+    overviewState: "offline" as OverviewDataState,
+    failedSources: ["overview data"],
+    deniedSources: [] as string[],
     lastRefreshedAt: new Date(),
   }));
 
@@ -336,24 +433,64 @@ export default async function HomePage() {
   // hint underneath is the human-readable explanation.
   const llmEmpty = llmPerMin === null;
   const llmDisplay = llmEmpty ? "x" : llmPerMin;
+  const overviewUnavailable = overviewState !== "healthy";
+  const overviewAccessDenied = overviewState === "denied";
 
   return (
-    <div className="dashboard-page">
+    <main className="dashboard-page" aria-label="System Overview">
       {/* Hero */}
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      <section className="flex flex-wrap items-start justify-between gap-3" aria-labelledby="system-overview-heading">
         <div className="flex items-start gap-3">
-          <div className="w-11 h-11 rounded-xl bg-blue-500/10 border border-blue-400/25 flex items-center justify-center text-blue-300 shadow-sm shadow-blue-950/40">
-            <Activity size={20} />
+          <div aria-hidden="true" className="w-11 h-11 rounded-xl bg-blue-500/10 border border-blue-400/25 flex items-center justify-center text-blue-300 shadow-sm shadow-blue-950/40">
+            <Activity size={20} aria-hidden="true" />
           </div>
           <div>
-            <h1 className="text-xl font-semibold text-white tracking-tight">System Overview</h1>
+            <h1 id="system-overview-heading" className="text-xl font-semibold text-white tracking-tight">System Overview</h1>
             <p className="text-sm text-slate-400 mt-0.5">Operator-ready summary of projects, workers, approvals, queues, and runtime health.</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <SystemStatusPill status={systemStatusStr} />
+          <div role="status" aria-label={`System status: ${systemStatusStr}`}>
+            <SystemStatusPill status={systemStatusStr} />
+          </div>
         </div>
-      </div>
+      </section>
+
+      {overviewUnavailable && (
+        <section
+          className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 shadow-sm shadow-amber-950/10"
+          role="region"
+          aria-label={overviewAccessDenied ? "Overview access status" : "Overview data status"}
+        >
+          <div className="min-w-0">
+            <h2 className="text-sm font-medium text-amber-100">
+              {overviewAccessDenied
+                ? "Overview access denied"
+                : overviewState === "offline"
+                  ? "Overview data unavailable"
+                  : "Overview data is partial"}
+            </h2>
+            <p className="mt-1 text-xs text-amber-200/70" role="status" aria-live="polite">
+              {overviewAccessDenied
+                ? `Access was denied for ${deniedSources.join(", ")}. Showing available values only; retry after authorization is restored.${failedSources.length > 0 ? ` Other sources failed: ${failedSources.join(", ")}.` : ""}`
+                : overviewState === "offline"
+                  ? "The control plane and metrics sources are unavailable. No live overview state is being inferred."
+                  : `Some overview sources failed: ${failedSources.join(", ")}. Showing available values only.`}
+            </p>
+          </div>
+          {!overviewAccessDenied && (
+            <form method="get" action="/">
+              <button
+                type="submit"
+                aria-label="Retry overview data"
+                className="inline-flex min-h-11 items-center rounded-md border border-amber-400/40 px-3 py-2 text-xs font-medium text-amber-100 hover:bg-amber-400/10"
+              >
+                Retry overview
+              </button>
+            </form>
+          )}
+        </section>
+      )}
 
       {/* System health card: prometheus query time + last refresh timestamp */}
       <SystemHealthCard
@@ -365,7 +502,7 @@ export default async function HomePage() {
       />
 
       {/* KPI row */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-label="Overview metrics">
         <KpiCard
           label="Active Projects"
           value={activeCount}
@@ -401,14 +538,74 @@ export default async function HomePage() {
           icon="inbox"
           tone={dlqCount > 0 ? "negative" : "positive"}
         />
-      </div>
+      </section>
+
+      {executive && (
+        <section className="dashboard-surface p-4" aria-label="Executive reconciliation">
+          <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+            <div>
+              <h2 className="text-sm font-medium text-white">Executive reconciliation</h2>
+              <p className="text-xs text-slate-500 mt-0.5">CFO cost, CTO delivery, and CEO portfolio reads from durable control-plane evidence.</p>
+            </div>
+            <span className={clsx("text-xs uppercase tracking-wide", executive.status === "reconciled" ? "text-emerald-300" : "text-amber-300")}>
+              {executive.status.replace(/_/g, " ")}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="rounded-lg border border-slate-800 bg-slate-950/55 p-3"><div className="text-lg font-semibold text-white">${executive.projects.usage.total_cost_usd.toFixed(2)}</div><div className="text-xxs text-slate-500 uppercase tracking-wide">recorded usage cost</div></div>
+            <div className="rounded-lg border border-slate-800 bg-slate-950/55 p-3"><div className="text-lg font-semibold text-white">{executive.projects.active_count}/{executive.coverage.project_count}</div><div className="text-xxs text-slate-500 uppercase tracking-wide">active projects</div></div>
+            <div className="rounded-lg border border-slate-800 bg-slate-950/55 p-3"><div className="text-lg font-semibold text-white">{executive.delivery.success_rate === null ? "—" : `${Math.round(executive.delivery.success_rate * 100)}%`}</div><div className="text-xxs text-slate-500 uppercase tracking-wide">terminal run success</div></div>
+            <div className="rounded-lg border border-slate-800 bg-slate-950/55 p-3"><div className="text-lg font-semibold text-white">${executive.budgets.available_usd.toFixed(2)}</div><div className="text-xxs text-slate-500 uppercase tracking-wide">budget available</div></div>
+          </div>
+          {executive.findings.length > 0 && <div className="mt-3 text-xs text-amber-300">{executive.findings.length} reconciliation finding(s); model profiles pending: {executive.models?.profile_pending_model_count ?? 0}.</div>}
+          {executive.views && (
+            <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3" aria-label="Executive role views">
+              <div className="rounded-lg border border-slate-800 bg-slate-950/55 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-300">CFO</div>
+                  <span className={clsx("text-xxs uppercase", executive.views.cfo.status === "clear" ? "text-emerald-300" : "text-amber-300")}>{executive.views.cfo.status}</span>
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                  <div><div className="text-sm font-semibold text-white">${executive.views.cfo.spend_usd.toFixed(2)}</div><div className="text-xxs text-slate-500">spend</div></div>
+                  <div><div className="text-sm font-semibold text-white">${executive.views.cfo.budget_available_usd.toFixed(2)}</div><div className="text-xxs text-slate-500">available</div></div>
+                  <div><div className="text-sm font-semibold text-white">${executive.views.cfo.reservation_active_usd.toFixed(2)}</div><div className="text-xxs text-slate-500">reserved/committed</div></div>
+                  <div><div className="text-sm font-semibold text-white">{executive.views.cfo.reservation_anomaly_count}</div><div className="text-xxs text-slate-500">ledger anomalies</div></div>
+                </div>
+              </div>
+              <div className="rounded-lg border border-slate-800 bg-slate-950/55 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-300">CTO</div>
+                  <span className={clsx("text-xxs uppercase", executive.views.cto.status === "clear" ? "text-emerald-300" : "text-amber-300")}>{executive.views.cto.status}</span>
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                  <div><div className="text-sm font-semibold text-white">{executive.views.cto.success_rate === null ? "—" : `${Math.round(executive.views.cto.success_rate * 100)}%`}</div><div className="text-xxs text-slate-500">run success</div></div>
+                  <div><div className="text-sm font-semibold text-white">{executive.views.cto.active_worker_runs}</div><div className="text-xxs text-slate-500">active runs</div></div>
+                  <div><div className="text-sm font-semibold text-white">{executive.views.cto.failed_worker_runs}</div><div className="text-xxs text-slate-500">failed runs</div></div>
+                  <div><div className="text-sm font-semibold text-white">{executive.views.cto.profile_coverage.pending_models}</div><div className="text-xxs text-slate-500">models pending</div></div>
+                </div>
+              </div>
+              <div className="rounded-lg border border-slate-800 bg-slate-950/55 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-300">CEO</div>
+                  <span className={clsx("text-xxs uppercase", executive.views.ceo.status === "clear" ? "text-emerald-300" : "text-amber-300")}>{executive.views.ceo.status}</span>
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                  <div><div className="text-sm font-semibold text-white">{executive.views.ceo.active_projects}/{executive.views.ceo.total_projects}</div><div className="text-xxs text-slate-500">active projects</div></div>
+                  <div><div className="text-sm font-semibold text-white">{executive.views.ceo.finding_count}</div><div className="text-xxs text-slate-500">findings</div></div>
+                  <div><div className="text-sm font-semibold text-white">${executive.views.ceo.budget_available_usd.toFixed(2)}</div><div className="text-xxs text-slate-500">budget available</div></div>
+                </div>
+              </div>
+            </div>
+          )}
+        </section>
+      )}
 
       {/* First run callout — quiet, not alarming */}
-      {firstRun !== "seeded" && (
-        <div className="flex items-center justify-between gap-4 rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 shadow-sm shadow-amber-950/10">
+      {firstRun !== "seeded" && !overviewAccessDenied && (
+        <section className="flex items-center justify-between gap-4 rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 shadow-sm shadow-amber-950/10" aria-label="First-run status">
           <div className="flex items-center gap-3 min-w-0">
             <div className="flex-shrink-0 w-8 h-8 rounded-md bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-300">
-              <AlertCircle size={16} />
+              <AlertCircle size={16} aria-hidden="true" />
             </div>
             <div className="min-w-0">
               <div className="text-sm font-medium text-amber-100">
@@ -422,11 +619,11 @@ export default async function HomePage() {
             </div>
           </div>
           {firstRun === "not_seeded" && <SeedDefaultCompanyButton />}
-        </div>
+        </section>
       )}
 
       {/* Company + state distribution */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <section className="grid grid-cols-1 lg:grid-cols-3 gap-4" aria-label="Company and project state">
         {company ? (
           <div className="lg:col-span-2 dashboard-surface p-4">
             <div className="flex items-center justify-between gap-4 mb-4">
@@ -436,8 +633,8 @@ export default async function HomePage() {
                   {company.totals.active_workers}/{company.totals.workers} workers active · {company.totals.pending_approvals} approvals pending
                 </p>
               </div>
-              <Link href="/system-viz" prefetch={false} className="inline-flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300">
-                Open graph <ArrowUpRight size={12} />
+              <Link href="/system-viz" prefetch={false} className="inline-flex min-h-11 items-center gap-1 text-xs text-blue-400 hover:text-blue-300">
+                Open graph <ArrowUpRight size={12} aria-hidden="true" />
               </Link>
             </div>
             {company.departments.length === 0 ? (
@@ -528,17 +725,17 @@ export default async function HomePage() {
             </div>
           )}
         </div>
-      </div>
+      </section>
 
       {/* Quick links */}
-      <div className="dashboard-surface p-4">
-        <h2 className="text-sm font-medium text-white mb-3">Quick Links</h2>
+      <section className="dashboard-surface p-4" aria-labelledby="quick-links-heading">
+        <h2 id="quick-links-heading" className="text-sm font-medium text-white mb-3">Quick Links</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2.5">
           {QUICK_LINKS.map((q) => (
             <QuickLinkCard key={q.href} {...q} />
           ))}
         </div>
-      </div>
-    </div>
+      </section>
+    </main>
   );
 }

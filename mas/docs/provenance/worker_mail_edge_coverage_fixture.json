@@ -1,0 +1,55 @@
+{
+  "schema_version": "aiat.worker-mail-edge-coverage-certification.v1",
+  "observed_at": "2026-08-17T22:34:59Z",
+  "mode": "deterministic-fixture",
+  "status": "pass",
+  "source_command": "uv run --isolated python scripts/check_worker_mail_edge_coverage.py --json --require-integration",
+  "coverage_schema": "aiat.worker-mail-edge-coverage.v1",
+  "trace_id": "fixture-worker-mail-edge-trace-001",
+  "worker_id": "00000000-0000-4000-a000-000000000921",
+  "require_integration": true,
+  "worker_trace_item_count": 6,
+  "worker_trace_required_sources": {
+    "worker_usage_records": "observed",
+    "worker_artifacts": "observed",
+    "native_model_spans": "observed",
+    "native_worker_spans": "observed",
+    "native_integration_spans": "observed",
+    "integration_evidence": "observed"
+  },
+  "mail_edge_source_counts": {
+    "delivery_attempt": 1,
+    "provider_webhook": 2,
+    "provider_poll": 0
+  },
+  "mail_edge_event_counts": {
+    "queued": 1,
+    "delivered": 1,
+    "bounced": 1,
+    "sent": 0,
+    "deferred": 0,
+    "complained": 0,
+    "failed": 0,
+    "unknown": 0
+  },
+  "mail_edge_status": "pass",
+  "missing_required_signals": [],
+  "network_access_performed": false,
+  "mutation_performed": false,
+  "payload_free_report": true,
+  "certification_boundary": {
+    "worker_trace_source_join": "checked",
+    "mail_edge_trace_correlation": "checked",
+    "mail_edge_worker_correlation": "checked",
+    "verified_provider_webhook_shape": "checked",
+    "bounce_signal": "checked",
+    "external_provider_callback": "not_checked",
+    "model_backed_worker_execution": "not_checked",
+    "live_worker_run": "not_checked",
+    "durable_database_readback": "not_checked",
+    "sandbox_canary": "not_checked"
+  },
+  "scope": "deterministic composition of bounded worker trace and payload-free mail-edge contracts; no database, worker, provider, or deployment state changed",
+  "secret_policy": "provider payloads, recipient data, credentials, and task input/output are omitted",
+  "licence_metadata_is_gate": false
+}

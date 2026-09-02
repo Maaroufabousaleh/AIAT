@@ -15,8 +15,14 @@ dependencies = [
     "httpx[http2]>=0.27",
     "tenacity>=8.5",           # retry / backoff
     "cachetools>=5.4",         # LRU cache for idempotency
+    "cryptography>=42",        # authenticated backup envelopes and credential boundaries
     "python-ulid>=2.0",        # sortable UUIDs for message_id
     "prometheus-client>=0.20",  # Phase 12 custom Prometheus metrics
+]
+
+[project.optional-dependencies]
+oci = [
+    "oci>=2.126.0",
 ]
 
 [build-system]

@@ -1,0 +1,63 @@
+{
+  "schema_version": "aiat.gateway-worker-mail-edge-postgres-certification.v1",
+  "evidence_commit": "17f6547",
+  "observed_at": "2026-08-18T07:45:59.407773Z",
+  "status": "pass",
+  "mode": "live-dual-postgres-worker-mail-edge",
+  "operator_opt_in": true,
+  "selected_model_id": "llama-3.3-70b-versatile",
+  "provider_id": "litellm",
+  "gateway_model_count": 9,
+  "gateway_call_count": 1,
+  "controller_terminal_state": "SUCCEEDED",
+  "run_state": "SUCCEEDED",
+  "durable_reopen": {
+    "worker_healthy": true,
+    "identity_healthy": true,
+    "worker_run_present": true,
+    "worker_usage_count": 1,
+    "worker_artifact_count": 1,
+    "native_span_count": 4,
+    "mail_observation_count": 3
+  },
+  "provider_ingress": {
+    "enabled": true,
+    "statuses": {
+      "delivered": 200,
+      "bounced": 200,
+      "duplicate": 200,
+      "conflict": 409,
+      "tampered": 401
+    },
+    "idempotent_duplicate": true,
+    "conflict_rejected": true,
+    "tampered_rejected": true
+  },
+  "worker_mail_edge_coverage": "pass",
+  "payload_free": true,
+  "generated_text_retained": false,
+  "external_network_access_performed": true,
+  "external_provider_call_performed": true,
+  "external_provider_mutation_performed": false,
+  "sandbox_execution_performed": false,
+  "cleanup": {
+    "worker_fixture_rows_remaining": 0,
+    "identity_fixture_rows_remaining": 0,
+    "identity_client_rows_remaining": 0
+  },
+  "boundaries": {
+    "selected_model_listing": "checked",
+    "selected_live_worker": "checked",
+    "durable_worker_usage_artifact_trace": "checked",
+    "worker_postgres_connection_reopen": "checked",
+    "identity_postgres_connection_reopen": "checked",
+    "provider_message_trace_correlation": "checked",
+    "resend_raw_body_provider_ingress": "checked",
+    "durable_webhook_and_bounce_readback": "checked",
+    "external_provider_callback_or_delivery": "not_checked",
+    "provider_backed_recovery": "not_checked",
+    "gvisor_or_firecracker": "not_checked"
+  },
+  "licence_metadata_is_gate": false,
+  "generated_text_retained_note": "Only scalar status/usage and payload-free mail-edge metadata are retained; generated response content and credentials are omitted."
+}

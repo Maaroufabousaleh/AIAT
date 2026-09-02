@@ -1,0 +1,17 @@
+{
+  "adapter_type": "aiat_gateway",
+  "controller_terminal_state": "SUCCEEDED",
+  "exact_model_id": "fixture/model-v1",
+  "external_provider_call_performed": false,
+  "fixture_dispatch_performed": true,
+  "gateway_request_count": 1,
+  "licence_metadata_is_gate": false,
+  "mode": "fixture",
+  "network_mutation_performed": false,
+  "provider_id": "fixture-provider",
+  "sandbox_execution_performed": false,
+  "schema_version": "aiat.gateway-worker-adapter.v1",
+  "scope": "real GatewayWorkerAdapter/WorkerRunController fixture; no external provider or deployment state changed",
+  "status": "pass",
+  "usage_attribution_match": true
+}

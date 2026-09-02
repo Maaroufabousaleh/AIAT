@@ -48,6 +48,7 @@ from .flow import (
     FlowRecommendTool,
     FlowStatusTool,
 )
+from .identity import get_identity_tools
 from .infra import (
     BlobDeleteTool,
     BlobDownloadTool,
@@ -60,8 +61,12 @@ from .infra import (
     SecretsManageTool,
 )
 from .memory import SharedMemoryReadTool, SharedMemoryWriteTool
-from .identity import get_identity_tools
-from .opencode_workspace import OpenCodeWorkspacePytestTool, OpenCodeWorkspaceReadTool, OpenCodeWorkspaceWriteTool
+from .opencode_workspace import (
+    OpenCodeWorkspacePytestTool,
+    OpenCodeWorkspaceReadTool,
+    OpenCodeWorkspaceWriteTool,
+)
+from .pm import IssueCommentTool, IssueGetTool, IssueLinkTool, IssueUpdateTool, PMSyncStatusTool
 from .project import (
     ApprovalOverrideCSOTool,
     DepartmentTaskTool,
@@ -77,10 +82,20 @@ from .project import (
     ProjectRepositoryTool,
     ProjectStatusTool,
     ProjectTransitionTool,
+    PrivilegedOpsRequestTool,
     ReviewAggregateTool,
     ReviewStartSessionTool,
     ReviewSubmitResponseTool,
     ReviewSubmitVetoTool,
+)
+from .scm import (
+    SCMBranchCreateTool,
+    SCMCheckPublishTool,
+    SCMCommitEvidenceTool,
+    SCMInstallationDiscoverTool,
+    SCMPullRequestCreateTool,
+    SCMReviewCommentTool,
+    SCMRunCredentialTool,
 )
 from .sprint_kpi import (
     EstimationAdjustTool,
@@ -154,6 +169,7 @@ def get_all_tools() -> list[BaseTool]:
         ReviewSubmitVetoTool(),
         ReviewAggregateTool(),
         ApprovalOverrideCSOTool(),
+        PrivilegedOpsRequestTool(),
         HumanNotifyTool(),
         HumanAwaitDecisionTool(),
         DepartmentTaskTool(),
@@ -173,6 +189,19 @@ def get_all_tools() -> list[BaseTool]:
         IssueDecomposeTool(),
         IssueUpdateStatusTool(),
         IssueListTool(),
+        IssueGetTool(),
+        IssueUpdateTool(),
+        IssueCommentTool(),
+        IssueLinkTool(),
+        PMSyncStatusTool(),
+        # SOURCE CONTROL
+        SCMInstallationDiscoverTool(),
+        SCMBranchCreateTool(),
+        SCMPullRequestCreateTool(),
+        SCMReviewCommentTool(),
+        SCMCheckPublishTool(),
+        SCMCommitEvidenceTool(),
+        SCMRunCredentialTool(),
         KPIComputeSprintTool(),
         KPIComputeProjectTool(),
         KPIQueryHistoryTool(),

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import io
 import json
 import subprocess
 import sys
 
 import pytest
+import yaml
 from tool_service.code_review_runner import review
 from tool_service.config import Settings
 from tool_service.devops_adapter import monitoring
@@ -12,6 +14,8 @@ from tool_service.mcp_client import invoke_mcp_tool
 from tool_service.rate_limiter import RateLimiterPool
 from tool_service.registry import ToolRegistry
 from tool_service.sandbox_runner import execute as execute_sandbox
+from tool_service.sandbox_runner import main as sandbox_main
+from tool_service.tools.adapters import CodeReviewTool
 from tool_service.tools.all_tools import get_all_tools
 
 from mas_core.protocols.enums import AgentRole
@@ -20,7 +24,10 @@ from mas_core.protocols.tool import ToolRequest
 
 def test_sandbox_runner_never_falls_back_when_runsc_is_missing(tmp_path, monkeypatch):
     monkeypatch.setattr("tool_service.sandbox_runner.shutil.which", lambda _name: "/usr/bin/docker")
-    monkeypatch.setattr("tool_service.sandbox_runner._runtime_available", lambda _docker: False)
+    monkeypatch.setattr(
+        "tool_service.sandbox_runner._runtime_probe",
+        lambda _docker: (False, "gvisor_runsc_runtime_not_available"),
+    )
 
     result = execute_sandbox(
         {
@@ -46,7 +53,10 @@ def test_sandbox_runner_scrubs_service_environment_and_can_mount_read_only(tmp_p
 
     monkeypatch.setenv("TOOL_SECRET", "must-not-reach-generated-tests")
     monkeypatch.setattr("tool_service.sandbox_runner.shutil.which", lambda _name: "/usr/bin/docker")
-    monkeypatch.setattr("tool_service.sandbox_runner._runtime_available", lambda _docker: True)
+    monkeypatch.setattr(
+        "tool_service.sandbox_runner._runtime_probe",
+        lambda _docker: (True, ""),
+    )
     monkeypatch.setattr(
         "tool_service.sandbox_runner.subprocess.Popen",
         lambda command, **_kwargs: captured.setdefault("command", command) and CompletedProcess(),
@@ -73,6 +83,85 @@ def test_sandbox_runner_scrubs_service_environment_and_can_mount_read_only(tmp_p
     assert any(value.endswith(",readonly") for value in command)
 
 
+@pytest.mark.parametrize(
+    ("probe_error", "reason"),
+    [
+        (subprocess.TimeoutExpired("docker", 10), "gvisor_runtime_probe_timeout"),
+        (OSError("docker unavailable"), "gvisor_runtime_probe_failed"),
+    ],
+)
+def test_sandbox_runner_classifies_runtime_probe_failures_without_raw_errors(
+    tmp_path, monkeypatch, probe_error, reason
+):
+    def fail_probe(*_args, **_kwargs):
+        raise probe_error
+
+    monkeypatch.setattr("tool_service.sandbox_runner.shutil.which", lambda _name: "/usr/bin/docker")
+    monkeypatch.setattr("tool_service.sandbox_runner.subprocess.run", fail_probe)
+
+    result = execute_sandbox(
+        {
+            "argv": ["pytest"],
+            "workspace_root": str(tmp_path),
+            "cwd": ".",
+            "profile": "gvisor",
+            "network_mode": "egress-deny-all",
+        }
+    )
+
+    assert result == {
+        "available": False,
+        "configured": True,
+        "reason": reason,
+        "sandbox_profile": "gvisor",
+    }
+
+
+def test_sandbox_runner_classifies_container_launch_failure_without_raw_errors(tmp_path, monkeypatch):
+    monkeypatch.setattr("tool_service.sandbox_runner.shutil.which", lambda _name: "/usr/bin/docker")
+    monkeypatch.setattr(
+        "tool_service.sandbox_runner._runtime_probe",
+        lambda _docker: (True, ""),
+    )
+
+    def fail_launch(*_args, **_kwargs):
+        raise OSError("docker launch failed")
+
+    monkeypatch.setattr("tool_service.sandbox_runner.subprocess.Popen", fail_launch)
+
+    result = execute_sandbox(
+        {
+            "argv": ["pytest"],
+            "workspace_root": str(tmp_path),
+            "cwd": ".",
+            "profile": "gvisor",
+            "network_mode": "egress-deny-all",
+        }
+    )
+
+    assert result == {
+        "available": False,
+        "configured": True,
+        "reason": "gvisor_container_launch_failed",
+        "sandbox_profile": "gvisor",
+    }
+
+
+def test_sandbox_runner_cli_does_not_emit_raw_request_errors(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["sandbox-runner", "--json-stdin"])
+    monkeypatch.setattr(sys, "stdin", io.StringIO("not-json"))
+
+    sandbox_main()
+
+    result = json.loads(capsys.readouterr().out)
+    assert result == {
+        "available": False,
+        "configured": True,
+        "reason": "sandbox_request_invalid",
+        "sandbox_profile": "gvisor",
+    }
+
+
 def test_code_review_reports_structured_findings_without_secret_text(tmp_path):
     subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
     subprocess.run(["git", "config", "user.email", "audit@example.invalid"], cwd=tmp_path, check=True)
@@ -90,6 +179,30 @@ def test_code_review_reports_structured_findings_without_secret_text(tmp_path):
     assert "do-not-leak" not in json.dumps(result)
 
 
+@pytest.mark.anyio
+async def test_code_review_tool_uses_local_reviewer_when_external_command_is_unset(
+    tmp_path, monkeypatch
+):
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "audit@example.invalid"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "AIAT Audit"], cwd=tmp_path, check=True)
+    source = tmp_path / "app.py"
+    source.write_text("safe = True\n", encoding="utf-8")
+    subprocess.run(["git", "add", "app.py"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=tmp_path, check=True, capture_output=True)
+    source.write_text('safe = True\napi_key = "local-review-fixture"\n', encoding="utf-8")
+    monkeypatch.delenv("TOOL_CODE_REVIEW_COMMAND", raising=False)
+    monkeypatch.setattr("tool_service.tools.adapters._workspace_root", lambda: tmp_path)
+
+    result = await CodeReviewTool().execute(cwd=".")
+
+    assert result["available"] is True
+    assert result["backend"] == "aiat_deterministic_diff_review"
+    assert result["external_adapter_configured"] is False
+    assert result["findings_count"] == 1
+    assert "local-review-fixture" not in json.dumps(result)
+
+
 def test_monitoring_adapter_writes_prometheus_and_synthetic_configs(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
@@ -104,6 +217,43 @@ def test_monitoring_adapter_writes_prometheus_and_synthetic_configs(tmp_path, mo
         "message-router",
         "tool-service",
     }
+
+
+def test_monitoring_adapter_writes_litellm_omniroute_analytics_plan(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    result = monitoring(
+        {
+            "config": {
+                "target": "litellm_omniroute",
+                "output_dir": "analytics",
+                "litellm_url": "http://litellm:4000",
+                "omniroute_url": "http://omniroute:20128",
+            }
+        }
+    )
+
+    assert result["target"] == "litellm_omniroute"
+    assert result["network_probe_performed"] is False
+    analytics = json.loads((tmp_path / "analytics" / "aiat-analytics.json").read_text())
+    assert analytics["schema_version"] == "aiat.monitoring-analytics-plan.v1"
+    assert analytics["surfaces"]["litellm"]["health_url"].endswith("/health/liveliness")
+    checks = yaml.safe_load((tmp_path / "analytics" / "synthetic_checks.yml").read_text())
+    assert {check["name"] for check in checks["checks"]} >= {"litellm", "omniroute"}
+
+
+def test_monitoring_adapter_rejects_credentials_in_analytics_endpoint(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(ValueError, match="must not contain credentials"):
+        monitoring(
+            {
+                "config": {
+                    "target": "analytics",
+                    "litellm_url": "https://user:password@litellm:4000",
+                }
+            }
+        )
 
 
 def test_settings_parse_reviewed_mcp_server_registry():

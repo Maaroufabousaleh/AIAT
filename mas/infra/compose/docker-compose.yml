@@ -1,5 +1,5 @@
 # ── docker-compose.yml ────────────────────────────────────────────────────────
-# 17 services: 10 platform/infra services + 7 executive/C-suite team-runners.
+# Core platform/infra services plus 11 governed department team-runners.
 # All infra is $0 self-hosted OSS; only LLM API costs apply.
 #
 # Usage:
@@ -15,22 +15,27 @@
 #   Required: POSTGRES_PASSWORD, MINIO_ROOT_PASSWORD,
 #             ROUTER_PASSWORD, TOOLCACHE_PASSWORD,
 #             ROUTER_SECRET or AGENT_TOKEN_SECRET, TOOL_SECRET,
-#             LLM_GATEWAY_URL, LLM_API_KEY, LITELLM_MASTER_KEY
+#             LLM_GATEWAY_URL, LLM_API_KEY, LITELLM_MASTER_KEY, and the
+#             immutable *_IMAGE_REF values documented in
+#             production-image-lock.example.env
+# Production release runs pull/build images in a separate locked step and then
+# start without `--build`; the `build:` blocks remain for the development
+# wrapper, whose local `:dev` refs are isolated in mas.sh.
 
 name: mas
 
 # ── Shared env vars (merged into each team's environment: block) ──────────────
-x-team-env: &team-env
+x-team-common-env: &team-common-env
   ROUTER_URL: "http://message-router:8001"
   ROUTER_SECRET: "${ROUTER_SECRET}"
   TOOL_SERVICE_URL: "http://tool-service:8002"
   TOOL_SECRET: "${TOOL_SECRET}"
-  PGBOUNCER_DSN: "postgresql+asyncpg://mas_user:${POSTGRES_PASSWORD}@pgbouncer:5432/mas"
-  MINIO_ENDPOINT: "http://minio:9000"
-  MINIO_ACCESS_KEY: "mas_agent"
-  MINIO_SECRET_KEY: "${MINIO_ROOT_PASSWORD}"
   ORCHESTRATOR_URL: "http://orchestrator-api:8000"
-  MAS_API_KEY: "${MAS_API_KEY}"
+  # IANA timezone selected by the applied company manifest. Internal storage
+  # remains UTC; runners use this only for operator-facing prompt timestamps.
+  AIAT_COMPANY_TIMEZONE: "${AIAT_COMPANY_TIMEZONE:-UTC}"
+  # LLM gateway defaults are intentionally shared; runner identity is added
+  # by one of the two narrow maps below.
   LOG_LEVEL: "INFO"
   # ── LLM gateway defaults ──────────────────────────────────────────────────
   LLM_BACKEND: "${LLM_BACKEND:-litellm}"
@@ -38,9 +43,17 @@ x-team-env: &team-env
   LLM_DEFAULT_MODEL: "${LLM_DEFAULT_MODEL}"
   LLM_API_KEY: "${LLM_API_KEY:-}"
 
+x-team-env: &team-env
+  <<: *team-common-env
+  AIAT_WORKER_API_KEY: "${AIAT_WORKER_API_KEY:?AIAT_WORKER_API_KEY must be configured}"
+
+x-team-ceo-env: &team-ceo-env
+  <<: *team-common-env
+  AIAT_CEO_API_KEY: "${AIAT_CEO_API_KEY:?AIAT_CEO_API_KEY must be configured}"
+
 # ── Shared team defaults ───────────────────────────────────────────────────
 x-team-defaults: &team-defaults
-  image: mas/team-runner:latest
+  image: "${AIAT_TEAM_RUNNER_IMAGE_REF:?AIAT_TEAM_RUNNER_IMAGE_REF must be an immutable OCI image reference}"
   build:
     context: ${MAS_BUILD_CONTEXT:-../..}
     dockerfile: infra/docker/Dockerfile.team-runner
@@ -79,6 +92,7 @@ volumes:
   minio_data:
   worker_mirrors:
   omniroute_data:
+  omniroute_logs:
   opencode_workspace:
   browser_profiles:
 
@@ -90,7 +104,7 @@ services:
   # Docker creates named volumes as root. The tool/OpenCode runtimes
   # deliberately run as UID 10001, so prepare both persistent volumes first.
   opencode-workspace-init:
-    image: alpine:3.21.3
+    image: alpine:3.21.3@sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c
     restart: "no"
     user: "0:0"
     network_mode: "none"
@@ -107,7 +121,7 @@ services:
   # ── 0. Redis ACL Init (one-time setup) ──────────────────────────────────────
   # Runs once to configure ACL users. Can be removed after first run.
   redis-acl-init:
-    image: mas/redis-acl-init:latest
+    image: "${AIAT_REDIS_ACL_INIT_IMAGE_REF:?AIAT_REDIS_ACL_INIT_IMAGE_REF must be an immutable OCI image reference}"
     build:
       context: .
       dockerfile: Dockerfile.redis-acl-init
@@ -126,7 +140,7 @@ services:
 
   # ── 1. Redis ────────────────────────────────────────────────────────────────
   redis:
-    image: redis:7.2-alpine
+    image: redis:7.2-alpine@sha256:05a97a479bc73de66f087dc05b569010772880f778cc8671fa6b8aadee32e5c6
     restart: unless-stopped
     command: >-
       sh -c 'if [ ! -f /data/users.acl ]; then
@@ -153,7 +167,7 @@ services:
 
   # ── 2. Postgres ─────────────────────────────────────────────────────────────
   postgres:
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:pg16@sha256:a36250871de0833b8757561c72f2477ef1ddd1101afa4e617fb552e0de514c6b
     restart: unless-stopped
     env_file:
       - path: ../../../.env
@@ -178,7 +192,7 @@ services:
 
   # ── 3. PgBouncer ────────────────────────────────────────────────────────────
   pgbouncer:
-    image: edoburu/pgbouncer:latest
+    image: edoburu/pgbouncer:latest@sha256:4c1ca296ef525f108f5d3552cc337c0c09587cf8dae7f0067fd93349e47dc1cd
     restart: unless-stopped
     env_file:
       - path: ../../../.env
@@ -195,7 +209,6 @@ services:
       LISTEN_PORT: "5432"
     networks:
       - internal
-      - workers
     depends_on:
       postgres:
         condition: service_healthy
@@ -204,7 +217,7 @@ services:
 
   # ── 4. MinIO ────────────────────────────────────────────────────────────────
   minio:
-    image: minio/minio:latest
+    image: minio/minio:latest@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
     restart: unless-stopped
     env_file:
       - path: ../../../.env
@@ -217,7 +230,6 @@ services:
       - minio_data:/data
     networks:
       - internal
-      - workers
     mem_limit: 512m
     cpus: "0.5"
     healthcheck:
@@ -229,7 +241,7 @@ services:
 
   # MinIO init: create bucket + access key for agents
   minio-init:
-    image: minio/mc:latest
+    image: minio/mc:latest@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
     restart: "no"
     env_file:
       - path: ../../../.env
@@ -252,7 +264,7 @@ services:
 
   # ── 5. Message Router ───────────────────────────────────────────────────────
   message-router:
-    image: mas/message-router:latest
+    image: "${AIAT_MESSAGE_ROUTER_IMAGE_REF:?AIAT_MESSAGE_ROUTER_IMAGE_REF must be an immutable OCI image reference}"
     build:
       context: ${MAS_BUILD_CONTEXT:-../..}
       dockerfile: infra/docker/Dockerfile.message-router
@@ -286,10 +298,12 @@ services:
 
   # ── 6. Tool Service ─────────────────────────────────────────────────────────
   tool-service:
-    image: mas/tool-service:latest
+    image: "${AIAT_TOOL_SERVICE_IMAGE_REF:?AIAT_TOOL_SERVICE_IMAGE_REF must be an immutable OCI image reference}"
     build:
       context: ${MAS_BUILD_CONTEXT:-../..}
       dockerfile: infra/docker/Dockerfile.tool-service
+      args:
+        TOOL_SERVICE_PROFILE: core
     restart: unless-stopped
     user: "10001:10001"
     env_file:
@@ -299,7 +313,8 @@ services:
       - internal
       - workers
       - public
-    # No host port in production — only team-runners (on workers) need it.
+    # No host port in production — team-runners reach this gateway on workers;
+    # the service itself owns the private data-plane bridges.
     # Use docker-compose.dev.yml to expose for local debugging.
     depends_on:
       opencode-workspace-init:
@@ -316,6 +331,9 @@ services:
       REDIS_USERNAME: "toolcache_user"
       REDIS_PASSWORD: "${TOOLCACHE_PASSWORD}"
       TOOL_SECRET: "${TOOL_SECRET}"
+      ORCHESTRATOR_URL: "http://orchestrator-api:8000"
+      MAS_API_KEY: "${MAS_API_KEY}"
+      AIAT_OPERATOR_API_KEY: "${AIAT_OPERATOR_API_KEY:?AIAT_OPERATOR_API_KEY must be configured for governed tool mutations}"
       PGBOUNCER_DSN: "postgresql+asyncpg://mas_user:${POSTGRES_PASSWORD}@pgbouncer:5432/mas"
       MINIO_ENDPOINT: "http://minio:9000"
       MINIO_ACCESS_KEY: "mas_agent"
@@ -324,11 +342,12 @@ services:
       LLM_BACKEND: "${LLM_BACKEND:-litellm}"
       LLM_GATEWAY_URL: "${LLM_GATEWAY_URL}"
       LLM_API_KEY: "${LLM_API_KEY}"
+      AIAT_COMPANY_TIMEZONE: "${AIAT_COMPANY_TIMEZONE:-UTC}"
       TOOL_CODE_REVIEW_COMMAND: "${TOOL_CODE_REVIEW_COMMAND:-aiat-code-review --json-stdin}"
       TOOL_INFRA_PROVISION_COMMAND: "${TOOL_INFRA_PROVISION_COMMAND:-aiat-devops-adapter infra --json-stdin}"
       TOOL_MONITORING_SETUP_COMMAND: "${TOOL_MONITORING_SETUP_COMMAND:-aiat-devops-adapter monitoring --json-stdin}"
       TOOL_SANDBOX_COMMAND: "${TOOL_SANDBOX_COMMAND:-aiat-sandbox-runner --json-stdin}"
-      AIAT_SANDBOX_IMAGE: "${AIAT_SANDBOX_IMAGE:-mas/tool-service:latest}"
+      AIAT_SANDBOX_IMAGE: "${AIAT_TOOL_SERVICE_IMAGE_REF:?AIAT_TOOL_SERVICE_IMAGE_REF must be an immutable OCI image reference}"
       TOOL_WORKSPACE_ROOT: "/workspace"
       AIAT_MCP_SERVERS_JSON: '${AIAT_MCP_SERVERS_JSON:-{"workspace":{"transport":"stdio","command":"python","args":["-m","tool_service.mcp_workspace_server"]}}}'
       PYTHONPATH: "/app"
@@ -357,8 +376,27 @@ services:
   # ── 7a. OmniRoute ─────────────────────────────────────────────────────────
   # Internal OpenAI-compatible route optimizer used as an explicit LiteLLM
   # fallback/free-tier route.
+  omniroute-data-init:
+    image: alpine:3.21.3@sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c
+    restart: "no"
+    user: "0:0"
+    network_mode: "none"
+    volumes:
+      - omniroute_data:/data
+      - omniroute_logs:/logs
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        mkdir -p /data
+        mkdir -p /logs
+        chown -R 10001:10001 /data
+        chown -R 10001:10001 /logs
+        chmod -R u+rwX /data
+        chmod -R u+rwX /logs
+
   omniroute:
-    image: "${OMNIROUTE_IMAGE:-diegosouzapw/omniroute:3.8.38}"
+    image: "${OMNIROUTE_IMAGE_REF:?OMNIROUTE_IMAGE_REF must be an immutable OCI image reference}"
     restart: unless-stopped
     user: "10001:10001"
     networks:
@@ -366,6 +404,9 @@ services:
       - public
     environment:
       PORT: "20128"
+      DASHBOARD_PORT: "20128"
+      API_PORT: "20129"
+      API_HOST: "0.0.0.0"
       OMNIROUTE_API_KEY: "${OMNIROUTE_API_KEY:-}"
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
@@ -384,10 +425,22 @@ services:
       NINEROUTER_DISABLE_MITM: "true"
       CLIPROXYAPI_PORT: "8317"
       LOCAL_HOSTNAMES: "omniroute,litellm,host.docker.internal"
+      # Trust only the explicitly supplied host CA bundle in addition to the
+      # image's public roots.  This supports enterprise/AV TLS interception
+      # without disabling certificate verification.
+      NODE_EXTRA_CA_CERTS: "/usr/local/share/ca-certificates/aiat-extra-ca.pem"
     volumes:
       - omniroute_data:/app/data
+      - omniroute_logs:/app/logs
+      - type: bind
+        source: "${AIAT_EXTRA_CA_CERT:-./aiat-extra-ca.pem}"
+        target: /usr/local/share/ca-certificates/aiat-extra-ca.pem
+        read_only: true
       - ./cliproxyapi-compat-wrapper.sh:/opt/aiat/cliproxyapi-compat-wrapper.sh:ro
       - ./repair-cliproxyapi.sh:/opt/aiat/repair-cliproxyapi.sh:ro
+    depends_on:
+      omniroute-data-init:
+        condition: service_completed_successfully
     mem_limit: 512m
     cpus: "0.5"
 
@@ -395,7 +448,7 @@ services:
   # Primary internal OpenAI-compatible LLM gateway. AIAT keeps its public /v1
   # adapter stable and points outbound model calls here when LLM_BACKEND=litellm.
   litellm:
-    image: "${LITELLM_IMAGE:-ghcr.io/berriai/litellm:main-stable}"
+    image: "${LITELLM_IMAGE_REF:?LITELLM_IMAGE_REF must be an immutable OCI image reference}"
     restart: unless-stopped
     networks:
       - internal
@@ -432,7 +485,7 @@ services:
 
   # ── 7. Orchestrator API ─────────────────────────────────────────────────────
   opencode-runtime:
-    image: mas/opencode-runtime:1.17.13
+    image: "${AIAT_OPENCODE_RUNTIME_IMAGE_REF:?AIAT_OPENCODE_RUNTIME_IMAGE_REF must be an immutable OCI image reference}"
     build:
       context: ${MAS_BUILD_CONTEXT:-../..}
       dockerfile: infra/docker/Dockerfile.opencode
@@ -443,7 +496,6 @@ services:
     user: "10001:10001"
     networks:
       - internal
-      - workers
     env_file:
       - path: ../../../.env
         format: raw
@@ -478,7 +530,7 @@ services:
       retries: 3
 
   orchestrator-api:
-    image: mas/orchestrator-api:latest
+    image: "${AIAT_ORCHESTRATOR_IMAGE_REF:?AIAT_ORCHESTRATOR_IMAGE_REF must be an immutable OCI image reference}"
     build:
       context: ${MAS_BUILD_CONTEXT:-../..}
       dockerfile: infra/docker/Dockerfile.orchestrator-api
@@ -504,12 +556,19 @@ services:
       message-router:
         condition: service_started
     environment:
+      # Credential resolution must fail closed in the deployed stack.  Local
+      # unit tests that omit MAS_ENVIRONMENT still retain the manager's
+      # development-only fallback outside Compose.
+      MAS_ENVIRONMENT: "${MAS_ENVIRONMENT:-production}"
       REDIS_URL: "redis://router_user:${ROUTER_PASSWORD}@redis:6379/0"
       PGBOUNCER_DSN: "postgresql+asyncpg://mas_user:${POSTGRES_PASSWORD}@pgbouncer:5432/mas"
       ROUTER_URL: "http://message-router:8001"
       ROUTER_SECRET: "${ROUTER_SECRET}"
       LOG_LEVEL: "INFO"
       MAS_API_KEY: "${MAS_API_KEY}"
+      AIAT_OPERATOR_API_KEY: "${AIAT_OPERATOR_API_KEY:?AIAT_OPERATOR_API_KEY must be configured}"
+      AIAT_CEO_API_KEY: "${AIAT_CEO_API_KEY:?AIAT_CEO_API_KEY must be configured}"
+      AIAT_WORKER_API_KEY: "${AIAT_WORKER_API_KEY:?AIAT_WORKER_API_KEY must be configured}"
       LLM_BACKEND: "${LLM_BACKEND:-litellm}"
       LLM_GATEWAY_URL: "${LLM_GATEWAY_URL}"
       LLM_DEFAULT_MODEL: "${LLM_DEFAULT_MODEL}"
@@ -544,8 +603,69 @@ services:
       retries: 3
 
   # ── 8. Dashboard ────────────────────────────────────────────────────────────
+  pm-gateway:
+    image: "${AIAT_PM_GATEWAY_IMAGE_REF:?AIAT_PM_GATEWAY_IMAGE_REF must be an immutable OCI image reference}"
+    build:
+      context: ${MAS_BUILD_CONTEXT:-../..}
+      dockerfile: infra/docker/Dockerfile.pm-gateway
+    restart: unless-stopped
+    env_file:
+      - path: ../../../.env
+        format: raw
+    networks:
+      - internal
+      - public
+    ports:
+      - "127.0.0.1:8010:8010"
+    depends_on:
+      orchestrator-api:
+        condition: service_healthy
+    environment:
+      ORCHESTRATOR_URL: "http://orchestrator-api:8000"
+      PM_GATEWAY_PORT: "8010"
+      PM_GATEWAY_ENVIRONMENT: "${PM_GATEWAY_ENVIRONMENT:-production}"
+      PM_GATEWAY_OUTBOX_INTERVAL_SECONDS: "${PM_GATEWAY_OUTBOX_INTERVAL_SECONDS:-5}"
+      PM_GATEWAY_WEBHOOK_BODY_MAX_BYTES: "${PM_GATEWAY_WEBHOOK_BODY_MAX_BYTES:-1048576}"
+    mem_limit: 128m
+    cpus: "0.25"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8010/health').read()"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+  # Outbound-only connector for the published pm-gateway webhook hostname.
+  # The tunnel route must target http://pm-gateway:8010, never localhost.
+  cloudflared:
+    # The tunnel is an opt-in deployment extension.  Keep it out of the
+    # default stack so a missing token cannot prevent the rest of Compose from
+    # starting; enable it with `--profile cloudflare` when configured.
+    profiles: ["cloudflare"]
+    image: cloudflare/cloudflared:2026.7.0@sha256:5e49861633763e8933475477c20bae6039ed47f32c1d267a34babc347f28f0df
+    command: tunnel --no-autoupdate run
+    restart: unless-stopped
+    # Docker's embedded DNS is failing SRV lookups for the tunnel edge in this
+    # environment.  These resolvers are used only for the connector's outbound
+    # Cloudflare discovery; no service is exposed by this setting.
+    dns:
+      - 1.1.1.1
+      - 1.0.0.1
+    environment:
+      # Compose interpolates service definitions even when a profile is not
+      # selected, so this must remain safe for the documented empty default.
+      TUNNEL_TOKEN: "${CLOUDFLARE_TUNNEL_TOKEN:-}"
+    networks:
+      # Egress only: this does not publish a host port or make a Cloudflare
+      # route to any service other than the explicitly configured pm-gateway.
+      - public
+      - internal
+    depends_on:
+      pm-gateway:
+        condition: service_healthy
+
   dashboard:
-    image: mas/dashboard:latest
+    image: "${AIAT_DASHBOARD_IMAGE_REF:?AIAT_DASHBOARD_IMAGE_REF must be an immutable OCI image reference}"
     build:
       context: ${MAS_BUILD_CONTEXT:-../..}
       dockerfile: infra/docker/Dockerfile.dashboard
@@ -570,7 +690,12 @@ services:
       ORCHESTRATOR_URL: "http://orchestrator-api:8000"
       MESSAGE_ROUTER_URL: "http://message-router:8001"
       TOOL_SERVICE_URL: "http://tool-service:8002"
+      AIAT_COMPANY_TIMEZONE: "${AIAT_COMPANY_TIMEZONE:-UTC}"
+      NEXT_PUBLIC_DISPLAY_TZ: "${AIAT_COMPANY_TIMEZONE:-UTC}"
+      DISPLAY_TZ: "${AIAT_COMPANY_TIMEZONE:-UTC}"
+      TZ: "${AIAT_COMPANY_TIMEZONE:-UTC}"
       PROMETHEUS_URL: "http://prometheus:9090"
+      PROMETHEUS_TIMEOUT_MS: "${PROMETHEUS_TIMEOUT_MS:-750}"
       LITELLM_DASHBOARD_URL: "${LITELLM_DASHBOARD_URL:-http://localhost:4001/ui/}"
       OMNIROUTE_DASHBOARD_URL: "${OMNIROUTE_DASHBOARD_URL:-http://localhost:20128/dashboard/analytics}"
       NODE_ENV: "production"
@@ -585,15 +710,15 @@ services:
       retries: 3
 
   # ── Team runners (11 containers) ────────────────────────────────────────────
-  # Each team merges &team-env (env vars only) then adds TEAM_CONFIG.
-  # Using <<: *team-env inside environment: is correct because *team-env
-  # contains ONLY key=value environment pairs, not service-level keys.
+  # Each team merges one identity-specific environment map (env vars only)
+  # then adds TEAM_CONFIG. The CEO runner never receives the worker key and
+  # worker runners never receive the CEO key.
 
   team-exec-ceo:
-    <<: *team-defaults
+    <<: *team-defaults  # shared defaults
     container_name: mas-team-exec-ceo
     environment:
-      <<: *team-env
+      <<: *team-ceo-env
       TEAM_CONFIG: /app/teams/exec_ceo.yaml
 
   team-exec-coo:
@@ -632,7 +757,7 @@ services:
       TEAM_CONFIG: /app/teams/office_cso.yaml
 
   team-office-cto:
-    <<: *team-defaults
+    <<: *team-defaults  # shared defaults
     container_name: mas-team-office-cto
     environment:
       <<: *team-env

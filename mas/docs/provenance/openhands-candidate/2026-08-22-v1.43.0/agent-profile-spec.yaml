@@ -1,0 +1,129 @@
+schema_version: aiat.openhands-agent-profile-spec.v1
+status: run_scoped_provision_required
+purpose: bounded OpenHands coding worker under the AIAT control plane
+
+governance_state:
+  certification_authorization: run_scoped_trusted_controller_only
+  activation_approval: separate_steward_transition_after_passed_certification
+  worker_activation_before_approval: forbidden
+
+candidate:
+  release: v1.43.0
+  source_commit: 4c1237f391fe394e9f67505fe3a0bd2d81f84188
+  image_digest: sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97
+
+aiat_bindings:
+  model_profile_id: opencode-phase0b-coding
+  model_profile_version: "1"
+  exact_model_id: omniroute-coding
+  # AIAT's model registry keeps the provider-agnostic alias above. OpenHands
+  # v1.43 routes custom OpenAI-compatible endpoints through LiteLLM, whose
+  # provider resolver requires this fixed wire prefix. The adapter owns this
+  # translation; task input cannot select or replace it.
+  openhands_wire_model_id: openai/omniroute-coding
+  model_name_translation: governed_aiat_alias_to_v143_openai_wire_model
+  model_route_authority: aiat_gateway
+  model_gateway_url: http://litellm:4000
+  model_gateway_auth_scope: workflow_run_generated
+  workspace_policy: isolated_run_scoped
+  sandbox_profile: gvisor
+  network_policy:
+    mode: egress-allowlist
+    allowlist: [litellm:4000, tool-service:8002]
+  budget_policy:
+    timeout_seconds: 300
+    max_iterations: 20
+  cancellation_policy:
+    graceful: pause
+    immediate: interrupt
+    resume: run
+  recovery_policy:
+    authority: aiat_control_plane
+    idempotency: required
+    restart_recovery: required
+  audit_policy:
+    sink: aiat_durable_audit
+    payload_retention: scalar_only
+
+agent_server_profile:
+  # Agent Server assigns this UUID when the profile is saved. It is not a
+  # portable configuration value and must be captured from the disposable
+  # certification instance's output.
+  id: null
+  name: aiat-openhands-v1-43-0-coding
+  agent_kind: openhands
+  # This must be an existing Agent Server LLM-profile name whose resolved
+  # configuration uses the AIAT gateway and the fixed wire model corresponding
+  # to exact_model_id above. It is not a direct provider credential or an
+  # arbitrary OpenHands model selection.
+  llm_profile_ref: aiat-openhands-omniroute-coding
+  # The operator must set this to the one disposable key supplied as
+  # OPENHANDS_MCP_SETTINGS_KEY. A null value at runtime would expose all
+  # configured MCP servers and is therefore forbidden.
+  mcp_server_refs: [aiat-openhands-v1-43-0-coding]
+  tools:
+    - name: terminal
+    - name: file_editor
+  enable_sub_agents: false
+  enable_switch_llm_tool: false
+  # OpenHands v1.43.0 exposes discovered skills through a deny-list rather than
+  # an allow-list. The certification provisioner first reads the server's
+  # discovered public/user catalog, persists every discovered name in
+  # ``disabled_skills``, and verifies a second materialization resolves zero
+  # skills. Project skills are resolved lazily by the upstream runtime, so the
+  # disposable certification workspace is separately required to contain no
+  # project-skill or plugin sources. This is an evidence-backed certification
+  # boundary, not a claim that the upstream image was modified.
+  public_skill_loading: profile_deny_list_materialized_from_server_catalog
+  user_skill_loading: profile_deny_list_materialized_from_server_catalog
+  project_skill_loading: certification_workspace_must_be_skill_free
+  plugins: disabled_by_empty_server_home_and_request_surface
+  browser: disabled
+  desktop: disabled
+  vscode: disabled
+  direct_credentials: disabled
+  arbitrary_external_mcp: disabled
+
+aiat_mcp_bridge:
+  fixed_url: http://tool-service:8002/openhands/mcp
+  settings_key_env: OPENHANDS_MCP_SETTINGS_KEY
+  required_prefix: aiat-openhands-
+  allowed_tools: [aiat_tool]
+  grant_source: aiat_control_plane
+  grant_binding: worker_id_and_run_id
+  grant_ttl_seconds: 300
+  cleanup: delete_settings_entry_after_run
+
+provisioning:
+  profile_api:
+    list: GET /api/agent-profiles
+    save: POST /api/agent-profiles/{name}
+    materialize: POST /api/agent-profiles/{name}/materialize
+  required_postconditions:
+    - returned_profile_id_is_recorded_without_fabrication
+    - materialize_is_valid
+    # The AIAT exact_model_id is the logical alias.  The resolved v1.43 LLM
+    # profile is valid only when its fixed OpenAI wire model is
+    # ``openai/omniroute-coding``; this compatibility detail is not caller
+    # selectable and does not change the AIAT model-route authority.
+    - resolved_llm_profile_matches_aiat_model_contract
+    - mcp_refs_contain_only_the_operator_key
+    - disabled_controls_are_verified_from_server_readback
+  aiat_storage:
+    profile_store: disposable Agent Server persistence for the certification run
+    certification_store: fresh Agent Server instance started by the workflow
+    same_authoritative_store: false
+    profile_id_portable: false
+    profile_id_source: server_generated_uuid
+    profile_materialization: deterministic by governed profile name and pins
+    agent_profile_id: workflow run-scoped output OPENHANDS_AGENT_PROFILE_ID
+    mcp_settings_key: static logical key OPENHANDS_MCP_SETTINGS_KEY; entry is created and deleted per run
+    mcp_entry_lifecycle: create_after_start_read_back_delete_always_verify_absent
+    certification_authorization:
+      issuer: AIAT trusted certification controller
+      required_runtime: runsc
+      required_sandbox: gvisor
+      does_not_grant_activation: true
+  secrets:
+    - AIAT_TOOL_SECRET (workflow-run-generated disposable bridge secret; not a persistent GitHub Actions secret)
+    - OPENHANDS_MODEL_GATEWAY_API_KEY (workflow-run-generated AIAT gateway credential; never direct provider credential)

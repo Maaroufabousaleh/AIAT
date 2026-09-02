@@ -1,0 +1,60 @@
+{
+  "schema_version": "aiat.runtime-adapter-conformance.v1",
+  "programme_scope": "personal-internal-only",
+  "observed_at": "2026-08-18T18:10:34Z",
+  "environment": {
+    "host_class": "WSL2 with Docker Desktop Linux engine",
+    "container": "mas-orchestrator-api-1",
+    "credentials_printed": false
+  },
+  "mode": "live",
+  "status": "pass",
+  "runtimes": [
+    {
+      "runtime_id": "langgraph",
+      "package": "langgraph",
+      "version": "0.6.11",
+      "available": true,
+      "adapter_class": "LangGraphAdapter",
+      "result_status": "completed",
+      "output_matches": true,
+      "project_context_preserved": true,
+      "message_history_preserved": true,
+      "health_before_shutdown": true,
+      "health_after_shutdown": false,
+      "external_model_call": false,
+      "status": "pass"
+    },
+    {
+      "runtime_id": "crewai",
+      "package": "crewai",
+      "version": "1.6.1",
+      "available": true,
+      "adapter_class": "CrewAIAdapter",
+      "result_status": "completed",
+      "output_matches": true,
+      "project_context_preserved": true,
+      "message_history_preserved": true,
+      "health_before_shutdown": true,
+      "health_after_shutdown": false,
+      "external_model_call": false,
+      "status": "pass"
+    }
+  ],
+  "scope": "adapter manifest/message translation, project-context preservation, and bounded fixture completion; no model/tool/provider/project calls",
+  "certification_boundary": {
+    "package_imports": "checked",
+    "framework_execution": "fixture_only",
+    "project_context": "preserved",
+    "message_history": "preserved",
+    "sandbox": "not_checked",
+    "security_scan": "not_checked",
+    "canary": "not_checked",
+    "live_worker_run": "not_checked",
+    "rollback": "not_checked"
+  },
+  "notices": [
+    "This proves Compose package availability and adapter lifecycle/message translation only; it is not a model-backed worker canary or sandbox certification.",
+    "No licence or resource metadata was evaluated as a gate; provenance remains metadata-only."
+  ]
+}

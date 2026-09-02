@@ -1,4 +1,4 @@
-"""Opt-in Oracle/Stalwart/Resend staging acceptance.
+"""Opt-in self-hosted Stalwart/Resend staging acceptance.
 
 This module never runs during ordinary CI. It mutates only an explicitly
 approved staging identity service and requires pre-enrolled operator and
@@ -116,7 +116,7 @@ async def _find_message(
 
 
 @pytest.mark.anyio
-async def test_live_oracle_stalwart_and_resend_acceptance() -> None:
+async def test_live_self_hosted_stalwart_and_resend_acceptance() -> None:
     if not _live_enabled():
         pytest.skip("set AIAT_RUN_LIVE_IDENTITY_TESTS=1 on approved staging only")
 

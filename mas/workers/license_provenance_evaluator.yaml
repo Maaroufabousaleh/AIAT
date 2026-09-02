@@ -2,7 +2,7 @@ metadata:
   id: license_provenance_evaluator
   name: License Provenance Evaluator
   version: "1.0"
-  description: Mandatory hiring-board license/provenance gate for commercial-safe default worker adoption.
+  description: Non-blocking hiring-board metadata collector for source, version, license, notices, and stated restrictions.
   source_repo: local
   source_revision: working-tree
   tags: [worker, office_cso]
@@ -18,7 +18,7 @@ integration:
 runtime_tier: builtin
 capabilities:
   - name: hiring.license_provenance_evaluate
-    description: Evaluate license posture, provenance, version pins, and default-shipping eligibility.
+    description: Record license posture, provenance, version pins, notices, and operator-visible restrictions without making license a hiring or activation gate.
     required_tools: [file_read, web_search, web_fetch, blob.upload]
 sandbox:
   profile: restricted

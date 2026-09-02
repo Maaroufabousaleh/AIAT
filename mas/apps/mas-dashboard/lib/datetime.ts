@@ -14,11 +14,11 @@
  * The operator-facing UI always shows times in `DISPLAY_TZ`.  This is
  * configurable via the `NEXT_PUBLIC_DISPLAY_TZ` environment variable (an IANA
  * zone name, e.g. "America/New_York", "Europe/London", "Asia/Tokyo").
- * Defaults to "America/New_York" — change this to match the operator's region.
+ * The company manifest/environment supplies the default; UTC is the safe
+ * repository fallback when no deployment profile has been loaded.
  *
- * Note: "America/New_York" auto-switches between EDT (UTC-4) and EST (UTC-5)
- * with daylight saving, so log timestamps always match the wall-clock time on
- * the East Coast.  A fixed UTC-offset label would be wrong half the year.
+ * IANA zones auto-switch daylight-saving offsets where applicable; never bake
+ * a fixed UTC offset into a display string.
  *
  * Type coercion
  * ------------
@@ -37,14 +37,16 @@ import { formatInTimeZone } from "date-fns-tz";
  *
  * Fallback chain:
  *   1. `NEXT_PUBLIC_DISPLAY_TZ` env var (public, read on the client)
- *   2. `DISPLAY_TZ` env var     (server-only fallback)
- *   3. "America/New_York"       (safe default for US-based ops)
+ *   2. `AIAT_COMPANY_TIMEZONE` env var (server-side company policy)
+ *   3. `DISPLAY_TZ` env var     (server-only fallback)
+ *   4. "UTC"                   (safe default)
  */
 function resolveDisplayTz(): string {
   return (
     process.env.NEXT_PUBLIC_DISPLAY_TZ ??
+    process.env.AIAT_COMPANY_TIMEZONE ??
     process.env.DISPLAY_TZ ??
-    "America/New_York"
+    "UTC"
   );
 }
 

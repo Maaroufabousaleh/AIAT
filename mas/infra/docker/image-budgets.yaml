@@ -1,0 +1,20 @@
+schema_version: "1"
+
+# Release ceilings for the two tool-service profiles. Local measurements are
+# descriptive; clean native-Linux build/pull, archive, SBOM, and scan evidence
+# remain separate release gates.
+budgets:
+  tool-service-core:
+    profile: core
+    image_ref_env: AIAT_TOOL_SERVICE_IMAGE_REF
+    max_compressed_bytes: 734003200
+    max_uncompressed_bytes: 1572864000
+    max_startup_seconds: 30
+    max_memory_bytes: 805306368
+  tool-service-extensions:
+    profile: extensions
+    image_ref_env: AIAT_TOOL_SERVICE_EXTENSIONS_IMAGE_REF
+    max_compressed_bytes: 2147483648
+    max_uncompressed_bytes: 4294967296
+    max_startup_seconds: 120
+    max_memory_bytes: 2147483648

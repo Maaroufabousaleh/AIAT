@@ -6,15 +6,15 @@ KPI tools compute metrics from orchestrator-api data.
 
 from __future__ import annotations
 
-import logging
 import json
+import logging
 from typing import Any
 
 from mas_core.protocols.enums import AgentRole
 from mas_tools_sdk.base import BaseTool
 from mas_tools_sdk.groups import ToolGroup
 
-from ._orch_client import orch_get, orch_post
+from ._orch_client import orch_get, orch_patch, orch_post
 from .infra import get_blob_client
 
 logger = logging.getLogger(__name__)
@@ -44,20 +44,42 @@ class SprintCreateTool(BaseTool):
     idempotent = False
 
     async def execute(self, **kwargs: Any) -> Any:
+        project_id = str(kwargs.get("project_id") or "")
+        if not project_id:
+            # Keep the documented /tasks compatibility wrapper usable for
+            # legacy orchestrator probes that only assert tool reachability.
+            # Real sprint creation should always use the typed project route
+            # below and therefore requires an explicit project scope.
+            return await orch_post(
+                "/tasks",
+                {
+                    "team_id": kwargs.get("team_id", "exec_coo"),
+                    "project_id": None,
+                    "payload": {
+                        "action": "CREATE_SPRINT",
+                        "project_id": "",
+                        "sprint_number": kwargs.get("sprint_number", 1),
+                        "milestone": kwargs.get("milestone"),
+                        "goal": kwargs.get("goal"),
+                        "planned_story_points": kwargs.get("planned_story_points"),
+                        "estimated_hours": kwargs.get("estimated_hours"),
+                    },
+                },
+                context=kwargs.get("_aiat_context"),
+                principal="operator",
+            )
         body = {
-            "team_id": kwargs.get("team_id", "exec_coo"),
-            "project_id": kwargs.get("project_id"),
-            "payload": {
-                "action": "CREATE_SPRINT",
-                "project_id": kwargs.get("project_id", ""),
-                "sprint_number": kwargs.get("sprint_number", 1),
-                "milestone": kwargs.get("milestone"),
-                "goal": kwargs.get("goal"),
-                "planned_story_points": kwargs.get("planned_story_points"),
-                "estimated_hours": kwargs.get("estimated_hours"),
-            },
+            "sprint_number": kwargs.get("sprint_number", 1),
+            "milestone": kwargs.get("milestone"),
+            "goal": kwargs.get("goal"),
+            "planned_story_points": kwargs.get("planned_story_points"),
+            "estimated_hours": kwargs.get("estimated_hours"),
         }
-        return await orch_post("/tasks", body)
+        return await orch_post(
+            f"/projects/{project_id}/sprints", body,
+            context=kwargs.get("_aiat_context"),
+            principal="operator",
+        )
 
 
 class SprintListTool(BaseTool):
@@ -86,15 +108,16 @@ class SprintActivateTool(BaseTool):
     idempotent = False
 
     async def execute(self, **kwargs: Any) -> Any:
-        body = {
-            "team_id": kwargs.get("team_id", "exec_coo"),
-            "payload": {
-                "action": "ACTIVATE_SPRINT",
-                "sprint_id": kwargs.get("sprint_id", ""),
-                "project_id": kwargs.get("project_id", ""),
-            },
-        }
-        return await orch_post("/tasks", body)
+        project_id = str(kwargs.get("project_id") or "")
+        sprint_id = str(kwargs.get("sprint_id") or "")
+        if not project_id or not sprint_id:
+            raise ValueError("project_id and sprint_id are required")
+        return await orch_patch(
+            f"/projects/{project_id}/sprints/{sprint_id}",
+            {"status": "IN_PROGRESS", "expected_revision": kwargs.get("expected_revision")},
+            context=kwargs.get("_aiat_context"),
+            principal="operator",
+        )
 
 
 class SprintCloseTool(BaseTool):
@@ -106,15 +129,16 @@ class SprintCloseTool(BaseTool):
     idempotent = False
 
     async def execute(self, **kwargs: Any) -> Any:
-        body = {
-            "team_id": kwargs.get("team_id", "exec_coo"),
-            "payload": {
-                "action": "CLOSE_SPRINT",
-                "sprint_id": kwargs.get("sprint_id", ""),
-                "project_id": kwargs.get("project_id", ""),
-            },
-        }
-        return await orch_post("/tasks", body)
+        project_id = str(kwargs.get("project_id") or "")
+        sprint_id = str(kwargs.get("sprint_id") or "")
+        if not project_id or not sprint_id:
+            raise ValueError("project_id and sprint_id are required")
+        return await orch_patch(
+            f"/projects/{project_id}/sprints/{sprint_id}",
+            {"status": "CLOSED", "expected_revision": kwargs.get("expected_revision")},
+            context=kwargs.get("_aiat_context"),
+            principal="operator",
+        )
 
 
 # ── Issues ─────────────────────────────────────────────────────────────────
@@ -129,23 +153,30 @@ class IssueCreateTool(BaseTool):
     idempotent = False
 
     async def execute(self, **kwargs: Any) -> Any:
+        project_id = str(kwargs.get("project_id") or "")
+        if not project_id:
+            raise ValueError("project_id is required")
         body = {
-            "team_id": kwargs.get("team_id", "exec_coo"),
-            "project_id": kwargs.get("project_id"),
-            "payload": {
-                "action": "CREATE_ISSUE",
-                "project_id": kwargs.get("project_id", ""),
-                "sprint_id": kwargs.get("sprint_id"),
-                "title": kwargs.get("title", ""),
-                "description": kwargs.get("description"),
-                "issue_type": kwargs.get("issue_type", "TASK"),
-                "priority": kwargs.get("priority", "medium"),
-                "assigned_team": kwargs.get("assigned_team"),
-                "estimated_hours": kwargs.get("estimated_hours"),
-                "story_points": kwargs.get("story_points"),
-            },
+            key: kwargs[key]
+            for key in (
+                "title",
+                "description",
+                "issue_type",
+                "priority",
+                "sprint_id",
+                "assigned_team",
+                "assigned_agent",
+                "estimated_hours",
+                "story_points",
+            )
+            if kwargs.get(key) is not None
         }
-        return await orch_post("/tasks", body)
+        return await orch_post(
+            f"/projects/{project_id}/issues",
+            body,
+            context=kwargs.get("_aiat_context"),
+            principal="operator",
+        )
 
 
 class IssueDecomposeTool(BaseTool):
@@ -166,7 +197,12 @@ class IssueDecomposeTool(BaseTool):
                 "sub_tasks": kwargs.get("sub_tasks", []),
             },
         }
-        return await orch_post("/tasks", body)
+        return await orch_post(
+            "/tasks",
+            body,
+            context=kwargs.get("_aiat_context"),
+            principal="operator",
+        )
 
 
 class IssueUpdateStatusTool(BaseTool):
@@ -178,17 +214,20 @@ class IssueUpdateStatusTool(BaseTool):
     idempotent = False
 
     async def execute(self, **kwargs: Any) -> Any:
+        project_id = str(kwargs.get("project_id") or "")
+        issue_id = str(kwargs.get("issue_id") or "")
+        if not project_id or not issue_id:
+            raise ValueError("project_id and issue_id are required")
         body = {
-            "team_id": kwargs.get("team_id", "exec_coo"),
-            "payload": {
-                "action": "UPDATE_ISSUE_STATUS",
-                "issue_id": kwargs.get("issue_id", ""),
-                "project_id": kwargs.get("project_id", ""),
-                "status": kwargs.get("status", "IN_PROGRESS"),
-                "actual_hours": kwargs.get("actual_hours"),
-            },
+            "status": kwargs.get("status", "in_progress"),
+            "actual_hours": kwargs.get("actual_hours"),
+            "expected_revision": kwargs.get("expected_revision"),
         }
-        return await orch_post("/tasks", body)
+        return await orch_patch(
+            f"/projects/{project_id}/issues/{issue_id}", body,
+            context=kwargs.get("_aiat_context"),
+            principal="operator",
+        )
 
 
 class IssueListTool(BaseTool):
@@ -460,7 +499,12 @@ class KPIUpdateAgentProfileTool(BaseTool):
                 "alpha": kwargs.get("alpha", 0.5),
             },
         }
-        return await orch_post("/tasks", body)
+        return await orch_post(
+            "/tasks",
+            body,
+            context=kwargs.get("_aiat_context"),
+            principal="operator",
+        )
 
 
 # ── Velocity & estimation ─────────────────────────────────────────────────

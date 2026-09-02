@@ -4,31 +4,31 @@ model_list:
   - model_name: auto
     litellm_params:
       model: openai/auto
-      api_base: http://omniroute:20128/v1
+      api_base: http://omniroute:20129/v1
       api_key: os.environ/OMNIROUTE_API_KEY
 
   - model_name: omniroute-auto
     litellm_params:
       model: openai/auto
-      api_base: http://omniroute:20128/v1
+      api_base: http://omniroute:20129/v1
       api_key: os.environ/OMNIROUTE_API_KEY
 
   - model_name: omniroute-free
     litellm_params:
       model: openai/auto/cheap
-      api_base: http://omniroute:20128/v1
+      api_base: http://omniroute:20129/v1
       api_key: os.environ/OMNIROUTE_API_KEY
 
   - model_name: omniroute-coding
     litellm_params:
       model: openai/auto/coding
-      api_base: http://omniroute:20128/v1
+      api_base: http://omniroute:20129/v1
       api_key: os.environ/OMNIROUTE_API_KEY
 
   - model_name: omniroute-smart
     litellm_params:
       model: openai/auto/smart
-      api_base: http://omniroute:20128/v1
+      api_base: http://omniroute:20129/v1
       api_key: os.environ/OMNIROUTE_API_KEY
 
   # Legacy AIAT aliases now stay compatible while flowing through OmniRoute,
@@ -36,25 +36,28 @@ model_list:
   - model_name: gpt-4o-mini
     litellm_params:
       model: openai/auto
-      api_base: http://omniroute:20128/v1
+      api_base: http://omniroute:20129/v1
       api_key: os.environ/OMNIROUTE_API_KEY
 
   - model_name: gemma-3-27b-it
     litellm_params:
       model: openai/gemini/gemma-4-31b-it
-      api_base: http://omniroute:20128/v1
+      api_base: http://omniroute:20129/v1
       api_key: os.environ/OMNIROUTE_API_KEY
 
   - model_name: gemini-2.0-flash
     litellm_params:
       model: openai/gemini/gemini-2.0-flash
-      api_base: http://omniroute:20128/v1
+      api_base: http://omniroute:20129/v1
       api_key: os.environ/OMNIROUTE_API_KEY
 
   - model_name: llama-3.3-70b-versatile
     litellm_params:
-      model: openai/groq/llama-3.3-70b-versatile
-      api_base: http://omniroute:20128/v1
+      # Preserve the legacy alias without routing to the retired Groq model.
+      # OmniRoute's governed coding pool resolves the currently available
+      # provider/model instead.
+      model: openai/auto/coding
+      api_base: http://omniroute:20129/v1
       api_key: os.environ/OMNIROUTE_API_KEY
 
 router_settings:

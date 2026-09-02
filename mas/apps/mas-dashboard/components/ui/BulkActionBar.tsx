@@ -77,7 +77,7 @@ export function BulkActionBar({
           type="button"
           onClick={onClear}
           disabled={loading}
-          className="flex items-center gap-1 px-2.5 py-1 text-xs text-gray-300 hover:text-white rounded transition-colors disabled:opacity-50"
+          className="inline-flex min-h-11 items-center gap-1 px-2.5 py-1 text-xs text-gray-300 hover:text-white rounded transition-colors disabled:opacity-50"
         >
           <X size={12} />
           Clear
@@ -93,7 +93,7 @@ export function BulkActionBar({
           disabled={loading}
           data-testid={`bulk-${action}-button`}
           className={clsx(
-            "flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded transition-colors disabled:opacity-50",
+            "inline-flex min-h-11 items-center gap-1.5 px-3 py-1 text-xs font-medium rounded transition-colors disabled:opacity-50",
             colorClasses
           )}
         >
@@ -138,7 +138,7 @@ export function SelectAllCheckbox({
         onChange(!checked);
       }}
       className={clsx(
-        "inline-flex items-center justify-center text-gray-400 hover:text-white transition-colors",
+        "inline-flex min-h-11 min-w-11 items-center justify-center text-gray-400 hover:text-white transition-colors",
         className
       )}
     >
@@ -187,7 +187,7 @@ export function RowCheckbox({
         onChange(!checked);
       }}
       className={clsx(
-        "inline-flex items-center justify-center text-gray-400 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
+        "inline-flex min-h-11 min-w-11 items-center justify-center text-gray-400 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
         className
       )}
     >
