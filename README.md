@@ -1,272 +1,194 @@
-# AIAT MAS
+<!--
+THESIS: AIAT is the control plane where authority, project state, and evidence stay visible while external runtimes remain replaceable workers.
+OWN-WORLD: A graphite instrument field with cyan routing signals, amber approval gates, and crisp system-map geometry.
+STORY: An operator can understand the boundary in seconds, then move from architecture to a safe local run without hunting through the repository.
+FIRST VIEWPORT: Banner, one-line promise, scope callout, status strip, and the control-plane boundary before the first long section.
+FORM: Read-mode repository landing page; the category-default marketing hero is intentionally replaced by an operational brief.
+FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
+-->
 
-AIAT MAS is a self-hosted multi-agent system for software-project orchestration.
-The active workspace is `mas/`; run service, test, migration, and dashboard
-commands from there.
+<p align="center">
+  <img src="docs/assets/branding/aiat-header.svg" alt="AIAT control plane: authority, state, evidence, and adapter-backed workers" width="1200">
+</p>
 
-The core MAS stack, configurable flows, project context layer, worker registry,
-credentials manager, privileged-operation policy, dashboard, and compose/systemd
-deployment files are implemented in code. Current implementation truth and
-remaining validation work are tracked by the root
-[`ROADMAP.md`](ROADMAP.md), the maintained feature/plan set under
-`Docs/current/`, and the current release ledger under `mas/docs/`. Older
-`.github/prompts/` and `Docs/AIAT_LIVE_TEST_LEDGER.md` files remain historical
-research/evidence inputs and do not override the roadmap.
+<h1 align="center">AIAT / Multi-Agent Operating System</h1>
 
-## What Is Included
+<p align="center">
+  Governed orchestration for a one-operator AI company.
+</p>
 
-- FastAPI services: orchestrator API, message router, tool service, and team runner.
-- Provider-neutral PM/SCM adapter package plus the internet-facing `pm-gateway`.
-- Shared Python packages: `mas-core` and `mas-tools-sdk`.
-- Next.js dashboard at `mas/apps/mas-dashboard`, exposed at `http://localhost:4000`.
-- 11 configured departments, 39 worker manifests, and 11 role prompts.
-- Versioned company manifests under `mas/companies/`, durable worker-run queues,
-  lease recovery, idempotent usage ledger, and atomic company budget reservations.
-- Postgres-first workflow and knowledge model with MinIO blob storage and
-  optional pgvector semantic retrieval.
-- Configurable orchestration flows with API and dashboard support.
-- Worker registry, upstream repository metadata, evaluation reports, and worker
-  lifecycle endpoints.
-- Centralized tool-service layer with grants, rate limiting, caching, audit, and
-  circuit breakers.
-- Credentials manager and CEO privileged-operation audit/policy layer.
-- LiteLLM and OmniRoute analytics shortcuts, optional Prometheus platform
-  metrics, DLQ inspection, and system visualization pages.
-- Deployed team runners use one identity-specific CEO or worker control-plane
-  credential and an allow-listed storage API for checkpoints, usage, documents,
-  and reviews; they do not receive database/object-storage credentials.
+<p align="center">
+  <a href="https://github.com/Maaroufabousaleh/AIAT/actions/workflows/aiat-ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Maaroufabousaleh/AIAT/aiat-ci.yml?branch=main&style=flat-square&label=CI" alt="AIAT CI status"></a>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.11%2B-0b1118?style=flat-square&logo=python&logoColor=0b1118&labelColor=61d5e8" alt="Python 3.11 or newer"></a>
+  <a href="https://www.docker.com/products/docker-desktop/"><img src="https://img.shields.io/badge/Docker-Compose-0b1118?style=flat-square&logo=docker&logoColor=0b1118&labelColor=61d5e8" alt="Docker Compose"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/licence-personal--internal--use-0b1118?style=flat-square&labelColor=f2bd67" alt="Personal internal use"></a>
+</p>
 
-## Repository Layout
+<p align="center">
+  <a href="Docs/README.md">Documentation</a> ·
+  <a href="AIAT_TARGET_PROGRAMME.md">Target programme</a> ·
+  <a href="ROADMAP.md">Roadmap</a> ·
+  <a href="mas/README.md">MAS workspace</a> ·
+  <a href="THIRD_PARTY_NOTICES.md">Provenance</a>
+</p>
+
+> [!IMPORTANT]
+> AIAT is a personal, single-operator, internal-use programme. It is not being
+> prepared as a product for sale, public distribution, managed hosting, or
+> third-party commercial deployment. External runtimes are treated as untrusted
+> execution and are reached through bounded, versioned adapters.
+
+## The short version
+
+AIAT keeps the authority layer in one place: the orchestrator, router, tool
+service, registries, credentials boundary, approvals, dashboard, company
+control plane, managers, and evidence systems. Workers can change underneath it;
+they run through AIAT shells and pinned adapters.
 
 ```text
-mas/
-  apps/
-    orchestrator-api/      FastAPI project/workflow/control API
-    pm-gateway/            Raw provider webhook ingress and bounded outbox trigger
-    message-router/        Redis Streams broker and WebSocket subscriptions
-    tool-service/          Central tool execution service
-    team-runner/           Per-team agent process
-    mas-dashboard/         Next.js operator dashboard
-  packages/
-    mas-core/              Protocols, policy, workflow, storage, agents, LLM gateway
-    mas-tools-sdk/         Tool manifest and client SDK
-  migrations/              Alembic schema migrations
-  infra/
-    compose/               Docker Compose files and env example
-    docker/                Dockerfiles
-    systemd/               masctl and systemd service units
-    sandbox/               Sandbox profile notes/templates
-  companies/               Versioned company/org/budget manifests
-  teams/                   11 department YAML configs
-  workers/                 39 worker manifests
-  prompts/                 11 role system prompts
-  docs/                    Architecture notes
+operator → AIAT authority → policy / approvals → adapter shell → external runtime
+                    ↘ project state / evidence / audit ↗
 ```
 
-The old root-level generated dashboard output is not the canonical app source.
-Use `mas/apps/mas-dashboard`.
+The useful distinction is simple: a model or worker may propose, inspect, test,
+or explain. AIAT-owned services decide what may be executed, what state is
+durable, and what evidence is sufficient to move forward.
 
-## Prerequisites
+## Current shape
 
-- Docker Desktop or Docker Engine with Compose v2.
-- Python 3.11+.
-- `uv`.
-- Node.js 20+ for dashboard development and password-hash generation.
-- Enough local Docker resources for the full stack; use at least 8 GB RAM and 4 CPUs.
+| Signal | Current posture |
+| --- | --- |
+| Programme | Personal, single-operator, internal use |
+| Authority | AIAT-owned control plane and approval boundary |
+| Workers | Adapter-backed external runtimes; treated as untrusted execution |
+| State | Postgres-first structured state, MinIO-backed heavy artifacts, Redis coordination |
+| Evidence | Versioned provenance, release ledgers, audit trails, and deterministic checks |
+| Activation | Security, compatibility, sandbox, privacy, budget, recovery, and human-approval gates remain enforceable |
 
-## First Run
+## Architecture at a glance
 
-From the repository root, copy `.env.example` to `.env` and set real values for at least:
+![AIAT system map showing the operator, authoritative control plane, durable state, and adapter-backed external workers](docs/assets/architecture/aiat-system-map.svg)
 
-- `POSTGRES_PASSWORD`
-- `MINIO_ROOT_PASSWORD`
-- `ROUTER_PASSWORD`
-- `TOOLCACHE_PASSWORD`
-- `ROUTER_SECRET`
-- `TOOL_SECRET`
-- `LLM_GATEWAY_URL`
-- `LLM_API_KEY` or provider-specific API keys
-- `DASHBOARD_USERNAME`
-- `DASHBOARD_PASSWORD_HASH`
-- `JWT_SECRET`
-- `MAS_API_KEY`
-- `AIAT_CEO_API_KEY` and `AIAT_WORKER_API_KEY` (distinct automation principals)
+The canonical implementation view is [`mas/docs/ARCHITECTURE.md`](mas/docs/ARCHITECTURE.md).
+The maintained feature specifications and ordered plans are indexed in the
+[`documentation hub`](Docs/README.md).
 
-Generate a dashboard password hash from the dashboard package:
+## What is in the repository
+
+| Area | Role |
+| --- | --- |
+| [`mas/apps/`](mas/apps/) | Orchestrator API, message router, tool service, team runner, identity service, and PM gateway |
+| [`mas/packages/`](mas/packages/) | Shared protocols, policy, workflow, storage, agent, gateway, and tool SDK packages |
+| [`mas/companies/`](mas/companies/) | Versioned company, organisation, and budget manifests |
+| [`mas/teams/`](mas/teams/) · [`mas/workers/`](mas/workers/) | 11 department definitions and 39 worker manifests |
+| [`mas/prompts/`](mas/prompts/) | 11 role prompts used by the company control plane |
+| [`mas/infra/`](mas/infra/) | Compose, image, systemd, mail-edge, and sandbox integration profiles |
+| [`mas/docs/provenance/`](mas/docs/provenance/) | Machine-readable component, pin, image, security, and release evidence |
+| [`Docs/current/`](Docs/current/) | Maintained feature specifications, status notes, and delivery plans |
+| [`docs/assets/`](docs/assets/) | Repository-owned visual assets used by this landing page and its architecture map |
+
+## Quick start
+
+The default loop is local and deterministic. No provider credentials or live
+actions are needed to run the unit and contract suites.
 
 ```bash
-cd mas/apps/mas-dashboard
-npm install
-node -e "const b=require('bcryptjs'); console.log(b.hashSync('replace-me', 12))"
-cd ../../..
-```
-
-Paste the hash into `.env` as `DASHBOARD_PASSWORD_HASH`.
-
-Start the base stack:
-
-```bash
+cp .env.example .env
+# Set the required local secrets in .env before starting services.
 mas/infra/compose/mas.sh up --build
 ```
 
-Run migrations:
+For migrations and health checks:
 
 ```bash
 uv --directory mas run alembic upgrade head
-```
-
-Check health:
-
-```bash
 curl http://localhost:8000/health
 curl http://localhost:8001/health
 curl http://localhost:8002/health
 curl http://localhost:4000/api/health
 ```
 
-Open the dashboard at `http://localhost:4000`.
+Open the operator dashboard at <http://localhost:4000>.
 
-## Development Mode
+## Developer checks
 
-The dev overlay exposes Redis, Postgres, MinIO, message-router, tool-service,
-LiteLLM, OmniRoute, optional Prometheus platform metrics, pgAdmin, and
-RedisInsight ports:
-
-```bash
-mas/infra/compose/mas.sh up --build
-```
-
-`mas.sh` is the development wrapper and supplies local `:dev` image names for
-the services built from this checkout. Direct production Compose usage remains
-strict: provide the immutable image inputs from
-`mas/infra/compose/production-image-lock.example.env` (with real digests).
-
-Useful local URLs:
-
-| Service | URL |
-|---|---|
-| Dashboard | `http://localhost:4000` |
-| Orchestrator API | `http://localhost:8000` |
-| Message router | `http://localhost:8001` |
-| Tool service | `http://localhost:8002` |
-| RedisInsight | `http://localhost:8003` |
-| pgAdmin | `http://localhost:5050` |
-| MinIO Console | `http://localhost:9001` |
-| LiteLLM analytics | `http://localhost:4001/ui/` |
-| OmniRoute analytics | `http://localhost:20128/dashboard/analytics` |
-| Prometheus platform metrics (optional) | `http://localhost:9090` |
-
-The AIAT sidebar links to both analytics pages. For remote or reverse-proxied
-deployments, set `LITELLM_DASHBOARD_URL` and `OMNIROUTE_DASHBOARD_URL` to the
-browser-reachable URLs.
-
-The gateway path is AIAT -> LiteLLM -> OmniRoute -> provider. On `mas.sh up`,
-AIAT idempotently imports the configured legacy provider keys into OmniRoute,
-enables model/pricing synchronization, and starts 9Router and CLIProxyAPI.
-See [the OmniRoute gateway guide](mas/docs/OMNIROUTE.md) for aliases, embedded
-service behavior, and the authentication handoff.
-
-## Tests
-
-Python workspace:
+Run from `mas/`:
 
 ```bash
 cd mas
 uv sync
-uv run python scripts/check_worker_reconciliation.py --json
-uv run python scripts/check_runtime_install_profile.py --json
-uv run python scripts/check_worker_steward_contract.py --json
-uv run python scripts/check_native_trace_spans.py --json
+uv run python -m compileall -q packages apps
+uv run python scripts/check_provenance.py
 uv run python scripts/check_docs_index.py --json
 uv run python scripts/check_release_ledger.py --json
 uv run pytest
-PYTHONPATH=apps/identity-service uv run pytest apps/identity-service/tests/test_identity_service.py
 uv run ruff check .
 uv run mypy .
 ```
 
-Dashboard:
+Dashboard checks:
 
 ```bash
 cd mas/apps/mas-dashboard
 npm install
+npm run typecheck
 npm run build
 npm run test:e2e
 ```
 
-Live/provider tests remain opt-in:
+Provider, Docker, native-sandbox, and live release checks remain explicit
+operator workflows. Passing local tests does not manufacture external evidence
+or unlock a consequential action.
 
-```bash
-cd mas
-MAS_RUN_LIVE_TESTS=1 uv run pytest -m live packages/mas-core/tests/test_llm_live.py
-```
+## Documentation map
 
-For the host-side live release ledger against the local Compose stack, use the
-published loopback ports; Compose-internal names such as `orchestrator-api` and
-`tool-service` are not host endpoints:
+Start at [`Docs/README.md`](Docs/README.md) for the source-of-truth order and
+the maintained reading paths.
 
-```bash
-cd mas
-export AIAT_ORCHESTRATOR_URL=http://127.0.0.1:8000
-export AIAT_TOOL_SERVICE_URL=http://127.0.0.1:8002
-export AIAT_OPERATOR_API_KEY='<operator-key-from-the-local-environment>'
-uv run python scripts/check_release_ledger.py --live --compose-local --json
-```
+| Need | Start here |
+| --- | --- |
+| Programme intent and boundaries | [`AIAT_TARGET_PROGRAMME.md`](AIAT_TARGET_PROGRAMME.md) |
+| Ordered implementation work | [`ROADMAP.md`](ROADMAP.md) |
+| Current feature truth | [`Docs/current/`](Docs/current/) |
+| System architecture | [`mas/docs/ARCHITECTURE.md`](mas/docs/ARCHITECTURE.md) |
+| Deployment and local operations | [`Docs/PM_Platform_Deployment.md`](Docs/PM_Platform_Deployment.md), [`mas/docs/PM_ACTIVE_DEPLOYMENT.md`](mas/docs/PM_ACTIVE_DEPLOYMENT.md) |
+| Dashboard and operator UX | [`Docs/current/FEATURE_DASHBOARD_AND_OPERATOR_UX.md`](Docs/current/FEATURE_DASHBOARD_AND_OPERATOR_UX.md) |
+| Workers, runtimes, and adapters | [`Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md`](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md) |
+| Security and recovery | [`Docs/current/FEATURE_SECURITY_OBSERVABILITY_AND_OPERATIONS.md`](Docs/current/FEATURE_SECURITY_OBSERVABILITY_AND_OPERATIONS.md) |
+| Component and licence metadata | [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md), [`third_party_components.yaml`](mas/docs/provenance/third_party_components.yaml) |
 
-The report is scalar-only and keeps blocked native/provider/operator gates
-blocked; it never treats licence metadata as a release gate.
+## Safety and trust boundaries
 
-## Runtime Shape
+- AIAT-owned services keep authority, project state, credentials, approvals, and evidence.
+- External runtimes execute through versioned adapters with bounded tools, network, filesystem, and credential scopes.
+- Security, authenticity, compatibility, privacy, sandbox, data-loss, budget, recovery, and human-approval checks remain independent of licence metadata.
+- The dashboard is an operator surface, not a second ledger, policy engine, or live-action authority.
+- Live/provider evidence is labelled separately from deterministic fixtures and local contract tests.
 
-Base compose defines the core infrastructure, control-plane services, analytics,
-and 11 team runners plus one-shot init jobs. The signed identity service and
-its private database/migration are enabled by the `mail-local` profile in
-`mas/infra/compose/docker-compose.stalwart-local.yml` (production identity is
-deployed behind the mail-edge TLS boundary):
+Read [`agents.md`](agents.md) for the internal architecture and resource policy,
+and [`mas/docs/provenance/release_ledger.yaml`](mas/docs/provenance/release_ledger.yaml)
+for machine-readable evidence posture.
 
-- Long-running infra/services: Redis, Postgres, PgBouncer, MinIO,
-  orchestrator-api, message-router, tool-service, dashboard, LiteLLM,
-  OmniRoute, and 11 team runners.
-- One-shot init jobs: Redis ACL init and MinIO bucket/user init.
-- Dev overlay adds pgAdmin, RedisInsight, LiteLLM and OmniRoute host access,
-  plus optional Prometheus platform metrics. Grafana is not bundled.
+## Licence and provenance
 
-Team runners are attached to the internal `workers` network only. PgBouncer and
-MinIO remain on the private control-plane network; the runner storage adapter
-calls the authenticated orchestrator storage boundary instead of opening SQL
-or S3 connections.
+AIAT’s original source and repository-owned visual assets are covered by
+[`LICENSE`](LICENSE). Third-party software, services, model references, data,
+and provider terms remain their own; AIAT records known version, source, licence,
+notice, and restriction metadata in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)
+and [`mas/docs/provenance/third_party_components.yaml`](mas/docs/provenance/third_party_components.yaml).
 
-The dashboard is an authenticated server-side proxy. Browser code calls
-Next.js API routes, and those routes hold service credentials server-side.
+Licence metadata is informational for this personal internal-use instance. It
+does not create an allowlist or block discovery, installation, activation,
+execution, updating, or normal internal use. If the programme’s distribution
+scope changes, perform a separate distribution review.
 
-## Planning
+## Working agreements
 
-The authoritative programme is [`AIAT_TARGET_PROGRAMME.md`](AIAT_TARGET_PROGRAMME.md)
-and the ordered documentation/implementation index is [`ROADMAP.md`](ROADMAP.md).
-The specifications and delivery plans linked there are authoritative for new
-work. The older reconciled and phased plans remain useful historical context:
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — change boundaries, checks, docs, and asset rules.
+- [`SECURITY.md`](SECURITY.md) — safe handling and private reporting guidance.
+- [`DESIGN.md`](DESIGN.md) — visual language, diagram, and documentation maintenance rules.
+- [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) — provenance and metadata policy.
 
-- `.github/prompts/PLAN_alpha_beta.md`
-- `.github/prompts/PLAN_gamma.md`
-- `.github/prompts/PLAN_delta.md`
-- `.github/prompts/PLAN_epsilon.md`
-
-Use `Docs/AIAT_LIVE_TEST_LEDGER.md` for current live-test evidence, defects,
-fixes, enhancement opportunities, and remaining work. The old merged plan under
-`.github/prompts/obsolete/AIAT_PLAN.md` is historical context only.
-
-Provider-neutral PM/SCM integration architecture and operator setup are documented in
-[`Docs/PM_Platform_Integration_Plan.md`](Docs/PM_Platform_Integration_Plan.md) and
-[`Docs/PM_Platform_Integration_Runbook.md`](Docs/PM_Platform_Integration_Runbook.md).
-The supporting decision, adapter, provider setup, deployment, dashboard, and
-certification references are indexed in [`Docs/PM_Platform_Integration_ADR.md`](Docs/PM_Platform_Integration_ADR.md),
-[`Docs/PM_Platform_Adapter_Authoring.md`](Docs/PM_Platform_Adapter_Authoring.md),
-[`Docs/PM_Platform_Deployment.md`](Docs/PM_Platform_Deployment.md), and
-the YouTrack/GitHub setup guides.
-
-## License
-
-AIAT is a personal, single-operator, internal-use programme. Third-party
-licence information is recorded as non-blocking metadata under
-[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md); resource selection and
-normal internal use are not controlled by licence allowlists.
+<p align="center">
+  <sub>AIAT / internal control plane · authority stays here · workers remain replaceable</sub>
+</p>

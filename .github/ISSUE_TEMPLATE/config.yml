@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security disclosure
+    url: https://github.com/Maaroufabousaleh/AIAT/security/policy
+    about: Do not disclose credentials or exploit details in an issue.
