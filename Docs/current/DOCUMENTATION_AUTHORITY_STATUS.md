@@ -39,7 +39,7 @@ personal/internal instance. Technical source integrity, version, security,
 sandbox, privacy, compatibility, budget, approval, and recovery evidence
 remain independent controls.
 
-The archival [`deep-research-report.md`](../../deep-research-report.md) was
+The archival [`deep-research-report.md`](../archive/deep-research-report.md) was
 reconciled in the current documentation pass: its former legal-risk appendix
 now redirects exact resource terms and notices to the provenance catalogue,
 and its technical comparison remains design input only.
@@ -509,7 +509,7 @@ informational and non-gating.
 
 The durable version-pinning group `7c1ef74` extends `6a10b0e` at migration
 `0042_worker_run_host_binding` and refreshes the maintained local certificate
-[`worker_version_pinning_postgres_evidence.json`](../../mas/provenance/worker_version_pinning_postgres_evidence.json).
+[`worker_version_pinning_postgres_evidence.json`](../../mas/docs/provenance/worker_version_pinning_postgres_evidence.json).
 It proves that a version-one `RUNNING` run retains its shell, adapter,
 skill-bundle, steward identity, worker source/version metadata, and immutable
 model-resolution snapshot after the registry advances to version two, while a

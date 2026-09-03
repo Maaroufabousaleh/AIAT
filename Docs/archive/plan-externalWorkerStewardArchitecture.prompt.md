@@ -4,8 +4,8 @@
 > design input, but licence review is now metadata capture only. It cannot
 > reject, block, or delay worker discovery, hiring, activation, rollout,
 > updating, or execution. Current authority is
-> [`AIAT_TARGET_PROGRAMME.md`](AIAT_TARGET_PROGRAMME.md) and
-> [`ROADMAP.md`](ROADMAP.md). Security, sandbox, compatibility, source/version
+> [`AIAT_TARGET_PROGRAMME.md`](../../AIAT_TARGET_PROGRAMME.md) and
+> [`ROADMAP.md`](../../ROADMAP.md). Security, sandbox, compatibility, source/version
 > provenance, budget, and human-action gates remain operative.
 
 ## Summary
@@ -1738,7 +1738,9 @@ The implementation is complete when:
 
 ## Assumptions and Defaults
 
-- The requested filename is the repository-root file `plan-externalWorkerStewardArchitecture.prompt.md`.
+- The requested filename was the repository-root file
+  `plan-externalWorkerStewardArchitecture.prompt.md`; it is retained here as a
+  historical design input.
 - The control plane remains AIAT-owned.
 - External applications never own authoritative project, approval, credential, permission, budget, hiring, or audit state.
 - Continuous updating means continuous monitoring and candidate preparation, never silently following upstream HEAD.

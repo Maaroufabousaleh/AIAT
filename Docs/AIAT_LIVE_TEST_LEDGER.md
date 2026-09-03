@@ -69,7 +69,7 @@ Source codes are used in the feature matrix.
 | Code | Source family | Review status | Notes |
 |---|---|---|---|
 | `SRC-CORE` | `README.md`, `mas/README.md` | Reviewed | Root and `mas/` variants differ by path context; both still reference obsolete `AIAT_PLAN.md`. |
-| `SRC-NEXT` | `next.txt` | Reviewed | Operator-requested features 1-16, including 2.1 and 8.1. |
+| `SRC-NEXT` | `Docs/archive/next.txt` | Reviewed | Operator-requested features 1-16, including 2.1 and 8.1; retained as a historical input. |
 | `SRC-AGENTS` | `agents.md` | Reviewed | Current personal/internal resource-selection policy and worker stack. |
 | `SRC-TOOLS` | `tools.md` | Reviewed | Current authority/capability tool split and six tool groups. |
 | `SRC-REPORT` | `.github/prompts/deep-research-report.md` | Reviewed | Current corrected research copy; differs from the Docs copy on monitoring defaults. |

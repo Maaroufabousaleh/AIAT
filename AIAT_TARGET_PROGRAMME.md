@@ -1942,18 +1942,18 @@ All project documentation available in the reviewed workspace was read and used 
 ### A.3 Consolidated design inputs
 
 - `README.md` and `mas/README.md`.
-- `next.txt`.
-- `plan-externalWorkerStewardArchitecture.prompt.md`.
+- `Docs/archive/next.txt`.
+- `Docs/archive/plan-externalWorkerStewardArchitecture.prompt.md`.
 - `Docs/AIAT_Deep_Research_Implementation_Plan.md`.
-- `deep-research-report.md`, `Docs/obs/deep-research-report.md`, and `.github/prompts/deep-research-report.md`.
+- `Docs/archive/deep-research-report.md`, `Docs/obs/deep-research-report.md`, and `.github/prompts/deep-research-report.md`.
 - `Docs/AIAT as a Modular AI Company Operating System.md`.
 - `.github/prompts/PLAN_alpha_beta.md`, `PLAN_gamma.md`, `PLAN_delta.md`, and `PLAN_epsilon.md`.
 - `tools.md`.
-- `AIAT_Email_Identity_Plan_Oracle_Stalwart_Resend.md`.
+- `Docs/archive/AIAT_Email_Identity_Plan_Oracle_Stalwart_Resend.md`.
 - `Docs/PM_Platform_Integration_ADR.md`, integration plans, setup guides, and runbooks.
 - `mas/packages/mas-core/capabilities/README.md` and `workflow/README.md`.
 - The 11 authority prompt documents under `mas/prompts/`.
-- `pdr_draft.md` and `cdr_document.md`.
+- `Docs/archive/pdr_draft.md` and `Docs/archive/cdr_document.md`.
 - `mas/apps/identity-service/constraints.txt` and small fixture/status text files.
 
 ### A.4 Superseded or corrected decisions

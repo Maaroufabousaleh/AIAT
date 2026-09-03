@@ -16,7 +16,8 @@ Use this page when you need the shortest path to the right document.
 2. [`ROADMAP.md`](../ROADMAP.md) — ordered implementation and documentation index.
 3. [`current/`](current/) — maintained feature specifications, plans, and status notes.
 4. [`../mas/docs/`](../mas/docs/) — focused implementation, deployment, and evidence references.
-5. Root research, prompts, PDFs, and DOCX files — useful historical inputs; they do not override the maintained set.
+5. [`archive/`](archive/) — historical research, prompts, and review drafts;
+   useful inputs that do not override the maintained set.
 
 ## Start here
 

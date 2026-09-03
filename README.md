@@ -85,6 +85,7 @@ The maintained feature specifications and ordered plans are indexed in the
 | [`mas/infra/`](mas/infra/) | Compose, image, systemd, mail-edge, and sandbox integration profiles |
 | [`mas/docs/provenance/`](mas/docs/provenance/) | Machine-readable component, pin, image, security, and release evidence |
 | [`Docs/current/`](Docs/current/) | Maintained feature specifications, status notes, and delivery plans |
+| [`Docs/archive/`](Docs/archive/) | Historical research, design inputs, and review drafts retained for traceability |
 | [`docs/assets/`](docs/assets/) | Repository-owned visual assets used by this landing page and its architecture map |
 
 ## Quick start
@@ -156,6 +157,7 @@ the maintained reading paths.
 | Workers, runtimes, and adapters | [`Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md`](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md) |
 | Security and recovery | [`Docs/current/FEATURE_SECURITY_OBSERVABILITY_AND_OPERATIONS.md`](Docs/current/FEATURE_SECURITY_OBSERVABILITY_AND_OPERATIONS.md) |
 | Component and licence metadata | [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md), [`third_party_components.yaml`](mas/docs/provenance/third_party_components.yaml) |
+| Historical research and review drafts | [`Docs/archive/`](Docs/archive/) |
 
 ## Safety and trust boundaries
 

@@ -7,7 +7,8 @@
 
 This is the root navigation and delivery-order document for the personal AIAT instance. The target programme defines the system; the feature specifications define each subsystem; the plans below define execution. Historical plans remain useful evidence but do not override this roadmap.
 
-Historical research inputs, including [`deep-research-report.md`](deep-research-report.md),
+Historical research inputs, including
+[`Docs/archive/deep-research-report.md`](Docs/archive/deep-research-report.md),
 remain design context only. Exact resource terms and notices are maintained in
 the [third-party metadata catalogue](mas/docs/provenance/third_party_components.yaml)
 and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md); they do not create an

@@ -9,7 +9,8 @@
 
 ## Summary
 
-This plan reconciles the root `deep-research-report.md` with the current AIAT
+This plan reconciles the archived
+[`archive/deep-research-report.md`](archive/deep-research-report.md) with the current AIAT
 codebase, architecture documents, deployment manifests, migrations, tests, and
 live-test ledger. The research report assumed that the AIAT repository was not
 available; that assumption is now obsolete. The report's central conclusion is

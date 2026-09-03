@@ -1,7 +1,7 @@
 # Apply Deep Research Alpha+Beta Plan
 
 ## Summary
-Implement the safe first slice from `deep-research-report.md`: keep AIAT as the control plane, harden its contracts, add a first-run/default-company path, and turn worker hiring into a guarded adapter/evaluation workflow. Do not integrate advanced runtimes, replace storage, or replace the dashboard in this pass.
+Implement the safe first slice from `Docs/archive/deep-research-report.md`: keep AIAT as the control plane, harden its contracts, add a first-run/default-company path, and turn worker hiring into a guarded adapter/evaluation workflow. Do not integrate advanced runtimes, replace storage, or replace the dashboard in this pass.
 
 ## Key Changes
 
