@@ -779,7 +779,7 @@ async def certify(
         project_id=UUID(os.environ["OPENHANDS_PROJECT_ID"]) if os.getenv("OPENHANDS_PROJECT_ID") else None,
         task_input={
             "prompt": task_prompt
-            or "In this disposable certification repository, make one minimal safe code change, run the existing tests, and report the result. Do not access credentials or external tools."
+            or "In this disposable certification repository, make one minimal safe code change, run the existing tests, and report the result. After the requested change and tests are complete, use OpenHands' normal finish tool to submit a concise result; do not stop at prose. Do not access credentials or external tools."
         },
         resolved_model_profile=ModelProfileReference(
             profile_id="aiat-live-certification",
@@ -1156,10 +1156,31 @@ def _execution_completion_evidence(report: dict[str, Any]) -> dict[str, Any]:
         "tool_call_count": int(diagnostics.get("tool_call_count") or 0),
         "tool_success_count": int(diagnostics.get("tool_success_count") or 0),
         "tool_error_count": int(diagnostics.get("tool_error_count") or 0),
+        "tool_name_counts": {
+            str(name): int(count)
+            for name, count in (diagnostics.get("tool_name_counts") or {}).items()
+            if isinstance(name, str) and isinstance(count, int) and count >= 0
+        },
+        "finish_tool_call_count": int(diagnostics.get("finish_tool_call_count") or 0),
+        "finish_tool_observation_count": int(
+            diagnostics.get("finish_tool_observation_count") or 0
+        ),
+        "last_action_tool_name": diagnostics.get("last_action_tool_name"),
+        "last_successful_tool_name": diagnostics.get("last_successful_tool_name"),
         "iteration_count": diagnostics.get("iteration_count") if diagnostics.get("iteration_count") is not None else "NOT_OBSERVED",
         "max_iterations": diagnostics.get("max_iterations"),
         "stuck_detection_enabled": diagnostics.get("stuck_detection_enabled"),
         "stuck_detection_triggered": bool(diagnostics.get("stuck_detection_triggered")),
+        "aiat_timeout_triggered": bool(diagnostics.get("aiat_timeout_triggered")),
+        "aiat_timeout_elapsed_seconds": diagnostics.get("aiat_timeout_elapsed_seconds"),
+        "status_immediately_before_timeout": diagnostics.get("status_immediately_before_timeout"),
+        "terminal_signal_already_buffered": bool(
+            diagnostics.get("terminal_signal_already_buffered")
+        ),
+        "timeout_interrupt_sent": bool(diagnostics.get("timeout_interrupt_sent")),
+        "interrupt_request_http_status": diagnostics.get("interrupt_request_http_status"),
+        "first_status_after_interrupt": diagnostics.get("first_status_after_interrupt"),
+        "first_event_after_interrupt": diagnostics.get("first_event_after_interrupt"),
         "execution_failure_class": diagnostics.get("execution_failure_class"),
         "final_response_endpoint_called": final_called,
         "final_response_http_status": final_http,
@@ -1169,6 +1190,8 @@ def _execution_completion_evidence(report: dict[str, Any]) -> dict[str, Any]:
             "post_test_activity_classification", "NOT_OBSERVED"
         ),
         "raw_event_payloads_retained": False,
+        "raw_tool_arguments_retained": False,
+        "raw_tool_results_retained": False,
         "raw_model_payloads_retained": False,
         "secret_values_retained": False,
     }

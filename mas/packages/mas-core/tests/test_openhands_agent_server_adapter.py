@@ -1398,6 +1398,12 @@ async def test_execute_timeout_interrupts_remote_and_returns_terminal_timeout(tm
     assert result.error.terminal is True
     assert f"POST /api/conversations/{conversation_id}/interrupt" in calls
     assert f"DELETE /api/conversations/{conversation_id}" in calls
+    diagnostics = adapter._diagnostics(run_request.run_id)
+    assert diagnostics["aiat_timeout_triggered"] is True
+    assert diagnostics["timeout_interrupt_sent"] is True
+    assert diagnostics["interrupt_request_http_status"] == 200
+    assert diagnostics["status_immediately_before_timeout"] == "running"
+    assert diagnostics["terminal_signal_already_buffered"] is False
     await adapter.close()
 
 
@@ -1499,6 +1505,61 @@ async def test_v143_error_field_is_immediate_terminal_and_event_ids_are_counted(
     assert diagnostics["model_error_observed"] is False
     assert diagnostics["model_error_count"] == 0
     assert all("value" not in item for item in diagnostics["event_tail"])
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_tool_name_diagnostics_retain_finish_signal_without_payloads(tmp_path: Path) -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={})
+
+    adapter = make_adapter(tmp_path, handler)
+    run = request(workspace=tmp_path / "workspace")
+    await adapter._emit_runtime_event(
+        run,
+        {
+            "id": "terminal-action",
+            "kind": "ActionEvent",
+            "tool_name": "terminal",
+            "arguments": {"command": "must-not-be-retained"},
+        },
+    )
+    await adapter._emit_runtime_event(
+        run,
+        {
+            "id": "finish-action",
+            "kind": "ActionEvent",
+            "action": {"name": "finish", "arguments": {"message": "secret-like content"}},
+        },
+    )
+    await adapter._emit_runtime_event(
+        run,
+        {
+            "id": "finish-observation",
+            "kind": "ObservationEvent",
+            "observation": {"tool_name": "finish", "is_error": False, "content": "hidden"},
+        },
+    )
+    await adapter._emit_runtime_event(
+        run,
+        {
+            "id": "unsafe-name",
+            "kind": "ActionEvent",
+            "tool_name": "finish\nraw-payload",
+            "arguments": {"raw": "must-not-be-retained"},
+        },
+    )
+    diagnostics = adapter._diagnostics(run.run_id)
+    assert diagnostics["tool_call_count"] == 3
+    assert diagnostics["tool_name_counts"] == {"terminal": 1, "finish": 1}
+    assert diagnostics["finish_tool_call_count"] == 1
+    assert diagnostics["finish_tool_observation_count"] == 1
+    assert diagnostics["last_action_tool_name"] == "finish"
+    assert diagnostics["last_successful_tool_name"] == "finish"
+    assert all(item.get("tool_name") != "finish\nraw-payload" for item in diagnostics["event_tail"])
+    serialized = json.dumps(diagnostics, sort_keys=True)
+    assert "must-not-be-retained" not in serialized
+    assert "secret-like content" not in serialized
     await adapter.close()
 
 

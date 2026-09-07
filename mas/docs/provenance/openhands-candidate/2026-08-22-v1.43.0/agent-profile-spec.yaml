@@ -64,6 +64,11 @@ agent_server_profile:
   tools:
     - name: terminal
     - name: file_editor
+  # OpenHands v1.43 adds its built-in ``finish`` and ``think`` tools through
+  # include_default_tools even when the profile's explicit execution tools
+  # are bounded to the two entries above. The certification task must still
+  # instruct the agent to use ``finish``; workspace/test success alone is not
+  # a worker completion signal.
   enable_sub_agents: false
   enable_switch_llm_tool: false
   # OpenHands v1.43.0 exposes discovered skills through a deny-list rather than

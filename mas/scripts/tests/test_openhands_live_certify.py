@@ -149,10 +149,18 @@ def test_execution_completion_evidence_is_bounded_and_explains_event_accounting(
             "tool_call_count": 2,
             "tool_success_count": 2,
             "tool_error_count": 0,
+            "tool_name_counts": {"terminal": 1, "finish": 1},
+            "finish_tool_call_count": 1,
+            "finish_tool_observation_count": 1,
+            "last_action_tool_name": "finish",
+            "last_successful_tool_name": "finish",
             "iteration_count": 3,
             "max_iterations": 20,
             "stuck_detection_enabled": True,
             "stuck_detection_triggered": False,
+            "aiat_timeout_triggered": False,
+            "terminal_signal_already_buffered": False,
+            "timeout_interrupt_sent": False,
             "execution_failure_class": None,
         },
     }
@@ -164,6 +172,11 @@ def test_execution_completion_evidence_is_bounded_and_explains_event_accounting(
     assert evidence["duplicate_event_count"] == 1
     assert evidence["terminal_state_source"] == "websocket"
     assert evidence["final_response_present"] is True
+    assert evidence["tool_name_counts"] == {"terminal": 1, "finish": 1}
+    assert evidence["finish_tool_call_count"] == 1
+    assert evidence["finish_tool_observation_count"] == 1
+    assert evidence["last_action_tool_name"] == "finish"
+    assert evidence["aiat_timeout_triggered"] is False
     serialized = json.dumps(evidence, sort_keys=True)
     assert "prompt" not in serialized
     assert '"value"' not in serialized
@@ -245,6 +258,18 @@ def test_task_spec_prompt_is_used_but_not_retained_in_public_definition(tmp_path
     assert definition["task_id"] == "fixture-task"
     assert "prompt" not in definition
     assert prompt not in json.dumps(definition)
+
+
+def test_canonical_task_prompt_requires_normal_finish_tool() -> None:
+    module = _module()
+    task_spec = (
+        Path(__file__).resolve().parents[3]
+        / "mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/coding-task-spec.json"
+    )
+    prompt, _, blockers = module._load_task_definition(task_spec)
+    assert blockers == []
+    assert prompt is not None
+    assert "use OpenHands' normal finish tool" in prompt
 
 
 def test_host_task_verification_requires_real_test_and_exact_workspace_change(tmp_path: Path) -> None:

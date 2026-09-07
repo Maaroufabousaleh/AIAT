@@ -493,10 +493,27 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             "tool_call_count": 0,
             "tool_success_count": 0,
             "tool_error_count": 0,
+            # Tool names are bounded protocol identifiers, not evidence
+            # payloads. Retain names/counts so a future completion failure
+            # can distinguish a missing ``finish`` action from a model/tool
+            # error without retaining arguments or observations.
+            "tool_name_counts": {},
+            "finish_tool_call_count": 0,
+            "finish_tool_observation_count": 0,
+            "last_action_tool_name": None,
+            "last_successful_tool_name": None,
             "iteration_count": None,
             "max_iterations": None,
             "stuck_detection_enabled": None,
             "stuck_detection_triggered": False,
+            "aiat_timeout_triggered": False,
+            "aiat_timeout_elapsed_seconds": None,
+            "status_immediately_before_timeout": None,
+            "terminal_signal_already_buffered": False,
+            "timeout_interrupt_sent": False,
+            "interrupt_request_http_status": None,
+            "first_status_after_interrupt": None,
+            "first_event_after_interrupt": None,
             "request_errors": [],
         }
 
@@ -519,6 +536,31 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
         if not text:
             return None
         return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()
+
+    @staticmethod
+    def _safe_tool_name(raw: dict[str, Any]) -> str | None:
+        """Return only a bounded wire tool identifier from an event.
+
+        Action/observation payloads may contain arbitrary arguments, source
+        contents, and model output. Tool names are useful completion
+        diagnostics, but only when they are scalar protocol identifiers.
+        """
+
+        value = raw.get("tool_name")
+        if not isinstance(value, str):
+            action = raw.get("action")
+            if isinstance(action, dict):
+                value = action.get("tool_name") or action.get("name")
+        if not isinstance(value, str):
+            observation = raw.get("observation")
+            if isinstance(observation, dict):
+                value = observation.get("tool_name") or observation.get("name")
+        if not isinstance(value, str):
+            return None
+        value = value.strip()
+        if not value or len(value) > 128 or re.fullmatch(r"[A-Za-z0-9_.:-]+", value) is None:
+            return None
+        return value
 
     @staticmethod
     def _append_bounded(items: list[dict[str, Any]], value: dict[str, Any], *, limit: int) -> None:
@@ -1493,6 +1535,15 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
 
         if kind == "ActionEvent":
             diagnostic["tool_call_count"] = int(diagnostic.get("tool_call_count") or 0) + 1
+            tool_name = self._safe_tool_name(raw)
+            if tool_name:
+                tool_counts = diagnostic.setdefault("tool_name_counts", {})
+                tool_counts[tool_name] = int(tool_counts.get(tool_name) or 0) + 1
+                diagnostic["last_action_tool_name"] = tool_name
+                if tool_name == "finish":
+                    diagnostic["finish_tool_call_count"] = int(
+                        diagnostic.get("finish_tool_call_count") or 0
+                    ) + 1
         elif kind == "ObservationEvent":
             observation = raw.get("observation")
             is_error = isinstance(observation, dict) and bool(
@@ -1500,6 +1551,19 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             )
             counter = "tool_error_count" if is_error else "tool_success_count"
             diagnostic[counter] = int(diagnostic.get(counter) or 0) + 1
+            tool_name = self._safe_tool_name(raw)
+            if tool_name and not is_error:
+                diagnostic["last_successful_tool_name"] = tool_name
+                if tool_name == "finish":
+                    diagnostic["finish_tool_observation_count"] = int(
+                        diagnostic.get("finish_tool_observation_count") or 0
+                    ) + 1
+
+        if diagnostic.get("timeout_interrupt_sent"):
+            if diagnostic.get("first_event_after_interrupt") is None:
+                diagnostic["first_event_after_interrupt"] = kind[:128]
+            if status and diagnostic.get("first_status_after_interrupt") is None:
+                diagnostic["first_status_after_interrupt"] = status
 
         for field_name in ("iteration", "iteration_count"):
             value = raw.get(field_name)
@@ -1517,6 +1581,9 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
                 "status": status,
                 "terminal": terminal and request.run_id in self._run_started,
                 "error_class": error_class,
+                "tool_name": self._safe_tool_name(raw)
+                if kind in {"ActionEvent", "ObservationEvent"}
+                else None,
             },
             limit=_EVENT_TAIL_LIMIT,
         )
@@ -1840,6 +1907,18 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
                     else:
                         rest_terminal_seen_at = None
                     if request.timeout_seconds and time.monotonic() - started > request.timeout_seconds:
+                        elapsed = time.monotonic() - started
+                        diagnostic["aiat_timeout_triggered"] = True
+                        diagnostic["aiat_timeout_elapsed_seconds"] = round(elapsed, 3)
+                        diagnostic["status_immediately_before_timeout"] = (
+                            status
+                            or diagnostic.get("last_event_status")
+                            or diagnostic.get("last_conversation_status")
+                        )
+                        diagnostic["terminal_signal_already_buffered"] = bool(
+                            diagnostic.get("terminal_state_observed")
+                            or self._terminal_event_status.get(request.run_id) in TERMINAL_STATUSES
+                        )
                         await self._interrupt_for_timeout(request, conversation_id)
                         if not diagnostic.get("terminal_state_observed"):
                             diagnostic["execution_failure_class"] = "BLOCKED_EXECUTION_COMPLETION"
@@ -1896,6 +1975,9 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
                 path=self.verification.endpoint("conversation_interrupt", conversation_id=conversation_id),
                 status_code=response.status_code,
             )
+            diagnostic = self._diagnostic_for(request.run_id)
+            diagnostic["timeout_interrupt_sent"] = True
+            diagnostic["interrupt_request_http_status"] = response.status_code
             if response.status_code not in {200, 404, 409}:
                 response.raise_for_status()
             await self.emit_audit(
