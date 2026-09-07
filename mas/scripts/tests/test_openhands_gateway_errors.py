@@ -30,6 +30,7 @@ def test_provider_failure_taxonomy_is_sanitized_and_distinct() -> None:
         "server": module.PROVIDER_SERVER_ERROR,
         "unavailable": module.PROVIDER_MODEL_UNAVAILABLE,
         "not_found": module.PROVIDER_MODEL_NOT_FOUND,
+        "validation": module.PROVIDER_VALIDATION_FAILED,
         "litellm_start": module.LITELLM_STARTUP_FAILURE,
         "litellm_health": module.LITELLM_HEALTH_FAILURE,
         "omni_start": module.OMNIROUTE_STARTUP_FAILURE,
@@ -56,6 +57,7 @@ def test_provider_failure_taxonomy_is_sanitized_and_distinct() -> None:
         "server": module.classify_failure(stage="provider", http_status=503),
         "unavailable": module.classify_failure(stage="provider", error_code="model_unavailable"),
         "not_found": module.classify_failure(stage="provider", http_status=404),
+        "validation": module.classify_failure(stage="provider", error_code="provider_validation_failed"),
         "litellm_start": module.classify_failure(stage="litellm_startup"),
         "litellm_health": module.classify_failure(stage="litellm_health"),
         "omni_start": module.classify_failure(stage="omniroute_startup"),
@@ -139,3 +141,30 @@ def test_omniroute_scope_configuration_failure_is_not_provider_failure() -> None
     )
     assert failure.failure_class == module.OMNIROUTE_CONFIGURATION_FAILURE
     assert module.is_provider_failure(failure.failure_class) is False
+
+
+def test_provider_validation_failure_is_distinct_from_omniroute_health() -> None:
+    module = _load("openhands_gateway_errors")
+    failure = module.classify_failure(
+        stage="provider", error_code="selected_provider_validation_failed"
+    )
+    assert failure.failure_class == module.PROVIDER_VALIDATION_FAILED
+    assert failure.stage == "provider"
+    assert module.classify_failure(
+        stage="omniroute_health", error_code="selected_provider_validation_failed"
+    ).failure_class == module.PROVIDER_VALIDATION_FAILED
+    invalid_response = module.classify_failure(
+        stage="omniroute_health", error_code="provider_test_invalid_response"
+    )
+    assert invalid_response.failure_class == module.PROVIDER_TEST_INVALID_RESPONSE
+    assert invalid_response.stage == "provider"
+
+
+def test_provider_validation_safe_diagnosis_codes_preserve_precise_classes() -> None:
+    module = _load("openhands_gateway_errors")
+    assert module.classify_failure(stage="provider", error_code="auth_failed").failure_class == module.INVALID_PROVIDER_CREDENTIAL
+    assert module.classify_failure(stage="provider", error_code="auth_missing").failure_class == module.INVALID_PROVIDER_CREDENTIAL
+    assert module.classify_failure(stage="provider", error_code="upstream_rate_limited").failure_class == module.PROVIDER_RATE_LIMIT
+    assert module.classify_failure(stage="provider", error_code="upstream_unavailable").failure_class == module.PROVIDER_SERVER_ERROR
+    assert module.classify_failure(stage="provider", error_code="network_error").failure_class == module.PROVIDER_NETWORK_FAILURE
+    assert module.classify_failure(stage="provider", error_code="timeout").failure_class == module.PROVIDER_TIMEOUT

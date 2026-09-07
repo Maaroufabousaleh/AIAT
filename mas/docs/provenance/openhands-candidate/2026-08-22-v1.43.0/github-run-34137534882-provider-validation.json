@@ -1,0 +1,68 @@
+{
+  "schema_version": "aiat.openhands-provider-validation-historical-run.v1",
+  "immutable_historical_record": true,
+  "run": {
+    "run_id": "34137534882",
+    "job_id": "101791865765",
+    "workflow_ref": "agent/fix-review-p1",
+    "candidate_sha": "ff92a135e997b4b7d9ed35a79e0922005f8034db",
+    "artifact_id": "10024661557",
+    "artifact_digest": "sha256:49275518010458c6986d9a26a21e4cf98b27488352435fffd851037fd3892721"
+  },
+  "candidate": {
+    "release": "v1.43.0",
+    "source_commit": "4c1237f391fe394e9f67505fe3a0bd2d81f84188",
+    "image_digest": "sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97",
+    "activation": "inactive"
+  },
+  "historical_observation": {
+    "precheck": "PASS",
+    "image_provenance": "PASS",
+    "gvisor_setup": "PASS",
+    "omniroute_application_health": "PASS",
+    "omniroute_auth_boundary": "PASS",
+    "provider_secret_preflight": "PASS",
+    "provider_route_provisioning": "BLOCKED",
+    "provider": "groq",
+    "provider_model": "openai/gpt-oss-120b",
+    "provider_test_route": "POST /api/providers/{connection_id}/test",
+    "provider_test_request_body": {},
+    "provider_test_http_status": "NOT_RETAINED_HISTORICAL",
+    "provider_test_valid_present": "NOT_RETAINED_HISTORICAL",
+    "provider_test_valid": "NOT_RETAINED_HISTORICAL",
+    "provider_test_diagnosis_type": "NOT_RETAINED_HISTORICAL",
+    "provider_test_diagnosis_source": "NOT_RETAINED_HISTORICAL",
+    "provider_test_diagnosis_code": "NOT_RETAINED_HISTORICAL",
+    "provider_test_upstream_status_code": "NOT_RETAINED_HISTORICAL",
+    "litellm": "NOT_STARTED",
+    "openhands": "NOT_STARTED",
+    "model_execution": "NOT_REACHED",
+    "mandatory_pass": 1,
+    "mandatory_failed": 0,
+    "mandatory_not_run": 19,
+    "zero_residue": "PASS",
+    "scanner_blocker": "BLOCKED_SCANNER_COVERAGE"
+  },
+  "historical_report": {
+    "failure": "selected_provider_validation_failed",
+    "failure_class": "OMNIROUTE_HEALTH_FAILURE",
+    "failure_stage": "omniroute_health",
+    "misclassification": "The provider-test HTTP 200 valid=false result was raised without stage=provider, so GatewayProvisioningError used its historical default stage omniroute_health. The original artifact retained no provider-test scalar response fields; the underlying provider cause is not inferred here."
+  },
+  "retrospective_classification": {
+    "failure_class": "FAILED_CERTIFICATION_IMPLEMENTATION",
+    "failure_stage": "provider",
+    "failure_boundary": "PROVIDER_VALIDATION",
+    "underlying_provider_validation_root_cause": "INSUFFICIENT_EVIDENCE",
+    "root_cause_confidence": "NOT_DETERMINABLE_FROM_RETAINED_ARTIFACT",
+    "aiat_diagnostic_bug": true,
+    "omniroute_application_health_failure": false,
+    "provider_failure_proven": false,
+    "credential_validity_proven": false,
+    "fixed_provider_test_request_body": {
+      "validationModelId": "openai/gpt-oss-120b"
+    },
+    "response_payloads_retained": false,
+    "provider_credentials_retained": false
+  }
+}
