@@ -1,0 +1,114 @@
+{
+  "schema_version": "aiat.openhands-historical-final-model-turn-diagnosis.v1",
+  "immutable_historical_record": true,
+  "run": {
+    "run_id": "34176286979",
+    "job_id": "101906236130",
+    "candidate_sha": "d0d2ff60859d83a99f5fefeec6b269294c52b9d6",
+    "artifact_id": "10037602902",
+    "artifact_digest": "sha256:b4ab01ca46abd8bde6b9ff5448e0c2290811cd31d9070cc61f1ce3f6256b70d1"
+  },
+  "candidate": {
+    "release": "v1.43.0",
+    "source_commit": "4c1237f391fe394e9f67505fe3a0bd2d81f84188",
+    "image_digest": "sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97",
+    "activation": "inactive"
+  },
+  "historical_observation": {
+    "mandatory_total": 20,
+    "mandatory_pass": 10,
+    "mandatory_failed": 1,
+    "mandatory_not_run": 9,
+    "causal_blocker_gate": "real_coding_task",
+    "real_coding_task": "FAILED_MODEL_EXECUTION",
+    "execution_failure_class": "BLOCKED_EXECUTION_COMPLETION",
+    "file_modifications": "PASS",
+    "test_execution": "PASS",
+    "raw_agent_event_count": 673,
+    "normalized_event_count": 1350,
+    "normalized_from_server_event_count": 1346,
+    "controller_internal_event_count": 4,
+    "duplicate_event_count": 0,
+    "replay_event_count": 0,
+    "tool_name_counts": {
+      "file_editor": 6,
+      "terminal": 1
+    },
+    "finish_tool_call_count": 0,
+    "finish_tool_observation_count": 0,
+    "model_error_observed": false,
+    "terminal_state_observed": false,
+    "last_event_type": "ConversationStateUpdateEvent",
+    "last_event_status": "paused",
+    "last_status_poll_value": "running",
+    "aiat_timeout_triggered": true,
+    "aiat_timeout_elapsed_seconds": 300.047,
+    "timeout_interrupt_sent": true,
+    "interrupt_http_status": 200,
+    "final_response_endpoint_called": false,
+    "final_response_present": false,
+    "worker_result_created": false,
+    "artifact_created": false,
+    "zero_residue": "PASS",
+    "scanner_blocker": "BLOCKED_SCANNER_COVERAGE"
+  },
+  "model_turn_reconstruction": {
+    "model_turn_count": "NOT_RETAINED_HISTORICAL",
+    "response_id_fingerprints": "NOT_RETAINED_HISTORICAL",
+    "last_successful_test_tool_event_ordinal": 668,
+    "last_successful_test_tool": "terminal",
+    "next_model_turn_started": "UNKNOWN_HISTORICAL",
+    "next_model_turn_completed": "UNKNOWN_HISTORICAL",
+    "post_test_activity_classification": "HISTORICAL_EVIDENCE_INSUFFICIENT",
+    "reason": "The bounded artifact retained event types and safe tool names but not response IDs, stream completion markers, model-call timing, or response classes. Events after the final terminal observation contain only state updates followed by the timeout interrupt; this cannot distinguish a never-finalized stream from a model turn that was not observed."
+  },
+  "v143_response_contract": {
+    "response_classes": [
+      "tool_calls",
+      "content",
+      "reasoning_only",
+      "empty"
+    ],
+    "content_sets_execution_status": "finished",
+    "finish_tool_can_set_execution_status": "finished",
+    "reasoning_only_behavior": "non_terminal_corrective_nudge",
+    "empty_behavior": "non_terminal_corrective_nudge",
+    "streaming_delta_is_final_response": false,
+    "terminal_states": [
+      "finished",
+      "error",
+      "stuck"
+    ],
+    "non_terminal_states": [
+      "idle",
+      "running",
+      "paused",
+      "waiting_for_confirmation",
+      "deleting"
+    ],
+    "source_authority": "OpenHands v1.43.0 source commit 4c1237f391fe394e9f67505fe3a0bd2d81f84188"
+  },
+  "classification": {
+    "primary_root_cause": "FINAL_MODEL_TURN_UNRESOLVED_HISTORICAL",
+    "root_cause_confidence": "INSUFFICIENT_HISTORICAL_EVIDENCE",
+    "model_error_observed": false,
+    "terminal_reconciliation_defect_proven": false,
+    "provider_failure": false,
+    "gateway_failure": false,
+    "workspace_or_test_failure": false,
+    "diagnostic_action": "Add bounded model-turn/stream correlation diagnostics; keep certification fail-closed."
+  },
+  "retention": {
+    "raw_event_payloads_retained": false,
+    "raw_model_content_retained": false,
+    "raw_reasoning_retained": false,
+    "raw_tool_arguments_retained": false,
+    "raw_tool_results_retained": false,
+    "secrets_retained": false
+  },
+  "independent_blockers": {
+    "scanner_blocker": "BLOCKED_SCANNER_COVERAGE",
+    "global_release": "NO-RELEASE",
+    "openhands_activation": "INACTIVE"
+  }
+}
