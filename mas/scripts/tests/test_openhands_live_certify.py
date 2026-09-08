@@ -154,6 +154,51 @@ def test_execution_completion_evidence_is_bounded_and_explains_event_accounting(
             "finish_tool_observation_count": 1,
             "last_action_tool_name": "finish",
             "last_successful_tool_name": "finish",
+            "model_turn_count": 2,
+            "current_model_turn_response_id_fingerprint": None,
+            "last_completed_model_turn_response_id_fingerprint": "b" * 64,
+            "streaming_delta_count": 7,
+            "streaming_delta_count_by_response_fingerprint": {"b" * 64: 7},
+            "message_event_count_by_response_fingerprint": {"b" * 64: 1},
+            "action_event_count_by_response_fingerprint": {"a" * 64: 1},
+            "last_model_turn_started_ordinal": 4,
+            "last_model_turn_completed_ordinal": 12,
+            "last_model_turn_duration_ms": 125.0,
+            "last_model_turn_stream_closed": True,
+            "last_model_turn_response_class": "content",
+            "last_model_turn_finish_reason": "stop",
+            "last_model_turn_content_present": True,
+            "last_model_turn_reasoning_present": False,
+            "last_model_turn_tool_calls_present": False,
+            "last_model_turn_tool_names": [],
+            "last_model_turn_message_event_present": True,
+            "last_model_turn_corrective_nudge_observed": False,
+            "last_model_turn_exception_class": None,
+            "last_model_turn_time_to_first_delta_ms": 20.0,
+            "last_model_turn_stream_active_ms": 95.0,
+            "last_model_turn_idle_after_last_delta_ms": 0.0,
+            "last_model_turn_finalized": True,
+            "corrective_nudge_count": 0,
+            "post_tool_model_turn_pending": False,
+            "post_tool_model_turn_started": True,
+            "post_tool_model_turn_completed": True,
+            "model_turn_tail": [
+                {
+                    "turn_ordinal": 2,
+                    "response_id_fingerprint": "b" * 64,
+                    "streaming_delta_count": 7,
+                    "action_event_count": 0,
+                    "message_event_count": 1,
+                    "response_class": "content",
+                    "finish_reason": "stop",
+                    "content_present": True,
+                    "reasoning_present": False,
+                    "tool_calls_present": False,
+                    "tool_names": [],
+                    "terminal_status_after_turn": "finished",
+                    "response_completion_observed": True,
+                }
+            ],
             "iteration_count": 3,
             "max_iterations": 20,
             "stuck_detection_enabled": True,
@@ -176,6 +221,11 @@ def test_execution_completion_evidence_is_bounded_and_explains_event_accounting(
     assert evidence["finish_tool_call_count"] == 1
     assert evidence["finish_tool_observation_count"] == 1
     assert evidence["last_action_tool_name"] == "finish"
+    assert evidence["model_turn_count"] == 2
+    assert evidence["streaming_delta_count"] == 7
+    assert evidence["last_model_turn_response_class"] == "content"
+    assert evidence["last_model_turn_finish_reason"] == "stop"
+    assert evidence["model_turn_tail"][0]["response_completion_observed"] is True
     assert evidence["aiat_timeout_triggered"] is False
     serialized = json.dumps(evidence, sort_keys=True)
     assert "prompt" not in serialized
