@@ -61,6 +61,7 @@ def test_provider_route_is_single_exact_and_never_retains_credentials() -> None:
                 },
             )
         if request.method == "POST" and request.url.path == "/api/providers/connection-1/test":
+            assert json.loads(request.content) == {"validationModelId": PROVISION.PROVIDER_MODEL}
             return httpx.Response(200, json={"valid": True, "diagnosis": {}})
         if request.method == "GET" and request.url.path == "/api/providers/connection-1/models":
             assert request.url.params.get("refresh") == "true"
@@ -138,6 +139,204 @@ def test_provider_route_is_single_exact_and_never_retains_credentials() -> None:
     client.close()
 
 
+def test_provider_test_http_200_valid_false_stays_at_provider_boundary() -> None:
+    provider_key = "provider-secret-must-not-appear"
+    diagnostics_payload = {
+        "valid": False,
+        "error": "raw provider error must not be retained",
+        "warning": None,
+        "diagnosis": {
+            "type": "upstream_auth_error",
+            "source": "upstream",
+            "code": "auth_failed",
+            "message": "raw diagnosis message must not be retained",
+        },
+        "statusCode": 401,
+    }
+    diagnostics = PROVISION._provider_test_diagnostics(diagnostics_payload, http_status=200)
+    assert diagnostics == {
+        "http_status": 200,
+        "valid_present": True,
+        "valid": False,
+        "diagnosis_type": "upstream_auth_error",
+        "diagnosis_source": "upstream",
+        "diagnosis_code": "auth_failed",
+        "upstream_status_code": 401,
+        "warning_present": False,
+        "raw_response_retained": False,
+        "error_message_retained": False,
+        "provider_credential_retained": False,
+    }
+    with pytest.raises(PROVISION.GatewayProvisioningError) as error:
+        PROVISION._require_provider_test_pass(diagnostics_payload, http_status=200)
+    assert error.value.stage == "provider"
+    assert str(error.value) == "selected_provider_validation_failed"
+    assert error.value.provider_test_diagnostics == diagnostics
+    assert PROVISION._provider_test_failure_class(diagnostics) == "INVALID_PROVIDER_CREDENTIAL"
+    serialized = json.dumps(diagnostics)
+    assert provider_key not in serialized
+    assert "raw provider error" not in serialized
+    assert "raw diagnosis message" not in serialized
+
+
+def test_provider_test_numeric_diagnosis_code_is_safe_upstream_status() -> None:
+    diagnostics = PROVISION._provider_test_diagnostics(
+        {
+            "valid": False,
+            "diagnosis": {
+                "type": "upstream_error",
+                "source": "upstream",
+                "code": "503",
+            },
+        },
+        http_status=200,
+    )
+    assert diagnostics["upstream_status_code"] == 503
+    assert PROVISION._provider_test_failure_class(diagnostics) == "PROVIDER_SERVER_ERROR"
+
+
+@pytest.mark.parametrize(
+    ("diagnosis_type", "expected_class"),
+    [
+        ("auth_missing", "INVALID_PROVIDER_CREDENTIAL"),
+        ("network_error", "PROVIDER_NETWORK_FAILURE"),
+        ("timeout", "PROVIDER_TIMEOUT"),
+        ("upstream_rate_limited", "PROVIDER_RATE_LIMIT"),
+        ("upstream_unavailable", "PROVIDER_SERVER_ERROR"),
+    ],
+)
+def test_provider_test_diagnosis_type_maps_to_safe_failure_class(
+    diagnosis_type: str, expected_class: str
+) -> None:
+    diagnostics = PROVISION._provider_test_diagnostics(
+        {
+            "valid": False,
+            "diagnosis": {
+                "type": diagnosis_type,
+                "source": "upstream",
+                "code": diagnosis_type,
+            },
+        },
+        http_status=200,
+    )
+    assert PROVISION._provider_test_failure_class(diagnostics) == expected_class
+
+
+def test_provision_invalid_provider_test_carries_provider_stage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    responses = iter(
+        [
+            httpx.Response(200, json={"connections": []}),
+            httpx.Response(
+                201,
+                json={
+                    "connection": {
+                        "id": "connection-1",
+                        "provider": "groq",
+                        "name": PROVISION.PROVIDER_NAME,
+                        "defaultModel": PROVISION.PROVIDER_MODEL,
+                    }
+                },
+            ),
+            httpx.Response(
+                200,
+                json={
+                    "provider": "groq",
+                    "connectionId": "connection-1",
+                    "source": "api",
+                    "models": [{"id": PROVISION.PROVIDER_MODEL}],
+                },
+            ),
+            httpx.Response(
+                200,
+                json={
+                    "valid": False,
+                    "diagnosis": {
+                        "type": "upstream_error",
+                        "source": "upstream",
+                        "code": "upstream_error",
+                    },
+                },
+            ),
+        ]
+    )
+    monkeypatch.setattr(PROVISION, "_configure_auto_router_scope", lambda _client: {"status": "PASS"})
+    monkeypatch.setattr(PROVISION, "_request", lambda *_args, **_kwargs: next(responses))
+    client = httpx.Client(base_url="http://omniroute.test")
+    with pytest.raises(PROVISION.GatewayProvisioningError) as error:
+        PROVISION.provision(
+            base_url="http://omniroute.test",
+            management_key="gateway-secret",
+            provider_key="provider-secret",
+            client=client,
+        )
+    client.close()
+    assert error.value.stage == "provider"
+    assert error.value.provider_test_diagnostics is not None
+    assert error.value.provider_test_diagnostics["valid"] is False
+
+
+def test_provider_test_missing_valid_is_a_provider_response_contract_failure() -> None:
+    with pytest.raises(PROVISION.GatewayProvisioningError) as error:
+        PROVISION._require_provider_test_pass({"diagnosis": {"type": "upstream_error"}})
+    assert str(error.value) == "provider_test_invalid_response"
+    assert error.value.stage == "provider"
+    assert error.value.provider_test_diagnostics["valid_present"] is False
+    assert error.value.provider_test_diagnostics["diagnosis_type"] == "upstream_error"
+    assert error.value.provider_test_diagnostics["warning_present"] is False
+    assert error.value.provider_test_diagnostics["raw_response_retained"] is False
+
+
+def test_provider_test_malformed_json_preserves_provider_stage() -> None:
+    response = httpx.Response(200, content=b"not-json")
+    with pytest.raises(PROVISION.GatewayProvisioningError) as error:
+        PROVISION._json(response, expected={200}, stage="provider")
+    assert str(error.value) == "omniroute_invalid_json"
+    assert error.value.stage == "provider"
+
+
+def test_provider_test_success_retains_only_safe_scalar_diagnostics() -> None:
+    result = PROVISION._require_provider_test_pass(
+        {"valid": True, "diagnosis": {"type": "ok", "source": "upstream", "code": None}}
+    )
+    assert result["valid"] is True
+    assert result["diagnosis_type"] == "ok"
+    assert result["diagnosis_source"] == "upstream"
+    assert result["raw_response_retained"] is False
+
+
+def test_provider_test_failure_report_preserves_stage_and_safe_diagnostics(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "provider-provisioning.json"
+    safe = {
+        "valid_present": True,
+        "valid": False,
+        "diagnosis_type": "upstream_error",
+        "diagnosis_source": "upstream",
+        "diagnosis_code": "upstream_error",
+        "warning_present": False,
+        "raw_response_retained": False,
+        "error_message_retained": False,
+        "provider_credential_retained": False,
+    }
+
+    def blocked(**_kwargs: object) -> dict[str, object]:
+        raise PROVISION.GatewayProvisioningError(
+            "selected_provider_validation_failed",
+            stage="provider",
+            provider_test_diagnostics=safe,
+        )
+
+    monkeypatch.setattr(PROVISION, "provision", blocked)
+    assert PROVISION.main(["--base-url", "http://omniroute.test", "--output", str(output)]) == 2
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["failure_stage"] == "provider"
+    assert report["failure_class"] == "PROVIDER_VALIDATION_FAILED"
+    assert report["provider_test"] == safe
+
+
 def test_baseline_discovery_block_does_not_suppress_auto_route_provisioning() -> None:
     """Keep the diagnostic baseline independent from auto/coding setup."""
 
@@ -181,6 +380,7 @@ def test_baseline_discovery_block_does_not_suppress_auto_route_provisioning() ->
                 },
             )
         if request.method == "POST" and request.url.path == "/api/providers/connection-1/test":
+            assert json.loads(request.content) == {"validationModelId": PROVISION.PROVIDER_MODEL}
             return httpx.Response(200, json={"valid": True})
         if request.method == "GET" and request.url.path == "/api/providers/connection-1/models":
             # The live provider does not advertise the frozen baseline.  This
@@ -258,6 +458,7 @@ def test_baseline_discovery_transport_failure_does_not_suppress_auto_route() -> 
                 },
             )
         if request.method == "POST" and request.url.path == "/api/providers/connection-1/test":
+            assert json.loads(request.content) == {"validationModelId": PROVISION.PROVIDER_MODEL}
             return httpx.Response(200, json={"valid": True})
         if request.method == "GET" and request.url.path == "/api/providers/connection-1/models":
             # The provider catalogue is temporarily unavailable.  This is a

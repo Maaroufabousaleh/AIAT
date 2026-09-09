@@ -1,9 +1,9 @@
 # AIAT Roadmap
 
 **Roadmap baseline:** 2026-08-10
-**Last updated:** 2026-08-23
+**Last updated:** 2026-09-09
 **Programme authority:** [AIAT_TARGET_PROGRAMME.md](AIAT_TARGET_PROGRAMME.md)  
-**Current phase:** P0 release integrity
+**Current phase:** Integrated development and system testing (P0 release carryovers tracked)
 
 This is the root navigation and delivery-order document for the personal AIAT instance. The target programme defines the system; the feature specifications define each subsystem; the plans below define execution. Historical plans remain useful evidence but do not override this roadmap.
 
@@ -14,7 +14,36 @@ the [third-party metadata catalogue](mas/docs/provenance/third_party_components.
 and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md); they do not create an
 AIAT selection or execution gate.
 
-## Current phase snapshot
+## Current integrated baseline — 2026-09-09
+
+AIAT is closing the reviewed OpenHands certification cycle and beginning a new
+Integrated Development & System Testing phase. This is a development-phase
+transition, not a release declaration: unresolved P0 integrity, host,
+security/scanner, live-evidence, and operator-approval gates remain release
+carryovers, and the global decision remains **NO-RELEASE**.
+
+| Area | Current state |
+| --- | --- |
+| Integration baseline | Reviewed feature work is merged on the temporary integration branch from `origin/main` at `2c99b75a`; the reviewed OpenHands tip is `15d2c1a874a2748548338066782b89561353de2e`. |
+| Static release ledger | The merged clean tree reports **63/63 pass**, 0 failed, 0 blocked, and 2 pending evidence items; the checker still returns `NO-RELEASE` because a live profile is not included and pending evidence remains. |
+| OpenHands | v1.43.0 remains an inactive/certifying candidate. Exact source/image pins and provider-route evidence are retained; real file editing and passing tests are proven, but successful live terminal worker completion is not. The latest classification is `BLOCKED_EXECUTION_COMPLETION` with the final model turn unresolved historically. |
+| OpenCode | Current default and unchanged. OpenHands remains a subordinate candidate and has not been activated. |
+| Provider route | Groq provider validation, baseline discovery, LiteLLM routing, and OpenHands infrastructure passed in the latest retained provider-backed run; credentials remain operator-owned and are not documented here. |
+| Scanner | `BLOCKED_SCANNER_COVERAGE`, independent of this integration and not remediated here. |
+
+### Next integrated development/testing priorities
+
+- Exercise end-to-end user flows, control-plane integration, worker and
+  department orchestration, and project/task lifecycle transitions.
+- Expand workflow/flow-builder, dashboard/UI, Playwright user-simulation,
+  failure/recovery, permissions/approval, identity/credentials, and
+  storage/recovery coverage with bounded evidence.
+- Profile model/worker interoperability, resource use, audit correctness, and
+  deployment readiness while keeping external runtimes behind AIAT authority.
+- Track remaining P0 release blockers separately; keep the OpenHands candidate
+  frozen until a future deliberate certification decision and steward review.
+
+## Historical P0 snapshot (retained)
 
 | Phase | State | Evidence-backed status |
 | --- | --- | --- |
@@ -112,12 +141,11 @@ network aliases, pins and preflights the governed MCP key, gates every
 expensive stage on provider/gateway/runtime readiness, classifies startup and
 route failures, scans workspace evidence for secret canaries, emits an
 explicit fail-closed summary, and publishes runtime materialization readiness
-to downstream steps. These remain unverified live-provider gates until the
-operator supplies `GROQ_API_KEY` and dispatches one deliberate run.
-This does not replace OpenCode, activate OpenHands, or advance the global release
-decision. Tomorrow's only planned live prerequisite is the operator-owned
-`GROQ_API_KEY`, followed by the safe preflight and one dispatch against a
-frozen candidate SHA.
+to downstream steps. This historical preparation predates the later retained
+provider-backed runs; it does not describe a current operator action. Those
+runs proved the provider route and infrastructure boundaries, but not live
+OpenHands terminal completion. This does not replace OpenCode, activate
+OpenHands, or advance the global release decision.
 
 The latest repository-local continuation is now `4b9ae29`. `4890aaa` verifies
 the exact LiteLLM/OmniRoute release-tag dereferences and source archive hashes;

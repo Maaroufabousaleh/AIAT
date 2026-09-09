@@ -2,7 +2,7 @@
   "schema_version": "aiat.openhands-certification-coding-task.v1",
   "task_id": "deterministic-slugify-v1",
   "fixture": "mas/scripts/fixtures/openhands-coding-task",
-  "prompt": "Implement slugger.core.slugify in the disposable repository. It must lowercase text, transliterate accented letters to ASCII, replace every run of non-alphanumeric characters with one hyphen, trim hyphens, return an empty string for empty/separator-only input, leave the tests unchanged, run python -m pytest -q, and report the real changed files.",
+  "prompt": "Implement slugger.core.slugify in the disposable repository. It must lowercase text, transliterate accented letters to ASCII, replace every run of non-alphanumeric characters with one hyphen, trim hyphens, return an empty string for empty/separator-only input, leave the tests unchanged, run python -m pytest -q, report the real changed files, and after the requested change and tests are complete use OpenHands' normal finish tool to submit a concise result; do not stop at prose.",
   "test_command": "python -m pytest -q",
   "expected_changed_paths": ["slugger/core.py"],
   "forbidden_changed_paths": ["tests/test_slugger.py", "pyproject.toml"],

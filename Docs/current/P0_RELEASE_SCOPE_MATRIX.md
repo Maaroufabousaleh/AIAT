@@ -1,6 +1,6 @@
 # P0 Release-Scope and External-Prerequisite Matrix
 
-**Updated:** 2026-08-24
+**Updated:** 2026-09-09
 **Decision owner:** personal operator
 **Authority:** [AIAT target programme](../../AIAT_TARGET_PROGRAMME.md), [roadmap](../../ROADMAP.md), [P0 status](P0_RELEASE_INTEGRITY_STATUS.md), and [P0 plan](plans/P0_RELEASE_INTEGRITY_PLAN.md)
 
@@ -13,11 +13,43 @@ third-party obligation.
 ## Frozen state
 
 ```text
-CURRENT_STATE=BLOCKED_EXTERNAL_OPERATOR_STATE
-CODE_BASELINE=CURRENT_AND_PASSING
+CURRENT_STATE=INTEGRATED_DEVELOPMENT_AND_SYSTEM_TESTING
+CODE_BASELINE=2c99b75a (reviewed integration baseline)
 FURTHER_IDENTICAL_AUDITS=NOT_REQUIRED
 GLOBAL_RELEASE_DECISION=NO-RELEASE
 ```
+
+## Current integrated status
+
+The development phase has advanced to **Integrated Development & System
+Testing**. This does not mark P0 complete or change the release decision.
+The merged clean tree's static ledger is **63/63 pass**, 0 failed, 0 blocked,
+and 2 pending evidence items; the checker returns `NO-RELEASE` because live
+profile evidence is not included and pending evidence remains.
+
+- **Provider:** the operator-owned Groq credential was replaced and the
+  latest retained provider-backed evidence passes provider validation, baseline
+  discovery, LiteLLM routing, and OpenHands infrastructure. The credential
+  value is not retained here.
+- **OpenHands:** v1.43.0 remains an inactive/certifying candidate, pinned to
+  source `4c1237f391fe394e9f67505fe3a0bd2d81f84188` and image digest
+  `sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97`.
+  Real file editing and passing tests are proven, but successful live terminal
+  worker completion is not; the latest classification is
+  `BLOCKED_EXECUTION_COMPLETION`.
+- **OpenCode:** unchanged current default; OpenHands has not been activated and
+  remains subordinate to AIAT authority.
+- **Scanner:** `BLOCKED_SCANNER_COVERAGE`, independent and out of scope for this
+  integration.
+- **Release:** `NO-RELEASE`; steward approval remains separate from
+  certification.
+
+The recent OpenHands evidence is immutable under
+[`mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/`](../../mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/), including runs
+`34137534882`, `34151828641`, and `34176286979`; run `34145363903` remains a
+historical GitHub record where no repository-local payload is retained.
+
+## Historical scope context (retained)
 
 The exact candidate `61f7d49b905a109a154f961e147f783016792218` has a fresh
 clean-clone static ledger certificate with 63/63 checks passing and zero
@@ -125,7 +157,7 @@ classification or the global `NO-RELEASE` decision.
 | `OPTIONAL_UNVERIFIED` | The capability is disabled or not selected for this release. No support claim is made; promotion to release scope requires a new decision and evidence. |
 | `DEFERRED` | The capability is explicitly outside this release. It must remain disabled or unused and must not be represented as certified. |
 
-## Decision matrix
+## Historical decision matrix (retained)
 
 | Capability / gate | Current evidence and blocker class | Proposed current classification | Operator action before resuming release work |
 | --- | --- | --- | --- |

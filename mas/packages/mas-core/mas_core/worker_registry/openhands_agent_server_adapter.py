@@ -106,6 +106,11 @@ _OPENHANDS_ALLOWED_TOOL_GRANTS = frozenset(
 TERMINAL_STATUSES = frozenset({"finished", "error", "stuck"})
 _EVENT_TAIL_LIMIT = 100
 _STATUS_TAIL_LIMIT = 100
+_MODEL_TURN_TAIL_LIMIT = 32
+_SAFE_RESPONSE_CLASSES = frozenset({"tool_calls", "content", "reasoning_only", "empty", "not_finalized", "unknown"})
+_SAFE_FINISH_REASONS = frozenset(
+    {"stop", "tool_calls", "length", "content_filter", "function_call", "max_tokens", "end_turn", "unknown"}
+)
 
 # This sentinel is intentionally module-private.  A metadata flag, request
 # extension, or caller-selected boolean is not sufficient to enter the
@@ -412,6 +417,10 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
         self._latest_event_status: dict[UUID, str] = {}
         self._terminal_event_status: dict[UUID, str] = {}
         self._event_id_fingerprints: dict[UUID, set[str]] = {}
+        # StreamingDeltaEvent deliberately contains no response identifier in
+        # v1.43.  Keep a bounded in-memory turn accumulator so later Action /
+        # Message events can correlate the stream without retaining content.
+        self._model_turn_by_run: dict[UUID, dict[str, Any]] = {}
         # Keep only bounded scalar protocol diagnostics.  The Agent Server can
         # return prompts, tool arguments, and model responses in HTTP/event
         # payloads; none of those values belong in AIAT evidence.
@@ -493,10 +502,57 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             "tool_call_count": 0,
             "tool_success_count": 0,
             "tool_error_count": 0,
+            # Tool names are bounded protocol identifiers, not evidence
+            # payloads. Retain names/counts so a future completion failure
+            # can distinguish a missing ``finish`` action from a model/tool
+            # error without retaining arguments or observations.
+            "tool_name_counts": {},
+            "finish_tool_call_count": 0,
+            "finish_tool_observation_count": 0,
+            "last_action_tool_name": None,
+            "last_successful_tool_name": None,
+            "model_turn_count": 0,
+            "current_model_turn_response_id_fingerprint": None,
+            "last_completed_model_turn_response_id_fingerprint": None,
+            "streaming_delta_count": 0,
+            "streaming_delta_count_by_response_fingerprint": {},
+            "message_event_count_by_response_fingerprint": {},
+            "action_event_count_by_response_fingerprint": {},
+            "last_model_turn_started_ordinal": None,
+            "last_model_turn_completed_ordinal": None,
+            "last_model_turn_duration_ms": None,
+            "last_model_turn_stream_closed": None,
+            "last_model_turn_response_class": None,
+            "last_model_turn_finish_reason": None,
+            "last_model_turn_content_present": False,
+            "last_model_turn_reasoning_present": False,
+            "last_model_turn_tool_calls_present": False,
+            "last_model_turn_tool_names": [],
+            "last_model_turn_message_event_present": False,
+            "last_model_turn_corrective_nudge_observed": False,
+            "last_model_turn_exception_class": None,
+            "last_model_turn_time_to_first_delta_ms": None,
+            "last_model_turn_stream_active_ms": None,
+            "last_model_turn_idle_after_last_delta_ms": None,
+            "last_model_turn_finalized": False,
+            "corrective_nudge_count": 0,
+            "post_tool_model_turn_pending": False,
+            "post_tool_model_turn_started": False,
+            "post_tool_model_turn_completed": False,
+            "post_test_activity_classification": "NOT_OBSERVED",
+            "model_turn_tail": [],
             "iteration_count": None,
             "max_iterations": None,
             "stuck_detection_enabled": None,
             "stuck_detection_triggered": False,
+            "aiat_timeout_triggered": False,
+            "aiat_timeout_elapsed_seconds": None,
+            "status_immediately_before_timeout": None,
+            "terminal_signal_already_buffered": False,
+            "timeout_interrupt_sent": False,
+            "interrupt_request_http_status": None,
+            "first_status_after_interrupt": None,
+            "first_event_after_interrupt": None,
             "request_errors": [],
         }
 
@@ -519,6 +575,107 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
         if not text:
             return None
         return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()
+
+    @staticmethod
+    def _safe_tool_name(raw: dict[str, Any]) -> str | None:
+        """Return only a bounded wire tool identifier from an event.
+
+        Action/observation payloads may contain arbitrary arguments, source
+        contents, and model output. Tool names are useful completion
+        diagnostics, but only when they are scalar protocol identifiers.
+        """
+
+        value = raw.get("tool_name")
+        if not isinstance(value, str):
+            action = raw.get("action")
+            if isinstance(action, dict):
+                value = action.get("tool_name") or action.get("name")
+        if not isinstance(value, str):
+            observation = raw.get("observation")
+            if isinstance(observation, dict):
+                value = observation.get("tool_name") or observation.get("name")
+        if not isinstance(value, str):
+            return None
+        value = value.strip()
+        if not value or len(value) > 128 or re.fullmatch(r"[A-Za-z0-9_.:-]+", value) is None:
+            return None
+        return value
+
+    @classmethod
+    def _safe_response_id_fingerprint(cls, raw: dict[str, Any]) -> str | None:
+        """Fingerprint a v1.43 LLM response identifier without retaining it."""
+
+        for key in ("llm_response_id", "response_id", "responseId"):
+            value = raw.get(key)
+            if isinstance(value, (str, int)) and str(value):
+                return cls._safe_fingerprint(value)
+        nested = raw.get("llm_response")
+        if isinstance(nested, dict):
+            for key in ("id", "response_id"):
+                value = nested.get(key)
+                if isinstance(value, (str, int)) and str(value):
+                    return cls._safe_fingerprint(value)
+        return None
+
+    @staticmethod
+    def _safe_finish_reason(raw: dict[str, Any]) -> str | None:
+        """Return only a documented bounded completion reason enum."""
+
+        candidates: list[Any] = [raw.get("finish_reason"), raw.get("finishReason")]
+        for key in ("llm_message", "message", "llm_response"):
+            nested = raw.get(key)
+            if isinstance(nested, dict):
+                candidates.extend((nested.get("finish_reason"), nested.get("finishReason")))
+        for value in candidates:
+            if not isinstance(value, str):
+                continue
+            value = value.strip().lower()
+            if value in _SAFE_FINISH_REASONS:
+                return value
+        return None
+
+    @staticmethod
+    def _safe_message_flags(raw: dict[str, Any]) -> tuple[bool, bool, bool, list[str]]:
+        """Extract booleans and tool names from a message event only."""
+
+        message = raw.get("llm_message")
+        if not isinstance(message, dict):
+            message = raw.get("message") if isinstance(raw.get("message"), dict) else {}
+        content = message.get("content")
+        if isinstance(content, str):
+            content_present = bool(content.strip())
+        elif isinstance(content, list):
+            content_present = any(
+                isinstance(item, dict)
+                and str(item.get("type") or "") == "text"
+                and isinstance(item.get("text"), str)
+                and bool(item["text"].strip())
+                for item in content
+            )
+        elif isinstance(content, dict):
+            content_present = (
+                str(content.get("type") or "") == "text"
+                and isinstance(content.get("text"), str)
+                and bool(content["text"].strip())
+            )
+        else:
+            content_present = False
+        reasoning_present = any(
+            bool(message.get(key))
+            for key in ("reasoning_content", "responses_reasoning_item", "thinking_blocks")
+        )
+        calls = message.get("tool_calls")
+        if not isinstance(calls, list):
+            calls = raw.get("tool_calls") if isinstance(raw.get("tool_calls"), list) else []
+        tool_names: list[str] = []
+        for call in calls:
+            if not isinstance(call, dict):
+                continue
+            function = call.get("function") if isinstance(call.get("function"), dict) else {}
+            candidate = call.get("name") or function.get("name")
+            if isinstance(candidate, str) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", candidate):
+                tool_names.append(candidate)
+        return content_present, reasoning_present, bool(calls), sorted(set(tool_names))
 
     @staticmethod
     def _append_bounded(items: list[dict[str, Any]], value: dict[str, Any], *, limit: int) -> None:
@@ -605,6 +762,182 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             ):
                 return True
         return False
+
+    def _model_turn_state(self, run_id: UUID, *, start_ordinal: int) -> dict[str, Any]:
+        """Return the current bounded model-turn accumulator, creating it once."""
+
+        state = self._model_turn_by_run.get(run_id)
+        if state is not None:
+            return state
+        diagnostic = self._diagnostic_for(run_id)
+        ordinal = int(diagnostic.get("model_turn_count") or 0) + 1
+        now = time.monotonic()
+        state = {
+            "ordinal": ordinal,
+            "response_id_fingerprint": None,
+            "streaming_delta_count": 0,
+            "action_event_count": 0,
+            "message_event_count": 0,
+            "started_ordinal": start_ordinal,
+            "started_at": now,
+            "first_delta_at": None,
+            "last_delta_at": None,
+            "response_class": None,
+            "finish_reason": None,
+            "content_present": False,
+            "reasoning_present": False,
+            "tool_calls_present": False,
+            "tool_names": [],
+            "message_event_present": False,
+            "finalized": False,
+        }
+        self._model_turn_by_run[run_id] = state
+        diagnostic["model_turn_count"] = ordinal
+        diagnostic["current_model_turn_response_id_fingerprint"] = None
+        diagnostic["last_model_turn_finalized"] = False
+        if diagnostic.get("post_tool_model_turn_pending"):
+            diagnostic["post_tool_model_turn_started"] = True
+        return state
+
+    def _record_model_turn_completion(
+        self,
+        run_id: UUID,
+        raw: dict[str, Any],
+        *,
+        response_class: str,
+        event_ordinal: int,
+    ) -> None:
+        """Finalize one model response using only scalar protocol metadata."""
+
+        diagnostic = self._diagnostic_for(run_id)
+        state = self._model_turn_state(run_id, start_ordinal=event_ordinal)
+        response_id = self._safe_response_id_fingerprint(raw)
+        if response_id:
+            state["response_id_fingerprint"] = response_id
+        content, reasoning, tool_calls, tool_names = self._safe_message_flags(raw)
+        state["content_present"] = bool(state["content_present"] or content)
+        state["reasoning_present"] = bool(state["reasoning_present"] or reasoning)
+        state["tool_calls_present"] = bool(state["tool_calls_present"] or tool_calls)
+        state["tool_names"] = sorted(set(state["tool_names"]) | set(tool_names))
+        state["response_class"] = response_class if response_class in _SAFE_RESPONSE_CLASSES else "unknown"
+        state["finish_reason"] = self._safe_finish_reason(raw)
+        state["finalized"] = True
+        state["message_event_present"] = bool(state["message_event_present"] or response_class in {"content", "reasoning_only", "empty"})
+        state["completed_ordinal"] = event_ordinal
+        now = time.monotonic()
+        diagnostic["last_completed_model_turn_response_id_fingerprint"] = state["response_id_fingerprint"]
+        diagnostic["current_model_turn_response_id_fingerprint"] = None
+        diagnostic["last_model_turn_started_ordinal"] = state["started_ordinal"]
+        diagnostic["last_model_turn_completed_ordinal"] = event_ordinal
+        diagnostic["last_model_turn_duration_ms"] = round((now - state["started_at"]) * 1000, 3)
+        diagnostic["last_model_turn_stream_closed"] = True
+        diagnostic["last_model_turn_response_class"] = state["response_class"]
+        diagnostic["last_model_turn_finish_reason"] = state["finish_reason"]
+        diagnostic["last_model_turn_content_present"] = state["content_present"]
+        diagnostic["last_model_turn_reasoning_present"] = state["reasoning_present"]
+        diagnostic["last_model_turn_tool_calls_present"] = state["tool_calls_present"]
+        diagnostic["last_model_turn_tool_names"] = list(state["tool_names"])
+        diagnostic["last_model_turn_message_event_present"] = state["message_event_present"]
+        diagnostic["last_model_turn_time_to_first_delta_ms"] = (
+            round((state["first_delta_at"] - state["started_at"]) * 1000, 3)
+            if state["first_delta_at"] is not None
+            else None
+        )
+        diagnostic["last_model_turn_stream_active_ms"] = (
+            round((state["last_delta_at"] - state["first_delta_at"]) * 1000, 3)
+            if state["first_delta_at"] is not None and state["last_delta_at"] is not None
+            else None
+        )
+        diagnostic["last_model_turn_idle_after_last_delta_ms"] = 0.0
+        diagnostic["last_model_turn_finalized"] = True
+        if diagnostic.get("post_tool_model_turn_pending"):
+            diagnostic["post_tool_model_turn_completed"] = True
+            diagnostic["post_tool_model_turn_pending"] = False
+        response_key = state["response_id_fingerprint"] or "UNATTRIBUTED"
+        for field_name, increment in (
+            ("streaming_delta_count_by_response_fingerprint", state["streaming_delta_count"]),
+            ("message_event_count_by_response_fingerprint", state["message_event_count"]),
+            ("action_event_count_by_response_fingerprint", state["action_event_count"]),
+        ):
+            values = diagnostic.setdefault(field_name, {})
+            values[response_key] = int(values.get(response_key) or 0) + int(increment)
+        self._append_bounded(
+            diagnostic.setdefault("model_turn_tail", []),
+            {
+                "turn_ordinal": state["ordinal"],
+                "response_id_fingerprint": state["response_id_fingerprint"],
+                "streaming_delta_count": state["streaming_delta_count"],
+                "action_event_count": state["action_event_count"],
+                "message_event_count": state["message_event_count"],
+                "response_class": state["response_class"],
+                "finish_reason": state["finish_reason"],
+                "content_present": state["content_present"],
+                "reasoning_present": state["reasoning_present"],
+                "tool_calls_present": state["tool_calls_present"],
+                "tool_names": list(state["tool_names"]),
+                "terminal_status_after_turn": diagnostic.get("last_event_status"),
+                "response_completion_observed": True,
+            },
+            limit=_MODEL_TURN_TAIL_LIMIT,
+        )
+        self._model_turn_by_run.pop(run_id, None)
+
+    def _record_model_turn_event(self, run_id: UUID, raw: dict[str, Any], kind: str, ordinal: int) -> None:
+        """Account for streaming/model completion events without retaining payloads."""
+
+        diagnostic = self._diagnostic_for(run_id)
+        if kind == "StreamingDeltaEvent":
+            state = self._model_turn_state(run_id, start_ordinal=ordinal)
+            now = time.monotonic()
+            state["streaming_delta_count"] += 1
+            state["first_delta_at"] = state["first_delta_at"] or now
+            state["last_delta_at"] = now
+            diagnostic["streaming_delta_count"] = int(diagnostic.get("streaming_delta_count") or 0) + 1
+            diagnostic["last_model_turn_stream_closed"] = False
+            diagnostic["last_model_turn_finalized"] = False
+            return
+        if kind == "ActionEvent":
+            state = self._model_turn_state(run_id, start_ordinal=ordinal)
+            state["action_event_count"] += 1
+            tool_name = self._safe_tool_name(raw)
+            if tool_name:
+                state["tool_names"] = sorted(set(state["tool_names"]) | {tool_name})
+            state["tool_calls_present"] = True
+            self._record_model_turn_completion(
+                run_id,
+                raw,
+                response_class="tool_calls",
+                event_ordinal=ordinal,
+            )
+            return
+        if kind != "MessageEvent":
+            return
+        source = str(raw.get("source") or "agent").lower()
+        if source == "environment" or self._safe_response_id_fingerprint(raw) is None and not raw.get("llm_message"):
+            # v1.43 emits its corrective framework nudge as an environment
+            # MessageEvent. It is not a model response and must not close the
+            # active turn.
+            diagnostic["corrective_nudge_count"] = int(diagnostic.get("corrective_nudge_count") or 0) + 1
+            diagnostic["last_model_turn_corrective_nudge_observed"] = True
+            return
+        state = self._model_turn_state(run_id, start_ordinal=ordinal)
+        state["message_event_count"] += 1
+        state["message_event_present"] = True
+        content, reasoning, tool_calls, _ = self._safe_message_flags(raw)
+        if tool_calls:
+            response_class = "tool_calls"
+        elif content:
+            response_class = "content"
+        elif reasoning:
+            response_class = "reasoning_only"
+        else:
+            response_class = "empty"
+        self._record_model_turn_completion(
+            run_id,
+            raw,
+            response_class=response_class,
+            event_ordinal=ordinal,
+        )
 
     def _record_http_diagnostic(
         self,
@@ -1422,6 +1755,7 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
         event_id = raw.get("id") or raw.get("event_id")
         diagnostic = self._diagnostic_for(request.run_id)
         diagnostic["event_count"] += 1
+        event_ordinal = int(diagnostic["event_count"])
         if kind not in diagnostic["event_types"]:
             diagnostic["event_types"].append(kind[:128])
         diagnostic["last_event_type"] = kind[:128]
@@ -1430,6 +1764,8 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
         diagnostic["normalized_from_server_event_count"] = int(
             diagnostic.get("normalized_from_server_event_count") or 0
         ) + 2
+
+        self._record_model_turn_event(request.run_id, raw, kind, event_ordinal)
 
         event_id_fingerprint = self._safe_fingerprint(event_id)
         if event_id_fingerprint:
@@ -1486,6 +1822,7 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
         if error_class:
             diagnostic["event_error_observed"] = True
             diagnostic["event_error_class"] = error_class
+            diagnostic["last_model_turn_exception_class"] = error_class
             if self._is_model_error_event(raw, kind):
                 diagnostic["model_error_observed"] = True
                 diagnostic["model_error_class"] = error_class
@@ -1493,6 +1830,15 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
 
         if kind == "ActionEvent":
             diagnostic["tool_call_count"] = int(diagnostic.get("tool_call_count") or 0) + 1
+            tool_name = self._safe_tool_name(raw)
+            if tool_name:
+                tool_counts = diagnostic.setdefault("tool_name_counts", {})
+                tool_counts[tool_name] = int(tool_counts.get(tool_name) or 0) + 1
+                diagnostic["last_action_tool_name"] = tool_name
+                if tool_name == "finish":
+                    diagnostic["finish_tool_call_count"] = int(
+                        diagnostic.get("finish_tool_call_count") or 0
+                    ) + 1
         elif kind == "ObservationEvent":
             observation = raw.get("observation")
             is_error = isinstance(observation, dict) and bool(
@@ -1500,6 +1846,25 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             )
             counter = "tool_error_count" if is_error else "tool_success_count"
             diagnostic[counter] = int(diagnostic.get(counter) or 0) + 1
+            tool_name = self._safe_tool_name(raw)
+            if tool_name and not is_error:
+                diagnostic["last_successful_tool_name"] = tool_name
+                if tool_name == "finish":
+                    diagnostic["finish_tool_observation_count"] = int(
+                        diagnostic.get("finish_tool_observation_count") or 0
+                    ) + 1
+                # A successful tool observation is the boundary after which
+                # v1.43 normally requests the next model turn. Keep this as a
+                # diagnostic expectation only; it never implies completion.
+                diagnostic["post_tool_model_turn_pending"] = True
+                diagnostic["post_tool_model_turn_started"] = False
+                diagnostic["post_tool_model_turn_completed"] = False
+
+        if diagnostic.get("timeout_interrupt_sent"):
+            if diagnostic.get("first_event_after_interrupt") is None:
+                diagnostic["first_event_after_interrupt"] = kind[:128]
+            if status and diagnostic.get("first_status_after_interrupt") is None:
+                diagnostic["first_status_after_interrupt"] = status
 
         for field_name in ("iteration", "iteration_count"):
             value = raw.get(field_name)
@@ -1517,6 +1882,19 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
                 "status": status,
                 "terminal": terminal and request.run_id in self._run_started,
                 "error_class": error_class,
+                "tool_name": self._safe_tool_name(raw)
+                if kind in {"ActionEvent", "ObservationEvent"}
+                else None,
+                "response_id_fingerprint": self._safe_response_id_fingerprint(raw)
+                if kind in {"ActionEvent", "MessageEvent"}
+                else None,
+                "model_turn_ordinal": diagnostic.get("model_turn_count")
+                if kind in {"StreamingDeltaEvent", "ActionEvent", "MessageEvent"}
+                else None,
+                "response_class": diagnostic.get("last_model_turn_response_class")
+                if kind == "ActionEvent"
+                or (kind == "MessageEvent" and str(raw.get("source") or "agent").lower() != "environment")
+                else None,
             },
             limit=_EVENT_TAIL_LIMIT,
         )
@@ -1759,6 +2137,33 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             },
         )
 
+    def _classify_post_test_activity(self, run_id: UUID) -> None:
+        """Record the observable boundary after the last successful tool.
+
+        This is intentionally an evidence classification, not a completion
+        heuristic. A missing model event cannot prove that a provider request
+        was never started, and it must never be promoted to worker success.
+        """
+
+        diagnostic = self._diagnostic_for(run_id)
+        state = self._model_turn_by_run.get(run_id)
+        if state is not None:
+            if state.get("streaming_delta_count"):
+                diagnostic["post_test_activity_classification"] = "FINAL_MODEL_TURN_NOT_FINALIZED"
+            else:
+                diagnostic["post_test_activity_classification"] = "MODEL_TURN_STARTED_WITHOUT_STREAM"
+            diagnostic["last_model_turn_stream_closed"] = False
+            now = time.monotonic()
+            if state.get("last_delta_at") is not None:
+                diagnostic["last_model_turn_idle_after_last_delta_ms"] = round(
+                    (now - state["last_delta_at"]) * 1000, 3
+                )
+            return
+        if diagnostic.get("post_tool_model_turn_pending"):
+            diagnostic["post_test_activity_classification"] = "NO_NEW_MODEL_TURN_EVENT_AFTER_LAST_TOOL_RESULT"
+        else:
+            diagnostic["post_test_activity_classification"] = "NO_POST_TEST_TOOL_BOUNDARY_OBSERVED"
+
     async def _execute(self, request: WorkerRunRequest) -> WorkerResult:
         conversation_id: str | None = None
         diagnostic = self._diagnostic_for(request.run_id)
@@ -1840,6 +2245,19 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
                     else:
                         rest_terminal_seen_at = None
                     if request.timeout_seconds and time.monotonic() - started > request.timeout_seconds:
+                        elapsed = time.monotonic() - started
+                        diagnostic["aiat_timeout_triggered"] = True
+                        diagnostic["aiat_timeout_elapsed_seconds"] = round(elapsed, 3)
+                        diagnostic["status_immediately_before_timeout"] = (
+                            status
+                            or diagnostic.get("last_event_status")
+                            or diagnostic.get("last_conversation_status")
+                        )
+                        diagnostic["terminal_signal_already_buffered"] = bool(
+                            diagnostic.get("terminal_state_observed")
+                            or self._terminal_event_status.get(request.run_id) in TERMINAL_STATUSES
+                        )
+                        self._classify_post_test_activity(request.run_id)
                         await self._interrupt_for_timeout(request, conversation_id)
                         if not diagnostic.get("terminal_state_observed"):
                             diagnostic["execution_failure_class"] = "BLOCKED_EXECUTION_COMPLETION"
@@ -1861,6 +2279,7 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
                 self._terminal_event_status.pop(request.run_id, None)
                 self._latest_event_status.pop(request.run_id, None)
                 self._event_id_fingerprints.pop(request.run_id, None)
+                self._model_turn_by_run.pop(request.run_id, None)
                 self._stop_events.add(request.run_id)
                 task = self._event_tasks.pop(request.run_id, None)
                 if task is not None:
@@ -1896,6 +2315,9 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
                 path=self.verification.endpoint("conversation_interrupt", conversation_id=conversation_id),
                 status_code=response.status_code,
             )
+            diagnostic = self._diagnostic_for(request.run_id)
+            diagnostic["timeout_interrupt_sent"] = True
+            diagnostic["interrupt_request_http_status"] = response.status_code
             if response.status_code not in {200, 404, 409}:
                 response.raise_for_status()
             await self.emit_audit(

@@ -1,0 +1,82 @@
+{
+  "schema_version": "aiat.openhands-model-response-completion-local-controls.v1",
+  "evidence_kind": "offline_exact_image_synthetic_openai_controls",
+  "candidate_aiat_sha": "d0d2ff60859d83a99f5fefeec6b269294c52b9d6",
+  "openhands": {
+    "release": "v1.43.0",
+    "source_commit": "4c1237f391fe394e9f67505fe3a0bd2d81f84188",
+    "image_digest": "sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97",
+    "platform": "linux/amd64"
+  },
+  "gateway": {
+    "protocol": "OpenAI-compatible chat-completions SSE",
+    "credential": "synthetic disposable key",
+    "raw_requests_retained": false,
+    "raw_responses_retained": false
+  },
+  "controls": [
+    {
+      "name": "streamed_content_success",
+      "sse_shape": "content_deltas_finish_reason_stop_done",
+      "conversation_create_http_status": 201,
+      "run_http_status": 200,
+      "gateway_request_observed": true,
+      "execution_status": "finished",
+      "final_response_present": true,
+      "result": "PASS"
+    },
+    {
+      "name": "streamed_finish_tool",
+      "sse_shape": "tool_call_finish_reason_tool_calls_done",
+      "conversation_create_http_status": 201,
+      "run_http_status": 200,
+      "gateway_request_observed": true,
+      "finish_tool_action_observed": true,
+      "execution_status": "finished",
+      "final_response_present": true,
+      "result": "PASS"
+    },
+    {
+      "name": "reasoning_only",
+      "sse_shape": "reasoning_delta_finish_reason_stop_done",
+      "gateway_request_observed": true,
+      "execution_status": "error",
+      "corrective_nudge_or_nonterminal_behavior": true,
+      "false_terminal_success": false,
+      "result": "PASS"
+    },
+    {
+      "name": "empty",
+      "sse_shape": "role_only_finish_reason_stop_done",
+      "gateway_request_observed": true,
+      "execution_status": "error",
+      "corrective_nudge_or_nonterminal_behavior": true,
+      "false_terminal_success": false,
+      "result": "PASS"
+    },
+    {
+      "name": "stream_never_closes",
+      "sse_shape": "valid_delta_without_stream_termination",
+      "gateway_request_observed": true,
+      "status_before_interrupt": "running",
+      "interrupt_http_status": 200,
+      "status_after_interrupt": "paused",
+      "false_terminal_success": false,
+      "result": "PASS"
+    },
+    {
+      "name": "stream_without_done",
+      "result": "NOT_RUN_SEPARATELY",
+      "note": "The never-closing control covers the bounded incomplete-stream path; no separate provider retry was introduced."
+    }
+  ],
+  "source_contract_controls": {
+    "content_sets_execution_status_finished": "PASS",
+    "finish_tool_can_mark_finished": "PASS",
+    "reasoning_only_remains_non_terminal": "PASS",
+    "empty_remains_non_terminal": "PASS",
+    "streaming_delta_is_not_final_response": "PASS",
+    "source": "openhands/sdk/agent/response_dispatch.py and openhands/sdk/llm/llm.py at exact v1.43.0 source commit"
+  },
+  "conclusion": "The exact image and synthetic gateway complete both normal content and FinishTool responses. Reasoning-only, empty, and never-closing streams remain fail-closed. Historical run 34176286979 did not retain enough response correlation to identify which incomplete-stream shape occurred."
+}

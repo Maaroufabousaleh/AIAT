@@ -24,6 +24,8 @@ PROVIDER_TIMEOUT = "PROVIDER_TIMEOUT"
 PROVIDER_SERVER_ERROR = "PROVIDER_SERVER_ERROR"
 PROVIDER_MODEL_UNAVAILABLE = "PROVIDER_MODEL_UNAVAILABLE"
 PROVIDER_MODEL_NOT_FOUND = "PROVIDER_MODEL_NOT_FOUND"
+PROVIDER_VALIDATION_FAILED = "PROVIDER_VALIDATION_FAILED"
+PROVIDER_TEST_INVALID_RESPONSE = "PROVIDER_TEST_INVALID_RESPONSE"
 AUTO_ROUTER_NO_VALID_PROVIDERS = "AUTO_ROUTER_NO_VALID_PROVIDERS"
 AUTO_ROUTER_ROUTE_FAILURE = "AUTO_ROUTER_ROUTE_FAILURE"
 LITELLM_STARTUP_FAILURE = "LITELLM_STARTUP_FAILURE"
@@ -52,6 +54,7 @@ _PROVIDER_CLASSES = {
     PROVIDER_SERVER_ERROR,
     PROVIDER_MODEL_UNAVAILABLE,
     PROVIDER_MODEL_NOT_FOUND,
+    PROVIDER_VALIDATION_FAILED,
     AUTO_ROUTER_NO_VALID_PROVIDERS,
     AUTO_ROUTER_ROUTE_FAILURE,
 }
@@ -137,6 +140,14 @@ def classify_failure(
     }:
         return GatewayFailure(OMNIROUTE_CONFIGURATION_FAILURE, normalized_stage, http_status)
 
+    # These codes identify an already-reached provider-test boundary.  Keep
+    # their stage canonical even if an older caller omitted the explicit
+    # provider stage (the historical misclassification this taxonomy guards).
+    if code in {"provider_validation_failed", "selected_provider_validation_failed"}:
+        return GatewayFailure(PROVIDER_VALIDATION_FAILED, "provider", http_status)
+    if code in {"provider_test_invalid_response", "omniroute_provider_test_invalid_response"}:
+        return GatewayFailure(PROVIDER_TEST_INVALID_RESPONSE, "provider", http_status)
+
     # Preserve harness/gateway stages before applying provider HTTP/exception
     # heuristics.  A failed health probe or an internal route transport error
     # is not evidence of a provider credential or availability failure.
@@ -179,6 +190,18 @@ def classify_failure(
 
     if code in {"insufficient_quota", "quota_exceeded", "billing_hard_limit"}:
         return GatewayFailure(PROVIDER_QUOTA_EXHAUSTED, normalized_stage, http_status)
+    if code in {"upstream_auth_error", "auth_failed"}:
+        return GatewayFailure(INVALID_PROVIDER_CREDENTIAL, normalized_stage, http_status)
+    if code in {"auth_missing", "token_expired"}:
+        return GatewayFailure(INVALID_PROVIDER_CREDENTIAL, normalized_stage, http_status)
+    if code in {"upstream_rate_limited", "rate_limited"}:
+        return GatewayFailure(PROVIDER_RATE_LIMIT, normalized_stage, http_status, retryable=True)
+    if code in {"upstream_unavailable"}:
+        return GatewayFailure(PROVIDER_SERVER_ERROR, normalized_stage, http_status, retryable=True)
+    if code in {"network_error", "provider_network_failure"}:
+        return GatewayFailure(PROVIDER_NETWORK_FAILURE, normalized_stage, http_status, retryable=True)
+    if code in {"timeout", "provider_timeout"}:
+        return GatewayFailure(PROVIDER_TIMEOUT, normalized_stage, http_status, retryable=True)
     if code in {"baseline_model_unavailable", "provider_model_unavailable"}:
         return GatewayFailure(PROVIDER_MODEL_UNAVAILABLE, normalized_stage, http_status)
     if code in {"auto_no_valid_providers", "no_valid_providers"}:
@@ -189,7 +212,13 @@ def classify_failure(
         return GatewayFailure(PROVIDER_MODEL_NOT_FOUND, normalized_stage, http_status)
     if code in {"model_unavailable", "service_unavailable", "overloaded"}:
         return GatewayFailure(PROVIDER_MODEL_UNAVAILABLE, normalized_stage, http_status, retryable=True)
-    if http_status == 401 or code in {"invalid_api_key", "invalid_credential", "authentication_error"}:
+    if http_status == 401 or code in {
+        "invalid_api_key",
+        "invalid_credential",
+        "authentication_error",
+        "auth_failed",
+        "upstream_auth_error",
+    }:
         return GatewayFailure(INVALID_PROVIDER_CREDENTIAL, normalized_stage, http_status)
     if http_status == 403 or code in {"permission_denied", "forbidden", "authorization_denied"}:
         return GatewayFailure(PROVIDER_AUTHORIZATION_DENIED, normalized_stage, http_status)

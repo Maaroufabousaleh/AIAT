@@ -779,7 +779,7 @@ async def certify(
         project_id=UUID(os.environ["OPENHANDS_PROJECT_ID"]) if os.getenv("OPENHANDS_PROJECT_ID") else None,
         task_input={
             "prompt": task_prompt
-            or "In this disposable certification repository, make one minimal safe code change, run the existing tests, and report the result. Do not access credentials or external tools."
+            or "In this disposable certification repository, make one minimal safe code change, run the existing tests, and report the result. After the requested change and tests are complete, use OpenHands' normal finish tool to submit a concise result; do not stop at prose. Do not access credentials or external tools."
         },
         resolved_model_profile=ModelProfileReference(
             profile_id="aiat-live-certification",
@@ -1114,6 +1114,31 @@ def _execution_completion_evidence(report: dict[str, Any]) -> dict[str, Any]:
     terminal = bool(diagnostics.get("terminal_state_observed"))
     final_called = bool(diagnostics.get("final_response_endpoint_called"))
     final_http = diagnostics.get("final_response_http_status")
+    model_turn_tail: list[dict[str, Any]] = []
+    for item in diagnostics.get("model_turn_tail", [])[-32:]:
+        if not isinstance(item, dict):
+            continue
+        model_turn_tail.append(
+            {
+                "turn_ordinal": item.get("turn_ordinal"),
+                "response_id_fingerprint": item.get("response_id_fingerprint"),
+                "streaming_delta_count": item.get("streaming_delta_count"),
+                "action_event_count": item.get("action_event_count"),
+                "message_event_count": item.get("message_event_count"),
+                "response_class": item.get("response_class"),
+                "finish_reason": item.get("finish_reason"),
+                "content_present": bool(item.get("content_present")),
+                "reasoning_present": bool(item.get("reasoning_present")),
+                "tool_calls_present": bool(item.get("tool_calls_present")),
+                "tool_names": [
+                    str(name)
+                    for name in (item.get("tool_names") or [])
+                    if isinstance(name, str) and len(name) <= 128
+                ],
+                "terminal_status_after_turn": item.get("terminal_status_after_turn"),
+                "response_completion_observed": bool(item.get("response_completion_observed")),
+            }
+        )
     return {
         "schema_version": "aiat.openhands-execution-completion.v1",
         "raw_agent_event_count": raw_count,
@@ -1156,10 +1181,86 @@ def _execution_completion_evidence(report: dict[str, Any]) -> dict[str, Any]:
         "tool_call_count": int(diagnostics.get("tool_call_count") or 0),
         "tool_success_count": int(diagnostics.get("tool_success_count") or 0),
         "tool_error_count": int(diagnostics.get("tool_error_count") or 0),
+        "tool_name_counts": {
+            str(name): int(count)
+            for name, count in (diagnostics.get("tool_name_counts") or {}).items()
+            if isinstance(name, str) and isinstance(count, int) and count >= 0
+        },
+        "finish_tool_call_count": int(diagnostics.get("finish_tool_call_count") or 0),
+        "finish_tool_observation_count": int(
+            diagnostics.get("finish_tool_observation_count") or 0
+        ),
+        "last_action_tool_name": diagnostics.get("last_action_tool_name"),
+        "last_successful_tool_name": diagnostics.get("last_successful_tool_name"),
+        "model_turn_count": int(diagnostics.get("model_turn_count") or 0),
+        "current_model_turn_response_id_fingerprint": diagnostics.get(
+            "current_model_turn_response_id_fingerprint"
+        ),
+        "last_completed_model_turn_response_id_fingerprint": diagnostics.get(
+            "last_completed_model_turn_response_id_fingerprint"
+        ),
+        "streaming_delta_count": int(diagnostics.get("streaming_delta_count") or 0),
+        "streaming_delta_count_by_response_fingerprint": {
+            str(key): int(value)
+            for key, value in (diagnostics.get("streaming_delta_count_by_response_fingerprint") or {}).items()
+            if isinstance(key, str) and isinstance(value, int) and value >= 0
+        },
+        "message_event_count_by_response_fingerprint": {
+            str(key): int(value)
+            for key, value in (diagnostics.get("message_event_count_by_response_fingerprint") or {}).items()
+            if isinstance(key, str) and isinstance(value, int) and value >= 0
+        },
+        "action_event_count_by_response_fingerprint": {
+            str(key): int(value)
+            for key, value in (diagnostics.get("action_event_count_by_response_fingerprint") or {}).items()
+            if isinstance(key, str) and isinstance(value, int) and value >= 0
+        },
+        "last_model_turn_started_ordinal": diagnostics.get("last_model_turn_started_ordinal"),
+        "last_model_turn_completed_ordinal": diagnostics.get("last_model_turn_completed_ordinal"),
+        "last_model_turn_duration_ms": diagnostics.get("last_model_turn_duration_ms"),
+        "last_model_turn_stream_closed": diagnostics.get("last_model_turn_stream_closed"),
+        "last_model_turn_response_class": diagnostics.get("last_model_turn_response_class"),
+        "last_model_turn_finish_reason": diagnostics.get("last_model_turn_finish_reason"),
+        "last_model_turn_content_present": bool(diagnostics.get("last_model_turn_content_present")),
+        "last_model_turn_reasoning_present": bool(diagnostics.get("last_model_turn_reasoning_present")),
+        "last_model_turn_tool_calls_present": bool(diagnostics.get("last_model_turn_tool_calls_present")),
+        "last_model_turn_tool_names": [
+            str(name) for name in (diagnostics.get("last_model_turn_tool_names") or []) if isinstance(name, str)
+        ],
+        "last_model_turn_message_event_present": bool(
+            diagnostics.get("last_model_turn_message_event_present")
+        ),
+        "last_model_turn_corrective_nudge_observed": bool(
+            diagnostics.get("last_model_turn_corrective_nudge_observed")
+        ),
+        "last_model_turn_exception_class": diagnostics.get("last_model_turn_exception_class"),
+        "last_model_turn_time_to_first_delta_ms": diagnostics.get(
+            "last_model_turn_time_to_first_delta_ms"
+        ),
+        "last_model_turn_stream_active_ms": diagnostics.get("last_model_turn_stream_active_ms"),
+        "last_model_turn_idle_after_last_delta_ms": diagnostics.get(
+            "last_model_turn_idle_after_last_delta_ms"
+        ),
+        "last_model_turn_finalized": bool(diagnostics.get("last_model_turn_finalized")),
+        "corrective_nudge_count": int(diagnostics.get("corrective_nudge_count") or 0),
+        "post_tool_model_turn_pending": bool(diagnostics.get("post_tool_model_turn_pending")),
+        "post_tool_model_turn_started": bool(diagnostics.get("post_tool_model_turn_started")),
+        "post_tool_model_turn_completed": bool(diagnostics.get("post_tool_model_turn_completed")),
+        "model_turn_tail": model_turn_tail,
         "iteration_count": diagnostics.get("iteration_count") if diagnostics.get("iteration_count") is not None else "NOT_OBSERVED",
         "max_iterations": diagnostics.get("max_iterations"),
         "stuck_detection_enabled": diagnostics.get("stuck_detection_enabled"),
         "stuck_detection_triggered": bool(diagnostics.get("stuck_detection_triggered")),
+        "aiat_timeout_triggered": bool(diagnostics.get("aiat_timeout_triggered")),
+        "aiat_timeout_elapsed_seconds": diagnostics.get("aiat_timeout_elapsed_seconds"),
+        "status_immediately_before_timeout": diagnostics.get("status_immediately_before_timeout"),
+        "terminal_signal_already_buffered": bool(
+            diagnostics.get("terminal_signal_already_buffered")
+        ),
+        "timeout_interrupt_sent": bool(diagnostics.get("timeout_interrupt_sent")),
+        "interrupt_request_http_status": diagnostics.get("interrupt_request_http_status"),
+        "first_status_after_interrupt": diagnostics.get("first_status_after_interrupt"),
+        "first_event_after_interrupt": diagnostics.get("first_event_after_interrupt"),
         "execution_failure_class": diagnostics.get("execution_failure_class"),
         "final_response_endpoint_called": final_called,
         "final_response_http_status": final_http,
@@ -1169,6 +1270,8 @@ def _execution_completion_evidence(report: dict[str, Any]) -> dict[str, Any]:
             "post_test_activity_classification", "NOT_OBSERVED"
         ),
         "raw_event_payloads_retained": False,
+        "raw_tool_arguments_retained": False,
+        "raw_tool_results_retained": False,
         "raw_model_payloads_retained": False,
         "secret_values_retained": False,
     }
