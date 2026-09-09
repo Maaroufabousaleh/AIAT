@@ -1,8 +1,42 @@
 # P0 Release Integrity Status
 
-**Updated:** 2026-08-23
+**Updated:** 2026-09-09
 
-## OpenHands v1.43.0 overnight continuation
+## Current integrated status — 2026-09-09
+
+AIAT is beginning the **Integrated Development & System Testing** phase after
+merging the reviewed OpenHands work into the integration baseline `2c99b75a`
+from current `origin/main`. This is a development transition only. P0 release
+integrity remains incomplete and the global decision is **NO-RELEASE**.
+
+The merged clean tree's actual static release-ledger result is **63/63 pass**,
+with 0 failed, 0 blocked, and 2 pending evidence items. The checker still
+returns `NO-RELEASE` because a live profile is not included and pending evidence
+remains.
+
+OpenHands remains an inactive/certifying v1.43.0 candidate with source
+`4c1237f391fe394e9f67505fe3a0bd2d81f84188` and image digest
+`sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97`.
+The retained provider-backed path validates the provider route, baseline
+discovery, LiteLLM, infrastructure, real file editing, and passing tests, but
+successful live terminal worker completion remains unproven. The latest
+runtime classification is `BLOCKED_EXECUTION_COMPLETION`, with the final model
+turn unresolved in historical evidence. Exact-image streamed-content and
+FinishTool controls pass locally; incomplete/reasoning-only controls remain
+fail-closed. No additional provider-backed run is claimed by this integration,
+and steward approval remains separate from certification.
+
+OpenCode remains the unchanged current default. Provider/Groq validation is
+resolved in retained evidence without retaining credential values. Scanner
+coverage remains independently `BLOCKED_SCANNER_COVERAGE` and is not addressed
+here.
+
+Immutable recent run records are retained under
+[`mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/`](../../mas/docs/provenance/openhands-candidate/2026-08-22-v1.43.0/), including runs
+`34137534882`, `34151828641`, and `34176286979`; `34145363903` remains a
+historical GitHub record without raw payload retention.
+
+## Historical OpenHands certification narrative (retained)
 
 The inactive OpenHands candidate remains separate from the current OpenCode
 default and from the global release decision. The repository-local

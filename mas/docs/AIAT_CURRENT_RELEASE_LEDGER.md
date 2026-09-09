@@ -1,9 +1,43 @@
 # AIAT Current Release Ledger
 
-**Run date:** 2026-08-24
-**Base revision:** `716e500` (the current reviewed OpenHands certification tip; it retains the runsc network, gateway/provenance, nested MCP cleanup, secret-scrubbing, exact-candidate preflight, stale-helper contract gates, explicit lifecycle-failure classification, fail-closed rejection of opaque pre-existing Agent Server provider connections, authoritative gateway-connection readback validation, signed run-bound MCP-grant readback, lifecycle grant rotation, and scalar evidence on every failure path). Commit `de50628` adds the narrow pinned-Agent-Server redacted-MCP readback rotation path while keeping production callers fail-closed; `716e500` registers the immutable run-327539 evidence and status refresh. The reviewed safety fix `e472ee1` suppresses any dispatch command when the requested candidate fails preflight, preventing implicit SHA substitution.
-**Working-tree state:** dirty; this ledger is a P0 progress ledger, not a production release certificate  
+**Run date:** 2026-09-09
+**Integration baseline:** reviewed OpenHands work is merged on the temporary integration branch from `origin/main` at `2c99b75a`; the reviewed OpenHands tip before integration is `15d2c1a874a2748548338066782b89561353de2e`.
+**Working-tree state:** clean integration worktree; this ledger is a P0 progress ledger, not a production release certificate
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
+
+## Current integrated summary
+
+The repository is entering the **Integrated Development & System Testing**
+phase. This development transition does not close P0 release gates. The actual
+`check_release_ledger.py --json` result from the merged clean tree is **63/63
+pass**, with 0 failed, 0 blocked, and 2 pending evidence items; the checker
+still returns `NO-RELEASE` because no live profile is included and pending
+evidence remains.
+
+- OpenHands v1.43.0 remains inactive and certifying, pinned to source
+  `4c1237f391fe394e9f67505fe3a0bd2d81f84188` and image digest
+  `sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97`.
+  Provider route, baseline discovery, LiteLLM, infrastructure, real file
+  editing, and passing tests are retained; successful live terminal worker
+  completion is not. The latest runtime classification remains
+  `BLOCKED_EXECUTION_COMPLETION`, with the final model turn unresolved in
+  historical evidence.
+- OpenCode remains the unchanged current default. OpenHands has not been
+  activated, and steward approval remains a separate decision.
+- Provider/Groq route validation is resolved in the latest retained evidence;
+  credentials remain operator-owned and are not retained in this ledger.
+- Native gVisor evidence remains retained as a pass for the native Ubuntu
+  `runsc` path; broader native release-host, image, and deployment evidence
+  remains open.
+- Scanner coverage remains independently `BLOCKED_SCANNER_COVERAGE`; no scanner
+  remediation is part of this integration.
+- Immutable recent OpenHands records remain available for runs
+  `34137534882`, `34145363903`, `34151828641`, and `34176286979` under
+  [`provenance/openhands-candidate/2026-08-22-v1.43.0/`](provenance/openhands-candidate/2026-08-22-v1.43.0/).
+
+No additional provider-backed run is claimed or warranted by this integration.
+
+## Historical ledger narrative (retained)
 
 The immutable live run `32759419116` is registered as failed certification
 implementation evidence. Its infrastructure, provider baseline, gVisor,
