@@ -2,7 +2,7 @@
 
 **Run date:** 2026-09-09
 **Integration baseline:** reviewed OpenHands work is merged on the temporary integration branch from `origin/main` at `2c99b75a`; the reviewed OpenHands tip before integration is `15d2c1a874a2748548338066782b89561353de2e`.
-**Working-tree state:** clean integration worktree; this ledger is a P0 progress ledger, not a production release certificate
+**Working-tree state:** clean published `main` tree; this ledger is a P0 progress ledger, not a production release certificate
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
 ## Current integrated summary
