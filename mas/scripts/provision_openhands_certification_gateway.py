@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -57,11 +58,13 @@ class GatewayProvisioningError(RuntimeError):
         stage: str = "omniroute_health",
         http_status: int | None = None,
         exception_type: str | None = None,
+        provider_test_diagnostics: dict[str, object] | None = None,
     ) -> None:
         super().__init__(reason)
         self.stage = stage
         self.http_status = http_status
         self.exception_type = exception_type
+        self.provider_test_diagnostics = provider_test_diagnostics
 
 
 def _json(
@@ -87,7 +90,120 @@ def _json(
     try:
         return response.json()
     except ValueError as exc:
-        raise GatewayProvisioningError("omniroute_invalid_json") from exc
+        # Preserve the caller's boundary.  A malformed provider-test response
+        # must not fall back to the default OmniRoute-health stage.
+        raise GatewayProvisioningError("omniroute_invalid_json", stage=stage) from exc
+
+
+_SAFE_PROVIDER_DIAGNOSTIC = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$")
+
+
+def _safe_provider_diagnostic_code(value: Any) -> str | None:
+    """Keep only bounded enum-like provider diagnostic values."""
+
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return value if _SAFE_PROVIDER_DIAGNOSTIC.fullmatch(value) else None
+
+
+def _safe_upstream_status(value: Any) -> int | None:
+    """Extract an HTTP status when OmniRoute encodes it as a scalar code."""
+
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int) and 100 <= value <= 599:
+        return value
+    if isinstance(value, str) and value.isdecimal():
+        status = int(value)
+        if 100 <= status <= 599:
+            return status
+    return None
+
+
+def _provider_test_diagnostics(value: Any, *, http_status: int | None = None) -> dict[str, object]:
+    """Extract scalar provider-test evidence without retaining response data."""
+
+    report: dict[str, object] = {
+        "valid_present": isinstance(value, dict) and "valid" in value,
+        "raw_response_retained": False,
+        "error_message_retained": False,
+        "provider_credential_retained": False,
+    }
+    if isinstance(http_status, int) and 100 <= http_status <= 599:
+        report["http_status"] = http_status
+    if not isinstance(value, dict):
+        return report
+
+    valid = value.get("valid")
+    if isinstance(valid, bool):
+        report["valid"] = valid
+    diagnosis = value.get("diagnosis")
+    if isinstance(diagnosis, dict):
+        for source_key, target_key in (
+            ("type", "diagnosis_type"),
+            ("source", "diagnosis_source"),
+            ("code", "diagnosis_code"),
+        ):
+            safe_value = _safe_provider_diagnostic_code(diagnosis.get(source_key))
+            if safe_value is not None:
+                report[target_key] = safe_value
+        status = _safe_upstream_status(diagnosis.get("statusCode"))
+        if status is None:
+            status = _safe_upstream_status(diagnosis.get("code"))
+        if status is not None:
+            report["upstream_status_code"] = status
+    status = _safe_upstream_status(value.get("statusCode"))
+    if status is not None:
+        report["upstream_status_code"] = status
+    report["warning_present"] = "warning" in value and value.get("warning") is not None
+    return report
+
+
+def _provider_test_failure_class(diagnostics: dict[str, object]) -> str:
+    """Classify safe OmniRoute provider-test fields, never response text."""
+
+    error_code = diagnostics.get("diagnosis_code")
+    status = diagnostics.get("upstream_status_code")
+    failure = classify_failure(
+        stage="provider",
+        http_status=status if isinstance(status, int) else None,
+        error_code=error_code if isinstance(error_code, str) else None,
+    )
+    # v3.8.38 emits these diagnosis enums for the corresponding upstream
+    # boundaries.  Preserve the precise existing provider taxonomy when safe
+    # fields support it; otherwise retain the intentionally generic validation
+    # class rather than asserting a credential/model cause.
+    if isinstance(diagnostics.get("diagnosis_type"), str):
+        typed_failure = classify_failure(
+            stage="provider",
+            http_status=status if isinstance(status, int) else None,
+            error_code=diagnostics["diagnosis_type"],
+        )
+        if typed_failure.failure_class != "MODEL_EXECUTION_FAILURE":
+            return typed_failure.failure_class
+    if failure.failure_class != "MODEL_EXECUTION_FAILURE":
+        return failure.failure_class
+    return "PROVIDER_VALIDATION_FAILED"
+
+
+def _require_provider_test_pass(value: Any, *, http_status: int | None = None) -> dict[str, object]:
+    """Fail closed at the provider boundary while retaining safe evidence."""
+
+    diagnostics = _provider_test_diagnostics(value, http_status=http_status)
+    if not diagnostics.get("valid_present"):
+        raise GatewayProvisioningError(
+            "provider_test_invalid_response",
+            stage="provider",
+            provider_test_diagnostics=diagnostics,
+        )
+    if diagnostics.get("valid") is not True:
+        raise GatewayProvisioningError(
+            "selected_provider_validation_failed",
+            stage="provider",
+            provider_test_diagnostics=diagnostics,
+        )
+    return diagnostics
 
 
 def _request(
@@ -363,15 +479,23 @@ def provision(
 
         baseline = _discover_baseline_model(client, connection_id)
 
+        test_response = _request(
+            client,
+            "POST",
+            f"/api/providers/{connection_id}/test",
+            stage="provider",
+            # v3.8.38 otherwise falls back to the first catalog model
+            # when /models is unavailable.  The certification provider
+            # test must exercise the frozen governed baseline instead of
+            # silently validating a different model.
+            json={"validationModelId": PROVIDER_MODEL},
+        )
         tested = _json(
-            _request(
-                client, "POST", f"/api/providers/{connection_id}/test", stage="provider", json={}
-            ),
+            test_response,
             expected={200},
             stage="provider",
         )
-        if not isinstance(tested, dict) or tested.get("valid") is not True:
-            raise GatewayProvisioningError("selected_provider_validation_failed")
+        provider_test = _require_provider_test_pass(tested, http_status=test_response.status_code)
 
         readback = _connections(
             _json(
@@ -405,6 +529,7 @@ def provision(
             "connection_identity_verified": True,
             "action": action,
             "provider_validation": "PASS",
+            "provider_test": provider_test,
             "provider_count": len(readback),
             "provider_pool": provider_pool_spec(),
             "provider_credential_retained": False,
@@ -467,6 +592,16 @@ def main(argv: list[str] | None = None) -> int:
             "management_key_retained": False,
             "response_payloads_retained": False,
         }
+        if isinstance(exc, GatewayProvisioningError) and exc.provider_test_diagnostics is not None:
+            provider_test = dict(exc.provider_test_diagnostics)
+            report["provider_test"] = provider_test
+            if reason == "selected_provider_validation_failed":
+                report["failure_class"] = _provider_test_failure_class(provider_test)
+            elif reason == "provider_test_invalid_response":
+                report["failure_class"] = "PROVIDER_TEST_INVALID_RESPONSE"
+            # Keep this boundary explicit even when a future safe diagnostic
+            # classification maps to a more specific provider class.
+            report["failure_stage"] = "provider"
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(
             json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8"

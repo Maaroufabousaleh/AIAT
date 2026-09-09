@@ -1398,6 +1398,12 @@ async def test_execute_timeout_interrupts_remote_and_returns_terminal_timeout(tm
     assert result.error.terminal is True
     assert f"POST /api/conversations/{conversation_id}/interrupt" in calls
     assert f"DELETE /api/conversations/{conversation_id}" in calls
+    diagnostics = adapter._diagnostics(run_request.run_id)
+    assert diagnostics["aiat_timeout_triggered"] is True
+    assert diagnostics["timeout_interrupt_sent"] is True
+    assert diagnostics["interrupt_request_http_status"] == 200
+    assert diagnostics["status_immediately_before_timeout"] == "running"
+    assert diagnostics["terminal_signal_already_buffered"] is False
     await adapter.close()
 
 
@@ -1499,6 +1505,240 @@ async def test_v143_error_field_is_immediate_terminal_and_event_ids_are_counted(
     assert diagnostics["model_error_observed"] is False
     assert diagnostics["model_error_count"] == 0
     assert all("value" not in item for item in diagnostics["event_tail"])
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_tool_name_diagnostics_retain_finish_signal_without_payloads(tmp_path: Path) -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={})
+
+    adapter = make_adapter(tmp_path, handler)
+    run = request(workspace=tmp_path / "workspace")
+    await adapter._emit_runtime_event(
+        run,
+        {
+            "id": "terminal-action",
+            "kind": "ActionEvent",
+            "tool_name": "terminal",
+            "arguments": {"command": "must-not-be-retained"},
+        },
+    )
+    await adapter._emit_runtime_event(
+        run,
+        {
+            "id": "finish-action",
+            "kind": "ActionEvent",
+            "action": {"name": "finish", "arguments": {"message": "secret-like content"}},
+        },
+    )
+    await adapter._emit_runtime_event(
+        run,
+        {
+            "id": "finish-observation",
+            "kind": "ObservationEvent",
+            "observation": {"tool_name": "finish", "is_error": False, "content": "hidden"},
+        },
+    )
+    await adapter._emit_runtime_event(
+        run,
+        {
+            "id": "unsafe-name",
+            "kind": "ActionEvent",
+            "tool_name": "finish\nraw-payload",
+            "arguments": {"raw": "must-not-be-retained"},
+        },
+    )
+    diagnostics = adapter._diagnostics(run.run_id)
+    assert diagnostics["tool_call_count"] == 3
+    assert diagnostics["tool_name_counts"] == {"terminal": 1, "finish": 1}
+    assert diagnostics["finish_tool_call_count"] == 1
+    assert diagnostics["finish_tool_observation_count"] == 1
+    assert diagnostics["last_action_tool_name"] == "finish"
+    assert diagnostics["last_successful_tool_name"] == "finish"
+    assert all(item.get("tool_name") != "finish\nraw-payload" for item in diagnostics["event_tail"])
+    serialized = json.dumps(diagnostics, sort_keys=True)
+    assert "must-not-be-retained" not in serialized
+    assert "secret-like content" not in serialized
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_model_turn_diagnostics_correlate_stream_and_completion_without_payloads(tmp_path: Path) -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={})
+
+    adapter = make_adapter(tmp_path, handler)
+    run = request(workspace=tmp_path / "workspace")
+    for ordinal in range(3):
+        await adapter._emit_runtime_event(
+            run,
+            {
+                "id": f"delta-{ordinal}",
+                "kind": "StreamingDeltaEvent",
+                "source": "agent",
+                "content": "must-not-be-retained",
+            },
+        )
+    await adapter._emit_runtime_event(
+        run,
+        {
+            "id": "tool-action",
+            "kind": "ActionEvent",
+            "source": "agent",
+            "llm_response_id": "response-tool-1",
+            "tool_name": "terminal",
+            "arguments": {"command": "must-not-be-retained"},
+            "finish_reason": "tool_calls",
+        },
+    )
+    await adapter._emit_runtime_event(
+        run,
+        {
+            "id": "tool-observation",
+            "kind": "ObservationEvent",
+            "source": "environment",
+            "tool_name": "terminal",
+            "observation": {"is_error": False, "content": "must-not-be-retained"},
+        },
+    )
+    await adapter._emit_runtime_event(
+        run,
+        {
+            "id": "content-message",
+            "kind": "MessageEvent",
+            "source": "agent",
+            "llm_response_id": "response-content-2",
+            "llm_message": {"content": [{"type": "text", "text": "must-not-be-retained"}]},
+            "finish_reason": "stop",
+        },
+    )
+    await adapter._emit_runtime_event(
+        run,
+        {
+            "id": "framework-nudge",
+            "kind": "MessageEvent",
+            "source": "environment",
+            "llm_message": {"content": [{"type": "text", "text": "nudge must-not-be-retained"}]},
+        },
+    )
+    diagnostics = adapter._diagnostics(run.run_id)
+    assert diagnostics["model_turn_count"] == 2
+    assert diagnostics["streaming_delta_count"] == 3
+    assert diagnostics["last_model_turn_response_class"] == "content"
+    assert diagnostics["last_model_turn_finish_reason"] == "stop"
+    assert diagnostics["last_model_turn_content_present"] is True
+    assert diagnostics["last_model_turn_message_event_present"] is True
+    assert diagnostics["corrective_nudge_count"] == 1
+    assert diagnostics["post_tool_model_turn_started"] is True
+    assert diagnostics["post_tool_model_turn_completed"] is True
+    assert diagnostics["streaming_delta_count_by_response_fingerprint"]
+    assert all(len(key) == 64 for key in diagnostics["streaming_delta_count_by_response_fingerprint"])
+    serialized = json.dumps(diagnostics, sort_keys=True)
+    assert "must-not-be-retained" not in serialized
+    assert "nudge must-not-be-retained" not in serialized
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_model_turn_without_completion_is_fail_closed_and_diagnosable(tmp_path: Path) -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={})
+
+    adapter = make_adapter(tmp_path, handler)
+    run = request(workspace=tmp_path / "workspace")
+    await adapter._emit_runtime_event(
+        run,
+        {
+            "id": "terminal-action",
+            "kind": "ActionEvent",
+            "source": "agent",
+            "llm_response_id": "response-terminal",
+            "tool_name": "terminal",
+        },
+    )
+    await adapter._emit_runtime_event(
+        run,
+        {
+            "id": "terminal-observation",
+            "kind": "ObservationEvent",
+            "source": "environment",
+            "tool_name": "terminal",
+            "observation": {"is_error": False},
+        },
+    )
+    adapter._classify_post_test_activity(run.run_id)
+    diagnostics = adapter._diagnostics(run.run_id)
+    assert diagnostics["post_test_activity_classification"] == "NO_NEW_MODEL_TURN_EVENT_AFTER_LAST_TOOL_RESULT"
+    assert diagnostics["terminal_state_observed"] is False
+    assert diagnostics["final_response_endpoint_called"] is False
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_model_turn_stream_without_completion_is_not_promoted_to_success(tmp_path: Path) -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={})
+
+    adapter = make_adapter(tmp_path, handler)
+    run = request(workspace=tmp_path / "workspace")
+    for ordinal in range(4):
+        await adapter._emit_runtime_event(
+            run,
+            {
+                "id": f"open-stream-{ordinal}",
+                "kind": "StreamingDeltaEvent",
+                "source": "agent",
+                "content": "redacted",
+            },
+        )
+    adapter._classify_post_test_activity(run.run_id)
+    diagnostics = adapter._diagnostics(run.run_id)
+    assert diagnostics["model_turn_count"] == 1
+    assert diagnostics["streaming_delta_count"] == 4
+    assert diagnostics["last_model_turn_finalized"] is False
+    assert diagnostics["last_model_turn_stream_closed"] is False
+    assert diagnostics["post_test_activity_classification"] == "FINAL_MODEL_TURN_NOT_FINALIZED"
+    assert diagnostics["terminal_state_observed"] is False
+    serialized = json.dumps(diagnostics, sort_keys=True)
+    assert "redacted" not in serialized
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("message", "expected_class"),
+    [
+        ({"content": [{"type": "text", "text": "bounded"}]}, "content"),
+        ({"content": [], "reasoning_content": "bounded"}, "reasoning_only"),
+        ({"content": []}, "empty"),
+    ],
+)
+async def test_v143_message_response_classes_are_distinguished_without_content_retention(
+    tmp_path: Path, message: dict[str, object], expected_class: str
+) -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={})
+
+    adapter = make_adapter(tmp_path, handler)
+    run = request(workspace=tmp_path / "workspace")
+    await adapter._emit_runtime_event(
+        run,
+        {
+            "id": f"message-{expected_class}",
+            "kind": "MessageEvent",
+            "source": "agent",
+            "llm_response_id": f"response-{expected_class}",
+            "llm_message": message,
+            "finish_reason": "stop",
+        },
+    )
+    diagnostics = adapter._diagnostics(run.run_id)
+    assert diagnostics["last_model_turn_response_class"] == expected_class
+    assert diagnostics["last_model_turn_finalized"] is True
+    assert diagnostics["last_model_turn_message_event_present"] is True
+    serialized = json.dumps(diagnostics, sort_keys=True)
+    assert "bounded" not in serialized
     await adapter.close()
 
 

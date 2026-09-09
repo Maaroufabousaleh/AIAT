@@ -75,6 +75,8 @@ _RETENTION_KEYS = frozenset(
         "grant_value_retained",
         "raw_response_retained",
         "raw_responses_retained",
+        "raw_tool_arguments_retained",
+        "raw_tool_results_retained",
         "raw_logs_retained",
         "container_logs_retained",
         "model_payloads_retained",

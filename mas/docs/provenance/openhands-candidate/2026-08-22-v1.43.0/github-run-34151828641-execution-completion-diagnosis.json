@@ -1,0 +1,168 @@
+{
+  "schema_version": "aiat.openhands-historical-execution-completion-diagnosis.v1",
+  "immutable_historical_record": true,
+  "run": {
+    "run_id": "34151828641",
+    "job_id": "101835542135",
+    "workflow_ref": "agent/fix-review-p1",
+    "candidate_sha": "2aed778cf15e6d38b1c5e81ebe83a1b7340c864e",
+    "artifact_id": "10029902627",
+    "artifact_digest": "sha256:10a75949210946035aab90339707de5ea08ff1a43b933ba737d25a97d8deb6b1"
+  },
+  "candidate": {
+    "release": "v1.43.0",
+    "source_commit": "4c1237f391fe394e9f67505fe3a0bd2d81f84188",
+    "image_digest": "sha256:36f847d1dfbbbdce90052437b06a3c6e76b8a54683228182eaf73085f03fcd97",
+    "activation": "inactive"
+  },
+  "historical_observation": {
+    "workflow_status": "BLOCKED_EXECUTION_COMPLETION",
+    "mandatory_pass_count": 10,
+    "mandatory_failed_count": 1,
+    "mandatory_not_run_count": 9,
+    "causal_blocker_gate": "real_coding_task",
+    "real_coding_task": "FAILED_MODEL_EXECUTION",
+    "model_error_observed": false,
+    "file_modifications": "PASS",
+    "test_execution": "PASS",
+    "workspace_change_confirmed": true,
+    "test_result_confirmed": true,
+    "agent_server_event_count": 1071,
+    "normalized_event_count": 2146,
+    "tool_call_count": 6,
+    "tool_success_count": 6,
+    "tool_error_count": 0,
+    "last_event_type": "ConversationStateUpdateEvent",
+    "last_event_status": "paused",
+    "last_status_poll": "running",
+    "terminal_state_observed": false,
+    "final_response_present": false,
+    "artifact_created": false,
+    "pause": "PASS",
+    "interrupt": "PASS",
+    "timeout": "PASS",
+    "zero_residue": "PASS",
+    "scanner_blocker": "BLOCKED_SCANNER_COVERAGE"
+  },
+  "classification": {
+    "failure_class": "FAILED_CERTIFICATION_IMPLEMENTATION",
+    "retrospective_status": "BLOCKED_EXECUTION_COMPLETION",
+    "model_error_observed": false,
+    "root_cause_status": "AGENT_COMPLETION_SIGNAL_NOT_PROVEN_HISTORICAL",
+    "root_cause_confidence": "BOUNDED_HISTORICAL_EVIDENCE",
+    "root_cause": "The primary coding conversation remained running until the AIAT adapter timeout. The adapter then sent the governed interrupt, after which Agent Server published paused state. The historical artifact does not retain tool names, model activity timing, or a FinishTool call, so it cannot prove whether the agent omitted FinishTool, continued reasoning, or encountered an unobserved completion-path issue. Passing workspace tests is not a terminal worker result. The certification task prompt lacked an explicit compatibility instruction to use the normal finish tool; a bounded prompt clarification and tool-name diagnostics are added for future runs.",
+    "paused_status_origin": "AIAT_TIMEOUT_INTERRUPT_LIKELY_EVENT_ORDER_NOT_TIMESTAMPED",
+    "provider_failure": false,
+    "gateway_failure": false,
+    "gvisor_failure": false,
+    "runtime_startup_failure": false,
+    "security_finding": false
+  },
+  "event_accounting": {
+    "raw_event_count": 1071,
+    "normalized_event_count": 2146,
+    "normalized_from_server_event_count": 2142,
+    "controller_internal_event_count": 4,
+    "duplicate_event_count": 0,
+    "replay_event_count": 0,
+    "unexplained_event_count": 0,
+    "event_id_count": 1071,
+    "explanation": "The adapter emits one progress and one audit event for each accepted Agent Server event, accounting for 1071 * 2 = 2142 normalized server-derived events. Four additional controller events account for the remainder. Every retained server event had an identifier fingerprint; no duplicate or reconnect replay was observed in this artifact. The counts therefore do not indicate double stream consumption."
+  },
+  "event_types": {
+    "counts": {
+      "ActionEvent": 6,
+      "ConversationStateUpdateEvent": 13,
+      "InterruptEvent": 1,
+      "MessageEvent": 1,
+      "ObservationEvent": 6,
+      "StreamingDeltaEvent": 1043,
+      "SystemPromptEvent": 1
+    },
+    "last_100_pattern": "StreamingDeltaEvent and final tool activity followed by paused ConversationStateUpdateEvent and InterruptEvent; no finished, error, or stuck terminal event was retained.",
+    "last_event_type": "ConversationStateUpdateEvent",
+    "last_event_status": "paused",
+    "last_event_id": "RETAINED_AS_FINGERPRINT_ONLY",
+    "raw_event_payloads_retained": false
+  },
+  "execution_metrics": {
+    "model_request_count": "NOT_OBSERVED_HISTORICAL",
+    "model_response_count": "NOT_OBSERVED_HISTORICAL",
+    "model_error_count": 0,
+    "tool_call_count": 6,
+    "tool_success_count": 6,
+    "tool_error_count": 0,
+    "finish_tool_call_count": "NOT_RETAINED_HISTORICAL",
+    "finish_tool_observation_count": "NOT_RETAINED_HISTORICAL",
+    "iteration_count": "NOT_OBSERVED_HISTORICAL",
+    "max_iterations": 20,
+    "stuck_detection_enabled": true,
+    "stuck_detection_triggered": false,
+    "post_test_activity_classification": "UNKNOWN_HISTORICAL_PAYLOADS_NOT_RETAINED"
+  },
+  "terminal_reconciliation": {
+    "v143_terminal_states": ["finished", "error", "stuck"],
+    "v143_running_states": ["idle", "running", "paused", "waiting_for_confirmation", "deleting"],
+    "v143_success_state": "finished",
+    "v143_error_states": ["error", "stuck"],
+    "v143_paused_state": "paused",
+    "v143_interrupted_state": "paused",
+    "finished_signal_before_timeout": "NO",
+    "per_field_finished_event": "NO",
+    "full_state_finished_event": "NO",
+    "rest_finished_poll": "NO",
+    "error_event": "NO",
+    "stuck_event": "NO",
+    "paused_event": "YES_AFTER_TIMEOUT_INTERRUPT",
+    "aiat_mapping_status": "WEBSOCKET_FULL_STATE_AUTHORITATIVE; ERROR/STUCK_PER_FIELD_IMMEDIATE; REST_FINISHED_BOUNDED_FALLBACK",
+    "timeout_terminal_race_present": "NO_EVIDENCE_OF_BUFFERED_TERMINAL_SIGNAL"
+  },
+  "finish_contract": {
+    "finish_tool_required_for_normal_success": true,
+    "finish_tool_default_enabled": true,
+    "materialized_explicit_tools": ["terminal", "file_editor"],
+    "materialized_default_tools": ["finish", "think"],
+    "finish_tool_available": true,
+    "think_tool_available": true,
+    "historical_finish_tool_call_count": "NOT_RETAINED_HISTORICAL",
+    "system_prompt_explicitly_instructs_finish_tool": false,
+    "certification_prompt_completion_signal_clear": false,
+    "compatibility_prompt_clarification": "ADDED_AFTER_HISTORICAL_RUN"
+  },
+  "timeout_reconciliation": {
+    "primary_status_before_timeout": "running",
+    "timeout_interrupt_sent": true,
+    "first_status_after_interrupt": "paused",
+    "primary_paused_status_origin": "AIAT_TIMEOUT_INTERRUPT_LIKELY",
+    "terminal_signal_already_buffered": false,
+    "final_response_endpoint_called": false,
+    "final_response_http_status": null,
+    "final_response_root_cause": "No terminal finished state was observed; final-response retrieval was not eligible."
+  },
+  "postrun": {
+    "worker_result_created": false,
+    "worker_result_block_reason": "NO_SUCCESSFUL_TERMINAL_RESULT",
+    "artifact_created": false,
+    "artifact_block_reason": "ARTIFACT_REGISTRATION_REQUIRES_SUCCESSFUL_TERMINAL_RESULT"
+  },
+  "lifecycle": {
+    "pause_resume": "PASS",
+    "interrupt": "PASS",
+    "timeout": "PASS",
+    "root_cause": "Lifecycle probes are separate from the primary coding conversation; no lifecycle failure was the causal blocker in this run."
+  },
+  "retention": {
+    "raw_event_payloads_retained": false,
+    "raw_tool_arguments_retained": false,
+    "raw_tool_results_retained": false,
+    "raw_model_payloads_retained": false,
+    "raw_prompts_retained": false,
+    "credentials_retained": false,
+    "event_ids_retained": false,
+    "status_tail_retained": true
+  },
+  "independent_blockers": {
+    "security_scanner_blocker": "BLOCKED_SCANNER_COVERAGE",
+    "scanner_gate_independent_of_live_task": true
+  }
+}
