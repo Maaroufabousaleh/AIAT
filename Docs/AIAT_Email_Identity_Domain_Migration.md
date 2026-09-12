@@ -61,6 +61,10 @@ For direct Resend sending, verify `agents.aiat.ca` in the Resend account and
 publish the exact provider-issued SPF, DKIM, return-path, and DMARC records.
 Resend DNS values are account- and region-specific; the repository contains
 names/placeholders only. Do not add a guessed SPF, DKIM, or return-path value.
+After exporting those exact values into the shell (not a committed env file),
+run [`mas/infra/cloudflare/scripts/validate-dns.sh`](../mas/infra/cloudflare/scripts/validate-dns.sh)
+to check public records. The script does not verify or mutate the Cloudflare
+dashboard route.
 
 ## Repository deployment sequence
 
