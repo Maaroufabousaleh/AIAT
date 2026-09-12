@@ -7,8 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 
 from .config import IdentitySettings, get_settings
-from .providers.resend import ResendRelayAdapter
-from .providers.stalwart import StalwartAdapter
+from .providers.factory import build_provider_pair
 from .routes import router
 from .service import IdentityService
 from .store import IdentityStore, InMemoryIdentityStore, PostgresIdentityStore
@@ -23,15 +22,13 @@ def create_app(*, settings: IdentitySettings | None = None, store: IdentityStore
             raise RuntimeError("identity database credentials are required in production")
         else:
             store = InMemoryIdentityStore()
-    stalwart = StalwartAdapter(base_url=settings.stalwart_public_url, api_key=settings.stalwart_api_key, jmap_service_token=settings.stalwart_jmap_service_token, timeout_seconds=settings.request_timeout_seconds)
-    resend = ResendRelayAdapter(
-        api_key=settings.resend_api_key,
-        sending_domain=settings.agent_mail_domain,
-        timeout_seconds=settings.request_timeout_seconds,
-        webhook_signing_secret=settings.resend_webhook_signing_secret,
-        webhook_tolerance_seconds=settings.resend_webhook_tolerance_seconds,
+    inbound_provider, outbound_provider = build_provider_pair(settings)
+    service = IdentityService(
+        settings=settings,
+        store=store,
+        inbound_provider=inbound_provider,
+        outbound_provider=outbound_provider,
     )
-    service = IdentityService(settings=settings, store=store, stalwart=stalwart, resend=resend)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
