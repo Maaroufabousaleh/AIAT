@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 from functools import lru_cache
+from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings
@@ -38,6 +39,17 @@ class IdentitySettings(BaseSettings):
     public_identity_url: str = "https://identity.aiat.ca"
     primary_domain: str = "aiat.ca"
     agent_mail_domain: str = "agents.aiat.ca"
+    # Provider selection is explicit and independent for each direction.  The
+    # defaults describe the v1 topology; Stalwart remains available when the
+    # operator deliberately selects it for a full-mailbox deployment.
+    identity_inbound_provider: str = "cloudflare"
+    identity_outbound_provider: str = "resend"
+    cloudflare_mail_edge_url: str = "http://cloudflare-mail-edge:8787"
+    cloudflare_mail_edge_auth_secret: str = ""
+    cloudflare_mail_retention_days: int = Field(default=7, ge=1, le=90)
+    cloudflare_processed_mail_retention_days: int = Field(default=1, ge=0, le=30)
+    mail_edge_max_message_bytes: int = Field(default=10 * 1024 * 1024, ge=1024, le=25 * 1024 * 1024)
+    human_approval_for_outbound: bool = True
     mail_hostname: str = "mail.aiat.ca"
     stalwart_public_url: str = "https://mail.aiat.ca"
     stalwart_api_key: str = ""
@@ -119,6 +131,14 @@ class IdentitySettings(BaseSettings):
             raise ValueError("mail and identity domains must be DNS names")
         return value
 
+    @field_validator("identity_inbound_provider", "identity_outbound_provider")
+    @classmethod
+    def _normalize_provider_name(cls, value: str) -> str:
+        value = value.strip().lower()
+        if not value:
+            raise ValueError("identity provider name is required")
+        return value
+
     @model_validator(mode="after")
     def _fail_closed_production(self) -> IdentitySettings:
         profile = self.identity_profile.strip().lower()
@@ -138,6 +158,27 @@ class IdentitySettings(BaseSettings):
             raise ValueError("DIRECT_MX_OUTBOUND_ENABLED must remain false")
         if self.default_outbound_enabled:
             raise ValueError("DEFAULT_OUTBOUND_ENABLED must remain false")
+        if self.identity_inbound_provider not in {"cloudflare", "stalwart"}:
+            raise ValueError("IDENTITY_INBOUND_PROVIDER must be cloudflare or stalwart")
+        if self.identity_outbound_provider not in {"resend", "stalwart"}:
+            raise ValueError("IDENTITY_OUTBOUND_PROVIDER must be resend or stalwart")
+        edge_url = self.cloudflare_mail_edge_url.strip()
+        if self.identity_inbound_provider == "cloudflare":
+            parsed_edge_url = urlsplit(edge_url)
+            if (
+                parsed_edge_url.scheme not in {"http", "https"}
+                or not parsed_edge_url.netloc
+                or parsed_edge_url.path not in {"", "/"}
+                or parsed_edge_url.username
+                or parsed_edge_url.password
+                or parsed_edge_url.query
+                or parsed_edge_url.fragment
+            ):
+                raise ValueError("CLOUDFLARE_MAIL_EDGE_URL must be an origin without credentials or query")
+        elif not edge_url:
+            # An unused Cloudflare URL is harmless in the optional Stalwart
+            # profile, but keeping it syntactically empty is confusing.
+            raise ValueError("CLOUDFLARE_MAIL_EDGE_URL must not be empty")
         relay_provider = self.outbound_relay_provider.strip().lower()
         relay_disabled = relay_provider in {"disabled", "none", "off"}
         if relay_disabled:
@@ -160,10 +201,17 @@ class IdentitySettings(BaseSettings):
                 "IDENTITY_DATABASE_PASSWORD": self.identity_database_password or self.identity_database_dsn,
                 "IDENTITY_SERVICE_SECRET": self.identity_service_secret,
                 "IDENTITY_CONTENT_ENCRYPTION_KEY": self.identity_content_encryption_key,
-                "STALWART_API_KEY": self.stalwart_api_key,
-                "STALWART_JMAP_SERVICE_TOKEN": self.stalwart_jmap_service_token,
-                "RESEND_API_KEY": self.resend_api_key,
             }
+            if self.identity_inbound_provider == "cloudflare":
+                required["CLOUDFLARE_MAIL_EDGE_AUTH_SECRET"] = self.cloudflare_mail_edge_auth_secret
+            else:
+                required["STALWART_API_KEY"] = self.stalwart_api_key
+                required["STALWART_JMAP_SERVICE_TOKEN"] = self.stalwart_jmap_service_token
+            if self.identity_outbound_provider == "resend":
+                required["RESEND_API_KEY"] = self.resend_api_key
+                required["RESEND_WEBHOOK_SIGNING_SECRET"] = self.resend_webhook_signing_secret
+            else:
+                required["STALWART_JMAP_SERVICE_TOKEN"] = self.stalwart_jmap_service_token
             missing = [name for name, value in required.items() if not value]
             if missing:
                 raise ValueError("missing required production identity configuration: " + ", ".join(missing))
@@ -191,11 +239,16 @@ class IdentitySettings(BaseSettings):
                 raise ValueError(
                     "IDENTITY_CONTENT_ENCRYPTION_KEY must decode to 32 bytes"
                 )
-            for name, value in {
+            secret_values = {
+                "CLOUDFLARE_MAIL_EDGE_AUTH_SECRET": self.cloudflare_mail_edge_auth_secret,
                 "STALWART_API_KEY": self.stalwart_api_key,
                 "STALWART_JMAP_SERVICE_TOKEN": self.stalwart_jmap_service_token,
                 "RESEND_API_KEY": self.resend_api_key,
-            }.items():
+                "RESEND_WEBHOOK_SIGNING_SECRET": self.resend_webhook_signing_secret,
+            }
+            for name, value in secret_values.items():
+                if not value:
+                    continue
                 if len(value) < 20:
                     raise ValueError(f"{name} is too short for production")
             if not self.client_public_keys:

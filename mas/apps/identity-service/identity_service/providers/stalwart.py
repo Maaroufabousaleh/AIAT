@@ -15,6 +15,7 @@ import anyio
 import httpx
 
 from ..models import redact
+from .base import MailProviderError
 
 logger = logging.getLogger(__name__)
 
@@ -45,16 +46,14 @@ def _worker_permissions() -> dict[str, bool]:
     return {name: True for name in _WORKER_PERMISSION_NAMES}
 
 
-class StalwartAdapterError(RuntimeError):
-    def __init__(self, code: str, message: str, *, transient: bool = False, correlation_id: str | None = None) -> None:
-        super().__init__(message)
-        self.code = code
-        self.transient = transient
-        self.correlation_id = correlation_id
+class StalwartAdapterError(MailProviderError):
+    """Sanitized Stalwart provider failure."""
 
 
 class StalwartAdapter:
     """Timeout-bounded, audited-at-service-layer Stalwart JMAP adapter."""
+
+    provider_name = "stalwart"
 
     def __init__(self, *, base_url: str, api_key: str, jmap_service_token: str = "", timeout_seconds: float = 15.0, client: httpx.AsyncClient | None = None) -> None:
         self.base_url = base_url.rstrip("/")
@@ -463,3 +462,99 @@ class StalwartAdapter:
         if provider_message_id not in (result.get("destroyed") or []):
             raise StalwartAdapterError("STALWART_SUBMISSION_NOT_CANCELLABLE", "Stalwart submission could not be cancelled")
         return {"correlation_id": correlation_id, "result": redact(result)}
+
+    # Provider-neutral lifecycle and outbound aliases.  The legacy JMAP
+    # methods above remain intact for optional full-mailbox deployments and
+    # their conformance fixtures.
+    async def provision_identity(
+        self,
+        address: str,
+        *,
+        identity_id: str,
+        worker_id: str,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        del identity_id, worker_id
+        existing = await self.find_mailbox(address)
+        result = existing or await self.create_mailbox(address, quota_mb=100, idempotency_key=idempotency_key)
+        return {
+            "provider": self.provider_name,
+            "provider_reference": result.get("provider_account_id"),
+            "provider_account_id": result.get("provider_account_id"),
+            "correlation_id": result.get("correlation_id"),
+            "result": redact(result.get("result", {})),
+        }
+
+    async def activate_identity(self, provider_reference: str, *, identity_id: str, address: str) -> dict[str, Any]:
+        del identity_id, address
+        return await self.enable_mailbox(provider_reference)
+
+    async def suspend_identity(self, provider_reference: str, *, identity_id: str, address: str) -> dict[str, Any]:
+        del identity_id, address
+        return await self.disable_mailbox(provider_reference)
+
+    async def retire_identity(self, provider_reference: str, *, identity_id: str, address: str) -> dict[str, Any]:
+        del identity_id, address
+        return await self.archive_mailbox(provider_reference)
+
+    async def acknowledge_event(self, event_id: str) -> dict[str, Any]:
+        # JMAP delivery is already durable in Stalwart; there is no remote
+        # event acknowledgement endpoint.  Returning a deterministic no-op
+        # keeps reconciliation code provider-neutral.
+        return {"provider": self.provider_name, "event_id": event_id, "acknowledged": True}
+
+    async def list_events(self, *, after: int, limit: int) -> dict[str, Any]:
+        del after, limit
+        return {"provider": self.provider_name, "cursor": 0, "next_cursor": 0, "events": []}
+
+    async def fetch_message(self, message_id: str) -> dict[str, Any]:
+        raise StalwartAdapterError(
+            "STALWART_ACCOUNT_REQUIRED",
+            "Stalwart message fetch requires its mailbox account reference",
+        )
+
+    async def verify_delivery(
+        self,
+        provider_reference: str,
+        provider_message_id: str,
+        *,
+        identity_id: str | None = None,
+    ) -> dict[str, Any]:
+        del identity_id
+        return await self.read_message(provider_reference, provider_message_id)
+
+    async def send_message(
+        self,
+        *,
+        sender: str,
+        recipients: list[str],
+        subject: str,
+        body: str,
+        idempotency_key: str,
+        content_type: str = "text/plain",
+        provider_reference: str | None = None,
+    ) -> dict[str, Any]:
+        del content_type
+        if not provider_reference:
+            raise StalwartAdapterError(
+                "STALWART_ACCOUNT_REQUIRED",
+                "Stalwart outbound submission requires its mailbox account reference",
+            )
+        return await self.submit_outbound_message(
+            provider_reference,
+            sender=sender,
+            recipients=recipients,
+            subject=subject,
+            body=body,
+            idempotency_key=idempotency_key,
+        )
+
+    async def get_delivery_status(self, provider_message_id: str, *, provider_reference: str | None = None) -> dict[str, Any]:
+        if not provider_reference:
+            raise StalwartAdapterError("STALWART_ACCOUNT_REQUIRED", "Stalwart delivery status requires its mailbox account reference")
+        return await self.get_outbound_queue_status(provider_reference, provider_message_id)
+
+    async def cancel_message(self, provider_message_id: str, *, provider_reference: str | None = None) -> dict[str, Any]:
+        if not provider_reference:
+            raise StalwartAdapterError("STALWART_ACCOUNT_REQUIRED", "Stalwart cancellation requires its mailbox account reference")
+        return await self.cancel_queued_message(provider_reference, provider_message_id)

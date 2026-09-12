@@ -112,13 +112,15 @@ def _safe_identity(value: dict[str, Any]) -> dict[str, Any]:
         "address": value["address"], "alias": value.get("alias") or value.get("friendly_alias"),
         "state": value["state"], "quota_mb": value.get("quota_mb", 100),
         "outbound_enabled": bool(value.get("outbound_enabled", False)),
+        "inbound_provider": value.get("inbound_provider") or "unknown",
+        "outbound_provider": value.get("outbound_provider") or "unknown",
         "provider_account_id": value.get("provider_account_id"),
         "created_at": value["created_at"], "updated_at": value["updated_at"],
     }).model_dump(mode="json")
 
 
 def _safe_outbound(value: dict[str, Any]) -> dict[str, Any]:
-    allowed = {"id", "worker_id", "identity_id", "sender", "recipients", "recipient_class", "state", "provider_message_id", "provider_correlation_id", "created_at", "updated_at"}
+    allowed = {"id", "worker_id", "identity_id", "sender", "recipients", "recipient_class", "content_type", "state", "provider", "provider_message_id", "provider_correlation_id", "created_at", "updated_at"}
     return redact({key: item for key, item in value.items() if key in allowed})
 
 
@@ -201,10 +203,14 @@ async def record_provider_webhook(body: ProviderWebhookRequest, client: Authenti
 async def receive_resend_provider_webhook(request: Request, service: IdentityService = Depends(_service)) -> dict[str, Any]:
     """Accept a Resend/Svix webhook after raw-body signature verification."""
 
+    webhook_provider = service.resend or service.outbound_provider
+    verify_webhook = getattr(webhook_provider, "verify_configured_webhook_signature", None)
+    if service.outbound.provider_name != "resend" or not callable(verify_webhook):
+        raise HTTPException(404, "Resend webhook endpoint is not enabled for the selected outbound provider")
     raw_body = bytes(request.scope.get("aiat.identity.raw_body", b""))
     if len(raw_body) > 1 * 1024 * 1024:
         raise HTTPException(413, "webhook body exceeds 1 MiB limit")
-    if not service.resend.verify_configured_webhook_signature(raw_body, request.headers):
+    if not verify_webhook(raw_body, request.headers):
         raise HTTPException(401, "invalid provider webhook authentication")
     try:
         payload = json.loads(raw_body.decode("utf-8"))
@@ -364,7 +370,7 @@ async def extract_link(body: MailQueryRequest, client: AuthenticatedClient = Dep
 @router.post("/outbound/request")
 async def outbound_request(body: OutboundRequest, client: AuthenticatedClient = Depends(_signed_client), service: IdentityService = Depends(_service)) -> dict[str, Any]:
     try:
-        request, approval = await service.request_outbound(client, worker_id=body.worker_id, actor_id=body.actor.actor_id, recipients=body.recipients, subject=body.subject, body=body.body, recipient_class=body.recipient_class, idempotency_key=body.idempotency_key)
+        request, approval = await service.request_outbound(client, worker_id=body.worker_id, actor_id=body.actor.actor_id, recipients=body.recipients, subject=body.subject, body=body.body, recipient_class=body.recipient_class, idempotency_key=body.idempotency_key, content_type=body.content_type)
     except PermissionError as exc:
         raise HTTPException(403, str(exc)) from exc
     return {"request": _safe_outbound(request), "approval": redact(approval)}

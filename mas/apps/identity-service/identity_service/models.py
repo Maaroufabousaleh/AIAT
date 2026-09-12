@@ -136,7 +136,7 @@ class OutboundRequest(ApiModel):
     subject: str = Field(min_length=1, max_length=998)
     body: str = Field(min_length=1, max_length=250_000)
     recipient_class: str = Field(min_length=1, max_length=64)
-    content_type: str = "text/plain"
+    content_type: str = Field(default="text/plain", pattern="^text/(plain|html)$")
 
     @field_validator("recipients")
     @classmethod
@@ -239,6 +239,8 @@ class IdentityView(ApiModel):
     state: IdentityState
     quota_mb: int
     outbound_enabled: bool = False
+    inbound_provider: str = "unknown"
+    outbound_provider: str = "unknown"
     provider_account_id: str | None = None
     created_at: datetime
     updated_at: datetime

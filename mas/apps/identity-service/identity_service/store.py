@@ -7,6 +7,8 @@ token, TOTP seed, or recovery code.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -31,11 +33,21 @@ class IdentityStore(Protocol):
     async def upsert_email_domain(self, *, domain: str, state: str, provider_domain_id: str | None, evidence: dict[str, Any], created_by: str) -> dict[str, Any]: ...
     async def provision_identity(
         self, *, company_id: UUID, worker_id: UUID, address: str, alias: str | None,
-        domain: str, idempotency_key: str, quota_mb: int
+        domain: str, idempotency_key: str, quota_mb: int,
+        inbound_provider: str = "cloudflare", outbound_provider: str = "resend",
     ) -> tuple[dict[str, Any], bool]: ...
     async def get_identity(self, worker_id: UUID) -> dict[str, Any] | None: ...
+    async def get_identity_by_address(self, address: str) -> dict[str, Any] | None: ...
     async def set_identity_state(self, worker_id: UUID, state: IdentityState, evidence: dict[str, Any], *, outbox_event_type: str | None = None, outbox_payload: dict[str, Any] | None = None) -> dict[str, Any] | None: ...
     async def set_provider_account(self, worker_id: UUID, provider_account_id: str | None) -> dict[str, Any] | None: ...
+    async def upsert_provider_binding(
+        self, *, identity_id: UUID, direction: str, provider: str,
+        provider_reference: str | None, lifecycle_state: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]: ...
+    async def get_provider_binding(
+        self, *, identity_id: UUID, direction: str, provider: str | None = None
+    ) -> dict[str, Any] | None: ...
     async def record_email_alias(self, *, identity_id: UUID, address: str) -> dict[str, Any]: ...
     async def start_provisioning_job(self, *, identity_id: UUID, company_id: UUID, worker_id: UUID, idempotency_key: str) -> dict[str, Any]: ...
     async def get_provisioning_job(self, idempotency_key: str) -> dict[str, Any] | None: ...
@@ -43,6 +55,17 @@ class IdentityStore(Protocol):
     async def record_mail_event(self, *, identity_id: UUID, provider_message_id: str | None, event_type: str, metadata: dict[str, Any]) -> dict[str, Any]: ...
     async def record_mail_edge_observation(self, observation: MailEdgeObservation) -> dict[str, Any]: ...
     async def record_verification_transaction(self, *, identity_id: UUID, provider_message_id: str, idempotency_key: str, code_hash: str | None, link_hash: str | None, state: str) -> dict[str, Any]: ...
+    async def upsert_inbound_message(
+        self, *, identity_id: UUID, provider: str, provider_event_id: str,
+        provider_message_id: str, envelope_recipient: str, sender: str | None,
+        subject: str, received_at: datetime, raw_object_ref: str,
+        raw_mime: bytes, normalized_message: dict[str, Any],
+    ) -> tuple[dict[str, Any], bool]: ...
+    async def get_inbound_message(self, *, identity_id: UUID, message_id: str) -> dict[str, Any] | None: ...
+    async def list_inbound_messages(self, *, identity_id: UUID, limit: int, query: str | None = None) -> list[dict[str, Any]]: ...
+    async def update_inbound_message(self, *, identity_id: UUID, message_id: str, **values: Any) -> dict[str, Any] | None: ...
+    async def get_inbound_sync_cursor(self, provider: str) -> int: ...
+    async def advance_inbound_sync_cursor(self, provider: str, cursor: int) -> int: ...
     async def create_identity_access_grant(self, *, worker_id: UUID, identity_id: UUID, grant_type: str, issued_by: str) -> dict[str, Any]: ...
     async def has_identity_access_grant(self, *, worker_id: UUID, identity_id: UUID, grant_type: str) -> bool: ...
     async def create_outbox(self, event_type: str, aggregate_type: str, aggregate_id: str, payload: dict[str, Any]) -> dict[str, Any]: ...
@@ -120,10 +143,17 @@ class InMemoryIdentityStore:
         self.domains: dict[str, dict[str, Any]] = {}
         self.identities_by_key: dict[str, UUID] = {}
         self.email_aliases: dict[str, dict[str, Any]] = {}
+        self.provider_bindings: dict[tuple[UUID, str, str], dict[str, Any]] = {}
         self.identity_grants: dict[tuple[UUID, UUID, str], dict[str, Any]] = {}
         self.provisioning_jobs: dict[str, dict[str, Any]] = {}
+        # Compatibility name retained for callers migrating from the old
+        # mailbox-centric table; both names intentionally reference one map.
+        self.email_identity_provisioning_jobs = self.provisioning_jobs
         self.mail_events: dict[tuple[UUID, str | None, str], dict[str, Any]] = {}
         self.mail_edge_observations: dict[tuple[str, str], dict[str, Any]] = {}
+        self.inbound_messages: dict[tuple[UUID, str, str], dict[str, Any]] = {}
+        self.inbound_messages_by_event: dict[tuple[str, str], tuple[UUID, str, str]] = {}
+        self.inbound_sync_cursors: dict[str, int] = {}
         self.verification_transactions: dict[str, dict[str, Any]] = {}
         self.nonces: dict[tuple[str, str], int] = {}
         self.client_registrations: dict[str, dict[str, Any]] = {}
@@ -183,7 +213,7 @@ class InMemoryIdentityStore:
         row.update({"state": state, "provider_domain_id": provider_domain_id or row.get("provider_domain_id"), "verification_evidence": redact(evidence), "updated_at": now})
         return row
 
-    async def provision_identity(self, *, company_id: UUID, worker_id: UUID, address: str, alias: str | None, domain: str, idempotency_key: str, quota_mb: int) -> tuple[dict[str, Any], bool]:
+    async def provision_identity(self, *, company_id: UUID, worker_id: UUID, address: str, alias: str | None, domain: str, idempotency_key: str, quota_mb: int, inbound_provider: str = "cloudflare", outbound_provider: str = "resend") -> tuple[dict[str, Any], bool]:
         existing_id = self.identities_by_key.get(idempotency_key)
         if existing_id is not None:
             return self.identities_by_worker[self.identities_by_key[idempotency_key]], False
@@ -204,6 +234,7 @@ class InMemoryIdentityStore:
             "domain_id": domain_row["id"],
             "address": address, "alias": alias, "state": IdentityState.HIRED_PENDING_IDENTITY,
             "quota_mb": quota_mb, "outbound_enabled": False, "provider_account_id": None,
+            "inbound_provider": inbound_provider, "outbound_provider": outbound_provider,
             "idempotency_key": idempotency_key, "created_at": now, "updated_at": now,
         }
         self.identities_by_worker[worker_id] = row
@@ -212,6 +243,19 @@ class InMemoryIdentityStore:
 
     async def get_identity(self, worker_id: UUID) -> dict[str, Any] | None:
         return self.identities_by_worker.get(worker_id)
+
+    async def get_identity_by_address(self, address: str) -> dict[str, Any] | None:
+        normalized = str(address).strip().casefold()
+        for identity in self.identities_by_worker.values():
+            if str(identity.get("address", "")).casefold() == normalized:
+                return identity
+            if any(
+                str(alias.get("address", "")).casefold() == normalized
+                and alias.get("identity_id") == identity.get("id")
+                for alias in self.email_aliases.values()
+            ):
+                return identity
+        return None
 
     async def set_identity_state(self, worker_id: UUID, state: IdentityState, evidence: dict[str, Any], *, outbox_event_type: str | None = None, outbox_payload: dict[str, Any] | None = None) -> dict[str, Any] | None:
         row = self.identities_by_worker.get(worker_id)
@@ -242,6 +286,35 @@ class InMemoryIdentityStore:
         row["provider_account_id"] = provider_account_id
         row["updated_at"] = _now()
         return row
+
+    async def upsert_provider_binding(
+        self, *, identity_id: UUID, direction: str, provider: str,
+        provider_reference: str | None, lifecycle_state: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        key = (identity_id, direction.upper(), provider.strip().lower())
+        row = self.provider_bindings.get(key)
+        if row is None:
+            row = {"id": uuid4(), "identity_id": identity_id, "direction": key[1], "provider": key[2], "created_at": _now()}
+            self.provider_bindings[key] = row
+        row.update({
+            "provider_reference": provider_reference,
+            "lifecycle_state": lifecycle_state,
+            "metadata": redact(metadata or {}),
+            "updated_at": _now(),
+        })
+        return row
+
+    async def get_provider_binding(
+        self, *, identity_id: UUID, direction: str, provider: str | None = None
+    ) -> dict[str, Any] | None:
+        direction = direction.upper()
+        if provider is not None:
+            return self.provider_bindings.get((identity_id, direction, provider.strip().lower()))
+        for (row_identity, row_direction, _provider), row in self.provider_bindings.items():
+            if row_identity == identity_id and row_direction == direction:
+                return row
+        return None
 
     async def record_email_alias(self, *, identity_id: UUID, address: str) -> dict[str, Any]:
         row = self.email_aliases.get(address)
@@ -311,6 +384,81 @@ class InMemoryIdentityStore:
             row["link_hash"] = link_hash
         row.update({"state": state, "updated_at": _now()})
         return row
+
+    async def upsert_inbound_message(
+        self, *, identity_id: UUID, provider: str, provider_event_id: str,
+        provider_message_id: str, envelope_recipient: str, sender: str | None,
+        subject: str, received_at: datetime, raw_object_ref: str,
+        raw_mime: bytes, normalized_message: dict[str, Any],
+    ) -> tuple[dict[str, Any], bool]:
+        provider = provider.strip().lower()
+        event_key = (provider, provider_event_id)
+        existing_key = self.inbound_messages_by_event.get(event_key)
+        if existing_key is not None:
+            existing = self.inbound_messages[existing_key]
+            if existing["identity_id"] != identity_id or existing["provider_message_id"] != provider_message_id:
+                raise ValueError("inbound provider event was reused for another identity")
+            return existing, False
+        key = (identity_id, provider, provider_message_id)
+        existing = self.inbound_messages.get(key)
+        if existing is not None:
+            self.inbound_messages_by_event[event_key] = key
+            return existing, False
+        row = {
+            "id": uuid4(), "identity_id": identity_id, "provider": provider,
+            "provider_event_id": provider_event_id, "provider_message_id": provider_message_id,
+            "envelope_recipient": envelope_recipient, "sender": sender,
+            "subject": subject, "received_at": received_at,
+            "raw_object_ref": raw_object_ref, "raw_mime": bytes(raw_mime),
+            "normalized_message": normalized_message, "processed_at": None,
+            "deleted_at": None, "created_at": _now(), "updated_at": _now(),
+        }
+        self.inbound_messages[key] = row
+        self.inbound_messages_by_event[event_key] = key
+        return row, True
+
+    async def get_inbound_message(self, *, identity_id: UUID, message_id: str) -> dict[str, Any] | None:
+        for (row_identity, _provider, provider_message_id), row in self.inbound_messages.items():
+            if row_identity == identity_id and provider_message_id == message_id and row.get("deleted_at") is None:
+                return row
+        return None
+
+    async def list_inbound_messages(self, *, identity_id: UUID, limit: int, query: str | None = None) -> list[dict[str, Any]]:
+        needle = str(query or "").strip().casefold()
+        rows = []
+        for (row_identity, _provider, _message_id), row in self.inbound_messages.items():
+            if row_identity != identity_id or row.get("deleted_at") is not None:
+                continue
+            haystack = " ".join(str(row.get(field) or "") for field in ("sender", "subject", "envelope_recipient")).casefold()
+            if needle and needle not in haystack:
+                continue
+            rows.append(row)
+        rows.sort(key=lambda row: row.get("received_at") or datetime.min.replace(tzinfo=UTC), reverse=True)
+        return rows[:limit]
+
+    async def update_inbound_message(self, *, identity_id: UUID, message_id: str, **values: Any) -> dict[str, Any] | None:
+        row = next(
+            (
+                item
+                for (row_identity, _provider, row_message_id), item in self.inbound_messages.items()
+                if row_identity == identity_id and row_message_id == message_id
+            ),
+            None,
+        )
+        if row is None:
+            return None
+        allowed = {key: value for key, value in values.items() if key in {"processed_at", "deleted_at"}}
+        row.update(allowed)
+        row["updated_at"] = _now()
+        return row
+
+    async def get_inbound_sync_cursor(self, provider: str) -> int:
+        return int(self.inbound_sync_cursors.get(provider.strip().lower(), 0))
+
+    async def advance_inbound_sync_cursor(self, provider: str, cursor: int) -> int:
+        key = provider.strip().lower()
+        self.inbound_sync_cursors[key] = max(int(self.inbound_sync_cursors.get(key, 0)), int(cursor))
+        return self.inbound_sync_cursors[key]
 
     async def create_identity_access_grant(self, *, worker_id: UUID, identity_id: UUID, grant_type: str, issued_by: str) -> dict[str, Any]:
         key = (worker_id, identity_id, grant_type)
@@ -661,6 +809,11 @@ class PostgresIdentityStore(InMemoryIdentityStore):
             row = result.mappings().first()
             return dict(row) if row else None
 
+    async def _fetchall(self, statement: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+        async with self.engine.begin() as conn:
+            result = await conn.execute(sa.text(statement), params)
+            return [dict(row) for row in result.mappings().all()]
+
     async def consume_client_nonce(self, client_id: str, nonce: str, expires_at: int) -> bool:
         async with self.engine.begin() as conn:
             await conn.execute(sa.text("DELETE FROM identity_client_nonces WHERE expires_at <= now()"))
@@ -709,7 +862,136 @@ class PostgresIdentityStore(InMemoryIdentityStore):
         assert row is not None
         return row
 
-    async def provision_identity(self, *, company_id: UUID, worker_id: UUID, address: str, alias: str | None, domain: str, idempotency_key: str, quota_mb: int) -> tuple[dict[str, Any], bool]:
+    def _encrypt_inbound_content(self, *, raw_mime: bytes, normalized_message: dict[str, Any]) -> str:
+        payload = {
+            "raw_mime_base64": base64.b64encode(raw_mime).decode("ascii"),
+            "message": normalized_message,
+        }
+        return self._encrypt_body(json.dumps(payload, separators=(",", ":")))
+
+    def _hydrate_inbound(self, row: dict[str, Any] | None) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        hydrated = dict(row)
+        content_ref = hydrated.pop("content_ref", None)
+        if content_ref:
+            try:
+                content = json.loads(self._decrypt_body(str(content_ref)))
+                hydrated["raw_mime"] = base64.b64decode(str(content.get("raw_mime_base64", "")), validate=True)
+                hydrated["normalized_message"] = content.get("message") if isinstance(content.get("message"), dict) else {}
+            except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                raise RuntimeError("identity inbound content could not be decrypted") from exc
+        else:
+            hydrated["raw_mime"] = b""
+            hydrated["normalized_message"] = {}
+        return hydrated
+
+    async def upsert_inbound_message(
+        self, *, identity_id: UUID, provider: str, provider_event_id: str,
+        provider_message_id: str, envelope_recipient: str, sender: str | None,
+        subject: str, received_at: datetime, raw_object_ref: str,
+        raw_mime: bytes, normalized_message: dict[str, Any],
+    ) -> tuple[dict[str, Any], bool]:
+        provider = provider.strip().lower()
+        existing_event = await self._fetchone(
+            "SELECT * FROM email_inbound_messages WHERE provider = :provider AND provider_event_id = :provider_event_id",
+            {"provider": provider, "provider_event_id": provider_event_id},
+        )
+        if existing_event is not None:
+            if str(existing_event.get("identity_id")) != str(identity_id) or str(existing_event.get("provider_message_id")) != provider_message_id:
+                raise ValueError("inbound provider event was reused for another identity")
+            return self._hydrate_inbound(existing_event) or existing_event, False
+        encrypted = self._encrypt_inbound_content(raw_mime=raw_mime, normalized_message=normalized_message)
+        content_hash = hashlib.sha256(raw_mime).hexdigest()
+        row = await self._fetchone(
+            """INSERT INTO email_inbound_messages
+                 (id, identity_id, provider, provider_event_id, provider_message_id,
+                  envelope_recipient, sender, subject, received_at, raw_object_ref,
+                  content_ref, content_hash)
+               VALUES (:id, :identity_id, :provider, :provider_event_id,
+                       :provider_message_id, :envelope_recipient, :sender, :subject,
+                       :received_at, :raw_object_ref, :content_ref, :content_hash)
+               ON CONFLICT (identity_id, provider, provider_message_id) DO NOTHING
+               RETURNING *""",
+            {
+                "id": uuid4(), "identity_id": identity_id, "provider": provider,
+                "provider_event_id": provider_event_id,
+                "provider_message_id": provider_message_id,
+                "envelope_recipient": envelope_recipient, "sender": sender,
+                "subject": subject, "received_at": received_at,
+                "raw_object_ref": raw_object_ref, "content_ref": encrypted,
+                "content_hash": content_hash,
+            },
+        )
+        if row is not None:
+            return self._hydrate_inbound(row) or row, True
+        existing = await self._fetchone(
+            """SELECT * FROM email_inbound_messages
+                WHERE identity_id = :identity_id AND provider = :provider
+                  AND provider_message_id = :provider_message_id""",
+            {"identity_id": identity_id, "provider": provider, "provider_message_id": provider_message_id},
+        )
+        if existing is None:
+            raise RuntimeError("inbound message idempotency lookup failed")
+        return self._hydrate_inbound(existing) or existing, False
+
+    async def get_inbound_message(self, *, identity_id: UUID, message_id: str) -> dict[str, Any] | None:
+        return self._hydrate_inbound(await self._fetchone(
+            """SELECT * FROM email_inbound_messages
+                WHERE identity_id = :identity_id AND provider_message_id = :message_id
+                  AND deleted_at IS NULL""",
+            {"identity_id": identity_id, "message_id": message_id},
+        ))
+
+    async def list_inbound_messages(self, *, identity_id: UUID, limit: int, query: str | None = None) -> list[dict[str, Any]]:
+        rows = await self._fetchall(
+            """SELECT * FROM email_inbound_messages
+                WHERE identity_id = :identity_id AND deleted_at IS NULL
+                  AND (:query = '' OR lower(coalesce(sender, '') || ' ' || coalesce(subject, '') || ' ' || envelope_recipient) LIKE :like_query)
+                ORDER BY received_at DESC LIMIT :limit""",
+            {"identity_id": identity_id, "query": str(query or "").strip().lower(), "like_query": f"%{str(query or '').strip().lower()}%", "limit": limit},
+        )
+        hydrated_rows: list[dict[str, Any]] = []
+        for row in rows:
+            hydrated = self._hydrate_inbound(row)
+            if hydrated is not None:
+                hydrated_rows.append(hydrated)
+        return hydrated_rows
+
+    async def update_inbound_message(self, *, identity_id: UUID, message_id: str, **values: Any) -> dict[str, Any] | None:
+        allowed = {key: value for key, value in values.items() if key in {"processed_at", "deleted_at"}}
+        if not allowed:
+            return await self.get_inbound_message(identity_id=identity_id, message_id=message_id)
+        assignments = [f"{key} = :{key}" for key in allowed]
+        row = await self._fetchone(
+            f"""UPDATE email_inbound_messages SET {', '.join(assignments)}, updated_at = now()
+                WHERE identity_id = :identity_id AND provider_message_id = :message_id
+                RETURNING *""",
+            {"identity_id": identity_id, "message_id": message_id, **allowed},
+        )
+        return self._hydrate_inbound(row)
+
+    async def get_inbound_sync_cursor(self, provider: str) -> int:
+        row = await self._fetchone(
+            "SELECT last_sequence FROM email_inbound_sync_cursors WHERE provider = :provider",
+            {"provider": provider.strip().lower()},
+        )
+        return int(row["last_sequence"]) if row else 0
+
+    async def advance_inbound_sync_cursor(self, provider: str, cursor: int) -> int:
+        row = await self._fetchone(
+            """INSERT INTO email_inbound_sync_cursors (id, provider, last_sequence)
+               VALUES (:id, :provider, :cursor)
+               ON CONFLICT (provider) DO UPDATE SET
+                 last_sequence = GREATEST(email_inbound_sync_cursors.last_sequence, EXCLUDED.last_sequence),
+                 updated_at = now()
+               RETURNING last_sequence""",
+            {"id": uuid4(), "provider": provider.strip().lower(), "cursor": cursor},
+        )
+        assert row is not None
+        return int(row["last_sequence"])
+
+    async def provision_identity(self, *, company_id: UUID, worker_id: UUID, address: str, alias: str | None, domain: str, idempotency_key: str, quota_mb: int, inbound_provider: str = "cloudflare", outbound_provider: str = "resend") -> tuple[dict[str, Any], bool]:
         row = await self._fetchone(
             """WITH selected_domain AS (
                  INSERT INTO email_domains
@@ -719,15 +1001,18 @@ class PostgresIdentityStore(InMemoryIdentityStore):
                  RETURNING id
                )
                INSERT INTO agent_email_identities
-                 (id, company_id, worker_id, domain_id, address, friendly_alias, state, quota_mb, idempotency_key)
+                 (id, company_id, worker_id, domain_id, address, friendly_alias, state, quota_mb,
+                  inbound_provider, outbound_provider, idempotency_key)
                SELECT :id, :company_id, :worker_id, selected_domain.id, :address, :alias,
-                      'HIRED_PENDING_IDENTITY', :quota_mb, :idempotency_key
+                      'HIRED_PENDING_IDENTITY', :quota_mb, :inbound_provider, :outbound_provider,
+                      :idempotency_key
                FROM selected_domain
                ON CONFLICT (idempotency_key) DO NOTHING
                RETURNING *""",
             {"id": uuid4(), "domain_id": uuid4(), "domain": domain,
              "company_id": company_id, "worker_id": worker_id,
              "address": address, "alias": alias, "quota_mb": quota_mb,
+             "inbound_provider": inbound_provider, "outbound_provider": outbound_provider,
              "idempotency_key": idempotency_key},
         )
         if row is not None:
@@ -742,6 +1027,17 @@ class PostgresIdentityStore(InMemoryIdentityStore):
 
     async def get_identity(self, worker_id: UUID) -> dict[str, Any] | None:
         return await self._fetchone("SELECT * FROM agent_email_identities WHERE worker_id = :worker_id", {"worker_id": worker_id})
+
+    async def get_identity_by_address(self, address: str) -> dict[str, Any] | None:
+        return await self._fetchone(
+            """SELECT i.* FROM agent_email_identities i
+               LEFT JOIN email_aliases a ON a.identity_id = i.id AND a.state = 'ACTIVE'
+               WHERE lower(i.address) = lower(:address)
+                  OR lower(a.address) = lower(:address)
+               ORDER BY CASE WHEN lower(i.address) = lower(:address) THEN 0 ELSE 1 END
+               LIMIT 1""",
+            {"address": address},
+        )
 
     async def set_identity_state(self, worker_id: UUID, state: IdentityState, evidence: dict[str, Any], *, outbox_event_type: str | None = None, outbox_payload: dict[str, Any] | None = None) -> dict[str, Any] | None:
         async with self.engine.begin() as conn:
@@ -772,6 +1068,50 @@ class PostgresIdentityStore(InMemoryIdentityStore):
     async def set_provider_account(self, worker_id: UUID, provider_account_id: str | None) -> dict[str, Any] | None:
         return await self._fetchone("UPDATE agent_email_identities SET provider_account_id = :provider_account_id, updated_at = now() WHERE worker_id = :worker_id RETURNING *", {"worker_id": worker_id, "provider_account_id": provider_account_id})
 
+    async def upsert_provider_binding(
+        self, *, identity_id: UUID, direction: str, provider: str,
+        provider_reference: str | None, lifecycle_state: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        row = await self._fetchone(
+            """INSERT INTO email_provider_bindings
+                 (id, identity_id, direction, provider, provider_reference,
+                  lifecycle_state, metadata_json)
+               VALUES (:id, :identity_id, :direction, :provider,
+                       :provider_reference, :lifecycle_state, CAST(:metadata AS jsonb))
+               ON CONFLICT (identity_id, direction, provider) DO UPDATE SET
+                 provider_reference = EXCLUDED.provider_reference,
+                 lifecycle_state = EXCLUDED.lifecycle_state,
+                 metadata_json = EXCLUDED.metadata_json,
+                 updated_at = now()
+               RETURNING *""",
+            {
+                "id": uuid4(), "identity_id": identity_id,
+                "direction": direction.upper(), "provider": provider.strip().lower(),
+                "provider_reference": provider_reference,
+                "lifecycle_state": lifecycle_state,
+                "metadata": json.dumps(redact(metadata or {})),
+            },
+        )
+        assert row is not None
+        return row
+
+    async def get_provider_binding(
+        self, *, identity_id: UUID, direction: str, provider: str | None = None
+    ) -> dict[str, Any] | None:
+        provider_clause = "AND provider = :provider" if provider is not None else ""
+        return await self._fetchone(
+            f"""SELECT * FROM email_provider_bindings
+                WHERE identity_id = :identity_id AND direction = :direction
+                  {provider_clause}
+                ORDER BY updated_at DESC LIMIT 1""",
+            {
+                "identity_id": identity_id,
+                "direction": direction.upper(),
+                "provider": provider.strip().lower() if provider is not None else None,
+            },
+        )
+
     async def record_email_alias(self, *, identity_id: UUID, address: str) -> dict[str, Any]:
         row = await self._fetchone(
             """INSERT INTO email_aliases (id, identity_id, address, state)
@@ -788,12 +1128,12 @@ class PostgresIdentityStore(InMemoryIdentityStore):
 
     async def start_provisioning_job(self, *, identity_id: UUID, company_id: UUID, worker_id: UUID, idempotency_key: str) -> dict[str, Any]:
         row = await self._fetchone(
-            """INSERT INTO mailbox_provisioning_jobs
+            """INSERT INTO email_identity_provisioning_jobs
                  (id, identity_id, company_id, worker_id, idempotency_key, state, attempt_count)
                VALUES (:id, :identity_id, :company_id, :worker_id, :idempotency_key, 'RUNNING', 1)
                ON CONFLICT (idempotency_key) DO UPDATE SET
                  identity_id = EXCLUDED.identity_id, state = 'RUNNING',
-                 attempt_count = mailbox_provisioning_jobs.attempt_count + 1,
+                 attempt_count = email_identity_provisioning_jobs.attempt_count + 1,
                  provider_correlation_id = NULL, updated_at = now()
                RETURNING *""",
             {"id": uuid4(), "identity_id": identity_id, "company_id": company_id,
@@ -806,13 +1146,13 @@ class PostgresIdentityStore(InMemoryIdentityStore):
         self, idempotency_key: str
     ) -> dict[str, Any] | None:
         return await self._fetchone(
-            "SELECT * FROM mailbox_provisioning_jobs WHERE idempotency_key = :key",
+            "SELECT * FROM email_identity_provisioning_jobs WHERE idempotency_key = :key",
             {"key": idempotency_key},
         )
 
     async def finish_provisioning_job(self, *, idempotency_key: str, state: str, provider_correlation_id: str | None, evidence: dict[str, Any]) -> dict[str, Any] | None:
         return await self._fetchone(
-            """UPDATE mailbox_provisioning_jobs SET state = :state,
+            """UPDATE email_identity_provisioning_jobs SET state = :state,
                  provider_correlation_id = :provider_correlation_id,
                  evidence = CAST(:evidence AS jsonb), updated_at = now()
                WHERE idempotency_key = :idempotency_key RETURNING *""",
@@ -1041,10 +1381,10 @@ class PostgresIdentityStore(InMemoryIdentityStore):
         encrypted_content = self._encrypt_body(body)
         row = await self._fetchone(
             """INSERT INTO outbound_mail_requests
-                 (id, identity_id, worker_id, sender, recipients_json, recipient_class, subject, content_ref, content_hash, state, idempotency_key)
-               VALUES (:id, :identity_id, :worker_id, :sender, CAST(:recipients AS jsonb), :recipient_class, :subject, :content_ref, :content_hash, 'PENDING_APPROVAL', :idempotency_key)
+                 (id, identity_id, worker_id, sender, recipients_json, recipient_class, subject, content_type, content_ref, content_hash, state, idempotency_key)
+               VALUES (:id, :identity_id, :worker_id, :sender, CAST(:recipients AS jsonb), :recipient_class, :subject, :content_type, :content_ref, :content_hash, 'PENDING_APPROVAL', :idempotency_key)
                ON CONFLICT (idempotency_key) DO NOTHING RETURNING *""",
-            {"id": uuid4(), "identity_id": kwargs["identity_id"], "worker_id": kwargs["worker_id"], "sender": kwargs["sender"], "recipients": self._json(kwargs["recipients"]), "recipient_class": kwargs["recipient_class"], "subject": kwargs["subject"], "content_ref": encrypted_content, "content_hash": hashlib.sha256(body.encode()).hexdigest(), "idempotency_key": kwargs["idempotency_key"]},
+            {"id": uuid4(), "identity_id": kwargs["identity_id"], "worker_id": kwargs["worker_id"], "sender": kwargs["sender"], "recipients": self._json(kwargs["recipients"]), "recipient_class": kwargs["recipient_class"], "subject": kwargs["subject"], "content_type": kwargs.get("content_type", "text/plain"), "content_ref": encrypted_content, "content_hash": hashlib.sha256(body.encode()).hexdigest(), "idempotency_key": kwargs["idempotency_key"]},
         )
         if row is not None:
             row["recipients"] = row.pop("recipients_json", [])
@@ -1318,7 +1658,7 @@ class PostgresIdentityStore(InMemoryIdentityStore):
         queries = {
             "identities": "SELECT * FROM agent_email_identities ORDER BY updated_at DESC LIMIT :limit",
             "mailboxes": """SELECT i.*, COALESCE((SELECT jsonb_agg(a.address ORDER BY a.address) FROM email_aliases a WHERE a.identity_id = i.id AND a.state = 'ACTIVE'), '[]'::jsonb) AS aliases FROM agent_email_identities i ORDER BY i.updated_at DESC LIMIT :limit""",
-            "outbound-mail": """SELECT r.id, r.worker_id, r.identity_id, r.sender, r.recipients_json, r.recipient_class, r.subject, r.state, r.provider_message_id, r.provider_correlation_id, a.state AS approval_state, r.created_at, r.updated_at FROM outbound_mail_requests r LEFT JOIN LATERAL (SELECT state FROM identity_approval_requests WHERE target_id = r.id ORDER BY created_at DESC LIMIT 1) a ON true ORDER BY r.updated_at DESC LIMIT :limit""",
+            "outbound-mail": """SELECT r.id, r.worker_id, r.identity_id, r.sender, r.recipients_json, r.recipient_class, r.subject, r.content_type, i.outbound_provider AS provider, r.state, r.provider_message_id, r.provider_correlation_id, a.state AS approval_state, r.created_at, r.updated_at FROM outbound_mail_requests r JOIN agent_email_identities i ON i.id = r.identity_id LEFT JOIN LATERAL (SELECT state FROM identity_approval_requests WHERE target_id = r.id ORDER BY created_at DESC LIMIT 1) a ON true ORDER BY r.updated_at DESC LIMIT :limit""",
             "external-accounts": "SELECT * FROM external_accounts ORDER BY updated_at DESC LIMIT :limit",
             "auth-sessions": "SELECT id, worker_id, external_account_id, service, state, lease_version, created_at, updated_at FROM browser_auth_sessions ORDER BY updated_at DESC LIMIT :limit",
             "identity-approvals": "SELECT * FROM identity_approval_requests ORDER BY created_at DESC LIMIT :limit",
