@@ -1,0 +1,11 @@
+{
+  email {$ACME_EMAIL}
+}
+
+http://{$IDENTITY_HOSTNAME} {
+  redir https://{host}{uri} permanent
+}
+
+{$IDENTITY_HOSTNAME} {
+  reverse_proxy identity-service:8010
+}

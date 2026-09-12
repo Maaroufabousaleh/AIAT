@@ -1,14 +1,19 @@
-# AIAT mail edge
+# AIAT optional Stalwart mail edge
 
-This is the provider-neutral production mail and identity deployment bundle
-for a self-hosted AIAT machine. It exposes only inbound SMTP (`25`) and Caddy
-HTTPS (`80/443`).
+This is the optional full-mailbox deployment bundle for a self-hosted AIAT
+machine. It is not the default v1 production path; use
+[`../cloudflare/README.md`](../cloudflare/README.md) for the default Cloudflare
+Email Routing + Worker/D1/R2 inbound and direct Resend API outbound topology.
+This profile is selected explicitly with `IDENTITY_INBOUND_PROVIDER=stalwart`
+and `IDENTITY_OUTBOUND_PROVIDER=stalwart`.
+
+When selected, it exposes only inbound SMTP (`25`) and Caddy HTTPS (`80/443`).
 Postgres, the Stalwart management API, and identity-service do not publish
 ports. They communicate on `mail_private`; `mail_egress` permits only outbound
 ACME, Resend, and provider API traffic and does not publish an administration
 surface.
 
-This bundle is the separate `mail-production` profile. The loopback-only
+This bundle is the separate optional `mail-production` profile. The loopback-only
 `mail-local` development profile remains in
 `infra/compose/docker-compose.stalwart-local.yml` with the independent
 `agents.aiat.local` namespace and Postgres/Stalwart volumes. Do not combine the

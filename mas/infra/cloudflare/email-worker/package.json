@@ -1,0 +1,19 @@
+{
+  "name": "@aiat/cloudflare-email-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --config ./vitest.config.ts",
+    "d1:migrate:local": "wrangler d1 migrations apply aiat-mail-edge --local",
+    "d1:migrate:remote": "wrangler d1 migrations apply aiat-mail-edge --remote",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260911.1",
+    "typescript": "5.8.3",
+    "vitest": "3.2.4",
+    "wrangler": "4.131.1"
+  }
+}

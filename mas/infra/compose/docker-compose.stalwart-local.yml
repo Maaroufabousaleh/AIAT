@@ -117,6 +117,8 @@ services:
       IDENTITY_CLIENT_SCOPES_JSON: '${IDENTITY_CLIENT_SCOPES_JSON:?IDENTITY_CLIENT_SCOPES_JSON is required in .env.stalwart-local}'
       STALWART_API_KEY: "${STALWART_API_KEY:?STALWART_API_KEY is required in .env.stalwart-local}"
       STALWART_JMAP_SERVICE_TOKEN: "${STALWART_JMAP_SERVICE_TOKEN:?STALWART_JMAP_SERVICE_TOKEN is required in .env.stalwart-local}"
+      IDENTITY_INBOUND_PROVIDER: stalwart
+      IDENTITY_OUTBOUND_PROVIDER: stalwart
       PRIMARY_DOMAIN: "${PRIMARY_DOMAIN:-aiat.local}"
       AGENT_MAIL_DOMAIN: "${AGENT_MAIL_DOMAIN:-agents.aiat.local}"
       MAIL_HOSTNAME: "${MAIL_HOSTNAME:-mail.localhost}"
