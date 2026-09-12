@@ -22,6 +22,7 @@ def _production_cloudflare_settings() -> IdentitySettings:
         identity_client_public_keys_json=json.dumps({"operator": base64.b64encode(b"p" * 32).decode()}),
         identity_client_scopes_json=json.dumps({"operator": ["identity:admin"]}),
         cloudflare_mail_edge_auth_secret="c" * 24,
+        cloudflare_mail_edge_url="https://mail-edge.aiat.ca",
         resend_api_key="r" * 24,
         resend_webhook_signing_secret="w" * 24,
         stalwart_api_key="",
@@ -37,6 +38,12 @@ def test_cloudflare_default_does_not_construct_or_require_stalwart() -> None:
     assert isinstance(outbound, ResendRelayAdapter)
     assert settings.stalwart_api_key == ""
     assert settings.stalwart_jmap_service_token == ""
+
+
+def test_production_cloudflare_custom_domain_origin_is_accepted() -> None:
+    settings = _production_cloudflare_settings()
+
+    assert settings.cloudflare_mail_edge_url == "https://mail-edge.aiat.ca"
 
 
 def test_stalwart_remains_selectable_as_an_explicit_profile() -> None:

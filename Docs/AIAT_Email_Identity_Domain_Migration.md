@@ -46,6 +46,22 @@ Do not guess or commit them. Configure the exact route:
 *@agents.aiat.ca -> the deployed AIAT mail Worker
 ```
 
+The Worker HTTP synchronization API is a separate HTTPS Custom Domain at
+`https://mail-edge.aiat.ca`. It is declared in
+`mas/infra/cloudflare/email-worker/wrangler.toml` as:
+
+```toml
+[[routes]]
+pattern = "mail-edge.aiat.ca"
+custom_domain = true
+```
+
+Keep `workers_dev = false`; do not substitute a `workers.dev` URL or a
+traditional `mail-edge.aiat.ca/*` route. Set the production identity-service
+value to `CLOUDFLARE_MAIL_EDGE_URL=https://mail-edge.aiat.ca`. The subsequent
+operator-owned Worker deployment creates/attaches this Custom Domain and its
+Cloudflare-managed certificate.
+
 The Worker registry, not a wildcard route, authorizes individual AIAT
 recipients. An unknown, suspended, retired, malformed, or oversized recipient
 is rejected before message persistence. The default Worker stores raw MIME in
@@ -92,8 +108,8 @@ For the operator-owned deployment, in order:
    `f52e0f58-d4b1-443e-9e30-c6b1784608f2`) and apply the reviewed D1 migration
    remotely. Do not create or configure an R2 bucket for the default profile.
 2. Store one high-entropy `MAIL_EDGE_AUTH_SECRET` in the Worker secret store,
-   deploy the Worker, and record its HTTPS origin in
-   `CLOUDFLARE_MAIL_EDGE_URL`. Inject the same value into
+   deploy the Worker, and set
+   `CLOUDFLARE_MAIL_EDGE_URL=https://mail-edge.aiat.ca`. Inject the same value into
    `CLOUDFLARE_MAIL_EDGE_AUTH_SECRET` for identity-service; do not expose a
    Cloudflare account token to AIAT.
 3. Configure the exact `*@agents.aiat.ca` Email Routing route to the Worker.

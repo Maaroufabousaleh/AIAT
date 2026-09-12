@@ -107,6 +107,24 @@ database_name = "aiat-mail-edge"
 database_id   = "f52e0f58-d4b1-443e-9e30-c6b1784608f2"
 ```
 
+The default `wrangler.toml` also declares exactly one HTTPS Custom Domain for
+the Worker:
+
+```toml
+[[routes]]
+pattern = "mail-edge.aiat.ca"
+custom_domain = true
+```
+
+The Worker is the origin for `https://mail-edge.aiat.ca`. `workers_dev` stays
+false, and the deployment does not use a traditional `mail-edge.aiat.ca/*`
+route or a `workers.dev` hostname. The production identity-service environment
+must use:
+
+```text
+CLOUDFLARE_MAIL_EDGE_URL=https://mail-edge.aiat.ca
+```
+
 The default `wrangler.toml` has no `r2_buckets` binding. After local checks
 pass, the operator-owned default sequence is:
 
@@ -120,8 +138,10 @@ npm run deploy
 
 This path does not create or require an R2 bucket and does not require R2
 billing activation. It still requires the operator's authenticated Wrangler
-session, the existing D1 database, and the Worker secret. Do not enable Email
-Routing or mutate DNS until the deployment is deliberately reviewed.
+session, the existing D1 database, and the Worker secret. The Custom Domain's
+DNS and certificate are Cloudflare deployment effects; do not deploy, enable
+Email Routing, or otherwise mutate DNS until the operator deliberately reviews
+that boundary.
 
 ## Optional R2 profile
 

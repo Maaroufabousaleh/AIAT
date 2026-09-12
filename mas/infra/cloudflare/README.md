@@ -11,6 +11,12 @@ explicitly optional Worker profile and is not needed for v1 deployment or
 local development. See [`email-worker/README.md`](email-worker/README.md) for
 the chunking, limits, recovery, and optional-profile details.
 
+The default Worker HTTPS origin is the single Custom Domain
+`https://mail-edge.aiat.ca`. It is declared in `email-worker/wrangler.toml`
+with `custom_domain = true`; the production identity-service value is
+`CLOUDFLARE_MAIL_EDGE_URL=https://mail-edge.aiat.ca`. The default deployment
+does not use `workers.dev` or a traditional `mail-edge.aiat.ca/*` route.
+
 The Compose bundle here runs AIAT Postgres, migrations, identity-service, and a
 TLS ingress for `identity.aiat.ca`. It does not run Stalwart and does not give
 the identity-service a Cloudflare account token. The runtime receives only the
@@ -65,8 +71,8 @@ optional `env.r2` profile and its bucket command are documented separately in
 1. The production D1 database `aiat-mail-edge` already exists. Review the
    checked-in database ID in `email-worker/wrangler.toml` and apply the D1
    migration remotely; no R2 bucket is required.
-2. Set the Worker secret `MAIL_EDGE_AUTH_SECRET`, deploy the Worker, and record
-   its HTTPS origin in `CLOUDFLARE_MAIL_EDGE_URL`.
+2. Set the Worker secret `MAIL_EDGE_AUTH_SECRET`, deploy the Worker, and set
+   `CLOUDFLARE_MAIL_EDGE_URL=https://mail-edge.aiat.ca` for identity-service.
 3. Configure Cloudflare Email Routing for the exact `*@agents.aiat.ca` route
    to the deployed Worker. The Worker itself rejects recipients absent from
    the AIAT registry.
