@@ -333,8 +333,9 @@ external client-language SDK compatibility yet.
   ambiguous-outage reconciliation hold, and secret-safe output pass without
   an external relay call; live send/receive/bounce/outage/restore evidence
   remains separate.
-- [x] Add payload-free provider-specific mocked conformance for the real Stalwart
-  and Resend adapters through `scripts/check_identity_provider_conformance.py`.
+- [x] Add payload-free provider-specific mocked conformance for the real
+  Cloudflare, Resend, and optional Stalwart adapters through
+  `scripts/check_identity_provider_conformance.py`.
   The checker covers passwordless mailbox provisioning/reconciliation, separate
   mail-service authentication, submission/cancellation, relay-domain validation,
   webhook normalization, and transient/permanent failure classification without

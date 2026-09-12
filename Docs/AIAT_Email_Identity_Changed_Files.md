@@ -1,10 +1,14 @@
 # AIAT Email Identity: Changed File Inventory
 
 This is the exhaustive repository-side file inventory for the email identity
-implementation as handed off on 2026-07-23. It excludes pre-existing,
+implementation as handed off on 2026-09-11. It excludes pre-existing,
 inaccessible `mas/.tmp-*` test directories and unrelated root-level files.
 
 - `Docs/AIAT_Email_Identity_Changed_Files.md`
+- `Docs/AIAT_Email_Identity_Provider_Architecture.md`
+- `Docs/current/FEATURE_IDENTITY_MAIL_AND_CREDENTIALS.md`
+- `Docs/current/P0_RELEASE_SCOPE_MATRIX.md`
+- `Docs/current/plans/P1_DEFAULT_PRODUCT_COMPLETION_PLAN.md`
 - `Docs/AIAT_Email_Identity_Implementation_Map.md`
 - `mas/.env.identity.example`
 - `mas/.gitignore`
@@ -32,6 +36,10 @@ inaccessible `mas/.tmp-*` test directories and unrelated root-level files.
 - `mas/apps/identity-service/identity_service/outbound/policy.py`
 - `mas/apps/identity-service/identity_service/outbound/service.py`
 - `mas/apps/identity-service/identity_service/providers/__init__.py`
+- `mas/apps/identity-service/identity_service/providers/base.py`
+- `mas/apps/identity-service/identity_service/providers/factory.py`
+- `mas/apps/identity-service/identity_service/providers/inbound/__init__.py`
+- `mas/apps/identity-service/identity_service/providers/inbound/cloudflare.py`
 - `mas/apps/identity-service/identity_service/providers/resend.py`
 - `mas/apps/identity-service/identity_service/providers/stalwart.py`
 - `mas/apps/identity-service/identity_service/routes.py`
@@ -48,12 +56,16 @@ inaccessible `mas/.tmp-*` test directories and unrelated root-level files.
 - `mas/apps/identity-service/migrations/script.py.mako`
 - `mas/apps/identity-service/migrations/versions/0001_identity_control_plane.py`
 - `mas/apps/identity-service/migrations/versions/0002_mail_trace_correlation.py`
+- `mas/apps/identity-service/migrations/versions/0003_mail_edge_observations.py`
+- `mas/apps/identity-service/migrations/versions/0004_provider_neutral_mail.py`
 - `mas/apps/identity-service/pyproject.toml`
 - `mas/apps/identity-service/tests/conftest.py`
 - `mas/apps/identity-service/tests/test_identity_service.py`
 - `mas/apps/identity-service/tests/test_live_identity_acceptance.py`
 - `mas/apps/identity-service/tests/test_postgres_store_integration.py`
 - `mas/apps/identity-service/tests/test_provider_adapters.py`
+- `mas/apps/identity-service/tests/test_cloudflare_mail_edge.py`
+- `mas/apps/identity-service/tests/test_provider_selection.py`
 - `mas/apps/mas-dashboard/app/(dashboard)/auth-sessions/page.tsx`
 - `mas/apps/mas-dashboard/app/(dashboard)/external-accounts/page.tsx`
 - `mas/apps/mas-dashboard/app/(dashboard)/identities/page.tsx`
@@ -94,6 +106,23 @@ inaccessible `mas/.tmp-*` test directories and unrelated root-level files.
 - `mas/infra/docker/Dockerfile.tool-service`
 - `mas/infra/docker/puppeteer-config.json`
 - `mas/infra/compose/docker-compose.yml`
+- `mas/infra/compose/docker-compose.stalwart-local.yml`
+- `mas/infra/compose/README.stalwart-local.md`
+- `mas/infra/compose/stalwart-local.env.example`
+- `mas/infra/cloudflare/.env.cloudflare-mail-edge.example`
+- `mas/infra/cloudflare/Caddyfile`
+- `mas/infra/cloudflare/README.md`
+- `mas/infra/cloudflare/docker-compose.yml`
+- `mas/infra/cloudflare/email-worker/README.md`
+- `mas/infra/cloudflare/email-worker/.dev.vars.example`
+- `mas/infra/cloudflare/email-worker/package.json`
+- `mas/infra/cloudflare/email-worker/package-lock.json`
+- `mas/infra/cloudflare/email-worker/schema/0001_mail_edge.sql`
+- `mas/infra/cloudflare/email-worker/src/index.ts`
+- `mas/infra/cloudflare/email-worker/tests/worker.test.ts`
+- `mas/infra/cloudflare/email-worker/tsconfig.json`
+- `mas/infra/cloudflare/email-worker/vitest.config.ts`
+- `mas/infra/cloudflare/email-worker/wrangler.toml`
 - `mas/infra/mail-edge/.env.mail-edge.example`
 - `mas/infra/mail-edge/Caddyfile`
 - `mas/infra/mail-edge/README.md`
@@ -124,3 +153,14 @@ inaccessible `mas/.tmp-*` test directories and unrelated root-level files.
 - `mas/packages/mas-core/tests/test_credentials_policy_integration.py`
 - `mas/packages/mas-tools-sdk/mas_tools_sdk/manifest.py`
 - `mas/pyproject.toml`
+
+The provider-neutral migration also updates the previously listed identity
+service, dashboard page, tool-service identity tool, optional mail-edge, and
+conformance-script files in place. The new default Cloudflare bundle is
+independent of the retained Stalwart files; Stalwart-specific scripts and
+fixtures remain optional-profile code.
+
+Additional conformance inventory:
+
+- `mas/scripts/check_identity_provider_conformance.py`
+- `mas/scripts/tests/test_check_identity_provider_conformance.py`

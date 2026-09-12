@@ -1,19 +1,22 @@
 # AIAT Email Identity: Repository Implementation Map
 
-> Superseded topology notice (2026-07-29): this historical map records the
-> former Oracle/paid-VPS deployment assumptions. The active production
-> topology is `self_hosted_stalwart_resend` with `agents.aiat.ca`; the retained
-> historical content below is not an activation instruction. Use
-> `Docs/AIAT_Email_Identity_Domain_Migration.md` for current operations.
+> Current topology notice (2026-09-11): the default production topology is
+> Cloudflare Email Routing -> Email Worker/D1/R2 -> signed AIAT sync for
+> inbound mail, with direct Resend API calls for outbound mail. Stalwart is an
+> explicitly selected optional full-mailbox provider. Use
+> `Docs/AIAT_Email_Identity_Provider_Architecture.md` and
+> `Docs/AIAT_Email_Identity_Domain_Migration.md` for the active boundary and
+> operator runbook.
 
 ## Scope and boundary
 
 AIAT owns the control plane, identity API, lifecycle state, policy decisions,
 audits, client signing, laptop reconciliation, local browser isolation, and
-mail-edge deployment definitions. Stalwart remains an external pinned mail
-server container; it is never vendored. Resend is an authenticated relay used
-only by Stalwart's outbound route. Neither workers nor the laptop call Resend
-directly, and the laptop never connects to the identity Postgres database.
+mail-edge deployment definitions. Cloudflare and Resend are untrusted
+provider boundaries called through AIAT adapters. Stalwart remains an
+external pinned optional full-mailbox container; it is never vendored. Neither
+workers nor the laptop call a provider directly, and the laptop never connects
+to the identity Postgres database.
 
 Live Oracle, DNS, PTR, TLS, Stalwart, and Resend certification are explicitly
 outside the repository boundary until operator-owned infrastructure and secrets
@@ -30,14 +33,15 @@ are available.
 | Browser runtime | `apps/tool-service/tool_service/tools/browser.py` | Replace reusable anonymous contexts for governed external accounts with persistent local profiles keyed by `(worker_id, service)`, opaque session handles, and explicit revocation. |
 | Credits and usage | `mas_core.memory` project usage events | Implement a dedicated reserve/commit/release identity ledger and usage events, so external identity operations are durable when the laptop is offline. |
 | Dashboard | `apps/mas-dashboard` Next.js app and orchestrator proxy routes | Add identity pages and secure server-side proxy routes. All views are metadata-only and redact secret-like fields. |
-| Deployment | `mas/infra/compose` | Add a self-contained `mail-edge` profile/bundle with Stalwart, identity service, private Postgres, TLS ingress, encrypted backup, scripts, and an Oracle/paid-VPS guide. |
+| Deployment | `mas/infra/cloudflare`, `mas/infra/mail-edge`, `mas/infra/compose` | Make the Cloudflare Worker/D1/R2 + identity-service Compose bundle the default; retain Stalwart mail-edge and loopback profiles as explicit optional deployments. |
 
 ## Delivery sequence
 
 1. Harden fail-closed production settings and default-deny privileged handling.
-2. Add `apps/identity-service`: signed API, dedicated schema/migration, service
-   layer, Stalwart JMAP adapter, Resend relay validation adapter, outbox, usage,
-   approvals, external accounts, and leases.
+2. Add `apps/identity-service`: signed API, dedicated schema/migration,
+   provider-neutral inbound/outbound contracts, Cloudflare edge adapter, direct
+   Resend API adapter, optional Stalwart adapter, outbox, usage, approvals,
+   external accounts, and leases.
 3. Add the signed laptop client and tool-service tools; integrate lifecycle
    provisioning and revocation into worker hiring/status transitions.
 4. Add the dashboard metadata surfaces and mail-edge Compose bundle, scripts,
@@ -58,11 +62,15 @@ are available.
 - Outbound starts disabled and can submit only after a durable human approval,
   credit hold, quota/rate checks, and sender ownership verification.
 - Direct IMAP/SMTP client access and credential/cookie export are prohibited.
-- Direct MX delivery is disabled in deployment configuration and host validation.
+- Direct MX delivery is disabled in deployment configuration and host validation;
+  the default inbound path has no public SMTP listener.
+- Cloudflare edge access uses a signed, replay-protected HMAC protocol. D1
+  stores registry/metadata only; raw MIME is temporary R2 data and local
+  identity-service copies are encrypted.
 
 ## Implemented repository architecture
 
-- `apps/identity-service` is the Oracle-side authority. It has a dedicated
+- `apps/identity-service` is the AIAT-side authority. It has a dedicated
   Postgres migration, fail-closed production settings, signed Ed25519 requests,
   durable client registration/revocation, replay protection, worker ownership
   grants, lifecycle transitions, audit,
@@ -78,6 +86,15 @@ are available.
   configured public key, active state, and scope set. Orchestrator and
   tool-service identity clients reject credential-bearing or non-origin URLs
   and require HTTPS in staging and production.
+- The default inbound adapter uses the signed Cloudflare mail-edge API:
+  envelope-recipient registration, lifecycle, event pull, raw-message fetch,
+  acknowledgement, processed/delete mutation, and temporary retention
+  protection. Synchronization commits local encrypted state before edge ack and
+  advances a durable provider cursor only after that commit.
+- The default outbound adapter calls Resend's HTTPS `/emails` API directly
+  after the existing AIAT ownership, approval, usage, rate, and audit gates.
+  Its idempotency key and opaque provider ID remain inside the identity-service
+  delivery state. Workers never receive the Resend API key.
 - Stalwart management calls use the private `/api` JMAP endpoint and a
   management-only API key. Mail calls use `/jmap`, the JMAP mail/submission
   capabilities, and a separate service bearer token. Outbound composition
@@ -93,7 +110,7 @@ are available.
   laptop downtime, and archives identities during retirement. Temporary
   mailboxes require a durable human approval before provider mutation.
 - Suspension and archival commit local revocation first. Browser sessions and
-  linked external accounts are revoked even when Stalwart is unavailable, and
+  linked external accounts are revoked even when a provider is unavailable, and
   the provider failure is audited for orchestrator retry.
 - The tool service authenticates callers, persists tool grants, forwards only
   signed governed operations, and keeps persistent browser profiles local and
@@ -110,7 +127,10 @@ are available.
   surface is an explicit allowlist for approval decisions, lifecycle
   suspension/archive, credential-rotation requests, external-account state,
   and session revocation; arbitrary identity-service paths cannot be proxied.
-- `infra/mail-edge` pins Stalwart, Postgres, and Caddy; keeps Postgres and
+- `infra/cloudflare` pins the default identity Postgres/Caddy runtime and
+  contains the source-controlled Worker/D1/R2 deployment boundary. It does not
+  pass a Cloudflare account token to AIAT. `infra/mail-edge` pins Stalwart,
+  Postgres, and Caddy for the optional full-mailbox profile; it keeps Postgres and
   administration private; creates an environment-backed Resend relay; removes
   every pre-existing remote delivery route; validates that the sole saved
   remote strategy is authenticated Resend; checks Stalwart's real
@@ -120,7 +140,24 @@ are available.
   stale files as well as ordinary files. The identity image runs non-root and
   installs against constraints exported from the repository lock.
 
-## Repository certification evidence (2026-07-23)
+## Repository certification evidence (2026-09-11)
+
+- The provider-neutral identity suite passes (**47 passed, 2 skipped**),
+  including Cloudflare envelope authorization, recipient-scoped deduplication,
+  signed sync retry/cursor semantics, lifecycle isolation, R2 retention, and
+  direct Resend API approval/idempotency fixtures. The skips are live or
+  opt-in database cases.
+- The Cloudflare Worker package passes TypeScript typecheck and its local
+  Vitest suite (**5 passed**); Wrangler applies the checked-in D1 migration in
+  the local emulator. No Cloudflare or Resend network/account mutation was
+  performed.
+- The payload-free provider conformance checker passes all mocked cases for
+  Cloudflare, Resend, and the retained Stalwart adapter. Its `--live` mode
+  remains explicitly blocked until operator-selected endpoints and evidence
+  exist.
+
+The older repository-wide counts below are historical evidence from the
+preceding identity implementation and do not certify the current providers.
 
 - The non-live identity-service suite passes (**29 passed, 1 skipped**), with the explicit
   Oracle live-certification test skipped until enabled, and
@@ -177,7 +214,7 @@ are available.
   a fresh PostgreSQL container, and recovered the exact worker ID, mailbox
   address, and `ACTIVE` lifecycle state. The drill also exposed and corrected
   an Alpine `tar -C` portability defect in the original backup script.
-- The local relay validator proves the configured remote route is authenticated
+- The optional Stalwart-profile relay validator proves the configured remote route is authenticated
   TLS to `smtp.resend.com:465`, its secret comes from `RESEND_API_KEY`, and the
   policy contains no unapproved remote route. The configured health check uses
   Stalwart's readiness endpoint. Live firewall and Stalwart saved-state checks
@@ -190,8 +227,9 @@ are available.
 
 ## Current migration heads
 
-- Identity Postgres: `0002_mail_trace_correlation` (safe outbound delivery
-  trace/span metadata; provider payloads remain identity-owned).
+- Identity Postgres: `0004_provider_neutral_mail` (independent provider
+  bindings, encrypted inbound sync state/content, retention metadata, and
+  direct-Resend content type; provider payloads remain identity-owned).
 - Laptop/control-plane Postgres:
   `0023_durable_browser_identity_and_tool_nonces` (including durable credential
   approvals/rates in `0022` and tool grants in `0021`).
@@ -199,25 +237,26 @@ are available.
 ## Operator-owned live blockers
 
 Repository completion is not production acceptance. The status remains
-**BLOCKED** until an approved Oracle/paid-VPS staging target and real secrets are
-provided and the mandatory live tests are executed. Outstanding evidence:
+**BLOCKED** for live certification until the operator supplies the selected
+Cloudflare/Resend resources and real secrets and executes the mandatory live
+tests. Outstanding evidence:
 
-- Oracle public IPv4, inbound TCP 25, outbound TCP 465/587, host firewall, and
-  proof that outbound TCP 25 is rejected.
-- Forward DNS, Oracle PTR, ACME TLS, MX, SPF, DKIM, and DMARC records.
-- Stalwart bootstrap, restricted management API key, mail JMAP service token,
-  two real isolated mailboxes, unknown-recipient rejection, inbound delivery,
-  reply routing, laptop-offline continuity, and post-restart reconciliation.
-- Resend account/API key, verified sending domain, live authenticated relay
-  delivery, provider event evidence, and confirmation that Stalwart selected
-  only the Resend route.
-- A production/staging backup artifact copied off-host and a restoration drill
-  including stopped-Stalwart data, followed by mailbox ownership/isolation
-  verification.
+- Cloudflare D1/R2 resources, Worker deployment, exact Email Routing route,
+  public identity TLS, and inbound delivery/retry/restart evidence.
+- Resend account/API key, verified sending domain, direct API acceptance,
+  authenticated webhook evidence, external delivery/reply evidence, and
+  confirmation that every send remains approval-gated.
+- Production Postgres migration, encrypted backup/restore, worker ownership
+  isolation, suspension/retirement, and provider-outage reconciliation.
+- If the optional Stalwart profile is selected instead, its separate JMAP,
+  SMTP, DNS, firewall, backup, and saved-route evidence remains required.
 
-Exact deployment, validation, backup, restore, and promotion commands are in
-[`mas/infra/mail-edge/README.md`](../mas/infra/mail-edge/README.md). No live
-credential value belongs in this document or in the repository.
+Exact default deployment and provider-boundary commands are in
+[`mas/infra/cloudflare/README.md`](../mas/infra/cloudflare/README.md) and
+[`AIAT_Email_Identity_Domain_Migration.md`](AIAT_Email_Identity_Domain_Migration.md).
+Optional Stalwart deployment, validation, backup, restore, and promotion
+commands are in [`mas/infra/mail-edge/README.md`](../mas/infra/mail-edge/README.md).
+No live credential value belongs in this document or in the repository.
 
 The exhaustive implementation file inventory is in
 [`AIAT_Email_Identity_Changed_Files.md`](AIAT_Email_Identity_Changed_Files.md).
