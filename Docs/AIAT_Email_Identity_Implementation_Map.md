@@ -262,8 +262,7 @@ Repository completion is not production acceptance. The targeted Cloudflare
 inbound smoke boundary is now proven, but the overall status remains
 **BLOCKED** for the remaining live certification. Outstanding evidence:
 
-- Cloudflare inbound retry/restart recovery and temporary-recipient retirement
-  follow-through, if required by the release decision.
+- Cloudflare inbound retry/restart recovery remains separate live evidence.
 - Resend account/API key, verified sending domain, direct API acceptance,
   authenticated webhook evidence, external delivery/reply evidence, and
   confirmation that every send remains approval-gated.
