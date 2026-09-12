@@ -60,6 +60,7 @@ migrations/versions/__pycache__/
 logs/
 
 # Local runtime/test temp directories
+.wrangler/
 codex_tmp/
 .tmp/
 .pytest_tmp/

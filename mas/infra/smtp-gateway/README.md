@@ -1,7 +1,11 @@
-# AIAT SMTP gateway: VPS edge and home Stalwart
+# AIAT optional SMTP gateway: VPS edge and home Stalwart
 
-This is a separate production topology for the home Fizz constraint. The home
-host can accept TCP/25 locally and through the forwarded public test port
+This is an optional Stalwart full-mailbox topology for the home Fizz
+constraint. The default v1 production path is
+[`../cloudflare/README.md`](../cloudflare/README.md): Cloudflare Email Routing
+plus Worker/D1/R2 inbound and direct Resend API outbound. Select this gateway
+only when public SMTP ingress and a home-hosted Stalwart mailbox are
+intentionally required. The home host can accept TCP/25 locally and through the forwarded public test port
 2525, but public TCP/25 times out. It therefore cannot be the public MX edge.
 The gateway VPS receives mail and forwards only the owned domain over
 WireGuard; the home host remains the mailbox, JMAP, identity-service, and

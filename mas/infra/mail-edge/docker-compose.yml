@@ -41,6 +41,8 @@ services:
       IDENTITY_CONTENT_ENCRYPTION_KEY: ${IDENTITY_CONTENT_ENCRYPTION_KEY:?identity content encryption key is required}
       IDENTITY_CLIENT_PUBLIC_KEYS_JSON: '${IDENTITY_CLIENT_PUBLIC_KEYS_JSON:?identity client public keys are required}'
       IDENTITY_CLIENT_SCOPES_JSON: '${IDENTITY_CLIENT_SCOPES_JSON:?identity client scopes are required}'
+      IDENTITY_INBOUND_PROVIDER: stalwart
+      IDENTITY_OUTBOUND_PROVIDER: stalwart
       STALWART_API_KEY: ${STALWART_API_KEY:?Stalwart API key is required}
       STALWART_JMAP_SERVICE_TOKEN: ${STALWART_JMAP_SERVICE_TOKEN:?Stalwart JMAP service token is required}
       RESEND_API_KEY: ${RESEND_API_KEY:?Resend API key is required}

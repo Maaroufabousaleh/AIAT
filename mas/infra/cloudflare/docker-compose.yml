@@ -1,0 +1,151 @@
+name: aiat-cloudflare-mail
+
+# Default v1 AIAT email identity runtime. Cloudflare Email Routing and the
+# Worker/D1/R2 resources are managed by Wrangler outside Docker; this bundle
+# runs only the AIAT authority and its private identity database. Stalwart is
+# deliberately absent from this default profile.
+services:
+  identity-postgres:
+    image: postgres:16.6-alpine@sha256:589f3b24f30e60a2b33f79543ed51c8f897589bcde5c59f4dc0e814551eeeb0f
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: identity
+      POSTGRES_USER: identity_service
+      POSTGRES_PASSWORD: ${IDENTITY_DATABASE_PASSWORD:?identity database password is required}
+    volumes:
+      - identity_postgres_data:/var/lib/postgresql/data
+    networks: [identity_private]
+    read_only: true
+    tmpfs: [/run, /tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    mem_limit: 512m
+    cpus: "0.50"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U identity_service -d identity"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+
+  identity-migrate:
+    image: aiat/identity-service:0.1.0
+    build:
+      context: ../../
+      dockerfile: infra/docker/Dockerfile.identity-service
+    restart: "no"
+    environment:
+      MAS_ENVIRONMENT: production
+      IDENTITY_DATABASE_HOST: identity-postgres
+      IDENTITY_DATABASE_PORT: "5432"
+      IDENTITY_DATABASE_NAME: identity
+      IDENTITY_DATABASE_USER: identity_service
+      IDENTITY_DATABASE_PASSWORD: ${IDENTITY_DATABASE_PASSWORD:?identity database password is required}
+    entrypoint: ["alembic", "-c", "/app/alembic.ini", "upgrade", "head"]
+    depends_on:
+      identity-postgres:
+        condition: service_healthy
+    networks: [identity_private]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    mem_limit: 192m
+    cpus: "0.25"
+
+  identity-service:
+    image: aiat/identity-service:0.1.0
+    build:
+      context: ../../
+      dockerfile: infra/docker/Dockerfile.identity-service
+    restart: unless-stopped
+    environment:
+      MAS_ENVIRONMENT: production
+      IDENTITY_PROFILE: production
+      IDENTITY_DATABASE_HOST: identity-postgres
+      IDENTITY_DATABASE_PORT: "5432"
+      IDENTITY_DATABASE_NAME: identity
+      IDENTITY_DATABASE_USER: identity_service
+      IDENTITY_DATABASE_PASSWORD: ${IDENTITY_DATABASE_PASSWORD:?identity database password is required}
+      IDENTITY_SERVICE_SECRET: ${IDENTITY_SERVICE_SECRET:?identity service secret is required}
+      IDENTITY_CONTENT_ENCRYPTION_KEY: ${IDENTITY_CONTENT_ENCRYPTION_KEY:?identity content encryption key is required}
+      IDENTITY_CLIENT_PUBLIC_KEYS_JSON: '${IDENTITY_CLIENT_PUBLIC_KEYS_JSON:?identity client public keys are required}'
+      IDENTITY_CLIENT_SCOPES_JSON: '${IDENTITY_CLIENT_SCOPES_JSON:?identity client scopes are required}'
+      PRIMARY_DOMAIN: ${PRIMARY_DOMAIN:-aiat.ca}
+      AGENT_MAIL_DOMAIN: ${AGENT_MAIL_DOMAIN:-agents.aiat.ca}
+      MAIL_HOSTNAME: ${MAIL_HOSTNAME:-mail.aiat.ca}
+      PUBLIC_IDENTITY_URL: https://${IDENTITY_HOSTNAME:-identity.aiat.ca}
+      IDENTITY_INBOUND_PROVIDER: cloudflare
+      IDENTITY_OUTBOUND_PROVIDER: resend
+      CLOUDFLARE_MAIL_EDGE_URL: ${CLOUDFLARE_MAIL_EDGE_URL:?Cloudflare mail-edge URL is required}
+      CLOUDFLARE_MAIL_EDGE_AUTH_SECRET: ${CLOUDFLARE_MAIL_EDGE_AUTH_SECRET:?Cloudflare mail-edge auth secret is required}
+      CLOUDFLARE_MAIL_RETENTION_DAYS: ${CLOUDFLARE_MAIL_RETENTION_DAYS:-7}
+      CLOUDFLARE_PROCESSED_MAIL_RETENTION_DAYS: ${CLOUDFLARE_PROCESSED_MAIL_RETENTION_DAYS:-1}
+      MAIL_EDGE_MAX_MESSAGE_BYTES: ${MAIL_EDGE_MAX_MESSAGE_BYTES:-10485760}
+      HUMAN_APPROVAL_FOR_OUTBOUND: "true"
+      RESEND_API_KEY: ${RESEND_API_KEY:?Resend API key is required}
+      RESEND_WEBHOOK_SIGNING_SECRET: ${RESEND_WEBHOOK_SIGNING_SECRET:?Resend webhook signing secret is required}
+      OUTBOUND_RELAY_PROVIDER: resend
+      OUTBOUND_RELAY_HOST: smtp.resend.com
+      OUTBOUND_RELAY_PORT: "465"
+      OUTBOUND_RELAY_TLS_MODE: implicit
+      OUTBOUND_RELAY_CERTIFIED: ${OUTBOUND_RELAY_CERTIFIED:-false}
+      DIRECT_MX_OUTBOUND_ENABLED: "false"
+      DEFAULT_OUTBOUND_ENABLED: "false"
+      # Stalwart is optional in this profile and is intentionally not
+      # constructed or credentialed by the default runtime.
+      STALWART_API_KEY: ""
+      STALWART_JMAP_SERVICE_TOKEN: ""
+      BROWSER_RUNTIME_LOCATION: operator_laptop
+    depends_on:
+      identity-postgres:
+        condition: service_healthy
+      identity-migrate:
+        condition: service_completed_successfully
+    networks: [identity_private, identity_egress]
+    read_only: true
+    tmpfs: [/run, /tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    mem_limit: 384m
+    cpus: "0.50"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8010/readyz', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+
+  identity-ingress:
+    image: caddy:2.8.4-alpine@sha256:b95ed06fbc6d74d24a40902090c8cc6086ce7d08ba60a3a7e8e62bf164a9d7bb
+    restart: unless-stopped
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL:?ACME contact email is required}
+      IDENTITY_HOSTNAME: ${IDENTITY_HOSTNAME:-identity.aiat.ca}
+    ports:
+      - "80:80"
+      - "443:443"
+    networks: [identity_private, identity_egress]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - identity_caddy_data:/data
+      - identity_caddy_config:/config
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    mem_limit: 192m
+    cpus: "0.25"
+    depends_on:
+      identity-service:
+        condition: service_healthy
+
+networks:
+  identity_private:
+    driver: bridge
+    internal: true
+  identity_egress:
+    driver: bridge
+
+volumes:
+  identity_postgres_data:
+  identity_caddy_data:
+  identity_caddy_config:
