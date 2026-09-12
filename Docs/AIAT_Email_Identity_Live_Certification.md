@@ -100,7 +100,8 @@ TEMPORARY_RECIPIENT_RETIREMENT = PASS
 IDENTITY_SERVICE_LIVE = PASS (inbound reconciliation boundary only)
 REAL_IDENTITY_PROVISIONING = PASS
 REAL_INBOUND_RECONCILIATION = PASS
-RESEND_API_AUTH = BLOCKED_PROVIDER_HTTP_401
+RESEND_API_AUTH = PASS_SENDING_ACCESS
+RESEND_DOMAIN_MANAGEMENT_READ = NOT_AVAILABLE_RESTRICTED_API_KEY
 RESEND_OUTBOUND_LIVE = NOT_YET_LIVE_CERTIFIED
 RESEND_WEBHOOK_LIVE = NOT_YET_LIVE_CERTIFIED
 REAL_AIAT_HIRING_LIFECYCLE_INTEGRATION = NOT_YET_LIVE_CERTIFIED
@@ -167,17 +168,21 @@ from this record.
 ## Current production boundary
 
 The identity database and local production container are healthy, but the full
-production runtime is not yet certified. Public webhook ingress is prepared as
-an opt-in Cloudflare Tunnel profile and is not started until its operator-owned
-token and remote hostname route exist. A secret-safe read-only Resend API probe
-using the existing injected credential returned HTTP `401`; no credential was
-rotated or replaced, and no outbound message was sent.
+production runtime is not yet certified. A secret-safe Resend API probe using
+the existing injected credential returned the structured provider
+classification `restricted_api_key` with HTTP `401`. This confirms the
+intentional least-privilege `sending_access` mode; it is not an invalid-key
+result, and no credential was rotated or replaced. Domain-management reads are
+unavailable in this mode, so transport certification must use the bounded
+`/emails` send endpoint with the configured production sending domain. No
+outbound message has yet been sent.
 
 ```text
 IDENTITY_SERVICE_RUNTIME_LOCAL = PASS
 PUBLIC_IDENTITY_INGRESS = NOT_YET_REACHABLE
-CLOUDFLARE_TUNNEL = NOT_CONFIGURED
-RESEND_API_AUTH = BLOCKED_PROVIDER_HTTP_401
+CLOUDFLARE_TUNNEL = CONNECTOR_NOT_IDENTITY_BOUND
+RESEND_API_AUTH = PASS_SENDING_ACCESS
+RESEND_DOMAIN_MANAGEMENT_READ = NOT_AVAILABLE_RESTRICTED_API_KEY
 RESEND_OUTBOUND_LIVE = NOT_YET_LIVE_CERTIFIED
 RESEND_WEBHOOK_LIVE = NOT_YET_LIVE_CERTIFIED
 REAL_AIAT_HIRING_LIFECYCLE_INTEGRATION = NOT_YET_LIVE_CERTIFIED

@@ -97,6 +97,9 @@ def test_cloudflare_identity_ingress_is_a_narrow_opt_in_tunnel_boundary() -> Non
     assert ingress["expose"] == ["8080"]
     assert ingress["networks"] == ["identity_private", "identity_tunnel"]
     assert "identity_egress" not in ingress["networks"]
+    assert ingress["cap_drop"] == ["ALL"]
+    assert ingress["cap_add"] == ["NET_BIND_SERVICE"]
+    assert ingress["security_opt"] == ["no-new-privileges:true"]
     assert tunnel["profiles"] == ["cloudflare"]
     assert tunnel["environment"]["TUNNEL_TOKEN"] == "${CLOUDFLARE_IDENTITY_TUNNEL_TOKEN:-}"
     assert tunnel["networks"] == ["identity_tunnel"]
