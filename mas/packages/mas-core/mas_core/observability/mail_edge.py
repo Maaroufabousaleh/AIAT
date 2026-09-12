@@ -37,7 +37,7 @@ MailEdgeOutcome = Literal["success", "failure", "unknown"]
 MailEdgeFailureClass = Literal["transient", "permanent"]
 
 _SAFE_PROVIDER_RE = re.compile(r"^[a-z][a-z0-9_.:-]{0,63}$")
-_SAFE_REFERENCE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$")
+_SAFE_REFERENCE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/_-]{0,199}$")
 _SENSITIVE_KEY_RE = re.compile(
     r"(?:body|content|cookie|credential|header|html|password|payload|query|recipient|"
     r"secret|subject|token|authorization|api[_-]?key)",

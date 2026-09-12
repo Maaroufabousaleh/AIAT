@@ -212,6 +212,11 @@ async def receive_resend_provider_webhook(request: Request, service: IdentitySer
         raise HTTPException(413, "webhook body exceeds 1 MiB limit")
     if not verify_webhook(raw_body, request.headers):
         raise HTTPException(401, "invalid provider webhook authentication")
+    # Resend/Svix carries the durable delivery-event identity in ``svix-id``;
+    # it is not guaranteed to be duplicated in the JSON body.  The signature
+    # verifier has already required this header, so pass it through as the
+    # recipient of the observation idempotency constraint.
+    provider_event_id = request.headers.get("svix-id")
     try:
         payload = json.loads(raw_body.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -223,6 +228,7 @@ async def receive_resend_provider_webhook(request: Request, service: IdentitySer
             provider="resend",
             payload=payload,
             actor_id="provider:resend",
+            event_id=provider_event_id,
         )
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
