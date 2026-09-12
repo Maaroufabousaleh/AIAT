@@ -219,10 +219,12 @@ blocked; it never treats licence metadata as a release gate.
 ## Runtime Shape
 
 Base compose defines the core infrastructure, control-plane services, analytics,
-and 11 team runners plus one-shot init jobs. The signed identity service and
-its private database/migration are enabled by the `mail-local` profile in
-`mas/infra/compose/docker-compose.stalwart-local.yml` (production identity is
-deployed behind the mail-edge TLS boundary):
+and 11 team runners plus one-shot init jobs. The default production email
+identity path is the Cloudflare Worker/D1/R2 bundle in
+`mas/infra/cloudflare/docker-compose.yml`, with direct Resend API outbound.
+The `mail-local` profile in `mas/infra/compose/docker-compose.stalwart-local.yml`
+and the `mail-edge` bundle remain explicit optional Stalwart full-mailbox
+profiles:
 
 - Long-running infra/services: Redis, Postgres, PgBouncer, MinIO,
   orchestrator-api, message-router, tool-service, dashboard, LiteLLM,

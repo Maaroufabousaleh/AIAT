@@ -134,7 +134,7 @@ classification or the global `NO-RELEASE` decision.
 | Firecracker high-risk isolation tier | The target programme calls Firecracker optional for high-risk work; the launch contract is statically valid, but launcher/binary/KVM evidence is absent. **Infrastructure/conditional.** | `OPTIONAL_UNVERIFIED` | Keep high-risk Firecracker workers disabled for this release. Promote to `REQUIRED_FOR_RELEASE` only if the operator includes that tier in scope, then provide KVM, launcher, microVM smoke/network, cleanup, and recovery evidence. |
 | Deployment image identity, SBOM, scan, and clean native build | Local image observations exist, but deployment-supplied immutable refs, native build reconciliation, SBOM/scan artifacts, and vulnerability dispositions are not complete. **Infrastructure/operator evidence.** | `REQUIRED_FOR_RELEASE` | Provide the ten immutable deployment refs and matching SBOM/scan/disposition artifacts on the certification host. |
 | Provider-managed object-store SSE/KMS and external key custody | The OCI-native adapter and deterministic mocked contract pass; no provider target, bucket customer-managed key, custody, rotation, or live read-back evidence is configured. **External configuration.** | `REQUIRED_FOR_RELEASE` | Supply the real OCI Object Storage + Vault/KMS target and governed auth reference, then run the live adapter for bucket/key identity, PUT/read/checksum, multipart/abort, provider metadata, delete, and zero residue. Do not claim the fixture as live evidence. |
-| External mail relay and delivery | Stalwart/Resend contracts and local fixtures pass, but operator-owned relay credentials, DNS/PTR state, and a safe recipient for live delivery/outage evidence are absent. **External configuration.** | `REQUIRED_FOR_RELEASE` if email remains in this release | Supply the live Stalwart/Resend/DNS state and run the governed external-delivery/reply and outage/restore acceptance. Keep direct MX outbound disabled until that evidence exists. |
+| External mail relay and delivery | The default Cloudflare Worker/D1/R2 inbound edge and direct Resend API contracts pass locally; operator-owned Cloudflare route/DNS, Resend authorization, and a safe recipient for live delivery/outage evidence are absent. **External configuration.** Optional Stalwart full-mailbox evidence remains separate. | `REQUIRED_FOR_RELEASE` if email remains in this release | Supply the selected default provider state and run the governed inbound sync, direct API delivery, webhook/reply, and outage/restore acceptance. Keep direct MX outbound disabled. If Stalwart is explicitly selected, run its profile-specific SMTP/JMAP acceptance as well. |
 | Self-improvement live signal and worker/provider path | The guarded lifecycle, approvals, rollback, and local Postgres certificate pass; no operator-selected signal source/project scope is configured. **External configuration/governance.** | `DEFERRED` for the current release | Keep candidate detection and live self-improvement disabled. If enabled, constrain the signal source/project, retain the human kill switch and approval, and promote the full live path to `REQUIRED_FOR_RELEASE`. |
 | OpenCode Program D candidate | The historical v1.17.13 scan is `FAILED_UNREPRODUCIBLE` because its raw findings/source snapshot were not retained. Fresh v1.18.21 source/image provenance and the AIAT boundary regression pass; the workflow now provisions Semgrep 1.168.0, TruffleHog 3.97.0, pinned SkillSpector, and Syft 1.51.0, while the local WSL run remains blocked because those tools have not been installed locally. **Security/tooling.** | `REQUIRED_FOR_RELEASE` | Run the pushed candidate workflow from a branch containing the workflow file. Retain the provisioning manifest, checksums, raw sanitized JSON/logs, SBOM, invocations, versions, and exit codes; keep coding/tester inactive until the technical scan passes and do not remediate historical ghost counts. |
 | OpenHands v1.43.0 candidate | Exact source/image pins, OpenHands gVisor evidence from run `32594885180`, native CI gVisor prerequisite evidence from run `32541110299`, AIAT boundary tests, digest-pinned disposable gateway wiring, exact LiteLLM/OmniRoute source-archive checksums, provider preflight, sanitized evidence-schema validation, run-scoped profile/MCP cleanup assertions, 20-gate matrix, deterministic coding-task fixture, offline lifecycle/security fixtures, fail-closed post-run test/diff/artifact verification, fail-closed disposable network-topology evidence, exact single-network attachment checks, and task-test credential-environment scrubbing pass repository-local checks. Runs `32695739623` and `32696377216` reached the provider/gateway, runsc, tool-service, and cleanup boundaries but failed closed on two stale Agent Server v1.43.0 readback envelopes (`config` LLM profile, then `agent_settings` MCP settings); both are preserved as `FAILED_CERTIFICATION_IMPLEMENTATION` / `BLOCKED_TOOL_BRIDGE`, with no live worker evidence claimed. The current reviewed tip `dbf21a3c2ae0c7fc5377076449192ed21c8f5797` includes strict run-bound MCP grants, lifecycle grant rotation, workspace metadata filtering, evidence/status alignment, exact single-network attachment evidence, and narrow certification-authorization blocker propagation; it passes the complete read-only dispatch preflight, but no replacement provider-backed run is claimed. **Candidate/live-provider gate.** | `REQUIRED_FOR_RELEASE` only if selected; currently inactive/certifying | Keep `GROQ_API_KEY` as the one operator-owned secret, freeze an exact reviewed SHA, run the safe preflight, and dispatch exactly one manual workflow only after it passes. Review sanitized evidence and steward approval independently; do not activate on certification alone. |
@@ -197,10 +197,10 @@ principal, then the command must verify bucket identity, provider encryption
 metadata, checksum/read-back, multipart/abort, deletion, and zero residue.
 Do not place credentials or key material in the matrix.
 
-### Stalwart/Resend mail acceptance
+### Provider-neutral mail acceptance
 
-Production identity configuration currently requires these names (values stay
-in the secret environment):
+The default Cloudflare/Resend production configuration requires these names
+(values stay in the secret environment):
 
 ```text
 MAS_ENVIRONMENT=production
@@ -208,21 +208,23 @@ IDENTITY_PROFILE=production
 IDENTITY_DATABASE_PASSWORD or IDENTITY_DATABASE_DSN
 IDENTITY_SERVICE_SECRET
 IDENTITY_CONTENT_ENCRYPTION_KEY
-STALWART_API_KEY
-STALWART_JMAP_SERVICE_TOKEN
+IDENTITY_INBOUND_PROVIDER=cloudflare
+IDENTITY_OUTBOUND_PROVIDER=resend
+CLOUDFLARE_MAIL_EDGE_URL
+CLOUDFLARE_MAIL_EDGE_AUTH_SECRET
 RESEND_API_KEY
+RESEND_WEBHOOK_SIGNING_SECRET
 IDENTITY_CLIENT_PUBLIC_KEYS_JSON
 IDENTITY_CLIENT_SCOPES_JSON
 AGENT_MAIL_DOMAIN=agents.aiat.ca
 MAIL_HOSTNAME=mail.aiat.ca
-OUTBOUND_RELAY_PROVIDER=resend
-OUTBOUND_RELAY_HOST=smtp.resend.com
-OUTBOUND_RELAY_PORT=465 or 587
-OUTBOUND_RELAY_TLS_MODE=implicit or starttls
-OUTBOUND_RELAY_CERTIFIED=true       # only after live certification
+OUTBOUND_RELAY_CERTIFIED=true       # compatibility activation latch only after live certification
 DIRECT_MX_OUTBOUND_ENABLED=false
 DEFAULT_OUTBOUND_ENABLED=false
 ```
+
+The optional Stalwart profile additionally requires `STALWART_API_KEY` and
+`STALWART_JMAP_SERVICE_TOKEN`, and uses its separate full-mailbox acceptance.
 
 The opt-in governed acceptance additionally requires these names:
 
@@ -247,9 +249,11 @@ LIVE_IDENTITY_WORKER_B_PRIVATE_KEY
 LIVE_IDENTITY_REPLY_TIMEOUT_SECONDS
 ```
 
-The acceptance must prove Stalwart submission, Resend relay, external receipt,
-reply return through Stalwart, and the required revocation case. Submission
-alone is not delivery evidence; direct MX outbound remains disabled.
+The default acceptance must prove Cloudflare route delivery, envelope-scoped
+sync, direct Resend API acceptance, webhook/reply evidence, and the required
+revocation case. Submission alone is not delivery evidence. The preserved
+Stalwart/JMAP submission and reply checks apply only when that optional profile
+is selected; direct MX outbound remains disabled in every profile.
 
 ### Self-improvement staging
 
