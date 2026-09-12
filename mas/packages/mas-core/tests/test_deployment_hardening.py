@@ -54,3 +54,29 @@ def test_omniroute_api_bridge_is_split_from_dashboard_and_litellm_uses_it() -> N
 def test_omniroute_bootstrap_uses_current_governed_groq_baseline() -> None:
     script = (COMPOSE_ROOT / "configure_omniroute.py").read_text(encoding="utf-8")
     assert 'ProviderSpec("GROQ_API_KEY", "groq", "AIAT Groq", "openai/gpt-oss-120b")' in script
+
+
+def test_cloudflare_identity_postgres_restores_only_init_capabilities() -> None:
+    compose = yaml.safe_load(
+        (MAS_ROOT / "infra" / "cloudflare" / "docker-compose.yml").read_text(encoding="utf-8")
+    )
+    service = compose["services"]["identity-postgres"]
+
+    assert service["cap_drop"] == ["ALL"]
+    assert set(service["cap_add"]) == {"CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID"}
+
+
+def test_identity_image_makes_migration_assets_readable_as_runtime_user() -> None:
+    dockerfile = (MAS_ROOT / "infra" / "docker" / "Dockerfile.identity-service").read_text(
+        encoding="utf-8"
+    )
+
+    assert (
+        "COPY --chown=10001:10001 --chmod=0644 "
+        "apps/identity-service/alembic.ini /app/alembic.ini"
+    ) in dockerfile
+    assert (
+        "COPY --chown=10001:10001 apps/identity-service/migrations /app/migrations"
+    ) in dockerfile
+    assert "RUN chmod -R u=rwX,go=rX /app/migrations" in dockerfile
+    assert "USER 10001:10001" in dockerfile
