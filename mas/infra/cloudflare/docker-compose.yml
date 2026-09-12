@@ -1,8 +1,10 @@
 name: aiat-cloudflare-mail
 
 # Default v1 AIAT email identity runtime. Cloudflare Email Routing and the
-# Worker/D1/R2 resources are managed by Wrangler outside Docker; this bundle
-# runs only the AIAT authority and its private identity database. Stalwart is
+# Worker/D1 resources are managed by Wrangler outside Docker; the default
+# Worker uses D1-only storage. An optional R2 profile is also managed outside
+# Docker. This bundle runs only the AIAT authority and its private identity
+# database. Stalwart is
 # deliberately absent from this default profile.
 services:
   identity-postgres:

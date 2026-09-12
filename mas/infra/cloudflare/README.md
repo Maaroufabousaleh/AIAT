@@ -4,7 +4,12 @@ This is the default v1 Docker runtime for the provider-neutral identity
 service. The managed edge is deployed from
 [`email-worker/`](email-worker/README.md):
 
-`Cloudflare Email Routing -> Email Worker -> D1/R2 -> signed pull -> AIAT identity-service -> governed worker tools`.
+`Cloudflare Email Routing -> Email Worker -> D1-only -> signed pull -> AIAT identity-service -> governed worker tools`.
+
+The default Worker stores bounded raw MIME in ordered D1 chunks. R2 is an
+explicitly optional Worker profile and is not needed for v1 deployment or
+local development. See [`email-worker/README.md`](email-worker/README.md) for
+the chunking, limits, recovery, and optional-profile details.
 
 The Compose bundle here runs AIAT Postgres, migrations, identity-service, and a
 TLS ingress for `identity.aiat.ca`. It does not run Stalwart and does not give
@@ -38,11 +43,28 @@ returned by Cloudflare and Resend rather than guessing MX, SPF, DKIM, or
 return-path records. It checks the public DNS records only; the exact Email
 Routing route still has to be verified in the Cloudflare account.
 
+## Default Worker live commands
+
+After the local checks pass and the operator has reviewed the existing D1
+database, the default Worker sequence is:
+
+```sh
+cd /mnt/c/projects/aiat/mas/infra/cloudflare/email-worker
+npm ci
+npm run d1:migrate:remote
+npx wrangler secret put MAIL_EDGE_AUTH_SECRET
+npm run deploy
+```
+
+The default command uses the checked-in D1 ID and has no R2 binding. The
+optional `env.r2` profile and its bucket command are documented separately in
+[`email-worker/README.md`](email-worker/README.md).
+
 ## Operator deployment order
 
-1. Create the production D1 database and R2 bucket, replace the placeholder
-   `database_id` in `email-worker/wrangler.toml`, and apply the checked-in D1
-   migration.
+1. The production D1 database `aiat-mail-edge` already exists. Review the
+   checked-in database ID in `email-worker/wrangler.toml` and apply the D1
+   migration remotely; no R2 bucket is required.
 2. Set the Worker secret `MAIL_EDGE_AUTH_SECRET`, deploy the Worker, and record
    its HTTPS origin in `CLOUDFLARE_MAIL_EDGE_URL`.
 3. Configure Cloudflare Email Routing for the exact `*@agents.aiat.ca` route
