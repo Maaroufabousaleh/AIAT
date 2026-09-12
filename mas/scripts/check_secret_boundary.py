@@ -23,12 +23,15 @@ SECRET_VARIABLES = (
     "IDENTITY_DATABASE_PASSWORD",
     "IDENTITY_SERVICE_SECRET",
     "IDENTITY_CONTENT_ENCRYPTION_KEY",
+    "AIAT_IDENTITY_CLIENT_PRIVATE_KEY",
+    "AIAT_IDENTITY_TOOL_PRIVATE_KEY",
     "IDENTITY_CLIENT_PUBLIC_KEYS_JSON",
     "IDENTITY_CLIENT_SCOPES_JSON",
     "IDENTITY_BOOTSTRAP_TOKEN",
     "STALWART_API_KEY",
     "STALWART_JMAP_SERVICE_TOKEN",
     "MAIL_EDGE_AUTH_SECRET",
+    "CLOUDFLARE_IDENTITY_TUNNEL_TOKEN",
 )
 
 LOCAL_SECRET_PROBES = (
@@ -50,6 +53,7 @@ PRODUCTION_BOUNDARY_FILES = (
     "mas/infra/cloudflare/email-worker/wrangler.toml",
     "mas/apps/identity-service/identity_service/config.py",
     "mas/scripts/certify_cloudflare_mail_edge_live.py",
+    "mas/scripts/certify_resend_live.py",
 )
 
 SECRET_ASSIGNMENT = re.compile(

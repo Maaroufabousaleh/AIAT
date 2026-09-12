@@ -18,10 +18,12 @@ with `custom_domain = true`; the production identity-service value is
 does not use `workers.dev` or a traditional `mail-edge.aiat.ca/*` route.
 
 The Compose bundle here runs AIAT Postgres, migrations, identity-service, and a
-TLS ingress for `identity.aiat.ca`. It does not run Stalwart and does not give
+private, path-limited Caddy gateway. It does not run Stalwart and does not give
 the identity-service a Cloudflare account token. The runtime receives only the
 narrow HMAC secret shared with the Worker and the direct Resend API/webhook
-secrets required by the selected outbound adapter.
+secrets required by the selected outbound adapter. Public TLS for the optional
+Resend webhook is terminated by Cloudflare Tunnel; the default Compose profile
+does not start that tunnel and publishes no host port.
 
 ## Static/local checks
 
@@ -76,6 +78,51 @@ The check reports only counts and safe paths; it never prints secret values.
 returned by Cloudflare and Resend rather than guessing MX, SPF, DKIM, or
 return-path records. It checks the public DNS records only; the exact Email
 Routing route still has to be verified in the Cloudflare account.
+
+## Optional Cloudflare webhook tunnel
+
+The only public identity-service route intended for the tunnel is:
+
+```text
+POST https://identity.aiat.ca/v1/mail-edge/provider-webhook/resend
+```
+
+The checked-in Caddy gateway listens only on the private Docker network at
+`http://identity-ingress:8080`, forwards that exact POST path to
+`identity-service:8010`, and returns 404 for every other path or method. It
+does not expose the identity API, Postgres, or a host port. The Cloudflare
+Tunnel's remotely configured public hostname must target
+`http://identity-ingress:8080`; Cloudflare remains responsible for public TLS.
+
+The tunnel is deliberately opt-in. Inject its connector token through the
+ignored operator environment as `CLOUDFLARE_IDENTITY_TUNNEL_TOKEN` and start
+only the explicit profile after the Cloudflare named tunnel has been configured:
+
+```sh
+cd /mnt/c/projects/aiat/mas/infra/cloudflare
+docker compose --env-file /home/maaro/.config/aiat/identity-production.env \
+  --profile cloudflare up -d cloudflared
+```
+
+The token is read by Compose from the environment and is not accepted as a
+command-line argument. A normal `docker compose config -q` and the default
+identity stack do not require it. If the profile is selected without a token,
+the connector must fail closed rather than exposing another route.
+
+For provider-only readiness (before enabling any outbound latch), use the
+adapter-backed Resend certificate:
+
+```sh
+cd /mnt/c/projects/aiat/mas
+uv run python scripts/certify_resend_live.py --json readiness
+```
+
+The optional `send-once --confirm-send` operation is a single, no-retry
+transport probe for an operator-controlled recipient supplied through
+`AIAT_CERTIFICATION_RECIPIENT`; it is not the governed worker send path and it
+never changes `OUTBOUND_RELAY_CERTIFIED`. The full certification still has to
+exercise signed identity-service allocation, approval, usage accounting, one
+approved send, and the public signed webhook.
 
 ## Repeatable live inbound certification
 
@@ -144,7 +191,9 @@ optional `env.r2` profile and its bucket command are documented separately in
 4. Verify `agents.aiat.ca` in Resend, copy its provider-issued DNS records,
    and set the real API/webhook secrets in the operator secret store.
 5. Populate the AIAT production environment, render this Compose bundle, run
-   `identity-migrate`, and start `identity-service` plus `identity-ingress`.
+   `identity-migrate`, and start `identity-service` plus the private
+   `identity-ingress` gateway. Start the optional `cloudflare` profile only
+   after the named tunnel route has been configured.
 6. Run the signed live inbound/outbound certification and only then set
    `OUTBOUND_RELAY_CERTIFIED=true`; outbound approval remains required for each
    message.

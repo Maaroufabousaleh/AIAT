@@ -125,13 +125,11 @@ services:
   identity-ingress:
     image: caddy:2.8.4-alpine@sha256:b95ed06fbc6d74d24a40902090c8cc6086ce7d08ba60a3a7e8e62bf164a9d7bb
     restart: unless-stopped
-    environment:
-      ACME_EMAIL: ${ACME_EMAIL:?ACME contact email is required}
-      IDENTITY_HOSTNAME: ${IDENTITY_HOSTNAME:-identity.aiat.ca}
-    ports:
-      - "80:80"
-      - "443:443"
-    networks: [identity_private, identity_egress]
+    # Cloudflare terminates public TLS. Caddy is only a private, path-limited
+    # gateway for the opt-in tunnel and never publishes a host port.
+    expose:
+      - "8080"
+    networks: [identity_private, identity_tunnel]
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - identity_caddy_data:/data
@@ -146,11 +144,39 @@ services:
       identity-service:
         condition: service_healthy
 
+  cloudflared:
+    # Public webhook ingress is an explicit deployment extension. A missing
+    # token is safe for the default Compose profile because this service is not
+    # selected unless `--profile cloudflare` is requested.
+    profiles: [cloudflare]
+    image: cloudflare/cloudflared:2026.7.0@sha256:5e49861633763e8933475477c20bae6039ed47f32c1d267a34babc347f28f0df
+    command: tunnel --no-autoupdate run
+    restart: unless-stopped
+    dns:
+      - 1.1.1.1
+      - 1.0.0.1
+    environment:
+      # The token is injected only from the operator environment; it is never
+      # placed in this file or in the command line.
+      TUNNEL_TOKEN: "${CLOUDFLARE_IDENTITY_TUNNEL_TOKEN:-}"
+    networks: [identity_tunnel]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    mem_limit: 192m
+    cpus: "0.25"
+    depends_on:
+      identity-ingress:
+        condition: service_started
+
 networks:
   identity_private:
     driver: bridge
     internal: true
   identity_egress:
+    driver: bridge
+  identity_tunnel:
     driver: bridge
 
 volumes:
