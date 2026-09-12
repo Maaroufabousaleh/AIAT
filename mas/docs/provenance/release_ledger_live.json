@@ -198,13 +198,13 @@
     "status": "pass",
     "ref": "scripts/check_identity_provider_conformance.py",
     "mode": "mocked-provider-conformance",
-    "providers": ["resend", "stalwart"],
-    "case_count": 11,
-    "passed_case_count": 11,
+    "providers": ["cloudflare", "resend", "stalwart"],
+    "case_count": 17,
+    "passed_case_count": 17,
     "external_network_access_performed": false,
     "external_provider_mutation_performed": false,
     "payload_free": true,
-    "note": "The bounded fixture drives the real Stalwart/Resend adapters through provider-shaped mocked HTTP. External account, delivery, outage, and restore evidence remain separate live gates."
+    "note": "The bounded fixture drives the real Cloudflare edge fixture plus Stalwart/Resend adapters through provider-shaped local or mocked HTTP. External account, delivery, outage, and restore evidence remain separate live gates."
   },
   "local_flow_runtime_evidence": {
     "status": "pass",

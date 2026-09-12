@@ -1022,7 +1022,7 @@
       "pending_evidence_count": 0,
       "status": "pass",
       "summary": {
-        "case_count": 11,
+        "case_count": 17,
         "error_count": 0,
         "errors": [],
         "external_network_access_performed": false,
@@ -1034,9 +1034,10 @@
           "provider_transient_failure": "checked"
         },
         "mode": "mocked-provider-conformance",
-        "passed_case_count": 11,
+        "passed_case_count": 17,
         "payload_free": true,
         "providers": [
+          "cloudflare",
           "resend",
           "stalwart"
         ],
