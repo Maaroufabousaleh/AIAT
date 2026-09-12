@@ -49,6 +49,29 @@ The external sender address, message body, verification code, raw MIME,
 authentication secret, and provider credentials are deliberately absent from
 this record.
 
+## Production runtime hardening evidence
+
+The production identity runtime also includes the following remediation,
+validated before the inbound certification was treated as canonical:
+
+- The official PostgreSQL image could not initialise its persistent data
+  directory while `cap_drop: [ALL]` was applied. The permanent Compose fix
+  retains `cap_drop: [ALL]` and restores only `CHOWN`, `DAC_OVERRIDE`,
+  `FOWNER`, `SETGID`, and `SETUID`, which are required by the image entrypoint
+  for first-time directory ownership and permission setup.
+- The identity-service image previously copied Alembic assets as restrictive
+  root-owned files. The permanent Dockerfile fix copies `alembic.ini` and the
+  migrations with UID/GID `10001:10001` ownership and normal read/execute
+  permissions, while retaining the non-root runtime user `10001:10001`.
+- The remediation is committed in
+  `528ad79199ea5fa2e808ca3f89012166cda57bf9`
+  (`fix(identity): harden production database startup and migration assets`).
+- The production database migrated through
+  `0001_identity_control_plane`, `0002_mail_trace_correlation`,
+  `0003_mail_edge_observations`, and `0004_provider_neutral_mail`; Alembic
+  reports `0004_provider_neutral_mail (head)`. The identity-service
+  `/healthz` and `/readyz` checks passed.
+
 ## Temporary certification identity
 
 The temporary recipient was retired through the signed lifecycle API after the
@@ -128,10 +151,14 @@ Secret-safe live evidence for that run:
   lifecycle API and its Cloudflare binding reached `RETIRED`; no registry or
   D1 row was deleted directly.
 
-An earlier historical smoke event used non-UUID temporary identifiers. It was
-metadata-verified, ACKed through the signed adapter, and advanced the cursor
-from `0` to `1`, but it is not treated as canonical identity-service
-reconciliation evidence. The canonical run above is the sequence-2 proof.
+An earlier historical smoke event was sequence `1` from a standalone smoke
+certificate. It used non-UUID temporary identity and worker identifiers that
+are incompatible with canonical identity-service synchronization. Its exact
+safe envelope metadata was verified, it was ACKed through the signed
+Cloudflare provider adapter, and `PostgresIdentityStore.advance_inbound_sync_cursor()`
+advanced the durable cursor from `0` to `1`. It was not processed by
+canonical identity-service synchronization. The canonical run above is the
+sequence-2 proof, and the final cursor is `2`.
 
 The external sender, message body, verification code, raw MIME, authentication
 secrets, webhook secrets, and provider credentials are deliberately absent
