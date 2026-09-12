@@ -2,7 +2,7 @@
 
 The fixture drives the real Cloudflare, Stalwart, and Resend adapters through
 deterministic local fixtures or mocked HTTP responses. It covers exact
-envelope-recipient registration, D1/R2 separation, recipient-scoped
+envelope-recipient registration, default D1 chunk separation, recipient-scoped
 deduplication, signed pull/ack/lifecycle behavior, passwordless Stalwart
 mailbox reconciliation, direct Resend API validation, webhook normalization,
 and transient/permanent failure classification. ``httpx.MockTransport`` is
@@ -266,11 +266,13 @@ async def _run_cloudflare() -> tuple[list[str], dict[str, bool]]:
             == "worker-a@agents.example"
         )
         cases.append("cloudflare_envelope_authorization")
-        checks["cloudflare_d1_r2_separation"] = (
+        checks["cloudflare_d1_chunk_separation"] = (
             "raw_mime" not in edge.d1["messages"][first_delivery["message_id"]]
-            and bool(edge.r2)
+            and edge.d1["messages"][first_delivery["message_id"]]["storage_backend"] == "d1"
+            and bool(edge.d1["chunks"].get(first_delivery["message_id"]))
+            and not edge.r2
         )
-        cases.append("cloudflare_d1_r2_separation")
+        cases.append("cloudflare_d1_chunk_separation")
         checks["cloudflare_recipient_scoped_dedup"] = (
             second_delivery.get("accepted") is True
             and first_delivery.get("message_id") != second_delivery.get("message_id")

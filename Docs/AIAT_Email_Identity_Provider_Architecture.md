@@ -12,8 +12,7 @@ The default production configuration is deliberately split by direction:
 Inbound:
 Cloudflare Email Routing
   -> Cloudflare Email Worker
-  -> D1 recipient registry + bounded event metadata
-  -> R2 temporary raw MIME
+  -> D1 recipient registry + bounded event metadata + chunked raw MIME
   -> signed HMAC pull/sync
   -> AIAT identity-service/Postgres
   -> signed orchestrator/tool-service/browser clients
@@ -68,12 +67,14 @@ unknown, suspended, retired, malformed, or oversized recipient/message is
 rejected before raw persistence.
 
 D1 stores the recipient registry, event ordering, message metadata, hashes,
-acknowledgements, replay nonces, and retention markers. R2 stores raw MIME at
-deterministic keys such as `inbound/<identity-id>/<message-id>.eml`. Raw MIME
-is not stored in D1. The Worker cleanup schedule removes expired R2 objects
-while retaining bounded D1 metadata. Verification extraction may place a
-short-lived protection marker; the AIAT Postgres transaction remains
-authoritative if the edge protection call is unavailable.
+acknowledgements, replay nonces, retention markers, and (by default) raw MIME
+as ordered, checksummed `mail_message_chunks` BLOB rows. No ordinary metadata
+or event row contains raw MIME. The default D1 path uses no R2 binding. An
+explicit optional R2 profile can store raw MIME at deterministic keys such as
+`inbound/<identity-id>/<message-id>.eml`; its API and state machine are the
+same. Verification extraction may place a short-lived protection marker; the
+AIAT Postgres transaction remains authoritative if the edge protection call
+is unavailable.
 
 The identity service keeps an encrypted, bounded local read copy so existing
 mail list/read and verification tools continue to work offline after a
@@ -114,9 +115,10 @@ must not share its database, namespace, or environment file.
 
 ## Operational status
 
-Repository tests use deterministic Cloudflare D1/R2 and HTTP fixtures and a
-mocked Resend API. They prove the local protocol and governance boundaries,
-not live Cloudflare routing, DNS, Resend account authorization, or external
-inbox delivery. The final activation latch remains false until the operator
+Repository tests use a deterministic D1-only Worker fixture, an explicit
+optional-R2 regression fixture, and mocked provider HTTP. They prove the local
+protocol and governance boundaries, not live Cloudflare routing, DNS, Resend
+account authorization, or external inbox delivery. The final activation latch
+remains false until the operator
 records the live certification described in
 [`Docs/AIAT_Email_Identity_Domain_Migration.md`](AIAT_Email_Identity_Domain_Migration.md).

@@ -228,7 +228,8 @@ MAS_RUN_LIVE_TESTS=1 uv run pytest -m live packages/mas-core/tests/test_llm_live
 Base compose defines the core infrastructure, control-plane services, analytics,
 and 11 team runners plus one-shot init jobs. The default production email
 identity path is `infra/cloudflare/docker-compose.yml`, with Cloudflare
-Worker/D1/R2 inbound and direct Resend API outbound. The `mail-local` profile
+Worker/D1-only inbound and direct Resend API outbound. The optional Worker R2
+profile is documented separately. The `mail-local` profile
 in `infra/compose/docker-compose.stalwart-local.yml` and `infra/mail-edge`
 remain explicit optional Stalwart full-mailbox profiles.
 

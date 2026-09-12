@@ -134,7 +134,7 @@ def test_cloudflare_fixture_accepts_near_limit_and_rejects_oversized_mail() -> N
 
 
 @pytest.mark.anyio
-async def test_cloudflare_edge_authorizes_envelope_recipient_and_persists_raw_in_r2() -> None:
+async def test_cloudflare_edge_authorizes_envelope_recipient_and_persists_raw_in_d1_chunks() -> None:
     service, edge, client = await make_service()
     try:
         worker = uuid4()
@@ -151,7 +151,8 @@ async def test_cloudflare_edge_authorizes_envelope_recipient_and_persists_raw_in
         assert result["duplicate"] is False
         metadata = edge.d1["messages"][message_id]
         assert "raw_mime" not in metadata
-        assert edge.r2[metadata["raw_object_key"]] == verification_mime()
+        assert b"".join(edge.chunks[message_id]) == verification_mime()
+        assert not edge.r2
         assert metadata["envelope_recipient"] == identity["address"]
         assert edge.receive_message(identity["address"], verification_mime())["duplicate"] is True
         assert edge.receive_message("unknown@agents.aiat.ca", verification_mime())["reason"] == "unknown_recipient"
@@ -268,10 +269,10 @@ async def test_cloudflare_retention_keeps_protected_verification_and_removes_exp
         edge.d1["messages"][message_id]["received_at"] = (now - timedelta(days=8)).isoformat()
         edge.d1["messages"][message_id]["protected_until"] = (now + timedelta(hours=1)).isoformat()
         assert edge.cleanup(now=now, retention_days=7, processed_retention_days=1) == 0
-        assert edge.r2
+        assert edge.chunks
         edge.d1["messages"][message_id]["protected_until"] = (now - timedelta(seconds=1)).isoformat()
         assert edge.cleanup(now=now, retention_days=7, processed_retention_days=1) == 1
-        assert not edge.r2
+        assert not edge.chunks
         assert edge.d1["messages"][message_id]["deleted_at"]
     finally:
         await client.aclose()

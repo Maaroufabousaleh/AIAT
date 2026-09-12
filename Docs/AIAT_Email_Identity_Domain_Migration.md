@@ -9,7 +9,7 @@ authoritative architecture and boundary decisions are in
 | Profile | Entry point | Namespace | Inbound | Outbound |
 | --- | --- | --- | --- | --- |
 | `development` / `mail-local` | `mas/infra/compose/docker-compose.stalwart-local.yml` | `agents.aiat.local` | loopback Stalwart | disabled |
-| `production` / Cloudflare v1 | `mas/infra/cloudflare/docker-compose.yml` plus `email-worker/` | `agents.aiat.ca` | Cloudflare Email Routing + Worker/D1/R2 | direct Resend API, approval-gated |
+| `production` / Cloudflare v1 | `mas/infra/cloudflare/docker-compose.yml` plus `email-worker/` | `agents.aiat.ca` | Cloudflare Email Routing + Worker/D1-only (optional Worker R2 profile) | direct Resend API, approval-gated |
 | optional full mailbox | `mas/infra/mail-edge/docker-compose.yml` | `agents.aiat.ca` | explicit Stalwart | explicit Stalwart or direct Resend |
 
 The local namespace, Postgres volume, provider registry, and secrets are
@@ -21,7 +21,7 @@ and never point a local environment file at a production database or edge.
 Inbound mail follows:
 
 ```text
-Cloudflare Email Routing -> Email Worker -> D1 metadata / R2 raw MIME
+Cloudflare Email Routing -> Email Worker -> D1 metadata + chunked raw MIME
   -> signed pull -> AIAT identity-service/Postgres -> governed clients
 ```
 
@@ -48,8 +48,10 @@ Do not guess or commit them. Configure the exact route:
 
 The Worker registry, not a wildcard route, authorizes individual AIAT
 recipients. An unknown, suspended, retired, malformed, or oversized recipient
-is rejected before R2/D1 message persistence. The SMTP envelope recipient is
-authoritative; a forged `To:` header cannot redirect ownership.
+is rejected before message persistence. The default Worker stores raw MIME in
+ordered D1 chunks and emits no event until chunk count, lengths, and the whole
+message checksum verify. The SMTP envelope recipient is authoritative; a
+forged `To:` header cannot redirect ownership.
 
 Create the public identity-service DNS/TLS endpoint required by the chosen
 ingress policy, normally `identity.aiat.ca` terminating at the Compose Caddy
@@ -85,9 +87,10 @@ docker compose --env-file .env.cloudflare-mail-edge.example config -q
 
 For the operator-owned deployment, in order:
 
-1. Create the Cloudflare D1 database and R2 bucket, replace the placeholder
-   `database_id` and bucket identifier in `email-worker/wrangler.toml`, and
-   apply the reviewed D1 migration remotely.
+1. Use the existing production D1 database configured in
+   `email-worker/wrangler.toml` (`aiat-mail-edge`, ID
+   `f52e0f58-d4b1-443e-9e30-c6b1784608f2`) and apply the reviewed D1 migration
+   remotely. Do not create or configure an R2 bucket for the default profile.
 2. Store one high-entropy `MAIL_EDGE_AUTH_SECRET` in the Worker secret store,
    deploy the Worker, and record its HTTPS origin in
    `CLOUDFLARE_MAIL_EDGE_URL`. Inject the same value into
@@ -120,7 +123,8 @@ backups; map the worker ID and ownership grant; provision the new address
 through identity-service; and retain historical audit/outbox records.
 
 If the edge has accepted a message but local synchronization has not committed,
-leave it in R2/D1 and retry from the durable cursor. If a provider call is
+leave it in D1 (or the explicitly selected optional R2/D1 profile) and retry
+from the durable cursor. If a provider call is
 ambiguous, reconcile its opaque reference before retrying. Never create a
 second recipient binding or manually edit D1/identity rows.
 
@@ -151,11 +155,12 @@ default Cloudflare path.
 
 ## Live certification still required
 
-Repository tests cover the Worker contract with deterministic D1/R2 emulators,
-the signed pull/retry boundary, lifecycle isolation, encrypted local sync,
-and Resend with a mocked HTTPS transport. They do not certify:
+Repository tests cover the Worker contract with a deterministic D1-only
+emulator, an explicit optional-R2 regression, the signed pull/retry boundary,
+lifecycle isolation, encrypted local sync, and Resend with a mocked HTTPS
+transport. They do not certify:
 
-- Cloudflare route delivery, D1/R2 bindings, Worker deployment, or DNS;
+- Cloudflare route delivery, D1 migration, Worker deployment, or DNS;
 - public TLS and identity ingress reachability;
 - Resend domain authorization, direct API acceptance, webhook authenticity,
   external inbox delivery, or reply routing;

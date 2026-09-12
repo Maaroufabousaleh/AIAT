@@ -41,7 +41,8 @@ This boundary gives workers stable identities and tightly controlled access to m
 - Orchestrator credential manager, approval requests, resolution audit, browser identity, and durable worker tool grants/nonces.
 - The dashboard credentials list reads with `cache: "no-store"`, retains the last successful redacted metadata set after a failed refresh, keeps placeholders/policy/usage rows visible while retrying, labels the list as stale, and exposes header Refresh plus banner Retry controls. A 401/403 read exposes a named access-denied region, preserves only previously loaded redacted metadata, and hides Refresh/Retry, creation, deletion, placeholder copy, selection, and audit navigation; creation and bulk mutations also fail closed on authorization loss. [`credentials/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/credentials/page.tsx>) and [`credentials-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/credentials-states.spec.ts) cover stale retention, recovery, first-load denial, and post-read denial 3/3 without putting secret values in the fixture (`970f09c`, `982c9c0`).
 - All identity-resource tables share an abortable, generation-guarded loader: an obsolete refresh cannot overwrite newer data, retained rows remain visible while retrying, and a successful retry clears the stale warning. Tables expose captions/column scopes and explicit, 44px action controls for keyboard and screen-reader use. [`IdentityResourcePage.tsx`](../../mas/apps/mas-dashboard/components/identity/IdentityResourcePage.tsx) and [`identity-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/identity-states.spec.ts) prove the failure → retained-data → recovery and semantic-control paths 1/1 without rendering sensitive fields (`46eccee`, `651ad11`).
-- Default Cloudflare Worker/D1/R2 deployment assets plus optional local
+- Default Cloudflare Worker/D1-only deployment assets plus an optional Worker
+  R2 profile and optional local
   Stalwart and SMTP-gateway deployment/runbook assets.
 
 ## Code anchors
@@ -90,7 +91,7 @@ remain separate operator-owned checks.
 
 | Profile | Status | Intended use |
 | --- | --- | --- |
-| Cloudflare Email Routing + Worker/D1/R2 + direct Resend API | Repository-complete default v1; live certification pending | Provider-managed inbound edge and direct API outbound, with AIAT identity-service governance and no public SMTP listener. |
+| Cloudflare Email Routing + Worker/D1-only + direct Resend API | Repository-complete default v1; live certification pending | Provider-managed inbound edge with chunked D1 raw MIME and direct API outbound, with AIAT identity-service governance and no public SMTP listener. An optional Worker R2 profile remains available. |
 | `agents.aiat.local` Stalwart | Implemented optional local profile | Loopback development and deterministic tests; no public-mail claim. |
 | Public Stalwart + Resend | Optional staged profile; live certification pending | Full-mailbox/JMAP deployments that deliberately select Stalwart and its own DNS/TLS/SMTP controls. |
 

@@ -83,7 +83,8 @@ def upgrade() -> None:
         sa.CheckConstraint("last_sequence >= 0", name="ck_email_inbound_cursor_nonnegative"),
     )
 
-    # Raw MIME remains at the edge's R2 object store in the normal topology.
+    # Raw MIME remains at the edge's bounded D1 chunks in the default
+    # topology; the Worker also retains an explicitly optional R2 profile.
     # The identity service stores an encrypted, bounded read copy only when it
     # synchronizes a message; the content_ref never enters an API response.
     op.create_table(

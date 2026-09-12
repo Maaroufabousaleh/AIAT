@@ -222,7 +222,7 @@ components:
     version: source-controlled-worker-v1
     source: https://developers.cloudflare.com/email-routing/email-workers/
     license_evidence: null
-    integration: cloudflare-managed-worker-with-d1-r2
+    integration: cloudflare-managed-worker-with-d1-default-optional-r2
     status: repository-implemented-live-deployment-pending
     operator_notice: Cloudflare service terms and account-specific Email Routing conditions remain operator-owned metadata; this record is not a technical or licence activation gate.
   - id: cloudflare-workers-types

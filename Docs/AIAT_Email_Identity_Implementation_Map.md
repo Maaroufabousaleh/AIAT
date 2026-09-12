@@ -1,8 +1,9 @@
 # AIAT Email Identity: Repository Implementation Map
 
-> Current topology notice (2026-09-11): the default production topology is
-> Cloudflare Email Routing -> Email Worker/D1/R2 -> signed AIAT sync for
-> inbound mail, with direct Resend API calls for outbound mail. Stalwart is an
+> Current topology notice (2026-09-12): the default production topology is
+> Cloudflare Email Routing -> Email Worker/D1-only -> signed AIAT sync for
+> inbound mail, with direct Resend API calls for outbound mail. R2 is an
+> explicitly selected optional raw-message backend, and Stalwart remains an
 > explicitly selected optional full-mailbox provider. Use
 > `Docs/AIAT_Email_Identity_Provider_Architecture.md` and
 > `Docs/AIAT_Email_Identity_Domain_Migration.md` for the active boundary and
@@ -33,7 +34,7 @@ are available.
 | Browser runtime | `apps/tool-service/tool_service/tools/browser.py` | Replace reusable anonymous contexts for governed external accounts with persistent local profiles keyed by `(worker_id, service)`, opaque session handles, and explicit revocation. |
 | Credits and usage | `mas_core.memory` project usage events | Implement a dedicated reserve/commit/release identity ledger and usage events, so external identity operations are durable when the laptop is offline. |
 | Dashboard | `apps/mas-dashboard` Next.js app and orchestrator proxy routes | Add identity pages and secure server-side proxy routes. All views are metadata-only and redact secret-like fields. |
-| Deployment | `mas/infra/cloudflare`, `mas/infra/mail-edge`, `mas/infra/compose` | Make the Cloudflare Worker/D1/R2 + identity-service Compose bundle the default; retain Stalwart mail-edge and loopback profiles as explicit optional deployments. |
+| Deployment | `mas/infra/cloudflare`, `mas/infra/mail-edge`, `mas/infra/compose` | Make the Cloudflare Worker/D1-only + identity-service Compose bundle the default; retain the optional Worker R2 profile and Stalwart mail-edge/loopback profiles as explicit alternatives. |
 
 ## Delivery sequence
 
@@ -64,9 +65,10 @@ are available.
 - Direct IMAP/SMTP client access and credential/cookie export are prohibited.
 - Direct MX delivery is disabled in deployment configuration and host validation;
   the default inbound path has no public SMTP listener.
-- Cloudflare edge access uses a signed, replay-protected HMAC protocol. D1
-  stores registry/metadata only; raw MIME is temporary R2 data and local
-  identity-service copies are encrypted.
+- Cloudflare edge access uses a signed, replay-protected HMAC protocol. The
+  default D1 path stores registry/metadata plus ordered, checksummed raw-MIME
+  chunks; raw MIME is absent from ordinary event rows. The optional R2 path
+  remains available, and local identity-service copies are encrypted.
 
 ## Implemented repository architecture
 
@@ -128,7 +130,8 @@ are available.
   suspension/archive, credential-rotation requests, external-account state,
   and session revocation; arbitrary identity-service paths cannot be proxied.
 - `infra/cloudflare` pins the default identity Postgres/Caddy runtime and
-  contains the source-controlled Worker/D1/R2 deployment boundary. It does not
+  contains the source-controlled Worker/D1-only deployment boundary plus an
+  explicit optional Worker R2 profile. It does not
   pass a Cloudflare account token to AIAT. `infra/mail-edge` pins Stalwart,
   Postgres, and Caddy for the optional full-mailbox profile; it keeps Postgres and
   administration private; creates an environment-backed Resend relay; removes
@@ -144,12 +147,14 @@ are available.
 
 - The provider-neutral identity suite passes (**47 passed, 2 skipped**),
   including Cloudflare envelope authorization, recipient-scoped deduplication,
-  signed sync retry/cursor semantics, lifecycle isolation, R2 retention, and
-  direct Resend API approval/idempotency fixtures. The skips are live or
+  signed sync retry/cursor semantics, lifecycle isolation, D1 fixture retention,
+  and direct Resend API approval/idempotency fixtures. The skips are live or
   opt-in database cases.
 - The Cloudflare Worker package passes TypeScript typecheck and its local
-  Vitest suite (**5 passed**); Wrangler applies the checked-in D1 migration in
-  the local emulator. No Cloudflare or Resend network/account mutation was
+  Vitest suite (**29 passed**); Wrangler applies the checked-in D1 migrations
+  in the local emulator. The suite covers D1 chunking, binary reconstruction,
+  checksum/retry/retention behavior, signed API security, and an explicit
+  optional-R2 regression. No Cloudflare or Resend network/account mutation was
   performed.
 - The payload-free provider conformance checker passes all mocked cases for
   Cloudflare, Resend, and the retained Stalwart adapter. Its `--live` mode
@@ -241,7 +246,8 @@ Repository completion is not production acceptance. The status remains
 Cloudflare/Resend resources and real secrets and executes the mandatory live
 tests. Outstanding evidence:
 
-- Cloudflare D1/R2 resources, Worker deployment, exact Email Routing route,
+- Cloudflare D1 resource migration, Worker deployment, exact Email Routing
+  route,
   public identity TLS, and inbound delivery/retry/restart evidence.
 - Resend account/API key, verified sending domain, direct API acceptance,
   authenticated webhook evidence, external delivery/reply evidence, and
