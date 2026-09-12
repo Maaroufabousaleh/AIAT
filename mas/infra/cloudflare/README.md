@@ -49,6 +49,43 @@ returned by Cloudflare and Resend rather than guessing MX, SPF, DKIM, or
 return-path records. It checks the public DNS records only; the exact Email
 Routing route still has to be verified in the Cloudflare account.
 
+## Repeatable live inbound certification
+
+After the operator injects `CLOUDFLARE_MAIL_EDGE_URL` and
+`CLOUDFLARE_MAIL_EDGE_AUTH_SECRET` through the local secret environment, use
+the adapter-backed certificate rather than an ad-hoc request. It makes no
+Cloudflare account calls, sends no external email, and prints only bounded
+metadata:
+
+```sh
+cd /mnt/c/projects/aiat/mas
+uv run python scripts/certify_cloudflare_mail_edge_live.py --json health
+uv run python scripts/certify_cloudflare_mail_edge_live.py --json inspect-events \
+  --recipient w-live-smoke-20260912@agents.aiat.ca \
+  --identity-id live-smoke-identity-20260912 \
+  --worker-id live-smoke-worker-20260912
+```
+
+Use `fetch-and-validate-message` with the safe `message_id` from event output
+and the expected recipient/identity/worker correlation. The script can also
+run signed `activate`, `suspend`, and `retire` transitions. To finalize the
+current temporary smoke identity, run the following after confirming the
+operator environment is authenticated:
+
+```sh
+cd /mnt/c/projects/aiat/mas
+uv run python scripts/certify_cloudflare_mail_edge_live.py finalize-certification \
+  --recipient w-live-smoke-20260912@agents.aiat.ca \
+  --identity-id live-smoke-identity-20260912 \
+  --worker-id live-smoke-worker-20260912 \
+  --provider-reference recipient:e2ad9f0588e174b1f82ebef7e389ad1b
+```
+
+This retires the registry binding through the signed lifecycle API; it does
+not edit D1 directly or send another external message. The live result and
+remaining release boundaries are recorded in
+[`../../../Docs/AIAT_Email_Identity_Live_Certification.md`](../../../Docs/AIAT_Email_Identity_Live_Certification.md).
+
 ## Default Worker live commands
 
 After the local checks pass and the operator has reviewed the existing D1

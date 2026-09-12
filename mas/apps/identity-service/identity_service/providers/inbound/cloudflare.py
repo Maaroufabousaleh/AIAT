@@ -15,18 +15,20 @@ import hmac
 import json
 import re
 import time
-from collections.abc import Mapping
 from datetime import UTC, datetime
 from email import policy
 from email.parser import BytesParser
 from email.utils import getaddresses, parsedate_to_datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, quote, urlsplit
 from uuid import uuid4
 
 import httpx
 
 from ..base import MailProviderError
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 _ADDRESS_RE = re.compile(r"^[^@\s<>\x00-\x1f\x7f]+@[^@\s<>\x00-\x1f\x7f]+$")
 _REFERENCE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,199}$")
@@ -39,6 +41,9 @@ _DEFAULT_MAX_MESSAGE_BYTES = 10 * 1024 * 1024
 _MAX_API_RESPONSE_BYTES = 36 * 1024 * 1024
 _AUTH_VERSION = "aiat.mail-edge.v1"
 _D1_RAW_CHUNK_SIZE = 256 * 1024
+_HTTP_MAX_CONNECTIONS = 20
+_HTTP_MAX_KEEPALIVE_CONNECTIONS = 10
+_HTTP_KEEPALIVE_EXPIRY_SECONDS = 30.0
 
 
 def normalize_email_address(value: str) -> str:
@@ -191,7 +196,13 @@ class CloudflareProviderError(MailProviderError):
 
 
 class CloudflareInboundAdapter:
-    """Signed client for the AIAT Cloudflare Email Worker API."""
+    """Signed client for the AIAT Cloudflare Email Worker API.
+
+    When no client is injected, the adapter lazily owns one bounded
+    HTTP/2-capable client for its entire lifetime. The application lifespan
+    closes that client; injected clients remain borrowed so tests and embedding
+    callers retain ownership of their transport.
+    """
 
     provider_name = "cloudflare"
 
@@ -221,9 +232,40 @@ class CloudflareInboundAdapter:
         self.edge_url = edge_url.rstrip("/")
         self._auth_secret = str(auth_secret or "")
         self.timeout = timeout_seconds
+        self._owns_client = client is None
         self._client = client
+        self._closed = False
         self.max_message_bytes = max_message_bytes
         self.auth_tolerance_seconds = auth_tolerance_seconds
+
+    def _ensure_client(self) -> httpx.AsyncClient:
+        """Return the one owned client, creating it before the first await."""
+
+        if self._closed:
+            raise RuntimeError("mail edge client is closed")
+        if self._client is None:
+            # Client construction is synchronous, so concurrent first callers
+            # cannot interleave between this check and assignment.
+            self._client = httpx.AsyncClient(
+                timeout=self.timeout,
+                limits=httpx.Limits(
+                    max_connections=_HTTP_MAX_CONNECTIONS,
+                    max_keepalive_connections=_HTTP_MAX_KEEPALIVE_CONNECTIONS,
+                    keepalive_expiry=_HTTP_KEEPALIVE_EXPIRY_SECONDS,
+                ),
+                http2=True,
+                follow_redirects=False,
+            )
+        return self._client
+
+    async def aclose(self) -> None:
+        """Close the provider-owned transport without closing borrowed clients."""
+
+        if not self._owns_client or self._closed:
+            return
+        self._closed = True
+        if self._client is not None:
+            await self._client.aclose()
 
     def _headers(self, method: str, path: str, body: bytes) -> dict[str, str]:
         timestamp = str(int(time.time()))
@@ -246,16 +288,20 @@ class CloudflareInboundAdapter:
         correlation_id = str(uuid4())
         headers = self._headers(method, path, body)
         headers["X-Request-ID"] = correlation_id
+        if self._closed:
+            raise CloudflareProviderError(
+                "CLOUDFLARE_MAIL_EDGE_CLIENT_CLOSED",
+                "mail edge client is closed",
+                correlation_id=correlation_id,
+            )
+        client = self._ensure_client()
         try:
-            if self._client is not None:
-                response = await self._client.request(
-                    method, f"{self.edge_url}{path}", content=body, headers=headers, timeout=self.timeout
-                )
-            else:
-                async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=False) as client:
-                    response = await client.request(
-                        method, f"{self.edge_url}{path}", content=body, headers=headers
-                    )
+            # Deliberately send one provider operation per adapter call. The
+            # caller reconciles transient failures instead of blindly replaying
+            # lifecycle or other potentially non-idempotent operations.
+            response = await client.request(
+                method, f"{self.edge_url}{path}", content=body, headers=headers, timeout=self.timeout
+            )
         except httpx.TimeoutException as exc:
             raise CloudflareProviderError("CLOUDFLARE_MAIL_EDGE_TIMEOUT", "mail edge request timed out", transient=True, correlation_id=correlation_id) from exc
         except httpx.HTTPError as exc:
@@ -305,9 +351,17 @@ class CloudflareInboundAdapter:
                 "idempotency_key": idempotency_key,
             },
         )
+        provider_reference = str(data.get("provider_reference") or "").strip()
+        if not provider_reference:
+            raise CloudflareProviderError(
+                "CLOUDFLARE_MAIL_EDGE_INVALID_RESPONSE",
+                "mail edge registration response is missing its provider reference",
+                transient=True,
+                correlation_id=correlation_id,
+            )
         return {
             "provider": self.provider_name,
-            "provider_reference": str(data.get("provider_reference") or f"recipient:{normalized}"),
+            "provider_reference": provider_reference,
             "correlation_id": correlation_id,
             "result": {"registered": True},
         }
