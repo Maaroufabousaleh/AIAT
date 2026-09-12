@@ -113,6 +113,7 @@ inaccessible `mas/.tmp-*` test directories and unrelated root-level files.
 - `mas/infra/cloudflare/Caddyfile`
 - `mas/infra/cloudflare/README.md`
 - `mas/infra/cloudflare/docker-compose.yml`
+- `mas/infra/cloudflare/scripts/validate-dns.sh`
 - `mas/infra/cloudflare/email-worker/README.md`
 - `mas/infra/cloudflare/email-worker/.dev.vars.example`
 - `mas/infra/cloudflare/email-worker/package.json`

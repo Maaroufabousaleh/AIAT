@@ -23,11 +23,20 @@ npm run d1:migrate:local
 
 cd /mnt/c/projects/aiat/mas/infra/cloudflare
 docker compose --env-file .env.cloudflare-mail-edge.local config -q
+
+# After the operator has copied the exact Cloudflare/Resend DNS values into
+# the shell environment, validate public records without reading any secret:
+sh scripts/validate-dns.sh
 ```
 
 The local Worker tests and Wrangler D1 migration do not contact Cloudflare or
 Resend. Copy the example to an ignored local file and keep every placeholder
 or real secret outside Git.
+
+`scripts/validate-dns.sh` deliberately requires the exact account/region values
+returned by Cloudflare and Resend rather than guessing MX, SPF, DKIM, or
+return-path records. It checks the public DNS records only; the exact Email
+Routing route still has to be verified in the Cloudflare account.
 
 ## Operator deployment order
 
