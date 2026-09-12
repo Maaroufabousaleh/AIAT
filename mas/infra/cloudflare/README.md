@@ -130,6 +130,15 @@ authentication; the bounded `send-once` operation proves this mode through
 the actual `/emails` endpoint. A full-access key may additionally report the
 provider domain status through `/domains`.
 
+Register or reconcile exactly one Resend webhook at
+`https://identity.aiat.ca/v1/mail-edge/provider-webhook/resend`; do not create
+a duplicate. Subscribe to `email.sent`, `email.delivered`,
+`email.delivery_delayed`, `email.bounced`, `email.complained`, and
+`email.failed`, plus `email.suppressed` only if the account currently supports
+it. The configured `RESEND_WEBHOOK_SIGNING_SECRET` must correspond to that
+webhook, and the identity service verifies the raw request body before storing
+any provider observation.
+
 The optional `send-once --confirm-send` operation is a single, no-retry
 transport probe for an operator-controlled recipient supplied through
 `AIAT_CERTIFICATION_RECIPIENT`; it is not the governed worker send path and it
