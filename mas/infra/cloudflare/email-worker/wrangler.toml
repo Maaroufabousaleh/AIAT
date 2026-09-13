@@ -3,6 +3,13 @@ main = "src/index.ts"
 compatibility_date = "2025-09-01"
 workers_dev = false
 
+# The Worker is the HTTPS origin for the signed identity-service API. This is
+# a Custom Domain, not a traditional `hostname/*` route; Cloudflare creates
+# the hostname's DNS record and certificate when the operator deploys it.
+[[routes]]
+pattern = "mail-edge.aiat.ca"
+custom_domain = true
+
 # The existing operator-owned D1 database is used by the default deployment.
 # The Worker runtime receives the narrow MAIL_EDGE_AUTH_SECRET; it never
 # receives a Cloudflare account API token.

@@ -32,6 +32,10 @@ credential boundary.
 
 The default bundle is [`mas/infra/cloudflare/docker-compose.yml`](../mas/infra/cloudflare/docker-compose.yml).
 The managed edge source is [`mas/infra/cloudflare/email-worker/`](../mas/infra/cloudflare/email-worker/).
+The signed identity-service synchronization origin is the Worker Custom Domain
+`https://mail-edge.aiat.ca`, configured with `custom_domain = true` while
+`workers_dev = false` remains disabled. The default design does not depend on a
+`workers.dev` hostname or a traditional `mail-edge.aiat.ca/*` route.
 
 ## Provider-neutral contracts
 
@@ -93,7 +97,8 @@ errors are sanitized, and the Worker has no Cloudflare account API token.
 Supported edge operations are health, exact-recipient registration and
 lifecycle, alias registration, event listing, message fetch, event
 acknowledgement, processed state, deletion, and temporary retention
-protection. The identity service is the only intended caller.
+protection at `https://mail-edge.aiat.ca`. The identity service is the only
+intended caller.
 
 ## Optional Stalwart profile
 
