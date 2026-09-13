@@ -220,7 +220,7 @@ blocked; it never treats licence metadata as a release gate.
 
 Base compose defines the core infrastructure, control-plane services, analytics,
 and 11 team runners plus one-shot init jobs. The default production email
-identity path is the Cloudflare Worker/D1/R2 bundle in
+identity path is the Cloudflare Worker/D1-only bundle in
 `mas/infra/cloudflare/docker-compose.yml`, with direct Resend API outbound.
 The `mail-local` profile in `mas/infra/compose/docker-compose.stalwart-local.yml`
 and the `mail-edge` bundle remain explicit optional Stalwart full-mailbox

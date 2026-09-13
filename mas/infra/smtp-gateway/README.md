@@ -3,7 +3,7 @@
 This is an optional Stalwart full-mailbox topology for the home Fizz
 constraint. The default v1 production path is
 [`../cloudflare/README.md`](../cloudflare/README.md): Cloudflare Email Routing
-plus Worker/D1/R2 inbound and direct Resend API outbound. Select this gateway
+plus Worker/D1-only inbound and direct Resend API outbound. Select this gateway
 only when public SMTP ingress and a home-hosted Stalwart mailbox are
 intentionally required. The home host can accept TCP/25 locally and through the forwarded public test port
 2525, but public TCP/25 times out. It therefore cannot be the public MX edge.

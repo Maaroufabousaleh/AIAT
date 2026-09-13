@@ -2,9 +2,9 @@
 
 The production adapter talks only to the narrow AIAT mail-edge API.  It never
 holds a Cloudflare account token and never exposes a provider administration
-endpoint.  ``CloudflareEdgeFixture`` mirrors the Worker/D1/R2 contract without
-network access so lifecycle, replay, privacy, and offline-catch-up tests can
-run on a laptop.
+endpoint.  ``CloudflareEdgeFixture`` mirrors the default Worker/D1 chunk
+contract without network access; an explicit fixture option retains the
+optional R2 compatibility path for provider regression tests.
 """
 
 from __future__ import annotations
@@ -38,6 +38,7 @@ _DEFAULT_MAX_MESSAGE_BYTES = 10 * 1024 * 1024
 # unbounded provider responses.
 _MAX_API_RESPONSE_BYTES = 36 * 1024 * 1024
 _AUTH_VERSION = "aiat.mail-edge.v1"
+_D1_RAW_CHUNK_SIZE = 256 * 1024
 
 
 def normalize_email_address(value: str) -> str:
@@ -434,13 +435,23 @@ class CloudflareInboundAdapter:
 
 
 class CloudflareEdgeFixture:
-    """No-network D1/R2 emulator used by provider and lifecycle tests."""
+    """No-network default D1-chunk emulator used by provider tests."""
 
-    def __init__(self, *, auth_secret: str = "fixture-mail-edge-secret", max_message_bytes: int = _DEFAULT_MAX_MESSAGE_BYTES) -> None:
+    def __init__(
+        self,
+        *,
+        auth_secret: str = "fixture-mail-edge-secret",
+        max_message_bytes: int = _DEFAULT_MAX_MESSAGE_BYTES,
+        storage_backend: str = "d1",
+    ) -> None:
+        if storage_backend not in {"d1", "r2"}:
+            raise ValueError("storage_backend must be d1 or r2")
         self.auth_secret = auth_secret
         self.max_message_bytes = max_message_bytes
+        self.storage_backend = storage_backend
         self.registry: dict[str, dict[str, Any]] = {}
-        self.d1: dict[str, dict[str, Any]] = {"recipients": {}, "messages": {}, "events": {}}
+        self.chunks: dict[str, list[bytes]] = {}
+        self.d1: dict[str, dict[str, Any]] = {"recipients": {}, "messages": {}, "events": {}, "chunks": self.chunks}
         self.r2: dict[str, bytes] = {}
         self.events: list[dict[str, Any]] = []
         self._events_by_provider_key: dict[str, dict[str, Any]] = {}
@@ -537,7 +548,11 @@ class CloudflareEdgeFixture:
         message_id = "m-" + hashlib.sha256(
             recipient.encode() + b"\x00" + source_id.encode() + b"\x00" + raw
         ).hexdigest()[:48]
-        object_key = f"inbound/{identity['identity_id']}/{message_id}.eml"
+        object_key = (
+            f"d1://mail-message/{message_id}"
+            if self.storage_backend == "d1"
+            else f"inbound/{identity['identity_id']}/{message_id}.eml"
+        )
         received_at = datetime.now(UTC).isoformat()
         view = normalize_raw_message(raw, message_id=message_id, envelope_recipient=recipient, received_at=received_at)
         self._sequence += 1
@@ -568,11 +583,20 @@ class CloudflareEdgeFixture:
             "received_at": received_at,
             "raw_size": len(raw),
             "raw_object_key": object_key,
+            "storage_backend": self.storage_backend,
+            "storage_state": "EVENT_READY",
+            "chunk_count": (len(raw) + _D1_RAW_CHUNK_SIZE - 1) // _D1_RAW_CHUNK_SIZE if self.storage_backend == "d1" and raw else 0,
             "processed_at": None,
             "protected_until": None,
             "deleted_at": None,
         }
-        self.r2[object_key] = raw
+        if self.storage_backend == "d1":
+            self.chunks[message_id] = [
+                raw[offset:offset + _D1_RAW_CHUNK_SIZE]
+                for offset in range(0, len(raw), _D1_RAW_CHUNK_SIZE)
+            ]
+        else:
+            self.r2[object_key] = raw
         self.d1["messages"][message_id] = dict(metadata)
         self.d1["events"][event["event_id"]] = {key: value for key, value in event.items() if key not in {"content_digest"}}
         self._messages_by_id[message_id] = {"metadata": metadata, "event": event, "message": view}
@@ -593,7 +617,7 @@ class CloudflareEdgeFixture:
             return self._response(400, {"error": "request body is invalid"})
         try:
             if request.method == "GET" and path == "/v1/health":
-                return self._response(200, {"status": "ok", "provider": "cloudflare", "storage": {"metadata": "d1", "raw": "r2"}})
+                return self._response(200, {"status": "ok", "provider": "cloudflare", "storage": {"metadata": "d1", "raw": self.storage_backend}, "storage_backend": self.storage_backend})
             if request.method == "POST" and path == "/v1/recipients/register":
                 return self._response(200, self._register(body, "VERIFYING"))
             if request.method == "POST" and path in {"/v1/recipients/activate", "/v1/recipients/suspend", "/v1/recipients/retire"}:
@@ -632,7 +656,7 @@ class CloudflareEdgeFixture:
                 if message is None or message["metadata"].get("deleted_at") is not None:
                     return self._response(404, {"error": "message not found"})
                 metadata = dict(message["metadata"])
-                raw = self.r2.get(metadata["raw_object_key"], b"")
+                raw = b"".join(self.chunks.get(message_id, [])) if metadata.get("storage_backend") == "d1" else self.r2.get(metadata["raw_object_key"], b"")
                 return self._response(200, {**metadata, "provider_event_id": message["event"]["provider_event_id"], "raw_mime_base64": base64.b64encode(raw).decode()})
             if request.method == "POST" and path.startswith("/v1/events/") and path.endswith("/ack"):
                 event_id = path.removeprefix("/v1/events/").removesuffix("/ack").rstrip("/")
@@ -662,6 +686,8 @@ class CloudflareEdgeFixture:
                 message["deleted_at"] = datetime.now(UTC).isoformat()
                 object_key = str(message.get("raw_object_key") or "")
                 self.r2.pop(object_key, None)
+                self.chunks.pop(message_id, None)
+                message["storage_state"] = "DELETED"
                 return self._response(200, {"message_id": message_id, "deleted": True})
             if request.method == "POST" and path.startswith("/v1/messages/") and path.endswith("/protect"):
                 message_id = path.removeprefix("/v1/messages/").removesuffix("/protect").rstrip("/")
@@ -686,7 +712,7 @@ class CloudflareEdgeFixture:
         retention_days: int = 7,
         processed_retention_days: int = 1,
     ) -> int:
-        """Delete expired R2 bodies while retaining bounded D1 metadata."""
+        """Delete expired raw bodies/chunks while retaining bounded metadata."""
 
         current = (now or datetime.now(UTC)).astimezone(UTC)
         raw_cutoff = current.timestamp() - retention_days * 24 * 60 * 60
@@ -708,6 +734,8 @@ class CloudflareEdgeFixture:
             if (processed_time is None and received <= raw_cutoff) or (processed_time is not None and processed_time <= processed_cutoff):
                 metadata["deleted_at"] = current.isoformat()
                 self.r2.pop(str(metadata.get("raw_object_key") or ""), None)
+                self.chunks.pop(message_id, None)
+                metadata["storage_state"] = "DELETED"
                 deleted += 1
                 if message_id in self._messages_by_id:
                     self._messages_by_id[message_id]["metadata"]["deleted_at"] = current.isoformat()

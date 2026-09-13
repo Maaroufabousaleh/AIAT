@@ -3,7 +3,7 @@
 This is the optional full-mailbox deployment bundle for a self-hosted AIAT
 machine. It is not the default v1 production path; use
 [`../cloudflare/README.md`](../cloudflare/README.md) for the default Cloudflare
-Email Routing + Worker/D1/R2 inbound and direct Resend API outbound topology.
+Email Routing + Worker/D1-only inbound and direct Resend API outbound topology.
 This profile is selected explicitly with `IDENTITY_INBOUND_PROVIDER=stalwart`
 and `IDENTITY_OUTBOUND_PROVIDER=stalwart`.
 

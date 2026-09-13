@@ -119,6 +119,7 @@ inaccessible `mas/.tmp-*` test directories and unrelated root-level files.
 - `mas/infra/cloudflare/email-worker/package.json`
 - `mas/infra/cloudflare/email-worker/package-lock.json`
 - `mas/infra/cloudflare/email-worker/schema/0001_mail_edge.sql`
+- `mas/infra/cloudflare/email-worker/schema/0002_d1_chunked_raw_messages.sql`
 - `mas/infra/cloudflare/email-worker/src/index.ts`
 - `mas/infra/cloudflare/email-worker/tests/worker.test.ts`
 - `mas/infra/cloudflare/email-worker/tsconfig.json`
@@ -159,7 +160,11 @@ The provider-neutral migration also updates the previously listed identity
 service, dashboard page, tool-service identity tool, optional mail-edge, and
 conformance-script files in place. The new default Cloudflare bundle is
 independent of the retained Stalwart files; Stalwart-specific scripts and
-fixtures remain optional-profile code.
+fixtures remain optional-profile code. The 2026-09-12 focused follow-up makes
+the default Worker D1-only, adds forward migration `0002` for ordered raw-MIME
+chunks, retains the R2 implementation only under the explicit optional
+profile, and expands the Worker suite to cover storage integrity, crash/retry,
+retention, isolation, signed API, and optional-R2 behavior.
 
 Additional conformance inventory:
 
