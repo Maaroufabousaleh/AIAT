@@ -3,25 +3,51 @@ main = "src/index.ts"
 compatibility_date = "2025-09-01"
 workers_dev = false
 
-# Replace only the resource identifiers during the operator-owned Cloudflare
-# deployment. The Worker runtime receives the narrow MAIL_EDGE_AUTH_SECRET;
-# it never receives a Cloudflare account API token.
+# The existing operator-owned D1 database is used by the default deployment.
+# The Worker runtime receives the narrow MAIL_EDGE_AUTH_SECRET; it never
+# receives a Cloudflare account API token.
 [[d1_databases]]
 binding = "DB"
 database_name = "aiat-mail-edge"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "f52e0f58-d4b1-443e-9e30-c6b1784608f2"
 migrations_dir = "schema"
-
-[[r2_buckets]]
-binding = "MAIL_OBJECTS"
-bucket_name = "aiat-mail-edge"
 
 [vars]
 MAIL_EDGE_AUTH_VERSION = "aiat.mail-edge.v1"
-MAIL_EDGE_MAX_MESSAGE_BYTES = "10485760"
+MAIL_EDGE_STORAGE_BACKEND = "d1"
+MAIL_EDGE_MAX_MESSAGE_BYTES = "4194304"
 MAIL_EDGE_AUTH_TOLERANCE_SECONDS = "300"
 MAIL_EDGE_RETENTION_DAYS = "7"
 MAIL_EDGE_PROCESSED_RETENTION_DAYS = "1"
+MAIL_EDGE_INCOMPLETE_RETENTION_SECONDS = "3600"
 
 [triggers]
+crons = ["*/15 * * * *"]
+
+# Optional future profile. It is never read by the default `wrangler deploy`
+# command and therefore does not require R2 entitlement or a bucket. Use only
+# after creating the named bucket and deploying explicitly with `--env r2`.
+[env.r2]
+name = "aiat-mail-edge-r2"
+
+[[env.r2.d1_databases]]
+binding = "DB"
+database_name = "aiat-mail-edge"
+database_id = "f52e0f58-d4b1-443e-9e30-c6b1784608f2"
+migrations_dir = "schema"
+
+[[env.r2.r2_buckets]]
+binding = "MAIL_OBJECTS"
+bucket_name = "aiat-mail-edge-raw"
+
+[env.r2.vars]
+MAIL_EDGE_AUTH_VERSION = "aiat.mail-edge.v1"
+MAIL_EDGE_STORAGE_BACKEND = "r2"
+MAIL_EDGE_MAX_MESSAGE_BYTES = "26214400"
+MAIL_EDGE_AUTH_TOLERANCE_SECONDS = "300"
+MAIL_EDGE_RETENTION_DAYS = "7"
+MAIL_EDGE_PROCESSED_RETENTION_DAYS = "1"
+MAIL_EDGE_INCOMPLETE_RETENTION_SECONDS = "3600"
+
+[env.r2.triggers]
 crons = ["*/15 * * * *"]
