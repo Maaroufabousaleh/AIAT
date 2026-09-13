@@ -142,10 +142,26 @@ services:
   redis:
     image: redis:7.2-alpine@sha256:05a97a479bc73de66f087dc05b569010772880f778cc8671fa6b8aadee32e5c6
     restart: unless-stopped
-    command: >-
-      sh -c 'if [ ! -f /data/users.acl ]; then
-      printf "%s\n" "user default on >redis_init_temp_pass ~* +@all" > /data/users.acl;
-      fi; exec redis-server /etc/redis/redis.conf'
+    command:
+      - sh
+      - -ec
+      - |
+        if [ ! -f /data/users.acl ]; then
+          printf "%s\n" "user default on >redis_init_temp_pass ~* +@all" > /data/users.acl
+        elif grep -q '^user router_user ' /data/users.acl; then
+          # ACL files survive container recreation.  Add the scripting
+          # permissions required by the router's atomic stream operations to
+          # an older persisted ACL before Redis loads it.  This is deliberately
+          # limited to the two commands and the known router user; the
+          # one-shot init still owns the complete least-privilege declaration.
+          if ! grep -Eq '(^|[[:space:]])\+eval([[:space:]]|$)' /data/users.acl; then
+            sed -i '/^user router_user / s/$/ +eval/' /data/users.acl
+          fi
+          if ! grep -Eq '(^|[[:space:]])\+evalsha([[:space:]]|$)' /data/users.acl; then
+            sed -i '/^user router_user / s/$/ +evalsha/' /data/users.acl
+          fi
+        fi
+        exec redis-server /etc/redis/redis.conf
     env_file:
       - path: ../../../.env
         format: raw

@@ -9,8 +9,8 @@ Two long-running asyncio tasks:
      (TTL elapsed), writes to the ``dead_letters`` Postgres table, ACKs + DELs
      the stream entry, and publishes a ``SYSTEM_EVENT`` DLQ notification to
      ``stream:exec_ceo``.
-   - Otherwise, the re-claimed entry stays in the stream and will be
-     re-delivered to a connecting subscriber.
+   - Otherwise, the replacement entry, old-entry ACK, and old-entry deletion
+     are committed by one Redis-atomic requeue operation.
 
 2. **trim_loop** — Runs every ``settings.trim_interval_seconds``.
    Calls ``XTRIM … MAXLEN ~ 50000`` on every known team stream to prevent
@@ -33,6 +33,7 @@ async def reclaim_loop() -> None:
     """Background task: XAUTOCLAIM idle PEL entries every N seconds."""
     from .dlq import make_dlq_system_event_fields, write_dead_letter
     from .redis_client import (
+        atomic_requeue_message,
         get_redis,
         reclaim_idle_messages,
         xack,
@@ -63,6 +64,7 @@ async def reclaim_loop() -> None:
                             xack,
                             xdel,
                             xadd_message,
+                            atomic_requeue_message,
                         )
                 except Exception:
                     logger.exception("Reclaim error for team=%s", team_id)
@@ -80,6 +82,7 @@ async def _handle_reclaimed_entry(
     xack,
     xdel,
     xadd_message,
+    requeue_message=None,
 ) -> None:
     """Process a single reclaimed PEL entry."""
     from mas_core.protocols.envelope import MessageEnvelope
@@ -144,9 +147,20 @@ async def _handle_reclaimed_entry(
     else:
         updated_fields = {"envelope": envelope.model_dump_json()}
         try:
-            new_entry_id = await xadd_message(team_id, updated_fields, redis)
-            await xack(team_id, entry_id, redis)
-            await xdel(team_id, entry_id, redis)
+            if requeue_message is not None:
+                new_entry_id, _deduplicated = await requeue_message(
+                    team_id=team_id,
+                    entry_id=entry_id,
+                    fields=updated_fields,
+                    redis=redis,
+                )
+            else:
+                # Compatibility seam for direct unit callers that inject the
+                # pre-PR-D primitives. Production reclaim_loop always passes
+                # atomic_requeue_message above.
+                new_entry_id = await xadd_message(team_id, updated_fields, redis)
+                await xack(team_id, entry_id, redis)
+                await xdel(team_id, entry_id, redis)
             logger.debug(
                 "Re-queued reclaimed message: message_id=%s team=%s retry=%d new_entry=%s",
                 envelope.message_id,

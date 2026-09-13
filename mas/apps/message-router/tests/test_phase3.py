@@ -148,7 +148,8 @@ def _no_op_lifespan():
 def _make_test_app(mock_redis: MagicMock):
     """Build a test FastAPI app with a no-op lifespan and pre-loaded mock Redis."""
     from message_router import redis_client
-    from message_router.routes_publish import _require_publisher_auth, router as publish_router
+    from message_router.routes_publish import _require_publisher_auth
+    from message_router.routes_publish import router as publish_router
     from message_router.routes_ws import router as ws_router
 
     app = FastAPI(lifespan=_no_op_lifespan())
@@ -179,6 +180,7 @@ class TestPublishRoute:
     def _make_mock_redis(self) -> MagicMock:
         r = MagicMock()
         r.xadd = AsyncMock(return_value="1700000000000-0")
+        r.eval = AsyncMock(return_value=[1, "1700000000000-0"])
         r.set = AsyncMock(return_value=True)
         r.get = AsyncMock(return_value=None)
         r.ping = AsyncMock(return_value=True)
@@ -267,9 +269,8 @@ class TestPublishRoute:
     def test_publish_deduplicated(self):
         """Second publish with same message_id returns deduplicated=true."""
         mock_redis = self._make_mock_redis()
-        # SET NX returns None (key already exists) → duplicate
-        mock_redis.set = AsyncMock(return_value=None)
-        mock_redis.get = AsyncMock(return_value="1700000000000-0")
+        # The atomic script returns the existing stream entry for a duplicate.
+        mock_redis.eval = AsyncMock(return_value=[0, "1700000000000-0"])
         app = _make_test_app(mock_redis)
         with TestClient(app) as client:
             env = make_envelope()
@@ -286,8 +287,8 @@ class TestPublishRoute:
     def test_publish_deduplicated_when_existing_key_is_pending(self):
         """Pending dedupe markers should resolve without enqueuing a duplicate."""
         mock_redis = self._make_mock_redis()
-        mock_redis.set = AsyncMock(return_value=None)
-        # check_and_set_dedupe reads first pending marker, then wait helper reads final entry id
+        mock_redis.eval = AsyncMock(return_value=[0, "_pending_"])
+        # A legacy pending marker is still resolved by the compatibility wait.
         mock_redis.get = AsyncMock(side_effect=["_pending_", "1700000000000-0"])
         app = _make_test_app(mock_redis)
         with TestClient(app) as client:
@@ -333,12 +334,12 @@ class TestBroadcastRoute:
         call_count = 0
         mock_redis = MagicMock()
 
-        async def fake_xadd(stream, fields):
+        async def fake_eval(_script, _numkeys, stream, _dedupe_key, *_args):
             nonlocal call_count
             call_count += 1
-            return f"17000000{call_count:05d}-0"
+            return [1, f"17000000{call_count:05d}-0"]
 
-        mock_redis.xadd = fake_xadd
+        mock_redis.eval = fake_eval
         mock_redis.ping = AsyncMock(return_value=True)
         app = _make_test_app(mock_redis)
         with TestClient(app) as client:
@@ -358,12 +359,12 @@ class TestBroadcastRoute:
         call_count = 0
         mock_redis = MagicMock()
 
-        async def fake_xadd(stream, fields):
+        async def fake_eval(_script, _numkeys, stream, _dedupe_key, *_args):
             nonlocal call_count
             call_count += 1
-            return f"17000000{call_count:05d}-0"
+            return [1, f"17000000{call_count:05d}-0"]
 
-        mock_redis.xadd = fake_xadd
+        mock_redis.eval = fake_eval
         mock_redis.ping = AsyncMock(return_value=True)
         app = _make_test_app(mock_redis)
         with TestClient(app) as client:
@@ -808,10 +809,9 @@ class TestRecentStreamRoute:
 
     @pytest.mark.asyncio
     async def test_recent_entries_without_cursor_returns_oldest_first(self):
-        from starlette.requests import Request
-
         from message_router import redis_client
         from message_router.routes_ws import recent_stream_entries
+        from starlette.requests import Request
 
         redis = MagicMock()
         redis.xrevrange = AsyncMock(
@@ -830,10 +830,9 @@ class TestRecentStreamRoute:
 
     @pytest.mark.asyncio
     async def test_recent_entries_after_cursor_uses_exclusive_xrange(self):
-        from starlette.requests import Request
-
         from message_router import redis_client
         from message_router.routes_ws import recent_stream_entries
+        from starlette.requests import Request
 
         redis = MagicMock()
         redis.xrange = AsyncMock(
@@ -875,6 +874,19 @@ class TestRedisACL:
         assert "toolcache_user" in content, "redis.conf should document toolcache_user"
         assert "default" in content and "off" in content, "redis.conf should disable default user"
 
+    def test_router_acl_allows_atomic_stream_scripts(self):
+        """The restricted router user must be able to execute its Lua scripts."""
+        import pathlib
+
+        test_dir = pathlib.Path(__file__).resolve().parent
+        repo_root = test_dir.parent.parent.parent
+        acl_init_path = repo_root / "infra" / "compose" / "redis-acl-init.sh"
+
+        content = acl_init_path.read_text()
+        assert "+eval" in content
+        assert "+evalsha" in content
+        assert "does not permit EVAL" in content
+
     def test_docker_compose_uses_acl(self):
         """Verify docker-compose.yml uses ACL usernames for Redis connections."""
         import pathlib
@@ -895,3 +907,5 @@ class TestRedisACL:
         assert "TOOLCACHE_PASSWORD" in content, "TOOLCACHE_PASSWORD env var should be defined"
         assert "path: ../../../.env" in content, "services should load the repository-root .env"
         assert "path: ./.env" not in content, "clean installs must not require a compose-local .env"
+        assert "sed -i '/^user router_user / s/$/ +eval/'" in content
+        assert "sed -i '/^user router_user / s/$/ +evalsha/'" in content
