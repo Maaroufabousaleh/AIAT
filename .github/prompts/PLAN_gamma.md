@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-Gamma applies the next slice of `deep-research-report.md`: AIAT should feel
+Gamma applies the next slice of `Docs/archive/deep-research-report.md`: AIAT should feel
 less like a collection of backend services and more like a usable company
 operating system. The goal is not only to add read-only dashboard panels. The
 goal is to make the report's company model, worker-hiring model, adapter model,

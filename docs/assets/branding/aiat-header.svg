@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="420" viewBox="0 0 1600 420" role="img" aria-labelledby="title desc">
+  <title id="title">AIAT governed multi-agent operating system</title>
+  <desc id="desc">A graphite control-plane banner with cyan routing signals, amber approval gates, and replaceable external workers.</desc>
+  <!-- AIAT-authored visual asset. No third-party imagery, fonts, or tracking. -->
+  <defs>
+    <pattern id="micro-grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M 32 0 L 0 0 0 32" fill="none" stroke="#182531" stroke-width="1" opacity="0.52"/>
+    </pattern>
+    <marker id="arrow-cyan" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#61d5e8"/>
+    </marker>
+    <filter id="soft-cyan" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="7" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="420" fill="#070c12"/>
+  <rect x="1" y="1" width="1598" height="418" rx="12" fill="none" stroke="#293847" stroke-width="2"/>
+  <rect x="28" y="28" width="1544" height="364" rx="8" fill="url(#micro-grid)" opacity="0.62"/>
+
+  <path d="M 52 318 H 714" stroke="#273b4a" stroke-width="2"/>
+  <path d="M 52 326 H 516" stroke="#14212c" stroke-width="1"/>
+  <path d="M 732 58 V 360" stroke="#273b4a" stroke-width="2"/>
+
+  <text x="76" y="86" fill="#61d5e8" font-family="Avenir Next, Avenir, Segoe UI, Arial, sans-serif" font-size="16" font-weight="700" letter-spacing="4">AIAT / CONTROL PLANE</text>
+  <text x="72" y="214" fill="#edf6fa" font-family="Avenir Next, Avenir, Segoe UI, Arial, sans-serif" font-size="126" font-weight="800" letter-spacing="-7">AIAT</text>
+  <text x="78" y="260" fill="#b5c5ce" font-family="Avenir Next, Avenir, Segoe UI, Arial, sans-serif" font-size="24" font-weight="500">governed orchestration for a one-operator AI company</text>
+  <text x="78" y="298" fill="#61d5e8" font-family="IBM Plex Mono, SFMono-Regular, Consolas, monospace" font-size="14" font-weight="600" letter-spacing="2">AUTHORITY STAYS HERE / WORKERS REMAIN REPLACEABLE</text>
+
+  <g transform="translate(782 76)">
+    <rect width="730" height="274" rx="6" fill="#0d1721" stroke="#304655" stroke-width="2"/>
+    <path d="M 0 70 H 730 M 0 140 H 730 M 0 210 H 730" stroke="#1a2a37" stroke-width="1"/>
+    <path d="M 146 0 V 274 M 292 0 V 274 M 438 0 V 274 M 584 0 V 274" stroke="#1a2a37" stroke-width="1"/>
+
+    <path d="M 110 137 H 266" stroke="#61d5e8" stroke-width="3" marker-end="url(#arrow-cyan)"/>
+    <path d="M 364 137 H 520" stroke="#61d5e8" stroke-width="3" marker-end="url(#arrow-cyan)"/>
+    <path d="M 594 137 H 684" stroke="#f2bd67" stroke-width="3" marker-end="url(#arrow-cyan)"/>
+    <path d="M 320 106 V 54 H 612 V 104" fill="none" stroke="#f2bd67" stroke-width="2" stroke-dasharray="6 6"/>
+    <path d="M 320 168 V 220 H 612 V 170" fill="none" stroke="#72d3a0" stroke-width="2" stroke-dasharray="6 6"/>
+
+    <g transform="translate(28 111)">
+      <rect width="118" height="52" rx="4" fill="#142431" stroke="#61d5e8" stroke-width="2"/>
+      <circle cx="18" cy="18" r="5" fill="#61d5e8" filter="url(#soft-cyan)"/>
+      <text x="31" y="23" fill="#edf6fa" font-family="IBM Plex Mono, SFMono-Regular, Consolas, monospace" font-size="12" font-weight="700">ROUTER</text>
+      <text x="18" y="41" fill="#8fa6b3" font-family="Avenir Next, Avenir, Segoe UI, Arial, sans-serif" font-size="11">messages / events</text>
+    </g>
+
+    <g transform="translate(266 111)">
+      <rect width="118" height="52" rx="4" fill="#142431" stroke="#61d5e8" stroke-width="2"/>
+      <circle cx="18" cy="18" r="5" fill="#61d5e8" filter="url(#soft-cyan)"/>
+      <text x="31" y="23" fill="#edf6fa" font-family="IBM Plex Mono, SFMono-Regular, Consolas, monospace" font-size="12" font-weight="700">CONTROL</text>
+      <text x="18" y="41" fill="#8fa6b3" font-family="Avenir Next, Avenir, Segoe UI, Arial, sans-serif" font-size="11">policy / state</text>
+    </g>
+
+    <g transform="translate(504 111)">
+      <rect width="118" height="52" rx="4" fill="#142431" stroke="#f2bd67" stroke-width="2"/>
+      <circle cx="18" cy="18" r="5" fill="#f2bd67"/>
+      <text x="31" y="23" fill="#edf6fa" font-family="IBM Plex Mono, SFMono-Regular, Consolas, monospace" font-size="12" font-weight="700">ADAPTER</text>
+      <text x="18" y="41" fill="#8fa6b3" font-family="Avenir Next, Avenir, Segoe UI, Arial, sans-serif" font-size="11">bounded hand-off</text>
+    </g>
+
+    <g transform="translate(638 111)">
+      <rect width="70" height="52" rx="4" fill="#2a2118" stroke="#f2bd67" stroke-width="2"/>
+      <text x="12" y="22" fill="#f2bd67" font-family="IBM Plex Mono, SFMono-Regular, Consolas, monospace" font-size="11" font-weight="700">WORKER</text>
+      <text x="12" y="39" fill="#cbb28c" font-family="Avenir Next, Avenir, Segoe UI, Arial, sans-serif" font-size="10">untrusted</text>
+    </g>
+
+    <text x="30" y="39" fill="#8fa6b3" font-family="IBM Plex Mono, SFMono-Regular, Consolas, monospace" font-size="11" font-weight="600" letter-spacing="1.5">AUTHORITATIVE PATH</text>
+    <text x="30" y="254" fill="#72d3a0" font-family="IBM Plex Mono, SFMono-Regular, Consolas, monospace" font-size="11" font-weight="600" letter-spacing="1.5">DURABLE EVIDENCE / APPROVALS / RECOVERY</text>
+  </g>
+
+  <g transform="translate(78 346)" font-family="IBM Plex Mono, SFMono-Regular, Consolas, monospace" font-size="11" font-weight="600" letter-spacing="1.3">
+    <text x="0" y="0" fill="#8fa6b3">STATE</text>
+    <text x="67" y="0" fill="#72d3a0">AUDITABLE</text>
+    <text x="206" y="0" fill="#8fa6b3">MODE</text>
+    <text x="266" y="0" fill="#f2bd67">INTERNAL ONLY</text>
+    <text x="465" y="0" fill="#8fa6b3">SIGNAL</text>
+    <text x="544" y="0" fill="#61d5e8">FAIL CLOSED</text>
+  </g>
+</svg>

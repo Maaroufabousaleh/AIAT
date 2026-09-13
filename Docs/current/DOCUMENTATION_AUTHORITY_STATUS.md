@@ -1,9 +1,21 @@
 # Documentation Authority Status
 
-**Updated:** 2026-08-18
+**Updated:** 2026-09-09
 **Roadmap:** [AIAT Roadmap](../../ROADMAP.md)
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 **Scope:** personal/internal AIAT instance
+
+## Current integrated baseline
+
+The maintained authority set now describes the **Integrated Development &
+System Testing** phase on integration baseline `2c99b75a`. The merged clean
+tree's static release ledger is 63/63 pass with 2 pending evidence items and
+global `NO-RELEASE`; OpenHands v1.43.0 remains inactive/certifying, OpenCode
+remains the unchanged default, and scanner coverage remains independently
+`BLOCKED_SCANNER_COVERAGE`. Current status is led by
+[`ROADMAP.md`](../../ROADMAP.md), [`P0_RELEASE_INTEGRITY_STATUS.md`](P0_RELEASE_INTEGRITY_STATUS.md),
+and [`AIAT_CURRENT_RELEASE_LEDGER.md`](../../mas/docs/AIAT_CURRENT_RELEASE_LEDGER.md);
+historical certification records remain immutable provenance.
 
 ## Audit result
 
@@ -39,7 +51,7 @@ personal/internal instance. Technical source integrity, version, security,
 sandbox, privacy, compatibility, budget, approval, and recovery evidence
 remain independent controls.
 
-The archival [`deep-research-report.md`](../../deep-research-report.md) was
+The archival [`deep-research-report.md`](../archive/deep-research-report.md) was
 reconciled in the current documentation pass: its former legal-risk appendix
 now redirects exact resource terms and notices to the provenance catalogue,
 and its technical comparison remains design input only.
@@ -509,7 +521,7 @@ informational and non-gating.
 
 The durable version-pinning group `7c1ef74` extends `6a10b0e` at migration
 `0042_worker_run_host_binding` and refreshes the maintained local certificate
-[`worker_version_pinning_postgres_evidence.json`](../../mas/provenance/worker_version_pinning_postgres_evidence.json).
+[`worker_version_pinning_postgres_evidence.json`](../../mas/docs/provenance/worker_version_pinning_postgres_evidence.json).
 It proves that a version-one `RUNNING` run retains its shell, adapter,
 skill-bundle, steward identity, worker source/version metadata, and immutable
 model-resolution snapshot after the registry advances to version two, while a

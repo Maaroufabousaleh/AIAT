@@ -4,8 +4,8 @@
 > 30, 2026 design/research snapshot. Its statement that the AIAT repository
 > was unavailable is historical and no longer true. The code-grounded status,
 > implementation decisions are maintained in
-> [`AIAT_TARGET_PROGRAMME.md`](AIAT_TARGET_PROGRAMME.md) and
-> [`ROADMAP.md`](ROADMAP.md). Licence, notice, and stated-use findings in this
+> [`AIAT_TARGET_PROGRAMME.md`](../../AIAT_TARGET_PROGRAMME.md) and
+> [`ROADMAP.md`](../../ROADMAP.md). Licence, notice, and stated-use findings in this
 > report are metadata only for the personal/internal instance. Do not treat
 > its old distribution assumptions, licence allowlists, prohibited-component
 > rules, commercial-use concerns, or licence-based build/activation exclusions
@@ -306,8 +306,8 @@ The minimum recommended staffing model is:
 
 The former legal-risk discussion is retired from this research snapshot. Exact
 resource terms, notices, source links, versions, and stated restrictions belong
-only in [`mas/docs/provenance/third_party_components.yaml`](mas/docs/provenance/third_party_components.yaml)
-and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). For this
+only in [`mas/docs/provenance/third_party_components.yaml`](../../mas/docs/provenance/third_party_components.yaml)
+and [`THIRD_PARTY_NOTICES.md`](../../THIRD_PARTY_NOTICES.md). For this
 personal/internal instance, those fields are operator metadata: they do not
 create an AIAT allowlist, prohibition, hiring gate, activation gate, or
 execution gate. Keep technical authenticity, security, sandbox, compatibility,
