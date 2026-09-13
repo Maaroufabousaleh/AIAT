@@ -13,6 +13,14 @@ from .service import IdentityService
 from .store import IdentityStore, InMemoryIdentityStore, PostgresIdentityStore
 
 
+async def _close_provider(provider: object) -> None:
+    """Close an owned provider transport when the provider exposes one."""
+
+    closer = getattr(provider, "aclose", None)
+    if callable(closer):
+        await closer()
+
+
 def create_app(*, settings: IdentitySettings | None = None, store: IdentityStore | None = None) -> FastAPI:
     settings = settings or get_settings()
     if store is None:
@@ -35,27 +43,36 @@ def create_app(*, settings: IdentitySettings | None = None, store: IdentityStore
         app.state.settings = settings
         app.state.identity_store = store
         app.state.identity_service = service
-        for client_id, public_key in settings.client_public_keys.items():
-            registration = await store.ensure_client_registration(
-                client_id=client_id, public_key=public_key,
-                scopes=sorted(settings.client_scopes.get(client_id, frozenset())),
-            )
-            configured_scopes = settings.client_scopes.get(client_id, frozenset())
-            registered_scopes = frozenset(registration.get("scopes") or [])
-            if (
-                registration.get("public_key") != public_key
-                or registration.get("state") != "ACTIVE"
-                or registered_scopes != configured_scopes
-            ):
-                # Environment changes never silently rotate a durable key or
-                # widen/narrow its authority. An operator must reconcile the
-                # registration explicitly, which makes stale privileges fail
-                # closed instead of surviving a configuration reduction.
-                raise RuntimeError(
-                    f"identity client registration mismatch or revocation: {client_id}"
+        try:
+            for client_id, public_key in settings.client_public_keys.items():
+                registration = await store.ensure_client_registration(
+                    client_id=client_id, public_key=public_key,
+                    scopes=sorted(settings.client_scopes.get(client_id, frozenset())),
                 )
-        yield
-        await store.close()
+                configured_scopes = settings.client_scopes.get(client_id, frozenset())
+                registered_scopes = frozenset(registration.get("scopes") or [])
+                if (
+                    registration.get("public_key") != public_key
+                    or registration.get("state") != "ACTIVE"
+                    or registered_scopes != configured_scopes
+                ):
+                    # Environment changes never silently rotate a durable key or
+                    # widen/narrow its authority. An operator must reconcile the
+                    # registration explicitly, which makes stale privileges fail
+                    # closed instead of surviving a configuration reduction.
+                    raise RuntimeError(
+                        f"identity client registration mismatch or revocation: {client_id}"
+                    )
+            yield
+        finally:
+            try:
+                await _close_provider(inbound_provider)
+            finally:
+                try:
+                    if outbound_provider is not inbound_provider:
+                        await _close_provider(outbound_provider)
+                finally:
+                    await store.close()
 
     app = FastAPI(title="AIAT identity-service", version="1.0.0", lifespan=lifespan, docs_url=None if settings.is_production else "/docs", redoc_url=None)
     app.include_router(router)

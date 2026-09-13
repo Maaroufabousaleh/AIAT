@@ -21,7 +21,8 @@ to the identity Postgres database.
 
 Live Oracle, DNS, PTR, TLS, Stalwart, and Resend certification are explicitly
 outside the repository boundary until operator-owned infrastructure and secrets
-are available.
+are available. The targeted Cloudflare inbound smoke certificate is recorded
+as `LIVE_CLOUDFLARE_INBOUND = PASS`; it does not certify the remaining runtime.
 
 ## Current architecture findings
 
@@ -161,6 +162,22 @@ are available.
   remains explicitly blocked until operator-selected endpoints and evidence
   exist.
 
+## Live provider evidence (2026-09-12)
+
+- `LIVE_CLOUDFLARE_INBOUND = PASS`: the operator-provided production smoke run
+  proved `agents.aiat.ca` MX -> Cloudflare Email Routing catch-all ->
+  `aiat-mail-edge` -> authorized recipient -> D1 chunked raw MIME -> signed
+  HMAC synchronization -> `CloudflareInboundAdapter` -> MIME parsing.
+- The safe correlation is recorded for recipient
+  `w-live-smoke-20260912@agents.aiat.ca`, identity
+  `live-smoke-identity-20260912`, and worker
+  `live-smoke-worker-20260912`; no sender address, body, code, raw MIME, or
+  provider secret is retained. See
+  [`AIAT_Email_Identity_Live_Certification.md`](AIAT_Email_Identity_Live_Certification.md).
+- The repeatable live operator certificate is
+  `mas/scripts/certify_cloudflare_mail_edge_live.py`; it uses the real
+  Cloudflare adapter and prints only allowlisted metadata.
+
 The older repository-wide counts below are historical evidence from the
 preceding identity implementation and do not certify the current providers.
 
@@ -241,19 +258,18 @@ preceding identity implementation and do not certify the current providers.
 
 ## Operator-owned live blockers
 
-Repository completion is not production acceptance. The status remains
-**BLOCKED** for live certification until the operator supplies the selected
-Cloudflare/Resend resources and real secrets and executes the mandatory live
-tests. Outstanding evidence:
+Repository completion is not production acceptance. The targeted Cloudflare
+inbound smoke boundary is now proven, but the overall status remains
+**BLOCKED** for the remaining live certification. Outstanding evidence:
 
-- Cloudflare D1 resource migration, Worker deployment, exact Email Routing
-  route,
-  public identity TLS, and inbound delivery/retry/restart evidence.
+- Cloudflare inbound retry/restart recovery and temporary-recipient retirement
+  follow-through, if required by the release decision.
 - Resend account/API key, verified sending domain, direct API acceptance,
   authenticated webhook evidence, external delivery/reply evidence, and
   confirmation that every send remains approval-gated.
-- Production Postgres migration, encrypted backup/restore, worker ownership
-  isolation, suspension/retirement, and provider-outage reconciliation.
+- REAL AIAT hiring/lifecycle integration, production Postgres migration,
+  encrypted backup/restore, worker ownership isolation, suspension/retirement,
+  and provider-outage reconciliation.
 - If the optional Stalwart profile is selected instead, its separate JMAP,
   SMTP, DNS, firewall, backup, and saved-route evidence remains required.
 

@@ -65,6 +65,7 @@ inaccessible `mas/.tmp-*` test directories and unrelated root-level files.
 - `mas/apps/identity-service/tests/test_postgres_store_integration.py`
 - `mas/apps/identity-service/tests/test_provider_adapters.py`
 - `mas/apps/identity-service/tests/test_cloudflare_mail_edge.py`
+- `mas/apps/identity-service/tests/test_cloudflare_http_lifecycle.py`
 - `mas/apps/identity-service/tests/test_provider_selection.py`
 - `mas/apps/mas-dashboard/app/(dashboard)/auth-sessions/page.tsx`
 - `mas/apps/mas-dashboard/app/(dashboard)/external-accounts/page.tsx`
@@ -170,3 +171,9 @@ Additional conformance inventory:
 
 - `mas/scripts/check_identity_provider_conformance.py`
 - `mas/scripts/tests/test_check_identity_provider_conformance.py`
+- `mas/scripts/certify_cloudflare_mail_edge_live.py`
+- `mas/scripts/tests/test_certify_cloudflare_mail_edge_live.py`
+
+The 2026-09-12 live-boundary follow-up also hardens the Cloudflare adapter's
+provider-owned HTTP client/lifespan cleanup and records the secret-safe live
+inbound result in `Docs/AIAT_Email_Identity_Live_Certification.md`.

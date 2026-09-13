@@ -4,7 +4,6 @@ import base64
 import json
 
 import pytest
-
 from identity_service.config import IdentitySettings
 from identity_service.providers.factory import build_provider_pair
 from identity_service.providers.inbound.cloudflare import CloudflareInboundAdapter
@@ -30,14 +29,18 @@ def _production_cloudflare_settings() -> IdentitySettings:
     )
 
 
-def test_cloudflare_default_does_not_construct_or_require_stalwart() -> None:
+@pytest.mark.anyio
+async def test_cloudflare_default_does_not_construct_or_require_stalwart() -> None:
     settings = _production_cloudflare_settings()
     inbound, outbound = build_provider_pair(settings)
 
-    assert isinstance(inbound, CloudflareInboundAdapter)
-    assert isinstance(outbound, ResendRelayAdapter)
-    assert settings.stalwart_api_key == ""
-    assert settings.stalwart_jmap_service_token == ""
+    try:
+        assert isinstance(inbound, CloudflareInboundAdapter)
+        assert isinstance(outbound, ResendRelayAdapter)
+        assert settings.stalwart_api_key == ""
+        assert settings.stalwart_jmap_service_token == ""
+    finally:
+        await inbound.aclose()
 
 
 def test_production_cloudflare_custom_domain_origin_is_accepted() -> None:

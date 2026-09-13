@@ -169,19 +169,46 @@ loopback Stalwart development profile has the same explicit provider override.
 Its JMAP and SMTP checks are optional-profile evidence, not evidence for the
 default Cloudflare path.
 
-## Live certification still required
+## Live certification status
 
-Repository tests cover the Worker contract with a deterministic D1-only
-emulator, an explicit optional-R2 regression, the signed pull/retry boundary,
-lifecycle isolation, encrypted local sync, and Resend with a mocked HTTPS
-transport. They do not certify:
+The operator's 2026-09-12 production smoke run is recorded in
+[`AIAT_Email_Identity_Live_Certification.md`](AIAT_Email_Identity_Live_Certification.md):
 
-- Cloudflare route delivery, D1 migration, Worker deployment, or DNS;
-- public TLS and identity ingress reachability;
-- Resend domain authorization, direct API acceptance, webhook authenticity,
-  external inbox delivery, or reply routing;
-- production backup/restore, restart persistence, or operator-owned firewall
-  policy.
+```text
+LIVE_CLOUDFLARE_INBOUND = PASS
+```
 
-Record those operator-owned results separately. No repository command or test
-creates/fakes a live account, mutates DNS, or prints a real secret.
+It proved Cloudflare MX/Email Routing catch-all delivery to `aiat-mail-edge`,
+recipient authorization, D1 chunked raw-message persistence, the signed HMAC
+sync API, identity/worker correlation, MIME reconstruction, and the expected
+smoke-test subject. It did not certify the full production identity-service,
+AIAT hiring/lifecycle integration, Resend outbound, or Cloudflare retry/restart
+recovery. Those remain explicitly pending.
+
+Use the repeatable adapter-backed certificate for future operator checks:
+
+```sh
+cd /mnt/c/projects/aiat/mas
+uv run python scripts/certify_cloudflare_mail_edge_live.py --json health
+uv run python scripts/certify_cloudflare_mail_edge_live.py --json inspect-events \
+  --recipient w-live-smoke-20260912@agents.aiat.ca \
+  --identity-id live-smoke-identity-20260912 \
+  --worker-id live-smoke-worker-20260912
+```
+
+After reviewing the safe event output and obtaining the message ID, use the
+same script to validate the message. Do not paste a raw message or secret into
+the command line. To retire the temporary recipient through the signed API,
+run:
+
+```sh
+cd /mnt/c/projects/aiat/mas
+uv run python scripts/certify_cloudflare_mail_edge_live.py finalize-certification \
+  --recipient w-live-smoke-20260912@agents.aiat.ca \
+  --identity-id live-smoke-identity-20260912 \
+  --worker-id live-smoke-worker-20260912 \
+  --provider-reference recipient:e2ad9f0588e174b1f82ebef7e389ad1b
+```
+
+No repository command or test creates/fakes a live account, sends another
+external message, mutates DNS, or prints a real secret.

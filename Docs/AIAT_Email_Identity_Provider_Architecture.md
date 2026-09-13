@@ -1,8 +1,10 @@
 # AIAT email identity provider architecture
 
 Status: repository implementation complete for the provider-neutral v1 path.
-Cloudflare, DNS, Resend account, and external delivery certification remain
-operator-owned live boundaries and are not implied by repository tests.
+`LIVE_CLOUDFLARE_INBOUND = PASS` was recorded on 2026-09-12 from the operator's
+production smoke run. Resend account, outbound delivery, and full production
+identity-service certification remain operator-owned live boundaries and are
+not implied by repository tests.
 
 ## Default v1 topology
 
@@ -92,7 +94,10 @@ Identity-service calls the narrow Worker API using
 `aiat.mail-edge.v1` with HMAC over version, method, path/query, timestamp,
 nonce, and body hash. The Worker stores used nonces in D1 and rejects stale or
 replayed requests. Requests are bounded, redirects are not followed, response
-errors are sanitized, and the Worker has no Cloudflare account API token.
+errors are sanitized, and the Worker has no Cloudflare account API token. The
+production factory gives the Cloudflare inbound adapter one bounded
+provider-owned HTTP/2 client (20 maximum connections, 10 keep-alive
+connections); FastAPI lifespan shutdown closes it.
 
 Supported edge operations are health, exact-recipient registration and
 lifecycle, alias registration, event listing, message fetch, event
@@ -122,8 +127,9 @@ must not share its database, namespace, or environment file.
 
 Repository tests use a deterministic D1-only Worker fixture, an explicit
 optional-R2 regression fixture, and mocked provider HTTP. They prove the local
-protocol and governance boundaries, not live Cloudflare routing, DNS, Resend
-account authorization, or external inbox delivery. The final activation latch
-remains false until the operator
-records the live certification described in
-[`Docs/AIAT_Email_Identity_Domain_Migration.md`](AIAT_Email_Identity_Domain_Migration.md).
+protocol and governance boundaries, not Resend account authorization,
+outbound delivery, or full production identity-service operation. The
+secret-safe Cloudflare inbound live result is recorded in
+[`AIAT_Email_Identity_Live_Certification.md`](AIAT_Email_Identity_Live_Certification.md);
+the final activation latch remains false until the remaining live boundaries
+are certified.

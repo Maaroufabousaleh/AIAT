@@ -7,11 +7,15 @@ Stalwart credential boundary that it does not use.
 
 from __future__ import annotations
 
-from ..config import IdentitySettings
-from .base import InboundMailProvider, OutboundMailProvider
+from typing import TYPE_CHECKING
+
 from .inbound.cloudflare import CloudflareInboundAdapter
 from .resend import ResendRelayAdapter
 from .stalwart import StalwartAdapter
+
+if TYPE_CHECKING:
+    from ..config import IdentitySettings
+    from .base import InboundMailProvider, OutboundMailProvider
 
 
 def build_stalwart(settings: IdentitySettings) -> StalwartAdapter:
@@ -26,6 +30,8 @@ def build_stalwart(settings: IdentitySettings) -> StalwartAdapter:
 def build_inbound_provider(settings: IdentitySettings) -> InboundMailProvider:
     provider = settings.identity_inbound_provider
     if provider == "cloudflare":
+        # Without an injected test transport, the adapter owns one bounded
+        # reusable client; the application lifespan closes it deterministically.
         return CloudflareInboundAdapter(
             edge_url=settings.cloudflare_mail_edge_url,
             auth_secret=settings.cloudflare_mail_edge_auth_secret,
