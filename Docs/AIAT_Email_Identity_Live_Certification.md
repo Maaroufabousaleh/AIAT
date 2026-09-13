@@ -65,6 +65,12 @@ call proved the `VERIFYING`/`ACTIVE` binding reaches `RETIRED`; it did not send
 another external message. A separate operator-controlled rejection check may
 be run after retirement if needed.
 
+## Certification follow-through
+
+```text
+TEMPORARY_RECIPIENT_RETIREMENT = PASS
+```
+
 ## Still pending
 
 ```text
@@ -78,7 +84,6 @@ REAL_AIAT_HIRING_LIFECYCLE_INTEGRATION = NOT_YET_LIVE_CERTIFIED
 RESEND_OUTBOUND = NOT_YET_LIVE_CERTIFIED
 FULL_PRODUCTION_IDENTITY_SERVICE = NOT_YET_STARTED_OR_CERTIFIED
 CLOUDFLARE_INBOUND_RETRY_RESTART_RECOVERY = NOT_YET_LIVE_CERTIFIED
-TEMPORARY_RECIPIENT_RETIREMENT = PASS
 ```
 
 The repeatable operator command is
