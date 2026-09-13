@@ -142,9 +142,10 @@ any provider observation.
 The optional `send-once --confirm-send` operation is a single, no-retry
 transport probe for an operator-controlled recipient supplied through
 `AIAT_CERTIFICATION_RECIPIENT`; it is not the governed worker send path and it
-never changes `OUTBOUND_RELAY_CERTIFIED`. The full certification still has to
-exercise signed identity-service allocation, approval, usage accounting, one
-approved send, and the public signed webhook.
+never changes `OUTBOUND_RELAY_CERTIFIED`. The bounded default certification,
+including signed identity-service allocation, approval, usage accounting, one
+approved send, delivery correlation, cleanup, and the public signed webhook,
+is recorded in [`../../../Docs/AIAT_Email_Identity_Live_Certification.md`](../../../Docs/AIAT_Email_Identity_Live_Certification.md).
 
 ## Repeatable live inbound certification
 

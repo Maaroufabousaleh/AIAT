@@ -118,11 +118,13 @@ For the operator-owned deployment, in order:
 5. Create/verify the domain through the signed identity-service workflow,
    provision a fresh worker identity, and deliver an external verification
    message. The service must sync it, verify ownership, and activate the
-   identity before worker activation.
-6. Keep outbound disabled while completing the live Resend API, delivery,
-   webhook, and reply evidence. Set the compatibility activation latch
-   `OUTBOUND_RELAY_CERTIFIED=true` only after that evidence is reviewed;
-   `DEFAULT_OUTBOUND_ENABLED` remains false and every message still requires a
+   identity before worker activation. The current default path's inbound and
+   identity-service evidence is recorded in the live certification document.
+6. For an uncertified replacement deployment, keep outbound disabled while
+   completing the live Resend API, delivery, and webhook evidence. The current
+   bounded default deployment has passed that evidence and records
+   `OUTBOUND_RELAY_CERTIFIED=true`; `DEFAULT_OUTBOUND_ENABLED` remains false,
+   `DIRECT_MX_OUTBOUND_ENABLED` remains false, and every message still requires
    durable human approval.
 
 The signed edge protocol acknowledges an event only after local persistence.
@@ -171,19 +173,31 @@ default Cloudflare path.
 
 ## Live certification status
 
-The operator's 2026-09-12 production smoke run is recorded in
-[`AIAT_Email_Identity_Live_Certification.md`](AIAT_Email_Identity_Live_Certification.md):
+The secret-safe production record
+[`AIAT_Email_Identity_Live_Certification.md`](AIAT_Email_Identity_Live_Certification.md)
+now records the bounded default Cloudflare/Resend identity path as certified:
 
 ```text
 LIVE_CLOUDFLARE_INBOUND = PASS
+PUBLIC_IDENTITY_INGRESS = PASS
+PUBLIC_WEBHOOK_REACHABILITY = PASS
+IDENTITY_SERVICE_LIVE = PASS
+REAL_IDENTITY_PROVISIONING = PASS
+REAL_INBOUND_RECONCILIATION = PASS
+RESEND_OUTBOUND_LIVE = PASS_PROVIDER_LEVEL_AND_GOVERNED
+RESEND_WEBHOOK_LIVE = PASS
+GOVERNED_APPROVAL_USAGE_IDEMPOTENCY = PASS
+TEMPORARY_RECIPIENT_RETIREMENT = PASS
+OUTBOUND_RELAY_CERTIFIED = true
+DEFAULT_OUTBOUND_ENABLED = false
+DIRECT_MX_OUTBOUND_ENABLED = false
+FINAL_EMAIL_SUBSYSTEM_STATUS = CERTIFIED
 ```
 
-It proved Cloudflare MX/Email Routing catch-all delivery to `aiat-mail-edge`,
-recipient authorization, D1 chunked raw-message persistence, the signed HMAC
-sync API, identity/worker correlation, MIME reconstruction, and the expected
-smoke-test subject. It did not certify the full production identity-service,
-AIAT hiring/lifecycle integration, Resend outbound, or Cloudflare retry/restart
-recovery. Those remain explicitly pending.
+This closes the default provider-neutral email identity gate and leaves no
+human blocker for that scope. Optional Stalwart/R2 profiles, broader
+outage/restart/bounce/restore evidence, and unrelated programme/release gates
+remain separate.
 
 Use the repeatable adapter-backed certificate for future operator checks:
 

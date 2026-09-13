@@ -19,10 +19,13 @@ external pinned optional full-mailbox container; it is never vendored. Neither
 workers nor the laptop call a provider directly, and the laptop never connects
 to the identity Postgres database.
 
-Live Oracle, DNS, PTR, TLS, Stalwart, and Resend certification are explicitly
-outside the repository boundary until operator-owned infrastructure and secrets
-are available. The targeted Cloudflare inbound smoke certificate is recorded
-as `LIVE_CLOUDFLARE_INBOUND = PASS`; it does not certify the remaining runtime.
+Live Oracle, DNS, PTR, TLS, and optional Stalwart profile evidence remain
+operator-owned boundaries. The default Cloudflare/Resend v1 path is now
+live-certified through the production identity service; the secret-safe result
+is recorded in [`AIAT_Email_Identity_Live_Certification.md`](AIAT_Email_Identity_Live_Certification.md).
+Agent/worker provisioning may depend on this certified default identity
+subsystem, while normal ownership, verification, lifecycle, and approval gates
+remain mandatory.
 
 ## Current architecture findings
 
@@ -256,19 +259,22 @@ preceding identity implementation and do not certify the current providers.
   `0023_durable_browser_identity_and_tool_nonces` (including durable credential
   approvals/rates in `0022` and tool grants in `0021`).
 
-## Operator-owned live blockers
+## Remaining operator-owned boundaries
 
-Repository completion is not production acceptance. The targeted Cloudflare
-inbound smoke boundary is now proven, but the overall status remains
-**BLOCKED** for the remaining live certification. Outstanding evidence:
+The default Cloudflare/Resend v1 identity path is live-certified. The
+secret-safe record proves public ingress, canonical inbound reconciliation,
+governed outbound approval/send/idempotency/accounting/audit, signed delivery
+webhook correlation, and normal certification cleanup. No human blocker remains
+for that bounded email identity path.
 
-- Cloudflare inbound retry/restart recovery remains separate live evidence.
-- Resend account/API key, verified sending domain, direct API acceptance,
-  authenticated webhook evidence, external delivery/reply evidence, and
-  confirmation that every send remains approval-gated.
-- REAL AIAT hiring/lifecycle integration, production Postgres migration,
-  encrypted backup/restore, worker ownership isolation, suspension/retirement,
-  and provider-outage reconciliation.
+The overall programme/release remains separate and is still blocked by other
+gates. Remaining email-adjacent boundaries are:
+
+- Broader Cloudflare/Resend outage, restart, bounce, retention, and restore
+  evidence when those scenarios are explicitly required.
+- REAL AIAT hiring/lifecycle integration beyond the canonical identity-service
+  lifecycle, encrypted backup/restore, and broader worker/control-plane
+  reconciliation.
 - If the optional Stalwart profile is selected instead, its separate JMAP,
   SMTP, DNS, firewall, backup, and saved-route evidence remains required.
 

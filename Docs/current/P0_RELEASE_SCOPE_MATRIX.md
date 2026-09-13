@@ -1,6 +1,6 @@
 # P0 Release-Scope and External-Prerequisite Matrix
 
-**Updated:** 2026-08-24
+**Updated:** 2026-09-13
 **Decision owner:** personal operator
 **Authority:** [AIAT target programme](../../AIAT_TARGET_PROGRAMME.md), [roadmap](../../ROADMAP.md), [P0 status](P0_RELEASE_INTEGRITY_STATUS.md), and [P0 plan](plans/P0_RELEASE_INTEGRITY_PLAN.md)
 
@@ -18,6 +18,10 @@ CODE_BASELINE=CURRENT_AND_PASSING
 FURTHER_IDENTICAL_AUDITS=NOT_REQUIRED
 GLOBAL_RELEASE_DECISION=NO-RELEASE
 ```
+
+The aggregate frozen state remains blocked by unrelated release prerequisites;
+the default Cloudflare/Resend email identity row below is explicitly closed as
+`PASS_FOR_DEFAULT_SCOPE` and does not change the global decision.
 
 The exact candidate `61f7d49b905a109a154f961e147f783016792218` has a fresh
 clean-clone static ledger certificate with 63/63 checks passing and zero
@@ -134,7 +138,7 @@ classification or the global `NO-RELEASE` decision.
 | Firecracker high-risk isolation tier | The target programme calls Firecracker optional for high-risk work; the launch contract is statically valid, but launcher/binary/KVM evidence is absent. **Infrastructure/conditional.** | `OPTIONAL_UNVERIFIED` | Keep high-risk Firecracker workers disabled for this release. Promote to `REQUIRED_FOR_RELEASE` only if the operator includes that tier in scope, then provide KVM, launcher, microVM smoke/network, cleanup, and recovery evidence. |
 | Deployment image identity, SBOM, scan, and clean native build | Local image observations exist, but deployment-supplied immutable refs, native build reconciliation, SBOM/scan artifacts, and vulnerability dispositions are not complete. **Infrastructure/operator evidence.** | `REQUIRED_FOR_RELEASE` | Provide the ten immutable deployment refs and matching SBOM/scan/disposition artifacts on the certification host. |
 | Provider-managed object-store SSE/KMS and external key custody | The OCI-native adapter and deterministic mocked contract pass; no provider target, bucket customer-managed key, custody, rotation, or live read-back evidence is configured. **External configuration.** | `REQUIRED_FOR_RELEASE` | Supply the real OCI Object Storage + Vault/KMS target and governed auth reference, then run the live adapter for bucket/key identity, PUT/read/checksum, multipart/abort, provider metadata, delete, and zero residue. Do not claim the fixture as live evidence. |
-| External mail relay and delivery | The default Cloudflare Worker/D1-only inbound edge and direct Resend API contracts pass locally; operator-owned Cloudflare route/DNS, Resend authorization, and a safe recipient for live delivery/outage evidence are absent. **External configuration.** Optional Worker R2 and Stalwart full-mailbox evidence remain separate. | `REQUIRED_FOR_RELEASE` if email remains in this release | Supply the selected default provider state and run the governed inbound sync, direct API delivery, webhook/reply, and outage/restore acceptance. Keep direct MX outbound disabled. If Stalwart or the optional Worker R2 profile is explicitly selected, run its profile-specific acceptance as well. |
+| External mail relay and delivery | The default Cloudflare Worker/D1-only inbound edge, public identity ingress, direct Resend transport, signed webhook, governed approval/send/idempotency/accounting/audit path, delivery correlation, and certification cleanup are live-certified in [`AIAT_Email_Identity_Live_Certification.md`](../AIAT_Email_Identity_Live_Certification.md). Optional Worker R2 and Stalwart full-mailbox evidence remain separate; broader provider outage/restore evidence is not part of this bounded certificate. | `PASS_FOR_DEFAULT_SCOPE` | No additional operator action is required for the certified default path. Keep `DEFAULT_OUTBOUND_ENABLED=false` and direct MX outbound disabled; certify an optional Stalwart/R2 profile or broader outage/restore behavior separately if selected. |
 | Self-improvement live signal and worker/provider path | The guarded lifecycle, approvals, rollback, and local Postgres certificate pass; no operator-selected signal source/project scope is configured. **External configuration/governance.** | `DEFERRED` for the current release | Keep candidate detection and live self-improvement disabled. If enabled, constrain the signal source/project, retain the human kill switch and approval, and promote the full live path to `REQUIRED_FOR_RELEASE`. |
 | OpenCode Program D candidate | The historical v1.17.13 scan is `FAILED_UNREPRODUCIBLE` because its raw findings/source snapshot were not retained. Fresh v1.18.21 source/image provenance and the AIAT boundary regression pass; the workflow now provisions Semgrep 1.168.0, TruffleHog 3.97.0, pinned SkillSpector, and Syft 1.51.0, while the local WSL run remains blocked because those tools have not been installed locally. **Security/tooling.** | `REQUIRED_FOR_RELEASE` | Run the pushed candidate workflow from a branch containing the workflow file. Retain the provisioning manifest, checksums, raw sanitized JSON/logs, SBOM, invocations, versions, and exit codes; keep coding/tester inactive until the technical scan passes and do not remediate historical ghost counts. |
 | OpenHands v1.43.0 candidate | Exact source/image pins, OpenHands gVisor evidence from run `32594885180`, native CI gVisor prerequisite evidence from run `32541110299`, AIAT boundary tests, digest-pinned disposable gateway wiring, exact LiteLLM/OmniRoute source-archive checksums, provider preflight, sanitized evidence-schema validation, run-scoped profile/MCP cleanup assertions, 20-gate matrix, deterministic coding-task fixture, offline lifecycle/security fixtures, fail-closed post-run test/diff/artifact verification, fail-closed disposable network-topology evidence, exact single-network attachment checks, and task-test credential-environment scrubbing pass repository-local checks. Runs `32695739623` and `32696377216` reached the provider/gateway, runsc, tool-service, and cleanup boundaries but failed closed on two stale Agent Server v1.43.0 readback envelopes (`config` LLM profile, then `agent_settings` MCP settings); both are preserved as `FAILED_CERTIFICATION_IMPLEMENTATION` / `BLOCKED_TOOL_BRIDGE`, with no live worker evidence claimed. The current reviewed tip `dbf21a3c2ae0c7fc5377076449192ed21c8f5797` includes strict run-bound MCP grants, lifecycle grant rotation, workspace metadata filtering, evidence/status alignment, exact single-network attachment evidence, and narrow certification-authorization blocker propagation; it passes the complete read-only dispatch preflight, but no replacement provider-backed run is claimed. **Candidate/live-provider gate.** | `REQUIRED_FOR_RELEASE` only if selected; currently inactive/certifying | Keep `GROQ_API_KEY` as the one operator-owned secret, freeze an exact reviewed SHA, run the safe preflight, and dispatch exactly one manual workflow only after it passes. Review sanitized evidence and steward approval independently; do not activate on certification alone. |
@@ -249,11 +253,15 @@ LIVE_IDENTITY_WORKER_B_PRIVATE_KEY
 LIVE_IDENTITY_REPLY_TIMEOUT_SECONDS
 ```
 
-The default acceptance must prove Cloudflare route delivery, envelope-scoped
-sync, direct Resend API acceptance, webhook/reply evidence, and the required
-revocation case. Submission alone is not delivery evidence. The preserved
-Stalwart/JMAP submission and reply checks apply only when that optional profile
-is selected; direct MX outbound remains disabled in every profile.
+The default acceptance is recorded in
+[`AIAT_Email_Identity_Live_Certification.md`](../AIAT_Email_Identity_Live_Certification.md)
+and proves Cloudflare route delivery, envelope-scoped sync, direct Resend API
+acceptance, signed webhook/delivery evidence, governed approval/send/
+idempotency/usage/audit, and certification cleanup. Submission alone is not
+delivery evidence; the certificate includes a terminal delivered event. The
+preserved Stalwart/JMAP submission and reply checks apply only when that
+optional profile is selected; direct MX outbound remains disabled in every
+profile.
 
 ### Self-improvement staging
 
@@ -302,9 +310,11 @@ this document, and coding/tester activation remains blocked.
 - **Infrastructure/environment failure:** WSL2/no native Linux, unavailable
   `runsc`, missing Firecracker host capability, and missing deployment image
   artifacts remain external host prerequisites.
-- **External configuration/governance:** the required OCI KMS/SSE target and
-  mail relay require operator-owned configuration; deferred self-improvement
-  must remain disabled and must not be simulated.
+- **External configuration/governance:** the required OCI KMS/SSE target remains
+  operator-owned; the default Cloudflare/Resend mail relay is configured and
+  certified for its bounded v1 scope, while optional profiles and broader
+  outage/restore evidence remain separate. Deferred self-improvement must
+  remain disabled and must not be simulated.
 - **Operator decision/hygiene:** security findings and protected memory-file
   state require a human disposition and are not silently normalized by the
   implementation agent.
@@ -314,11 +324,11 @@ this document, and coding/tester activation remains blocked.
 Complete this record before changing any conditional row or rerunning a live
 release gate:
 
-| Capability | Decision (`REQUIRED_FOR_RELEASE` / `OPTIONAL_UNVERIFIED` / `DEFERRED`) | Rationale and compensating controls | Owner/date | Evidence reference |
+| Capability | Decision (`REQUIRED_FOR_RELEASE` / `OPTIONAL_UNVERIFIED` / `DEFERRED` / `PASS_FOR_DEFAULT_SCOPE`) | Rationale and compensating controls | Owner/date | Evidence reference |
 | --- | --- | --- | --- | --- |
 | Firecracker |  |  |  |  |
 | Provider-managed KMS/SSE |  |  |  |  |
-| External mail relay |  |  |  |  |
+| External mail relay | `PASS_FOR_DEFAULT_SCOPE` | The default Cloudflare/Resend identity path is live-certified; keep default outbound and direct MX disabled, and treat optional profiles/broader outage and restore as separate evidence. | personal operator / 2026-09-13 | [`AIAT_Email_Identity_Live_Certification.md`](../AIAT_Email_Identity_Live_Certification.md) |
 | Self-improvement live path |  |  |  |  |
 | Security findings |  |  |  |  |
 | Protected memory files |  |  |  |  |
