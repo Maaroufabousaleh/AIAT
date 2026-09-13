@@ -9,6 +9,7 @@ complete email subsystem or the full production identity-service runtime.
 
 ```text
 LIVE_CLOUDFLARE_INBOUND = PASS
+CLOUDFLARE_INBOUND_LIVE = PASS
 CERTIFICATION_DATE = 2026-09-12
 CERTIFICATION_RUN = LIVE-CLOUDFLARE-INBOUND-2026-09-12
 ```
@@ -50,27 +51,34 @@ this record.
 
 ## Temporary certification identity
 
-The temporary recipient must be retired through the signed lifecycle API. Its
-provider reference is a non-secret opaque registration value returned by the
-Worker; for the current deterministic recipient binding it is:
+The temporary recipient was retired through the signed lifecycle API after the
+certification run. Its provider reference is a non-secret opaque registration
+value returned by the Worker; for the current deterministic recipient binding
+it was:
 
 ```text
 recipient:e2ad9f0588e174b1f82ebef7e389ad1b
 ```
 
-The supported cleanup command is documented in the domain runbook. It proves
-the `VERIFYING`/`ACTIVE` binding reaches `RETIRED`; it does not send another
-external message. A separate operator-controlled rejection check may be run
-after retirement if needed.
+The supported cleanup command is documented in the domain runbook. The live
+call proved the `VERIFYING`/`ACTIVE` binding reaches `RETIRED`; it did not send
+another external message. A separate operator-controlled rejection check may
+be run after retirement if needed.
 
 ## Still pending
 
 ```text
+IDENTITY_SERVICE_LIVE = NOT_YET_STARTED_OR_CERTIFIED
+REAL_IDENTITY_PROVISIONING = NOT_YET_LIVE_CERTIFIED
+REAL_INBOUND_RECONCILIATION = NOT_YET_LIVE_CERTIFIED
+RESEND_API_AUTH = NOT_YET_CERTIFIED
+RESEND_OUTBOUND_LIVE = NOT_YET_LIVE_CERTIFIED
+RESEND_WEBHOOK_LIVE = NOT_YET_LIVE_CERTIFIED
 REAL_AIAT_HIRING_LIFECYCLE_INTEGRATION = NOT_YET_LIVE_CERTIFIED
 RESEND_OUTBOUND = NOT_YET_LIVE_CERTIFIED
 FULL_PRODUCTION_IDENTITY_SERVICE = NOT_YET_STARTED_OR_CERTIFIED
 CLOUDFLARE_INBOUND_RETRY_RESTART_RECOVERY = NOT_YET_LIVE_CERTIFIED
-TEMPORARY_RECIPIENT_RETIREMENT = PENDING_OPERATOR_COMMAND
+TEMPORARY_RECIPIENT_RETIREMENT = PASS
 ```
 
 The repeatable operator command is
