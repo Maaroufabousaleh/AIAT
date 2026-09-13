@@ -44,6 +44,34 @@ The local Worker tests and Wrangler D1 migration do not contact Cloudflare or
 Resend. Copy the example to an ignored local file and keep every placeholder
 or real secret outside Git.
 
+## Secret boundary
+
+Real credentials are configuration inputs, never source-controlled defaults.
+The repository-level ignore rules cover local .env* files, Wrangler .dev.vars*
+files, .secrets/ and secrets/ directories, and common credential-file suffixes.
+The tracked *.example files are templates only and must contain placeholders.
+
+For this deployment boundary:
+
+- Docker receives production values from the operator environment or an
+  ignored local env file such as .env.cloudflare-mail-edge.local.
+- Wrangler receives the Worker HMAC value through wrangler secret put (and
+  local development may use the ignored .dev.vars file); no secret belongs in
+  wrangler.toml.
+- Python adapters and certification scripts read secrets from environment
+  variables or the configured external secret store. They must not construct
+  production credentials, put them in source, pass them as command-line
+  arguments, or write them into the checkout.
+
+Run the secret-boundary check from the repository root before committing a
+Cloudflare or identity-runtime change:
+
+~~~sh
+python3 mas/scripts/check_secret_boundary.py
+~~~
+
+The check reports only counts and safe paths; it never prints secret values.
+
 `scripts/validate-dns.sh` deliberately requires the exact account/region values
 returned by Cloudflare and Resend rather than guessing MX, SPF, DKIM, or
 return-path records. It checks the public DNS records only; the exact Email
