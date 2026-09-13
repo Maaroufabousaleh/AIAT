@@ -1,0 +1,18 @@
+:8080 {
+  # Cloudflare Tunnel terminates public TLS. Only the Resend webhook is
+  # reachable through this gateway; the identity API remains private.
+  @resend_webhook {
+    method POST
+    path /v1/mail-edge/provider-webhook/resend
+  }
+
+  handle @resend_webhook {
+    # reverse_proxy forwards the request body unchanged. The identity service
+    # verifies the provider signature over those exact bytes.
+    reverse_proxy identity-service:8010
+  }
+
+  handle {
+    respond 404
+  }
+}

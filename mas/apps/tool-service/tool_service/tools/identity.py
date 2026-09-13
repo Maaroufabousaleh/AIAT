@@ -1,4 +1,4 @@
-"""Governed mailbox, external-account and browser-session tools."""
+"""Governed email-identity, external-account, and browser-session tools."""
 
 from __future__ import annotations
 
@@ -53,7 +53,7 @@ class IdentityTool(BaseTool):
         elif self.mode == "wait":
             body = {"worker_id": worker_id, "actor": actor, "sender_domain": kwargs.get("sender_domain"), "timeout_seconds": kwargs.get("timeout_seconds", 30)}
         elif self.mode == "outbound-request":
-            body = {"worker_id": worker_id, "actor": actor, "idempotency_key": kwargs.get("idempotency_key"), "recipients": kwargs.get("recipients"), "subject": kwargs.get("subject"), "body": kwargs.get("body"), "recipient_class": kwargs.get("recipient_class")}
+            body = {"worker_id": worker_id, "actor": actor, "idempotency_key": kwargs.get("idempotency_key"), "recipients": kwargs.get("recipients"), "subject": kwargs.get("subject"), "body": kwargs.get("body"), "content_type": kwargs.get("content_type", "text/plain"), "recipient_class": kwargs.get("recipient_class")}
         elif self.mode == "outbound-approved":
             body = {"worker_id": worker_id, "actor": actor, "outbound_request_id": kwargs.get("outbound_request_id"), "idempotency_key": kwargs.get("idempotency_key")}
         elif self.mode == "outbound-cancel":
@@ -100,8 +100,8 @@ def get_identity_tools() -> list[BaseTool]:
         IdentityTool("mail.extract_link", "/v1/mail/extract-link", "Extract a safe link from a caller-owned verification message.", "extract-link"),
         IdentityTool("mail.mark_processed", "/v1/mail/mark-processed", "Mark a caller-owned mailbox message processed.", "mark"),
         IdentityTool("mail.delete", "/v1/mail/delete", "Delete a caller-owned mailbox message.", "delete"),
-        IdentityTool("mail.send_request", "/v1/outbound/request", "Request human-approved outbound mail through Stalwart.", "outbound-request"),
-        IdentityTool("mail.send_approved", "/v1/outbound/send-approved", "Submit an approved mail request through Stalwart's queue.", "outbound-approved"),
+        IdentityTool("mail.send_request", "/v1/outbound/request", "Request human-approved outbound mail through the selected provider.", "outbound-request"),
+        IdentityTool("mail.send_approved", "/v1/outbound/send-approved", "Submit an approved outbound mail request through the selected provider.", "outbound-approved"),
         IdentityTool("mail.get_delivery_status", "/v1/outbound/delivery-status", "Read caller-owned outbound delivery status.", "outbound-status"),
         IdentityTool("mail.cancel_queued", "/v1/outbound/{outbound_request_id}/cancel", "Cancel a caller-owned queued outbound message.", "outbound-cancel"),
         IdentityTool("identity.external.signup_request", "/v1/external-accounts/signup-request", "Request a governed external account.", "external"),

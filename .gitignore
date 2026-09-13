@@ -33,8 +33,27 @@ htmlcov/
 infra/compose/.env
 .env
 *.env
+.env.*
+*.env.*
 !.env.example
 !*.env.example
+!.env.*.example
+!*.env.*.example
+
+# Local runtime secret material — NEVER commit real values
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+!.dev.vars.*.example
+**/secrets/
+**/.secrets/
+*.secret
+*.secrets
+*.credential
+*.credentials
+*.key
+*.p12
+*.pfx
 
 # IDE / editor
 .vscode/settings.json

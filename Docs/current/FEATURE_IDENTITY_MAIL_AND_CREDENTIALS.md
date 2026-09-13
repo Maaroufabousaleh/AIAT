@@ -1,7 +1,7 @@
 # Identity, Mail, Credentials, and External Accounts Feature Specification
 
 **Baseline:** 2026-08-10
-**Status:** governed identity/mail lifecycle group `f577675` implemented; safe delivery-attempt trace correlation is implemented; the dashboard credentials list now retains redacted metadata through refresh failures with explicit stale/retry recovery (`970f09c`, source-built `credentials-states.spec.ts` 1/1) and fails closed on 401/403 reads by retaining only previously loaded redacted metadata while hiding read/mutation controls (`982c9c0`, source-built `credentials-states.spec.ts` 3/3); shared identity-resource refreshes are abort/generation-safe, prove stale-to-recovered retry, and expose semantic 44px row actions (`46eccee`, `651ad11`, source-built `identity-states.spec.ts` 1/1); the relay-verifier/JMAP fixture and safe route-finish traceback boundary were reconciled in `3edff39` (mail-edge 11/11 and SMTP-gateway suite pass); production domain and transport certification pending
+**Status:** governed identity/mail lifecycle group `f577675` implemented; safe delivery-attempt trace correlation is implemented; the dashboard credentials list now retains redacted metadata through refresh failures with explicit stale/retry recovery (`970f09c`, source-built `credentials-states.spec.ts` 1/1) and fails closed on 401/403 reads by retaining only previously loaded redacted metadata while hiding read/mutation controls (`982c9c0`, source-built `credentials-states.spec.ts` 3/3); shared identity-resource refreshes are abort/generation-safe, prove stale-to-recovered retry, and expose semantic 44px row actions (`46eccee`, `651ad11`, source-built `identity-states.spec.ts` 1/1); the relay-verifier/JMAP fixture and safe route-finish traceback boundary were reconciled in `3edff39` (mail-edge 11/11 and SMTP-gateway suite pass); the default Cloudflare/Resend v1 path is live-certified; optional Stalwart/full-mailbox profiles and broader outage/restore work remain separate
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose
@@ -11,9 +11,12 @@ This boundary gives workers stable identities and tightly controlled access to m
 ## Implemented now
 
 - Dedicated identity-service application and independent Postgres migration.
-- Signed client requests, replay storage, identity lifecycle, domains, mailbox addressing, Stalwart/JMAP adapter, and verification helpers.
+- Signed client requests, replay storage, identity lifecycle, domains, mailbox
+  addressing, provider-neutral mail adapters (Cloudflare/Resend by default;
+  Stalwart optional), and verification helpers.
 - Mail list/search/read/process/delete, verification-code/link extraction, and bounded wait.
-- Outbound request, approval, approved send, delivery status, cancellation, and Resend relay boundary.
+- Outbound request, approval, approved direct Resend API send, delivery status,
+  cancellation, and provider webhook boundary.
 - External-account signup/status/login/rotation/suspend/close lifecycle.
 - Versioned external-account action policy (`aiat.external-account-action-policy.v1`) exposes category-sensitive signup, always-approved credential rotation, human-approved closure, immediate safety suspension, and governed local browser-session rules. Close requests now pause at a durable approval before state change and session revocation.
 - The deterministic `aiat.external-account-action-policy-check.v1` fixture reconciles the real five-action catalogue, development/organization/provider category dispositions, and fail-closed unknown action/category behavior without creating identity, account, session, credential, or provider state. Licence/restriction metadata is explicitly outside this policy.
@@ -38,13 +41,15 @@ This boundary gives workers stable identities and tightly controlled access to m
 - Orchestrator credential manager, approval requests, resolution audit, browser identity, and durable worker tool grants/nonces.
 - The dashboard credentials list reads with `cache: "no-store"`, retains the last successful redacted metadata set after a failed refresh, keeps placeholders/policy/usage rows visible while retrying, labels the list as stale, and exposes header Refresh plus banner Retry controls. A 401/403 read exposes a named access-denied region, preserves only previously loaded redacted metadata, and hides Refresh/Retry, creation, deletion, placeholder copy, selection, and audit navigation; creation and bulk mutations also fail closed on authorization loss. [`credentials/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/credentials/page.tsx>) and [`credentials-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/credentials-states.spec.ts) cover stale retention, recovery, first-load denial, and post-read denial 3/3 without putting secret values in the fixture (`970f09c`, `982c9c0`).
 - All identity-resource tables share an abortable, generation-guarded loader: an obsolete refresh cannot overwrite newer data, retained rows remain visible while retrying, and a successful retry clears the stale warning. Tables expose captions/column scopes and explicit, 44px action controls for keyboard and screen-reader use. [`IdentityResourcePage.tsx`](../../mas/apps/mas-dashboard/components/identity/IdentityResourcePage.tsx) and [`identity-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/identity-states.spec.ts) prove the failure → retained-data → recovery and semantic-control paths 1/1 without rendering sensitive fields (`46eccee`, `651ad11`).
-- Local Stalwart, direct mail-edge, and SMTP gateway deployment/runbook assets.
+- Default Cloudflare Worker/D1-only deployment assets plus an optional Worker
+  R2 profile and optional local
+  Stalwart and SMTP-gateway deployment/runbook assets.
 
 ## Code anchors
 
 - Identity service: [`mas/apps/identity-service/identity_service/`](../../mas/apps/identity-service/identity_service/)
 - Signed orchestrator client and safe mail SLO projection: [`mas/apps/orchestrator-api/orchestrator_api/identity_client.py`](../../mas/apps/orchestrator-api/orchestrator_api/identity_client.py)
-- Identity migrations: [`mas/apps/identity-service/migrations/versions/0001_identity_control_plane.py`](../../mas/apps/identity-service/migrations/versions/0001_identity_control_plane.py) and [`0002_mail_trace_correlation.py`](../../mas/apps/identity-service/migrations/versions/0002_mail_trace_correlation.py)
+- Identity migrations: [`mas/apps/identity-service/migrations/versions/0001_identity_control_plane.py`](../../mas/apps/identity-service/migrations/versions/0001_identity_control_plane.py), [`0002_mail_trace_correlation.py`](../../mas/apps/identity-service/migrations/versions/0002_mail_trace_correlation.py), and [`0004_provider_neutral_mail.py`](../../mas/apps/identity-service/migrations/versions/0004_provider_neutral_mail.py)
 - Credential manager: [`mas/packages/mas-core/mas_core/credentials/`](../../mas/packages/mas-core/mas_core/credentials/)
 - Dashboard credentials list: [`mas/apps/mas-dashboard/app/(dashboard)/credentials/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/credentials/page.tsx>) and [`credentials-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/credentials-states.spec.ts)
 - Shared identity-resource dashboard surface: [`IdentityResourcePage.tsx`](../../mas/apps/mas-dashboard/components/identity/IdentityResourcePage.tsx) and [`identity-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/identity-states.spec.ts)
@@ -86,9 +91,9 @@ remain separate operator-owned checks.
 
 | Profile | Status | Intended use |
 | --- | --- | --- |
-| `agents.aiat.local` Stalwart | Implemented local profile | Loopback development and deterministic tests; no public-mail claim. |
-| Direct public Stalwart + Resend | Staged, live certification pending | Public host with DNS, TLS, inbound TCP/25, DKIM/SPF/DMARC, backup, and abuse controls. |
-| Public SMTP gateway + WireGuard + private Stalwart + Resend | Staged, live certification pending | Environments where the private/home ISP cannot accept reliable inbound TCP/25. |
+| Cloudflare Email Routing + Worker/D1-only + direct Resend API | Repository-complete default v1; live certification PASS | Provider-managed inbound edge with chunked D1 raw MIME and direct API outbound, with AIAT identity-service governance and no public SMTP listener. The bounded inbound, public webhook, governed outbound, delivery, accounting, audit, and cleanup evidence is recorded in [`AIAT_Email_Identity_Live_Certification.md`](../AIAT_Email_Identity_Live_Certification.md). An optional Worker R2 profile remains available. |
+| `agents.aiat.local` Stalwart | Implemented optional local profile | Loopback development and deterministic tests; no public-mail claim. |
+| Public Stalwart + Resend | Optional staged profile; not selected for the default certification | Full-mailbox/JMAP deployments that deliberately select Stalwart and its own DNS/TLS/SMTP controls. |
 
 Oracle is one possible VPS provider, not an architectural dependency.
 
@@ -106,8 +111,8 @@ CAPTCHA, MFA enrolment/recovery, payment, legal acceptance, destructive account 
   [`mas/docs/provenance/mail_edge_ingress_certification.json`](../../mas/docs/provenance/mail_edge_ingress_certification.json).
   This local certificate does not claim external provider, Postgres, worker, or
   live bounce evidence.
-- [x] Certify the rebuilt local Compose `PostgresIdentityStore` path at
-  migration `0003_mail_edge_observations`, including connection reopen,
+- [x] Certify the rebuilt local Compose `PostgresIdentityStore` path at the
+  historical migration `0003_mail_edge_observations`, including connection reopen,
   payload-free SQL/dashboard read-back, duplicate/conflict/tamper handling, and
   reserved-fixture cleanup with
   [`check_mail_edge_postgres_ingress.py`](../../mas/scripts/check_mail_edge_postgres_ingress.py);
@@ -115,21 +120,30 @@ CAPTCHA, MFA enrolment/recovery, payment, legal acceptance, destructive account 
   [`mas/docs/provenance/mail_edge_postgres_ingress_certification.json`](../../mas/docs/provenance/mail_edge_postgres_ingress_certification.json).
   This remains local database evidence, not external provider or live worker
   evidence.
-- Add provider/webhook-level delivery, bounce, relay, and inbound mail-edge
-  spans. The durable outbound-attempt correlation and safe orchestrator
-  projection are complete, but they do not claim provider delivery or bounce
-  truth.
-- Select and certify the production mail topology with real DNS, TLS, send, receive, bounce, spam, outage, and restore evidence.
+- The current identity-service head is `0004_provider_neutral_mail`; the
+  production migration and runtime health/readiness evidence are recorded in
+  [`AIAT_Email_Identity_Live_Certification.md`](../AIAT_Email_Identity_Live_Certification.md).
+  Future schema changes still require a fresh disposable Postgres migration run.
+- Add broader provider/webhook-level delivery, bounce, relay, and inbound
+  mail-edge spans. The certified default path proves signed delivered Resend
+  evidence and durable outbound-attempt correlation; broader bounce,
+  retention, outage, and restore evidence remains separate.
+- The default production topology is selected and certified for real DNS, TLS,
+  inbound, governed send, signed webhook, delivery, and cleanup. Optional
+  full-mailbox profiles and broader bounce, spam, outage, restore, key-rotation,
+  and domain-migration rehearsal remain separate.
 - Complete key rotation and domain migration rehearsal.
 - [x] Add CEO service identity and persisted section-level dashboard ACLs; native deployment and UI evidence remains.
 - Prove credential expiration/revocation during active worker/browser sessions.
 - Extend the action taxonomy with provider-specific live conformance and outage/restore evidence; the generic high-risk taxonomy and human pause boundary are implemented.
-- [x] Keep the external-account action taxonomy and lifecycle independently release-checkable: five actions, category-sensitive signup, human approval for rotation/closure, immediate suspension, governed browser sessions, fail-closed unknown inputs, one-use lease consumption, rotation revocation, and closure/suspension revocation are covered by deterministic fixtures; provider-specific live conformance remains.
+- [x] Keep the external-account action taxonomy and lifecycle independently release-checkable: five actions, category-sensitive signup, human approval for rotation/closure, immediate suspension, governed browser sessions, fail-closed unknown inputs, one-use lease consumption, rotation revocation, and closure/suspension revocation are covered by deterministic fixtures; optional-profile and outage/restore evidence remains separate.
 - [x] Keep outbound mail independently release-checkable: the deterministic
   fixture covers approval pause, request/submission idempotency, definitive
   provider-failure retry, ambiguous-outage reconciliation hold, and
-  secret-safe output without an external relay call; live send/receive/bounce
-  and outage/restore evidence remains separate.
+  secret-safe output without an external relay call. The default Cloudflare/
+  Resend live send, signed webhook, delivery, accounting, audit, and cleanup
+  evidence is recorded in [`AIAT_Email_Identity_Live_Certification.md`](../AIAT_Email_Identity_Live_Certification.md);
+  optional-profile and broader outage/restore evidence remains separate.
 - Validate queue recovery across gateway/tunnel/private-mail outages.
 - Ensure all dashboard proxy routes redact secrets and preserve operator/service identity.
 

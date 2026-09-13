@@ -6,7 +6,7 @@ import hashlib
 import hmac
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, TypeVar
 from uuid import UUID, uuid4
 
@@ -21,8 +21,9 @@ from .mailboxes.service import MailboxService
 from .models import ExternalAccountState, IdentityState
 from .outbound.policy import OutboundPolicy
 from .outbound.service import OutboundService
+from .providers.base import InboundMailProvider, OutboundMailProvider
+from .providers.factory import build_provider_pair
 from .providers.resend import ResendRelayAdapter
-from .providers.stalwart import StalwartAdapter
 from .sessions.browser_sessions import profile_key
 from .store import IdentityStore
 from .sync.outbox import OutboxService
@@ -41,17 +42,67 @@ class AuthenticatedClient:
 
 
 class IdentityService:
-    def __init__(self, *, settings: IdentitySettings, store: IdentityStore, stalwart: StalwartAdapter, resend: ResendRelayAdapter) -> None:
+    def __init__(
+        self,
+        *,
+        settings: IdentitySettings,
+        store: IdentityStore,
+        inbound_provider: InboundMailProvider | None = None,
+        outbound_provider: OutboundMailProvider | None = None,
+        # Legacy keyword arguments remain accepted for preserved operational
+        # scripts and fixtures. They are an injection compatibility layer, not
+        # the production construction path.
+        stalwart: Any | None = None,
+        resend: Any | None = None,
+    ) -> None:
         self.settings = settings
         self.store = store
+        if inbound_provider is None:
+            if stalwart is not None:
+                inbound_provider = stalwart
+            else:
+                inbound_provider, selected_outbound = build_provider_pair(settings)
+                if outbound_provider is None:
+                    outbound_provider = selected_outbound
+        if outbound_provider is None:
+            if stalwart is not None and not isinstance(resend, ResendRelayAdapter):
+                # Existing in-memory lifecycle fixtures inject one fake
+                # mailbox provider for both directions. Explicit production
+                # factory construction never enters this branch.
+                outbound_provider = stalwart
+            elif resend is not None:
+                outbound_provider = resend
+            else:
+                _unused_inbound, outbound_provider = build_provider_pair(settings)
+        assert inbound_provider is not None and outbound_provider is not None
+        self.inbound_provider = inbound_provider
+        self.outbound_provider = outbound_provider
+        self._legacy_stalwart = stalwart or (
+            inbound_provider if getattr(inbound_provider, "provider_name", "") == "stalwart" else None
+        )
+        self._resend = resend or (
+            outbound_provider if isinstance(outbound_provider, ResendRelayAdapter) else None
+        )
         self.outbox = OutboxService(store)
         self.usage = UsageLedger(store)
         self.approvals = ApprovalService(store)
-        self.mailboxes = MailboxService(store=store, provider=stalwart, outbox=self.outbox, usage=self.usage, agent_mail_domain=settings.agent_mail_domain, quota_mb=settings.default_mailbox_quota_mb, retention_days=settings.default_mail_retention_days, provider_rate_limit=settings.provider_rate_limit_per_minute)
-        self.domains = DomainService(store=store, provider=stalwart, outbox=self.outbox)
+        inbound_fallback = (
+            "stalwart"
+            if stalwart is not None and inbound_provider is stalwart
+            else settings.identity_inbound_provider
+        )
+        outbound_fallback = (
+            "stalwart"
+            if stalwart is not None and outbound_provider is stalwart
+            else settings.identity_outbound_provider
+        )
+        inbound_name = str(getattr(inbound_provider, "provider_name", inbound_fallback))
+        outbound_name = str(getattr(outbound_provider, "provider_name", outbound_fallback))
+        self.mailboxes = MailboxService(store=store, provider=inbound_provider, outbox=self.outbox, usage=self.usage, agent_mail_domain=settings.agent_mail_domain, quota_mb=settings.default_mailbox_quota_mb, retention_days=settings.cloudflare_mail_retention_days if inbound_name == "cloudflare" else settings.default_mail_retention_days, provider_rate_limit=settings.provider_rate_limit_per_minute, inbound_provider_name=inbound_name, outbound_provider_name=outbound_name)
+        self.domains = DomainService(store=store, provider=inbound_provider, outbox=self.outbox, provider_name=inbound_name)
         self.outbound = OutboundService(
             store=store,
-            provider=stalwart,
+            provider=outbound_provider,
             approvals=self.approvals,
             usage=self.usage,
             outbox=self.outbox,
@@ -59,10 +110,32 @@ class IdentityService:
             agent_domain=settings.agent_mail_domain,
             provider_rate_limit=settings.outbound_rate_limit_per_minute,
             outbound_relay_certified=settings.outbound_relay_certified,
+            provider_name=outbound_name,
         )
-        self.stalwart = stalwart
-        self.resend = resend
         self.external_policy = ExternalAccountPolicy()
+
+    @property
+    def stalwart(self) -> Any | None:
+        """Compatibility handle for optional Stalwart fixtures and tooling."""
+
+        return self._legacy_stalwart
+
+    @stalwart.setter
+    def stalwart(self, provider: Any) -> None:
+        self._legacy_stalwart = provider
+        self.inbound_provider = provider
+        self.mailboxes.provider = provider
+        self.mailboxes.inbound_provider_name = str(getattr(provider, "provider_name", "stalwart"))
+        self.domains.provider = provider
+        self.domains.provider_name = self.mailboxes.inbound_provider_name
+
+    @property
+    def resend(self) -> Any | None:
+        return self._resend
+
+    @resend.setter
+    def resend(self, provider: Any) -> None:
+        self._resend = provider
 
     @staticmethod
     def assert_worker_access(client: AuthenticatedClient, *, actor_id: str, worker_id: UUID, allow_delegate: bool = False) -> None:
@@ -83,12 +156,111 @@ class IdentityService:
     async def consume_mail_provider_rate(self, worker_id: UUID) -> None:
         window = datetime.now(UTC).replace(second=0, microsecond=0)
         allowed = await self.store.consume_provider_rate(
-            provider="stalwart", rate_key=f"mail-access:{worker_id}",
+            provider=self.mailboxes.inbound_provider_name, rate_key=f"mail-access:{worker_id}",
             window_started_at=window,
             limit=self.settings.provider_rate_limit_per_minute,
         )
         if not allowed:
             raise PermissionError("mail provider rate limit exceeded")
+
+    def _uses_cloudflare_inbound(self) -> bool:
+        return self.mailboxes.inbound_provider_name == "cloudflare"
+
+    @staticmethod
+    def _inbound_list_item(row: dict[str, Any]) -> dict[str, Any]:
+        message = row.get("normalized_message") if isinstance(row.get("normalized_message"), dict) else {}
+        return {
+            "id": row.get("provider_message_id") or message.get("id"),
+            "receivedAt": message.get("receivedAt") or row.get("received_at"),
+            "from": message.get("from") or ([{"email": row.get("sender")}] if row.get("sender") else []),
+            "to": message.get("to") or ([{"email": row.get("envelope_recipient")}] if row.get("envelope_recipient") else []),
+            "subject": row.get("subject") or message.get("subject", ""),
+            "preview": message.get("preview", ""),
+            "processed": bool(row.get("processed_at")),
+        }
+
+    async def synchronize_inbound(self, *, limit: int = 1000) -> dict[str, Any]:
+        """Catch up Cloudflare edge events with ack-after-commit semantics."""
+
+        if not self._uses_cloudflare_inbound():
+            return {"provider": self.mailboxes.inbound_provider_name, "cursor": 0, "next_cursor": 0, "processed": 0}
+        cursor = await self.store.get_inbound_sync_cursor("cloudflare")
+        response = await self.inbound_provider.list_events(after=cursor, limit=limit)
+        events = response.get("events") or []
+        processed = 0
+        for event in events:
+            if not isinstance(event, dict):
+                raise ValueError("cloudflare event is not an object")
+            sequence = int(event.get("sequence", 0))
+            if sequence <= cursor:
+                continue
+            event_id = str(event.get("event_id") or event.get("provider_event_id") or "")
+            message_id = str(event.get("message_id") or "")
+            identity_id = UUID(str(event.get("identity_id")))
+            if not event_id or not message_id:
+                raise ValueError("cloudflare event is missing its durable identifiers")
+            fetched = await self.inbound_provider.fetch_message(message_id)
+            if str(fetched.get("identity_id")) != str(identity_id):
+                raise PermissionError("cloudflare delivery identity correlation is inconsistent")
+            if event.get("worker_id") and str(fetched.get("worker_id")) != str(event.get("worker_id")):
+                raise PermissionError("cloudflare delivery worker correlation is inconsistent")
+            fetched_event_id = str(fetched.get("provider_event_id") or event_id)
+            if fetched_event_id != event_id:
+                raise PermissionError("cloudflare provider event correlation is inconsistent")
+            view = fetched.get("message") if isinstance(fetched.get("message"), dict) else {}
+            owner = await self.store.get_identity(UUID(str(fetched.get("worker_id"))))
+            if owner is None or str(owner.get("id")) != str(identity_id):
+                raise PermissionError("cloudflare delivery owner is not an AIAT identity")
+            envelope_recipient = str(event.get("envelope_recipient") or view.get("envelope_recipient") or "").casefold()
+            if str(owner.get("address", "")).casefold() != envelope_recipient:
+                alias_owner = await self.store.get_identity_by_address(envelope_recipient)
+                if alias_owner is None or str(alias_owner.get("id")) != str(identity_id) or alias_owner.get("worker_id") != owner.get("worker_id"):
+                    raise PermissionError("cloudflare envelope recipient does not match the AIAT identity")
+            raw_mime = fetched.get("raw_mime")
+            if not isinstance(raw_mime, bytes):
+                raise ValueError("cloudflare message body is not bounded bytes")
+            from_values = view.get("from") if isinstance(view.get("from"), list) else []
+            sender = None
+            if from_values and isinstance(from_values[0], dict):
+                sender = str(from_values[0].get("email") or "") or None
+            recipient_values = view.get("to") if isinstance(view.get("to"), list) else []
+            envelope_recipient = str(event.get("envelope_recipient") or "")
+            if recipient_values and isinstance(recipient_values[0], dict):
+                # The event's envelope recipient remains authoritative; the
+                # parsed view is only checked for a safe display projection.
+                if envelope_recipient and str(recipient_values[0].get("email") or "").casefold() != envelope_recipient.casefold():
+                    raise PermissionError("cloudflare envelope recipient correlation is inconsistent")
+            await self.store.upsert_inbound_message(
+                identity_id=identity_id,
+                provider="cloudflare",
+                provider_event_id=event_id,
+                provider_message_id=message_id,
+                envelope_recipient=envelope_recipient,
+                sender=sender,
+                subject=str(view.get("subject") or "")[:998],
+                received_at=datetime.fromisoformat(str(event.get("received_at") or datetime.now(UTC).isoformat()).replace("Z", "+00:00")),
+                raw_object_ref=str(event.get("object_key") or f"inbound/{identity_id}/{message_id}.eml"),
+                raw_mime=raw_mime,
+                normalized_message=view,
+            )
+            await self.store.record_mail_event(
+                identity_id=identity_id,
+                provider_message_id=message_id,
+                event_type="INBOUND_RECEIVED",
+                metadata={
+                    "provider": "cloudflare", "provider_event_id": event_id,
+                    "sequence": sequence, "raw_object_ref": str(event.get("object_key") or ""),
+                },
+            )
+            # The edge event is acknowledged only after both the message copy
+            # and the durable normalized mail event have committed.
+            await self.inbound_provider.acknowledge_event(event_id)
+            cursor = await self.store.advance_inbound_sync_cursor("cloudflare", sequence)
+            processed += 1
+        return {
+            "provider": "cloudflare", "cursor": await self.store.get_inbound_sync_cursor("cloudflare"),
+            "next_cursor": int(response.get("next_cursor", cursor) or cursor), "processed": processed,
+        }
 
     async def charged_provider_call(
         self,
@@ -140,6 +312,8 @@ class IdentityService:
                 address=self.mailboxes.address_for(worker_id), alias=friendly_alias,
                 domain=self.settings.agent_mail_domain,
                 idempotency_key=idempotency_key, quota_mb=self.settings.default_mailbox_quota_mb,
+                inbound_provider=self.mailboxes.inbound_provider_name,
+                outbound_provider=self.outbound.provider_name,
             )
             approval = await self.store.get_approval_for_target(worker_id)
             if approval is None:
@@ -160,10 +334,21 @@ class IdentityService:
                 )
                 return identity
         identity, created = await self.mailboxes.provision(company_id=company_id, worker_id=worker_id, friendly_alias=friendly_alias, idempotency_key=idempotency_key)
-        if identity.get("provider_account_id"):
+        binding = await self.store.get_provider_binding(
+            identity_id=identity["id"], direction="INBOUND",
+            provider=self.mailboxes.inbound_provider_name,
+        )
+        if identity.get("provider_account_id") or binding:
             await self.store.create_identity_access_grant(
                 worker_id=worker_id, identity_id=identity["id"],
                 grant_type="mailbox", issued_by=actor_id,
+            )
+            await self.store.upsert_provider_binding(
+                identity_id=identity["id"], direction="OUTBOUND",
+                provider=self.outbound.provider_name,
+                provider_reference=None,
+                lifecycle_state="DISABLED",
+                metadata={"default_enabled": False},
             )
         await self.store.create_audit(actor_id=actor_id, action="identity.provision", target_type="worker", target_id=str(worker_id), outcome="created" if created else "idempotent", metadata={"identity_id": str(identity["id"]), "address": identity["address"]})
         return identity
@@ -171,22 +356,36 @@ class IdentityService:
     async def verify_identity(self, client: AuthenticatedClient, *, worker_id: UUID, actor_id: str, provider_message_id: str) -> dict[str, Any]:
         self.assert_worker_access(client, actor_id=actor_id, worker_id=worker_id, allow_delegate=True)
         identity = await self.owned_identity(client, actor_id=actor_id, worker_id=worker_id, allow_delegate=True)
-        if identity is None or not identity.get("provider_account_id"):
-            raise PermissionError("mailbox is not available for delivery verification")
         if str(identity.get("state")) != IdentityState.IDENTITY_VERIFYING:
-            raise PermissionError("only a verifying mailbox can be activated")
-        # A real JMAP read confirms that a message was persisted by Stalwart;
-        # no caller-provided assertion can activate a mailbox on its own.
-        message = await self.stalwart.read_message(str(identity["provider_account_id"]), provider_message_id)
-        messages = ((message.get("result") or {}).get("list") or []) if isinstance(message, dict) else []
-        if not any(isinstance(item, dict) and str(item.get("id")) == provider_message_id for item in messages):
-            raise ValueError("JMAP delivery evidence does not contain the requested message")
+            raise PermissionError("only a verifying email identity can be activated")
+        binding = await self.store.get_provider_binding(
+            identity_id=identity["id"], direction="INBOUND",
+            provider=self.mailboxes.inbound_provider_name,
+        )
+        provider_reference = (binding or {}).get("provider_reference") or identity.get("provider_account_id")
+        if not provider_reference:
+            raise PermissionError("inbound provider binding is unavailable for delivery verification")
+        if self._uses_cloudflare_inbound():
+            await self.synchronize_inbound(limit=1000)
+            message = await self.inbound_provider.verify_delivery(
+                str(provider_reference), provider_message_id, identity_id=str(identity["id"])
+            )
+        elif hasattr(self.inbound_provider, "verify_delivery"):
+            message = await self.inbound_provider.verify_delivery(
+                str(provider_reference), provider_message_id, identity_id=str(identity["id"])
+            )
+        else:
+            # Preserved legacy test doubles only expose the old read method.
+            message = await self.inbound_provider.read_message(str(provider_reference), provider_message_id)  # type: ignore[attr-defined]
+            messages = ((message.get("result") or {}).get("list") or []) if isinstance(message, dict) else []
+            if not any(isinstance(item, dict) and str(item.get("id")) == provider_message_id for item in messages):
+                raise ValueError("provider delivery evidence does not contain the requested message")
         await self.store.record_mail_event(
             identity_id=identity["id"], provider_message_id=provider_message_id,
             event_type="DELIVERY_VERIFIED",
-            metadata={"provider_correlation_id": message.get("correlation_id")},
+            metadata={"provider": self.mailboxes.inbound_provider_name, "provider_correlation_id": message.get("correlation_id")},
         )
-        identity = await self.mailboxes.mark_delivery_verified(worker_id, evidence={"provider_message_id": provider_message_id, "provider_correlation_id": message.get("correlation_id")})
+        identity = await self.mailboxes.mark_delivery_verified(worker_id, evidence={"provider": self.mailboxes.inbound_provider_name, "provider_message_id": provider_message_id, "provider_correlation_id": message.get("correlation_id")})
         await self.store.create_audit(actor_id=actor_id, action="identity.verify", target_type="worker", target_id=str(worker_id), outcome="verified", metadata={"identity_id": str(identity["id"])})
         return identity
 
@@ -241,13 +440,27 @@ class IdentityService:
         identity = await self.owned_identity(client, actor_id=actor_id, worker_id=worker_id)
         if identity is None or identity.get("state") not in {IdentityState.IDENTITY_ACTIVE, IdentityState.IDENTITY_VERIFYING, "IDENTITY_ACTIVE", "IDENTITY_VERIFYING"}:
             raise PermissionError("mailbox is not available")
-        if not identity.get("provider_account_id"):
-            raise RuntimeError("mailbox provider account is not available")
         await self.consume_mail_provider_rate(worker_id)
+        if self._uses_cloudflare_inbound():
+            await self.synchronize_inbound(limit=1000)
+            rows = await self.store.list_inbound_messages(identity_id=identity["id"], limit=limit, query=query)
+            result = {
+                "provider": "cloudflare",
+                "result": {
+                    "list": [self._inbound_list_item(row) for row in rows],
+                    "ids": [str(row.get("provider_message_id")) for row in rows],
+                    "limit": limit,
+                    "query": query,
+                },
+            }
+            await self.store.create_audit(actor_id=actor_id, action="mail.search" if query else "mail.list", target_type="email_identity", target_id=str(identity["id"]), outcome="ok", metadata={"provider": "cloudflare", "limit": limit, "query_present": bool(query)})
+            return result
+        if not identity.get("provider_account_id"):
+            raise RuntimeError("inbound provider binding is not available")
         result = await self.charged_provider_call(
             worker_id=worker_id,
             operation="mail_search" if query else "mail_list",
-            call=lambda: self.stalwart.list_messages(
+            call=lambda: self.inbound_provider.list_messages(  # type: ignore[attr-defined]
                 str(identity["provider_account_id"]), limit=limit, query=query
             ),
         )
@@ -257,13 +470,24 @@ class IdentityService:
     async def mail_read(self, client: AuthenticatedClient, *, worker_id: UUID, actor_id: str, message_id: str) -> dict[str, Any]:
         self.assert_worker_access(client, actor_id=actor_id, worker_id=worker_id)
         identity = await self.owned_identity(client, actor_id=actor_id, worker_id=worker_id)
-        if identity.get("state") not in {IdentityState.IDENTITY_ACTIVE, IdentityState.IDENTITY_VERIFYING, "IDENTITY_ACTIVE", "IDENTITY_VERIFYING"} or not identity.get("provider_account_id"):
-            raise PermissionError("mailbox is not available")
+        if identity.get("state") not in {IdentityState.IDENTITY_ACTIVE, IdentityState.IDENTITY_VERIFYING, "IDENTITY_ACTIVE", "IDENTITY_VERIFYING"}:
+            raise PermissionError("email identity is not available")
         await self.consume_mail_provider_rate(worker_id)
+        if self._uses_cloudflare_inbound():
+            await self.synchronize_inbound(limit=1000)
+            row = await self.store.get_inbound_message(identity_id=identity["id"], message_id=message_id)
+            message = row.get("normalized_message") if row else None
+            result = {"provider": "cloudflare", "result": {"list": [message] if isinstance(message, dict) else []}}
+            if row:
+                await self.store.record_mail_event(identity_id=identity["id"], provider_message_id=message_id, event_type="READ", metadata={"provider": "cloudflare"})
+            await self.store.create_audit(actor_id=actor_id, action="mail.read", target_type="email_identity", target_id=str(identity["id"]), outcome="ok" if row else "not_found", metadata={"message_id": message_id})
+            return result
+        if not identity.get("provider_account_id"):
+            raise PermissionError("inbound provider binding is not available")
         result = await self.charged_provider_call(
             worker_id=worker_id,
             operation="mail_read",
-            call=lambda: self.stalwart.read_message(
+            call=lambda: self.inbound_provider.read_message(  # type: ignore[attr-defined]
                 str(identity["provider_account_id"]), message_id
             ),
         )
@@ -286,19 +510,40 @@ class IdentityService:
         identity = await self.owned_identity(
             client, actor_id=actor_id, worker_id=worker_id
         )
-        if (
-            str(identity.get("state")) != "IDENTITY_ACTIVE"
-            or not identity.get("provider_account_id")
-        ):
-            raise PermissionError("active mailbox is required")
+        if str(identity.get("state")) != "IDENTITY_ACTIVE":
+            raise PermissionError("active email identity is required")
         await self.consume_mail_provider_rate(worker_id)
+        if self._uses_cloudflare_inbound():
+            await self.synchronize_inbound(limit=1000)
+            row = await self.store.get_inbound_message(identity_id=identity["id"], message_id=message_id)
+            if row is None:
+                raise PermissionError("message ownership denied")
+            binding = await self.store.get_provider_binding(identity_id=identity["id"], direction="INBOUND", provider="cloudflare")
+            provider_reference = str((binding or {}).get("provider_reference") or "")
+            if operation == "mark_processed":
+                result = await self.charged_provider_call(worker_id=worker_id, operation="mail.mark_processed", call=lambda: self.inbound_provider.mark_processed(provider_reference, message_id))  # type: ignore[attr-defined]
+                await self.store.update_inbound_message(identity_id=identity["id"], message_id=message_id, processed_at=datetime.now(UTC))
+                event_type = "PROCESSED"
+                audit_action = "mail.mark_processed"
+            elif operation == "delete":
+                result = await self.charged_provider_call(worker_id=worker_id, operation="mail.delete", call=lambda: self.inbound_provider.delete_message(provider_reference, message_id))
+                await self.store.update_inbound_message(identity_id=identity["id"], message_id=message_id, deleted_at=datetime.now(UTC))
+                event_type = "DELETED"
+                audit_action = "mail.delete"
+            else:
+                raise ValueError("unknown mail mutation is denied")
+            await self.store.record_mail_event(identity_id=identity["id"], provider_message_id=message_id, event_type=event_type, metadata={"provider": "cloudflare", "provider_correlation_id": result.get("correlation_id")})
+            await self.store.create_audit(actor_id=actor_id, action=audit_action, target_type="email_identity", target_id=str(identity["id"]), outcome="ok", metadata={"message_id": message_id})
+            return result
+        if not identity.get("provider_account_id"):
+            raise PermissionError("inbound provider binding is not available")
         if operation == "mark_processed":
-            call = lambda: self.stalwart.mark_processed(  # noqa: E731
+            call = lambda: self.inbound_provider.mark_processed(  # type: ignore[attr-defined]  # noqa: E731
                 str(identity["provider_account_id"]), message_id
             )
             audit_action = "mail.mark_processed"
         elif operation == "delete":
-            call = lambda: self.stalwart.delete_message(  # noqa: E731
+            call = lambda: self.inbound_provider.delete_message(  # type: ignore[attr-defined]  # noqa: E731
                 str(identity["provider_account_id"]), message_id
             )
             audit_action = "mail.delete"
@@ -336,17 +581,58 @@ class IdentityService:
             code_hash=code_hash, link_hash=link_hash,
             state="EXTRACTED" if code or link else "NOT_FOUND",
         )
+        if self._uses_cloudflare_inbound() and (code or link) and hasattr(self.inbound_provider, "protect_message"):
+            # The local transaction is authoritative. Edge protection is a
+            # best-effort retention extension so an active recovery flow is
+            # not removed by the short processed-mail cleanup window.
+            try:
+                binding = await self.store.get_provider_binding(
+                    identity_id=identity["id"], direction="INBOUND", provider="cloudflare"
+                )
+                provider_reference = str((binding or {}).get("provider_reference") or "")
+                if not provider_reference:
+                    raise PermissionError("inbound provider binding is unavailable for retention protection")
+                await self.inbound_provider.protect_message(  # type: ignore[attr-defined]
+                    provider_reference,
+                    message_id,
+                    until=(datetime.now(UTC) + timedelta(days=1)).replace(microsecond=0).isoformat(),
+                )
+            except Exception as exc:
+                await self.store.create_audit(
+                    actor_id=actor_id, action="mail.protect_verification",
+                    target_type="email_identity", target_id=str(identity["id"]),
+                    outcome="edge_protection_pending", metadata={"failure_code": type(exc).__name__},
+                )
 
     async def wait_for_verification(self, client: AuthenticatedClient, *, worker_id: UUID, actor_id: str, sender_domain: str | None, timeout_seconds: int) -> dict[str, Any] | None:
         self.assert_worker_access(client, actor_id=actor_id, worker_id=worker_id)
         identity = await self.owned_identity(client, actor_id=actor_id, worker_id=worker_id)
-        if identity.get("state") not in {IdentityState.IDENTITY_ACTIVE, IdentityState.IDENTITY_VERIFYING, "IDENTITY_ACTIVE", "IDENTITY_VERIFYING"} or not identity.get("provider_account_id"):
-            raise PermissionError("mailbox is not available")
+        if identity.get("state") not in {IdentityState.IDENTITY_ACTIVE, IdentityState.IDENTITY_VERIFYING, "IDENTITY_ACTIVE", "IDENTITY_VERIFYING"}:
+            raise PermissionError("email identity is not available")
         await self.consume_mail_provider_rate(worker_id)
+        if self._uses_cloudflare_inbound():
+            del timeout_seconds  # Edge synchronization is bounded by one pull; callers retry with their own deadline.
+            await self.synchronize_inbound(limit=1000)
+            rows = await self.store.list_inbound_messages(identity_id=identity["id"], limit=100, query=None)
+            result = None
+            sender_needle = str(sender_domain or "").strip().casefold()
+            for row in rows:
+                sender = str(row.get("sender") or "").casefold()
+                if sender_needle and not sender.endswith("@" + sender_needle):
+                    continue
+                result = {"provider": "cloudflare", "result": {"list": [row.get("normalized_message", {})]}}
+                provider_message_id = str(row.get("provider_message_id") or "")
+                if provider_message_id:
+                    await self.store.record_mail_event(identity_id=identity["id"], provider_message_id=provider_message_id, event_type="VERIFICATION_RECEIVED", metadata={"provider": "cloudflare", "sender_domain": sender_domain})
+                break
+            await self.store.create_audit(actor_id=actor_id, action="mail.wait_for_verification", target_type="email_identity", target_id=str(identity["id"]), outcome="found" if result else "timeout", metadata={"provider": "cloudflare", "sender_domain": sender_domain})
+            return result
+        if not identity.get("provider_account_id"):
+            raise PermissionError("inbound provider binding is not available")
         result = await self.charged_provider_call(
             worker_id=worker_id,
             operation="mail_wait",
-            call=lambda: self.stalwart.wait_for_message(
+            call=lambda: self.inbound_provider.wait_for_message(  # type: ignore[attr-defined]
                 str(identity["provider_account_id"]),
                 sender_domain=sender_domain,
                 timeout_seconds=timeout_seconds,
@@ -364,9 +650,9 @@ class IdentityService:
         await self.store.create_audit(actor_id=actor_id, action="mail.wait_for_verification", target_type="mailbox", target_id=str(identity["id"]), outcome="found" if result else "timeout", metadata={"sender_domain": sender_domain})
         return result
 
-    async def request_outbound(self, client: AuthenticatedClient, *, worker_id: UUID, actor_id: str, recipients: list[str], subject: str, body: str, recipient_class: str, idempotency_key: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    async def request_outbound(self, client: AuthenticatedClient, *, worker_id: UUID, actor_id: str, recipients: list[str], subject: str, body: str, recipient_class: str, idempotency_key: str, content_type: str = "text/plain") -> tuple[dict[str, Any], dict[str, Any]]:
         await self.owned_identity(client, actor_id=actor_id, worker_id=worker_id)
-        request, approval, _created = await self.outbound.request(worker_id=worker_id, recipients=recipients, subject=subject, body=body, recipient_class=recipient_class, idempotency_key=idempotency_key)
+        request, approval, _created = await self.outbound.request(worker_id=worker_id, recipients=recipients, subject=subject, body=body, recipient_class=recipient_class, idempotency_key=idempotency_key, content_type=content_type)
         await self.store.create_audit(actor_id=actor_id, action="mail.send_request", target_type="outbound_mail_request", target_id=str(request["id"]), outcome="pending_approval", metadata={"approval_id": str(approval["id"]), "recipient_count": len(recipients)})
         return request, approval
 
@@ -518,14 +804,25 @@ class IdentityService:
         if not provider_message_id:
             raise ValueError("outbound message has not been queued")
         identity = await self.store.get_identity(worker_id)
-        if identity is None or not identity.get("provider_account_id"):
-            raise PermissionError("mailbox is unavailable")
+        if identity is None:
+            raise PermissionError("email identity is unavailable")
+        binding = await self.store.get_provider_binding(
+            identity_id=identity["id"], direction="OUTBOUND", provider=self.outbound.provider_name
+        )
+        provider_reference = (binding or {}).get("provider_reference") or identity.get("provider_account_id")
+        async def cancel() -> dict[str, Any]:
+            if hasattr(self.outbound_provider, "cancel_message"):
+                return await self.outbound_provider.cancel_message(  # type: ignore[attr-defined]
+                    str(provider_message_id),
+                    provider_reference=str(provider_reference) if provider_reference else None,
+                )
+            legacy = getattr(self.inbound_provider, "cancel_queued_message", None)
+            if callable(legacy) and provider_reference:
+                return await legacy(str(provider_reference), str(provider_message_id))
+            raise ValueError("selected outbound provider does not support cancellation")
+
         result = await self.charged_provider_call(
-            worker_id=worker_id,
-            operation="mail_cancel_queued",
-            call=lambda: self.stalwart.cancel_queued_message(
-                str(identity["provider_account_id"]), str(provider_message_id)
-            ),
+            worker_id=worker_id, operation="mail_cancel_queued", call=cancel
         )
         updated = await self.store.update_outbound_request(request_id, state="CANCELLED", provider_correlation_id=result.get("correlation_id"))
         if updated is None:
@@ -808,7 +1105,13 @@ class IdentityService:
     async def health(self) -> dict[str, Any]:
         # Health deliberately contains no connection string, credential state,
         # relay credential, or provider secret.
-        return {"status": "ok", "service": "identity-service", "direct_mx_outbound_enabled": self.settings.direct_mx_outbound_enabled, "outbound_relay_provider": self.settings.outbound_relay_provider}
+        return {
+            "status": "ok", "service": "identity-service",
+            "direct_mx_outbound_enabled": self.settings.direct_mx_outbound_enabled,
+            "inbound_provider": self.mailboxes.inbound_provider_name,
+            "outbound_provider": self.outbound.provider_name,
+            "outbound_relay_provider": self.settings.outbound_relay_provider,
+        }
 
     async def dashboard_resource(self, resource: str) -> list[dict[str, Any]]:
         rows = await self.store.dashboard_rows(resource)
@@ -816,6 +1119,8 @@ class IdentityService:
             return rows
         health: dict[str, Any] = {
             "record_type": "relay_health",
+            "inbound_provider": self.mailboxes.inbound_provider_name,
+            "outbound_provider": self.outbound.provider_name,
             "relay_provider": self.settings.outbound_relay_provider,
             "relay_host": self.settings.outbound_relay_host,
             "relay_port": self.settings.outbound_relay_port,
@@ -823,17 +1128,15 @@ class IdentityService:
             "direct_mx_outbound_enabled": False,
         }
         try:
-            health["stalwart_health"] = (await self.stalwart.health_check()).get(
-                "healthy", True
-            )
+            health[f"{self.mailboxes.inbound_provider_name}_health"] = (await self.inbound_provider.health_check()).get("healthy", True)
         except Exception as exc:
-            health["stalwart_health"] = "unavailable"
-            health["stalwart_error"] = type(exc).__name__
+            health[f"{self.mailboxes.inbound_provider_name}_health"] = "unavailable"
+            health[f"{self.mailboxes.inbound_provider_name}_error"] = type(exc).__name__
         if str(self.settings.outbound_relay_provider).strip().lower() in {"disabled", "none", "off"}:
             health["resend_health"] = "disabled"
         else:
             try:
-                health["resend_health"] = (await self.resend.health_check()).get(
+                health["resend_health"] = (await self.outbound_provider.health_check()).get(
                     "valid", False
                 )
             except Exception as exc:
@@ -844,12 +1147,12 @@ class IdentityService:
             row = dict(stored)
             account_id = row.pop("provider_account_id", None)
             provider_message_id = row.get("provider_message_id")
-            if account_id and provider_message_id:
+            if account_id and provider_message_id and hasattr(self.inbound_provider, "get_outbound_queue_status"):
                 try:
-                    status = await self.stalwart.get_outbound_queue_status(
+                    status = await self.inbound_provider.get_outbound_queue_status(  # type: ignore[attr-defined]
                         str(account_id), str(provider_message_id)
                     )
-                    row["stalwart_queue_state"] = status.get("result")
+                    row[f"{self.mailboxes.inbound_provider_name}_queue_state"] = status.get("result")
                 except Exception as exc:
                     row["stalwart_queue_state"] = "unavailable"
                     row["queue_status_error"] = type(exc).__name__

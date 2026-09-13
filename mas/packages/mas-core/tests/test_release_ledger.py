@@ -103,8 +103,8 @@ def test_static_release_ledger_aggregates_bounded_verifiers_without_release_clai
     )
     assert identity_conformance["category"] == "contract"
     assert identity_conformance["status"] == "pass"
-    assert identity_conformance["summary"]["case_count"] == 11
-    assert identity_conformance["summary"]["passed_case_count"] == 11
+    assert identity_conformance["summary"]["case_count"] == 17
+    assert identity_conformance["summary"]["passed_case_count"] == 17
     assert identity_conformance["summary"]["error_count"] == 0
     assert identity_conformance["summary"]["external_network_access_performed"] is False
     assert identity_conformance["summary"]["external_provider_mutation_performed"] is False
