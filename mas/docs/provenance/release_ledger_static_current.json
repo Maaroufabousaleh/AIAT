@@ -1,5 +1,5 @@
 {
-  "checked_at": "2026-08-24T01:52:13.543923+00:00",
+  "checked_at": "2026-09-15T12:31:52.894917+00:00",
   "checks": [
     {
       "base_id": "provenance",
@@ -10,7 +10,7 @@
       "pending_evidence_count": 0,
       "status": "pass",
       "summary": {
-        "summary": "provenance: validated 22 components"
+        "summary": "provenance: validated 31 components"
       }
     },
     {
@@ -40,13 +40,29 @@
         "errors": [],
         "git": {
           "branch": "agent/fix-review-p1",
-          "changed_path_count": 6,
-          "revision": "92964a090f5608d45846f3b865e9000fdcc8ccc5",
+          "changed_path_count": 128,
+          "revision": "0f068476db908ee43bbc52900bf421394a121e6c",
           "working_tree_clean": false
         },
-        "manifest_digest": "e50eb2e4b225fae852a29f94c4a0f903d852cb4101f0f435ec3c7557f2623ced",
+        "manifest_digest": "70d8b6ac60c0ed5ba176eda5653f927de8b8feb976f96f647a63ab771fcb0446",
         "status": "pass",
         "tracked_input_count": 15
+      }
+    },
+    {
+      "base_id": "database_migration_head",
+      "category": "release",
+      "exit_code": 0,
+      "id": "database_migration_head",
+      "mode": "static",
+      "pending_evidence_count": 0,
+      "status": "pass",
+      "summary": {
+        "external_network_access_performed": false,
+        "external_provider_mutation_performed": false,
+        "mode": "static",
+        "reason": "source migration graph has the expected single head",
+        "status": "pass"
       }
     },
     {
@@ -569,9 +585,9 @@
         "finding_count": 0,
         "profile_count": 0,
         "profile_coverage": "pending_persisted_profile_bindings",
-        "profile_pending_model_count": 93,
+        "profile_pending_model_count": 92,
         "profile_version_count": 0,
-        "registry_model_count": 93,
+        "registry_model_count": 92,
         "status": "pass"
       }
     },
@@ -773,15 +789,15 @@
       "status": "pass",
       "summary": {
         "cleanup_verified": true,
-        "cpu_time_ms": 52.756,
+        "cpu_time_ms": 56.881,
         "error_count": 0,
         "measurement_source": "procfs",
         "mode": "fixture",
-        "rss_after_bytes": 94060544,
-        "rss_before_bytes": 93843456,
-        "rss_peak_bytes": 131690496,
+        "rss_after_bytes": 95260672,
+        "rss_before_bytes": 95145984,
+        "rss_peak_bytes": 132993024,
         "status": "pass",
-        "wall_time_ms": 52.748
+        "wall_time_ms": 56.747
       }
     },
     {
@@ -1388,8 +1404,8 @@
   "counts": {
     "blocked": 0,
     "fail": 0,
-    "pass": 63,
-    "total": 63
+    "pass": 64,
+    "total": 64
   },
   "decision_reasons": [
     "live profile was not included",
@@ -1399,13 +1415,13 @@
   "environment": {
     "docker_cli_available": true,
     "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
-    "python": "3.11.15"
+    "python": "3.13.13"
   },
   "git": {
     "branch": "agent/fix-review-p1",
-    "changed_path_count": 6,
+    "changed_path_count": 128,
     "clean": false,
-    "revision": "92964a090f5608d45846f3b865e9000fdcc8ccc5"
+    "revision": "0f068476db908ee43bbc52900bf421394a121e6c"
   },
   "pending_evidence_count": 2,
   "policy": {

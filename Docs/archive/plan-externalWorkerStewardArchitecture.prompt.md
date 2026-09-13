@@ -1738,9 +1738,9 @@ The implementation is complete when:
 
 ## Assumptions and Defaults
 
-- The requested filename was the repository-root file
-  `plan-externalWorkerStewardArchitecture.prompt.md`; it is retained here as a
-  historical design input.
+- This historical prompt was formerly the repository-root file
+  `plan-externalWorkerStewardArchitecture.prompt.md`; it is now retained under
+  `Docs/archive/`.
 - The control plane remains AIAT-owned.
 - External applications never own authoritative project, approval, credential, permission, budget, hiring, or audit state.
 - Continuous updating means continuous monitoring and candidate preparation, never silently following upstream HEAD.

@@ -17,6 +17,7 @@ Projects are the primary ownership, security, cost, evidence, and lifecycle boun
 ## Implemented now
 
 - Canonical projects with state, history, revision, owner/requester, company, configuration, retry, archive, and deletion paths.
+- Project state/history and project-transition notification intent commit atomically through `WorkflowController`/`AgentStorage`; the bounded outbox dispatcher publishes stable transition IDs and retains failed notifications for retry (migration `0043_project_transition_outbox`).
 - Default software lifecycle from feasibility through PDR/CDR, human approval, requirements review, sprint execution, retrospective, KPI persistence, completion, and archive.
 - Durable documents with lineage, immutable revisions, statuses, preview/download, and supersession.
 - Review sessions/comments, CSO veto, approval gates, pending decisions, and audit timeline.
@@ -170,6 +171,10 @@ normal internal use, or the evidence completion predicate.
 
 ## Remaining gaps
 
+- Run live Postgres/Redis crash and outage certification for the project-transition
+  outbox, including publisher restart, stable-ID replay, and downstream
+  idempotency; deterministic/unit coverage is present but does not claim live
+  deployment evidence.
 - Run the saved-definition migration for existing legacy flows with reviewed
   worker bindings, then publish the resulting immutable versions; the API and
   metadata evidence are implemented, while live worker canary/recovery proof

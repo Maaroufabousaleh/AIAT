@@ -34,6 +34,7 @@ LICENSE_IDENTIFIER_RE = re.compile(
 MAINTAINED_DOCS = (
     REPO_ROOT / "AIAT_TARGET_PROGRAMME.md",
     REPO_ROOT / "ROADMAP.md",
+    REPO_ROOT / "Docs" / "current" / "AIAT_IMPLEMENTATION_INDEX.md",
     REPO_ROOT / "THIRD_PARTY_NOTICES.md",
     REPO_ROOT / "Docs" / "current" / "P0_RELEASE_INTEGRITY_STATUS.md",
     MAS_ROOT / "docs" / "AIAT_CURRENT_RELEASE_LEDGER.md",
@@ -146,6 +147,48 @@ def _roadmap_reference_errors(canonical: list[Path]) -> list[str]:
     return errors
 
 
+def _implementation_index_reference_errors() -> list[str]:
+    """Ensure every current status/specification document is navigable.
+
+    The implementation index is intentionally a maintained hand-written map:
+    it carries status and next-action context that cannot be generated safely
+    from filenames alone.  This check only guards its minimum navigation
+    promise, so adding a current document cannot silently make it undiscoverable.
+    """
+
+    index = REPO_ROOT / "Docs" / "current" / "AIAT_IMPLEMENTATION_INDEX.md"
+    try:
+        text = index.read_text(encoding="utf-8")
+    except OSError as exc:
+        return [f"{index.relative_to(REPO_ROOT)}: cannot read ({type(exc).__name__})"]
+
+    errors: list[str] = []
+    current_root = REPO_ROOT / "Docs" / "current"
+    current_documents = sorted(current_root.glob("*.md"))
+    current_documents.extend(sorted((current_root / "plans").glob("*.md")))
+    for document in current_documents:
+        if document == index:
+            continue
+        relative = document.relative_to(current_root).as_posix()
+        if relative not in text:
+            errors.append(
+                "Docs/current/AIAT_IMPLEMENTATION_INDEX.md: current document "
+                f"is not referenced: {relative}"
+            )
+
+    # The top-level MAS documentation contains the operational entry points
+    # that the index promises to expose alongside Docs/current/.
+    mas_docs_root = MAS_ROOT / "docs"
+    for document in sorted(mas_docs_root.glob("*.md")):
+        relative = document.relative_to(REPO_ROOT).as_posix()
+        if document.name not in text and relative not in text:
+            errors.append(
+                "Docs/current/AIAT_IMPLEMENTATION_INDEX.md: MAS operational "
+                f"document is not referenced: {relative}"
+            )
+    return errors
+
+
 def build_report() -> dict[str, Any]:
     canonical = _canonical_docs()
     maintained = [path for path in (*MAINTAINED_DOCS, *canonical) if path.exists()]
@@ -158,6 +201,7 @@ def build_report() -> dict[str, Any]:
     errors.extend(_policy_errors())
     errors.extend(_licence_detail_errors(maintained))
     errors.extend(_roadmap_reference_errors(canonical))
+    errors.extend(_implementation_index_reference_errors())
     return {
         "schema_version": CHECK_SCHEMA,
         "status": "fail" if errors else "pass",
@@ -165,6 +209,14 @@ def build_report() -> dict[str, Any]:
         "canonical_plan_count": sum(path.name.endswith("_PLAN.md") for path in canonical),
         "maintained_document_count": len(maintained),
         "link_checked_document_count": sum(path.suffix.lower() == ".md" for path in maintained),
+        "implementation_index": {
+            "status": "fail"
+            if any(
+                error.startswith("Docs/current/AIAT_IMPLEMENTATION_INDEX.md:")
+                for error in errors
+            )
+            else "pass",
+        },
         "errors": errors,
         "policy": {
             "programme_scope": "personal-internal-only",

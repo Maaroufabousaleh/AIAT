@@ -1,6 +1,6 @@
 # Documentation Authority Status
 
-**Updated:** 2026-09-09
+**Updated:** 2026-09-13
 **Roadmap:** [AIAT Roadmap](../../ROADMAP.md)
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 **Scope:** personal/internal AIAT instance
@@ -25,6 +25,7 @@ set is intentionally smaller:
 
 - one normative target programme (`AIAT_TARGET_PROGRAMME.md`);
 - one root navigation/delivery roadmap (`ROADMAP.md`);
+- one maintained implementation index (`Docs/current/AIAT_IMPLEMENTATION_INDEX.md`);
 - thirteen current feature specifications;
 - three ordered plans; and
 - focused implementation/review status notes linked from the roadmap.
@@ -153,7 +154,7 @@ The current workspace reports:
 ```text
 canonical features: 13
 canonical plans: 3
-maintained documents: 22
+maintained documents: 23
 licence metadata is a gate: false
 ```
 

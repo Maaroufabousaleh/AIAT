@@ -6,8 +6,11 @@
 bounded duplicate-effect/replay protection, complete local governed run-version
 pinning, fenced host-loss queue-recovery, a repeated same-host recovery soak,
 selected model-resolution host-execution, and the fail-closed Firecracker launch
-contract are implemented; deployed runtime, host-certified sandbox, provider,
-and independent-host recovery evidence remain open
+contract are implemented; normal binding commit/release now settles the
+reservation and binding in one database transaction and failed new assignments
+compensate their newly-created reservation; deployed runtime, host-certified
+sandbox, provider, independent-host recovery, and host-loss reassignment fault
+evidence remain open
 
 **Implementation:** `73c0bda`, `f9c717b`, `d45e4dd`, `7c1ef74`, `893293a`, `424805c`, `2bc7ca5`, `6cef1b8`, `9a7db70`, `5ed0a0b`
 
@@ -88,7 +91,18 @@ The claim owner is the binding owner, making host admission, queue lease, and
 release auditable under one bounded identity. Controller terminal handling
 remains authoritative for artifact/usage persistence and terminal state. The
 binding service now permits the required `COMMITTED → RELEASED` transition and
-keeps replay idempotent.
+keeps replay idempotent. Normal binding settlement calls the reservation ledger
+through the caller's database connection, so reservation and binding state are
+committed or rolled back together. If assignment persistence fails after a new
+reservation is created, the binding service compensates that reservation; a
+replayed scheduler reservation is never released by this cleanup path.
+
+Host-loss reassignment remains a separate recovery boundary because scheduling
+the replacement reservation is still a separate transaction. Once scheduling
+succeeds, replacing the durable binding and settling the new reservation share
+one transaction, and a failed replacement compensates a newly-created
+reservation. It must still be covered by explicit retry/reconciliation and
+live fault evidence before the host-loss path is treated as fully proven.
 
 ## Durable evidence
 
@@ -282,7 +296,9 @@ docker exec mas-orchestrator-api-1 python /tmp/check_worker_host_loss_queue_reco
 docker exec mas-orchestrator-api-1 python /tmp/check_worker_host_model_resolution_postgres.py --json
 ```
 
-The deployed command requires migration `0042_worker_run_host_binding` and a
+The deployed command requires the current migration head
+`0044_worker_run_runtime_bindings` (which includes
+`0042_worker_run_host_binding`) and a
 local Postgres DSN. It is a certification probe, not an automatic production
 dispatcher. A production host integration must supply an authenticated host
 identity, adapter/runtime selection, sandbox profile, bounded mounts/network,
@@ -302,6 +318,9 @@ artifact policy, and recovery policy before it can claim a real run.
   high-risk profiles.
 - Add provider-backed execution, callback/bounce evidence, outage recovery, and
   restore/rollback exercises.
+- Inject failures across reservation creation, binding persistence, normal
+  settlement, and host-loss reassignment; verify compensation, idempotent retry,
+  and no permanent orphan reservation or stale binding.
 
 The canonical resource metadata catalogue remains the only place for third-party
 source and licence metadata; this execution contract does not use that metadata

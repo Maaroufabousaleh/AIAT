@@ -134,9 +134,39 @@ AIAT keeps stable organisational workers while allowing their execution engines 
 
 ## Implemented now
 
+The specialist worker plane validates model/profile attribution through its
+worker-run resolution snapshot. The separate TeamRunner/AgentBase governance
+plane retains only explicit direct-AgentBase compatibility fixtures as an
+unbound path; deployed TeamRunner calls require a snapshot when the control
+plane is available. The current working tree adds an opt-in immutable
+`GovernanceModelBinding` on `AgentConfig`: bound calls, including the direct
+C-suite human-directive one-turn path, use the exact model, suppress automatic
+fallback without a new governed decision, record safe snapshot/profile/provider
+details in usage, and fail closed on a response-model mismatch. TeamRunner
+resolves a snapshot-bearing message through its scoped control-plane storage
+boundary, and `AgentBase` carries that same snapshot on project-scoped outbound
+replies, delegated tasks, and broadcasts while rejecting a conflicting
+snapshot. Fresh orchestrator `TASK`/`ADMIN_TASK`/`DIRECTIVE`/`QUERY` producer
+paths create and attach a persisted snapshot before publication. Explicit
+direct-AgentBase compatibility fixtures and provider-backed evidence remain
+open; snapshot-bearing direct `AgentBase` dispatch resolves through scoped
+storage or fails closed, and checkpoint shutdown/startup resumes retain and
+restore the snapshot reference. The snapshot-bearing opt-in legacy CEO fallback
+also calls the exact bound model and carries the snapshot reference into its
+response evidence.
+
 - Versioned `aiat.worker.v1` and `aiat.adapter.v1` protocol models and negotiation.
 - Normalized requests, capabilities, events, results, errors, artifacts, usage, tool responses, pause/resume/cancel, health, and readiness.
-- `WorkerRunController` with durable lifecycle, compare-and-set transitions, evidence persistence, queue leases, heartbeat recovery, and run APIs.
+- `WorkerRunController` with durable lifecycle, compare-and-set transitions, evidence persistence, queue leases, heartbeat recovery, mediated-tool effect replay/ambiguity handling, and run APIs.
+- Compatible `WorkerRuntimeStatus` reconciliation and `WorkerCancellationReceipt` acknowledgement models now expose the distinction between local runtime knowledge, cancellation-request acceptance, and proven terminal cancellation. Migration `0044_worker_run_runtime_bindings` persists one safe subordinate runtime reference per dispatch attempt, and controller reconciliation reads it before legacy transition metadata. Migration `0045_worker_tool_effects` persists one mediated-tool effect per run/idempotency key before dispatch; completed responses replay with the current request ID, while in-flight/ambiguous effects fail closed instead of being executed again. OpenCode now looks up a durable session reference through its certified session/status endpoints; the inactive OpenHands candidate performs a conservative conversation-status lookup (REST `finished` remains advisory), and the controller records the subordinate observation timestamp/status without changing canonical run state. The base adapter's accepted/task/terminal maps remain process-local; provider-specific effect reconciliation and adapter-specific live termination/result recovery remain open.
+- Governance checkpoint persistence retains the inbound
+  `model_resolution_snapshot_id`; startup resume dispatch restores the scoped
+  binding, accepts the unscoped `operator-direct` case, and fails closed when a
+  snapshot-bearing direct `AgentBase` dispatch cannot read an authorized
+  snapshot. Durable subordinate runtime references now exist for specialist
+  dispatch attempts; concrete OpenCode/OpenHands status lookup is implemented
+  as a subordinate observation only. It does not activate OpenHands, settle an
+  AIAT worker run, or prove live termination/result recovery.
 - `scripts/check_worker_lease_recovery_postgres.py --json` certifies the existing
   Postgres queue lease boundary against one reserved fixture: competing claims
   are denied while a lease is live, heartbeats require the claimant, one
@@ -667,6 +697,13 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   acceptance, ordered-event, and normalized-terminal-result contract as native
   workers. This is deterministic adapter-contract evidence only; installed
   runtime, sandbox, canary, and live recovery certification remain separate.
+- LangGraph and CrewAI framework behavior now has one implementation in
+  [`runtime_adapters.py`](../../mas/packages/mas-core/mas_core/worker_registry/runtime_adapters.py).
+  The historical [`langgraph_adapter.py`](../../mas/packages/mas-core/mas_core/worker_registry/langgraph_adapter.py)
+  and [`crewai_adapter.py`](../../mas/packages/mas-core/mas_core/worker_registry/crewai_adapter.py)
+  paths remain thin compatibility re-exports while the legacy factory, Letta
+  dotted configuration, and MAF certification references are inventoried for a
+  later deletion decision.
 - The Microsoft Agent Framework adapter group (`b937a89`, extending
   `fc528a8`) now has deterministic compatibility coverage for `Agent`/fallback
   construction, async `run`/`invoke` dispatch, explicit chat-client injection,
@@ -866,6 +903,15 @@ AIAT keeps stable organisational workers while allowing their execution engines 
   launcher and cannot silently fall back to Docker/runc. Static contract
   evidence passes; the current live readiness certificate is blocked because
   neither the launcher nor the Firecracker binary is available.
+- [x] Preserve governance model provenance through AgentBase checkpoint
+  shutdown/startup resumes and snapshot-bearing direct dispatch; the runtime
+  resolves only an existing scoped snapshot and fails closed when it is
+  unavailable. TeamRunner also rejects model-bearing messages without a
+  snapshot when its control-plane storage boundary is active, so deployed
+  governance work cannot silently fall back to `auto` or a configured model.
+  Explicit direct-AgentBase compatibility fixtures remain unbound and are
+  tracked separately from provider-backed evidence. Snapshot-bearing opt-in
+  legacy CEO fallback is bound to the exact persisted decision.
 - [ ] Prove gVisor smoke/network behaviour and optional Firecracker with real
   host evidence; these remain release gates.
 - [x] Add a deterministic real-controller lifecycle fixture for checkpoint persistence, pause/resume/checkpoint reference, cold cancellation, cold-crash failure normalization, lease expiry/requeue, and artifact/usage-before-terminal ordering; database, sandbox, live worker, canary, and rollback proof remain separate evidence gates.

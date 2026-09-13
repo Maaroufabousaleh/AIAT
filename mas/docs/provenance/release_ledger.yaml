@@ -26,6 +26,11 @@ checks:
     script: scripts/check_release_environment.py
     args: [--json]
     live_args: [--require-native-linux, --json]
+  - id: database_migration_head
+    category: release
+    script: scripts/check_database_migration_head.py
+    args: [--json]
+    live_args: [--live, --json]
   - id: api_contract
     category: contract
     script: scripts/check_api_contract.py
