@@ -78,6 +78,9 @@ def _registry() -> ModelRegistry:
 
 
 async def _run() -> dict[str, Any]:
+    # Keep the fixture's transient hold long enough that the release-ledger
+    # process scheduler cannot let it expire before the state is read back.
+    cooldown_seconds = 2.0
     client = LLMGatewayClient(
         LLMConfig(
             gateway_url="https://gateway.fixture.invalid",
@@ -91,8 +94,8 @@ async def _run() -> dict[str, Any]:
         ),
         registry=_registry(),
         rate_limit_tracker=RateLimitTracker(
-            cooldown_base_s=0.1,
-            cooldown_max_s=0.1,
+            cooldown_base_s=cooldown_seconds,
+            cooldown_max_s=cooldown_seconds,
             provider_cooldown_threshold=1,
         ),
     )
@@ -138,7 +141,7 @@ async def _run() -> dict[str, Any]:
                         PRIMARY_MODEL,
                         provider=PRIMARY_PROVIDER,
                     )
-                    await asyncio.sleep(0.2)
+                    await asyncio.sleep(cooldown_seconds + 0.25)
                     primary_recovered = True
                     second = await client.chat_completion_with_fallback(
                         [{"role": "user", "content": "fixture recovery"}],
