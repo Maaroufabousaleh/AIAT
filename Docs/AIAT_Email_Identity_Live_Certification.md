@@ -94,19 +94,58 @@ be run after retirement if needed.
 TEMPORARY_RECIPIENT_RETIREMENT = PASS
 ```
 
+## Resend provider transport certification
+
+The existing operator-owned Resend credential was exercised through the
+bounded provider certificate after the Cloudflare public webhook boundary was
+verified. The key was classified as intentional least-privilege
+`sending_access`; domain-management reads were not used as an authentication
+gate. Exactly one harmless provider-level certification send was submitted,
+with no automatic retry. The provider then delivered a signed webhook to the
+exact public callback, and the identity-service accepted and normalized it
+without retaining the webhook body.
+
+```text
+RESEND_API_AUTH = PASS_SENDING_ACCESS
+RESEND_DOMAIN_STATUS = NOT_AVAILABLE_RESTRICTED_API_KEY
+RESEND_TRANSPORT_CERTIFICATION = PASS_PROVIDER_LEVEL
+RESEND_SEND_COUNT = 1
+RESEND_AUTOMATIC_RETRY = false
+RESEND_PROVIDER_MESSAGE_ID_PRESENT = PASS
+RESEND_PROVIDER_MESSAGE_ID = 96638bf4-9e1e-4b57-b492-65034fc78de7
+RESEND_WEBHOOK_URL = https://identity.aiat.ca/v1/mail-edge/provider-webhook/resend
+RESEND_WEBHOOK_SIGNATURE = PASS
+RESEND_WEBHOOK_EVENT_ID = msg_3JFWEiXYCndSuAKMUzOzyJe27x9
+RESEND_DELIVERY_EVENT = delivered
+RESEND_PROVIDER_OBSERVATION = PASS
+```
+
+The matching normalized observation recorded `source=provider_webhook`,
+`outcome=success`, and `signature_verified=true`; its provider message
+reference exactly matched the accepted provider message ID. A corresponding
+`mail.provider_event` audit record was created. These identifiers are opaque
+provider references; the recipient, sender, message body, credentials, and
+webhook secret are deliberately absent.
+
 ## Still pending
 
 ```text
-IDENTITY_SERVICE_LIVE = PASS (inbound reconciliation boundary only)
-REAL_IDENTITY_PROVISIONING = PASS
+IDENTITY_SERVICE_LIVE = PASS (runtime and provider webhook boundary)
+REAL_IDENTITY_PROVISIONING = PASS (new certification identity is verifying)
 REAL_INBOUND_RECONCILIATION = PASS
+NEW_CERTIFICATION_WORKER_ID = b9461896-ede2-404e-8647-6aef16066275
+NEW_CERTIFICATION_IDENTITY_ID = 23b86a80-9427-4fee-874b-de5dd7a3ba3c
+NEW_CERTIFICATION_IDENTITY_STATE = IDENTITY_VERIFYING
+NEW_CERTIFICATION_ACTIVATION = HUMAN_ACTION_REQUIRED_ACTIVATION_EMAIL
 RESEND_API_AUTH = PASS_SENDING_ACCESS
 RESEND_DOMAIN_MANAGEMENT_READ = NOT_AVAILABLE_RESTRICTED_API_KEY
-RESEND_OUTBOUND_LIVE = NOT_YET_LIVE_CERTIFIED
-RESEND_WEBHOOK_LIVE = NOT_YET_LIVE_CERTIFIED
+RESEND_OUTBOUND_LIVE = PASS_PROVIDER_LEVEL_ONLY
+RESEND_WEBHOOK_LIVE = PASS_PROVIDER_LEVEL
+GOVERNED_AIAT_OUTBOUND = NOT_YET_LIVE_CERTIFIED
+GOVERNED_APPROVAL_USAGE_IDEMPOTENCY = NOT_YET_LIVE_CERTIFIED
 REAL_AIAT_HIRING_LIFECYCLE_INTEGRATION = NOT_YET_LIVE_CERTIFIED
-RESEND_OUTBOUND = NOT_YET_LIVE_CERTIFIED
-FULL_PRODUCTION_IDENTITY_SERVICE = NOT_YET_STARTED_OR_CERTIFIED
+RESEND_OUTBOUND = PASS_PROVIDER_LEVEL_ONLY
+FULL_PRODUCTION_IDENTITY_SERVICE = NOT_YET_FULLY_CERTIFIED
 CLOUDFLARE_INBOUND_RETRY_RESTART_RECOVERY = NOT_YET_LIVE_CERTIFIED
 ```
 
@@ -169,9 +208,11 @@ from this record.
 
 The identity database and local production container are healthy, but the full
 production runtime is not yet certified. The dedicated Cloudflare Tunnel is
-now connected and the public identity boundary has been verified through the
+connected and the public identity boundary has been verified through the
 Cloudflare edge. The narrow gateway exposes only the signed provider webhook;
-unrelated public paths remain hidden.
+unrelated public paths remain hidden. Provider-level Resend transport and
+webhook certification has passed; the governed worker lifecycle and send path
+remain pending activation of the new certification identity.
 
 ```text
 PUBLIC_IDENTITY_INGRESS = PASS
@@ -193,7 +234,8 @@ This confirms the intentional least-privilege `sending_access` mode; it is not
 an invalid-key result, and no credential was rotated or replaced.
 Domain-management reads are unavailable in this mode, so transport
 certification must use the bounded `/emails` send endpoint with the configured
-production sending domain. No outbound message has yet been sent.
+production sending domain. One provider-level certification message was
+accepted and delivered; the governed worker send has not yet been attempted.
 
 ```text
 IDENTITY_SERVICE_RUNTIME_LOCAL = PASS
@@ -204,11 +246,12 @@ PUBLIC_WEBHOOK_REACHABILITY = PASS
 PRIVATE_IDENTITY_API_EXPOSURE = PASS_FAIL_CLOSED
 RESEND_API_AUTH = PASS_SENDING_ACCESS
 RESEND_DOMAIN_MANAGEMENT_READ = NOT_AVAILABLE_RESTRICTED_API_KEY
-RESEND_OUTBOUND_LIVE = NOT_YET_LIVE_CERTIFIED
-RESEND_WEBHOOK_LIVE = NOT_YET_LIVE_CERTIFIED
+RESEND_OUTBOUND_LIVE = PASS_PROVIDER_LEVEL_ONLY
+RESEND_WEBHOOK_LIVE = PASS_PROVIDER_LEVEL
 REAL_AIAT_HIRING_LIFECYCLE_INTEGRATION = NOT_YET_LIVE_CERTIFIED
-FULL_PRODUCTION_IDENTITY_SERVICE = NOT_YET_STARTED_OR_CERTIFIED
-OUTBOUND_RELAY_CERTIFIED = false
+GOVERNED_AIAT_OUTBOUND = NOT_YET_LIVE_CERTIFIED
+FULL_PRODUCTION_IDENTITY_SERVICE = NOT_YET_FULLY_CERTIFIED
+OUTBOUND_RELAY_CERTIFIED = true
 DEFAULT_OUTBOUND_ENABLED = false
 DIRECT_MX_OUTBOUND_ENABLED = false
 ```
