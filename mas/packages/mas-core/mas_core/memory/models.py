@@ -61,6 +61,61 @@ project_state_history = sa.Table(
     ),
 )
 
+# ── 2a. project_transition_outbox ────────────────────────────────────────────
+#
+# Project state/history and the router notification intent are committed in
+# the same Postgres transaction.  The outbox is intentionally scoped to this
+# aggregate boundary; it is not a replacement for the existing PM/identity
+# outboxes or a generic event platform.
+project_transition_outbox = sa.Table(
+    "project_transition_outbox",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column(
+        "project_id",
+        sa.UUID(),
+        sa.ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    sa.Column("from_state", sa.Text()),
+    sa.Column("to_state", sa.Text(), nullable=False),
+    sa.Column("event", sa.Text(), nullable=False),
+    sa.Column("triggered_by", sa.Text()),
+    sa.Column("payload", JSONB()),
+    sa.Column("status", sa.Text(), nullable=False, server_default="PENDING"),
+    sa.Column("attempts", sa.Integer(), nullable=False, server_default="0"),
+    sa.Column("claimed_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column(
+        "next_attempt_at",
+        sa.TIMESTAMP(timezone=True),
+        server_default=sa.text("now()"),
+        nullable=False,
+    ),
+    sa.Column("last_error", sa.Text()),
+    sa.Column(
+        "created_at",
+        sa.TIMESTAMP(timezone=True),
+        server_default=sa.text("now()"),
+        nullable=False,
+    ),
+    sa.Column("published_at", sa.TIMESTAMP(timezone=True)),
+    sa.CheckConstraint(
+        "status IN ('PENDING', 'PROCESSING', 'PUBLISHED')",
+        name="ck_project_transition_outbox_status",
+    ),
+    sa.Index(
+        "ix_project_transition_outbox_pending",
+        "status",
+        "next_attempt_at",
+        "created_at",
+    ),
+    sa.Index(
+        "ix_project_transition_outbox_project_created",
+        "project_id",
+        "created_at",
+    ),
+)
+
 # ── 3. documents ──────────────────────────────────────────────────────────────
 documents = sa.Table(
     "documents",
@@ -1554,6 +1609,77 @@ worker_runs = sa.Table(
     sa.Column("started_at", sa.TIMESTAMP(timezone=True)),
     sa.Column("completed_at", sa.TIMESTAMP(timezone=True)),
     sa.UniqueConstraint("worker_id", "idempotency_key", name="uq_worker_run_idempotency"),
+)
+
+# A runtime acceptance is a subordinate binding, not canonical worker-run
+# state.  Keep one durable record per dispatch attempt so a controller restart
+# can look up the external runtime reference without relying on transition
+# JSON or an adapter process's in-memory maps.
+worker_run_runtime_bindings = sa.Table(
+    "worker_run_runtime_bindings",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column(
+        "run_id",
+        sa.UUID(),
+        sa.ForeignKey("worker_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    sa.Column("attempt_count", sa.Integer(), nullable=False),
+    sa.Column("adapter_id", sa.UUID(), sa.ForeignKey("runtime_adapters.id", ondelete="SET NULL")),
+    sa.Column("runtime_type", sa.Text(), nullable=False, server_default="unknown"),
+    sa.Column("runtime_run_id", sa.Text()),
+    sa.Column("status", sa.Text(), nullable=False, server_default="ACCEPTED"),
+    sa.Column("metadata", JSONB(), nullable=False, server_default="{}"),
+    sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+    sa.Column("updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+    sa.Column("last_reconciled_at", sa.TIMESTAMP(timezone=True)),
+    sa.UniqueConstraint("run_id", "attempt_count", name="uq_worker_runtime_binding_attempt"),
+    sa.CheckConstraint(
+        "status IN ('ACCEPTED', 'RUNNING', 'PAUSED', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'TIMED_OUT', 'UNKNOWN')",
+        name="ck_worker_runtime_binding_status",
+    ),
+)
+
+# A mediated tool request can perform an external side effect before the
+# runtime receives its response.  Keep that effect outcome separately from
+# the runtime event stream so a controller restart can replay a known response
+# or fail closed on an outcome that is still ambiguous.  This table is scoped
+# to one worker run; it is not a general event or task platform.
+worker_tool_effects = sa.Table(
+    "worker_tool_effects",
+    metadata,
+    sa.Column("id", sa.UUID(), primary_key=True),
+    sa.Column(
+        "run_id",
+        sa.UUID(),
+        sa.ForeignKey("worker_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    sa.Column("request_id", sa.UUID(), nullable=False),
+    sa.Column("idempotency_key", sa.Text(), nullable=False),
+    sa.Column("tool_name", sa.Text(), nullable=False),
+    sa.Column("request_sha256", sa.String(64), nullable=False),
+    sa.Column("state", sa.Text(), nullable=False, server_default="IN_FLIGHT"),
+    sa.Column("response_json", JSONB()),
+    sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+    sa.Column("updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+    sa.Column("completed_at", sa.TIMESTAMP(timezone=True)),
+    sa.UniqueConstraint(
+        "run_id",
+        "idempotency_key",
+        name="uq_worker_tool_effect_run_key",
+    ),
+    sa.CheckConstraint(
+        "state IN ('IN_FLIGHT', 'COMPLETED', 'AMBIGUOUS')",
+        name="ck_worker_tool_effect_state",
+    ),
+)
+
+sa.Index(
+    "ix_worker_tool_effects_run_state",
+    worker_tool_effects.c.run_id,
+    worker_tool_effects.c.state,
 )
 
 # ── 19f. worker_run_host_bindings ────────────────────────────────────────────

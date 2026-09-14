@@ -8,13 +8,82 @@ when constructing each agent.
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
+from uuid import UUID  # noqa: TC003 - Pydantic resolves UUID annotations at runtime.
 
-from pydantic import Field, field_validator
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from ..protocols.enums import AgentRole  # noqa: TC001 - Pydantic resolves this at runtime.
 from ..protocols.envelope import TaskBudget
+
+
+class GovernanceModelBinding(BaseModel):
+    """Immutable model decision supplied to a governance-agent invocation.
+
+    Specialist worker runs receive the full model-resolution snapshot from the
+    orchestrator.  Governance agents currently have a separate runtime plane,
+    so this small projection is the explicit hand-off point when a caller has
+    resolved a model for an AgentBase invocation.  It is intentionally not a
+    resolver, scheduler, or authority store.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    resolution_snapshot_id: UUID
+    profile_id: str
+    profile_version: str | None = None
+    provider_id: str
+    exact_model_id: str
+
+    @field_validator("profile_id", "provider_id", "exact_model_id")
+    @classmethod
+    def _non_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("governance model binding values must not be blank")
+        return value
+
+    @field_validator("profile_version")
+    @classmethod
+    def _normalise_version(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        return value or None
+
+    @model_validator(mode="after")
+    def _reject_unmanaged_model(self) -> GovernanceModelBinding:
+        if self.exact_model_id.lower() in {"auto", "default", "latest"}:
+            raise ValueError("governance model binding requires an exact model ID")
+        return self
+
+    @classmethod
+    def from_snapshot(
+        cls,
+        snapshot_id: UUID,
+        snapshot: Mapping[str, Any],
+    ) -> GovernanceModelBinding:
+        """Build the runtime projection from a persisted AIAT snapshot.
+
+        Resolution and project-scope authorization remain control-plane
+        responsibilities.  This helper only performs the narrow, immutable
+        projection that governance runtimes are allowed to consume.
+        """
+        return cls(
+            resolution_snapshot_id=snapshot_id,
+            profile_id=str(snapshot.get("resolved_profile_id") or ""),
+            profile_version=(
+                str(snapshot["resolved_profile_version"])
+                if snapshot.get("resolved_profile_version") is not None
+                else None
+            ),
+            provider_id=str(snapshot.get("provider_id") or ""),
+            exact_model_id=str(snapshot.get("exact_model_id") or ""),
+        )
 
 
 class AgentConfig(BaseSettings):
@@ -95,6 +164,25 @@ class AgentConfig(BaseSettings):
         description=(
             "Default LiteLLM/OmniRoute alias passed to "
             "LLMGatewayClient.chat_completion()."
+        ),
+    )
+    model_resolution_binding: GovernanceModelBinding | None = Field(
+        default=None,
+        description=(
+            "Optional immutable AIAT model decision for this governance-agent "
+            "runtime. When present, AgentBase uses the exact model and records "
+            "the resolution snapshot; when absent, the legacy direct-gateway "
+            "path remains visible as unresolved until TeamRunner supplies a "
+            "per-invocation binding."
+        ),
+    )
+    require_model_resolution_binding: bool = Field(
+        default=False,
+        description=(
+            "If True, every AgentBase model call requires a per-dispatch or "
+            "static GovernanceModelBinding. TeamRunner enables this when its "
+            "control-plane storage boundary is active; direct compatibility "
+            "fixtures may leave it disabled."
         ),
     )
 

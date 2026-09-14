@@ -447,12 +447,20 @@ class CSuiteAgent(AdminAgent):
     ) -> str:
         """Run one bounded LLM turn for operator chat."""
         llm_started_here = await self._ensure_llm_started()
+        binding = self._effective_model_resolution_binding()
+        # Human-directive handling is a separate one-turn path from
+        # ``AgentBase.think()``.  It must still use the same immutable AIAT
+        # model decision when one is present, and governed calls cannot fall
+        # back to an unrecorded model.
+        requested_model = self._governed_request_model(
+            None if binding is not None else self.config.llm_model
+        )
         try:
-            if self.config.llm_use_fallback:
+            if self.config.llm_use_fallback and binding is None:
                 response = await self._llm.chat_completion_with_fallback(
                     messages,
                     task=self.config.llm_fallback_task,
-                    model=self.config.llm_model,
+                    model=requested_model,
                     tools=tools,
                     tool_choice="auto",
                     max_tokens=self.config.llm_max_tokens,
@@ -464,12 +472,20 @@ class CSuiteAgent(AdminAgent):
             else:
                 response = await self._llm.chat_completion(
                     messages,
-                    model=self.config.llm_model,
+                    model=requested_model,
                     tools=tools,
                     max_tokens=self.config.llm_max_tokens,
                     temperature=self.config.llm_temperature,
                     stream=self.config.llm_stream,
                 )
+            self._validate_governed_response(response)
+            await self._record_llm_usage(
+                model=response.model or requested_model,
+                status="success",
+                prompt_tokens=response.usage.prompt_tokens,
+                completion_tokens=response.usage.completion_tokens,
+                cost_usd=response.usage.estimated_cost_usd,
+            )
         finally:
             if llm_started_here:
                 await self._llm.stop()

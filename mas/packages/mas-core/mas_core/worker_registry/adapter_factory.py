@@ -349,7 +349,7 @@ def _create_langgraph_adapter(
     **kwargs: Any,
 ) -> Any:
     """Create a LangGraph-backed worker adapter (Epsilon)."""
-    from mas_core.worker_registry.langgraph_adapter import (
+    from mas_core.worker_registry.runtime_adapters import (
         LangGraphAdapter,
         LangGraphCapabilities,
     )
@@ -363,7 +363,7 @@ def _create_crewai_adapter(
     **kwargs: Any,
 ) -> Any:
     """Create a CrewAI-backed worker adapter (Epsilon)."""
-    from mas_core.worker_registry.crewai_adapter import (
+    from mas_core.worker_registry.runtime_adapters import (
         CrewAIAdapter,
         CrewAICapabilities,
     )

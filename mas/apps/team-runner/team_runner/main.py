@@ -31,6 +31,7 @@ from mas_core.agent_runtime import (
     BudgetTracker,
     CSuiteAgent,
     ExecutiveAgent,
+    GovernanceModelBinding,
     RouterClient,
     SubAgent,
     WorkerAgent,
@@ -51,6 +52,22 @@ if TYPE_CHECKING:
     from mas_core.memory import AgentStorage, CheckpointStore
 
 log = structlog.get_logger(__name__)
+
+
+# These message types can cause a governance agent to invoke its model loop.
+# The orchestrator attaches an immutable model-resolution snapshot before
+# publishing them.  TeamRunner is a runtime plane, not a model resolver, so a
+# deployed runner must reject a missing snapshot instead of falling back to the
+# process/configured model.  Direct AgentBase compatibility fixtures remain
+# separate; this boundary protects the production TeamRunner entrypoint.
+_MODEL_GOVERNED_MESSAGE_TYPES = frozenset(
+    {
+        MessageType.TASK,
+        MessageType.ADMIN_TASK,
+        MessageType.DIRECTIVE,
+        MessageType.QUERY,
+    }
+)
 
 
 class AgentSpec(BaseModel):
@@ -213,7 +230,22 @@ class CheckpointAdapter:
             "tool_results": row.get("tool_results_json") or [],
             "budget_snapshot": row.get("budget_state_json"),
             "task_envelope_id": row.get("task_message_id"),
+            "model_resolution_snapshot_id": task_json.get("model_resolution_snapshot_id"),
         }
+
+    async def get_model_resolution_snapshot(
+        self,
+        snapshot_id: UUID,
+        *,
+        project_id: UUID | None = None,
+    ) -> dict[str, Any] | None:
+        """Forward scoped governance reads without exposing storage authority."""
+        if self._usage_storage is None:
+            return None
+        getter = getattr(self._usage_storage, "get_model_resolution_snapshot", None)
+        if not callable(getter):
+            return None
+        return await getter(snapshot_id, project_id=project_id)
 
     async def delete_checkpoint(
         self,
@@ -412,6 +444,7 @@ class TeamRuntime:
             router_url=self.settings.router_url,
             budget_defaults=spec.budget_defaults,
             llm_model=self.settings.llm_model,
+            require_model_resolution_binding=self.storage is not None,
             tool_names=spec.tools,
             tool_definitions=[
                 tool.model_dump(mode="json")
@@ -585,9 +618,73 @@ class TeamRuntime:
             )
         self._in_flight_frame = frame
         try:
-            await agent._dispatch(frame)
+            binding = await self._resolve_model_binding(frame.envelope)
+            if (
+                binding is None
+                and self.storage is not None
+                and frame.envelope.msg_type in _MODEL_GOVERNED_MESSAGE_TYPES
+            ):
+                raise RuntimeError(
+                    "governance-agent message is missing an AIAT model-resolution snapshot"
+                )
+            await agent._dispatch(frame, model_resolution_binding=binding)
         finally:
             self._in_flight_frame = None
+
+    async def _resolve_model_binding(
+        self,
+        envelope: MessageEnvelope,
+    ) -> GovernanceModelBinding | None:
+        """Resolve an explicitly supplied model decision for one invocation.
+
+        TeamRunner remains a separate governance runtime plane.  It does not
+        resolve models or accept raw model IDs; it only consumes an immutable
+        snapshot that the control plane has already created and verifies its
+        project scope before handing the projection to AgentBase.
+        """
+        snapshot_id = envelope.model_resolution_snapshot_id
+        if snapshot_id is None:
+            return None
+        if self.storage is None:
+            raise RuntimeError(
+                "governed governance-agent invocation requires control-plane storage"
+            )
+        getter = getattr(self.storage, "get_model_resolution_snapshot", None)
+        if not callable(getter):
+            raise RuntimeError(
+                "control-plane storage does not expose model-resolution snapshots"
+            )
+        project_id: UUID | None = None
+        if envelope.project_id is not None and str(envelope.project_id) != "operator-direct":
+            try:
+                project_id = UUID(str(envelope.project_id))
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError(
+                    "governed governance-agent invocations require a UUID project_id or operator-direct"
+                ) from exc
+        snapshot = await getter(snapshot_id, project_id=project_id)
+        if snapshot is None:
+            raise RuntimeError(
+                f"model-resolution snapshot {snapshot_id} is missing or outside project scope"
+            )
+
+        stored_project_id = snapshot.get("project_id")
+        if stored_project_id is not None:
+            try:
+                stored_project_uuid = UUID(str(stored_project_id))
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError(
+                    "model-resolution snapshot has an invalid project scope"
+                ) from exc
+            if project_id is None or stored_project_uuid != project_id:
+                raise RuntimeError("model-resolution snapshot is outside project scope")
+
+        try:
+            return GovernanceModelBinding.from_snapshot(snapshot_id, snapshot)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                "model-resolution snapshot is not an authorized exact-model decision"
+            ) from exc
 
     async def _handle_shutdown_message(self, frame: WSMessageFrame) -> None:
         """G5+G6: Handle SHUTDOWN — save checkpoints, stop agents, send HTTP ACK."""
@@ -832,6 +929,7 @@ class TeamRuntime:
             sender_team=self.team_config.team_id,
             recipient_id=agent.agent_id,
             project_id=str(checkpoint.get("project_id") or task_json.get("project_id") or "resume"),
+            model_resolution_snapshot_id=task_json.get("model_resolution_snapshot_id"),
             payload={
                 "action": "RESUME",
                 "task_message_id": task_message_id,

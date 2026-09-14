@@ -3,9 +3,68 @@
 from __future__ import annotations
 
 from unittest.mock import AsyncMock
+from uuid import uuid4
 
 import anyio
 import pytest
+
+
+@pytest.mark.anyio
+async def test_ceo_request_reuses_model_snapshot_across_router_retry(monkeypatch) -> None:
+    from orchestrator_api import main
+
+    class Storage:
+        def __init__(self) -> None:
+            self.values: dict[str, str] = {}
+
+        async def get_config(self, key: str):
+            return self.values.get(key)
+
+        async def set_config_if_absent(self, key: str, value: str) -> bool:
+            if key in self.values:
+                return False
+            self.values[key] = value
+            return True
+
+        async def compare_and_set_config(self, key: str, expected: str, value: str) -> bool:
+            if self.values.get(key) != expected:
+                return False
+            self.values[key] = value
+            return True
+
+    storage = Storage()
+    previous = main.app.state.storage
+    main.app.state.storage = storage
+    generated = [uuid4(), uuid4()]
+    calls = 0
+
+    async def attach(envelope: dict[str, object]) -> None:
+        nonlocal calls
+        envelope["model_resolution_snapshot_id"] = str(generated[calls])
+        calls += 1
+
+    monkeypatch.setattr(main, "_attach_governance_model_snapshot", attach)
+    try:
+        message_id = "ceo-retry-snapshot"
+        first = {"message_id": message_id, "msg_type": "TASK"}
+        first_snapshot = await main._prepare_ceo_request_model_snapshot(
+            first,
+            message_id=message_id,
+            durable_record=None,
+        )
+        second = {"message_id": message_id, "msg_type": "TASK"}
+        second_snapshot = await main._prepare_ceo_request_model_snapshot(
+            second,
+            message_id=message_id,
+            durable_record=None,
+        )
+    finally:
+        main.app.state.storage = previous
+
+    assert first_snapshot == generated[0]
+    assert second_snapshot == generated[0]
+    assert second["model_resolution_snapshot_id"] == str(generated[0])
+    assert calls == 1
 
 
 @pytest.mark.anyio

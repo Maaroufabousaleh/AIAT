@@ -849,7 +849,7 @@ class StewardCreateRequest(TypedDict):
     transport_type: NotRequired[str]
 
 class TeamRunnerStorageRequest(TypedDict):
-    operation: Required[Literal['storage_health', 'checkpoint_save', 'checkpoint_load', 'checkpoint_latest', 'checkpoint_delete', 'usage_record', 'document_get', 'document_create', 'document_update_status', 'review_create', 'review_get', 'review_update', 'review_comment_add', 'review_comments_get', 'review_list']]
+    operation: Required[Literal['storage_health', 'checkpoint_save', 'checkpoint_load', 'checkpoint_latest', 'checkpoint_delete', 'usage_record', 'model_resolution_snapshot_get', 'document_get', 'document_create', 'document_update_status', 'review_create', 'review_get', 'review_update', 'review_comment_add', 'review_comments_get', 'review_list']]
     payload: NotRequired[dict[str, Any]]
 
 class TraceEvidence(TypedDict):

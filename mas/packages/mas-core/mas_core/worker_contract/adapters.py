@@ -11,10 +11,12 @@ import asyncio
 import inspect
 import logging
 from collections import defaultdict
-from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
-from uuid import UUID
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Awaitable, Callable
+    from uuid import UUID
 
 from .models import (
     ADAPTER_API_VERSION,
@@ -22,8 +24,9 @@ from .models import (
     EventType,
     ProtocolVersion,
     WorkerAuditEvent,
-    WorkerCapabilities,
     WorkerCancellation,
+    WorkerCancellationReceipt,
+    WorkerCapabilities,
     WorkerError,
     WorkerEvent,
     WorkerHealth,
@@ -33,6 +36,7 @@ from .models import (
     WorkerResume,
     WorkerRunAccepted,
     WorkerRunRequest,
+    WorkerRuntimeStatus,
     WorkerToolResponse,
 )
 
@@ -41,13 +45,21 @@ logger = logging.getLogger(__name__)
 
 @dataclass(slots=True)
 class AdapterContext:
-    """Dependencies an adapter may use after AIAT has authorized a run."""
+    """Dependencies an adapter may use after AIAT has authorized a run.
+
+    ``secrets`` is retained as a compatibility channel for runtime-specific
+    bootstrap credentials.  It is deliberately hidden from the dataclass
+    representation and must not be copied into a child process environment.
+    New integrations should pass opaque AIAT-owned lease/reference IDs through
+    ``secret_refs`` and resolve them only at the governed service boundary.
+    """
 
     tool_dispatcher: Callable[[Any], Awaitable[Any]] | None = None
     artifact_registrar: Callable[[Any], Awaitable[Any]] | None = None
     audit_sink: Callable[[WorkerAuditEvent], Awaitable[None]] | None = None
     workspace_path: str | None = None
-    secrets: dict[str, str] = field(default_factory=dict)
+    secrets: dict[str, str] = field(default_factory=dict, repr=False)
+    secret_refs: dict[str, str] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -67,7 +79,14 @@ class WorkerAdapter(Protocol):
 
     def events(self, run_id: UUID) -> AsyncIterator[WorkerEvent]: ...
 
-    async def cancel(self, request: WorkerCancellation) -> None: ...
+    async def cancel(self, request: WorkerCancellation) -> WorkerCancellationReceipt | None: ...
+
+    async def reconcile(
+        self,
+        run_id: UUID,
+        *,
+        runtime_run_id: str | None = None,
+    ) -> WorkerRuntimeStatus: ...
 
     async def pause(self, request: WorkerPause) -> None: ...
 
@@ -102,6 +121,7 @@ class BaseWorkerAdapter:
         self._active_tasks: dict[UUID, asyncio.Task[Any]] = {}
         self._cancel_requested: set[UUID] = set()
         self._stream_closed: set[UUID] = set()
+        self._terminal_status: dict[UUID, str] = {}
         self._closed = False
 
     def _protocol(self) -> ProtocolVersion:
@@ -182,6 +202,7 @@ class BaseWorkerAdapter:
             if not isinstance(result, WorkerResult):
                 result = self._coerce_result(request, result)
             if not result.success and result.error is not None and result.error.code == "CANCELLED":
+                self._terminal_status[request.run_id] = "CANCELLED"
                 await self._emit(WorkerEvent(
                     protocol=self._protocol(),
                     run_id=request.run_id,
@@ -190,6 +211,7 @@ class BaseWorkerAdapter:
                     error=result.error,
                 ))
                 return
+            self._terminal_status[request.run_id] = "SUCCEEDED" if result.success else "FAILED"
             await self._emit(WorkerEvent(
                 protocol=self._protocol(),
                 run_id=request.run_id,
@@ -200,10 +222,12 @@ class BaseWorkerAdapter:
                 usage=result.usage,
             ))
         except asyncio.CancelledError:
+            self._terminal_status[request.run_id] = "CANCELLED"
             error = WorkerError(
                 code="CANCELLED",
                 message="adapter task was forcefully cancelled",
                 retryable=True,
+                terminal=True,
                 category="cancellation",
             )
             await self._emit(WorkerEvent(
@@ -214,6 +238,7 @@ class BaseWorkerAdapter:
                 error=error,
             ))
         except Exception as exc:  # adapters must normalize runtime failures
+            self._terminal_status[request.run_id] = "FAILED"
             logger.exception("Worker adapter execution failed for %s", self.worker_id)
             error = WorkerError(
                 code="RUNTIME_ERROR",
@@ -293,11 +318,64 @@ class BaseWorkerAdapter:
             if run_id in self._stream_closed and queue.empty():
                 break
 
-    async def cancel(self, request: WorkerCancellation) -> None:
+    async def cancel(self, request: WorkerCancellation) -> WorkerCancellationReceipt:
+        terminal_status = self._terminal_status.get(request.run_id)
+        if terminal_status is not None:
+            return WorkerCancellationReceipt(
+                run_id=request.run_id,
+                accepted=False,
+                terminal=True,
+                runtime_status=terminal_status,
+                details={"reason": "runtime already terminal"},
+            )
         self._cancel_requested.add(request.run_id)
         task = self._active_tasks.get(request.run_id)
+        if task is None:
+            accepted = any(item.run_id == request.run_id for item in self._accepted_by_key.values())
+            return WorkerCancellationReceipt(
+                run_id=request.run_id,
+                accepted=accepted,
+                terminal=False,
+                runtime_status="UNKNOWN",
+                details={"reason": "runtime task is not present in this adapter process"},
+            )
         if request.force and task is not None:
+            # Give a freshly-created task one scheduling turn before forcing
+            # cancellation.  Without this yield asyncio may cancel the task
+            # before ``_run_and_emit`` starts, which skips its cancellation
+            # handler/finally block and leaves the event stream open.
+            await asyncio.sleep(0)
             task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            self._active_tasks.pop(request.run_id, None)
+            if request.run_id not in self._terminal_status:
+                # A task cancelled before its coroutine ever entered still
+                # needs a terminal contract event for the controller and
+                # stream consumer.  This is a subordinate runtime event; the
+                # controller remains responsible for canonical state.
+                self._terminal_status[request.run_id] = "CANCELLED"
+                await self._emit(WorkerEvent(
+                    protocol=self._protocol(),
+                    run_id=request.run_id,
+                    worker_id=self.worker_id,
+                    event_type=EventType.CANCELLED,
+                    error=WorkerError(
+                        code="CANCELLED",
+                        message="adapter task was forcefully cancelled before it started",
+                        retryable=True,
+                        terminal=True,
+                        category="cancellation",
+                    ),
+                ))
+                await self._close_queue(request.run_id)
+            terminal_status = self._terminal_status.get(request.run_id, "CANCELLED")
+            return WorkerCancellationReceipt(
+                run_id=request.run_id,
+                accepted=True,
+                terminal=True,
+                runtime_status=terminal_status,
+                details={"force": True},
+            )
         else:
             await self._emit(WorkerEvent(
                 protocol=self._protocol(),
@@ -306,6 +384,72 @@ class BaseWorkerAdapter:
                 event_type=EventType.CANCEL_REQUESTED,
                 error=WorkerError(code="CANCEL_REQUESTED", message=request.reason, category="cancellation"),
             ))
+        return WorkerCancellationReceipt(
+            run_id=request.run_id,
+            accepted=True,
+            terminal=False,
+            runtime_status="CANCELLATION_REQUESTED",
+            details={"force": request.force},
+        )
+
+    async def reconcile(
+        self,
+        run_id: UUID,
+        *,
+        runtime_run_id: str | None = None,
+    ) -> WorkerRuntimeStatus:
+        """Report local runtime knowledge without changing AIAT state.
+
+        The base adapter intentionally cannot recover work from a fresh
+        process: its acceptance/task maps are process-local.  Returning
+        ``UNKNOWN`` in that case makes the limitation explicit and gives
+        external adapters a stable hook for a durable runtime lookup.
+        """
+
+        terminal_status = self._terminal_status.get(run_id)
+        if terminal_status is not None:
+            return WorkerRuntimeStatus(
+                run_id=run_id,
+                status=terminal_status,
+                terminal=True,
+                runtime_run_id=runtime_run_id,
+            )
+        task = self._active_tasks.get(run_id)
+        if task is not None and not task.done():
+            status = "CANCELLATION_REQUESTED" if run_id in self._cancel_requested else "RUNNING"
+            accepted = next(
+                (item for item in self._accepted_by_key.values() if item.run_id == run_id),
+                None,
+            )
+            return WorkerRuntimeStatus(
+                run_id=run_id,
+                status=status,
+                runtime_run_id=runtime_run_id or (accepted.runtime_run_id if accepted else None),
+            )
+        if run_id in self._stream_closed:
+            return WorkerRuntimeStatus(
+                run_id=run_id,
+                status="UNKNOWN",
+                terminal=False,
+                runtime_run_id=runtime_run_id,
+                details={"reason": "stream closed without retained terminal status"},
+            )
+        accepted = next(
+            (item for item in self._accepted_by_key.values() if item.run_id == run_id),
+            None,
+        )
+        if accepted is not None:
+            return WorkerRuntimeStatus(
+                run_id=run_id,
+                status="ACCEPTED",
+                runtime_run_id=runtime_run_id or accepted.runtime_run_id,
+            )
+        return WorkerRuntimeStatus(
+            run_id=run_id,
+            status="UNKNOWN",
+            runtime_run_id=runtime_run_id,
+            details={"reason": "run is not known to this adapter process"},
+        )
 
     async def pause(self, request: WorkerPause) -> None:
         await self._emit(WorkerEvent(
@@ -362,7 +506,7 @@ class NativeWorkerAdapter(BaseWorkerAdapter):
 
     def __init__(
         self,
-        worker: Callable[[WorkerRunRequest, "NativeWorkerAdapter"], Awaitable[Any] | Any],
+        worker: Callable[[WorkerRunRequest, NativeWorkerAdapter], Awaitable[Any] | Any],
         *,
         worker_id: str,
         capabilities: WorkerCapabilities | None = None,

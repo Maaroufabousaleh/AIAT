@@ -17,6 +17,7 @@ import math
 import os
 import re
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
@@ -35,6 +36,7 @@ from mas_core.worker_contract import (
     StreamingMode,
     ToolMode,
     WorkerCancellation,
+    WorkerCancellationReceipt,
     WorkerCapabilities,
     WorkerError,
     WorkerEvent,
@@ -42,6 +44,7 @@ from mas_core.worker_contract import (
     WorkerReadiness,
     WorkerResult,
     WorkerRunRequest,
+    WorkerRuntimeStatus,
     WorkerToolRequest,
     WorkerToolResponse,
     WorkerUsage,
@@ -138,12 +141,86 @@ def _external_capabilities(
     )
 
 
+_PROCESS_SECRET_KEY_RE = re.compile(
+    r"(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credential|authorization|cookie)",
+    re.IGNORECASE,
+)
+_REDACTED_PROCESS_VALUE = "[REDACTED]"
+
+
+def _copy_explicit_process_environment(
+    environment: Mapping[str, str] | None,
+) -> dict[str, str]:
+    """Validate and copy the explicit environment allowed for a child.
+
+    ``None`` means an intentionally empty environment.  In particular, it
+    does not mean ``os.environ``.  A process worker must receive every
+    required value through its worker configuration or sandbox launcher so
+    that service credentials cannot cross the adapter boundary implicitly.
+    """
+
+    if environment is None:
+        return {}
+    if not isinstance(environment, Mapping):
+        raise TypeError("process environment must be a string mapping")
+    for key, value in environment.items():
+        if (
+            not isinstance(key, str)
+            or not key
+            or "=" in key
+            or "\x00" in key
+            or not isinstance(value, str)
+            or "\x00" in value
+        ):
+            raise ValueError("process environment keys and values must be valid strings")
+    return dict(environment)
+
+
+def _process_secret_values(
+    environment: Mapping[str, str],
+    context: AdapterContext,
+) -> tuple[str, ...]:
+    """Return known secret values that must not re-enter worker output."""
+
+    values = {
+        value
+        for key, value in environment.items()
+        if value and _PROCESS_SECRET_KEY_RE.search(key)
+    }
+    # ProcessAdapter never copies context.secrets into the child environment,
+    # but scrub compatible bootstrap values if a runtime echoes one back.
+    values.update(value for value in context.secrets.values() if value)
+    return tuple(sorted(values, key=len, reverse=True))
+
+
+def _redact_process_value(value: Any, secret_values: tuple[str, ...]) -> Any:
+    """Redact known secret values from process responses and diagnostics."""
+
+    if isinstance(value, str):
+        redacted = value
+        for secret in secret_values:
+            redacted = redacted.replace(secret, _REDACTED_PROCESS_VALUE)
+        return redacted
+    if isinstance(value, dict):
+        return {
+            key: _redact_process_value(item, secret_values)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_process_value(item, secret_values) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_process_value(item, secret_values) for item in value)
+    return value
+
+
 class ProcessAdapter(BaseWorkerAdapter):
     """Adapter for a certified process/stdio worker.
 
     The command is a list of arguments and is never passed through a shell.
     A runtime must emit JSON lines for normalized events or a final JSON result;
     non-JSON stdout is retained as output text and does not become authority.
+    ``environment`` is an explicit child-environment allowlist.  It is never
+    merged with the parent environment or ``AdapterContext.secrets``.
     """
 
     runtime_type = "process"
@@ -170,9 +247,10 @@ class ProcessAdapter(BaseWorkerAdapter):
         )
         self.command = list(command)
         self.cwd = cwd
-        self.environment = dict(environment or {})
+        self.environment = _copy_explicit_process_environment(environment)
         self._runner = runner
         self._processes: dict[UUID, asyncio.subprocess.Process] = {}
+        self._force_cancel_requested: set[UUID] = set()
 
     async def _execute(self, request: WorkerRunRequest) -> Any:
         if self._runner is not None:
@@ -183,14 +261,31 @@ class ProcessAdapter(BaseWorkerAdapter):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=self.cwd,
-            env=self.environment or None,
+            env=dict(self.environment),
         )
         self._processes[request.run_id] = process
+        secret_values = _process_secret_values(self.environment, self.context)
         payload = json.dumps(request.model_dump(mode="json"), separators=(",", ":")) + "\n"
-        assert process.stdin is not None
-        process.stdin.write(payload.encode())
-        await process.stdin.drain()
-        process.stdin.close()
+        cancellation_requested = request.run_id in self._cancel_requested
+        if cancellation_requested:
+            # Cancellation can race the subprocess creation.  The caller may
+            # have requested cancellation before create_subprocess_exec()
+            # populated _processes; never hand the request to a process that
+            # was already cancelled.
+            if request.run_id in self._force_cancel_requested:
+                process.kill()
+            else:
+                process.terminate()
+        else:
+            assert process.stdin is not None
+            try:
+                process.stdin.write(payload.encode())
+                await process.stdin.drain()
+            except (BrokenPipeError, ConnectionResetError):
+                if request.run_id not in self._cancel_requested:
+                    raise
+            finally:
+                process.stdin.close()
         outputs: list[str] = []
         final: WorkerResult | None = None
         assert process.stdout is not None
@@ -206,8 +301,9 @@ class ProcessAdapter(BaseWorkerAdapter):
                 try:
                     data = json.loads(line)
                 except json.JSONDecodeError:
-                    outputs.append(line)
+                    outputs.append(_redact_process_value(line, secret_values))
                     continue
+                data = _redact_process_value(data, secret_values)
                 if isinstance(data, dict) and "event_type" in data:
                     event = WorkerEvent.model_validate({
                         "run_id": request.run_id,
@@ -226,7 +322,28 @@ class ProcessAdapter(BaseWorkerAdapter):
                 else:
                     outputs.append(json.dumps(data, sort_keys=True))
             await process.wait()
-            stderr = (await stderr_task).decode(errors="replace")[-4000:]
+            stderr = _redact_process_value(
+                (await stderr_task).decode(errors="replace")[-4000:],
+                secret_values,
+            )
+            # A normal ProcessAdapter termination is the expected result of
+            # an AIAT cancellation request, not a transport failure.  The
+            # cancellation marker is set before the OS signal is sent so the
+            # process-exit path is deterministic even when terminate() races
+            # with stdout draining.
+            if request.run_id in self._cancel_requested:
+                return WorkerResult(
+                    run_id=request.run_id,
+                    worker_id=self.worker_id,
+                    success=False,
+                    error=WorkerError(
+                        code="CANCELLED",
+                        message="process terminated by cancellation request",
+                        retryable=False,
+                        terminal=True,
+                        category="cancellation",
+                    ),
+                )
             if final is not None:
                 return final
             if process.returncode:
@@ -248,15 +365,44 @@ class ProcessAdapter(BaseWorkerAdapter):
                 stderr_task.cancel()
                 await asyncio.gather(stderr_task, return_exceptions=True)
             self._processes.pop(request.run_id, None)
+            self._cancel_requested.discard(request.run_id)
+            self._force_cancel_requested.discard(request.run_id)
 
-    async def cancel(self, request: WorkerCancellation) -> None:
+    async def cancel(self, request: WorkerCancellation) -> WorkerCancellationReceipt:
+        # Record intent before looking up the process.  This closes the
+        # start/cancel race where the adapter has accepted a run but the
+        # subprocess has not yet been created.
+        self._cancel_requested.add(request.run_id)
+        if request.force:
+            self._force_cancel_requested.add(request.run_id)
         process = self._processes.get(request.run_id)
         if process is not None:
+            # Record the intent before signalling the child so an expected
+            # non-zero process exit is normalized as cancellation below.
             if request.force:
                 process.kill()
             else:
                 process.terminate()
-        await super().cancel(request)
+        receipt = await super().cancel(request)
+        if not request.force and process is not None:
+            # A graceful termination request is initially only an
+            # acknowledgement.  If the child has already exited, waiting for
+            # it here proves the terminal runtime fact and lets the controller
+            # settle cancellation immediately.  A child that ignores SIGTERM
+            # remains non-terminal and is handled by the normal event/recovery
+            # path rather than being falsely reported as stopped.
+            try:
+                await asyncio.wait_for(asyncio.shield(process.wait()), timeout=1.0)
+            except TimeoutError:
+                return receipt
+            return WorkerCancellationReceipt(
+                run_id=request.run_id,
+                accepted=True,
+                terminal=True,
+                runtime_status="CANCELLED",
+                details={"signal": "TERM", "process_returncode": process.returncode},
+            )
+        return receipt
 
 
 class HTTPAdapter(BaseWorkerAdapter):
@@ -381,14 +527,16 @@ class HTTPAdapter(BaseWorkerAdapter):
             })
         return {"success": True, "output": data}
 
-    async def cancel(self, request: WorkerCancellation) -> None:
+    async def cancel(self, request: WorkerCancellation) -> WorkerCancellationReceipt:
         client = await self._get_client()
         endpoint = self.endpoints["cancel"].format(run_id=request.run_id)
         try:
             response = await client.post(endpoint, json=request.model_dump(mode="json"))
             response.raise_for_status()
-        finally:
+        except Exception:
             await super().cancel(request)
+            raise
+        return await super().cancel(request)
 
     async def close(self) -> None:
         await super().close()
@@ -454,9 +602,9 @@ class MCPAdapter(BaseWorkerAdapter):
             return final or {"success": True, "output": result}
         return result
 
-    async def cancel(self, request: WorkerCancellation) -> None:
+    async def cancel(self, request: WorkerCancellation) -> WorkerCancellationReceipt:
         await self.client.cancel(request.model_dump(mode="json"))
-        await super().cancel(request)
+        return await super().cancel(request)
 
     async def close(self) -> None:
         await super().close()
@@ -501,16 +649,395 @@ class MCPHTTPClient:
         await self.client.aclose()
 
 
+class LangGraphCapabilities:
+    """Configuration retained for the compatibility-facing LangGraph API."""
+
+    def __init__(
+        self,
+        state_schema: dict[str, Any] | None = None,
+        checkpointer: str = "memory",
+        threads_per_worker: int = 10,
+        interrupt_before: list[str] | None = None,
+        interrupt_after: list[str] | None = None,
+        graph_definition: dict[str, Any] | None = None,
+    ) -> None:
+        self.state_schema = state_schema or {}
+        self.checkpointer = checkpointer
+        self.threads_per_worker = threads_per_worker
+        self.interrupt_before = interrupt_before or []
+        self.interrupt_after = interrupt_after or []
+        self.graph_definition = graph_definition or {}
+
+    @classmethod
+    def from_config(cls, config: dict[str, Any]) -> LangGraphCapabilities:
+        return cls(
+            state_schema=config.get("state_schema"),
+            checkpointer=config.get("checkpointer", "memory"),
+            threads_per_worker=config.get("threads_per_worker", 10),
+            interrupt_before=config.get("interrupt_before", []),
+            interrupt_after=config.get("interrupt_after", []),
+            graph_definition=config.get("graph_definition", {}),
+        )
+
+
+class CrewAICapabilities:
+    """Configuration retained for the compatibility-facing CrewAI API."""
+
+    def __init__(
+        self,
+        crew_config: dict[str, Any] | None = None,
+        agents: list[str] | None = None,
+        tasks: list[str] | None = None,
+        process: str = "sequential",
+        memory_enabled: bool = False,
+        shared_memory: bool = False,
+    ) -> None:
+        self.crew_config = crew_config or {}
+        self.agents = agents or []
+        self.tasks = tasks or []
+        self.process = process
+        self.memory_enabled = memory_enabled
+        self.shared_memory = shared_memory
+
+    @classmethod
+    def from_config(cls, config: dict[str, Any]) -> CrewAICapabilities:
+        return cls(
+            crew_config=config.get("crew_config", {}),
+            agents=config.get("agents", []),
+            tasks=config.get("tasks", []),
+            process=config.get("process", "sequential"),
+            memory_enabled=config.get("memory_enabled", False),
+            shared_memory=config.get("shared_memory", False),
+        )
+
+
+def _manifest_id(manifest: Any) -> str:
+    metadata = getattr(manifest, "metadata", None)
+    return str(getattr(metadata, "id", "framework-worker"))
+
+
 class LangGraphAdapter(NativeWorkerAdapter):
-    """Certified native bridge for a LangGraph-compatible callable."""
+    """Canonical LangGraph adapter with a compatibility manifest surface.
+
+    The normal AIAT path supplies a governed callable and uses the universal
+    ``WorkerAdapter`` lifecycle.  The legacy manifest constructor remains
+    supported for the bounded conformance probe and old factory callers, but
+    its framework-specific ``send_task`` surface is deliberately kept as a
+    compatibility mode rather than a second adapter implementation.
+    """
 
     runtime_type = "langgraph"
 
+    def __init__(
+        self,
+        runner: Any | None = None,
+        capabilities: LangGraphCapabilities | None = None,
+        *,
+        manifest: Any | None = None,
+        worker_id: str | None = None,
+        context: AdapterContext | None = None,
+        runtime_version: str | None = None,
+    ) -> None:
+        if manifest is None and runner is not None and worker_id is None and hasattr(runner, "metadata"):
+            manifest, runner = runner, None
+        self._framework_compatibility_mode = manifest is not None
+        if self._framework_compatibility_mode:
+            self.manifest = manifest
+            self._framework_capabilities = capabilities or LangGraphCapabilities.from_config(
+                getattr(manifest, "runtime_config", {}) or {}
+            )
+            self._graph: Any | None = None
+            self._framework_initialized = False
+            self._availability_reason: str | None = None
+
+            async def unavailable_worker(_request: WorkerRunRequest, _adapter: NativeWorkerAdapter) -> dict[str, Any]:
+                return {"success": False, "error": {"code": "COMPATIBILITY_ONLY", "message": "use send_task()"}}
+
+            super().__init__(
+                unavailable_worker,
+                worker_id=_manifest_id(manifest),
+                context=context,
+                runtime_version=runtime_version,
+            )
+            return
+        if runner is None or worker_id is None:
+            raise TypeError("LangGraphAdapter requires a callable runner and worker_id")
+        super().__init__(
+            runner,
+            worker_id=worker_id,
+            context=context,
+            runtime_version=runtime_version,
+        )
+
+    async def initialize(self) -> None:
+        """Load the configured graph for the compatibility constructor."""
+        if not self._framework_compatibility_mode:
+            return
+        if self._framework_initialized:
+            return
+        try:
+            graph_def = self._framework_capabilities.graph_definition
+            if not graph_def:
+                self._availability_reason = "graph_definition is required for an executable LangGraph worker"
+                logger.warning("LangGraphAdapter %s unavailable: %s", _manifest_id(self.manifest), self._availability_reason)
+                return
+            importlib.import_module("langgraph")
+            graph_type = graph_def.get("type", "StateGraph")
+            state_schema = graph_def.get("state_schema", {"messages": list})
+            if graph_type == "StateGraph":
+                from langgraph.checkpoint.memory import MemorySaver
+                from langgraph.graph import StateGraph
+
+                builder = StateGraph(state_schema)
+                for node_name, node_config in graph_def.get("nodes", {}).items():
+                    handler = node_config.get("handler", node_name)
+                    builder.add_node(node_name, handler)
+                for from_node, to_node in graph_def.get("edges", []):
+                    builder.add_edge(from_node, to_node)
+                if "entry" in graph_def:
+                    builder.set_entry_point(graph_def["entry"])
+                if "finish" in graph_def:
+                    builder.set_finish_point(graph_def["finish"])
+                checkpointer = MemorySaver() if self._framework_capabilities.checkpointer == "memory" else None
+                self._graph = builder.compile(checkpointer=checkpointer)
+            if self._graph is None:
+                self._availability_reason = f"unsupported LangGraph graph type: {graph_type}"
+                return
+            self._framework_initialized = True
+            logger.info(
+                "LangGraphAdapter %s initialized with checkpointer=%s",
+                _manifest_id(self.manifest),
+                self._framework_capabilities.checkpointer,
+            )
+        except ImportError:
+            self._availability_reason = "langgraph package is not installed"
+            logger.warning("LangGraphAdapter %s unavailable: %s", _manifest_id(self.manifest), self._availability_reason)
+        except Exception as exc:
+            self._availability_reason = f"LangGraph graph initialization failed: {exc}"
+            logger.exception("LangGraphAdapter %s initialization failed", _manifest_id(self.manifest))
+
+    async def send_task(self, envelope: Any) -> dict[str, Any]:
+        """Run a compatibility-mode graph through its bounded translation API."""
+        if not self._framework_compatibility_mode:
+            raise RuntimeError("send_task() is available only for the manifest compatibility constructor")
+        await self.initialize()
+        task_input = self._translate_framework_input(envelope)
+        if self._graph is None:
+            return {
+                "status": "unavailable",
+                "input": task_input,
+                "output": None,
+                "runtime": "langgraph",
+                "worker_id": _manifest_id(self.manifest),
+                "reason": self._availability_reason or "runtime is not initialized",
+            }
+        try:
+            result = await self._graph.ainvoke(task_input)
+            return {
+                "status": "completed",
+                "input": task_input,
+                "output": result,
+                "runtime": "langgraph",
+                "worker_id": _manifest_id(self.manifest),
+            }
+        except Exception as exc:
+            logger.error("LangGraph execution failed for %s: %s", _manifest_id(self.manifest), exc)
+            return {
+                "status": "error",
+                "input": task_input,
+                "error": str(exc),
+                "runtime": "langgraph",
+                "worker_id": _manifest_id(self.manifest),
+            }
+
+    async def health_check(self) -> bool:
+        if not self._framework_compatibility_mode:
+            return (await self.health()).healthy
+        return self._framework_initialized
+
+    async def shutdown(self) -> None:
+        if self._framework_compatibility_mode:
+            self._graph = None
+            self._framework_initialized = False
+            self._availability_reason = None
+
+    def _translate_framework_input(self, envelope: Any) -> dict[str, Any]:
+        payload = getattr(envelope, "payload", {}) or {}
+        project_id = getattr(envelope, "project_id", None)
+        return {
+            "task": payload.get("task", ""),
+            "context": payload.get("context", ""),
+            "project_id": str(project_id) if project_id else None,
+            "messages": payload.get("messages", []),
+        }
+
+    _translate_input = _translate_framework_input
+
 
 class CrewAIAdapter(NativeWorkerAdapter):
-    """Certified native bridge for a CrewAI-compatible callable."""
+    """Canonical CrewAI adapter with the same compatibility surface as LangGraph."""
 
     runtime_type = "crewai"
+
+    def __init__(
+        self,
+        runner: Any | None = None,
+        capabilities: CrewAICapabilities | None = None,
+        *,
+        manifest: Any | None = None,
+        worker_id: str | None = None,
+        context: AdapterContext | None = None,
+        runtime_version: str | None = None,
+    ) -> None:
+        if manifest is None and runner is not None and worker_id is None and hasattr(runner, "metadata"):
+            manifest, runner = runner, None
+        self._framework_compatibility_mode = manifest is not None
+        if self._framework_compatibility_mode:
+            self.manifest = manifest
+            self._framework_capabilities = capabilities or CrewAICapabilities.from_config(
+                getattr(manifest, "runtime_config", {}) or {}
+            )
+            self._crew: Any | None = None
+            self._framework_initialized = False
+            self._availability_reason: str | None = None
+
+            async def unavailable_worker(_request: WorkerRunRequest, _adapter: NativeWorkerAdapter) -> dict[str, Any]:
+                return {"success": False, "error": {"code": "COMPATIBILITY_ONLY", "message": "use send_task()"}}
+
+            super().__init__(
+                unavailable_worker,
+                worker_id=_manifest_id(manifest),
+                context=context,
+                runtime_version=runtime_version,
+            )
+            return
+        if runner is None or worker_id is None:
+            raise TypeError("CrewAIAdapter requires a callable runner and worker_id")
+        super().__init__(
+            runner,
+            worker_id=worker_id,
+            context=context,
+            runtime_version=runtime_version,
+        )
+
+    async def initialize(self) -> None:
+        """Instantiate the configured crew for the compatibility constructor."""
+        if not self._framework_compatibility_mode:
+            return
+        if self._framework_initialized:
+            return
+        try:
+            importlib.import_module("crewai")
+        except ImportError:
+            self._availability_reason = "crewai package is not installed"
+            logger.warning("CrewAIAdapter %s unavailable: %s", _manifest_id(self.manifest), self._availability_reason)
+            return
+        crew_cfg = self._framework_capabilities.crew_config
+        if not crew_cfg:
+            self._availability_reason = "crew_config is required for an executable CrewAI worker"
+            logger.warning("CrewAIAdapter %s unavailable: %s", _manifest_id(self.manifest), self._availability_reason)
+            return
+        try:
+            from crewai import Agent, Crew, Task
+
+            agents: list[Any] = []
+            for agent_cfg in crew_cfg.get("agents", []):
+                if isinstance(agent_cfg, dict):
+                    agents.append(
+                        Agent(
+                            role=str(agent_cfg.get("role") or "worker"),
+                            goal=str(agent_cfg.get("goal") or ""),
+                            backstory=str(agent_cfg.get("backstory") or ""),
+                        )
+                    )
+            tasks: list[Any] = []
+            for task_cfg in crew_cfg.get("tasks", []):
+                if isinstance(task_cfg, dict):
+                    agent_idx = task_cfg.get("agent_index")
+                    task_agent = agents[agent_idx] if isinstance(agent_idx, int) and 0 <= agent_idx < len(agents) else None
+                    tasks.append(
+                        Task(
+                            description=str(task_cfg.get("description") or ""),
+                            expected_output=str(task_cfg.get("expected_output") or ""),
+                            agent=task_agent,
+                        )
+                    )
+            crew_kwargs: dict[str, Any] = {
+                "agents": agents,
+                "tasks": tasks,
+                "process": self._framework_capabilities.process,
+            }
+            if self._framework_capabilities.memory_enabled:
+                crew_kwargs["memory"] = True
+            self._crew = Crew(**crew_kwargs)
+            if not agents or not tasks:
+                self._availability_reason = "crew_config must declare at least one agent and task"
+                return
+            self._framework_initialized = True
+            logger.info(
+                "CrewAIAdapter %s initialized: %d agents, %d tasks, process=%s",
+                _manifest_id(self.manifest), len(agents), len(tasks), self._framework_capabilities.process,
+            )
+        except Exception as exc:
+            self._availability_reason = f"CrewAI initialization failed: {exc}"
+            logger.exception("Failed to initialize CrewAI crew for %s", _manifest_id(self.manifest))
+
+    async def send_task(self, envelope: Any) -> dict[str, Any]:
+        """Run a compatibility-mode crew through its bounded translation API."""
+        if not self._framework_compatibility_mode:
+            raise RuntimeError("send_task() is available only for the manifest compatibility constructor")
+        await self.initialize()
+        task_input = self._translate_framework_input(envelope)
+        if self._crew is None:
+            return {
+                "status": "unavailable",
+                "input": task_input,
+                "output": None,
+                "runtime": "crewai",
+                "worker_id": _manifest_id(self.manifest),
+                "reason": self._availability_reason or "runtime is not initialized",
+            }
+        try:
+            result = self._crew.kickoff(inputs=task_input)
+            return {
+                "status": "completed",
+                "input": task_input,
+                "output": str(result),
+                "runtime": "crewai",
+                "worker_id": _manifest_id(self.manifest),
+            }
+        except Exception as exc:
+            logger.error("CrewAI execution failed for %s: %s", _manifest_id(self.manifest), exc)
+            return {
+                "status": "error",
+                "input": task_input,
+                "error": str(exc),
+                "runtime": "crewai",
+                "worker_id": _manifest_id(self.manifest),
+            }
+
+    async def health_check(self) -> bool:
+        if not self._framework_compatibility_mode:
+            return (await self.health()).healthy
+        return self._framework_initialized
+
+    async def shutdown(self) -> None:
+        if self._framework_compatibility_mode:
+            self._crew = None
+            self._framework_initialized = False
+            self._availability_reason = None
+
+    def _translate_framework_input(self, envelope: Any) -> dict[str, Any]:
+        payload = getattr(envelope, "payload", {}) or {}
+        project_id = getattr(envelope, "project_id", None)
+        return {
+            "task": payload.get("task", ""),
+            "context": payload.get("context", ""),
+            "project_id": str(project_id) if project_id else None,
+            "messages": payload.get("messages", []),
+        }
+
+    _translate_input = _translate_framework_input
 
 
 class GatewayWorkerAdapter(NativeWorkerAdapter):
@@ -1633,6 +2160,120 @@ class OpenCodeAdapter(HTTPAdapter):
         status = payload.get(session_id) if isinstance(payload, dict) else None
         return status if isinstance(status, dict) else None
 
+    async def reconcile(
+        self,
+        run_id: UUID,
+        *,
+        runtime_run_id: str | None = None,
+    ) -> WorkerRuntimeStatus:
+        """Look up an OpenCode session after the adapter process restarted.
+
+        OpenCode exposes session existence and a bounded status map, but its
+        REST ``idle`` state does not by itself prove that the AIAT result has
+        been durably collected.  The reconciliation result therefore reports
+        ``ACCEPTED`` for an idle session and never invents terminal success
+        from that observation.  AIAT remains responsible for result/evidence
+        settlement.
+        """
+
+        local = await BaseWorkerAdapter.reconcile(
+            self,
+            run_id,
+            runtime_run_id=runtime_run_id,
+        )
+        session_id = runtime_run_id or local.runtime_run_id or self._session_by_run.get(run_id)
+        if not session_id:
+            return local
+        if not re.fullmatch(r"ses[a-zA-Z0-9_-]+", str(session_id)):
+            return WorkerRuntimeStatus(
+                run_id=run_id,
+                status="UNKNOWN",
+                runtime_run_id=str(session_id),
+                details={"reason": "invalid OpenCode session reference"},
+            )
+
+        session_id = str(session_id)
+        self._session_by_run[run_id] = session_id
+        request = WorkerRunRequest(
+            run_id=run_id,
+            idempotency_key=f"aiat-reconcile:{run_id}",
+            worker_id=self.worker_id,
+            task_type="runtime.reconcile",
+        )
+        try:
+            client = await self._get_client()
+            session_response = await client.get(
+                self._endpoint("session_get").replace("{sessionID}", session_id),
+                params=self._query(request),
+            )
+            if session_response.status_code == 404:
+                return WorkerRuntimeStatus(
+                    run_id=run_id,
+                    status="UNKNOWN",
+                    runtime_run_id=session_id,
+                    details={"reason": "OpenCode session was not found", "session_present": False},
+                )
+            session_response.raise_for_status()
+            session_payload = session_response.json() if session_response.content else {}
+            status_payload = await self._session_status(request, session_id)
+            native_status = ""
+            status_source = "session_get"
+            if isinstance(status_payload, dict):
+                native_status = str(
+                    status_payload.get("type")
+                    or status_payload.get("status")
+                    or ""
+                ).strip().lower()
+                if native_status:
+                    status_source = "session_status"
+            if not native_status and isinstance(session_payload, dict):
+                native_status = str(
+                    session_payload.get("type")
+                    or session_payload.get("status")
+                    or ""
+                ).strip().lower()
+
+            if native_status in {"busy", "working", "running", "retry", "pending", "queued"}:
+                normalized = "RUNNING"
+                terminal = False
+            elif native_status in {"paused", "pausing"}:
+                normalized = "PAUSED"
+                terminal = False
+            elif native_status in {"cancelled", "canceled", "aborted"}:
+                normalized = "CANCELLED"
+                terminal = True
+            elif native_status in {"error", "failed", "failure"}:
+                normalized = "FAILED"
+                terminal = True
+            elif native_status in {"idle", "completed", "complete", "done", "finished"}:
+                normalized = "ACCEPTED"
+                terminal = False
+            else:
+                normalized = "UNKNOWN"
+                terminal = False
+
+            details = {
+                "source": status_source,
+                "session_present": True,
+                "native_status": native_status or None,
+            }
+            if normalized == "ACCEPTED":
+                details["terminality"] = "not_proven_by_session_status"
+            return WorkerRuntimeStatus(
+                run_id=run_id,
+                status=normalized,
+                terminal=terminal,
+                runtime_run_id=session_id,
+                details=details,
+            )
+        except Exception as exc:
+            return WorkerRuntimeStatus(
+                run_id=run_id,
+                status="UNKNOWN",
+                runtime_run_id=session_id,
+                details={"reason": "OpenCode runtime lookup failed", "error_type": type(exc).__name__},
+            )
+
     async def _artifacts(self, request: WorkerRunRequest, session_id: str) -> list[Any]:
         client = await self._get_client()
         path = self._endpoint("diff").replace("{sessionID}", session_id)
@@ -1733,7 +2374,7 @@ class OpenCodeAdapter(HTTPAdapter):
             await self._stop_mcp_grant_refresher(request.run_id)
             await self._cleanup_session(request, session_id)
 
-    async def cancel(self, request: WorkerCancellation) -> None:
+    async def cancel(self, request: WorkerCancellation) -> WorkerCancellationReceipt:
         session_id = self._session_by_run.get(request.run_id)
         if session_id:
             client = await self._get_client()
@@ -1746,7 +2387,7 @@ class OpenCodeAdapter(HTTPAdapter):
                     raise
             self._cancelled.add(request.run_id)
             await self._stop_mcp_grant_refresher(request.run_id)
-        await super().cancel(request)
+        return await super().cancel(request)
 
     async def deliver_tool_response(self, response: Any) -> None:
         await super().deliver_tool_response(response)

@@ -232,6 +232,20 @@
           "title": "Message Id",
           "type": "string"
         },
+        "model_resolution_snapshot_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional AIAT model-resolution decision for a governance-agent invocation. The control plane validates the snapshot and scope; it is never a raw model selection.",
+          "title": "Model Resolution Snapshot Id"
+        },
         "msg_type": {
           "$ref": "#/$defs/MessageType",
           "description": "Message type \u2014 governs routing and handling."

@@ -18,9 +18,9 @@ AgentConfig     Pydantic settings per agent (id, role, team_id, budget_defaults,
 
 from .admin import AdminAgent
 from .attachment_manager import SavedFile, TempAttachmentManager
-from .base import AgentBase
+from .base import AgentBase, ModelProvenanceError
 from .budget import BudgetExhausted, BudgetTracker
-from .config import AgentConfig
+from .config import AgentConfig, GovernanceModelBinding
 from .csuite import CSuiteAgent
 from .executive import ExecutiveAgent
 from .router_client import RouterClient, RouterDuplicateMessage, RouterError
@@ -30,6 +30,8 @@ from .worker import WorkerAgent
 __all__ = [
     "AgentBase",
     "AgentConfig",
+    "GovernanceModelBinding",
+    "ModelProvenanceError",
     "BudgetExhausted",
     "BudgetTracker",
     "RouterClient",

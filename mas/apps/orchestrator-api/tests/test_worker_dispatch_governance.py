@@ -38,6 +38,7 @@ class _DispatchStorage:
         self.fail_at = fail_at
         self.reservations: list[dict[str, object]] = []
         self.settlements: list[dict[str, object]] = []
+        self.snapshots: list[dict[str, object]] = []
 
     async def get_worker(self, worker_id: UUID):
         if worker_id != WORKER_ID:
@@ -49,7 +50,8 @@ class _DispatchStorage:
             "adapter_config": {},
         }
 
-    async def create_model_resolution_snapshot(self, **_kwargs):
+    async def create_model_resolution_snapshot(self, **kwargs):
+        self.snapshots.append(kwargs)
         return None
 
     async def reserve_budget(self, **kwargs):
@@ -84,6 +86,65 @@ def _patch_storage(storage) -> None:
     from orchestrator_api.main import app
 
     app.state.storage = storage
+
+
+@pytest.mark.anyio
+async def test_non_llm_dispatch_keeps_policy_snapshot_out_of_model_attribution(
+    monkeypatch,
+) -> None:
+    import mas_core.worker_contract as worker_contract
+    import orchestrator_api.main as main
+
+    class ProjectDispatchStorage(_DispatchStorage):
+        async def get_project(self, project_id):
+            return {"id": project_id, "company_id": None}
+
+        async def list_company_worker_assignments(self, _company_id):
+            return []
+
+    storage = ProjectDispatchStorage()
+    _patch_storage(storage)
+    captured: dict[str, object] = {}
+
+    class RecordingController:
+        def __init__(self, *, storage) -> None:
+            self.storage = storage
+
+        async def execute(self, request, _adapter, **kwargs):
+            captured["request"] = request
+            captured["kwargs"] = kwargs
+            return worker_contract.WorkerRunOutcome(
+                run_id=request.run_id,
+                state="SUCCEEDED",
+                result=worker_contract.WorkerResult(
+                    run_id=request.run_id,
+                    worker_id=request.worker_id,
+                    success=True,
+                ),
+            )
+
+    monkeypatch.setattr(worker_contract, "WorkerRunController", RecordingController)
+    monkeypatch.setattr(main, "_certified_worker_adapter", AsyncMock(return_value=_Adapter()))
+
+    result = await main.dispatch_worker_run(
+        main.WorkerRunDispatchRequest(
+            worker_id=WORKER_ID,
+            idempotency_key="non-llm-policy-only",
+            task_type="deterministic.test",
+            project_id=PROJECT_ID,
+            dispatch_mode="inline",
+        )
+    )
+
+    assert result["state"] == "SUCCEEDED"
+    assert len(storage.snapshots) == 1
+    assert storage.snapshots[0]["project_id"] == PROJECT_ID
+    assert captured["kwargs"]["model_resolution_snapshot_id"] is None  # type: ignore[index]
+    request = captured["request"]
+    assert request.resolved_model_profile is None  # type: ignore[union-attr]
+    assert request.extensions["policy_snapshot_id"] == str(
+        storage.snapshots[0]["snapshot"]["snapshot_id"]  # type: ignore[index]
+    )
 
 
 @pytest.mark.anyio

@@ -65,8 +65,7 @@ def test_runtime_adapter_live_mode_is_blocked_when_packages_are_absent() -> None
 
 
 def test_framework_adapters_preserve_project_and_message_context() -> None:
-    from mas_core.worker_registry.crewai_adapter import CrewAIAdapter
-    from mas_core.worker_registry.langgraph_adapter import LangGraphAdapter
+    from mas_core.worker_registry.runtime_adapters import CrewAIAdapter, LangGraphAdapter
 
     envelope = SimpleNamespace(
         project_id="project-translation",
@@ -86,8 +85,7 @@ def test_framework_adapters_preserve_project_and_message_context() -> None:
 
 
 def test_framework_adapters_normalize_missing_project_id() -> None:
-    from mas_core.worker_registry.crewai_adapter import CrewAIAdapter
-    from mas_core.worker_registry.langgraph_adapter import LangGraphAdapter
+    from mas_core.worker_registry.runtime_adapters import CrewAIAdapter, LangGraphAdapter
 
     envelope = SimpleNamespace(project_id=None, payload={})
     for adapter in (

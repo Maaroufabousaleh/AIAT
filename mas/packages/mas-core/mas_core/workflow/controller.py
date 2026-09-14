@@ -15,8 +15,9 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
+from inspect import Parameter, isawaitable, signature
 from typing import TYPE_CHECKING, Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from mas_core.workflow.states import ProjectState
 from mas_core.workflow.transitions import (
@@ -31,12 +32,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Type alias for async event publisher callbacks.
-# Signature: async def publish(project_id, from_state, to_state, event, actor_id, context) -> None
-EventPublisher = Callable[
-    [str, str, str, str, str, dict[str, Any]],
-    Coroutine[Any, Any, None],
-]
+# Type alias for async event publisher callbacks.  The optional keyword gives
+# the publisher the stable outbox/message identity without making the
+# publisher a state owner.  Existing test/dry-run callbacks that accept
+# ``*args`` continue to work; the controller still treats a ``None`` return as
+# legacy/unknown delivery rather than claiming the outbox row was published.
+EventPublisher = Callable[..., Coroutine[Any, Any, bool | None]]
 
 
 class InvalidTransitionError(ValueError):
@@ -58,6 +59,7 @@ class WorkflowTransitionResult:
     next_state: TransitionTarget
     actor_id: str
     context: dict[str, Any]
+    transition_id: UUID | None = None
 
 
 class WorkflowController:
@@ -93,6 +95,60 @@ class WorkflowController:
         if target is None:
             raise InvalidTransitionError(state=state, event=event)
         return target
+
+    @staticmethod
+    def _invoke_event_publisher(
+        publisher: EventPublisher,
+        *,
+        project_id: str,
+        from_state: str,
+        to_state: str,
+        event: str,
+        actor_id: str,
+        context: dict[str, Any],
+        transition_id: UUID | None,
+    ) -> Any:
+        """Call current or legacy publisher callbacks without masking errors.
+
+        The production publisher accepts the stable transition identity.  A
+        small number of older integrations/tests still expose the original
+        six-argument callback, so inspect the callable before invoking it
+        instead of catching a ``TypeError`` that might have originated inside
+        the publisher itself.
+        """
+        parameters: tuple[Parameter, ...]
+        try:
+            parameters = tuple(signature(publisher).parameters.values())
+        except (TypeError, ValueError):
+            parameters = ()
+        accepts_keyword = any(
+            parameter.name == "transition_id"
+            or parameter.kind is Parameter.VAR_KEYWORD
+            for parameter in parameters
+        )
+        if accepts_keyword:
+            return publisher(
+                project_id,
+                from_state,
+                to_state,
+                event,
+                actor_id,
+                context,
+                transition_id=transition_id,
+            )
+        accepts_extra_positional = any(
+            parameter.kind is Parameter.VAR_POSITIONAL
+            for parameter in parameters
+        )
+        args = (
+            project_id,
+            from_state,
+            to_state,
+            event,
+            actor_id,
+            context,
+        )
+        return publisher(*args, transition_id) if accepts_extra_positional else publisher(*args)
 
     def _resolve_special_target(
         self,
@@ -148,6 +204,7 @@ class WorkflowController:
             - Publishes a SYSTEM_EVENT if event_publisher is set.
         """
         ctx = dict(context or {})
+        transition_id = uuid4() if self._storage is not None else None
 
         # 1. Validate and resolve the target state.
         raw_target = self.next_state(current_state, event)
@@ -183,6 +240,7 @@ class WorkflowController:
                 failure_reason=failure_reason,
                 failed_from_state=failed_from_state,
                 expected_state=str(current_state),
+                transition_id=transition_id,
             )
 
             if updated is None:
@@ -203,14 +261,26 @@ class WorkflowController:
         # 3. Publish SYSTEM_EVENT if publisher is available.
         if self._event_publisher is not None:
             try:
-                await self._event_publisher(
-                    project_id,
-                    str(current_state),
-                    str(concrete_target),
-                    event.value,
-                    actor_id,
-                    ctx,
+                published = await self._invoke_event_publisher(
+                    self._event_publisher,
+                    project_id=project_id,
+                    from_state=str(current_state),
+                    to_state=str(concrete_target),
+                    event=event.value,
+                    actor_id=actor_id,
+                    context=ctx,
+                    transition_id=transition_id,
                 )
+                if published is True and transition_id is not None and self._storage is not None:
+                    # A publisher may succeed and then lose the response
+                    # before the bookkeeping write.  Marking is deliberately
+                    # best-effort; a remaining pending row is safe to replay
+                    # with the same stable message identity.
+                    marker = getattr(self._storage, "mark_project_transition_published", None)
+                    if callable(marker):
+                        marker_result = marker(transition_id)
+                        if isawaitable(marker_result):
+                            await marker_result
             except Exception:
                 logger.exception(
                     "Failed to publish SYSTEM_EVENT for project=%s transition %s -> %s",
@@ -228,4 +298,5 @@ class WorkflowController:
             next_state=concrete_target,
             actor_id=actor_id,
             context=ctx,
+            transition_id=transition_id,
         )

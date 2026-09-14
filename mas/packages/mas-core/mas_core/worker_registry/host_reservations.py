@@ -298,55 +298,88 @@ class HostCapacityReservationLedger:
         owner: str,
         target: str,
     ) -> dict[str, Any]:
+        now = datetime.now(tz=UTC)
+        async with self._storage.engine.begin() as connection:
+            updated, idempotent_replay = await self.transition_in_transaction(
+                connection,
+                reservation_id,
+                owner=owner,
+                target=target,
+                now=now,
+            )
+        return public_reservation(
+            updated,
+            host_key=str(updated["host_key"]),
+            now=now,
+            idempotent_replay=idempotent_replay,
+        )
+
+    async def transition_in_transaction(
+        self,
+        connection: Any,
+        reservation_id: UUID,
+        *,
+        owner: str,
+        target: str,
+        now: datetime | None = None,
+    ) -> tuple[Mapping[str, Any], bool]:
+        """Transition a reservation while the caller owns its transaction.
+
+        Binding settlement has to update the reservation and its run-host
+        binding atomically.  This method deliberately accepts an existing
+        connection instead of opening a second transaction.  It is a
+        reservation primitive only: it never changes worker-run or binding
+        state and it does not call a runtime/provider.
+        """
+
         actor = str(owner or "").strip()
         if not actor:
             raise ValueError("owner is required")
         if target not in {"COMMITTED", "RELEASED"}:
             raise ValueError("unsupported reservation transition")
-        now = datetime.now(tz=UTC)
-        async with self._storage.engine.begin() as connection:
-            row = await self._host_and_reservation(connection, reservation_id)
-            if row is None:
-                raise ReservationRejected("reservation_not_found")
-            if row["owner"] != actor:
-                raise PermissionError("reservation owner mismatch")
-            state = str(row["state"])
-            reservation_generation = int(row.get("host_lease_generation") or 1)
-            current_generation = int(row.get("current_lease_generation") or 1)
-            if state in ACTIVE_STATES and reservation_generation != current_generation:
-                await connection.execute(
-                    t.worker_host_reservations.update()
-                    .where(t.worker_host_reservations.c.id == reservation_id)
-                    .values(state="EXPIRED", released_at=now, lease_expires_at=None)
-                )
-                raise ReservationRejected("host_lease_generation_mismatch")
-            if state == target or (state in {"RELEASED", "EXPIRED"} and target == "RELEASED"):
-                return public_reservation(row, host_key=str(row["host_key"]), now=now, idempotent_replay=True)
-            if target == "COMMITTED" and state != "RESERVED":
-                raise ReservationRejected("reservation_not_transitionable")
-            if target == "RELEASED" and state not in {"RESERVED", "COMMITTED"}:
-                raise ReservationRejected("reservation_not_transitionable")
-            if state == "RESERVED" and not _lease_valid(row, now=now):
-                await connection.execute(
-                    t.worker_host_reservations.update()
-                    .where(t.worker_host_reservations.c.id == reservation_id)
-                    .values(state="EXPIRED", released_at=now)
-                )
-                raise ReservationRejected("reservation_lease_expired")
-            values: dict[str, Any] = {"state": target}
-            if target == "COMMITTED":
-                values.update(committed_at=now, lease_expires_at=None)
-            else:
-                values.update(released_at=now, lease_expires_at=None)
+        current_time = now or datetime.now(tz=UTC)
+        row = await self._host_and_reservation(connection, reservation_id)
+        if row is None:
+            raise ReservationRejected("reservation_not_found")
+        if row["owner"] != actor:
+            raise PermissionError("reservation owner mismatch")
+        state = str(row["state"])
+        reservation_generation = int(row.get("host_lease_generation") or 1)
+        current_generation = int(row.get("current_lease_generation") or 1)
+        if state in ACTIVE_STATES and reservation_generation != current_generation:
             await connection.execute(
                 t.worker_host_reservations.update()
                 .where(t.worker_host_reservations.c.id == reservation_id)
-                .values(**values)
+                .values(state="EXPIRED", released_at=current_time, lease_expires_at=None)
             )
-            updated = await self._host_and_reservation(connection, reservation_id, for_update=False)
+            raise ReservationRejected("host_lease_generation_mismatch")
+        if state == target or (state in {"RELEASED", "EXPIRED"} and target == "RELEASED"):
+            return row, True
+        if target == "COMMITTED" and state != "RESERVED":
+            raise ReservationRejected("reservation_not_transitionable")
+        if target == "RELEASED" and state not in {"RESERVED", "COMMITTED"}:
+            raise ReservationRejected("reservation_not_transitionable")
+        if state == "RESERVED" and not _lease_valid(row, now=current_time):
+            await connection.execute(
+                t.worker_host_reservations.update()
+                .where(t.worker_host_reservations.c.id == reservation_id)
+                .values(state="EXPIRED", released_at=current_time)
+            )
+            raise ReservationRejected("reservation_lease_expired")
+        values: dict[str, Any] = {"state": target}
+        if target == "COMMITTED":
+            values.update(committed_at=current_time, lease_expires_at=None)
+        else:
+            values.update(released_at=current_time, lease_expires_at=None)
+        await connection.execute(
+            t.worker_host_reservations.update()
+            .where(t.worker_host_reservations.c.id == reservation_id)
+            .values(**values)
+        )
+        updated = await self._host_and_reservation(connection, reservation_id, for_update=False)
         if updated is None:
             raise ReservationRejected("reservation_not_found")
-        return public_reservation(updated, host_key=str(updated["host_key"]), now=now)
+        return updated, False
 
     async def commit(self, reservation_id: UUID, *, owner: str) -> dict[str, Any]:
         return await self._transition(reservation_id, owner=owner, target="COMMITTED")

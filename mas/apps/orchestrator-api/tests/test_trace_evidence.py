@@ -322,8 +322,11 @@ async def test_operator_retention_plan_is_read_only_and_bounded(client):
     assert payload["mode"] == "read-only-plan"
     assert payload["trace_id"] == "trace-123"
     assert payload["mutation_performed"] is False
-    assert payload["counts"]["archive"] == 0
-    assert payload["counts"]["retain"] == 2
+    # The fixture's non-held span is dated 2026-08-10.  Once the repository
+    # clock passes its 30-day policy window, it is correctly classified as an
+    # archive candidate; the legal-held 2026-01-01 span remains retained.
+    assert payload["counts"]["archive"] == 1
+    assert payload["counts"]["retain"] == 1
     assert payload["counts"]["legal_hold"] == 1
     assert payload["deletion_ids"] == []
     assert payload["candidates"][0]["legal_hold"] is True
