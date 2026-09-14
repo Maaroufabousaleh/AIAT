@@ -41,6 +41,26 @@ def _adapter() -> ResendRelayAdapter:
     )
 
 
+def _restricted_adapter() -> ResendRelayAdapter:
+    def transport(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/domains":
+            return httpx.Response(
+                401,
+                json={"name": "restricted_api_key", "statusCode": 401},
+                request=request,
+            )
+        if request.url.path == "/emails":
+            return httpx.Response(200, json={"id": "re_sending_access_message"}, request=request)
+        return httpx.Response(404, json={}, request=request)
+
+    return ResendRelayAdapter(
+        api_key="fixture-sending-access-key",
+        sending_domain="agents.aiat.ca",
+        client=httpx.AsyncClient(transport=httpx.MockTransport(transport)),
+        webhook_signing_secret="whsec_" + "c2lnbmluZy1maXh0dXJl",
+    )
+
+
 def test_readiness_is_bounded_and_does_not_return_provider_payload(monkeypatch) -> None:
     monkeypatch.setattr(certificate, "_dns_summary", lambda domain: {
         "domain_txt": {"available": True, "present": True, "record_count": 1},
@@ -88,6 +108,52 @@ def test_send_once_requires_explicit_confirmation_without_calling_provider(monke
     with pytest.raises(certificate.CertificationInputError, match="confirm-send"):
         asyncio.run(run())
     assert calls == 0
+
+
+def test_readiness_accepts_known_restricted_sending_key(monkeypatch) -> None:
+    monkeypatch.setattr(certificate, "_dns_summary", lambda domain: {
+        "domain_txt": {"available": True, "present": True, "record_count": 1},
+        "domain_mx": {"available": True, "present": True, "record_count": 1},
+        "dmarc_txt": {"available": True, "present": True, "record_count": 1},
+    })
+
+    import asyncio
+
+    async def run() -> dict:
+        adapter = _restricted_adapter()
+        try:
+            return await certificate.execute_command(_args("readiness"), adapter)
+        finally:
+            await adapter._client.aclose()
+
+    report = asyncio.run(run())
+    assert report["status"] == "PASS"
+    assert report["api_auth"] == "PASS"
+    assert report["api_auth_scope"] == "sending_access"
+    assert report["domain_status_accepted"] == "NOT_AVAILABLE_RESTRICTED_API_KEY"
+    assert report["domain_readable"] is False
+
+
+def test_send_once_uses_bounded_send_endpoint_for_restricted_key(monkeypatch) -> None:
+    monkeypatch.setenv("AIAT_CERTIFICATION_RECIPIENT", "operator@example.net")
+    monkeypatch.setenv("AIAT_CERTIFICATION_SENDER", "certification@agents.aiat.ca")
+    monkeypatch.setenv("AIAT_CERTIFICATION_IDEMPOTENCY_KEY", "restricted-send-fixture")
+
+    import asyncio
+
+    async def run() -> dict:
+        adapter = _restricted_adapter()
+        try:
+            return await certificate.execute_command(
+                _args("send-once", confirm_send=True), adapter
+            )
+        finally:
+            await adapter._client.aclose()
+
+    report = asyncio.run(run())
+    assert report["status"] == "PASS"
+    assert report["send_count"] == 1
+    assert report["provider_message_id"] == "re_sending_access_message"
 
 
 def test_send_once_reports_only_safe_provider_metadata(monkeypatch) -> None:

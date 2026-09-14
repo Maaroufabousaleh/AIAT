@@ -13,9 +13,9 @@ import hashlib
 import hmac
 import json
 import logging
+import re
 import time
-from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 from uuid import uuid4
 
@@ -28,13 +28,38 @@ from .base import MailProviderError
 
 logger = logging.getLogger(__name__)
 
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
 
 class ResendAdapterError(MailProviderError):
     """Sanitized Resend API failure."""
 
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        transient: bool = False,
+        correlation_id: str | None = None,
+        status_code: int | None = None,
+        provider_error_code: str | None = None,
+    ) -> None:
+        super().__init__(
+            code,
+            message,
+            transient=transient,
+            correlation_id=correlation_id,
+        )
+        # These are bounded provider classifications only. Response bodies
+        # and provider credentials never cross this exception boundary.
+        self.status_code = status_code
+        self.provider_error_code = provider_error_code
+
 
 class ResendRelayAdapter:
     provider_name = "resend"
+    _PROVIDER_ERROR_CODE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 
     def __init__(
         self,
@@ -158,19 +183,22 @@ class ResendRelayAdapter:
             raise ResendAdapterError("RESEND_TIMEOUT", "Resend request timed out", transient=True, correlation_id=correlation_id) from exc
         except httpx.HTTPError as exc:
             raise ResendAdapterError("RESEND_UNAVAILABLE", "Resend request failed", transient=True, correlation_id=correlation_id) from exc
-        if response.status_code >= 400:
-            raise ResendAdapterError(
-                "RESEND_REJECTED",
-                "Resend rejected the request",
-                transient=self.classify_transient_or_permanent_failure(response.status_code) == "transient",
-                correlation_id=correlation_id,
-            )
         if len(response.content) > 4 * 1024 * 1024:
             raise ResendAdapterError(
                 "RESEND_INVALID_RESPONSE",
                 "Resend response exceeded the bounded limit",
                 transient=True,
                 correlation_id=correlation_id,
+                status_code=response.status_code,
+            )
+        if response.status_code >= 400:
+            raise ResendAdapterError(
+                "RESEND_REJECTED",
+                "Resend rejected the request",
+                transient=self.classify_transient_or_permanent_failure(response.status_code) == "transient",
+                correlation_id=correlation_id,
+                status_code=response.status_code,
+                provider_error_code=self._safe_provider_error_code(response),
             )
         try:
             data = response.json()
@@ -185,9 +213,55 @@ class ResendRelayAdapter:
             )
         return data, correlation_id
 
+    @classmethod
+    def _safe_provider_error_code(cls, response: httpx.Response) -> str | None:
+        """Extract only a bounded, syntactically safe provider error name."""
+
+        if len(response.content) > 64 * 1024:
+            return None
+        try:
+            payload = response.json()
+        except ValueError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        for key in ("name", "code", "type"):
+            value = payload.get(key)
+            if isinstance(value, str) and cls._PROVIDER_ERROR_CODE.fullmatch(value):
+                return value
+        return None
+
+    @staticmethod
+    def classify_auth_failure(error: ResendAdapterError) -> str:
+        """Classify known Resend auth outcomes without exposing the response."""
+
+        if (
+            error.status_code == 401
+            and error.provider_error_code == "restricted_api_key"
+        ):
+            return "sending_access"
+        if error.status_code == 403 and error.provider_error_code == "invalid_api_key":
+            return "invalid"
+        return "unknown"
+
     async def validate_relay_credentials(self) -> dict[str, Any]:
-        _body, correlation_id = await self._request("GET", "/domains")
-        return {"valid": True, "correlation_id": correlation_id}
+        try:
+            _body, correlation_id = await self._request("GET", "/domains")
+        except ResendAdapterError as exc:
+            if self.classify_auth_failure(exc) != "sending_access":
+                raise
+            return {
+                "valid": True,
+                "access_mode": "sending_access",
+                "domain_readable": False,
+                "correlation_id": exc.correlation_id,
+            }
+        return {
+            "valid": True,
+            "access_mode": "full_access",
+            "domain_readable": True,
+            "correlation_id": correlation_id,
+        }
 
     async def validate_sending_domain(self) -> dict[str, Any]:
         body, correlation_id = await self._request("GET", "/domains")

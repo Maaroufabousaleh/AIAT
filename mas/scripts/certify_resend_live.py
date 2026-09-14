@@ -154,15 +154,31 @@ def _base_report(operation: str) -> dict[str, Any]:
 async def _readiness(adapter: ResendRelayAdapter) -> dict[str, Any]:
     report = _base_report("readiness")
     auth = await adapter.validate_relay_credentials()
-    domain = await adapter.validate_sending_domain()
+    if auth.get("access_mode") == "sending_access":
+        # Resend intentionally rejects domain-management reads for a valid
+        # sending-only key. The actual bounded /emails probe below is the
+        # transport certificate for this least-privilege mode.
+        domain = {
+            "valid": False,
+            "readable": False,
+            "status": "not_available_restricted_api_key",
+        }
+    else:
+        domain = await adapter.validate_sending_domain()
     webhook_configured = _webhook_secret_is_configured(adapter._webhook_signing_secret)
     dns = _dns_summary(adapter.sending_domain)
     dns_available = all(item["available"] for item in dns.values())
     report.update(
         {
             "api_auth": "PASS" if auth.get("valid") else "FAIL",
+            "api_auth_scope": auth.get("access_mode", "unknown"),
             "sending_domain": adapter.sending_domain,
-            "domain_status_accepted": bool(domain.get("valid")),
+            "domain_status_accepted": (
+                bool(domain.get("valid"))
+                if auth.get("access_mode") != "sending_access"
+                else "NOT_AVAILABLE_RESTRICTED_API_KEY"
+            ),
+            "domain_readable": bool(domain.get("readable", auth.get("domain_readable"))),
             "domain_reference_present": bool(domain.get("domain_id")),
             "webhook_secret_format": "PASS" if webhook_configured else "FAIL",
             "public_dns": dns,
@@ -171,7 +187,9 @@ async def _readiness(adapter: ResendRelayAdapter) -> dict[str, Any]:
     )
     report["status"] = (
         "PASS"
-        if auth.get("valid") and domain.get("valid") and webhook_configured
+        if auth.get("valid")
+        and (domain.get("valid") or auth.get("access_mode") == "sending_access")
+        and webhook_configured
         else "FAIL"
     )
     return report

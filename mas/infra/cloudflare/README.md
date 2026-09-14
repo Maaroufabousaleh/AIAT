@@ -94,6 +94,11 @@ does not expose the identity API, Postgres, or a host port. The Cloudflare
 Tunnel's remotely configured public hostname must target
 `http://identity-ingress:8080`; Cloudflare remains responsible for public TLS.
 
+`CLOUDFLARE_IDENTITY_TUNNEL_TOKEN` must belong to a dedicated identity tunnel
+whose public hostname is `identity.aiat.ca`. Do not reuse a connector token for
+the PM gateway or any other unrelated tunnel; the remote tunnel configuration
+must not route identity traffic to another service.
+
 The tunnel is deliberately opt-in. Inject its connector token through the
 ignored operator environment as `CLOUDFLARE_IDENTITY_TUNNEL_TOKEN` and start
 only the explicit profile after the Cloudflare named tunnel has been configured:
@@ -116,6 +121,14 @@ adapter-backed Resend certificate:
 cd /mnt/c/projects/aiat/mas
 uv run python scripts/certify_resend_live.py --json readiness
 ```
+
+The readiness result distinguishes a valid Resend `sending_access` key from an
+invalid key. Resend may return the structured `restricted_api_key` HTTP 401
+when a sending-only key calls domain-management or webhook-management
+endpoints. That is expected least-privilege behavior, not invalid
+authentication; the bounded `send-once` operation proves this mode through
+the actual `/emails` endpoint. A full-access key may additionally report the
+provider domain status through `/domains`.
 
 The optional `send-once --confirm-send` operation is a single, no-retry
 transport probe for an operator-controlled recipient supplied through
