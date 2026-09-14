@@ -362,22 +362,22 @@ async def test_verified_provider_webhook_is_idempotent_payload_free_and_projecte
 async def test_resend_provider_ingress_verifies_raw_body_and_persists_normalized_event(identity_client):
     client, _signers = identity_client
     body = json.dumps({
-        "id": "resend-ingress-event-1",
         "type": "email.bounced",
         "data": {"email_id": "resend-message-1", "status": "bounced", "body": "drop-me"},
     }, separators=(",", ":"), sort_keys=True).encode()
     timestamp = int(time.time())
-    signed = f"resend-msg-1.{timestamp}.".encode() + body
+    signed = f"msg_resend-ingress-event-1.{timestamp}.".encode() + body
     signature = base64.b64encode(hmac.new(b"resend-webhook-secret", signed, hashlib.sha256).digest()).decode()
     headers = {
         "Content-Type": "application/json",
-        "svix-id": "resend-msg-1",
+        "svix-id": "msg_resend-ingress-event-1",
         "svix-timestamp": str(timestamp),
         "svix-signature": f"v1,{signature}",
     }
     response = await client.post("/v1/mail-edge/provider-webhook/resend", content=body, headers=headers)
     assert response.status_code == 200, response.text
     assert response.json()["event_type"] == "bounced"
+    assert response.json()["event_id"] == "msg_resend-ingress-event-1"
     assert "drop-me" not in response.text
 
     tampered = await client.post(
