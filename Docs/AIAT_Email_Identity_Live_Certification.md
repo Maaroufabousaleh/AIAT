@@ -168,20 +168,40 @@ from this record.
 ## Current production boundary
 
 The identity database and local production container are healthy, but the full
-production runtime is not yet certified. A secret-safe Resend API probe using
-the existing injected credential returned the structured provider
-classification `restricted_api_key` with HTTP `401`. This confirms the
-intentional least-privilege `sending_access` mode; it is not an invalid-key
-result, and no credential was rotated or replaced. Domain-management reads are
-unavailable in this mode, so transport certification must use the bounded
-`/emails` send endpoint with the configured production sending domain. No
-outbound message has yet been sent.
+production runtime is not yet certified. The dedicated Cloudflare Tunnel is
+now connected and the public identity boundary has been verified through the
+Cloudflare edge. The narrow gateway exposes only the signed provider webhook;
+unrelated public paths remain hidden.
+
+```text
+PUBLIC_IDENTITY_INGRESS = PASS
+CLOUDFLARE_TUNNEL = PASS
+CLOUDFLARE_TUNNEL_ID = 50b7a5c8-06ff-4d40-bd3c-34987b8c1c46
+PUBLIC_WEBHOOK_REACHABILITY = PASS
+PRIVATE_IDENTITY_API_EXPOSURE = PASS_FAIL_CLOSED
+PUBLIC_WEBHOOK_URL = https://identity.aiat.ca/v1/mail-edge/provider-webhook/resend
+```
+
+The safe edge probe returned `404` for `/healthz` and an unrelated path,
+`404` for an unsigned `GET` to the webhook path, and application-level `401`
+for an unsigned `POST` to the exact webhook path. Internal identity-service
+health and readiness both returned `200`.
+
+A secret-safe Resend API probe using the existing injected credential returned
+the structured provider classification `restricted_api_key` with HTTP `401`.
+This confirms the intentional least-privilege `sending_access` mode; it is not
+an invalid-key result, and no credential was rotated or replaced.
+Domain-management reads are unavailable in this mode, so transport
+certification must use the bounded `/emails` send endpoint with the configured
+production sending domain. No outbound message has yet been sent.
 
 ```text
 IDENTITY_SERVICE_RUNTIME_LOCAL = PASS
 PRIVATE_WEBHOOK_GATEWAY = PASS (unrelated paths 404; unsigned POST 401)
-PUBLIC_IDENTITY_INGRESS = NOT_YET_REACHABLE
-CLOUDFLARE_TUNNEL = CONNECTED_TO_UNRELATED_PM_GATEWAY
+PUBLIC_IDENTITY_INGRESS = PASS
+CLOUDFLARE_TUNNEL = PASS
+PUBLIC_WEBHOOK_REACHABILITY = PASS
+PRIVATE_IDENTITY_API_EXPOSURE = PASS_FAIL_CLOSED
 RESEND_API_AUTH = PASS_SENDING_ACCESS
 RESEND_DOMAIN_MANAGEMENT_READ = NOT_AVAILABLE_RESTRICTED_API_KEY
 RESEND_OUTBOUND_LIVE = NOT_YET_LIVE_CERTIFIED
