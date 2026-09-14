@@ -6,6 +6,7 @@ import yaml
 
 MAS_ROOT = Path(__file__).resolve().parents[3]
 COMPOSE_ROOT = MAS_ROOT / "infra" / "compose"
+CLOUDFLARE_ROOT = MAS_ROOT / "infra" / "cloudflare"
 
 
 def test_cloudflare_tunnel_is_opt_in_and_empty_token_safe() -> None:
@@ -80,3 +81,34 @@ def test_identity_image_makes_migration_assets_readable_as_runtime_user() -> Non
     ) in dockerfile
     assert "RUN chmod -R u=rwX,go=rX /app/migrations" in dockerfile
     assert "USER 10001:10001" in dockerfile
+
+
+def test_cloudflare_identity_ingress_is_a_narrow_opt_in_tunnel_boundary() -> None:
+    compose = yaml.safe_load(
+        (CLOUDFLARE_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    )
+    ingress = compose["services"]["identity-ingress"]
+    tunnel = compose["services"]["cloudflared"]
+    identity_service_environment = compose["services"]["identity-service"]["environment"]
+    networks = compose["networks"]
+    caddyfile = (CLOUDFLARE_ROOT / "Caddyfile").read_text(encoding="utf-8")
+
+    assert "ports" not in ingress
+    assert ingress["expose"] == ["8080"]
+    assert ingress["networks"] == ["identity_private", "identity_tunnel"]
+    assert "identity_egress" not in ingress["networks"]
+    assert tunnel["profiles"] == ["cloudflare"]
+    assert tunnel["environment"]["TUNNEL_TOKEN"] == "${CLOUDFLARE_IDENTITY_TUNNEL_TOKEN:-}"
+    assert tunnel["networks"] == ["identity_tunnel"]
+    assert "ports" not in tunnel
+    assert tunnel["cap_drop"] == ["ALL"]
+    assert tunnel["read_only"] is True
+    assert tunnel["security_opt"] == ["no-new-privileges:true"]
+    assert networks["identity_tunnel"]["driver"] == "bridge"
+    assert "CLOUDFLARE_IDENTITY_TUNNEL_TOKEN" not in identity_service_environment
+    assert "CLOUDFLARE_API_TOKEN" not in identity_service_environment
+
+    assert "method POST" in caddyfile
+    assert "path /v1/mail-edge/provider-webhook/resend" in caddyfile
+    assert "reverse_proxy identity-service:8010" in caddyfile
+    assert "respond 404" in caddyfile

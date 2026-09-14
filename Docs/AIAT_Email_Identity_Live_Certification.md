@@ -74,10 +74,10 @@ TEMPORARY_RECIPIENT_RETIREMENT = PASS
 ## Still pending
 
 ```text
-IDENTITY_SERVICE_LIVE = NOT_YET_STARTED_OR_CERTIFIED
-REAL_IDENTITY_PROVISIONING = NOT_YET_LIVE_CERTIFIED
-REAL_INBOUND_RECONCILIATION = NOT_YET_LIVE_CERTIFIED
-RESEND_API_AUTH = NOT_YET_CERTIFIED
+IDENTITY_SERVICE_LIVE = PASS (inbound reconciliation boundary only)
+REAL_IDENTITY_PROVISIONING = PASS
+REAL_INBOUND_RECONCILIATION = PASS
+RESEND_API_AUTH = BLOCKED_PROVIDER_HTTP_401
 RESEND_OUTBOUND_LIVE = NOT_YET_LIVE_CERTIFIED
 RESEND_WEBHOOK_LIVE = NOT_YET_LIVE_CERTIFIED
 REAL_AIAT_HIRING_LIFECYCLE_INTEGRATION = NOT_YET_LIVE_CERTIFIED
@@ -92,3 +92,70 @@ It reads only `CLOUDFLARE_MAIL_EDGE_URL` and
 `CLOUDFLARE_MAIL_EDGE_AUTH_SECRET` from the environment, uses the production
 adapter/HMAC implementation, and emits only bounded metadata and pass/fail
 status.
+
+## Canonical AIAT inbound reconciliation
+
+The later live run used a fresh UUID-backed identity through the real
+identity-service lifecycle rather than treating the temporary smoke mailbox as
+the production test identity. The following evidence is intentionally limited
+to identifiers and state transitions:
+
+```text
+CANONICAL_RUN = LIVE-CLOUDFLARE-INBOUND-AIAT-2026-09-12
+worker_id = 7125b01c-974e-4f73-abf6-b1ac72b5b66e
+identity_id = 976a7349-fc76-405e-b395-e60c3911c9eb
+address = w-7125b01c-974e-4f73-abf6-b1ac72b5b66e@agents.aiat.ca
+provider_event_id = evt-bbf91ddf532b44f9b6f6f4601acc3630d277b36bf7741845
+provider_message_id = m-7034ad555f2f4dafa945dde634d6d5f5
+```
+
+Secret-safe live evidence for that run:
+
+- The real identity-service/Postgres runtime reached `/healthz` and `/readyz`;
+  the production database was at Alembic head `0004_provider_neutral_mail`.
+- Governed allocation created the identity, registered its Cloudflare binding,
+  and left the identity in `IDENTITY_VERIFYING` until delivery evidence was
+  available.
+- A real external inbound message reached the canonical envelope recipient;
+  the Worker stored it in D1 chunks, the identity-service retrieved and
+  reconstructed the raw message, and ownership/correlation matched the worker
+  and identity above.
+- The normalized `inbound.message.received` event was persisted before the
+  signed ACK, and the identity-service reconciliation cursor advanced to `2`.
+- Delivery verification persisted `INBOUND_RECEIVED` and
+  `DELIVERY_VERIFIED`, then the identity reached `IDENTITY_ACTIVE`.
+- The certification identity was subsequently archived through the governed
+  lifecycle API and its Cloudflare binding reached `RETIRED`; no registry or
+  D1 row was deleted directly.
+
+An earlier historical smoke event used non-UUID temporary identifiers. It was
+metadata-verified, ACKed through the signed adapter, and advanced the cursor
+from `0` to `1`, but it is not treated as canonical identity-service
+reconciliation evidence. The canonical run above is the sequence-2 proof.
+
+The external sender, message body, verification code, raw MIME, authentication
+secrets, webhook secrets, and provider credentials are deliberately absent
+from this record.
+
+## Current production boundary
+
+The identity database and local production container are healthy, but the full
+production runtime is not yet certified. Public webhook ingress is prepared as
+an opt-in Cloudflare Tunnel profile and is not started until its operator-owned
+token and remote hostname route exist. A secret-safe read-only Resend API probe
+using the existing injected credential returned HTTP `401`; no credential was
+rotated or replaced, and no outbound message was sent.
+
+```text
+IDENTITY_SERVICE_RUNTIME_LOCAL = PASS
+PUBLIC_IDENTITY_INGRESS = NOT_YET_REACHABLE
+CLOUDFLARE_TUNNEL = NOT_CONFIGURED
+RESEND_API_AUTH = BLOCKED_PROVIDER_HTTP_401
+RESEND_OUTBOUND_LIVE = NOT_YET_LIVE_CERTIFIED
+RESEND_WEBHOOK_LIVE = NOT_YET_LIVE_CERTIFIED
+REAL_AIAT_HIRING_LIFECYCLE_INTEGRATION = NOT_YET_LIVE_CERTIFIED
+FULL_PRODUCTION_IDENTITY_SERVICE = NOT_YET_STARTED_OR_CERTIFIED
+OUTBOUND_RELAY_CERTIFIED = false
+DEFAULT_OUTBOUND_ENABLED = false
+DIRECT_MX_OUTBOUND_ENABLED = false
+```
