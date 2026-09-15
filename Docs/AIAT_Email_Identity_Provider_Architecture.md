@@ -1,10 +1,14 @@
 # AIAT email identity provider architecture
 
 Status: repository implementation complete for the provider-neutral v1 path.
-`LIVE_CLOUDFLARE_INBOUND = PASS` was recorded on 2026-09-12 from the operator's
-production smoke run. Resend account, outbound delivery, and full production
-identity-service certification remain operator-owned live boundaries and are
-not implied by repository tests.
+The bounded default Cloudflare/Resend v1 path is live-certified, including
+inbound production delivery, public webhook ingress, governed outbound
+transport, signed delivery observations, accounting, audit, and certification
+cleanup. The secret-safe evidence is recorded in
+[`AIAT_Email_Identity_Live_Certification.md`](AIAT_Email_Identity_Live_Certification.md)
+with `FINAL_EMAIL_SUBSYSTEM_STATUS = CERTIFIED`. Optional Stalwart/R2 profiles,
+broader outage/restore evidence, and unrelated programme release gates remain
+separate.
 
 ## Default v1 topology
 
@@ -127,9 +131,9 @@ must not share its database, namespace, or environment file.
 
 Repository tests use a deterministic D1-only Worker fixture, an explicit
 optional-R2 regression fixture, and mocked provider HTTP. They prove the local
-protocol and governance boundaries, not Resend account authorization,
-outbound delivery, or full production identity-service operation. The
-secret-safe Cloudflare inbound live result is recorded in
-[`AIAT_Email_Identity_Live_Certification.md`](AIAT_Email_Identity_Live_Certification.md);
-the final activation latch remains false until the remaining live boundaries
-are certified.
+protocol and governance boundaries; the bounded live Cloudflare/Resend and
+identity-service result is recorded in
+[`AIAT_Email_Identity_Live_Certification.md`](AIAT_Email_Identity_Live_Certification.md).
+The scoped `OUTBOUND_RELAY_CERTIFIED` latch is true for this certified default
+path, while `DEFAULT_OUTBOUND_ENABLED=false` and
+`DIRECT_MX_OUTBOUND_ENABLED=false` remain intentional fail-closed defaults.
