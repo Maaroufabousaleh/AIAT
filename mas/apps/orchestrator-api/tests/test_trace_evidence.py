@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 
@@ -144,13 +146,14 @@ class _TraceStorage:
         limit: int,
     ) -> list[dict]:
         assert trace_id in {None, "trace-123"}
+        now = datetime.now(tz=UTC)
         rows = [
             {
                 "id": "native-old",
                 "trace_id": "trace-123",
                 "span_id": "native-old-span",
                 "source_kind": "transport",
-                "started_at": "2026-01-01T00:00:00+00:00",
+                "started_at": (now - timedelta(days=90)).isoformat(),
                 "attributes_json": {"secret": "do-not-return", "legal_hold": True},
             },
             {
@@ -158,7 +161,11 @@ class _TraceStorage:
                 "trace_id": "trace-123",
                 "span_id": "native-new-span",
                 "source_kind": "tool",
-                "started_at": "2026-08-10T00:00:00+00:00",
+                # Keep this row inside the 30-day policy window regardless of
+                # when the test suite runs. The planner evaluates against the
+                # request clock, so fixed historical dates make this contract
+                # test expire over time.
+                "started_at": (now - timedelta(days=1)).isoformat(),
                 "attributes_json": {"secret": "do-not-return"},
             },
         ]
@@ -320,6 +327,10 @@ async def test_operator_retention_plan_is_read_only_and_bounded(client):
     assert payload["counts"]["legal_hold"] == 1
     assert payload["deletion_ids"] == []
     assert payload["candidates"][0]["legal_hold"] is True
+    assert [candidate["disposition"] for candidate in payload["candidates"]] == [
+        "retain",
+        "retain",
+    ]
     assert len(payload["candidates"]) == 2
     assert "do-not-return" not in response.text
 
