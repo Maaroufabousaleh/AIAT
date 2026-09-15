@@ -31,6 +31,11 @@ AIAT must make dangerous automation bounded, attributable, observable, and recov
   certificate is static-pass/live-blocked because the host lacks the launcher
   and Firecracker binary.
 - Router recovery using pending entries, reclaim, retry, TTL, durable DLQ, safe trimming, and audited replay.
+- Point-to-point and broadcast publication now use a Redis-atomic dedupe/XADD
+  script, and production reclaim requeue uses one script for replacement XADD,
+  PEL acknowledgement, and old-entry deletion. Redis remains an at-least-once
+  transport; live crash/failover and protected-effect idempotency evidence are
+  still required.
 - Health/metrics endpoints, structured logging helpers, traces/metrics modules, LiteLLM and OmniRoute services/pages, optional Prometheus dev profile, and Playwright/API health tooling.
 - The read-only `GET /system/diagnostics` route performs a database `SELECT 1`, router/tool-service `/health` probes, and a non-mutating object-store `head_bucket` check when endpoint credentials are configured. It returns only bounded status, latency, HTTP/connection flags, and exception type; dependency payloads, URLs, credentials, and error text are never returned. A failed dependency yields an HTTP 200 `degraded` report, while missing control-plane storage remains a 503 boundary. Focused API coverage exercises healthy, degraded, unconfigured, unavailable-storage, and payload-redaction cases (`2860838`).
 - `scripts/mas-ctl` is the API-facing operator wrapper for `status`, `diagnostics`, `bootstrap`, `resume`, and `shutdown`. It uses the operator API key from an explicit argument or environment, performs no container lifecycle work, never emits upstream error bodies, and makes bootstrap readiness require both `/health` and an `ok` `/system/diagnostics` result (`380daf5`; executable mode `f8df50e`).
@@ -150,6 +155,7 @@ AIAT must make dangerous automation bounded, attributable, observable, and recov
 - Policy: [`mas/packages/mas-core/mas_core/policy/`](../../mas/packages/mas-core/mas_core/policy/)
 - Observability: [`mas/packages/mas-core/mas_core/observability/`](../../mas/packages/mas-core/mas_core/observability/)
 - Router: [`mas/apps/message-router/message_router/`](../../mas/apps/message-router/message_router/)
+- Router atomicity: [`redis_client.py`](../../mas/apps/message-router/message_router/redis_client.py), [`routes_publish.py`](../../mas/apps/message-router/message_router/routes_publish.py), [`tasks.py`](../../mas/apps/message-router/message_router/tasks.py), and [`test_architecture_failure_characterization.py`](../../mas/apps/message-router/tests/test_architecture_failure_characterization.py)
 - Request trace middleware: [`mas/apps/orchestrator-api/orchestrator_api/main.py`](../../mas/apps/orchestrator-api/orchestrator_api/main.py), [`mas/apps/message-router/message_router/main.py`](../../mas/apps/message-router/message_router/main.py), [`mas/apps/tool-service/tool_service/main.py`](../../mas/apps/tool-service/tool_service/main.py), [`mas/packages/mas-tools-sdk/mas_tools_sdk/client.py`](../../mas/packages/mas-tools-sdk/mas_tools_sdk/client.py)
 - Worker message trace boundary: [`mas/packages/mas-core/mas_core/agent_runtime/base.py`](../../mas/packages/mas-core/mas_core/agent_runtime/base.py), [`mas/packages/mas-core/mas_core/agent_runtime/router_client.py`](../../mas/packages/mas-core/mas_core/agent_runtime/router_client.py)
 - Trace evidence read model: [`mas/packages/mas-core/mas_core/observability/trace_evidence.py`](../../mas/packages/mas-core/mas_core/observability/trace_evidence.py), [`/observability/traces/{trace_id}`](../../mas/apps/orchestrator-api/orchestrator_api/main.py), [`mas/scripts/check_trace_evidence.py`](../../mas/scripts/check_trace_evidence.py)
@@ -261,6 +267,9 @@ AIAT must make dangerous automation bounded, attributable, observable, and recov
   projections are bounded read-model inputs, not a replacement for full
   distributed spans.
 - Native-Linux browser E2E, cold-crash, backup/restore, and disaster-recovery evidence is incomplete.
+- Redis publication/requeue scripts have deterministic unit coverage, but the
+  deployed Redis outage, process-death, failover, and duplicate-effect matrix
+  remains an operator-owned release gate.
 
 ## Acceptance criteria
 

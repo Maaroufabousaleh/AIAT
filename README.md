@@ -17,6 +17,29 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   Governed orchestration for a one-operator AI company.
 </p>
 
+The canonical service workspace lives under `mas/`: use `mas/pyproject.toml`,
+`mas/uv.lock`, `mas/alembic.ini`, and `mas/run_tests.py` for current commands.
+The root-level counterparts are retained only for compatibility with older
+root-oriented tooling.
+
+The repository root is intentionally reserved for navigation, policy, launch
+configuration, and project metadata. Historical design inputs are retained in
+[`Docs/archive/`](Docs/archive/) so the GitHub landing page stays focused on
+the maintained system.
+
+The core MAS stack, configurable flows, project context layer, worker registry,
+credentials manager, privileged-operation policy, dashboard, and compose/systemd
+deployment files are implemented in code. Current implementation truth and
+remaining validation work are tracked by the root
+[`ROADMAP.md`](ROADMAP.md), the maintained feature/plan set under
+`Docs/current/`, and the current release ledger under `mas/docs/`. Older
+`.github/prompts/` and `Docs/AIAT_LIVE_TEST_LEDGER.md` files remain historical
+research/evidence inputs and do not override the roadmap.
+
+Use the maintained [AIAT Implementation Index](Docs/current/AIAT_IMPLEMENTATION_INDEX.md)
+for a compact capability-by-capability map linking implementation evidence,
+remaining gates, and the detailed documents to open next.
+
 <p align="center">
   <a href="https://github.com/Maaroufabousaleh/AIAT/actions/workflows/aiat-ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Maaroufabousaleh/AIAT/aiat-ci.yml?branch=main&style=flat-square&label=CI" alt="AIAT CI status"></a>
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.11%2B-0b1118?style=flat-square&logo=python&logoColor=0b1118&labelColor=61d5e8" alt="Python 3.11 or newer"></a>
@@ -150,6 +173,7 @@ the maintained reading paths.
 | --- | --- |
 | Programme intent and boundaries | [`AIAT_TARGET_PROGRAMME.md`](AIAT_TARGET_PROGRAMME.md) |
 | Ordered implementation work | [`ROADMAP.md`](ROADMAP.md) |
+| Compact implementation/evidence index | [`Docs/current/AIAT_IMPLEMENTATION_INDEX.md`](Docs/current/AIAT_IMPLEMENTATION_INDEX.md) |
 | Current feature truth | [`Docs/current/`](Docs/current/) |
 | System architecture | [`mas/docs/ARCHITECTURE.md`](mas/docs/ARCHITECTURE.md) |
 | Deployment and local operations | [`Docs/PM_Platform_Deployment.md`](Docs/PM_Platform_Deployment.md), [`mas/docs/PM_ACTIVE_DEPLOYMENT.md`](mas/docs/PM_ACTIVE_DEPLOYMENT.md) |
@@ -178,6 +202,12 @@ profiles:
 Read [`agents.md`](agents.md) for the internal architecture and resource policy,
 and [`mas/docs/provenance/release_ledger.yaml`](mas/docs/provenance/release_ledger.yaml)
 for machine-readable evidence posture.
+
+Use `Docs/AIAT_LIVE_TEST_LEDGER.md` for current live-test evidence, defects,
+fixes, enhancement opportunities, and remaining work. Historical root-level
+design inputs, research, and review drafts are catalogued in
+[`Docs/archive/README.md`](Docs/archive/README.md) and do not override the
+programme, roadmap, current feature specifications, or release ledgers.
 
 ## Licence and provenance
 

@@ -40,6 +40,9 @@ def test_docs_index_has_one_target_thirteen_features_and_three_plans() -> None:
     assert report["status"] == "pass"
     assert report["canonical_feature_count"] == 13
     assert report["canonical_plan_count"] == 3
+    assert report["maintained_document_count"] == 23
+    assert report["link_checked_document_count"] == 23
+    assert report["implementation_index"] == {"status": "pass"}
     assert report["policy"] == {
         "licence_metadata_is_gate": False,
         "licence_detail_surface": "metadata-only",

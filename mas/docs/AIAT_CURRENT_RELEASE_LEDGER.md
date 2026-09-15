@@ -5,6 +5,21 @@
 **Working-tree state:** clean published `main` tree; this ledger is a P0 progress ledger, not a production release certificate
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
+## Current working-tree refresh — 2026-09-15
+
+The current static release-ledger invocation reports **64/64 pass**. The
+authenticated local-Compose live sweep at `2026-09-15T12:11:27Z` against
+revision `0f068476db908ee43bbc52900bf421394a121e6c` reports **83/89 pass,
+0 fail, 6 blocked**, and four pending evidence items. The blocked checks are
+native-host/environment, database migration-head reachability,
+deployment-image provenance, Firecracker worker-pool readiness, outbound mail
+lifecycle, and operator-selected self-improvement scope. The source migration
+head is `0045_worker_tool_effects`; the currently running local Compose
+database remains at `0042_worker_run_host_binding`, and no migration or
+service restart was performed. The scalar live summary is retained at
+[`provenance/release_ledger_live_compose_local_current.json`](provenance/release_ledger_live_compose_local_current.json).
+The global decision remains **NO-RELEASE**.
+
 The default Cloudflare/Resend v1 email identity path is separately
 live-certified. The secret-safe evidence in
 [`../../Docs/AIAT_Email_Identity_Live_Certification.md`](../../Docs/AIAT_Email_Identity_Live_Certification.md)
@@ -449,7 +464,7 @@ approved status. `176055e` packages the canonical candidate provenance in the
 orchestrator API image and resolves source-style refs against that image-local
 evidence root without accepting arbitrary paths.
 
-The current `check_release_ledger.py --json` static invocation reports 63/63
+The current `check_release_ledger.py --json` static invocation reports 64/64
 passing checks. Any older 61/61 wording in historical ledger rows is retained
 for provenance and does not override the machine-readable result. The retained
 native Ubuntu gVisor certificate [`native_gvisor_certification_live.json`](provenance/native_gvisor_certification_live.json)
@@ -481,7 +496,7 @@ wave (`d92b3dc`/`407a4f9`), the live AIAT credentials-manager boundary certifica
 (`12ba7c7`/`1808a15`/`1c1df03`), the fresh configured Compose trace/metrics/worker/runtime/model
 read-backs (`cb47e3b`), the live flow-runtime certificate (`27247f4`), the encrypted
 object-store envelope and fresh-process restore checks (`57504a7`), and the static
-aggregation at 63/63 checks passing; the current live profiles retain their
+aggregation at 64/64 checks passing; the current live profiles retain their
 own pending/blocked counts and the working tree remains dirty;
 the conservative decision remains
 **NO-RELEASE**. The `fa42284` implementation certificate and `0e0a76f`
@@ -542,6 +557,22 @@ Firecracker, outbound mail, self-improvement source, pending security review,
 and clean-worktree gates remain open. A transient first-aggregate
 `network_boundary:live` health failure was excluded after the narrow and
 broader reruns passed; it is classified as infrastructure/environment timing.
+
+The latest authenticated local Compose sweep at
+`2026-09-15T12:11:27Z` against implementation revision
+`0f068476db908ee43bbc52900bf421394a121e6c` reports 83 passes, zero failures,
+six externally blocked checks, and four pending evidence items across 89
+checks. It uses the published loopback ports and operator/tool-service
+authentication supplied through the process environment; no credentials or
+payloads are retained. The bounded live tool-trace, catalogue/metrics/runtime,
+trace/SLO, and worker-reconciliation checks pass in this sweep. The remaining
+blocked checks are native-host/environment, database migration-head
+reachability, deployment-image provenance, Firecracker worker-pool readiness,
+outbound mail lifecycle, and operator-selected self-improvement scope. The
+scalar summary is retained at
+[`provenance/release_ledger_live_compose_local_current.json`](provenance/release_ledger_live_compose_local_current.json).
+The global decision remains **NO-RELEASE** because those blockers, the pending
+evidence items, and the dirty worktree remain.
 
 The immediately preceding aggregate invocation used the wrong local API-key
 alias and returned a 403 trace read-back; it is classified as harness/configuration
@@ -969,7 +1000,7 @@ release decision are intentionally not recomputed from the dirty working tree.
 | Built-in PM/SCM mocked HTTP conformance | static/unit/fixture; provider live boundary | PASS | Commit `7f6bfc5`; `uv run --isolated pytest packages/mas-core/tests/test_provider_adapter_http_conformance.py -q`; `uv run --isolated python scripts/check_provider_adapter_http_conformance.py --json` drives eight real-adapter YouTrack/GitHub cases through local mocked responses for health/configuration, projection/read-back, cursors, deactivation, comments/links, GitHub source-control paths, webhook handling, and retryable/permanent failures; no external HTTP or provider mutation occurs |
 | PM inbound canary replay and ACTIVE activation scope | static/unit/API/storage (live provider boundary) | PASS (bounded governance; live open) | Commit `72e1aef`; `uv run --isolated pytest apps/orchestrator-api/tests/test_pm_control_plane.py packages/mas-core/tests/test_pm_integrations.py packages/mas-core/tests/test_phase7_storage.py -q` plus `check_api_contract.py --json` pass. ACTIVE inbound mutations persist sanitized actor/command/projection evidence atomically; verified terminal-conflict replay is digest/expiry/arming/connection/one-command gated; ACTIVE lifecycle plans snapshot trusted actor scope/blast radius/default-deny policy and transactional approval evidence; evidence-only reconciliation observations remain non-blocking while actionable conflicts stay blocking. Operator-owned verified replay fixtures and provider/native live canary, rollback, and restore evidence remain open; licence metadata is informational only |
 | External-account lifecycle fixture | static/unit/fixture; provider live boundary | PASS | `uv run --isolated pytest packages/mas-core/tests/test_external_account_lifecycle.py -q`; `uv run --isolated python scripts/check_external_account_lifecycle.py --json` drives the actual `IdentityService` through eight in-memory cases for category approval/idempotency, one-use browser leases, credential rotation/session revocation, closure approval, immediate suspension, fail-closed unknown categories, and secret-safe output without external account/provider calls |
-| Machine-readable release ledger | static aggregation; live boundary | PASS (63/63 static + configured live evidence); BLOCKED/NO-RELEASE (live profiles) | `uv run --isolated python scripts/check_release_ledger.py --json` registers and passes the bounded object-store lifecycle and trace-retention execution checks (`aa7d2b2`) plus encrypted-backup and fresh-process restore checks (`57504a7`); scalar summary is [`provenance/release_ledger_static_current.json`](provenance/release_ledger_static_current.json). The current unconfigured 85-check `--live --json` aggregation at 2026-08-19T04:47:35Z (revision `57504a7`, evidence `cb290ff`) records 71 passes, zero failures, 14 externally blocked probes, and four pending evidence items; the corrected configured Compose 81-check aggregation at 2026-08-18T23:57:08Z (revision `296d89b`, evidence `f6063e0`) records 76 passes, zero failures, 5 externally blocked probes, and four pending evidence items. Image identity, trace, tool-trace, SLO, binding, provider-diverse object-store, gateway-recovery, identity-provider conformance, model-profile, and credentials evidence remain scalar and bounded; native release host, image SBOM/scan artifacts, gVisor, Firecracker, provider/mail, unresolved security findings, external KMS/key custody, clean-host/disaster recovery, and self-improvement source remain separate open gates. A prior wrong-API-key harness result is explicitly excluded; licence metadata remains non-gating. |
+| Machine-readable release ledger | static aggregation; live boundary | PASS (64/64 static + current live evidence); BLOCKED/NO-RELEASE (live profile) | `uv run --isolated python scripts/check_release_ledger.py --json` now includes the checked-in migration-head guard and reports 64/64 static checks passing; scalar summary is [`provenance/release_ledger_static_current.json`](provenance/release_ledger_static_current.json). The authenticated local Compose aggregation at 2026-09-15T12:11:27Z records 83 passes, zero failures, 6 externally blocked probes, and four pending evidence items across 89 checks; the scalar summary is [`provenance/release_ledger_live_compose_local_current.json`](provenance/release_ledger_live_compose_local_current.json). The live migration-head query is blocked because the host-side read-only DSN cannot reach the published port; source is at 0045 while the running local database remains at 0042. Native release host, image SBOM/scan artifacts, gVisor, Firecracker, provider/mail, unresolved security findings, external KMS/key custody, clean-host/disaster recovery, and self-improvement source remain separate open gates. A prior wrong-API-key harness result is explicitly excluded; licence metadata remains non-gating. |
 | Project evidence package | static/unit/API/dashboard (preparatory P1) | PASS (committed core/API/dashboard surfaces; project-page/live preparatory) | Commits `a44a1aa`, `d0472af`, `cbf00d9`, `33e0384`, `82bbaeb`, `1112d5e`, and dashboard error-state repair `fc4f0fa`; the deterministic `EvidencePackage` builder, scope-policy resolver, isolated package/policy API router boundary, operator-only idempotent snapshot upsert, project workspace coverage, and API/UI evidence-package categories pass focused tests. `aiat.project-evidence-package.v1` groups repository, documents, tests, security, deployment, cost, approvals, flow, worker, artifact, and audit sources, while licence/restriction values remain metadata-only notices; live durable snapshot/provider/worker generation and native recovery remain open |
 | Project evidence package stale/retry recovery | static/build/source-built Playwright (preparatory P1) | PASS | Commit `bc80ad5`; `npm run typecheck`, targeted ESLint, full dashboard `npm run lint` (two unrelated hook warnings), `npm run build`, and the source-built `project-evidence-states.spec.ts` pass 1/1. The page uses `cache: "no-store"`, retains the last successful package when a refresh fails, labels it as last known, and exposes a keyboard-visible Retry action that clears after successful recovery; initial failures remain explicit. Full project-page composition and live provider/worker evidence remain open |
 | Project evidence package accessibility baseline | static/build/source-built Playwright (preparatory P1) | PASS | Commit `89091c1`; targeted ESLint, `npm run typecheck`, `npm run build`, and the source-built `project-evidence-states.spec.ts` pass 1/1. The page exposes named main/package sections, labeled 44px back/refresh actions, and a captioned evidence table with scoped column headers; the Impeccable detector returned no warnings for the changed page/test. This is a focused page-level baseline; full WCAG/native-Linux visual certification and live provider/worker evidence remain open |

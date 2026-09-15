@@ -1,13 +1,13 @@
 {
   "schema_version": "aiat.release-ledger-live-compose-local-summary.v1",
   "programme_scope": "personal-internal-only",
-  "observed_at": "2026-08-21T17:42:45.830393+00:00",
+  "observed_at": "2026-09-15T12:11:27.606576+00:00",
   "profile": "live-compose-local",
   "status": "blocked",
   "release_decision": "NO-RELEASE",
   "counts": {
-    "total": 85,
-    "pass": 79,
+    "total": 89,
+    "pass": 83,
     "fail": 0,
     "blocked": 6
   },
@@ -18,34 +18,24 @@
     "worktree is dirty"
   ],
   "git": {
-    "revision": "13c96c13ae13f8b1935c227db89a77a867e551ec",
+    "revision": "0f068476db908ee43bbc52900bf421394a121e6c",
+    "branch": "agent/fix-review-p1",
     "working_tree_clean": false,
-    "changed_path_count": 2
+    "changed_path_count": 127
   },
   "endpoint_mode": "published loopback ports for the local Compose stack; endpoint values are not retained",
   "blocked_checks": [
     "release_environment:live",
+    "database_migration_head:live",
     "image_provenance:live",
-    "sandbox_runtime_readiness:live",
     "firecracker_worker_pool_readiness:live",
     "outbound_mail_lifecycle:live",
     "self_improvement_candidate_detection:live"
   ],
   "failed_checks": [],
-  "excluded_attempts": [
-    {
-      "observed_at": "2026-08-21T17:40:21.556173+00:00",
-      "check": "network_boundary:live",
-      "classification": "infrastructure/environment transient container-health race",
-      "initial_summary": "team-dept-devops control-plane storage health failed",
-      "narrow_rerun": "pass",
-      "broader_rerun": "pass",
-      "retained_payloads_or_logs": false
-    }
-  ],
   "payload_free": true,
   "secret_free": true,
   "licence_metadata_is_gate": false,
   "resource_gate_status": "pass",
-  "invalid_resource_run_excluded": true
+  "invalid_resource_run_excluded": false
 }

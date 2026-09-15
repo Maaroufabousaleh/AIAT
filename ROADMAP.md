@@ -1,9 +1,9 @@
 # AIAT Roadmap
 
 **Roadmap baseline:** 2026-08-10
-**Last updated:** 2026-09-09
+**Last updated:** 2026-09-15
 **Programme authority:** [AIAT_TARGET_PROGRAMME.md](AIAT_TARGET_PROGRAMME.md)  
-**Current phase:** Integrated development and system testing (P0 release carryovers tracked)
+**Current phase:** P0 release integrity (integrated development and system testing carryovers tracked)
 
 This is the root navigation and delivery-order document for the personal AIAT instance. The target programme defines the system; the feature specifications define each subsystem; the plans below define execution. Historical plans remain useful evidence but do not override this roadmap.
 
@@ -13,6 +13,37 @@ remain design context only. Exact resource terms and notices are maintained in
 the [third-party metadata catalogue](mas/docs/provenance/third_party_components.yaml)
 and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md); they do not create an
 AIAT selection or execution gate.
+
+The canonical OSS architecture, simplification, benchmark, and implementation
+plan is [`mas/docs/AIAT_OSS_ARCHITECTURE_AND_IMPLEMENTATION_PLAN.md`](mas/docs/AIAT_OSS_ARCHITECTURE_AND_IMPLEMENTATION_PLAN.md).
+It is authoritative for OSS decisions and migration sequencing; the target
+programme and release ledger remain authoritative for broader architecture and
+release status.
+
+The maintained [AIAT Implementation Index](Docs/current/AIAT_IMPLEMENTATION_INDEX.md)
+is the compact feature-by-feature entry point to implementation status, evidence,
+remaining gates, and the next document to open. It complements this roadmap;
+it does not replace the detailed feature specifications or release ledger.
+
+The current core migration head is `0045_worker_tool_effects`. The
+project-transition notification intent is persisted with project state and
+history and drained by a bounded stable-ID dispatcher; specialist worker
+runtime references are now persisted per dispatch attempt for restart lookup;
+OpenCode and the inactive OpenHands candidate consume those references for
+bounded subordinate status observations, while the controller records the
+observation without changing canonical run state. Compatible runtime-
+reconciliation and cancellation-receipt hooks remain while adapter-specific
+termination/result recovery and live evidence are open; live outage/restart
+evidence remains an R1 release gate. See the [implementation index](Docs/current/AIAT_IMPLEMENTATION_INDEX.md#current-capability-index)
+for the maintained feature/status/evidence map.
+
+The governance-agent plane now has an additive, project-scoped model snapshot
+carrier: snapshot-bearing messages are resolved through the TeamRunner
+control-plane storage boundary and bound to `AgentBase` for that dispatch.
+When TeamRunner has its control-plane storage boundary, model-bearing messages
+without a snapshot are now rejected rather than falling back to a configured or
+automatic model. Direct AgentBase compatibility fixtures remain explicitly
+unbound; this does not merge TeamRunner/AgentBase into `WorkerAdapter`.
 
 ## Current integrated baseline — 2026-09-09
 
@@ -25,7 +56,7 @@ carryovers, and the global decision remains **NO-RELEASE**.
 | Area | Current state |
 | --- | --- |
 | Integration baseline | Reviewed feature work is merged on the temporary integration branch from `origin/main` at `2c99b75a`; the reviewed OpenHands tip is `15d2c1a874a2748548338066782b89561353de2e`. |
-| Static release ledger | The merged clean tree reports **63/63 pass**, 0 failed, 0 blocked, and 2 pending evidence items; the checker still returns `NO-RELEASE` because a live profile is not included and pending evidence remains. |
+| Static release ledger | The merged clean tree reports **64/64 pass**, 0 failed, 0 blocked, and 2 pending evidence items; the checker still returns `NO-RELEASE` because a live profile is not included and pending evidence remains. |
 | OpenHands | v1.43.0 remains an inactive/certifying candidate. Exact source/image pins and provider-route evidence are retained; real file editing and passing tests are proven, but successful live terminal worker completion is not. The latest classification is `BLOCKED_EXECUTION_COMPLETION` with the final model turn unresolved historically. |
 | OpenCode | Current default and unchanged. OpenHands remains a subordinate candidate and has not been activated. |
 | Provider route | Groq provider validation, baseline discovery, LiteLLM routing, and OpenHands infrastructure passed in the latest retained provider-backed run; credentials remain operator-owned and are not documented here. |
@@ -48,12 +79,24 @@ carryovers, and the global decision remains **NO-RELEASE**.
 | Phase | State | Evidence-backed status |
 | --- | --- | --- |
 | R0 — documentation authority | complete | Canonical target, thirteen feature documents, three plans, root navigation, the tracked `mas/uv.lock`, and the personal/internal metadata-only policy are present. Both the current workspace and a clean Git archive pass `check_docs_index.py`; regression coverage asserts the thirteen-feature/three-plan authority set (`0dbfdb7`), and concrete licence identifiers are kept in metadata surfaces by the scope guard (`dee1a7e`). |
-| R1 — P0 release integrity | in progress | Static ledger: 63/63 pass, including the Firecracker worker-pool readiness, bounded gateway-provider-recovery, security-finding-review, multipart, object-store resource-profile, object-store provider-outage, object-store lifecycle, trace-retention execution, encrypted object-store backup, fresh-process restore, AIAT credentials-manager, identity-provider-conformance, and live-flow-runtime children; release-ledger regression coverage asserts the registered children remain present and passing (`aa7d2b2`, `7f2ac9c`, `a864970`, `23e908e`, `424d310`, `bb0fa8f`, `407a4f9`, `d101901`, `8dbf508`, `b327e0e`, `86be2a8`, `c568b87`, `27247f4`, `57504a7`). The policy-backed network matrix contract (`96fb71f`) now feeds the same protected/allowed rows to static and live checks, the OpenCode Compose sandbox contract is statically enforced (`2c098f5`), and the refreshed local WSL2 run passes 11/11 runners. The latest unconfigured local live ledger snapshot at `2026-08-19T04:47:35Z` records 71 pass, 0 fail, 14 blocked, 4 pending, and `NO-RELEASE` across 85 checks after the lifecycle, retention-execution, encrypted-backup, and clean-process-restore rows were registered; the latest corrected configured Compose aggregation is recorded separately with 76 pass, 0 fail, 5 blocked, and 4 pending across 81 checks. The retained live flow-runtime certificate (`27247f4`) passes 12/12 scalar cases for parallel/join/switch/cancel/timeout/escalation/safe-retry and deletes all disposable fixtures; native watchdog and cold-crash recovery remain separate gates. The provider-diverse multipart/resource/outage, retained gateway provider-retry, and live default-worker binding certificates are now validated through the retained-live evidence path; trace transport/tool, metrics-series, worker-reconciliation, runtime-benchmark, model-catalogue, and credentials evidence remains scalar-only. The identity-provider checker adds mocked Stalwart/Resend conformance without claiming external account, delivery, outage, or restore evidence. The gateway certificate advances only bounded transient retry, and the binding certificate advances only persisted declaration reconciliation; external outage/restore, callback/delivery, worker canary, and sandbox evidence remain separate. The OpenCode/LiteLLM profile identity reconciliation is fixed, and the exact unreferenced stale smoke profile has now been removed with complete 93/93 catalogue read-back. SLO remains descriptive/attention because native sources are not observed. Native-Linux, deployment image digests/SBOM/scan artifacts, gVisor/Firecracker, non-mail provider/KMS, clean-worktree, unresolved OpenCode findings, clean-host/disaster-recovery, worker canary/rollback, and selected self-improvement evidence remain open; the default Cloudflare/Resend email identity path is separately live-certified, while optional profile and broader mail-edge outage/restore evidence remain separate. |
+| R1 — P0 release integrity | in progress | Static ledger: 64/64 pass, including the Firecracker worker-pool readiness, bounded gateway-provider-recovery, security-finding-review, multipart, object-store resource-profile, object-store provider-outage, object-store lifecycle, trace-retention execution, encrypted object-store backup, fresh-process restore, AIAT credentials-manager, identity-provider-conformance, live-flow-runtime, and source migration-head guard children; release-ledger regression coverage asserts the registered children remain present and passing. The policy-backed network matrix contract feeds the same protected/allowed rows to static and live checks, the OpenCode Compose sandbox contract is statically enforced, and the refreshed local WSL2 run passes 11/11 runners. The latest authenticated local Compose live sweep at `2026-09-15T12:11:27Z` records 83 pass, 0 fail, 6 blocked, 4 pending, and `NO-RELEASE` across 89 checks; the database migration-head check is additionally blocked because the host-side read-only DSN cannot reach the published port while the running local database remains at `0042_worker_run_host_binding` and source is at `0045_worker_tool_effects`. Native-Linux, deployment image digests/SBOM/scan artifacts, gVisor/Firecracker, non-mail provider/KMS, clean-worktree, unresolved OpenCode findings, clean-host/disaster-recovery, worker canary/rollback, and selected self-improvement evidence remain open; the default Cloudflare/Resend email identity path is separately live-certified, while optional profile and broader mail-edge outage/restore evidence remain separate. |
 | R2–R5 — P1 default programme completion | preparatory implementation | Control-plane, worker, flow, evidence, identity, provider, executive, SDK, and dashboard contracts are substantially implemented and statically tested; the current local Compose dashboard suite passes 58/59 tests (one explicit operator-fixture skip), including hierarchy communication-policy/path tracing, retained hiring evaluation details, focused 2/2 shell accessibility, 2/2 theme preference, identity stale-record/retry, PM integration conflict/stale retry, project-detail stale/retry, and system-visualization partial/offline retry coverage. Source-built governance, System Control, Projects list, Project evidence package, Tools catalogue, dead-letter queue, credentials, Metrics, Flows, flow editor, new-flow builder, project detail, project workspace, Container Logs, Agent Streams, Hiring Board, CEO Live Feed, CEO Command Center chat, evidence-detail, system-visualisation, PM integrations, System Overview, and shared identity-resource stale/recovery/accessibility tests also pass; selector repairs are recorded in `d5f596e` and `514aeeb`, the project evidence package stale/retry group is recorded in `bc80ad5`, its focused accessibility baseline in `89091c1`, the project evidence package denial recovery in `00f81b5` (source-built matrix 3/3), the Evidence Detail denial recovery in `23e2db9` (source-built matrix 11/11), the System Overview access-denied recovery in `b0ab779` (source-built 403 fixture 1/1), the new-flow builder access-denied recovery in `b07299b` (source-built matrix 3/3), the Tools catalogue focused accessibility baseline in `83e39e6`, the dead-letter queue focused accessibility baseline in `99a19a2`, the credentials focused accessibility baseline in `93fdfbc`, the Metrics focused accessibility baseline in `da113af`, the Container Logs focused accessibility baseline in `993b1cb`, the Agent Streams focused accessibility baseline in `d320383`, the Hiring Board focused accessibility baseline in `826b4c5`, the CEO Live Feed focused accessibility baseline in `1f947a9`, the CEO Command Center chat focused accessibility baseline in `8ffb5df`, the Governance focused accessibility baseline in `f4ae7eb`, the System Control focused accessibility baseline in `543f392`, the Project Detail focused accessibility baseline in `40b87dd`, the evidence-detail focused accessibility baseline in `32f3a76`, the system-visualisation focused accessibility baseline in `ed5e551`, the PM integrations focused accessibility baseline in `bbd6ba3`, the System Overview focused accessibility baseline in `c07b4a6`, and the shared identity-resource accessibility baseline in `a260e04`; flow-editor load/stale/retry recovery is recorded in `b5098e7`, project-detail first-load/retry recovery is recorded in `f364763`, project-workspace stale/retry recovery is recorded in `cb1c665`, Projects list read/mutation denial recovery is recorded in `17d25b0` (source-built denial matrix 4/4), Project Evidence canonical-read denial recovery is recorded in `00f81b5` (source-built denial matrix 3/3), and Evidence Detail bounded scalar-read denial recovery is recorded in `23e2db9` (source-built denial matrix 11/11). Compose also passes the bounded LangGraph/CrewAI adapter lifecycle probe with exact locked package parity (LangGraph `0.6.11`, CrewAI `1.6.1`); page-by-page light/dark parity, native-Linux, workforce, model-backed canary/live-run, sandbox, rollback, and provider certification remain open. |
 
-The current `check_release_ledger.py --json` static invocation reports 63/63
+The current `check_release_ledger.py --json` static invocation reports 64/64
 passing checks; older 61/61 references above are retained as historical
 snapshot wording and do not supersede the machine-readable result.
+
+The latest authenticated local Compose live sweep at
+`2026-09-15T12:11:27Z` against revision
+`0f068476db908ee43bbc52900bf421394a121e6c` reports 83/89 checks passing,
+zero failures, six externally blocked checks, and four pending evidence items.
+It supersedes the older configured live aggregates for current local evidence;
+the remaining blockers are native-host/environment, database migration-head
+reachability, deployment-image provenance, Firecracker worker-pool readiness,
+outbound mail lifecycle, and operator-selected self-improvement scope. The
+source migration head is `0045_worker_tool_effects`; the running local Compose
+database remains at `0042_worker_run_host_binding` and was not migrated in this
+validation. The global decision remains **NO-RELEASE**.
 
 The exact candidate commit `61f7d49b905a109a154f961e147f783016792218` was
 also evaluated from a fresh Git clone: the clone was clean and its static
@@ -1150,6 +1193,7 @@ executive-form, and confirmation controls (`f4ae7eb`).
 
 | Need | Read |
 | --- | --- |
+| Compact index of implemented capabilities, evidence, remaining work, and next documents | [AIAT Implementation Index](Docs/current/AIAT_IMPLEMENTATION_INDEX.md) |
 | Programme vision, architecture laws, minimal/optional stack, consolidated decisions, programme completion | [AIAT Target Programme](AIAT_TARGET_PROGRAMME.md) |
 | Documentation audit, authority precedence, and clean-checkout limitation | [Documentation Authority Status](Docs/current/DOCUMENTATION_AUTHORITY_STATUS.md) |
 | Current control plane, company, authority, policy, and budget target | [Control Plane and Company](Docs/current/FEATURE_CONTROL_PLANE_AND_COMPANY.md) |
@@ -2072,6 +2116,15 @@ release transitions. The local certificate at
 [`worker_run_host_binding_postgres_evidence.json`](mas/docs/provenance/worker_run_host_binding_postgres_evidence.json)
 survives connection reopen and cleans its fixture graph; it is assignment
 authority only, so live worker/provider/sandbox execution remains open.
+
+The current working tree narrows the settlement window: normal reservation and
+run-host binding commit/release now use the same database transaction through
+the reservation ledger's in-transaction primitive. A failed new assignment,
+including a host-loss replacement, releases the newly-created reservation,
+while replayed reservations are left untouched. Host-loss replacement binding
+and replacement-reservation commit now share one transaction after scheduling;
+reservation creation, worker claims, evidence/usage settlement, and live host
+recovery still need explicit reconciliation and fault evidence.
 
 **Progress:** the provider-neutral `aiat.object-store-conformance.v1` fixture
 and offline report command pass against the deterministic in-memory adapter.

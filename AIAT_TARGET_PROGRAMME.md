@@ -89,7 +89,7 @@ The `license_provenance_evaluator` collects and reports this metadata; it is not
 
 The repository is a substantial working implementation rather than a greenfield proposal. The reviewed baseline contains 863 tracked files, 417 Python files, 169 TypeScript/JavaScript files, 116 test files, 41 worker YAML manifests, 11 team manifests, and 11 governance prompts. These counts are a repository snapshot, not release metrics.
 
-The core database migration graph has a single current head at `0036_native_trace_spans`, with historical branches reconciled at `0008`. The identity service has its own migration line, currently headed by `0004_provider_neutral_mail` after `0003_mail_edge_observations`. The current schema includes durable records for projects, state transitions, documents, reviews, approvals, sprints, issues, context, artifacts, capabilities, workers, stewards, runtime provenance, certification, model profiles, worker runs, flows, company manifests, budgets, API request observations, native payload-free trace spans, directly trace-correlated model/artifact/integration evidence, PM integrations, provider-neutral email bindings and inbound sync state, evidence, and outbox/reconciliation state.
+The core database migration graph has a single current head at `0045_worker_tool_effects`, with historical branches reconciled at `0008`. Historical certificates may intentionally name the migration revision they exercised; they do not override the current head. The identity service has its own migration line, currently headed by `0004_provider_neutral_mail` after `0003_mail_edge_observations`. The current schema includes durable records for projects, state transitions, documents, reviews, approvals, sprints, issues, context, artifacts, capabilities, workers, stewards, runtime provenance, certification, model profiles, worker runs, per-attempt subordinate runtime bindings, mediated worker-tool effect outcomes, flows, company manifests, budgets, API request observations, native payload-free trace spans, directly trace-correlated model/artifact/integration evidence, PM integrations, provider-neutral email bindings and inbound sync state, evidence, and outbox/reconciliation state.
 
 ### 2.1 Capability status snapshot
 
@@ -171,11 +171,29 @@ Only AIAT may authoritatively write:
 
 External runtimes may propose actions and return evidence. External PM, SCM, model, mail, identity, automation, browser, coding, or observability systems may project or execute approved actions. None may replace AIAT's authority.
 
-### 3.2 One writer per state machine
+### 3.2 Explicit ownership per state machine and runtime plane
 
-- `WorkerRunController` is the sole writer of durable worker-run lifecycle state.
+- The application/business authority for canonical project transitions is
+  `WorkflowController`, backed by the storage transaction primitive. The
+  project-transition outbox intent is committed with project state/history;
+  the bounded dispatcher publishes the resulting notification later. This
+  describes business authority, not a claim that no lower-level storage
+  function can issue SQL.
+- Specialist worker-run ownership is deliberately split. `HostScheduler`
+  chooses placement; the host reservation/run-binding system owns resource
+  reservations, bindings, and generation constraints; `HostExecutor` and its
+  storage claim primitive own the `QUEUED -> CLAIMED` acquisition edge; host
+  recovery owns stale-host fencing and legitimate requeue transitions;
+  `WorkerRunController` owns post-claim validation/readiness, dispatch,
+  running, pause/resume, tool mediation, result/evidence settlement, and
+  normal execution terminal transitions; `WorkerAdapter` owns subordinate
+  runtime behavior only and must not write canonical project or worker-run
+  business state.
+- `TeamRunner` and its `AgentBase`-derived executives, C-suite, admin, and
+  sub-agent objects form the current governance/company-agent runtime plane.
+  They are intentionally distinct from the specialist worker plane and are
+  not forced through `WorkerAdapter` merely for conceptual uniformity.
 - The flow controller is the sole writer of flow-instance and flow-node execution state.
-- The project workflow controller is the sole writer of canonical project transitions.
 - Company-manifest application owns company configuration versions and active pointers.
 - Integration lifecycle plans and governed apply/rollback operations own PM/SCM connection state.
 - Identity-service lifecycle operations own mailbox, account, browser-session, and outbound-mail state.
@@ -809,13 +827,13 @@ The identity service remains a dedicated boundary with its own database and migr
 
 ### 10.3 Mail deployment profiles
 
-Three profiles are valid, with one selected per environment:
+The default and optional profiles are explicit, with one selected per environment:
 
 | Profile | Use | Rules |
 | --- | --- | --- |
+| Default production | Cloudflare Email Routing + Worker/D1-only, AIAT identity-service, direct Resend API (optional Worker R2 profile) | Requires provider resources, exact provider-issued DNS/TLS values, narrow runtime secrets, and live inbound/outbound certification. No public SMTP listener or direct-MX outbound path is required. |
 | Local development | `agents.aiat.local` loopback Stalwart profile | No public delivery claim; local-only ports and test credentials. |
-| Direct production | Self-hosted Stalwart with Resend outbound | Requires public DNS, inbound reachability, TLS, DKIM/SPF/DMARC, backup, abuse controls, and live send/receive certification. |
-| SMTP gateway production | Public VPS gateway over WireGuard to private/home Stalwart, Resend outbound | Preferred where the home ISP blocks or cannot reliably receive TCP/25. Gateway queues safely during tunnel outage and is not the identity authority. |
+| Optional full mailbox | Self-hosted Stalwart, with explicit Resend or Stalwart outbound selection | Requires the Stalwart-specific DNS, inbound reachability, TLS, SMTP/JMAP, backup, abuse controls, and live certification. The optional SMTP gateway remains available for this profile. |
 
 The historical Oracle-specific topology is superseded as a mandatory design. Oracle may be one operator-selected VPS provider; the contract is provider-neutral.
 
