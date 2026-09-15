@@ -4,7 +4,8 @@ Provides:
 - A lazily-initialised async Redis client (``redis.asyncio``) shared across
   the whole application.
 - Stream / consumer-group helpers (create, trim, reclaim).
-- Publish-side idempotency (dedupe key TTL).
+- Redis-atomic publication and reclaim/requeue transitions.
+- Compatibility helpers for the older dedupe API.
 
 All stream key names follow the convention ``stream:{team_id}``.
 All consumer-group names follow ``group:{team_id}``.
@@ -99,6 +100,19 @@ def dedupe_key(message_id: str) -> str:
     return f"{settings.dedupe_prefix}:{message_id}"
 
 
+def scoped_dedupe_key(message_id: str, scope: str | None = None) -> str:
+    """Return a dedupe key optionally scoped to one logical destination.
+
+    Normal point-to-point publication uses the message ID alone. Broadcast
+    publication uses one key per destination so the same envelope can be
+    delivered once to every team stream without one team's entry suppressing
+    another team's entry.
+    """
+    if scope is None:
+        return dedupe_key(message_id)
+    return f"{dedupe_key(message_id)}:{scope}"
+
+
 async def ensure_consumer_group(team_id: str, redis: Redis | None = None) -> None:
     """Create the consumer group for *team_id* if it does not already exist.
 
@@ -142,6 +156,134 @@ async def xadd_message(
     return entry_id
 
 
+# Redis executes each Lua script atomically. Keeping the dedupe lookup, XADD,
+# and final entry-id write in one script removes the process-death window that
+# existed between those commands. The script returns [1, entry_id] for a new
+# publication and [0, existing_entry_id] for a duplicate.
+_ATOMIC_PUBLISH_LUA = """
+local existing = redis.call('GET', KEYS[2])
+if existing then
+    return {0, existing}
+end
+
+local field_count = tonumber(ARGV[2])
+local xadd_args = {}
+for i = 1, field_count do
+    local offset = 3 + ((i - 1) * 2)
+    xadd_args[#xadd_args + 1] = ARGV[offset]
+    xadd_args[#xadd_args + 1] = ARGV[offset + 1]
+end
+
+local entry_id = redis.call('XADD', KEYS[1], '*', unpack(xadd_args))
+redis.call('SET', KEYS[2], entry_id, 'EX', ARGV[1])
+return {1, entry_id}
+"""
+
+
+_ATOMIC_REQUEUE_LUA = """
+local existing = redis.call('GET', KEYS[2])
+if existing then
+    return {0, existing}
+end
+
+local field_count = tonumber(ARGV[2])
+local xadd_args = {}
+for i = 1, field_count do
+    local offset = 5 + ((i - 1) * 2)
+    xadd_args[#xadd_args + 1] = ARGV[offset]
+    xadd_args[#xadd_args + 1] = ARGV[offset + 1]
+end
+
+local replacement_id = redis.call('XADD', KEYS[1], '*', unpack(xadd_args))
+redis.call('SET', KEYS[2], replacement_id, 'EX', ARGV[1])
+redis.call('XACK', KEYS[1], ARGV[3], ARGV[4])
+redis.call('XDEL', KEYS[1], ARGV[4])
+return {1, replacement_id}
+"""
+
+
+def _decode_atomic_result(result: Any, operation: str) -> tuple[str, bool]:
+    """Decode the two-element result returned by an atomic Redis script."""
+    if not isinstance(result, (list, tuple)) or len(result) != 2:
+        raise RuntimeError(f"Invalid Redis {operation} result: {result!r}")
+    status, entry_id = result
+    if status not in (0, 1, "0", "1") or entry_id in (None, ""):
+        raise RuntimeError(f"Invalid Redis {operation} result: {result!r}")
+    return str(entry_id), str(status) == "0"
+
+
+async def atomic_publish_message(
+    team_id: str,
+    fields: dict[str, str],
+    message_id: str,
+    *,
+    dedupe_scope: str | None = None,
+    redis: Redis | None = None,
+) -> tuple[str, bool]:
+    """Publish one stream entry and its dedupe record in one Redis script.
+
+    Returns ``(entry_id, deduplicated)``. A legacy ``_pending_`` marker is
+    returned as-is so callers can safely wait for an older in-flight publisher
+    while all new publications use this atomic path.
+    """
+    if not fields:
+        raise ValueError("Atomic Redis publication requires at least one field")
+    r = redis or get_redis()
+    args: list[str] = [
+        str(settings.dedupe_ttl_seconds),
+        str(len(fields)),
+    ]
+    for field, value in fields.items():
+        args.extend((field, value))
+    result = await r.eval(
+        _ATOMIC_PUBLISH_LUA,
+        2,
+        stream_key(team_id),
+        scoped_dedupe_key(message_id, dedupe_scope),
+        *args,
+    )
+    return _decode_atomic_result(result, "publication")
+
+
+def requeue_dedupe_key(team_id: str, entry_id: str) -> str:
+    """Return the stable dedupe key for one reclaimed stream entry."""
+    return f"{settings.dedupe_prefix}:requeue:{team_id}:{entry_id}"
+
+
+async def atomic_requeue_message(
+    team_id: str,
+    entry_id: str,
+    fields: dict[str, str],
+    redis: Redis | None = None,
+) -> tuple[str, bool]:
+    """Re-add a reclaimed entry and remove its old entry atomically.
+
+    The replacement XADD, stable requeue result, PEL acknowledgement, and old
+    entry deletion execute in one Redis script. Repeating a call after a lost
+    response returns the original replacement ID instead of creating another
+    replacement entry.
+    """
+    if not fields:
+        raise ValueError("Atomic Redis requeue requires at least one field")
+    r = redis or get_redis()
+    args: list[str] = [
+        str(settings.requeue_dedupe_ttl_seconds),
+        str(len(fields)),
+        group_name(team_id),
+        entry_id,
+    ]
+    for field, value in fields.items():
+        args.extend((field, value))
+    result = await r.eval(
+        _ATOMIC_REQUEUE_LUA,
+        2,
+        stream_key(team_id),
+        requeue_dedupe_key(team_id, entry_id),
+        *args,
+    )
+    return _decode_atomic_result(result, "requeue")
+
+
 # ---------------------------------------------------------------------------
 # Publish-side idempotency (dedupe key)
 # ---------------------------------------------------------------------------
@@ -152,7 +294,12 @@ async def check_and_set_dedupe(
     entry_id: str,
     redis: Redis | None = None,
 ) -> str | None:
-    """Atomically check for an existing dedupe key, set it if absent.
+    """Compatibility helper for callers that still use the old publish flow.
+
+    New publication paths must use :func:`atomic_publish_message`. This helper
+    remains available for existing callers and characterization tests; its
+    reservation and later XADD/finalization calls are not one atomic
+    publication operation.
 
     Returns
     -------
@@ -176,6 +323,7 @@ async def check_and_set_dedupe(
 async def wait_for_dedupe_resolution(
     message_id: str,
     *,
+    dedupe_scope: str | None = None,
     pending_value: str = "_pending_",
     timeout_ms: int = 2_000,
     poll_ms: int = 20,
@@ -187,7 +335,7 @@ async def wait_for_dedupe_resolution(
     ``timeout_ms`` or disappears.
     """
     r = redis or get_redis()
-    key = dedupe_key(message_id)
+    key = scoped_dedupe_key(message_id, dedupe_scope)
     deadline = asyncio.get_running_loop().time() + (timeout_ms / 1000.0)
 
     while True:

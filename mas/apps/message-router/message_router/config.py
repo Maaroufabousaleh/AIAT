@@ -65,6 +65,13 @@ class Settings(BaseSettings):
     dedupe_ttl_seconds: int = Field(
         default=300, description="Publish-side idempotency TTL in seconds."
     )
+    requeue_dedupe_ttl_seconds: int = Field(
+        default=86_400,
+        description=(
+            "How long an atomic reclaim/requeue result is retained so a lost "
+            "client response can be retried without creating another entry."
+        ),
+    )
     stream_max_len: int = Field(
         default=50_000, description="Approximate MAXLEN for each team stream (XTRIM)."
     )

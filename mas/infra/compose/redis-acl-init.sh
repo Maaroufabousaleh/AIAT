@@ -26,8 +26,16 @@ while [ $i -lt $MAX_RETRIES ]; do
     fi
     if [ "$(redis-cli --no-auth-warning --user router_user -a "$ROUTER_PASS" -h "$REDIS_HOST" -p "$REDIS_PORT" ping 2>/dev/null || true)" = "PONG" ] &&
         [ "$(redis-cli --no-auth-warning --user toolcache_user -a "$TOOLCACHE_PASS" -h "$REDIS_HOST" -p "$REDIS_PORT" ping 2>/dev/null || true)" = "PONG" ]; then
-        echo "Redis ACL users are already configured."
-        exit 0
+        # A persisted ACL may predate the router's atomic Lua operations.  Do
+        # not silently report a healthy init while the deployed router would
+        # receive NOPERM for EVAL.  The Redis service performs the narrow ACL
+        # file migration before startup; this check verifies the loaded ACL.
+        if [ "$(redis-cli --no-auth-warning --user router_user -a "$ROUTER_PASS" -h "$REDIS_HOST" -p "$REDIS_PORT" eval 'return 1' 0 2>/dev/null || true)" = "1" ]; then
+            echo "Redis ACL users are already configured, including router scripting access."
+            exit 0
+        fi
+        echo "ERROR: persisted router_user ACL does not permit EVAL; refusing to start the router." >&2
+        exit 1
     fi
     i=$((i + 1))
     echo "Waiting... ($i/$MAX_RETRIES)"
@@ -63,6 +71,7 @@ expect_ok() {
 expect_ok redis_admin \
     ACL SETUSER router_user on ">${ROUTER_PASS}" resetkeys -@all \
     "~stream:*" "~dedupe:*" "~heartbeat:*" \
+    +eval +evalsha \
     +ping +get +set +del +xgroup +xadd +xautoclaim +xclaim +xtrim +xack +xdel \
     +xreadgroup +xrange +xrevrange +xpending
 echo "  - router_user configured"

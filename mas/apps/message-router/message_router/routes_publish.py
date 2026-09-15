@@ -11,15 +11,12 @@ from pydantic import BaseModel
 from mas_core.observability.metrics import MAS_MESSAGES_TOTAL, MESSAGES_PUBLISHED_TOTAL
 from mas_core.observability.tracing import bind_trace_id
 from mas_core.policy.engine import CommunicationPolicy
-from mas_core.protocols.envelope import MessageEnvelope
+from mas_core.protocols.envelope import MessageEnvelope  # noqa: TC001
 
 from .config import settings
 from .redis_client import (
-    check_and_set_dedupe,
-    dedupe_key,
-    get_redis,
+    atomic_publish_message,
     wait_for_dedupe_resolution,
-    xadd_message,
 )
 
 logger = structlog.stdlib.get_logger(__name__)
@@ -113,9 +110,13 @@ async def publish_message(
 
     message_id_str = str(envelope.message_id)
     pending_marker = "_pending_"
-    existing_entry_id = await check_and_set_dedupe(message_id_str, pending_marker)
-    if existing_entry_id is not None:
-        if existing_entry_id == pending_marker:
+    entry_id, deduplicated = await atomic_publish_message(
+        target_team,
+        {"envelope": envelope.model_dump_json()},
+        message_id_str,
+    )
+    if deduplicated:
+        if entry_id == pending_marker:
             resolved_entry_id = await wait_for_dedupe_resolution(
                 message_id_str,
                 pending_value=pending_marker,
@@ -134,24 +135,9 @@ async def publish_message(
         logger.debug(
             "Duplicate publish ignored: message_id=%s original_entry=%s",
             message_id_str,
-            existing_entry_id,
+            entry_id,
         )
-        return PublishResponse(entry_id=existing_entry_id, deduplicated=True)
-
-    fields = {"envelope": envelope.model_dump_json()}
-    try:
-        entry_id = await xadd_message(target_team, fields)
-    except Exception:
-        redis = get_redis()
-        await redis.delete(dedupe_key(message_id_str))
-        raise
-
-    redis = get_redis()
-    await redis.set(
-        f"{settings.dedupe_prefix}:{message_id_str}",
-        entry_id,
-        ex=settings.dedupe_ttl_seconds,
-    )
+        return PublishResponse(entry_id=entry_id, deduplicated=True)
 
     logger.debug(
         "Published: message_id=%s team=%s type=%s entry_id=%s",
@@ -223,11 +209,29 @@ async def broadcast_message(
 
     entry_ids: dict[str, str] = {}
     message_id_str = str(envelope.message_id)
+    pending_marker = "_pending_"
 
     for team_id in settings.known_teams:
         per_team = envelope.model_copy(update={"recipient_team": team_id})
         fields = {"envelope": per_team.model_dump_json()}
-        eid = await xadd_message(team_id, fields)
+        eid, _deduplicated = await atomic_publish_message(
+            team_id,
+            fields,
+            message_id_str,
+            dedupe_scope=f"broadcast:{team_id}",
+        )
+        if eid == pending_marker:
+            resolved_entry_id = await wait_for_dedupe_resolution(
+                message_id_str,
+                dedupe_scope=f"broadcast:{team_id}",
+                pending_value=pending_marker,
+            )
+            if resolved_entry_id is None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Duplicate broadcast already in progress; retry shortly.",
+                )
+            eid = resolved_entry_id
         entry_ids[team_id] = eid
 
     logger.info(
