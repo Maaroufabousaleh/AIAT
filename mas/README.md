@@ -4,6 +4,10 @@ AIAT MAS is a self-hosted multi-agent system for software-project orchestration.
 The active workspace is this `mas/` directory; run service, test, migration, and
 dashboard commands from here.
 
+> Repository overview: [AIAT GitHub landing page](../README.md) ·
+> [documentation hub](../Docs/README.md) ·
+> [licence and provenance](../THIRD_PARTY_NOTICES.md)
+
 The core MAS stack, configurable flows, project context layer, worker registry,
 credentials manager, privileged-operation policy, dashboard, and compose/systemd
 deployment files are implemented in code. Current implementation truth and

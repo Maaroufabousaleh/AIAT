@@ -1,59 +1,90 @@
-# AIAT third-party metadata notice
+# AIAT third-party notices
 
-AIAT is a personal, single-operator, internal-use programme. Third-party
-resources are selected for their technical usefulness and are normally used
-through dependencies, external processes, services, CLIs, or AIAT adapters.
-They do not become AIAT authority code.
+AIAT is a personal, single-operator, internal-use programme. The repository's
+original source and visual assets are covered by [`LICENSE`](LICENSE). This
+document does not relicense any third-party component. External software,
+services, model references or weights, datasets, provider data, and other
+resources retain their own licences, terms, notices, and restrictions.
 
-The machine-readable inventory is
+> [!IMPORTANT]
+> Licence information is metadata for this personal instance. It helps the
+> operator understand provenance and obligations; it is not a substitute for a
+> separate distribution review.
+
+## At a glance
+
+| Surface | What it means |
+| --- | --- |
+| AIAT source and docs | Repository-owned material identified by [`LICENSE`](LICENSE) |
+| AIAT visual assets | Original SVG geometry under [`docs/assets/`](docs/assets/) |
+| External runtimes and tools | Reached through dependencies, external processes, services, CLIs, or AIAT adapters |
+| Technical identity | Exact version, release, commit, image digest, or explicit unavailability |
+| Licence identity | Detected or declared licence/source evidence when known |
+| Runtime decisions | Controlled by security, authenticity, sandbox, compatibility, privacy, budget, recovery, and human-approval evidence |
+
+## Machine-readable catalogue
+
+The authoritative component inventory is
 [`mas/docs/provenance/third_party_components.yaml`](mas/docs/provenance/third_party_components.yaml).
-Technical runtime/CLI reproducibility is tracked separately in
-[`mas/docs/provenance/operator_pins.yaml`](mas/docs/provenance/operator_pins.yaml)
-and checked by [`mas/scripts/check_operator_pins.py`](mas/scripts/check_operator_pins.py).
-An exact technical pin or an explicitly unavailable host/deployment identity
-is not a licence decision and does not create a licence allowlist.
-The maintained documentation scope is checked by
-[`mas/scripts/check_docs_index.py`](mas/scripts/check_docs_index.py), which
-keeps concrete licence identifiers in these metadata surfaces rather than in
-feature, plan, or status prose.
+Technical runtime and CLI pins are tracked separately in
+[`mas/docs/provenance/operator_pins.yaml`](mas/docs/provenance/operator_pins.yaml).
+Release, image, security, and runtime evidence remain in the surrounding
+[`mas/docs/provenance/`](mas/docs/provenance/) directory.
+
+Each catalogue entry records what is known about:
+
+- component identity, role, integration mode, and active status;
+- exact version, release, commit, image reference, or digest;
+- canonical source and licence evidence links;
+- stated notices, restrictions, and unresolved operator questions; and
+- compatibility, security, sandbox, and certification evidence where applicable.
+
+Package-managed dependencies are enumerated by [`mas/uv.lock`](mas/uv.lock) and
+the dashboard lockfile. A future wheel, container, executable, model bundle,
+or cached-data publication must build its own complete licence/notice bundle
+from the exact dependency closure; this catalogue is not that bundle.
 
 ## Metadata-only policy
 
-For each resource, AIAT records metadata when known:
+For this internal programme:
 
-- name, exact version/release/commit/image digest, and canonical source;
-- integration mode and active adapter version;
-- detected or declared licence identifier and licence/source link;
-- notices and stated restrictions, including non-commercial,
-  no-modification, source-disclosure, redistribution, network-use, or other
-  conditions;
-- dependency lock/SBOM and security provenance where available.
+- AIAT records known licence data and stated restrictions rather than hiding them.
+- AIAT has no licence allowlist or prohibited-licence list.
+- Missing or unusual metadata creates an operator notice, not a default denial.
+- Licence metadata is not an automated hiring, activation, installation, update, execution, or release gate.
+- Technical suitability, authenticity, security, privacy, sandbox, compatibility,
+  budget, data-loss, recovery, and human approval remain enforceable controls.
+- A resource is not treated as AIAT authority code merely because an adapter can invoke it.
 
-Licence classification is informational in this internal programme. It is not
-an automated hiring, activation, installation, update, execution, or release
-gate. Missing or unusual licence metadata creates an operator notice, not a
-denial. AIAT has no licence allowlist or prohibited-component list for personal
-internal use.
+This policy does not waive, reinterpret, or change a third party's terms. The
+personal operator owns the decision to use a resource and any obligations that
+may apply.
 
-TruffleHog, Plane, ZITADEL, Vault, Ansible, OpenProject, Neo4j Community, and
-other resources previously excluded for distribution concerns may be used
-normally when the operator chooses them and their technical/security
-integration is suitable.
+## Repository-owned visual assets
 
-## What remains enforced
+The current GitHub presentation uses original, repository-owned SVG geometry:
 
-This metadata policy does not weaken:
+- [`docs/assets/branding/aiat-header.svg`](docs/assets/branding/aiat-header.svg)
+- [`docs/assets/architecture/aiat-system-map.svg`](docs/assets/architecture/aiat-system-map.svg)
 
-- source/version authenticity and reproducibility;
-- vulnerability, secret, and malicious-instruction checks;
-- sandbox, network, filesystem, credential, privacy, and data-loss controls;
-- adapter compatibility and recovery tests;
-- human approval for dangerous or consequential actions.
+They contain no remote images, tracking pixels, copied logos, external fonts,
+or model-weight content. Their provenance and maintenance rules are documented
+in [`docs/assets/README.md`](docs/assets/README.md).
 
-## Scope-change notice
+## What is not bundled
 
-Recording metadata does not change or waive third-party terms. The personal
-operator remains responsible for the decision to use each resource and for any
-obligations that apply. If AIAT is later distributed, sold, commercially
-hosted, or operated for other people, perform a new distribution-specific
-review; do not treat this internal-only metadata policy as that review.
+The source repository does not intentionally vendor third-party source trees,
+model-weight files, provider payloads, or training datasets. A dependency or
+provider named in an architecture document is not by itself evidence that its
+source or data is copied into AIAT.
+
+The exact active integration boundary is the source of truth. If a component is
+installed, vendored, modified, redistributed, or shipped inside a new artefact,
+update the catalogue and preserve the applicable notices before distribution.
+
+## Scope change
+
+If AIAT is later sold, distributed, hosted for others, or used commercially,
+create a separate distribution-specific review. Do not reuse this
+internal-only metadata policy as that review, and do not assume that recording a
+licence link changes any third-party obligation.

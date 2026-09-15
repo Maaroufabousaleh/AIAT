@@ -1,0 +1,36 @@
+AIAT PERSONAL INTERNAL-USE SOURCE NOTICE
+Copyright (c) 2026 Maarouf Abou-Saleh
+All Rights Reserved.
+
+This notice applies to the original AIAT source code, documentation, and
+repository-owned visual assets identified as such by the copyright holder (the
+"AIAT Work").
+
+AIAT is a personal, single-operator, internal-use programme. Unless the
+copyright holder gives separate written permission, no licence is granted to
+copy, modify, distribute, sublicense, publish, sell, commercially exploit, or
+create derivative works from the AIAT Work, in whole or in part. Viewing the
+repository for evaluation does not grant those permissions.
+
+This notice does not purport to restrict rights that are necessarily granted by
+the terms of the platform hosting a repository. Third-party software, source
+code, model references or weights, datasets, provider data, and services are
+excluded from the AIAT Work and remain governed by their own licences, terms,
+notices, and restrictions. Nothing here relicences, removes, or restricts
+rights granted by those third-party terms.
+
+The repository's third-party metadata catalogue is available at
+`THIRD_PARTY_NOTICES.md` and
+`mas/docs/provenance/third_party_components.yaml`. Recording metadata does not
+change or waive a third party's terms.
+
+If AIAT is later sold, distributed, hosted for others, or used commercially,
+perform a separate distribution review. Do not treat this personal/internal
+notice as that review.
+
+THE AIAT WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING
+FROM, OUT OF, OR IN CONNECTION WITH THE AIAT WORK OR THE USE OR OTHER DEALINGS
+IN THE AIAT WORK.

@@ -1,0 +1,124 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="820" viewBox="0 0 1600 820" role="img" aria-labelledby="title desc">
+  <title id="title">AIAT system map</title>
+  <desc id="desc">The operator reaches AIAT's authoritative control plane. Policy, approvals, state, and evidence remain inside AIAT while adapter shells connect to external runtimes and tools.</desc>
+  <!-- AIAT-authored visual asset. Geometry is maintained with the architecture docs. -->
+  <defs>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#172430" stroke-width="1" opacity="0.62"/>
+    </pattern>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#61d5e8"/>
+    </marker>
+    <marker id="arrow-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#f2bd67"/>
+    </marker>
+    <filter id="glow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <style>
+      .label { font-family: Avenir Next, Avenir, Segoe UI, Arial, sans-serif; }
+      .mono { font-family: IBM Plex Mono, SFMono-Regular, Consolas, monospace; }
+      .zone-title { fill: #8fa6b3; font-size: 14px; font-weight: 700; letter-spacing: 3px; }
+      .node-title { fill: #edf6fa; font-size: 17px; font-weight: 700; }
+      .node-copy { fill: #9db0ba; font-size: 13px; font-weight: 500; }
+      .node-mono { fill: #61d5e8; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="820" fill="#070c12"/>
+  <rect x="24" y="24" width="1552" height="772" rx="12" fill="url(#grid)"/>
+  <rect x="24" y="24" width="1552" height="772" rx="12" fill="none" stroke="#293847" stroke-width="2"/>
+
+  <text x="68" y="80" class="label" fill="#edf6fa" font-size="34" font-weight="800" letter-spacing="-1">AIAT system map</text>
+  <text x="68" y="112" class="label" fill="#9db0ba" font-size="17">One authority boundary. Replaceable execution on the far side.</text>
+  <text x="1530" y="80" class="mono" text-anchor="end" fill="#61d5e8" font-size="12" font-weight="700" letter-spacing="2">INTERNAL / GOVERNED / ADAPTER-BACKED</text>
+
+  <rect x="58" y="148" width="1090" height="366" rx="8" fill="#0c151e" stroke="#304655" stroke-width="2"/>
+  <text x="84" y="184" class="mono zone-title">AIAT AUTHORITATIVE CONTROL PLANE</text>
+
+  <rect x="1180" y="148" width="352" height="366" rx="8" fill="#17130f" stroke="#5d4930" stroke-width="2"/>
+  <text x="1206" y="184" class="mono" fill="#f2bd67" font-size="14" font-weight="700" letter-spacing="3">UNTRUSTED EXECUTION</text>
+
+  <rect x="58" y="554" width="1474" height="194" rx="8" fill="#0b1515" stroke="#2d514c" stroke-width="2"/>
+  <text x="84" y="590" class="mono" fill="#72d3a0" font-size="14" font-weight="700" letter-spacing="3">DURABLE STATE / EVIDENCE / RECOVERY</text>
+
+  <g transform="translate(92 236)">
+    <rect width="196" height="90" rx="5" fill="#142431" stroke="#61d5e8" stroke-width="2"/>
+    <circle cx="25" cy="25" r="7" fill="#61d5e8" filter="url(#glow)"/>
+    <text x="44" y="31" class="label node-title">Operator surface</text>
+    <text x="22" y="58" class="label node-copy">dashboard / CLI / review</text>
+    <text x="22" y="77" class="mono node-mono">PROPOSES / APPROVES</text>
+  </g>
+
+  <g transform="translate(344 220)">
+    <rect width="234" height="122" rx="5" fill="#142431" stroke="#61d5e8" stroke-width="2"/>
+    <circle cx="25" cy="27" r="7" fill="#61d5e8" filter="url(#glow)"/>
+    <text x="44" y="33" class="label node-title">Orchestrator API</text>
+    <text x="22" y="63" class="label node-copy">projects / flows / company state</text>
+    <text x="22" y="84" class="label node-copy">worker leases / lifecycle</text>
+    <text x="22" y="105" class="mono node-mono">SOLE WORKFLOW WRITER</text>
+  </g>
+
+  <g transform="translate(634 220)">
+    <rect width="218" height="122" rx="5" fill="#142431" stroke="#61d5e8" stroke-width="2"/>
+    <circle cx="25" cy="27" r="7" fill="#61d5e8" filter="url(#glow)"/>
+    <text x="44" y="33" class="label node-title">Policy + approvals</text>
+    <text x="22" y="63" class="label node-copy">grants / credentials / gates</text>
+    <text x="22" y="84" class="label node-copy">human decision records</text>
+    <text x="22" y="105" class="mono node-mono">FAIL-CLOSED BOUNDARY</text>
+  </g>
+
+  <g transform="translate(908 220)">
+    <rect width="210" height="122" rx="5" fill="#2a2118" stroke="#f2bd67" stroke-width="2"/>
+    <circle cx="25" cy="27" r="7" fill="#f2bd67"/>
+    <text x="44" y="33" class="label node-title">Tool service</text>
+    <text x="22" y="63" class="label node-copy">scoped tools / rate limits</text>
+    <text x="22" y="84" class="label node-copy">audit / cache / breakers</text>
+    <text x="22" y="105" class="mono" fill="#f2bd67" font-size="11" font-weight="700" letter-spacing="1.5">BOUNDED HAND-OFF</text>
+  </g>
+
+  <g transform="translate(1208 236)">
+    <rect width="296" height="90" rx="5" fill="#241c15" stroke="#f2bd67" stroke-width="2"/>
+    <circle cx="25" cy="25" r="7" fill="#f2bd67"/>
+    <text x="44" y="31" class="label node-title">External runtimes</text>
+    <text x="22" y="58" class="label node-copy">coding / research / model workers</text>
+    <text x="22" y="77" class="mono" fill="#f2bd67" font-size="11" font-weight="700" letter-spacing="1.5">UNTRUSTED PROCESS</text>
+  </g>
+
+  <path d="M 288 281 H 344" fill="none" stroke="#61d5e8" stroke-width="3" marker-end="url(#arrow)"/>
+  <path d="M 578 281 H 634" fill="none" stroke="#61d5e8" stroke-width="3" marker-end="url(#arrow)"/>
+  <path d="M 852 281 H 908" fill="none" stroke="#61d5e8" stroke-width="3" marker-end="url(#arrow)"/>
+  <path d="M 1118 281 H 1208" fill="none" stroke="#f2bd67" stroke-width="3" marker-end="url(#arrow-amber)"/>
+
+  <path d="M 461 342 V 454 H 338 V 608" fill="none" stroke="#72d3a0" stroke-width="2" stroke-dasharray="7 7" marker-end="url(#arrow)"/>
+  <path d="M 743 342 V 470 H 730 V 608" fill="none" stroke="#72d3a0" stroke-width="2" stroke-dasharray="7 7" marker-end="url(#arrow)"/>
+  <path d="M 1013 342 V 454 H 1108 V 608" fill="none" stroke="#72d3a0" stroke-width="2" stroke-dasharray="7 7" marker-end="url(#arrow)"/>
+  <path d="M 1356 326 V 454 H 1356 V 608" fill="none" stroke="#f2bd67" stroke-width="2" stroke-dasharray="7 7" marker-end="url(#arrow-amber)"/>
+
+  <g transform="translate(118 620)">
+    <rect width="406" height="92" rx="5" fill="#10211f" stroke="#72d3a0" stroke-width="2"/>
+    <text x="22" y="31" class="label node-title">Postgres</text>
+    <text x="22" y="58" class="label node-copy">canonical structured state / migrations</text>
+    <text x="22" y="78" class="mono" fill="#72d3a0" font-size="11" font-weight="700" letter-spacing="1.5">PROJECT-SCOPED / DURABLE</text>
+  </g>
+
+  <g transform="translate(598 620)">
+    <rect width="406" height="92" rx="5" fill="#10211f" stroke="#72d3a0" stroke-width="2"/>
+    <text x="22" y="31" class="label node-title">MinIO + Redis</text>
+    <text x="22" y="58" class="label node-copy">heavy artifacts / coordination streams</text>
+    <text x="22" y="78" class="mono" fill="#72d3a0" font-size="11" font-weight="700" letter-spacing="1.5">ARTIFACTS / LEASES / RECOVERY</text>
+  </g>
+
+  <g transform="translate(1078 620)">
+    <rect width="406" height="92" rx="5" fill="#10211f" stroke="#72d3a0" stroke-width="2"/>
+    <text x="22" y="31" class="label node-title">Evidence + audit</text>
+    <text x="22" y="58" class="label node-copy">provenance / traces / release ledgers</text>
+    <text x="22" y="78" class="mono" fill="#72d3a0" font-size="11" font-weight="700" letter-spacing="1.5">REVIEWABLE / PAYLOAD-SAFE</text>
+  </g>
+
+  <text x="1530" y="780" class="mono" text-anchor="end" fill="#718692" font-size="11" letter-spacing="1.5">AIAT-AUTHORED GEOMETRY / SEE DOCS/README.MD</text>
+</svg>
