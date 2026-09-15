@@ -1063,7 +1063,7 @@ export type StewardCreateRequest = {
 };
 
 export type TeamRunnerStorageRequest = {
-  operation: ("storage_health" | "checkpoint_save" | "checkpoint_load" | "checkpoint_latest" | "checkpoint_delete" | "usage_record" | "document_get" | "document_create" | "document_update_status" | "review_create" | "review_get" | "review_update" | "review_comment_add" | "review_comments_get" | "review_list");
+  operation: ("storage_health" | "checkpoint_save" | "checkpoint_load" | "checkpoint_latest" | "checkpoint_delete" | "usage_record" | "model_resolution_snapshot_get" | "document_get" | "document_create" | "document_update_status" | "review_create" | "review_get" | "review_update" | "review_comment_add" | "review_comments_get" | "review_list");
   payload?: {
   [key: string]: unknown;
 };

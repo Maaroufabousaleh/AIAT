@@ -40,6 +40,7 @@ from mas_core.memory.models import (
     metadata,
     native_trace_spans,
     project_state_history,
+    project_transition_outbox,
     projects,
     review_comments,
     review_sessions,
@@ -47,6 +48,7 @@ from mas_core.memory.models import (
     sprints,
     system_config,
     worker_registry,
+    worker_run_runtime_bindings,
 )
 
 # ── Storage ───────────────────────────────────────────────────────────────────
@@ -129,6 +131,7 @@ class TestModelsMetadata:
     EXPECTED_TABLES = [
         "projects",
         "project_state_history",
+        "project_transition_outbox",
         "documents",
         "review_sessions",
         "review_comments",
@@ -176,6 +179,8 @@ class TestModelsMetadata:
         "rollout_transitions",
         "rollback_records",
         "worker_runs",
+        "worker_run_runtime_bindings",
+        "worker_tool_effects",
         "worker_run_transitions",
         "worker_events",
         "worker_checkpoints",
@@ -225,6 +230,7 @@ class TestModelsMetadata:
     def test_capability_registry_tables_defined(self):
         assert capabilities.name == "capabilities"
         assert worker_registry.name == "worker_registry"
+        assert worker_run_runtime_bindings.name == "worker_run_runtime_bindings"
         assert role_capability_map.name == "role_capability_map"
         assert infra_events.name == "infra_events"
 
@@ -254,6 +260,31 @@ class TestModelsMetadata:
         assert "to_state" in cols
         assert "event" in cols
         assert "project_id" in cols
+
+    def test_project_transition_outbox_columns_and_status_constraint(self):
+        cols = {c.name for c in project_transition_outbox.columns}
+        assert {
+            "id",
+            "project_id",
+            "from_state",
+            "to_state",
+            "event",
+            "triggered_by",
+            "payload",
+            "status",
+            "attempts",
+            "claimed_at",
+            "next_attempt_at",
+            "last_error",
+            "created_at",
+            "published_at",
+        } == cols
+        constraints = {
+            constraint.name
+            for constraint in project_transition_outbox.constraints
+            if getattr(constraint, "name", None)
+        }
+        assert "ck_project_transition_outbox_status" in constraints
 
     def test_integration_evidence_columns(self):
         from mas_core.memory.models import integration_evidence_records

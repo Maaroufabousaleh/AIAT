@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -90,8 +90,15 @@ def test_executor_rejects_missing_binding_and_exposes_schema() -> None:
 class _SnapshotStorage:
     def __init__(self, snapshot: dict[str, object] | None) -> None:
         self.snapshot = snapshot
+        self.project_ids: list[UUID | None] = []
 
-    async def get_model_resolution_snapshot(self, _snapshot_id: UUID) -> dict[str, object] | None:
+    async def get_model_resolution_snapshot(
+        self,
+        _snapshot_id: UUID,
+        *,
+        project_id: UUID | None = None,
+    ) -> dict[str, object] | None:
+        self.project_ids.append(project_id)
         return self.snapshot
 
 
@@ -156,3 +163,27 @@ async def test_model_snapshot_mismatch_is_rejected_before_claim() -> None:
         )
 
     assert caught.value.reason_code == "model_resolution_snapshot_reference_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_host_model_snapshot_lookup_preserves_project_scope() -> None:
+    snapshot_id = UUID("00000000-0000-4000-a000-000000000105")
+    project_id = uuid4()
+    storage = _SnapshotStorage(
+        {
+            "id": snapshot_id,
+            "requested_profile_id": "profile-v1",
+            "resolved_profile_id": "profile-v1",
+            "resolved_profile_version": "v1",
+            "exact_model_id": "model-v1",
+            "policy_failure_code": None,
+        }
+    )
+    executor = WorkerHostExecutor(storage)
+    request = _model_request(snapshot_id=snapshot_id).model_copy(
+        update={"project_id": project_id}
+    )
+
+    await executor._validate_model_resolution(request, snapshot_id)
+
+    assert storage.project_ids == [project_id]

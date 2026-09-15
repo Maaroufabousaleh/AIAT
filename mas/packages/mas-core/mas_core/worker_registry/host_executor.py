@@ -164,7 +164,10 @@ class WorkerHostExecutor:
         getter = getattr(self._storage, "get_model_resolution_snapshot", None)
         if not callable(getter):
             raise WorkerHostExecutionRejected("model_resolution_snapshot_unavailable")
-        snapshot = await getter(normalized_snapshot_id)
+        snapshot = await getter(
+            normalized_snapshot_id,
+            project_id=getattr(worker_request, "project_id", None),
+        )
         if snapshot is None:
             raise WorkerHostExecutionRejected("model_resolution_snapshot_not_found")
         if snapshot.get("policy_failure_code"):

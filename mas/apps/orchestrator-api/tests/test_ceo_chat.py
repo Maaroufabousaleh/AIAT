@@ -826,6 +826,96 @@ async def test_ceo_fallback_publishes_unverified_explicit_evidence(monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_ceo_fallback_uses_bound_model_snapshot_when_supplied(monkeypatch):
+    from orchestrator_api import main as orchestrator_main
+
+    snapshot_id = UUID("00000000-0000-4000-a000-0000000000f1")
+    published: list[dict[str, Any]] = []
+    completions: list[dict[str, Any]] = []
+
+    storage = MagicMock()
+    storage.get_model_resolution_snapshot = AsyncMock(
+        return_value={
+            "id": snapshot_id,
+            "project_id": None,
+            "resolved_profile_id": "ceo",
+            "resolved_profile_version": "7",
+            "provider_id": "openai",
+            "exact_model_id": "openai/gpt-4o-mini",
+        }
+    )
+    monkeypatch.setattr(orchestrator_main.app.state, "storage", storage, raising=False)
+
+    class FakeChatResponse:
+        model = "openai/gpt-4o-mini"
+        text = "The governed project is ready."
+
+    class FakeLLM:
+        async def __aenter__(self) -> "FakeLLM":
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+        async def ask(self, *args: Any, **kwargs: Any) -> str:
+            raise AssertionError("bound CEO fallback must not use compatibility ask()")
+
+        async def chat_completion(self, **kwargs: Any) -> FakeChatResponse:
+            completions.append(kwargs)
+            return FakeChatResponse()
+
+    class FakeResponse:
+        status_code = 200
+        text = "ok"
+
+        @property
+        def is_success(self) -> bool:
+            return True
+
+    class FakeAsyncClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> "FakeAsyncClient":
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+        async def post(self, url: str, json: dict[str, Any]) -> FakeResponse:
+            published.append(json)
+            return FakeResponse()
+
+    monkeypatch.setenv("ENABLE_CEO_FAKE_RESPONSE", "1")
+    monkeypatch.setattr(orchestrator_main, "LLMGatewayClient", FakeLLM)
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+
+    await orchestrator_main._publish_ceo_response(
+        instruction="summarize project status",
+        correlation_id="request-bound",
+        parent_id="request-bound",
+        model_resolution_snapshot_id=snapshot_id,
+    )
+
+    assert completions[0]["model"] == "openai/gpt-4o-mini"
+    assert completions[0]["messages"][-1] == {
+        "role": "user",
+        "content": "summarize project status",
+    }
+    envelope = published[0]
+    assert envelope["model_resolution_snapshot_id"] == str(snapshot_id)
+    provenance = envelope["payload"]["evidence"]["model_provenance"]
+    assert provenance == {
+        "status": "bound",
+        "resolution_snapshot_id": str(snapshot_id),
+        "profile_id": "ceo",
+        "profile_version": "7",
+        "provider_id": "openai",
+        "exact_model_id": "openai/gpt-4o-mini",
+    }
+
+
+@pytest.mark.anyio
 async def test_operator_send_to_ceo_hiring_url_then_role_uses_repo_name(client, monkeypatch):
     from orchestrator_api.main import app
 

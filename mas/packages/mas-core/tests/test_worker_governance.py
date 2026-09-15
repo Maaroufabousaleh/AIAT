@@ -329,6 +329,74 @@ async def test_opencode_session_adapter_maps_live_lifecycle_and_basic_auth() -> 
 
 
 @pytest.mark.asyncio
+async def test_opencode_reconcile_uses_durable_session_after_adapter_restart() -> None:
+    session_id = "ses_restartable"
+    run_id = uuid4()
+    endpoints = {
+        "health": "/global/health",
+        "openapi": "/doc",
+        "project_current": "/project/current",
+        "session_list": "/session",
+        "session_create": "/session",
+        "session_get": "/session/{sessionID}",
+        "session_delete": "/session/{sessionID}",
+        "session_status": "/session/status",
+        "messages": "/session/{sessionID}/message",
+        "prompt_async": "/session/{sessionID}/prompt_async",
+        "events": "/global/event",
+        "abort": "/session/{sessionID}/abort",
+        "diff": "/session/{sessionID}/diff",
+        "permission_reply": "/session/{sessionID}/permissions/{permissionID}",
+        "mcp_add": "/mcp",
+        "mcp_status": "/mcp",
+    }
+    verification = OpenCodeInterfaceVerification(
+        release="1.17.13",
+        commit_sha="F8C45BAE73A8F1E2088023FDD34DC2FE0A7F93F505F073E0703E4E1A19AFE8FF",
+        report_version="2",
+        approved=True,
+        openapi_sha256="a" * 64,
+        config_schema_sha256="b" * 64,
+        endpoints=endpoints,
+        evidence={"approval_record_id": "test", "fixture_refs": ["test"]},
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == f"/session/{session_id}":
+            return httpx.Response(200, json={"id": session_id}, request=request)
+        if request.method == "GET" and request.url.path == "/session/status":
+            return httpx.Response(200, json={session_id: {"type": "busy"}}, request=request)
+        raise AssertionError(f"unexpected request: {request.method} {request.url.path}")
+
+    client = httpx.AsyncClient(
+        base_url="http://opencode.test",
+        transport=httpx.MockTransport(handler),
+    )
+    adapter = OpenCodeAdapter(
+        verification,
+        base_url="http://opencode.test",
+        worker_id="opencode-test",
+        client=client,
+        context=AdapterContext(secrets={"opencode_password": "test-password"}),
+    )
+
+    try:
+        observed = await adapter.reconcile(run_id, runtime_run_id=session_id)
+    finally:
+        await adapter.close()
+
+    assert observed.run_id == run_id
+    assert observed.runtime_run_id == session_id
+    assert observed.status == "RUNNING"
+    assert observed.terminal is False
+    assert observed.details == {
+        "source": "session_status",
+        "session_present": True,
+        "native_status": "busy",
+    }
+
+
+@pytest.mark.asyncio
 async def test_opencode_bridge_refreshes_expiring_grant_with_same_name() -> None:
     endpoints = {
         "health": "/global/health",

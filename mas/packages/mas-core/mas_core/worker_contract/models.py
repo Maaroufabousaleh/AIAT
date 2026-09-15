@@ -228,7 +228,7 @@ class WorkerManifest(_ContractModel):
     extensions: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def validate_model_requirements(self) -> "WorkerManifest":
+    def validate_model_requirements(self) -> WorkerManifest:
         if self.capabilities.model_mode == ModelMode.NONE and self.model_profile is not None:
             raise ValueError("model_profile is not allowed when model_mode is none")
         return self
@@ -317,8 +317,8 @@ class WorkerToolResponse(_ContractModel):
     tool_name: str
     success: bool
     result: Any = None
-    error: "WorkerError | None" = None
-    usage: "WorkerUsage | None" = None
+    error: WorkerError | None = None
+    usage: WorkerUsage | None = None
 
 
 class WorkerArtifact(_ContractModel):
@@ -362,7 +362,7 @@ class WorkerUsage(_ContractModel):
     exact_model_id: str | None = None
 
     @model_validator(mode="after")
-    def derive_total_tokens(self) -> "WorkerUsage":
+    def derive_total_tokens(self) -> WorkerUsage:
         if self.total_tokens == 0 and (self.prompt_tokens or self.completion_tokens):
             self.total_tokens = self.prompt_tokens + self.completion_tokens
         return self
@@ -382,7 +382,7 @@ class WorkerResult(_ContractModel):
     completed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     @model_validator(mode="after")
-    def result_error_consistency(self) -> "WorkerResult":
+    def result_error_consistency(self) -> WorkerResult:
         if self.success and self.error is not None:
             raise ValueError("successful worker results cannot contain an error")
         if not self.success and self.error is None:
@@ -407,6 +407,49 @@ class WorkerCancellation(_ContractModel):
     requested_by: str
     force: bool = False
     requested_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class WorkerCancellationReceipt(_ContractModel):
+    """Subordinate acknowledgement of a runtime cancellation request.
+
+    ``accepted`` means that the runtime received the request.  It does not
+    imply that the runtime has stopped; callers must inspect ``terminal`` or
+    reconcile the runtime before treating cancellation as complete.
+    """
+
+    run_id: UUID
+    accepted: bool
+    terminal: bool = False
+    runtime_status: str = "UNKNOWN"
+    details: dict[str, Any] = Field(default_factory=dict)
+    acknowledged_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    @field_validator("runtime_status")
+    @classmethod
+    def normalize_runtime_status(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if not normalized:
+            raise ValueError("runtime cancellation status must not be blank")
+        return normalized
+
+
+class WorkerRuntimeStatus(_ContractModel):
+    """Non-authoritative runtime observation used after process restarts."""
+
+    run_id: UUID
+    status: str = "UNKNOWN"
+    terminal: bool = False
+    runtime_run_id: str | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
+    observed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    @field_validator("status")
+    @classmethod
+    def normalize_status(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if not normalized:
+            raise ValueError("runtime status must not be blank")
+        return normalized
 
 
 class WorkerPause(_ContractModel):
@@ -472,7 +515,7 @@ class WorkerEvent(_ContractModel):
     extensions: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def validate_payload_for_event(self) -> "WorkerEvent":
+    def validate_payload_for_event(self) -> WorkerEvent:
         payload_by_type = {
             EventType.PROGRESS: self.progress,
             EventType.TOOL_REQUEST: self.tool_request,

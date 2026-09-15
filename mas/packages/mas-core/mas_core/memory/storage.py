@@ -879,6 +879,7 @@ class AgentStorage:
         failure_reason: str | None = None,
         failed_from_state: str | None = None,
         expected_state: str | None = None,
+        transition_id: UUID | None = None,
     ) -> dict[str, Any] | None:
         """Atomically update project state and append a history row.
 
@@ -893,6 +894,7 @@ class AgentStorage:
         Returns the updated project row, or None if the project was not found
         (or the expected_state guard failed).
         """
+        transition_id = transition_id or uuid4()
         now = datetime.now(tz=UTC)
         async with self.engine.begin() as conn:
             # Read current state
@@ -966,6 +968,22 @@ class AgentStorage:
                     transitioned_at=now,
                 )
             )
+            # The router notification intent is part of the same transaction
+            # as canonical state/history.  Publication remains a separate,
+            # retryable operation; this row is deliberately scoped to project
+            # transitions rather than introducing a global event platform.
+            await conn.execute(
+                t.project_transition_outbox.insert().values(
+                    id=transition_id,
+                    project_id=project_id,
+                    from_state=from_state,
+                    to_state=new_state,
+                    event=event,
+                    triggered_by=triggered_by,
+                    payload=payload,
+                    created_at=now,
+                )
+            )
             refreshed = (
                 await conn.execute(t.projects.select().where(t.projects.c.id == project_id))
             ).mappings().first()
@@ -973,6 +991,157 @@ class AgentStorage:
                 await self._enqueue_project_projections_tx(conn, dict(refreshed))
 
         return await self.get_project(project_id)
+
+    async def list_project_transition_outbox(
+        self,
+        *,
+        status: str = "PENDING",
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Return due project-transition notifications in creation order.
+
+        Only project-transition notifications use this queue.  PM and
+        identity synchronization retain their existing outbox implementations
+        and delivery contracts.
+        """
+        if status == "PENDING":
+            await self.recover_stale_project_transition_outbox()
+        now = datetime.now(tz=UTC)
+        query = (
+            t.project_transition_outbox.select()
+            .where(t.project_transition_outbox.c.status == status)
+            .where(t.project_transition_outbox.c.next_attempt_at <= now)
+            .order_by(t.project_transition_outbox.c.created_at)
+            .limit(limit)
+        )
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def recover_stale_project_transition_outbox(
+        self,
+        *,
+        lease_seconds: int = 300,
+    ) -> int:
+        """Return abandoned outbox claims to the pending queue."""
+        cutoff = datetime.now(tz=UTC) - timedelta(seconds=max(30, lease_seconds))
+        now = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            result = await conn.execute(
+                t.project_transition_outbox.update()
+                .where(t.project_transition_outbox.c.status == "PROCESSING")
+                .where(t.project_transition_outbox.c.claimed_at.is_not(None))
+                .where(t.project_transition_outbox.c.claimed_at <= cutoff)
+                .values(
+                    status="PENDING",
+                    claimed_at=None,
+                    next_attempt_at=now,
+                )
+            )
+        return int(result.rowcount or 0)
+
+    async def claim_project_transition_outbox(
+        self,
+        outbox_id: UUID,
+    ) -> dict[str, Any] | None:
+        """Claim one due project-transition notification."""
+        now = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            row = (
+                await conn.execute(
+                    t.project_transition_outbox.select()
+                    .where(t.project_transition_outbox.c.id == outbox_id)
+                    .where(t.project_transition_outbox.c.status == "PENDING")
+                    .where(t.project_transition_outbox.c.next_attempt_at <= now)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if row is None:
+                return None
+            attempts = int(row.get("attempts") or 0) + 1
+            await conn.execute(
+                t.project_transition_outbox.update()
+                .where(t.project_transition_outbox.c.id == outbox_id)
+                .where(t.project_transition_outbox.c.status == "PENDING")
+                .values(
+                    status="PROCESSING",
+                    attempts=attempts,
+                    claimed_at=now,
+                )
+            )
+            claimed = dict(row)
+            claimed.update(
+                status="PROCESSING",
+                attempts=attempts,
+                claimed_at=now,
+            )
+            return claimed
+
+    async def mark_project_transition_outbox(
+        self,
+        outbox_id: UUID,
+        *,
+        status: str,
+        error: str | None = None,
+        retry_after_seconds: int | None = None,
+    ) -> dict[str, Any] | None:
+        """Mark a project-transition notification published or retryable."""
+        if status not in {"PENDING", "PUBLISHED"}:
+            raise ValueError("invalid project transition outbox status")
+        now = datetime.now(tz=UTC)
+        values: dict[str, Any] = {
+            "status": status,
+            "claimed_at": None,
+            "last_error": error[:1000] if error else None,
+        }
+        if status == "PUBLISHED":
+            values.update(
+                published_at=now,
+                next_attempt_at=now,
+                last_error=None,
+            )
+            where_status = t.project_transition_outbox.c.status != "PUBLISHED"
+        else:
+            # The caller may have published successfully and lost the
+            # bookkeeping response.  Never move an already-published row back
+            # to pending during a stale retry.
+            async with self.engine.connect() as conn:
+                row = (
+                    await conn.execute(
+                        t.project_transition_outbox.select().where(
+                            t.project_transition_outbox.c.id == outbox_id
+                        )
+                    )
+                ).mappings().first()
+            attempts = int(row.get("attempts") or 0) if row is not None else 0
+            delay = (
+                max(0, retry_after_seconds)
+                if retry_after_seconds is not None
+                else min(300, max(1, 2 ** min(attempts, 8)))
+            )
+            values["next_attempt_at"] = now + timedelta(seconds=delay)
+            where_status = t.project_transition_outbox.c.status != "PUBLISHED"
+
+        async with self.engine.begin() as conn:
+            await conn.execute(
+                t.project_transition_outbox.update()
+                .where(t.project_transition_outbox.c.id == outbox_id)
+                .where(where_status)
+                .values(**values)
+            )
+        async with self.engine.connect() as conn:
+            row = (
+                await conn.execute(
+                    t.project_transition_outbox.select().where(
+                        t.project_transition_outbox.c.id == outbox_id
+                    )
+                )
+            ).mappings().first()
+        return dict(row) if row else None
+
+    async def mark_project_transition_published(self, transition_id: UUID) -> None:
+        """Mark an immediately delivered transition notification complete."""
+        await self.mark_project_transition_outbox(transition_id, status="PUBLISHED")
 
     async def get_project_history(
         self,
@@ -8549,8 +8718,30 @@ class AgentStorage:
             await conn.execute(t.model_resolution_snapshots.insert().values(**values))
         return values
 
-    async def get_model_resolution_snapshot(self, snapshot_id: UUID) -> dict[str, Any] | None:
-        return await self._get_table_row(t.model_resolution_snapshots, t.model_resolution_snapshots.c.id, snapshot_id)
+    async def get_model_resolution_snapshot(
+        self,
+        snapshot_id: UUID,
+        *,
+        project_id: UUID | None = None,
+    ) -> dict[str, Any] | None:
+        """Read one model decision, optionally enforcing project scope.
+
+        A project-bound snapshot must never be exposed to an unscoped or
+        different-project governance invocation.  A snapshot with no project
+        is a control-plane-wide decision and may be used by a project-scoped
+        invocation.
+        """
+        row = await self._get_table_row(
+            t.model_resolution_snapshots,
+            t.model_resolution_snapshots.c.id,
+            snapshot_id,
+        )
+        if row is None:
+            return None
+        stored_project_id = row.get("project_id")
+        if stored_project_id is not None and stored_project_id != project_id:
+            return None
+        return row
 
     async def create_worker_run(self, *, run_id: UUID, worker_id: UUID, idempotency_key: str, task_type: str, request: dict[str, Any], project_id: UUID | None = None, flow_id: UUID | None = None, flow_instance_id: UUID | None = None, flow_node_execution_id: int | None = None, worker_shell_version_id: UUID | None = None, adapter_id: UUID | None = None, skill_bundle_id: UUID | None = None, steward_id: UUID | None = None, model_resolution_snapshot_id: UUID | None = None, state: str = "CREATED", queue_priority: int = 0, next_attempt_at: datetime | None = None) -> dict[str, Any]:
         async with self.engine.begin() as conn:
@@ -8601,6 +8792,10 @@ class AgentStorage:
         async with self.engine.begin() as conn:
             clauses = [
                 t.worker_runs.c.state == "QUEUED",
+                # A durable cancellation request is an execution fence.  It
+                # may race with lease recovery after a run is requeued, so a
+                # queued row carrying the marker must never be claimed again.
+                t.worker_runs.c.cancel_requested_at.is_(None),
                 sa.or_(t.worker_runs.c.next_attempt_at.is_(None), t.worker_runs.c.next_attempt_at <= now),
                 sa.or_(t.worker_runs.c.lease_expires_at.is_(None), t.worker_runs.c.lease_expires_at <= now),
             ]
@@ -8662,15 +8857,73 @@ class AgentStorage:
             rows = (
                 await conn.execute(
                     t.worker_runs.select().where(
-                        sa.and_(
-                            t.worker_runs.c.state.in_(("CLAIMED", "VALIDATING", "READY", "DISPATCHING", "RUNNING", "PAUSING", "RESUMING")),
-                            t.worker_runs.c.lease_expires_at.is_not(None),
-                            t.worker_runs.c.lease_expires_at < now,
+                        sa.or_(
+                            sa.and_(
+                                t.worker_runs.c.state.in_(("CLAIMED", "VALIDATING", "READY", "DISPATCHING", "RUNNING", "PAUSING", "RESUMING")),
+                                t.worker_runs.c.lease_expires_at.is_not(None),
+                                t.worker_runs.c.lease_expires_at < now,
+                            ),
+                            sa.and_(
+                                t.worker_runs.c.state == "QUEUED",
+                                t.worker_runs.c.cancel_requested_at.is_not(None),
+                            ),
                         )
                     ).order_by(t.worker_runs.c.lease_expires_at.asc()).limit(limit).with_for_update(skip_locked=True)
                 )
             ).mappings().all()
             for row in rows:
+                if row.get("cancel_requested_at") is not None:
+                    cancellation_reason = (
+                        "worker run cancellation was requested before lease expiry; "
+                        "expired execution was fenced and not requeued"
+                    )
+                    await conn.execute(
+                        t.worker_runs.update()
+                        .where(t.worker_runs.c.id == row["id"])
+                        .values(
+                            state="CANCELLED",
+                            claim_owner=None,
+                            claimed_at=None,
+                            heartbeat_at=None,
+                            lease_expires_at=None,
+                            next_attempt_at=None,
+                            completed_at=now,
+                            recovery_reason=cancellation_reason,
+                            error_json={
+                                "code": "CANCELLED",
+                                "message": cancellation_reason,
+                            },
+                        )
+                    )
+                    await conn.execute(
+                        t.worker_run_transitions.insert().values(
+                            id=uuid4(),
+                            run_id=row["id"],
+                            from_state=str(row["state"]),
+                            to_state="CANCELLED",
+                            actor="worker-run-recovery",
+                            reason="durable cancellation request honored after lease expiry",
+                            metadata={"attempt_count": int(row.get("attempt_count") or 0)},
+                        )
+                    )
+                    recovered.append(
+                        {
+                            **dict(row),
+                            "state": "CANCELLED",
+                            "claim_owner": None,
+                            "claimed_at": None,
+                            "heartbeat_at": None,
+                            "lease_expires_at": None,
+                            "next_attempt_at": None,
+                            "completed_at": now,
+                            "error_json": {
+                                "code": "CANCELLED",
+                                "message": cancellation_reason,
+                            },
+                            "recovery_reason": cancellation_reason,
+                        }
+                    )
+                    continue
                 await conn.execute(
                     t.worker_runs.update().where(t.worker_runs.c.id == row["id"]).values(
                         state="QUEUED",
@@ -8755,6 +9008,76 @@ class AgentStorage:
                 values["negotiation_json"] = negotiation
             if replay_metadata is not None:
                 values["replay_metadata"] = replay_metadata
+            runtime_binding = (
+                transition_metadata.get("runtime_binding")
+                if isinstance(transition_metadata, Mapping)
+                else None
+            )
+            if isinstance(runtime_binding, Mapping):
+                runtime_run_id = runtime_binding.get("runtime_run_id")
+                runtime_type = str(runtime_binding.get("runtime_type") or "unknown")[:200]
+                runtime_status = str(
+                    runtime_binding.get("status")
+                    or ("RUNNING" if new_state == "RUNNING" else "ACCEPTED")
+                ).upper()
+                allowed_binding_statuses = {
+                    "ACCEPTED",
+                    "RUNNING",
+                    "PAUSED",
+                    "SUCCEEDED",
+                    "FAILED",
+                    "CANCELLED",
+                    "TIMED_OUT",
+                    "UNKNOWN",
+                }
+                if runtime_status not in allowed_binding_statuses:
+                    runtime_status = "UNKNOWN"
+                binding_values = {
+                    "id": uuid4(),
+                    "run_id": run_id,
+                    "attempt_count": int(
+                        runtime_binding.get("attempt_count")
+                        or current.get("attempt_count")
+                        or 0
+                    ),
+                    "adapter_id": runtime_binding.get("adapter_id"),
+                    "runtime_type": runtime_type,
+                    "runtime_run_id": str(runtime_run_id) if runtime_run_id else None,
+                    "status": runtime_status,
+                    "metadata": dict(runtime_binding.get("metadata") or {}),
+                    "updated_at": now,
+                }
+                binding_insert = pg_insert(t.worker_run_runtime_bindings).values(
+                    **binding_values
+                )
+                await conn.execute(
+                    binding_insert.on_conflict_do_update(
+                        index_elements=["run_id", "attempt_count"],
+                        set_={
+                            "adapter_id": binding_values["adapter_id"],
+                            "runtime_type": binding_values["runtime_type"],
+                            "runtime_run_id": binding_values["runtime_run_id"],
+                            "status": binding_values["status"],
+                            "metadata": binding_values["metadata"],
+                            "updated_at": now,
+                        },
+                    )
+                )
+            elif new_state in {"PAUSED", "SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT"}:
+                # A terminal transition may not carry a fresh acceptance
+                # payload.  Keep the durable subordinate binding in step with
+                # the canonical run without changing ownership of that state.
+                await conn.execute(
+                    t.worker_run_runtime_bindings.update()
+                    .where(
+                        sa.and_(
+                            t.worker_run_runtime_bindings.c.run_id == run_id,
+                            t.worker_run_runtime_bindings.c.attempt_count
+                            == int(current.get("attempt_count") or 0),
+                        )
+                    )
+                    .values(status=new_state, updated_at=now)
+                )
             await conn.execute(t.worker_runs.update().where(t.worker_runs.c.id == run_id).values(**values))
             await conn.execute(
                 t.worker_run_transitions.insert().values(
@@ -8769,6 +9092,182 @@ class AgentStorage:
                 )
             )
         return await self.get_worker_run(run_id)
+
+    async def get_worker_runtime_binding(
+        self,
+        run_id: UUID,
+        *,
+        attempt_count: int | None = None,
+    ) -> dict[str, Any] | None:
+        """Return the newest durable subordinate runtime binding for a run."""
+
+        query = (
+            t.worker_run_runtime_bindings.select()
+            .where(t.worker_run_runtime_bindings.c.run_id == run_id)
+            .order_by(t.worker_run_runtime_bindings.c.attempt_count.desc())
+            .limit(1)
+        )
+        if attempt_count is not None:
+            query = query.where(
+                t.worker_run_runtime_bindings.c.attempt_count == attempt_count
+            )
+        async with self.engine.connect() as conn:
+            row = (await conn.execute(query)).mappings().first()
+        return dict(row) if row else None
+
+    async def record_worker_runtime_observation(
+        self,
+        run_id: UUID,
+        *,
+        status: str,
+        runtime_run_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Persist a subordinate runtime observation without changing run state.
+
+        Reconciliation is deliberately not a worker-run transition.  This
+        method updates only the newest per-attempt runtime binding, preserving
+        the binding as an AIAT-owned audit of what the external runtime
+        reported.  Canonical result/evidence settlement still goes through
+        ``WorkerRunController``.
+        """
+
+        normalized_status = str(status or "UNKNOWN").strip().upper()
+        allowed_statuses = {
+            "ACCEPTED",
+            "RUNNING",
+            "PAUSED",
+            "SUCCEEDED",
+            "FAILED",
+            "CANCELLED",
+            "TIMED_OUT",
+            "UNKNOWN",
+        }
+        if normalized_status not in allowed_statuses:
+            normalized_status = "UNKNOWN"
+        now = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            query = (
+                t.worker_run_runtime_bindings.select()
+                .where(t.worker_run_runtime_bindings.c.run_id == run_id)
+                .order_by(t.worker_run_runtime_bindings.c.attempt_count.desc())
+                .limit(1)
+                .with_for_update()
+            )
+            row = (await conn.execute(query)).mappings().first()
+            if row is None:
+                return None
+            values: dict[str, Any] = {
+                "status": normalized_status,
+                "last_reconciled_at": now,
+                "updated_at": now,
+            }
+            if runtime_run_id is not None:
+                values["runtime_run_id"] = str(runtime_run_id)
+            await conn.execute(
+                t.worker_run_runtime_bindings.update()
+                .where(t.worker_run_runtime_bindings.c.id == row["id"])
+                .values(**values)
+            )
+            updated = dict(row)
+            updated.update(values)
+            return updated
+
+    async def begin_worker_tool_effect(
+        self,
+        *,
+        run_id: UUID,
+        request_id: UUID,
+        idempotency_key: str,
+        tool_name: str,
+        request_sha256: str,
+    ) -> dict[str, Any]:
+        """Reserve or recover one mediated tool effect for a worker run.
+
+        A worker may receive the same tool request again after the controller
+        loses the response.  The effect row is created before dispatching the
+        tool, so a later controller can replay a known response or fail closed
+        when the earlier attempt is still ambiguous.  This method never calls
+        the tool and never changes canonical worker-run state.
+        """
+
+        values = {
+            "id": uuid4(),
+            "run_id": run_id,
+            "request_id": request_id,
+            "idempotency_key": idempotency_key,
+            "tool_name": tool_name,
+            "request_sha256": request_sha256,
+            "state": "IN_FLIGHT",
+        }
+        async with self.engine.begin() as conn:
+            insert = pg_insert(t.worker_tool_effects).values(**values).on_conflict_do_nothing(
+                index_elements=[
+                    t.worker_tool_effects.c.run_id,
+                    t.worker_tool_effects.c.idempotency_key,
+                ]
+            )
+            await conn.execute(insert)
+            row = (
+                await conn.execute(
+                    t.worker_tool_effects.select()
+                    .where(
+                        sa.and_(
+                            t.worker_tool_effects.c.run_id == run_id,
+                            t.worker_tool_effects.c.idempotency_key == idempotency_key,
+                        )
+                    )
+                    .with_for_update()
+                )
+            ).mappings().first()
+        if row is None:
+            raise RuntimeError("worker tool effect reservation was not persisted")
+        result = dict(row)
+        if result["request_sha256"] != request_sha256:
+            result["disposition"] = "CONFLICT"
+        elif result["state"] == "COMPLETED" and result.get("response_json") is not None:
+            result["disposition"] = "REPLAY"
+        elif result["state"] == "AMBIGUOUS":
+            result["disposition"] = "AMBIGUOUS"
+        elif result["state"] == "IN_FLIGHT" and result["id"] == values["id"]:
+            result["disposition"] = "NEW"
+        else:
+            # An existing in-flight row may have been created by a controller
+            # that died before dispatch or response persistence.  Never rerun
+            # it automatically; the effect is ambiguous until reconciled.
+            result["disposition"] = "AMBIGUOUS"
+        return result
+
+    async def complete_worker_tool_effect(
+        self,
+        effect_id: UUID,
+        *,
+        state: str,
+        response_json: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Persist a known or ambiguous mediated-tool response."""
+
+        normalized_state = str(state).strip().upper()
+        if normalized_state not in {"COMPLETED", "AMBIGUOUS"}:
+            raise ValueError("worker tool effect completion state is invalid")
+        now = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            await conn.execute(
+                t.worker_tool_effects.update()
+                .where(t.worker_tool_effects.c.id == effect_id)
+                .values(
+                    state=normalized_state,
+                    response_json=response_json,
+                    updated_at=now,
+                    completed_at=now if normalized_state == "COMPLETED" else None,
+                )
+            )
+            row = (
+                await conn.execute(
+                    t.worker_tool_effects.select()
+                    .where(t.worker_tool_effects.c.id == effect_id)
+                )
+            ).mappings().first()
+        return dict(row) if row else None
 
     async def append_worker_event(self, *, run_id: UUID, sequence: int, event_type: str, event: dict[str, Any], event_sha256: str, max_event_count: int | None = None) -> dict[str, Any]:
         values = {"id": uuid4(), "run_id": run_id, "sequence": sequence, "event_type": event_type, "event_json": event, "event_sha256": event_sha256}

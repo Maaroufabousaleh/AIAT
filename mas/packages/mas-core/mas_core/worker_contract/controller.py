@@ -1,22 +1,29 @@
-"""Sole authoritative writer for durable worker-run lifecycle state."""
+"""Authoritative post-claim coordinator for durable worker-run lifecycle state.
+
+Host placement, claim acquisition, and host-loss recovery retain ownership of
+their respective worker-run transitions; this controller owns the execution
+lifecycle after a run has been claimed.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import json
 import logging
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from .adapters import BaseWorkerAdapter, WorkerAdapter
 from .models import (
     CheckpointMode,
     EventType,
     WorkerCancellation,
+    WorkerCancellationReceipt,
     WorkerEvent,
     WorkerPause,
     WorkerReadiness,
@@ -24,6 +31,7 @@ from .models import (
     WorkerResume,
     WorkerRunAccepted,
     WorkerRunRequest,
+    WorkerRuntimeStatus,
     WorkerToolResponse,
 )
 from .protocol import ProtocolNegotiationError, negotiate_protocol
@@ -82,6 +90,82 @@ class WorkerRunController:
         self.max_event_count = max_event_count
         self._memory_runs: dict[UUID, dict[str, Any]] = {}
         self._memory_events: dict[UUID, list[dict[str, Any]]] = {}
+        self._memory_tool_effects: dict[tuple[UUID, str], dict[str, Any]] = {}
+
+    @staticmethod
+    def _tool_request_sha256(tool_request: Any) -> str:
+        """Hash the effect identity while ignoring a transport-local request ID."""
+
+        payload = tool_request.model_dump(mode="json")
+        payload.pop("request_id", None)
+        return hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+
+    async def _begin_tool_effect(self, tool_request: Any) -> dict[str, Any]:
+        request_sha256 = self._tool_request_sha256(tool_request)
+        storage_begin = getattr(self.storage, "begin_worker_tool_effect", None)
+        if callable(storage_begin):
+            return await storage_begin(
+                run_id=tool_request.run_id,
+                request_id=tool_request.request_id,
+                idempotency_key=tool_request.idempotency_key,
+                tool_name=tool_request.tool_name,
+                request_sha256=request_sha256,
+            )
+
+        key = (tool_request.run_id, tool_request.idempotency_key)
+        existing = self._memory_tool_effects.get(key)
+        if existing is not None:
+            result = dict(existing)
+            if result["request_sha256"] != request_sha256:
+                result["disposition"] = "CONFLICT"
+            elif result["state"] == "COMPLETED" and result.get("response_json") is not None:
+                result["disposition"] = "REPLAY"
+            elif result["state"] == "AMBIGUOUS":
+                result["disposition"] = "AMBIGUOUS"
+            else:
+                result["disposition"] = "AMBIGUOUS"
+            return result
+        row = {
+            "id": uuid4(),
+            "run_id": tool_request.run_id,
+            "request_id": tool_request.request_id,
+            "idempotency_key": tool_request.idempotency_key,
+            "tool_name": tool_request.tool_name,
+            "request_sha256": request_sha256,
+            "state": "IN_FLIGHT",
+            "response_json": None,
+        }
+        self._memory_tool_effects[key] = row
+        return {**row, "disposition": "NEW"}
+
+    async def _complete_tool_effect(
+        self,
+        tool_request: Any,
+        effect: dict[str, Any],
+        *,
+        state: str,
+        response: WorkerToolResponse,
+    ) -> None:
+        response_json = response.model_dump(mode="json")
+        storage_complete = getattr(self.storage, "complete_worker_tool_effect", None)
+        if callable(storage_complete):
+            await storage_complete(
+                effect["id"],
+                state=state,
+                response_json=response_json,
+            )
+            return
+        key = (tool_request.run_id, tool_request.idempotency_key)
+        row = self._memory_tool_effects.get(key)
+        if row is not None:
+            row.update(
+                {
+                    "state": state,
+                    "response_json": response_json,
+                }
+            )
 
     async def create_run(
         self,
@@ -180,11 +264,142 @@ class WorkerRunController:
             row["negotiation_json"] = negotiation
         if replay_metadata is not None:
             row["replay_metadata"] = replay_metadata
+        if transition_metadata:
+            row.setdefault("transition_metadata", {}).update(transition_metadata)
+            runtime_binding = transition_metadata.get("runtime_binding")
+            if isinstance(runtime_binding, dict):
+                row["runtime_run_id"] = runtime_binding.get("runtime_run_id")
+                row["runtime_binding"] = dict(runtime_binding)
+        if target in {"PAUSED", "SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT"}:
+            binding = row.get("runtime_binding")
+            if isinstance(binding, dict):
+                binding["status"] = target
         if target == "RUNNING":
             row.setdefault("started_at", datetime.now(UTC))
         if target in TERMINAL_RUN_STATES:
             row["completed_at"] = datetime.now(UTC)
         return row
+
+    async def reconcile(
+        self,
+        run_id: UUID,
+        adapter: WorkerAdapter,
+    ) -> WorkerRuntimeStatus:
+        """Observe subordinate runtime state without mutating canonical state.
+
+        A controller restart must not infer completion from missing in-memory
+        adapter maps.  The adapter may provide a durable runtime lookup; when
+        it cannot, this method returns ``UNKNOWN`` and leaves the AIAT run
+        untouched for an explicit recovery decision.
+        """
+
+        row = await self.get_run(run_id)
+        if row is None:
+            return WorkerRuntimeStatus(
+                run_id=run_id,
+                status="UNKNOWN",
+                details={"reason": "canonical worker run not found"},
+            )
+
+        runtime_run_id = row.get("runtime_run_id")
+        if runtime_run_id is not None:
+            runtime_run_id = str(runtime_run_id)
+        binding_reader = getattr(self.storage, "get_worker_runtime_binding", None)
+        if runtime_run_id is None and callable(binding_reader):
+            try:
+                binding = await binding_reader(run_id)
+            except Exception as exc:
+                logger.warning(
+                    "worker_runtime_binding_read_failed",
+                    extra={"run_id": str(run_id), "error": type(exc).__name__},
+                )
+                binding = None
+            if isinstance(binding, dict):
+                candidate = binding.get("runtime_run_id")
+                if candidate is not None:
+                    runtime_run_id = str(candidate)
+        if runtime_run_id is None:
+            transition_reader = getattr(self.storage, "list_worker_run_transitions", None)
+            if callable(transition_reader):
+                try:
+                    transitions = await transition_reader(run_id)
+                except Exception as exc:
+                    logger.warning(
+                        "worker_runtime_transition_read_failed",
+                        extra={"run_id": str(run_id), "error": type(exc).__name__},
+                    )
+                    transitions = []
+                for transition in reversed(transitions or []):
+                    metadata = transition.get("metadata") or {}
+                    if not isinstance(metadata, dict):
+                        continue
+                    runtime_run_id = metadata.get("runtime_run_id")
+                    accepted_metadata = metadata.get("accepted_metadata")
+                    if runtime_run_id is None and isinstance(accepted_metadata, dict):
+                        runtime_run_id = accepted_metadata.get("runtime_run_id")
+                        if runtime_run_id is None:
+                            # OpenCode and similar adapters may use a named
+                            # session identifier in accepted metadata.
+                            runtime_run_id = accepted_metadata.get("opencode_session_id")
+                    if runtime_run_id is not None:
+                        runtime_run_id = str(runtime_run_id)
+                        break
+
+        reconciler = getattr(adapter, "reconcile", None)
+        if not callable(reconciler):
+            return WorkerRuntimeStatus(
+                run_id=run_id,
+                status="UNKNOWN",
+                runtime_run_id=runtime_run_id,
+                details={"reason": "adapter does not expose runtime reconciliation"},
+            )
+        try:
+            raw_status = reconciler(run_id, runtime_run_id=runtime_run_id)
+            observed = await raw_status if inspect.isawaitable(raw_status) else raw_status
+            if isinstance(observed, WorkerRuntimeStatus):
+                normalized = observed
+            else:
+                normalized = WorkerRuntimeStatus.model_validate(observed)
+            if normalized.run_id != run_id:
+                logger.error(
+                    "worker_runtime_reconciliation_scope_mismatch",
+                    extra={"run_id": str(run_id)},
+                )
+                return WorkerRuntimeStatus(
+                    run_id=run_id,
+                    status="UNKNOWN",
+                    runtime_run_id=runtime_run_id,
+                    details={"reason": "adapter returned a different run ID"},
+                )
+            recorder = getattr(self.storage, "record_worker_runtime_observation", None)
+            if callable(recorder):
+                try:
+                    await recorder(
+                        run_id,
+                        status=normalized.status,
+                        runtime_run_id=normalized.runtime_run_id or runtime_run_id,
+                    )
+                except Exception as exc:
+                    # The observation is useful audit state, but it is not
+                    # allowed to turn a read-only reconciliation into a
+                    # canonical worker-run transition or hide the runtime
+                    # fact already returned to the caller.
+                    logger.warning(
+                        "worker_runtime_observation_persist_failed",
+                        extra={"run_id": str(run_id), "error": type(exc).__name__},
+                    )
+            return normalized
+        except Exception as exc:
+            logger.warning(
+                "worker_runtime_reconciliation_failed",
+                extra={"run_id": str(run_id), "error": type(exc).__name__},
+            )
+            return WorkerRuntimeStatus(
+                run_id=run_id,
+                status="UNKNOWN",
+                runtime_run_id=runtime_run_id,
+                details={"reason": "adapter reconciliation failed", "error_type": type(exc).__name__},
+            )
 
     async def _persist_result_evidence(self, request: WorkerRunRequest, result: WorkerResult) -> None:
         """Persist every returned artifact and usage record before terminal state.
@@ -322,7 +537,10 @@ class WorkerRunController:
                 "MODEL_USAGE_ATTRIBUTION_UNAVAILABLE",
                 "model resolution snapshot storage is unavailable",
             )
-        snapshot = await getter(normalized_snapshot_id)
+        snapshot = await getter(
+            normalized_snapshot_id,
+            project_id=request.project_id,
+        )
         if not isinstance(snapshot, dict):
             raise WorkerRunError(
                 "MODEL_USAGE_ATTRIBUTION_SNAPSHOT_NOT_FOUND",
@@ -358,48 +576,111 @@ class WorkerRunController:
         if event.tool_request is None:
             return
         tool_request = event.tool_request
-        if tool_request.tool_name not in request.tool_grants:
+        if tool_request.run_id != request.run_id:
+            raise WorkerRunError(
+                "TOOL_REQUEST_SCOPE_MISMATCH",
+                "worker tool request does not match the controller run",
+                details={
+                    "controller_run_id": str(request.run_id),
+                    "tool_request_run_id": str(tool_request.run_id),
+                },
+            )
+        effect = await self._begin_tool_effect(tool_request)
+        disposition = str(effect.get("disposition") or "AMBIGUOUS")
+        if disposition == "CONFLICT":
             response = WorkerToolResponse(
                 request_id=tool_request.request_id,
                 run_id=request.run_id,
                 tool_name=tool_request.tool_name,
                 success=False,
                 error={
-                    "code": "TOOL_NOT_GRANTED",
-                    "message": f"Tool {tool_request.tool_name!r} is not granted to this Worker Run",
+                    "code": "TOOL_IDEMPOTENCY_CONFLICT",
+                    "message": "The tool idempotency key was reused with different request arguments",
+                    "terminal": True,
                     "category": "policy",
                 },
             )
-        else:
-            dispatcher = getattr(getattr(adapter, "context", None), "tool_dispatcher", None)
-            if dispatcher is None:
+        elif disposition in {"REPLAY", "AMBIGUOUS"}:
+            stored_response = effect.get("response_json")
+            if stored_response is not None:
+                response = WorkerToolResponse.model_validate(stored_response).model_copy(
+                    update={
+                        "request_id": tool_request.request_id,
+                        "run_id": request.run_id,
+                        "tool_name": tool_request.tool_name,
+                    }
+                )
+            else:
                 response = WorkerToolResponse(
                     request_id=tool_request.request_id,
                     run_id=request.run_id,
                     tool_name=tool_request.tool_name,
                     success=False,
                     error={
-                        "code": "TOOL_MEDIATOR_UNAVAILABLE",
-                        "message": "No AIAT tool mediator is configured for this worker",
+                        "code": "TOOL_EFFECT_AMBIGUOUS",
+                        "message": "A previous tool attempt may have performed an effect; automatic replay is blocked",
+                        "retryable": False,
+                        "terminal": True,
+                        "category": "recovery",
+                    },
+                )
+        else:
+            effect_state = "COMPLETED"
+            if tool_request.tool_name not in request.tool_grants:
+                response = WorkerToolResponse(
+                    request_id=tool_request.request_id,
+                    run_id=request.run_id,
+                    tool_name=tool_request.tool_name,
+                    success=False,
+                    error={
+                        "code": "TOOL_NOT_GRANTED",
+                        "message": f"Tool {tool_request.tool_name!r} is not granted to this Worker Run",
                         "category": "policy",
                     },
                 )
             else:
-                try:
-                    raw_response = await dispatcher(tool_request)
-                    response = raw_response if isinstance(raw_response, WorkerToolResponse) else WorkerToolResponse.model_validate(raw_response)
-                except Exception as exc:
+                dispatcher = getattr(getattr(adapter, "context", None), "tool_dispatcher", None)
+                if dispatcher is None:
                     response = WorkerToolResponse(
                         request_id=tool_request.request_id,
                         run_id=request.run_id,
                         tool_name=tool_request.tool_name,
                         success=False,
                         error={
-                            "code": "TOOL_MEDIATION_FAILED",
-                            "message": str(exc),
-                            "category": "transport",
+                            "code": "TOOL_MEDIATOR_UNAVAILABLE",
+                            "message": "No AIAT tool mediator is configured for this worker",
+                            "category": "policy",
                         },
                     )
+                else:
+                    try:
+                        raw_response = await dispatcher(tool_request)
+                        response = raw_response if isinstance(raw_response, WorkerToolResponse) else WorkerToolResponse.model_validate(raw_response)
+                    except Exception as exc:
+                        # The tool may have completed an external effect before
+                        # its response reached AIAT.  Record the ambiguity and
+                        # do not allow a later controller to execute it again.
+                        effect_state = "AMBIGUOUS"
+                        response = WorkerToolResponse(
+                            request_id=tool_request.request_id,
+                            run_id=request.run_id,
+                            tool_name=tool_request.tool_name,
+                            success=False,
+                            error={
+                                "code": "TOOL_EFFECT_AMBIGUOUS",
+                                "message": "Tool mediation failed; the effect outcome requires reconciliation before retry",
+                                "retryable": False,
+                                "terminal": True,
+                                "category": "recovery",
+                                "details": {"cause_type": type(exc).__name__},
+                            },
+                        )
+            await self._complete_tool_effect(
+                tool_request,
+                effect,
+                state=effect_state,
+                response=response,
+            )
         deliver = getattr(adapter, "deliver_tool_response", None)
         if deliver is None:
             raise WorkerRunError("TOOL_RESPONSE_UNSUPPORTED", "adapter does not support mediated tool responses")
@@ -511,13 +792,39 @@ class WorkerRunController:
             await self.transition(request.run_id, "READY", expected="VALIDATING", negotiation=negotiation)
             await self.transition(request.run_id, "DISPATCHING", expected="READY")
             accepted = await adapter.start(request)
+            runtime_run_id = accepted.runtime_run_id if accepted else None
+            accepted_metadata = accepted.metadata if accepted else {}
+            if runtime_run_id is None and isinstance(accepted_metadata, dict):
+                for key in ("runtime_run_id", "opencode_session_id", "external_run_id"):
+                    candidate = accepted_metadata.get(key)
+                    if candidate:
+                        runtime_run_id = str(candidate)
+                        break
+            current_after_accept = await self.get_run(request.run_id) or {}
+            runtime_binding = {
+                "attempt_count": int(current_after_accept.get("attempt_count") or 0),
+                "adapter_id": str(adapter_id) if adapter_id is not None else None,
+                "runtime_type": str(getattr(adapter, "runtime_type", "unknown") or "unknown"),
+                "runtime_run_id": runtime_run_id,
+                "status": "RUNNING",
+                # Only immutable, non-secret runtime identity metadata is
+                # persisted here.  The legacy transition metadata continues
+                # to retain its compatibility payload separately.
+                "metadata": {
+                    "runtime_version": str(getattr(adapter, "runtime_version", "") or ""),
+                    "adapter_api_version": str(
+                        getattr(adapter, "adapter_api_version", "") or ""
+                    ),
+                },
+            }
             await self.transition(
                 request.run_id,
                 "RUNNING",
                 expected="DISPATCHING",
                 transition_metadata={
-                    "runtime_run_id": accepted.runtime_run_id if accepted else None,
-                    "accepted_metadata": accepted.metadata if accepted else {},
+                    "runtime_run_id": runtime_run_id,
+                    "accepted_metadata": accepted_metadata,
+                    "runtime_binding": runtime_binding,
                 },
             )
 
@@ -628,8 +935,46 @@ class WorkerRunController:
         if current in {"QUEUED", "CLAIMED", "CREATED"}:
             await self.transition(run_id, "CANCELLED", expected=current, error={"code": "CANCELLED", "message": reason})
             return await self.get_run(run_id)
-        await adapter.cancel(WorkerCancellation(run_id=run_id, reason=reason, requested_by=requested_by, force=force))
-        if current in {"RUNNING", "DISPATCHING", "READY", "VALIDATING"}:
+        raw_receipt = await adapter.cancel(
+            WorkerCancellation(run_id=run_id, reason=reason, requested_by=requested_by, force=force)
+        )
+        receipt: WorkerCancellationReceipt | None
+        if raw_receipt is None:
+            # Compatibility path for pre-receipt adapters.  Preserve the
+            # historical state transition, but keep it documented as an
+            # acknowledgement-only path until that adapter is upgraded.
+            receipt = None
+        elif isinstance(raw_receipt, WorkerCancellationReceipt):
+            receipt = raw_receipt
+        else:
+            receipt = WorkerCancellationReceipt.model_validate(raw_receipt)
+
+        if receipt is not None:
+            if receipt.run_id != run_id:
+                raise WorkerRunError(
+                    "CANCELLATION_SCOPE_MISMATCH",
+                    "worker cancellation receipt does not match the requested run",
+                )
+            if not receipt.terminal:
+                # The runtime accepted the request but did not prove
+                # termination. Leave the canonical run non-terminal; a later
+                # CANCELLED event or reconciliation must settle it.
+                return await self.get_run(run_id)
+            if receipt.runtime_status not in {"CANCELLED", "CANCELED"}:
+                # A runtime that is already completed/failed, or whose
+                # terminal status is unknown, wins over a late cancellation
+                # request. Reconciliation/normal result settlement owns the
+                # terminal state in that case.
+                return await self.get_run(run_id)
+        if current in {
+            "RUNNING",
+            "DISPATCHING",
+            "READY",
+            "VALIDATING",
+            "PAUSING",
+            "PAUSED",
+            "RESUMING",
+        }:
             await self.transition(run_id, "CANCELLED", expected=current, error={"code": "CANCELLED", "message": reason})
         return await self.get_run(run_id)
 

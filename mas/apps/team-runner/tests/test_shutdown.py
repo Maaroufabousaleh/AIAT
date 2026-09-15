@@ -326,6 +326,7 @@ async def test_resume_reuses_original_task_message_identity(runner_settings):
     agent.restore_from_checkpoint = MagicMock()
     agent._dispatch = AsyncMock()
     task_id = uuid4()
+    snapshot_id = uuid4()
 
     await runtime._resume_agent(
         agent,
@@ -334,11 +335,16 @@ async def test_resume_reuses_original_task_message_identity(runner_settings):
             "task_message_id": str(task_id),
             "messages_json": [],
             "iteration": 1,
+            "task_envelope_json": {
+                "project_id": "resume-project",
+                "model_resolution_snapshot_id": str(snapshot_id),
+            },
         },
     )
 
     frame = agent._dispatch.await_args.args[0]
     assert frame.envelope.message_id == task_id
+    assert frame.envelope.model_resolution_snapshot_id == snapshot_id
 
 
 @pytest.mark.anyio

@@ -18,8 +18,15 @@ SNAPSHOT_ID = UUID("00000000-0000-4000-a000-000000000901")
 class _SnapshotStorage:
     def __init__(self, snapshot: dict[str, object] | None) -> None:
         self.snapshot = snapshot
+        self.project_ids: list[UUID | None] = []
 
-    async def get_model_resolution_snapshot(self, snapshot_id: UUID) -> dict[str, object] | None:
+    async def get_model_resolution_snapshot(
+        self,
+        snapshot_id: UUID,
+        *,
+        project_id: UUID | None = None,
+    ) -> dict[str, object] | None:
+        self.project_ids.append(project_id)
         if snapshot_id != SNAPSHOT_ID:
             return None
         return self.snapshot
@@ -109,3 +116,31 @@ async def test_missing_model_usage_is_rejected_closed() -> None:
         )._validate_result_model_attribution(request, result, SNAPSHOT_ID)
 
     assert caught.value.code == "MODEL_USAGE_ATTRIBUTION_MISMATCH"
+
+
+@pytest.mark.asyncio
+async def test_model_attribution_lookup_preserves_project_scope() -> None:
+    project_id = uuid4()
+    storage = _SnapshotStorage(
+        {
+            "provider_id": "provider-v1",
+            "exact_model_id": "model-v1",
+        }
+    )
+    controller = WorkerRunController(storage=storage)
+    request = _request().model_copy(update={"project_id": project_id})
+    result = WorkerResult(
+        run_id=request.run_id,
+        worker_id=request.worker_id,
+        success=True,
+        usage=WorkerUsage(
+            prompt_tokens=1,
+            completion_tokens=1,
+            provider="provider-v1",
+            exact_model_id="model-v1",
+        ),
+    )
+
+    await controller._validate_result_model_attribution(request, result, SNAPSHOT_ID)
+
+    assert storage.project_ids == [project_id]

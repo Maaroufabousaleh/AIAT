@@ -160,6 +160,20 @@ class ControlPlaneStorageClient:
         result = await self._request("usage_record", **kwargs)
         return result if isinstance(result, dict) else None
 
+    async def get_model_resolution_snapshot(
+        self,
+        snapshot_id: UUID,
+        *,
+        project_id: UUID | None = None,
+    ) -> dict[str, Any] | None:
+        """Read a model decision through the scoped control-plane boundary."""
+        result = await self._request(
+            "model_resolution_snapshot_get",
+            snapshot_id=snapshot_id,
+            project_id=project_id,
+        )
+        return result if isinstance(result, dict) else None
+
     async def get_document(self, document_id: UUID) -> dict[str, Any] | None:
         result = await self._request("document_get", document_id=document_id)
         return result if isinstance(result, dict) else None

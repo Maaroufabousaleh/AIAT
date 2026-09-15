@@ -35,6 +35,7 @@ from mas_core.worker_contract import (
     ToolMode,
     WorkerArtifact,
     WorkerCancellation,
+    WorkerCancellationReceipt,
     WorkerCapabilities,
     WorkerError,
     WorkerHealth,
@@ -43,6 +44,7 @@ from mas_core.worker_contract import (
     WorkerResult,
     WorkerResume,
     WorkerRunRequest,
+    WorkerRuntimeStatus,
     WorkerUsage,
 )
 from mas_core.worker_contract.openhands_bridge import (
@@ -1709,6 +1711,122 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
                 return self.observed_execution_status(run_id)
         return None
 
+    async def reconcile(
+        self,
+        run_id: UUID,
+        *,
+        runtime_run_id: str | None = None,
+    ) -> WorkerRuntimeStatus:
+        """Observe a pinned OpenHands conversation after an adapter restart.
+
+        REST ``error`` and ``stuck`` states are immediate terminal failures in
+        the active execution loop.  REST ``finished`` remains advisory for
+        v1.43 because the adapter deliberately waits for the authoritative
+        full-state event before accepting a successful result.  Reconciliation
+        therefore reports that state as ``UNKNOWN`` rather than fabricating a
+        successful AIAT settlement.
+        """
+
+        local = await BaseWorkerAdapter.reconcile(
+            self,
+            run_id,
+            runtime_run_id=runtime_run_id,
+        )
+        conversation_id = (
+            runtime_run_id
+            or local.runtime_run_id
+            or self._conversation_by_run.get(run_id)
+        )
+        if not conversation_id:
+            return local
+        try:
+            UUID(str(conversation_id))
+        except (TypeError, ValueError):
+            return WorkerRuntimeStatus(
+                run_id=run_id,
+                status="UNKNOWN",
+                runtime_run_id=str(conversation_id),
+                details={"reason": "invalid OpenHands conversation reference"},
+            )
+
+        conversation_id = str(conversation_id)
+        self._conversation_by_run[run_id] = conversation_id
+        try:
+            info = await self._conversation(conversation_id)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                return WorkerRuntimeStatus(
+                    run_id=run_id,
+                    status="UNKNOWN",
+                    runtime_run_id=conversation_id,
+                    details={"reason": "OpenHands conversation was not found", "conversation_present": False},
+                )
+            return WorkerRuntimeStatus(
+                run_id=run_id,
+                status="UNKNOWN",
+                runtime_run_id=conversation_id,
+                details={"reason": "OpenHands runtime lookup failed", "error_type": type(exc).__name__},
+            )
+        except Exception as exc:
+            return WorkerRuntimeStatus(
+                run_id=run_id,
+                status="UNKNOWN",
+                runtime_run_id=conversation_id,
+                details={"reason": "OpenHands runtime lookup failed", "error_type": type(exc).__name__},
+            )
+
+        native_status = str(info.get("execution_status") or "").strip().lower()
+        details = {
+            "source": "conversation_get",
+            "conversation_present": True,
+            "native_status": native_status or None,
+        }
+        if native_status in {"error", "stuck"}:
+            return WorkerRuntimeStatus(
+                run_id=run_id,
+                status="FAILED",
+                terminal=True,
+                runtime_run_id=conversation_id,
+                details=details,
+            )
+        if native_status in {"cancelled", "canceled", "interrupted"}:
+            return WorkerRuntimeStatus(
+                run_id=run_id,
+                status="CANCELLED",
+                terminal=True,
+                runtime_run_id=conversation_id,
+                details=details,
+            )
+        if native_status in {"paused", "pausing"}:
+            return WorkerRuntimeStatus(
+                run_id=run_id,
+                status="PAUSED",
+                runtime_run_id=conversation_id,
+                details=details,
+            )
+        if native_status in {"running", "awaiting_input", "waiting", "busy"}:
+            return WorkerRuntimeStatus(
+                run_id=run_id,
+                status="RUNNING",
+                runtime_run_id=conversation_id,
+                details=details,
+            )
+        if native_status == "idle":
+            return WorkerRuntimeStatus(
+                run_id=run_id,
+                status="ACCEPTED",
+                runtime_run_id=conversation_id,
+                details=details,
+            )
+        if native_status == "finished":
+            details["terminality"] = "advisory_rest_state"
+        return WorkerRuntimeStatus(
+            run_id=run_id,
+            status="UNKNOWN",
+            runtime_run_id=conversation_id,
+            details=details,
+        )
+
     async def _create_conversation(self, request: WorkerRunRequest) -> str:
         await self._configure_tool_bridge(request)
         existing = self._conversation_by_key.get(request.idempotency_key)
@@ -2355,7 +2473,7 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
         )
         await super().resume(request)
 
-    async def cancel(self, request: WorkerCancellation) -> None:
+    async def cancel(self, request: WorkerCancellation) -> WorkerCancellationReceipt:
         conversation_id = self._conversation_by_run.get(request.run_id)
         if conversation_id:
             endpoint = "conversation_interrupt" if request.force else "conversation_pause"
@@ -2369,7 +2487,7 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             if response.status_code >= 400 and not request.force:
                 response.raise_for_status()
         self._cancelled.add(request.run_id)
-        await super().cancel(request)
+        return await super().cancel(request)
 
     async def close(self) -> None:
         self._stop_events.update(self._event_tasks)

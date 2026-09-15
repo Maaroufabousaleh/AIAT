@@ -99,3 +99,51 @@ async def test_storage_health_check_requires_explicit_ok_response() -> None:
         await client.health_check()
     finally:
         await client.close()
+
+
+@pytest.mark.anyio
+async def test_storage_client_reads_project_scoped_model_snapshot() -> None:
+    from team_runner.storage_client import ControlPlaneStorageClient
+
+    snapshot_id = uuid4()
+    project_id = uuid4()
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = request.read()
+        return httpx.Response(
+            200,
+            json={
+                "id": str(snapshot_id),
+                "project_id": str(project_id),
+                "resolved_profile_id": "governance",
+                "resolved_profile_version": "v1",
+                "provider_id": "provider",
+                "exact_model_id": "provider/model",
+            },
+        )
+
+    client = ControlPlaneStorageClient(
+        orchestrator_url="http://orchestrator-api:8000",
+        api_key="worker-secret",
+        team_id="office_cio",
+    )
+    await client._client.aclose()
+    client._client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="http://test",
+        headers={"X-API-Key": "worker-secret", "X-AIAT-Team-ID": "office_cio"},
+    )
+    try:
+        result = await client.get_model_resolution_snapshot(
+            snapshot_id,
+            project_id=project_id,
+        )
+    finally:
+        await client.close()
+
+    assert result is not None
+    assert result["id"] == str(snapshot_id)
+    assert b'"operation":"model_resolution_snapshot_get"' in seen["body"]  # type: ignore[operator]
+    assert f'"snapshot_id":"{snapshot_id}"'.encode() in seen["body"]  # type: ignore[operator]
+    assert f'"project_id":"{project_id}"'.encode() in seen["body"]  # type: ignore[operator]

@@ -30,25 +30,35 @@ import logging
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
-from typing import Any
+from contextlib import suppress
+from contextvars import ContextVar
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from ..llm_gateway.client import LLMGatewayClient
 from ..llm_gateway.models import ToolDefinition
 from ..observability.metrics import MAS_BUDGET_EXHAUSTED_TOTAL, MAS_LLM_CALLS_TOTAL
 from ..observability.tracing import bind_trace_id, clear_trace_context
-from ..protocols.enums import AgentRole
-from ..protocols.envelope import MessageEnvelope
-from ..protocols.ws import WSMessageFrame
 from .attachment_manager import TempAttachmentManager
 from .budget import BudgetExhausted, BudgetTracker
-from .config import AgentConfig
+from .config import AgentConfig, GovernanceModelBinding
 from .router_client import RouterClient
 from .tool_catalog import tool_catalog_prompt, tool_definitions_for_agent
 
 logger = logging.getLogger(__name__)
 
+if TYPE_CHECKING:
+    from ..protocols.enums import AgentRole
+    from ..protocols.envelope import MessageEnvelope
+    from ..protocols.ws import WSMessageFrame
+
 ToolExecutor = Callable[[str, dict[str, Any]], Awaitable[Any] | Any]
+
+
+class ModelProvenanceError(RuntimeError):
+    """Raised when a governed AgentBase call cannot prove model attribution."""
+
+    code = "MODEL_PROVENANCE_MISMATCH"
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +141,17 @@ class AgentBase(ABC):
         # Currently active envelope (set when processing a message)
         self._current_envelope: MessageEnvelope | None = None
 
+        # Per-dispatch governance model binding.  A context variable keeps an
+        # envelope's binding local to the task that is processing it and avoids
+        # mutating the long-lived AgentConfig when TeamRunner handles another
+        # message for the same agent.
+        self._invocation_model_binding: ContextVar[
+            GovernanceModelBinding | None
+        ] = ContextVar(
+            f"aiat_agent_model_binding_{self.agent_id}",
+            default=None,
+        )
+
         # Checkpoint restored from Postgres (set by restore_from_checkpoint)
         self._checkpoint: dict[str, Any] | None = None
         self._llm: LLMGatewayClient = llm_client or LLMGatewayClient()
@@ -208,7 +229,12 @@ class AgentBase(ABC):
     # Internal dispatch — called for every WSMessageFrame from the router
     # ------------------------------------------------------------------
 
-    async def _dispatch(self, frame: WSMessageFrame) -> None:
+    async def _dispatch(
+        self,
+        frame: WSMessageFrame,
+        *,
+        model_resolution_binding: GovernanceModelBinding | None = None,
+    ) -> None:
         """LRU check → delegate to handle_message → checkpoint lifecycle.
 
         This method is the ``handler`` passed to ``RouterClient.subscribe``.
@@ -232,12 +258,23 @@ class AgentBase(ABC):
             return
 
         self._current_envelope = envelope
-        bind_trace_id(
-            str(envelope.correlation_id or envelope.message_id),
-            span_id=str(envelope.message_id),
-        )
-
+        binding_token = None
         try:
+            effective_binding = model_resolution_binding
+            if effective_binding is None:
+                effective_binding = await self._resolve_dispatch_model_binding(envelope)
+            elif envelope.model_resolution_snapshot_id not in (
+                None,
+                effective_binding.resolution_snapshot_id,
+            ):
+                raise ModelProvenanceError(
+                    "governance-agent dispatch binding does not match its envelope snapshot"
+                )
+            binding_token = self._invocation_model_binding.set(effective_binding)
+            bind_trace_id(
+                str(envelope.correlation_id or envelope.message_id),
+                span_id=str(envelope.message_id),
+            )
             task_budget = (
                 envelope.budget if envelope.budget is not None else self.config.budget_defaults
             )
@@ -265,7 +302,67 @@ class AgentBase(ABC):
             self._processed_lru.add(msg_id_str)
             self._current_envelope = None
         finally:
+            if binding_token is not None:
+                self._invocation_model_binding.reset(binding_token)
+            self._current_envelope = None
             clear_trace_context()
+
+    async def _resolve_dispatch_model_binding(
+        self,
+        envelope: MessageEnvelope,
+    ) -> GovernanceModelBinding | None:
+        """Resolve a snapshot-bearing direct dispatch through governed storage.
+
+        TeamRunner normally supplies this projection explicitly.  The fallback
+        covers the older direct ``AgentBase.run``/checkpoint-resume entrypoint
+        without allowing a snapshot-bearing message to silently fall back to a
+        different model.  An unbound message remains compatible and is tracked
+        as unresolved by the existing governance path.
+        """
+        snapshot_id = envelope.model_resolution_snapshot_id
+        if snapshot_id is None:
+            return None
+
+        getter = getattr(self._storage, "get_model_resolution_snapshot", None)
+        if not callable(getter):
+            raise ModelProvenanceError(
+                "governance-agent snapshot-bearing dispatch requires scoped model storage"
+            )
+
+        project_id: UUID | None = None
+        raw_project_id = envelope.project_id
+        if raw_project_id is not None and str(raw_project_id) != "operator-direct":
+            try:
+                project_id = UUID(str(raw_project_id))
+            except (TypeError, ValueError) as exc:
+                raise ModelProvenanceError(
+                    "governance-agent snapshot scope must be a UUID or operator-direct"
+                ) from exc
+
+        snapshot = await getter(snapshot_id, project_id=project_id)
+        if snapshot is None:
+            raise ModelProvenanceError(
+                "governance-agent model-resolution snapshot is missing or out of scope"
+            )
+        stored_project_id = snapshot.get("project_id")
+        if stored_project_id is not None:
+            try:
+                stored_project_uuid = UUID(str(stored_project_id))
+            except (TypeError, ValueError) as exc:
+                raise ModelProvenanceError(
+                    "governance-agent model-resolution snapshot has invalid project scope"
+                ) from exc
+            if project_id is None or stored_project_uuid != project_id:
+                raise ModelProvenanceError(
+                    "governance-agent model-resolution snapshot is out of scope"
+                )
+
+        try:
+            return GovernanceModelBinding.from_snapshot(snapshot_id, snapshot)
+        except (TypeError, ValueError) as exc:
+            raise ModelProvenanceError(
+                "governance-agent snapshot is not an authorized exact-model decision"
+            ) from exc
 
     # ------------------------------------------------------------------
     # Checkpoint helpers — used by concrete subclasses during think() loops
@@ -283,8 +380,12 @@ class AgentBase(ABC):
         if self._storage is None or self._current_envelope is None:
             return
         project_id = self._current_envelope.project_id or "none"
+        checkpoint_data = dict(data)
+        snapshot_id = getattr(self._current_envelope, "model_resolution_snapshot_id", None)
+        if snapshot_id is not None:
+            checkpoint_data.setdefault("model_resolution_snapshot_id", str(snapshot_id))
         try:
-            await self._storage.save_checkpoint(self.agent_id, project_id, data)
+            await self._storage.save_checkpoint(self.agent_id, project_id, checkpoint_data)
         except Exception as exc:
             logger.error("Failed to save checkpoint: %s", exc, extra=self._log_extra())
 
@@ -329,13 +430,54 @@ class AgentBase(ABC):
     # Publish helpers
     # ------------------------------------------------------------------
 
+    def _bind_outgoing_model_provenance(self, envelope: MessageEnvelope) -> MessageEnvelope:
+        """Carry the current governed decision across an agent message boundary.
+
+        TeamRunner supplies a model-resolution binding for one inbound
+        governance invocation.  All messages emitted while handling that
+        invocation are part of the same governed decision unless a caller has
+        already supplied the exact same snapshot.  A different snapshot would
+        be an un-authorized model decision, while a message for another
+        project cannot safely reuse a project-scoped snapshot.
+
+        System-scoped messages without project context remain unbound.  The
+        control plane is still responsible for creating and validating the
+        snapshot; AgentBase only carries the immutable reference.
+        """
+        binding = self._effective_model_resolution_binding()
+        if binding is None:
+            return envelope
+
+        explicit_snapshot_id = envelope.model_resolution_snapshot_id
+        if explicit_snapshot_id is not None:
+            if explicit_snapshot_id != binding.resolution_snapshot_id:
+                raise ModelProvenanceError(
+                    "governance-agent outgoing message uses a different model-resolution binding"
+                )
+            return envelope
+
+        current = self._current_envelope
+        if envelope.project_id is None:
+            return envelope
+        if current is None or current.project_id is None:
+            raise ModelProvenanceError(
+                "governance-agent cannot attach a project-scoped model binding without project context"
+            )
+        if envelope.project_id != current.project_id:
+            raise ModelProvenanceError(
+                "governance-agent cannot reuse a model-resolution binding across projects"
+            )
+        return envelope.model_copy(
+            update={"model_resolution_snapshot_id": binding.resolution_snapshot_id}
+        )
+
     async def publish(self, envelope: MessageEnvelope) -> str:
-        """Publish a message via the router.  Returns the stream entry ID."""
-        return await self._router.publish(envelope)
+        """Publish a message via the router with scoped provenance."""
+        return await self._router.publish(self._bind_outgoing_model_provenance(envelope))
 
     async def broadcast(self, envelope: MessageEnvelope) -> dict[str, Any]:
-        """Broadcast a message to all 11 team streams via the router."""
-        return await self._router.broadcast(envelope)
+        """Broadcast a message to all 11 team streams with scoped provenance."""
+        return await self._router.broadcast(self._bind_outgoing_model_provenance(envelope))
 
     # ------------------------------------------------------------------
     # LLM + tool helpers
@@ -438,12 +580,14 @@ class AgentBase(ABC):
             )
             return
 
-        details = None
+        details: dict[str, Any] = self._model_provenance_details()
         if error is not None:
-            details = {
-                "error_type": type(error).__name__,
-                "error": str(error)[:1000],
-            }
+            details.update(
+                {
+                    "error_type": type(error).__name__,
+                    "error": str(error)[:1000],
+                }
+            )
         try:
             usage_result = usage_writer(
                 project_id=project_id,
@@ -467,6 +611,69 @@ class AgentBase(ABC):
             logger.exception(
                 "Failed to persist project LLM usage",
                 extra=self._log_extra(iteration=iteration),
+            )
+
+    def _model_provenance_details(self) -> dict[str, Any]:
+        """Return safe provenance metadata for governance-agent usage records."""
+        binding = self._effective_model_resolution_binding()
+        if binding is None:
+            return {
+                "provenance_status": "unresolved",
+                "runtime_plane": "governance_agent",
+                "reason": "AgentBase direct gateway path has no model-resolution binding",
+            }
+        return {
+            "provenance_status": "bound",
+            "runtime_plane": "governance_agent",
+            "resolution_snapshot_id": str(binding.resolution_snapshot_id),
+            "profile_id": binding.profile_id,
+            "profile_version": binding.profile_version,
+            "provider_id": binding.provider_id,
+            "exact_model_id": binding.exact_model_id,
+        }
+
+    def _effective_model_resolution_binding(self) -> GovernanceModelBinding | None:
+        """Return the per-dispatch binding, or the static test/compat binding."""
+        return self._invocation_model_binding.get() or self.config.model_resolution_binding
+
+    @staticmethod
+    def _model_aliases(binding: GovernanceModelBinding) -> set[str]:
+        """Return gateway spellings accepted for one governed exact model."""
+        exact = binding.exact_model_id
+        aliases = {exact}
+        provider_prefix = f"{binding.provider_id}/"
+        if exact.startswith(provider_prefix):
+            aliases.add(exact.removeprefix(provider_prefix))
+        else:
+            aliases.add(f"{provider_prefix}{exact}")
+        return aliases
+
+    def _governed_request_model(self, requested_model: str | None) -> str:
+        """Select the immutable model bound to this governance invocation."""
+        binding = self._effective_model_resolution_binding()
+        if binding is None:
+            if self.config.require_model_resolution_binding:
+                raise ModelProvenanceError(
+                    "governance-agent model call requires an AIAT model-resolution binding"
+                )
+            return requested_model or self.config.llm_model
+
+        aliases = self._model_aliases(binding)
+        if requested_model is not None and requested_model not in aliases:
+            raise ModelProvenanceError(
+                "governance-agent model override does not match its AIAT resolution binding"
+            )
+        return binding.exact_model_id
+
+    def _validate_governed_response(self, response: Any) -> None:
+        """Fail closed when a bound call returns an unapproved model identity."""
+        binding = self._effective_model_resolution_binding()
+        if binding is None:
+            return
+        observed_model = str(getattr(response, "model", "") or "").strip()
+        if observed_model not in self._model_aliases(binding):
+            raise ModelProvenanceError(
+                "governance-agent response model does not match its AIAT resolution binding"
             )
 
     async def think(
@@ -535,18 +742,23 @@ class AgentBase(ABC):
                         extra=self._log_extra(iteration=iteration),
                     )
                     # Phase 12: budget exhaustion metric
-                    try:
+                    with suppress(Exception):
                         MAS_BUDGET_EXHAUSTED_TOTAL.labels(
                             agent_id=self.agent_id,
                             budget_type="pre_llm_check",
                         ).inc()
-                    except Exception:
-                        pass
                     break
 
-                requested_model = model or self.config.llm_model
+                requested_model = self._governed_request_model(model)
                 try:
-                    if self.config.llm_use_fallback:
+                    # A snapshot binds this invocation to one exact model.
+                    # Automatic fallback would create a new model decision
+                    # without a new AIAT snapshot, so it is intentionally not
+                    # used until governed fallback snapshots are supported.
+                    if (
+                        self.config.llm_use_fallback
+                        and self._effective_model_resolution_binding() is None
+                    ):
                         response = await self._llm.chat_completion_with_fallback(
                             messages,
                             task=self.config.llm_fallback_task,
@@ -576,6 +788,7 @@ class AgentBase(ABC):
                             ),
                             stream=self.config.llm_stream if stream is None else stream,
                         )
+                    self._validate_governed_response(response)
                 except Exception as exc:
                     await self._record_llm_usage(
                         model=requested_model,
@@ -586,13 +799,11 @@ class AgentBase(ABC):
                     raise
 
                 # Phase 12: LLM call metric
-                try:
+                with suppress(Exception):
                     MAS_LLM_CALLS_TOTAL.labels(
-                        model=model or self.config.llm_model,
+                        model=requested_model,
                         agent_id=self.agent_id,
                     ).inc()
-                except Exception:
-                    pass  # metrics are best-effort
 
                 # Prometheus is fleet-scoped. Persist the response's actual
                 # project, model, tokens, and estimated cost for workspace
@@ -619,13 +830,11 @@ class AgentBase(ABC):
                         extra=self._log_extra(iteration=iteration),
                     )
                     # Phase 12: budget exhaustion metric
-                    try:
+                    with suppress(Exception):
                         MAS_BUDGET_EXHAUSTED_TOTAL.labels(
                             agent_id=self.agent_id,
                             budget_type="llm_call",
                         ).inc()
-                    except Exception:
-                        pass
                     break
 
                 messages.append(response.message.model_dump(exclude_none=True))

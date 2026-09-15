@@ -176,6 +176,14 @@ class MessageEnvelope(BaseModel):
         default=None,
         description="Project this message belongs to. Mandatory for all messages after INIT.",
     )
+    model_resolution_snapshot_id: UUID | None = Field(
+        default=None,
+        description=(
+            "Optional AIAT model-resolution decision for a governance-agent "
+            "invocation. The control plane validates the snapshot and scope; "
+            "it is never a raw model selection."
+        ),
+    )
 
     # --- Timing & delivery ---
     timestamp: datetime = Field(

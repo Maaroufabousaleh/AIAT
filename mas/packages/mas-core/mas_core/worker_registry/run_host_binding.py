@@ -250,14 +250,23 @@ class WorkerRunHostBindingService:
         reservation = schedule.get("reservation")
         if schedule.get("status") not in {"RESERVED", "REPLAYED"} or not isinstance(reservation, Mapping):
             raise RunHostBindingRejected("host_reservation_unavailable")
+        reservation_was_created = (
+            schedule.get("status") == "RESERVED"
+            and not bool(reservation.get("idempotent_replay"))
+        )
+        reservation_id: UUID | None = None
         try:
             host_uuid = reservation.get("host_uuid")
-            reservation_id = reservation.get("id")
+            reservation_id_value = reservation.get("id")
             host_lease_generation = int(reservation.get("host_lease_generation") or 1)
-            if host_uuid is None or reservation_id is None:
+            if host_uuid is None or reservation_id_value is None:
                 raise ValueError
             host_uuid = host_uuid if isinstance(host_uuid, UUID) else UUID(str(host_uuid))
-            reservation_id = reservation_id if isinstance(reservation_id, UUID) else UUID(str(reservation_id))
+            reservation_id = (
+                reservation_id_value
+                if isinstance(reservation_id_value, UUID)
+                else UUID(str(reservation_id_value))
+            )
         except (TypeError, ValueError) as exc:
             raise RunHostBindingRejected("reservation_projection_invalid") from exc
 
@@ -293,7 +302,20 @@ class WorkerRunHostBindingService:
                         created_at=now,
                     )
                 )
-        except sa.exc.IntegrityError as exc:
+        except Exception as exc:
+            # Scheduling and binding intentionally remain separate authority
+            # boundaries, but a failed binding must not strand a newly-created
+            # reservation.  A replayed reservation belongs to the existing
+            # scheduler record and must not be released here.
+            if reservation_was_created and reservation_id is not None:
+                try:
+                    await self._ledger.release(reservation_id, owner=owner)
+                except Exception as cleanup_exc:
+                    raise RunHostBindingRejected(
+                        "run_host_binding_reservation_cleanup_failed"
+                    ) from cleanup_exc
+            if not isinstance(exc, sa.exc.IntegrityError):
+                raise
             replay = await self.get(run_id)
             if replay is not None and str(replay.get("assignment_key")) == assignment_key:
                 return {**replay, "idempotent_replay": True}
@@ -319,46 +341,83 @@ class WorkerRunHostBindingService:
         if str(existing.get("owner")) != actor:
             raise PermissionError("run-host binding owner mismatch")
         state = str(existing.get("state") or "")
-        if state == target:
+        reservation_state = str(existing.get("reservation_state") or "")
+        reservation_settled = reservation_state == target or (
+            target == "RELEASED" and reservation_state in {"RELEASED", "EXPIRED"}
+        )
+        if state == target and reservation_settled:
             return {**existing, "idempotent_replay": True}
-        transitionable = state == "ASSIGNED" or (target == "RELEASED" and state == "COMMITTED")
+        transitionable = (
+            state == "ASSIGNED"
+            or state == target
+            or (target == "RELEASED" and state == "COMMITTED")
+        )
         if not transitionable:
             raise RunHostBindingRejected("run_host_binding_not_transitionable")
         reservation_id = existing.get("reservation_id")
         if not isinstance(reservation_id, UUID):
             reservation_id = UUID(str(reservation_id))
-        if target == "COMMITTED":
-            await self._ledger.commit(reservation_id, owner=actor)
-        else:
-            await self._ledger.release(reservation_id, owner=actor)
         from ..memory import models as t
 
         now = self._now()
-        state_clause = (
-            t.worker_run_host_bindings.c.state == "ASSIGNED"
-            if target == "COMMITTED"
-            else t.worker_run_host_bindings.c.state.in_(("ASSIGNED", "COMMITTED"))
-        )
         async with self._storage.engine.begin() as connection:
-            await connection.execute(
-                t.worker_run_host_bindings.update()
-                .where(
-                    sa.and_(
-                        t.worker_run_host_bindings.c.run_id == normalized_run_id,
-                        t.worker_run_host_bindings.c.owner == actor,
-                        state_clause,
+            # Reservation and binding settlement share this transaction.  If
+            # an earlier process committed only one side, this retry repairs
+            # the safe, owner-bound state instead of leaving a permanent
+            # ASSIGNED/COMMITTED split.
+            await self._ledger.transition_in_transaction(
+                connection,
+                reservation_id,
+                owner=actor,
+                target=target,
+                now=now,
+            )
+            locked = await self._fetch(
+                connection,
+                run_id=normalized_run_id,
+                for_update=True,
+            )
+            if locked is None:
+                raise RunHostBindingRejected("run_host_binding_not_found")
+            if str(locked.get("owner")) != actor:
+                raise PermissionError("run-host binding owner mismatch")
+            locked_state = str(locked.get("state") or "")
+            if locked_state == target:
+                idempotent_replay = True
+            else:
+                state_clause = (
+                    t.worker_run_host_bindings.c.state == "ASSIGNED"
+                    if target == "COMMITTED"
+                    else t.worker_run_host_bindings.c.state.in_(
+                        ("ASSIGNED", "COMMITTED")
                     )
                 )
-                .values(
-                    state=target,
-                    committed_at=now if target == "COMMITTED" else None,
-                    released_at=now if target == "RELEASED" else None,
+                if target == "COMMITTED" and locked_state != "ASSIGNED":
+                    raise RunHostBindingRejected("run_host_binding_not_transitionable")
+                if target == "RELEASED" and locked_state not in {"ASSIGNED", "COMMITTED"}:
+                    raise RunHostBindingRejected("run_host_binding_not_transitionable")
+                result = await connection.execute(
+                    t.worker_run_host_bindings.update()
+                    .where(
+                        sa.and_(
+                            t.worker_run_host_bindings.c.run_id == normalized_run_id,
+                            t.worker_run_host_bindings.c.owner == actor,
+                            state_clause,
+                        )
+                    )
+                    .values(
+                        state=target,
+                        committed_at=now if target == "COMMITTED" else None,
+                        released_at=now if target == "RELEASED" else None,
+                    )
                 )
-            )
+                if result.rowcount != 1:
+                    raise RunHostBindingRejected("run_host_binding_settlement_conflict")
+                idempotent_replay = False
         result = await self.get(normalized_run_id)
         if result is None:
             raise RunHostBindingRejected("run_host_binding_not_readable")
-        return result
+        return {**result, "idempotent_replay": idempotent_replay}
 
     async def commit(self, run_id: UUID | str, *, owner: str) -> dict[str, Any]:
         return await self._settle(run_id, owner=owner, target="COMMITTED")
@@ -434,17 +493,33 @@ class WorkerRunHostBindingService:
             reservation, Mapping
         ):
             raise RunHostBindingRecoveryRejected("host_recovery_reservation_unavailable")
+        reservation_was_created = (
+            schedule.get("status") == "RESERVED"
+            and not bool(reservation.get("idempotent_replay"))
+        )
+        reservation_id: UUID | None = None
         try:
             host_uuid = reservation.get("host_uuid")
-            reservation_id = reservation.get("id")
+            reservation_id_value = reservation.get("id")
             host_lease_generation = int(reservation.get("host_lease_generation") or 1)
-            if host_uuid is None or reservation_id is None:
+            if host_uuid is None or reservation_id_value is None:
                 raise ValueError
             host_uuid = host_uuid if isinstance(host_uuid, UUID) else UUID(str(host_uuid))
-            reservation_id = reservation_id if isinstance(reservation_id, UUID) else UUID(str(reservation_id))
+            reservation_id = (
+                reservation_id_value
+                if isinstance(reservation_id_value, UUID)
+                else UUID(str(reservation_id_value))
+            )
         except (TypeError, ValueError) as exc:
             raise RunHostBindingRecoveryRejected("reservation_projection_invalid") from exc
         if str(reservation_id) == old_reservation_id or str(reservation.get("host_id") or "") == old_host_id:
+            if reservation_was_created and reservation_id is not None:
+                try:
+                    await self._ledger.release(reservation_id, owner=owner)
+                except Exception as cleanup_exc:
+                    raise RunHostBindingRecoveryRejected(
+                        "host_recovery_reservation_cleanup_failed"
+                    ) from cleanup_exc
             raise RunHostBindingRecoveryRejected("host_recovery_same_host_selected")
 
         from ..memory import models as t
@@ -458,29 +533,76 @@ class WorkerRunHostBindingService:
             "recovered_from_reservation_id": old_reservation_id,
             "recovered_from_lease_generation": old_generation,
         }
-        async with self._storage.engine.begin() as connection:
-            row = (
-                await connection.execute(
-                    t.worker_run_host_bindings.select()
-                    .where(t.worker_run_host_bindings.c.run_id == run_id)
-                    .with_for_update()
+        now = self._now()
+        try:
+            async with self._storage.engine.begin() as connection:
+                row = (
+                    await connection.execute(
+                        t.worker_run_host_bindings.select()
+                        .where(t.worker_run_host_bindings.c.run_id == run_id)
+                        .with_for_update()
+                    )
+                ).mappings().first()
+                if row is None or str(row.get("state") or "") != "COMMITTED":
+                    raise RunHostBindingRecoveryRejected(
+                        "run_host_binding_changed_during_recovery"
+                    )
+                replacement = await connection.execute(
+                    t.worker_run_host_bindings.update()
+                    .where(
+                        sa.and_(
+                            t.worker_run_host_bindings.c.run_id == run_id,
+                            t.worker_run_host_bindings.c.state == "COMMITTED",
+                        )
+                    )
+                    .values(
+                        host_id=host_uuid,
+                        reservation_id=reservation_id,
+                        host_lease_generation=host_lease_generation,
+                        assignment_key=assignment_key,
+                        owner=owner,
+                        state="ASSIGNED",
+                        metadata=metadata,
+                        committed_at=None,
+                        released_at=None,
+                    )
                 )
-            ).mappings().first()
-            if row is None or str(row.get("state") or "") != "COMMITTED":
-                raise RunHostBindingRecoveryRejected("run_host_binding_changed_during_recovery")
-            await connection.execute(
-                t.worker_run_host_bindings.update()
-                .where(t.worker_run_host_bindings.c.run_id == run_id)
-                .values(
-                    host_id=host_uuid,
-                    reservation_id=reservation_id,
-                    host_lease_generation=host_lease_generation,
-                    assignment_key=assignment_key,
+                if replacement.rowcount != 1:
+                    raise RunHostBindingRecoveryRejected(
+                        "run_host_binding_replacement_conflict"
+                    )
+                await self._ledger.transition_in_transaction(
+                    connection,
+                    reservation_id,
                     owner=owner,
-                    state="ASSIGNED",
-                    metadata=metadata,
-                    committed_at=None,
-                    released_at=None,
+                    target="COMMITTED",
+                    now=now,
                 )
-            )
-        return await self.commit(run_id, owner=owner)
+                settled = await connection.execute(
+                    t.worker_run_host_bindings.update()
+                    .where(
+                        sa.and_(
+                            t.worker_run_host_bindings.c.run_id == run_id,
+                            t.worker_run_host_bindings.c.state == "ASSIGNED",
+                            t.worker_run_host_bindings.c.reservation_id == reservation_id,
+                        )
+                    )
+                    .values(state="COMMITTED", committed_at=now, released_at=None)
+                )
+                if settled.rowcount != 1:
+                    raise RunHostBindingRecoveryRejected(
+                        "run_host_binding_settlement_conflict"
+                    )
+        except Exception:
+            if reservation_was_created and reservation_id is not None:
+                try:
+                    await self._ledger.release(reservation_id, owner=owner)
+                except Exception as cleanup_exc:
+                    raise RunHostBindingRecoveryRejected(
+                        "host_recovery_reservation_cleanup_failed"
+                    ) from cleanup_exc
+            raise
+        result = await self.get(run_id)
+        if result is None:
+            raise RunHostBindingRecoveryRejected("run_host_binding_not_readable")
+        return result

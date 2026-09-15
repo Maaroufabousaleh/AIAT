@@ -1482,6 +1482,44 @@ async def test_v143_rest_finished_is_advisory_until_execute_fallback(tmp_path: P
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("execution_status", "expected_status", "terminal"),
+    [
+        ("running", "RUNNING", False),
+        ("error", "FAILED", True),
+        ("finished", "UNKNOWN", False),
+    ],
+)
+async def test_reconcile_uses_durable_conversation_without_fabricating_success(
+    tmp_path: Path,
+    execution_status: str,
+    expected_status: str,
+    terminal: bool,
+) -> None:
+    conversation_id = str(uuid4())
+    run = request(workspace=tmp_path / "workspace")
+
+    async def handler(http_request: httpx.Request) -> httpx.Response:
+        if http_request.method == "GET" and http_request.url.path == f"/api/conversations/{conversation_id}":
+            return httpx.Response(200, json={"execution_status": execution_status})
+        raise AssertionError(f"unexpected request: {http_request.method} {http_request.url.path}")
+
+    adapter = make_adapter(tmp_path, handler)
+    try:
+        observed = await adapter.reconcile(run.run_id, runtime_run_id=conversation_id)
+    finally:
+        await adapter.close()
+
+    assert observed.run_id == run.run_id
+    assert observed.runtime_run_id == conversation_id
+    assert observed.status == expected_status
+    assert observed.terminal is terminal
+    assert observed.details["native_status"] == execution_status
+    if execution_status == "finished":
+        assert observed.details["terminality"] == "advisory_rest_state"
+
+
+@pytest.mark.asyncio
 async def test_v143_error_field_is_immediate_terminal_and_event_ids_are_counted(tmp_path: Path) -> None:
     async def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={})

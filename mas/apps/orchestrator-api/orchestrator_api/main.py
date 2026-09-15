@@ -1723,6 +1723,7 @@ class TeamRunnerStorageRequest(BaseModel):
         "checkpoint_latest",
         "checkpoint_delete",
         "usage_record",
+        "model_resolution_snapshot_get",
         "document_get",
         "document_create",
         "document_update_status",
@@ -2203,6 +2204,7 @@ PROJECT_STAGE_DIRECTIVES: dict[str, tuple[str, str]] = {
 
 _ROUTER_ACCEPTED_STATUS_CODES = {200, 201, 409}
 _STAGE_DIRECTIVE_RETRY_SECONDS = 5.0
+_PROJECT_TRANSITION_OUTBOX_INTERVAL_SECONDS = 5.0
 _stage_directive_retry_scopes: dict[tuple[str, str], anyio.CancelScope] = {}
 
 
@@ -2244,6 +2246,7 @@ def _build_stage_directive(
 
 
 async def _publish_router_envelope(envelope: dict[str, Any]) -> bool:
+    await _attach_governance_model_snapshot(envelope)
     async with httpx.AsyncClient(timeout=10, headers=_router_auth_headers()) as client:
         response = await client.post(f"{ROUTER_URL}/messages/publish", json=envelope)
     if response.status_code in _ROUTER_ACCEPTED_STATUS_CODES:
@@ -2337,11 +2340,23 @@ async def publish_system_event(
     event: str,
     actor_id: str,
     context: dict[str, Any],
-) -> None:
-    """Publish a SYSTEM_EVENT via the message-router HTTP API."""
-    _cancel_project_stage_retries(project_id)
+    *,
+    transition_id: UUID | str | None = None,
+    include_stage_directive: bool = True,
+) -> bool:
+    """Publish a SYSTEM_EVENT and report router acceptance.
+
+    ``transition_id`` is the stable message identity persisted by the narrow
+    project-transition outbox.  The optional stage directive remains a
+    separate, actionable message with its existing retry behavior; outbox
+    replays only retry the system event so a router outage cannot create a
+    second actionable directive on every replay.
+    """
+    if include_stage_directive:
+        _cancel_project_stage_retries(project_id)
+    message_id = str(transition_id) if transition_id is not None else str(uuid4())
     envelope = {
-        "message_id": str(uuid4()),
+        "message_id": message_id,
         "correlation_id": project_id,
         "msg_type": MessageType.SYSTEM_EVENT.value,
         "sender_id": "orchestrator",
@@ -2358,20 +2373,25 @@ async def publish_system_event(
         },
         "created_at": datetime.now(tz=UTC).isoformat(),
     }
-    directive = _build_stage_directive(
-        project_id=project_id,
-        state=to_state,
-        context=context,
-        parent_id=envelope["message_id"],
-        triggered_by_event=event,
+    directive = (
+        _build_stage_directive(
+            project_id=project_id,
+            state=to_state,
+            context=context,
+            parent_id=envelope["message_id"],
+            triggered_by_event=event,
+        )
+        if include_stage_directive
+        else None
     )
+    system_delivered = False
     try:
-        await _publish_router_envelope(envelope)
+        system_delivered = await _publish_router_envelope(envelope)
     except Exception:
         logger.exception("Failed to publish SYSTEM_EVENT to router")
 
-    if directive is None:
-        return
+    if not include_stage_directive or directive is None:
+        return system_delivered
     try:
         delivered = await _publish_router_envelope(directive)
     except Exception:
@@ -2391,6 +2411,102 @@ async def publish_system_event(
         )
     else:
         _schedule_stage_directive_retry(project_id, to_state, directive)
+    return system_delivered
+
+
+async def drain_project_transition_outbox(
+    storage: AgentStorage,
+    *,
+    limit: int = 100,
+) -> dict[str, int]:
+    """Deliver a bounded batch of project-transition outbox rows.
+
+    The dispatcher is intentionally small and aggregate-specific.  It does
+    not replace the PM/identity outbox drainers or turn Redis into canonical
+    state.  A stable outbox ID makes uncertain publication safe to replay
+    once the router's own idempotency path accepts it.
+    """
+    candidates = await storage.list_project_transition_outbox(limit=limit)
+    published = 0
+    failed = 0
+    for candidate in candidates:
+        outbox = await storage.claim_project_transition_outbox(candidate["id"])
+        if outbox is None:
+            continue
+        try:
+            delivered = await publish_system_event(
+                str(outbox["project_id"]),
+                str(outbox.get("from_state") or ""),
+                str(outbox["to_state"]),
+                str(outbox["event"]),
+                str(outbox.get("triggered_by") or "system"),
+                dict(outbox.get("payload") or {}),
+                transition_id=outbox["id"],
+                include_stage_directive=False,
+            )
+        except Exception as exc:
+            delivered = False
+            error = f"{type(exc).__name__}: {exc}"
+        else:
+            error = "router did not accept project transition event"
+
+        if delivered:
+            try:
+                await storage.mark_project_transition_outbox(
+                    outbox["id"],
+                    status="PUBLISHED",
+                )
+            except Exception:
+                # Leave the row PROCESSING so the lease recovery path can
+                # replay it.  The stable message ID prevents a logical
+                # duplicate if the router already accepted the event.
+                logger.exception(
+                    "project_transition_outbox_publish_bookkeeping_failed",
+                    extra={"outbox_id": str(outbox["id"])},
+                )
+                failed += 1
+            else:
+                published += 1
+        else:
+            failed += 1
+            try:
+                await storage.mark_project_transition_outbox(
+                    outbox["id"],
+                    status="PENDING",
+                    error=error,
+                )
+            except Exception:
+                logger.exception(
+                    "project_transition_outbox_retry_bookkeeping_failed",
+                    extra={"outbox_id": str(outbox["id"])},
+                )
+    return {"claimed": len(candidates), "published": published, "failed": failed}
+
+
+async def project_transition_outbox_loop(
+    storage: AgentStorage,
+    stop_event: Any,
+    *,
+    interval_seconds: float = _PROJECT_TRANSITION_OUTBOX_INTERVAL_SECONDS,
+    max_iterations: int | None = None,
+) -> None:
+    """Continuously drain durable project-transition notification intent."""
+    iteration = 0
+    while not stop_event.is_set():
+        try:
+            await anyio.sleep(interval_seconds)
+            if stop_event.is_set():
+                break
+            result = await drain_project_transition_outbox(storage)
+            if result["published"] or result["failed"]:
+                logger.info("project_transition_outbox_drained", extra=result)
+            iteration += 1
+            if max_iterations is not None and iteration >= max_iterations:
+                break
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            logger.exception("project_transition_outbox_loop_error")
 
 
 # ── Watchdog background task ─────────────────────────────────────────────────
@@ -2843,6 +2959,7 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
         # jobs are eligible on the first scheduler cycle.
         ceo_command_task_group.start_soon(update_monitor_loop, storage, stop_event)
         ceo_command_task_group.start_soon(worker_run_recovery_loop, storage, stop_event)
+        ceo_command_task_group.start_soon(project_transition_outbox_loop, storage, stop_event)
 
         try:
             await _recover_ceo_commands(storage)
@@ -5395,6 +5512,7 @@ _TEAM_RUNNER_UUID_FIELDS = frozenset(
         "run_id",
         "worker_id",
         "checkpoint_id",
+        "snapshot_id",
     }
 )
 _TEAM_RUNNER_DATETIME_FIELDS = frozenset({"occurred_at", "completed_at"})
@@ -5526,6 +5644,36 @@ async def team_runner_storage(
             values["team_id"] = str(values.get("team_id") or team_id)
             usage = await storage.record_project_usage(**values)
             return _serialize(usage) if usage is not None else None
+
+        if operation == "model_resolution_snapshot_get":
+            snapshot_id = _team_runner_uuid(payload.get("snapshot_id"), field="snapshot_id")
+            if snapshot_id is None:
+                # ``allow_none`` is false above; this guard narrows the helper
+                # return type for static analysis and protects future changes
+                # to that helper from turning this into an unscoped lookup.
+                raise HTTPException(422, "snapshot_id must be a UUID")
+            project_id = _team_runner_uuid(
+                payload.get("project_id"),
+                field="project_id",
+                allow_none=True,
+            )
+            snapshot = await storage.get_model_resolution_snapshot(
+                snapshot_id,
+                project_id=project_id,
+            )
+            if snapshot is None:
+                return None
+            stored_project_id = snapshot.get("project_id")
+            if stored_project_id is not None:
+                try:
+                    stored_project_uuid = UUID(str(stored_project_id))
+                except (TypeError, ValueError):
+                    return None
+                if project_id is None or stored_project_uuid != project_id:
+                    # Do not disclose whether a project-bound snapshot exists
+                    # to a runner outside that project scope.
+                    return None
+            return _serialize(snapshot)
 
         if operation == "document_get":
             document = await storage.get_document(
@@ -6313,6 +6461,7 @@ async def replay_dead_letter(letter_id: int) -> dict[str, Any]:
     envelope["timestamp"] = datetime.now(tz=UTC).isoformat()
 
     try:
+        await _attach_governance_model_snapshot(envelope)
         async with httpx.AsyncClient(timeout=10, headers=_router_auth_headers()) as client:
             resp = await client.post(f"{ROUTER_URL}/messages/publish", json=envelope)
             if resp.status_code not in (200, 201):
@@ -6588,6 +6737,7 @@ async def create_task(body: dict[str, Any], request: Request) -> dict[str, Any]:
         "created_at": datetime.now(tz=UTC).isoformat(),
     }
     try:
+        await _attach_governance_model_snapshot(envelope)
         async with httpx.AsyncClient(timeout=10, headers=_router_auth_headers()) as client:
             resp = await client.post(f"{ROUTER_URL}/messages/publish", json=envelope)
             return {"status": "published", "message_id": envelope["message_id"]}
@@ -10175,6 +10325,108 @@ async def _effective_model_policy_layers(
     return tuple(layers)
 
 
+_GOVERNANCE_MODEL_MESSAGE_TYPES = frozenset(
+    {
+        MessageType.TASK.value,
+        MessageType.ADMIN_TASK.value,
+        MessageType.DIRECTIVE.value,
+        MessageType.QUERY.value,
+    }
+)
+
+
+async def _attach_governance_model_snapshot(
+    envelope: dict[str, Any],
+) -> UUID | None:
+    """Attach one persisted model decision to a governance-plane message.
+
+    TeamRunner and AgentBase remain a distinct runtime plane from specialist
+    ``WorkerAdapter`` runs.  They still need the same control-plane model
+    provenance at the boundary where the orchestrator creates work.  This
+    helper resolves only from persisted AIAT profiles and policy layers; it
+    never accepts a raw model route and never makes the governance runtime an
+    authority over project state.
+
+    Compatibility callers and test doubles without the complete control-plane
+    storage surface are deliberately left unchanged.  A real ``AgentStorage``
+    instance has all required methods, so production governance messages fail
+    closed if no approved model can be resolved or persisted.
+    """
+    if envelope.get("msg_type") not in _GOVERNANCE_MODEL_MESSAGE_TYPES:
+        return None
+    existing = envelope.get("model_resolution_snapshot_id")
+    if existing:
+        try:
+            return UUID(str(existing))
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("governance message has an invalid model snapshot ID") from exc
+
+    storage = getattr(app.state, "storage", None)
+    required_methods = (
+        "list_model_profiles",
+        "create_model_resolution_snapshot",
+    )
+    if storage is None or not all(
+        inspect.iscoroutinefunction(getattr(storage, name, None))
+        for name in required_methods
+    ):
+        return None
+
+    raw_project_id = envelope.get("project_id")
+    project_id: UUID | None = None
+    if raw_project_id is not None and str(raw_project_id) != "operator-direct":
+        try:
+            project_id = UUID(str(raw_project_id))
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                "governance message project_id must be a UUID or operator-direct"
+            ) from exc
+
+    from mas_core.llm_gateway import (
+        ModelProfileResolver,
+        ModelResolutionRequest,
+    )
+
+    raw_layers: list[tuple[str, Any]] = []
+    get_config = getattr(storage, "get_config", None)
+    if inspect.iscoroutinefunction(get_config):
+        raw_layers.append(("organization", await get_config("model_policy.organization")))
+
+    get_project = getattr(storage, "get_project", None)
+    if project_id is not None and inspect.iscoroutinefunction(get_project):
+        project = await get_project(project_id)
+        if project is not None:
+            raw_layers.append(("project", (project.get("config") or {}).get("model_policy")))
+
+    layers = tuple(
+        layer
+        for name, raw in raw_layers
+        if (layer := _model_policy_layer(name, raw)) is not None
+    )
+    # Constructing the request through the same typed resolver used by worker
+    # dispatch keeps governance messages subject to the persisted profile and
+    # policy model.  The task type is descriptive metadata, not a model route.
+    request = ModelResolutionRequest(
+        task_type=f"governance:{str(envelope.get('recipient_team') or 'unknown')}",
+        layers=layers,
+    )
+    try:
+        snapshot = ModelProfileResolver().resolve(
+            await _persisted_model_profiles(storage),
+            request,
+        )
+    except ValueError as exc:
+        raise RuntimeError("no approved model profile can govern this message") from exc
+
+    persisted = await storage.create_model_resolution_snapshot(
+        snapshot=snapshot.model_dump(mode="json"),
+        project_id=project_id,
+    )
+    snapshot_id = UUID(str(persisted.get("id") or snapshot.snapshot_id))
+    envelope["model_resolution_snapshot_id"] = str(snapshot_id)
+    return snapshot_id
+
+
 @app.post("/model-profiles", status_code=201)
 async def create_model_profile(req: ModelProfileCreateRequest) -> dict[str, Any]:
     storage = _storage()
@@ -10889,6 +11141,7 @@ async def dispatch_worker_run(req: WorkerRunDispatchRequest) -> dict[str, Any]:
 
     resolved_model_profile = None
     model_resolution_snapshot_id = None
+    runtime_extensions = dict(req.runtime_extensions)
     override_approval_id: UUID | None = None
     try:
         provided_requested_model_profile = ModelProfileReference.model_validate(req.requested_model_profile) if req.requested_model_profile else None
@@ -10977,7 +11230,17 @@ async def dispatch_worker_run(req: WorkerRunDispatchRequest) -> dict[str, Any]:
             "selection_reason": "Non-LLM worker governance policy snapshot",
         }
         await storage.create_model_resolution_snapshot(snapshot=none_snapshot, project_id=req.project_id)
-        model_resolution_snapshot_id = none_snapshot["snapshot_id"]
+        # This is a policy-only record.  It intentionally is not attached to
+        # worker_runs.model_resolution_snapshot_id: that column denotes an
+        # exact provider/model decision and the worker/host attribution checks
+        # must remain disabled for a genuinely non-LLM run.  Keep the policy
+        # record in the request extensions for audit/debugging without making
+        # it look like model provenance.
+        model_resolution_snapshot_id = None
+        runtime_extensions = {
+            **runtime_extensions,
+            "policy_snapshot_id": str(none_snapshot["snapshot_id"]),
+        }
 
     try:
         request = WorkerRunRequest(
@@ -11002,7 +11265,7 @@ async def dispatch_worker_run(req: WorkerRunDispatchRequest) -> dict[str, Any]:
             },
             checkpoint_policy=req.checkpoint_policy,
             retry_policy=req.retry_policy,
-            extensions=req.runtime_extensions,
+            extensions=runtime_extensions,
             trace_id=current_trace_id(),
         )
     except ValueError as exc:
@@ -13819,6 +14082,48 @@ def _ceo_fallback_evidence(response_text: str) -> tuple[str, dict[str, Any]]:
     }
 
 
+async def _load_ceo_fallback_model_binding(
+    snapshot_id: UUID | str,
+) -> Any:
+    """Load the operator-scoped model decision for the legacy fallback.
+
+    The fallback is not a ``WorkerAdapter`` run, but it is still a governance
+    model call when the originating CEO message carried a snapshot.  Keep the
+    lookup read-only and scoped to the operator-direct (project-less) record;
+    this helper never resolves a model or accepts a caller-supplied model ID.
+    """
+    from mas_core.agent_runtime import GovernanceModelBinding
+
+    try:
+        resolved_snapshot_id = UUID(str(snapshot_id))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("CEO fallback model snapshot ID is invalid") from exc
+
+    storage = getattr(app.state, "storage", None)
+    getter = getattr(storage, "get_model_resolution_snapshot", None)
+    if not callable(getter):
+        raise RuntimeError("CEO fallback model snapshot storage is unavailable")
+    snapshot = await getter(resolved_snapshot_id, project_id=None)
+    if snapshot is None or snapshot.get("project_id") is not None:
+        raise RuntimeError("CEO fallback model snapshot is missing or out of scope")
+    try:
+        return GovernanceModelBinding.from_snapshot(resolved_snapshot_id, snapshot)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("CEO fallback model snapshot is not an exact approved decision") from exc
+
+
+def _ceo_fallback_model_aliases(binding: Any) -> set[str]:
+    """Return provider-qualified and unqualified spellings for one binding."""
+    exact = str(binding.exact_model_id)
+    aliases = {exact}
+    provider_prefix = f"{binding.provider_id}/"
+    if exact.startswith(provider_prefix):
+        aliases.add(exact.removeprefix(provider_prefix))
+    else:
+        aliases.add(f"{provider_prefix}{exact}")
+    return aliases
+
+
 async def _publish_ceo_chat_response(
     *,
     response_text: str,
@@ -13826,6 +14131,7 @@ async def _publish_ceo_chat_response(
     parent_id: str,
     action: dict[str, Any] | None = None,
     evidence: dict[str, Any] | None = None,
+    model_resolution_snapshot_id: UUID | str | None = None,
 ) -> None:
     payload: dict[str, Any] = {
         "response": response_text,
@@ -13862,6 +14168,8 @@ async def _publish_ceo_chat_response(
         "created_at": datetime.now(tz=UTC).isoformat(),
         "ack_required": False,
     }
+    if model_resolution_snapshot_id is not None:
+        envelope["model_resolution_snapshot_id"] = str(model_resolution_snapshot_id)
     try:
         async with httpx.AsyncClient(timeout=15, headers=_router_auth_headers()) as client:
             resp = await client.post(f"{ROUTER_URL}/messages/publish", json=envelope)
@@ -13922,6 +14230,7 @@ async def _publish_ceo_response(
     instruction: str,
     correlation_id: str,
     parent_id: str,
+    model_resolution_snapshot_id: UUID | str | None = None,
 ) -> None:
     """Generate and publish a CEO chat response without waiting on stream backlog.
 
@@ -13933,36 +14242,87 @@ async def _publish_ceo_response(
     if os.getenv("ENABLE_CEO_FAKE_RESPONSE", "0") not in {"1", "true", "yes"}:
         return
     response_text = ""
+    model_binding: Any | None = None
+    binding_error: str | None = None
     try:
-        async with LLMGatewayClient() as llm:
-            response_text = await llm.ask(
-                instruction,
-                system=(
-                    "You are the AIAT CEO Executive Copilot speaking directly to the human "
-                    "operator in the dashboard chat. Reply conversationally and helpfully. "
-                    "Be concise, direct, and practical. If the operator asks for an action, "
-                    "state what you can do next and any required clarification. If the supplied "
-                    "context contains a canonical AIAT record ID that you cite, add one separate "
-                    "line in the exact form `AIAT_EVIDENCE: kind=id`; never invent IDs or include "
-                    "secret values in that line."
-                ),
-                task="general",
-                max_tokens=450,
-                temperature=0.4,
+        if model_resolution_snapshot_id is not None:
+            model_binding = await _load_ceo_fallback_model_binding(
+                model_resolution_snapshot_id,
             )
+        async with LLMGatewayClient() as llm:
+            system_prompt = (
+                "You are the AIAT CEO Executive Copilot speaking directly to the human "
+                "operator in the dashboard chat. Reply conversationally and helpfully. "
+                "Be concise, direct, and practical. If the operator asks for an action, "
+                "state what you can do next and any required clarification. If the supplied "
+                "context contains a canonical AIAT record ID that you cite, add one separate "
+                "line in the exact form `AIAT_EVIDENCE: kind=id`; never invent IDs or include "
+                "secret values in that line."
+            )
+            if model_binding is None:
+                # Compatibility mode for the explicitly opt-in legacy path.
+                # It remains visible as unresolved evidence below.
+                response_text = await llm.ask(
+                    instruction,
+                    system=system_prompt,
+                    task="general",
+                    max_tokens=450,
+                    temperature=0.4,
+                )
+            else:
+                response = await llm.chat_completion(
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": instruction},
+                    ],
+                    model=model_binding.exact_model_id,
+                    max_tokens=450,
+                    temperature=0.4,
+                )
+                observed_model = str(getattr(response, "model", "") or "").strip()
+                if observed_model not in _ceo_fallback_model_aliases(model_binding):
+                    raise RuntimeError(
+                        "CEO fallback response model does not match its AIAT resolution binding"
+                    )
+                response_text = str(getattr(response, "text", "") or "")
     except Exception as exc:
         logger.warning("CEO chat direct response failed: %s", exc)
+        binding_error = type(exc).__name__
         response_text = (
             "I received your message, but my live language-model response path is currently "
             "limited. Your request is queued with the CEO runtime."
         )
     response_text = _clean_ceo_chat_text(response_text)
     response_text, evidence = _ceo_fallback_evidence(response_text)
+    if model_binding is not None:
+        evidence["model_provenance"] = {
+            "status": "bound" if binding_error is None else "failed",
+            "resolution_snapshot_id": str(model_binding.resolution_snapshot_id),
+            "profile_id": model_binding.profile_id,
+            "profile_version": model_binding.profile_version,
+            "provider_id": model_binding.provider_id,
+            "exact_model_id": model_binding.exact_model_id,
+        }
+    elif model_resolution_snapshot_id is not None:
+        # A supplied snapshot that could not be loaded must never silently
+        # downgrade into the unbound legacy call path.
+        evidence["status"] = "blocked"
+        evidence["model_provenance"] = {
+            "status": "unavailable",
+            "resolution_snapshot_id": str(model_resolution_snapshot_id),
+            "error_type": binding_error or "RuntimeError",
+        }
+    else:
+        evidence["model_provenance"] = {
+            "status": "unresolved",
+            "reason": "legacy direct fallback was invoked without a model snapshot",
+        }
     await _publish_ceo_chat_response(
         response_text=response_text.strip() or "I received your message.",
         correlation_id=correlation_id,
         parent_id=parent_id,
         evidence=evidence,
+        model_resolution_snapshot_id=model_resolution_snapshot_id,
     )
 
 
@@ -15723,6 +16083,7 @@ def _ceo_progress_detail(instruction: str) -> str:
 
 
 _CEO_COMMAND_PREFIX = "ceo_command:"
+_CEO_REQUEST_SNAPSHOT_PREFIX = "ceo_model_snapshot:"
 
 
 def _ceo_command_json(record: dict[str, Any]) -> str:
@@ -15764,6 +16125,126 @@ async def _store_new_ceo_command(
     if loaded is None:  # pragma: no cover - defensive against external deletion races
         raise RuntimeError("CEO command record disappeared during creation")
     return loaded[0], False
+
+
+def _ceo_snapshot_id(value: Any) -> UUID | None:
+    if value is None or str(value).strip() == "":
+        return None
+    try:
+        return value if isinstance(value, UUID) else UUID(str(value))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("CEO request has an invalid model snapshot ID") from exc
+
+
+async def _load_ceo_request_snapshot(
+    storage: AgentStorage,
+    message_id: str,
+) -> UUID | None:
+    getter = getattr(storage, "get_config", None)
+    if not inspect.iscoroutinefunction(getter):
+        return None
+    raw = await getter(f"{_CEO_REQUEST_SNAPSHOT_PREFIX}{message_id}")
+    return _ceo_snapshot_id(raw)
+
+
+async def _remember_ceo_request_snapshot(
+    storage: AgentStorage,
+    *,
+    message_id: str,
+    snapshot_id: UUID,
+) -> UUID:
+    """Bind one CEO request ID to one immutable model decision.
+
+    Router publication is idempotent by ``message_id``.  The model decision
+    must therefore be idempotent by the same key before the request is sent;
+    otherwise a retry can publish the original envelope while using a newly
+    resolved model for the synchronous fallback response.
+    """
+    key = f"{_CEO_REQUEST_SNAPSHOT_PREFIX}{message_id}"
+    existing = await _load_ceo_request_snapshot(storage, message_id)
+    if existing is not None:
+        return existing
+    setter = getattr(storage, "set_config_if_absent", None)
+    if not inspect.iscoroutinefunction(setter):
+        # The model snapshot itself is already durable.  Compatibility storage
+        # doubles without the idempotency primitive cannot provide the stronger
+        # retry binding, so leave the caller's resolved snapshot in place.
+        return snapshot_id
+    created = await setter(key, str(snapshot_id))
+    if created:
+        return snapshot_id
+    existing = await _load_ceo_request_snapshot(storage, message_id)
+    if existing is None:  # pragma: no cover - defensive against external deletion
+        raise RuntimeError("CEO request model snapshot binding disappeared")
+    return existing
+
+
+async def _record_ceo_command_snapshot(
+    storage: AgentStorage,
+    *,
+    message_id: str,
+    snapshot_id: UUID,
+) -> None:
+    """Persist the snapshot reference alongside an API-owned CEO command."""
+    loaded = await _load_ceo_command(storage, message_id)
+    if loaded is None:
+        return
+    record, raw = loaded
+    existing = _ceo_snapshot_id(record.get("model_resolution_snapshot_id"))
+    if existing is not None:
+        if existing != snapshot_id:
+            raise RuntimeError("CEO command is already bound to a different model snapshot")
+        return
+    record["model_resolution_snapshot_id"] = str(snapshot_id)
+    record["updated_at"] = datetime.now(tz=UTC).isoformat()
+    updated = await storage.compare_and_set_config(
+        f"{_CEO_COMMAND_PREFIX}{message_id}",
+        raw,
+        _ceo_command_json(record),
+    )
+    if updated:
+        return
+    reloaded = await _load_ceo_command(storage, message_id)
+    if reloaded is None or _ceo_snapshot_id(reloaded[0].get("model_resolution_snapshot_id")) != snapshot_id:
+        raise RuntimeError("CEO command model snapshot binding lost a concurrent update")
+
+
+async def _prepare_ceo_request_model_snapshot(
+    envelope: dict[str, Any],
+    *,
+    message_id: str,
+    durable_record: dict[str, Any] | None,
+) -> UUID | None:
+    """Resolve or reuse the immutable model snapshot for one CEO request."""
+    storage = getattr(app.state, "storage", None)
+    candidate = _ceo_snapshot_id(
+        (durable_record or {}).get("model_resolution_snapshot_id")
+        or envelope.get("model_resolution_snapshot_id")
+    )
+    if candidate is None and storage is not None:
+        getter = getattr(storage, "get_config", None)
+        if callable(getter):
+            candidate = await _load_ceo_request_snapshot(storage, message_id)
+    if candidate is not None:
+        envelope["model_resolution_snapshot_id"] = str(candidate)
+    else:
+        await _attach_governance_model_snapshot(envelope)
+        candidate = _ceo_snapshot_id(envelope.get("model_resolution_snapshot_id"))
+
+    if candidate is None or storage is None:
+        return candidate
+    candidate = await _remember_ceo_request_snapshot(
+        storage,
+        message_id=message_id,
+        snapshot_id=candidate,
+    )
+    envelope["model_resolution_snapshot_id"] = str(candidate)
+    await _record_ceo_command_snapshot(
+        storage,
+        message_id=message_id,
+        snapshot_id=candidate,
+    )
+    return candidate
 
 
 async def _transition_ceo_command(
@@ -16016,6 +16497,11 @@ async def operator_send_to_ceo(
         "created_at": datetime.now(tz=UTC).isoformat(),
     }
     try:
+        await _prepare_ceo_request_model_snapshot(
+            envelope,
+            message_id=message_id,
+            durable_record=durable_record,
+        )
         async with httpx.AsyncClient(timeout=15, headers=_router_auth_headers()) as client:
             resp = await client.post(f"{ROUTER_URL}/messages/publish", json=envelope)
             if resp.status_code == 403:
@@ -16097,6 +16583,7 @@ async def operator_send_to_ceo(
         instruction=instruction,
         correlation_id=message_id,
         parent_id=message_id,
+        model_resolution_snapshot_id=envelope.get("model_resolution_snapshot_id"),
     )
     return {"ok": True, "entry_id": result.get("entry_id")}
 

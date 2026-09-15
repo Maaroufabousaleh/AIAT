@@ -173,7 +173,9 @@ class CheckpointStore:
             conditions.append(t.agent_checkpoints.c.team_id == team_id)
         async with self._engine.begin() as conn:
             result = await conn.execute(
-                t.agent_checkpoints.delete().where(sa.and_(*conditions))
+                t.agent_checkpoints.delete().where(
+                    sa.and_(*conditions)
+                )
             )
         deleted = result.rowcount > 0
         if deleted:
