@@ -167,6 +167,14 @@ the maintained reading paths.
 - The dashboard is an operator surface, not a second ledger, policy engine, or live-action authority.
 - Live/provider evidence is labelled separately from deterministic fixtures and local contract tests.
 
+Base compose defines the core infrastructure, control-plane services, analytics,
+and 11 team runners plus one-shot init jobs. The default production email
+identity path is the Cloudflare Worker/D1-only bundle in
+`mas/infra/cloudflare/docker-compose.yml`, with direct Resend API outbound.
+The `mail-local` profile in `mas/infra/compose/docker-compose.stalwart-local.yml`
+and the `mail-edge` bundle remain explicit optional Stalwart full-mailbox
+profiles:
+
 Read [`agents.md`](agents.md) for the internal architecture and resource policy,
 and [`mas/docs/provenance/release_ledger.yaml`](mas/docs/provenance/release_ledger.yaml)
 for machine-readable evidence posture.

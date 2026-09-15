@@ -15,10 +15,13 @@ the local in-memory and Postgres certificates are retained at
 [`mas/docs/provenance/mail_edge_ingress_certification.json`](../../mas/docs/provenance/mail_edge_ingress_certification.json)
 and
 [`mas/docs/provenance/mail_edge_postgres_ingress_certification.json`](../../mas/docs/provenance/mail_edge_postgres_ingress_certification.json).
-Live provider configuration/callback delivery, external bounce confirmation,
-and deployment evidence remain open. A bounded selected model-backed worker
-and transient retry certificate is retained separately; local Postgres
-durability is certified only for the rebuilt Compose identity profile.
+The default Cloudflare/Resend email identity path is now live-certified; its
+secret-safe evidence is recorded in
+[`AIAT_Email_Identity_Live_Certification.md`](../AIAT_Email_Identity_Live_Certification.md).
+Broader external bounce/recovery, optional profiles, and deployment evidence
+remain open. A bounded selected model-backed worker and transient retry
+certificate is retained separately; local Postgres durability is certified only
+for the rebuilt Compose identity profile.
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
 ## Purpose

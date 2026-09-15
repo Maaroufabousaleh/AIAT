@@ -297,7 +297,14 @@ external client-language SDK compatibility yet.
 - [x] Persist bounded delivery-attempt trace/span metadata in the identity
   service and project it through the signed client without crossing mail
   content, recipient, provider, or relay metadata into AIAT evidence.
-- Select direct or SMTP-gateway production mail profile and complete DNS/TLS/send/receive/bounce/outage/restore certification.
+- [x] Certify the default Cloudflare Email Routing + Worker/D1-only inbound and
+  governed direct-Resend outbound path, including public webhook ingress,
+  approval/send/idempotency/accounting/audit evidence, delivery correlation,
+  and normal certification cleanup; see
+  [`AIAT_Email_Identity_Live_Certification.md`](../../AIAT_Email_Identity_Live_Certification.md).
+- Select an optional full-mailbox/Stalwart or SMTP-gateway profile and complete
+  its profile-specific DNS/TLS/send/receive/bounce/outage/restore certification
+  only if that profile is selected.
 - Rehearse key rotation and domain migration.
 - Complete YouTrack mapped-human ACTIVE command certification.
 - Complete GitHub App installation, webhook, branch/PR/review/check/commit/run-credential, retry, revoke, and reconciliation certification.
@@ -333,8 +340,9 @@ external client-language SDK compatibility yet.
   ambiguous-outage reconciliation hold, and secret-safe output pass without
   an external relay call; live send/receive/bounce/outage/restore evidence
   remains separate.
-- [x] Add payload-free provider-specific mocked conformance for the real Stalwart
-  and Resend adapters through `scripts/check_identity_provider_conformance.py`.
+- [x] Add payload-free provider-specific mocked conformance for the real
+  Cloudflare, Resend, and optional Stalwart adapters through
+  `scripts/check_identity_provider_conformance.py`.
   The checker covers passwordless mailbox provisioning/reconciliation, separate
   mail-service authentication, submission/cancellation, relay-domain validation,
   webhook normalization, and transient/permanent failure classification without

@@ -22,14 +22,15 @@ def test_mocked_identity_provider_conformance_passes_without_external_access() -
     report = json.loads(result.stdout)
     assert report["schema_version"] == "aiat.identity-provider-conformance.v1"
     assert report["status"] == "pass"
-    assert report["providers"] == ["resend", "stalwart"]
-    assert report["case_count"] == report["passed_case_count"] == 11
+    assert report["providers"] == ["cloudflare", "resend", "stalwart"]
+    assert report["case_count"] == report["passed_case_count"] == 17
     assert report["error_count"] == 0
     assert report["external_network_access_performed"] is False
     assert report["external_provider_mutation_performed"] is False
     assert report["payload_free"] is True
     assert report["secret_safe_report"] is True
     assert "fixture body" not in result.stdout
+    assert "bounded body" not in result.stdout
     assert "fixture-management-token" not in result.stdout
 
 

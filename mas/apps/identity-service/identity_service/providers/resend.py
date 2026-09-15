@@ -1,8 +1,9 @@
-"""Resend relay health/validation adapter.
+"""Direct Resend provider adapter.
 
-Resend is never a worker-facing sending API.  Mail submission is performed by
-Stalwart; this adapter validates the configured relay and records safe provider
-correlation metadata only.
+Resend is never a worker-facing sending API.  The identity-service invokes it
+only after ownership, approval, quota, credit, idempotency, and audit checks
+have completed.  The adapter returns opaque provider IDs and sanitized status;
+it never returns an API key or provider payload to a worker.
 """
 
 from __future__ import annotations
@@ -10,10 +11,12 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import json
 import logging
+import re
 import time
-from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 from uuid import uuid4
 
 import httpx
@@ -21,11 +24,43 @@ import httpx
 from mas_core.observability.mail_edge import MailEdgeObservation, normalize_provider_webhook
 
 from ..models import redact
+from .base import MailProviderError
 
 logger = logging.getLogger(__name__)
 
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+
+class ResendAdapterError(MailProviderError):
+    """Sanitized Resend API failure."""
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        transient: bool = False,
+        correlation_id: str | None = None,
+        status_code: int | None = None,
+        provider_error_code: str | None = None,
+    ) -> None:
+        super().__init__(
+            code,
+            message,
+            transient=transient,
+            correlation_id=correlation_id,
+        )
+        # These are bounded provider classifications only. Response bodies
+        # and provider credentials never cross this exception boundary.
+        self.status_code = status_code
+        self.provider_error_code = provider_error_code
+
 
 class ResendRelayAdapter:
+    provider_name = "resend"
+    _PROVIDER_ERROR_CODE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+
     def __init__(
         self,
         *,
@@ -123,27 +158,110 @@ class ResendRelayAdapter:
             tolerance_seconds=self.webhook_tolerance_seconds,
         )
 
-    async def _request(self, method: str, path: str) -> tuple[dict[str, Any], str]:
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        payload: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
+    ) -> tuple[dict[str, Any], str]:
         correlation_id = str(uuid4())
         headers = {"Authorization": f"Bearer {self._api_key}", "X-Request-ID": correlation_id}
+        body = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode() if payload is not None else None
+        if body is not None:
+            headers["Content-Type"] = "application/json"
+        if idempotency_key:
+            headers["Idempotency-Key"] = idempotency_key
         try:
             if self._client is not None:
-                response = await self._client.request(method, f"https://api.resend.com{path}", headers=headers, timeout=self.timeout)
+                response = await self._client.request(method, f"https://api.resend.com{path}", headers=headers, content=body, timeout=self.timeout)
             else:
                 async with httpx.AsyncClient(timeout=self.timeout) as client:
-                    response = await client.request(method, f"https://api.resend.com{path}", headers=headers)
+                    response = await client.request(method, f"https://api.resend.com{path}", headers=headers, content=body)
+        except httpx.TimeoutException as exc:
+            raise ResendAdapterError("RESEND_TIMEOUT", "Resend request timed out", transient=True, correlation_id=correlation_id) from exc
         except httpx.HTTPError as exc:
-            raise RuntimeError("Resend relay validation unavailable") from exc
+            raise ResendAdapterError("RESEND_UNAVAILABLE", "Resend request failed", transient=True, correlation_id=correlation_id) from exc
+        if len(response.content) > 4 * 1024 * 1024:
+            raise ResendAdapterError(
+                "RESEND_INVALID_RESPONSE",
+                "Resend response exceeded the bounded limit",
+                transient=True,
+                correlation_id=correlation_id,
+                status_code=response.status_code,
+            )
         if response.status_code >= 400:
-            raise RuntimeError("Resend relay validation rejected")
+            raise ResendAdapterError(
+                "RESEND_REJECTED",
+                "Resend rejected the request",
+                transient=self.classify_transient_or_permanent_failure(response.status_code) == "transient",
+                correlation_id=correlation_id,
+                status_code=response.status_code,
+                provider_error_code=self._safe_provider_error_code(response),
+            )
         try:
-            return response.json(), correlation_id
+            data = response.json()
         except ValueError:
             return {}, correlation_id
+        if not isinstance(data, dict):
+            raise ResendAdapterError(
+                "RESEND_INVALID_RESPONSE",
+                "Resend returned an invalid response",
+                transient=True,
+                correlation_id=correlation_id,
+            )
+        return data, correlation_id
+
+    @classmethod
+    def _safe_provider_error_code(cls, response: httpx.Response) -> str | None:
+        """Extract only a bounded, syntactically safe provider error name."""
+
+        if len(response.content) > 64 * 1024:
+            return None
+        try:
+            payload = response.json()
+        except ValueError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        for key in ("name", "code", "type"):
+            value = payload.get(key)
+            if isinstance(value, str) and cls._PROVIDER_ERROR_CODE.fullmatch(value):
+                return value
+        return None
+
+    @staticmethod
+    def classify_auth_failure(error: ResendAdapterError) -> str:
+        """Classify known Resend auth outcomes without exposing the response."""
+
+        if (
+            error.status_code == 401
+            and error.provider_error_code == "restricted_api_key"
+        ):
+            return "sending_access"
+        if error.status_code == 403 and error.provider_error_code == "invalid_api_key":
+            return "invalid"
+        return "unknown"
 
     async def validate_relay_credentials(self) -> dict[str, Any]:
-        _body, correlation_id = await self._request("GET", "/domains")
-        return {"valid": True, "correlation_id": correlation_id}
+        try:
+            _body, correlation_id = await self._request("GET", "/domains")
+        except ResendAdapterError as exc:
+            if self.classify_auth_failure(exc) != "sending_access":
+                raise
+            return {
+                "valid": True,
+                "access_mode": "sending_access",
+                "domain_readable": False,
+                "correlation_id": exc.correlation_id,
+            }
+        return {
+            "valid": True,
+            "access_mode": "full_access",
+            "domain_readable": True,
+            "correlation_id": correlation_id,
+        }
 
     async def validate_sending_domain(self) -> dict[str, Any]:
         body, correlation_id = await self._request("GET", "/domains")
@@ -152,9 +270,108 @@ class ResendRelayAdapter:
         return {"valid": bool(domain and str(domain.get("status", "")).lower() in {"verified", "active"}), "domain_id": (domain or {}).get("id"), "correlation_id": correlation_id}
 
     async def test_relay_connection(self) -> dict[str, Any]:
-        # The SMTP route is exercised by deployment validation; API validation
-        # here confirms the relay account is reachable without sending mail.
+        # Preserve the old method name for operational callers. The selected
+        # default path validates the direct HTTPS API without sending mail.
         return await self.validate_relay_credentials()
+
+    async def send_message(
+        self,
+        *,
+        sender: str,
+        recipients: list[str],
+        subject: str,
+        body: str,
+        idempotency_key: str,
+        content_type: str = "text/plain",
+        provider_reference: str | None = None,
+    ) -> dict[str, Any]:
+        """Send one approved message through Resend's HTTPS API.
+
+        Resend's idempotency header is part of the provider call, while the
+        identity-service's durable claim and request key remain the authority
+        that prevents duplicate sends across process restarts.
+        """
+
+        del provider_reference
+        if content_type not in {"text/plain", "text/html"}:
+            raise ValueError("content_type must be text/plain or text/html")
+        if (
+            not sender
+            or len(sender) > 320
+            or any(char in sender for char in "\r\n")
+            or "@" not in sender
+            or not recipients
+            or any(
+                not item
+                or len(item) > 320
+                or any(char in item for char in "\r\n")
+                or "@" not in item
+                for item in recipients
+            )
+        ):
+            raise ValueError("sender and recipients must be email addresses")
+        content_key = "html" if content_type == "text/html" else "text"
+        payload = {
+            "from": sender,
+            "to": recipients,
+            "subject": subject,
+            content_key: body,
+        }
+        data, correlation_id = await self._request(
+            "POST", "/emails", payload=payload, idempotency_key=idempotency_key
+        )
+        provider_message_id = data.get("id") or data.get("email_id")
+        if not isinstance(provider_message_id, str) or not provider_message_id.strip():
+            raise ResendAdapterError(
+                "RESEND_INVALID_RESPONSE",
+                "Resend did not return a message identifier",
+                transient=True,
+                correlation_id=correlation_id,
+            )
+        return {
+            "provider": self.provider_name,
+            "provider_message_id": provider_message_id,
+            "correlation_id": correlation_id,
+            "result": {"accepted": True},
+        }
+
+    async def get_delivery_status(self, provider_message_id: str) -> dict[str, Any]:
+        safe_message_id = quote(str(provider_message_id), safe="")
+        data, correlation_id = await self._request("GET", f"/emails/{safe_message_id}")
+        status = data.get("last_event") or data.get("status") or "unknown"
+        return {"provider": self.provider_name, "provider_message_id": provider_message_id, "status": str(status), "correlation_id": correlation_id}
+
+    async def cancel_message(self, provider_message_id: str, *, provider_reference: str | None = None) -> dict[str, Any]:
+        del provider_message_id, provider_reference
+        raise ResendAdapterError(
+            "RESEND_CANCEL_UNSUPPORTED",
+            "Resend does not support cancelling an accepted message",
+        )
+
+    async def submit_outbound_message(
+        self,
+        account_id: str,
+        *,
+        sender: str,
+        recipients: list[str],
+        subject: str,
+        body: str,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        """Compatibility spelling for older provider fixtures.
+
+        ``account_id`` is intentionally ignored: direct Resend delivery is
+        bound to the governed sender address, not a mailbox account.
+        """
+
+        del account_id
+        return await self.send_message(
+            sender=sender,
+            recipients=recipients,
+            subject=subject,
+            body=body,
+            idempotency_key=idempotency_key,
+        )
 
     @staticmethod
     def record_provider_message_id(provider_message_id: str) -> dict[str, str]:

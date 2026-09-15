@@ -11,8 +11,9 @@ RUN pip install --no-cache-dir --no-deps /tmp/mas-core \
     && pip install --no-cache-dir --constraint /tmp/identity-service/constraints.txt /tmp/identity-service \
     && rm -rf /tmp/identity-service
 
-COPY apps/identity-service/alembic.ini /app/alembic.ini
-COPY apps/identity-service/migrations /app/migrations
+COPY --chown=10001:10001 --chmod=0644 apps/identity-service/alembic.ini /app/alembic.ini
+COPY --chown=10001:10001 apps/identity-service/migrations /app/migrations
+RUN chmod -R u=rwX,go=rX /app/migrations
 
 USER 10001:10001
 EXPOSE 8010
