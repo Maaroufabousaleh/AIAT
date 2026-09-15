@@ -56,7 +56,7 @@ from mas_core.worker_registry.run_host_binding import (  # noqa: E402
 )
 
 CHECK_SCHEMA = "aiat.worker-host-execution-postgres-certification.v1"
-EXPECTED_MIGRATION = "0042_worker_run_host_binding"
+EXPECTED_MIGRATION = "0045_worker_tool_effects"
 WORKER_NAME = "aiat-cert-host-execution-v1"
 WORKER_PREFIX = f"{WORKER_NAME}%"
 HOST_NAME = "aiat-cert-host-execution-worker-v1"

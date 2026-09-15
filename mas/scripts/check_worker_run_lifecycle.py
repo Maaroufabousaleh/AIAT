@@ -227,6 +227,35 @@ class _FixtureStorage:
             ):
                 continue
             previous = row["state"]
+            if row.get("cancel_requested_at") is not None:
+                reason = (
+                    "worker run cancellation was requested before lease expiry; "
+                    "expired execution was fenced and not requeued"
+                )
+                row.update(
+                    {
+                        "state": "CANCELLED",
+                        "claim_owner": None,
+                        "claimed_at": None,
+                        "heartbeat_at": None,
+                        "lease_expires_at": None,
+                        "next_attempt_at": None,
+                        "completed_at": now,
+                        "recovery_reason": reason,
+                        "error_json": {"code": "CANCELLED", "message": reason},
+                    }
+                )
+                self.transitions.append(
+                    {
+                        "from_state": previous,
+                        "to_state": "CANCELLED",
+                        "actor": "worker-run-recovery",
+                        "reason": "durable cancellation request honored after lease expiry",
+                        "metadata": {},
+                    }
+                )
+                recovered.append(dict(row))
+                continue
             row.update(
                 {
                     "state": "QUEUED",
@@ -408,13 +437,25 @@ async def _run_fixture() -> dict[str, Any]:
     crash_execution = asyncio.create_task(controller.execute(crash_request, crash_adapter, worker_registry_id=worker_id))
     await asyncio.wait_for(crash_started.wait(), timeout=2)
     await _wait_for_state(controller, crash_request.run_id, "RUNNING")
-    cancelled = await controller.cancel(crash_request.run_id, crash_adapter, reason="fixture cold crash", requested_by="fixture", force=True)
+    cancellation_ack = await controller.cancel(
+        crash_request.run_id,
+        crash_adapter,
+        reason="fixture cold crash",
+        requested_by="fixture",
+        force=True,
+    )
     crash_outcome = await asyncio.wait_for(crash_execution, timeout=2)
+    cancellation_settled = storage.runs[crash_request.run_id]["state"] == "CANCELLED"
     results["cold_cancellation"] = {
         "status": "pass"
-        if cancelled and cancelled.get("state") == "CANCELLED" and crash_outcome.state == "CANCELLED"
+        if cancellation_ack
+        and cancellation_ack.get("state") in {"RUNNING", "CANCELLED"}
+        and cancellation_settled
+        and crash_outcome.state == "CANCELLED"
         else "fail",
         "terminal_state": crash_outcome.state,
+        "acknowledged_state": cancellation_ack.get("state") if cancellation_ack else None,
+        "settled_state": storage.runs[crash_request.run_id]["state"],
         "cancel_requested": True,
     }
     await crash_adapter.close()

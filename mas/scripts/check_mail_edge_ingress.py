@@ -153,7 +153,11 @@ async def _run() -> dict[str, Any]:
                 content=conflict_body,
                 headers=_signed_headers(
                     conflict_body,
-                    message_id="svix-fixture-conflict",
+                    # Resend/Svix idempotency is keyed by the signed delivery
+                    # identity.  Reuse the bounced delivery ID while changing
+                    # the normalized event body so the store must reject the
+                    # conflicting reuse.
+                    message_id="svix-fixture-bounced",
                     timestamp=timestamp,
                 ),
             )
@@ -196,7 +200,7 @@ async def _run() -> dict[str, Any]:
         and tampered.status_code == 401
         and len(store.mail_edge_observations) == 2
         and len(rows) == 2
-        and event_ids == {"mail-edge-fixture-delivered", "mail-edge-fixture-bounced"}
+        and event_ids == {"svix-fixture-delivered", "svix-fixture-bounced"}
         and rows_are_safe
         and _PAYLOAD_MARKER not in raw_store
         and _PAYLOAD_MARKER not in raw_audit

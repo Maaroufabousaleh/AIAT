@@ -40,6 +40,23 @@ def test_semgrep_summary_separates_findings_from_engine_errors():
     assert shape is None
 
 
+def test_semgrep_error_classes_separate_internal_execution_from_coverage():
+    module = _module()
+    classes, details = module._semgrep_error_classes(
+        {
+            "errors": [
+                {"code": 2, "type": "Internal matching error"},
+                {"code": 3, "type": ["PartialParsing", []]},
+            ]
+        }
+    )
+    assert classes == [module.SCANNER_COVERAGE_INCOMPLETE, module.SCANNER_EXECUTION_FAILURE]
+    assert {row["failure_class"] for row in details} == {
+        module.SCANNER_COVERAGE_INCOMPLETE,
+        module.SCANNER_EXECUTION_FAILURE,
+    }
+
+
 def test_generic_summary_reads_skillspector_issues_and_severity(tmp_path):
     module = _module()
     path = tmp_path / "skillspector-fixture.json"
@@ -52,6 +69,80 @@ def test_generic_summary_reads_skillspector_issues_and_severity(tmp_path):
     assert severities == {"CRITICAL": 1, "HIGH": 1}
     assert errors == 0
     assert shape is None
+
+
+def test_semgrep_nonzero_empty_exit_is_recorded_in_failure_classes(tmp_path, monkeypatch):
+    module = _module()
+    source = tmp_path / "source"
+    source.mkdir()
+    output_dir = tmp_path / "evidence"
+    output_dir.mkdir()
+
+    class Result:
+        returncode = 2
+        stdout = json.dumps({"results": [], "errors": []})
+        stderr = "scanner stopped"
+
+    monkeypatch.setattr(module.shutil, "which", lambda _name: "/usr/bin/semgrep")
+    monkeypatch.setattr(module.subprocess, "run", lambda *_args, **_kwargs: Result())
+
+    row = module._run_scanner(
+        "semgrep",
+        ["semgrep", "--json", str(source)],
+        source=source,
+        output_dir=output_dir,
+    )
+
+    assert row["status"] == "blocked"
+    assert row["failure_class"] == module.SCANNER_EXECUTION_FAILURE
+    assert module.SCANNER_EXECUTION_FAILURE in row["failure_classes"]
+
+
+def test_unavailable_scanner_is_recorded_in_failure_classes(tmp_path, monkeypatch):
+    module = _module()
+    source = tmp_path / "source"
+    source.mkdir()
+    output_dir = tmp_path / "evidence"
+    output_dir.mkdir()
+
+    monkeypatch.setattr(module.shutil, "which", lambda _name: None)
+
+    row = module._run_scanner(
+        "semgrep",
+        ["semgrep", "--json", str(source)],
+        source=source,
+        output_dir=output_dir,
+    )
+
+    assert row["status"] == "blocked"
+    assert row["failure_class"] == module.TOOL_INSTALLATION_FAILURE
+    assert row["failure_classes"] == [module.TOOL_INSTALLATION_FAILURE]
+
+
+def test_scanner_process_exception_is_recorded_in_failure_classes(tmp_path, monkeypatch):
+    module = _module()
+    source = tmp_path / "source"
+    source.mkdir()
+    output_dir = tmp_path / "evidence"
+    output_dir.mkdir()
+
+    monkeypatch.setattr(module.shutil, "which", lambda _name: "/usr/bin/semgrep")
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("scanner unavailable")),
+    )
+
+    row = module._run_scanner(
+        "semgrep",
+        ["semgrep", "--json", str(source)],
+        source=source,
+        output_dir=output_dir,
+    )
+
+    assert row["status"] == "blocked"
+    assert row["failure_class"] == module.SCANNER_EXECUTION_FAILURE
+    assert row["failure_classes"] == [module.SCANNER_EXECUTION_FAILURE]
 
 
 def test_candidate_report_requires_digest_image_sbom_scanners_and_boundary(tmp_path, monkeypatch):

@@ -82,7 +82,7 @@ from mas_core.worker_contract.models import ModelProfileReference, WorkerRunRequ
 from mas_core.worker_registry.runtime_adapters import GatewayWorkerAdapter  # noqa: E402
 
 CHECK_SCHEMA = "aiat.gateway-worker-mail-edge-postgres-certification.v1"
-EXPECTED_WORKER_MIGRATION = "0042_worker_run_host_binding"
+EXPECTED_WORKER_MIGRATION = "0045_worker_tool_effects"
 EXPECTED_IDENTITY_MIGRATION = "0003_mail_edge_observations"
 WORKER_NAME = "aiat-cert-gateway-mail-edge-postgres-v1"
 WORKER_PREFIX = f"{WORKER_NAME}%"

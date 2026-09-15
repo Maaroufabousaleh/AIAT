@@ -29,8 +29,12 @@ if TYPE_CHECKING:
 from mas_core.protocols.enums import AgentRole, MessageType
 from mas_core.protocols.envelope import MessageEnvelope
 from mas_core.protocols.worker_manifest import WorkerManifest
-from mas_core.worker_registry.crewai_adapter import CrewAIAdapter, CrewAICapabilities
-from mas_core.worker_registry.langgraph_adapter import LangGraphAdapter, LangGraphCapabilities
+from mas_core.worker_registry.runtime_adapters import (
+    CrewAIAdapter,
+    CrewAICapabilities,
+    LangGraphAdapter,
+    LangGraphCapabilities,
+)
 
 CONFORMANCE_SCHEMA = "aiat.runtime-adapter-conformance.v1"
 DEFAULT_RUNTIME_IDS = ("langgraph", "crewai")

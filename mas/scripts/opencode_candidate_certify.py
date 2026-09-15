@@ -44,6 +44,7 @@ SENSITIVE_VALUE = re.compile(
 SEVERITIES = ("CRITICAL", "HIGH", "MEDIUM", "LOW", "WARNING", "INFO", "ERROR")
 TOOL_INSTALLATION_FAILURE = "TOOL_INSTALLATION_FAILURE"
 SCANNER_EXECUTION_FAILURE = "SCANNER_EXECUTION_FAILURE"
+SCANNER_COVERAGE_INCOMPLETE = "SCANNER_COVERAGE_INCOMPLETE"
 SECURITY_FINDING = "SECURITY_FINDING"
 SBOM_FAILURE = "SBOM_FAILURE"
 AIAT_BOUNDARY_FAILURE = "AIAT_BOUNDARY_FAILURE"
@@ -227,6 +228,39 @@ def _semgrep_summary(value: Any) -> tuple[int, Counter[str], int, str | None]:
     return len(results), severities, error_count, None
 
 
+def _semgrep_error_classes(value: Any) -> tuple[list[str], list[dict[str, Any]]]:
+    """Return bounded taxonomy for Semgrep engine/parser errors.
+
+    The raw Semgrep JSON remains the authoritative evidence.  This summary is
+    deliberately scalar: it records error classes and counts without copying
+    scanner messages, source snippets, or temporary paths into the report.
+    """
+
+    errors = value.get("errors") if isinstance(value, dict) else None
+    if not isinstance(errors, list):
+        return [], []
+    counts: Counter[tuple[str, str]] = Counter()
+    for error in errors:
+        if not isinstance(error, dict):
+            counts[("other", "malformed_error_row")] += 1
+            continue
+        code = str(error.get("code") or "unknown")
+        error_type = error.get("type")
+        if isinstance(error_type, list) and error_type:
+            error_type = error_type[0]
+        normalized_type = str(error_type or "unknown")
+        if code == "2" or normalized_type == "Internal matching error":
+            taxonomy = SCANNER_EXECUTION_FAILURE
+        else:
+            taxonomy = SCANNER_COVERAGE_INCOMPLETE
+        counts[(taxonomy, normalized_type)] += 1
+    details = [
+        {"failure_class": failure_class, "error_type": error_type, "count": count}
+        for (failure_class, error_type), count in sorted(counts.items())
+    ]
+    return sorted({failure_class for failure_class, _ in counts}), details
+
+
 def _trufflehog_summary(path: Path) -> tuple[int, Counter[str], int, str | None]:
     findings = 0
     severities: Counter[str] = Counter()
@@ -287,6 +321,7 @@ def _run_scanner(
             "scanner_error_count": 1,
             "scanner_errors": ["executable_unavailable"],
             "failure_class": TOOL_INSTALLATION_FAILURE,
+            "failure_classes": [TOOL_INSTALLATION_FAILURE],
             "raw_output_retained": False,
         }
     actual_command = [executable, *command[1:]]
@@ -308,6 +343,7 @@ def _run_scanner(
             "scanner_error_count": 1,
             "scanner_errors": [type(exc).__name__],
             "failure_class": SCANNER_EXECUTION_FAILURE,
+            "failure_classes": [SCANNER_EXECUTION_FAILURE],
             "raw_output_retained": False,
         }
     stdout_text = result.stdout or ""
@@ -319,7 +355,11 @@ def _run_scanner(
     value, parse_error = _parse_json_output(stdout_path) if scanner != "trufflehog" else (None, None)
     if scanner == "semgrep":
         finding_count, severities, scanner_error_count, shape_error = _semgrep_summary(value)
-        scanner_errors = ([shape_error] if shape_error else [])
+        scanner_failure_classes, scanner_error_details = _semgrep_error_classes(value)
+        scanner_errors = scanner_error_details
+        if shape_error:
+            scanner_errors.append({"failure_class": SCANNER_EXECUTION_FAILURE, "error_type": shape_error, "count": 1})
+            scanner_failure_classes.append(SCANNER_EXECUTION_FAILURE)
     elif scanner == "trufflehog":
         finding_count, severities, scanner_error_count, shape_error = _trufflehog_summary(stdout_path)
         scanner_errors = ([shape_error] if shape_error else [])
@@ -329,12 +369,27 @@ def _run_scanner(
     if parse_error and scanner != "trufflehog":
         scanner_error_count += 1
         scanner_errors.append(f"{scanner}_json_invalid")
+        if scanner == "semgrep":
+            scanner_failure_classes.append(SCANNER_EXECUTION_FAILURE)
     # Semgrep/TruffleHog use non-zero exits to indicate findings.  A non-zero
     # exit with no structured findings is an execution error instead.
     if result.returncode != 0 and finding_count == 0 and scanner_error_count == 0:
         scanner_error_count = 1
         scanner_errors.append(f"exit_{result.returncode}_without_structured_findings")
-    failure_class = SCANNER_EXECUTION_FAILURE if scanner_error_count else (SECURITY_FINDING if finding_count else None)
+        if scanner == "semgrep":
+            # Keep the synthetic execution error in both fields.  The
+            # certification blocker derives from ``failure_classes`` while
+            # operators also consume the singular ``failure_class`` below.
+            scanner_failure_classes.append(SCANNER_EXECUTION_FAILURE)
+    if scanner_error_count:
+        failure_class = (
+            SCANNER_EXECUTION_FAILURE
+            if SCANNER_EXECUTION_FAILURE in scanner_failure_classes
+            else SCANNER_COVERAGE_INCOMPLETE
+        ) if scanner == "semgrep" else SCANNER_EXECUTION_FAILURE
+    else:
+        failure_class = SECURITY_FINDING if finding_count else None
+    failure_classes = sorted(set(scanner_failure_classes)) if scanner == "semgrep" else ([failure_class] if failure_class else [])
     return {
         "name": scanner,
         "status": "pass" if scanner_error_count == 0 else "blocked",
@@ -346,6 +401,7 @@ def _run_scanner(
         "scanner_error_count": scanner_error_count,
         "scanner_errors": scanner_errors,
         "failure_class": failure_class,
+        "failure_classes": failure_classes,
         "raw_json_path": str(stdout_path.name),
         "stderr_log_path": str(stderr_path.name),
         "raw_output_retained": True,
@@ -502,7 +558,12 @@ def certify(
     for row in scanner_rows:
         severity_counts.update({str(k).upper(): int(v) for k, v in (row.get("severity_counts") or {}).items()})
     if any(row.get("status") != "pass" for row in scanner_rows):
-        blockers.append("one_or_more_scanners_unavailable_or_failed")
+        if any(SCANNER_EXECUTION_FAILURE in (row.get("failure_classes") or []) for row in scanner_rows):
+            blockers.append("scanner_execution_failed")
+        if any(SCANNER_COVERAGE_INCOMPLETE in (row.get("failure_classes") or []) for row in scanner_rows):
+            blockers.append("scanner_coverage_incomplete")
+        if any(row.get("failure_class") == TOOL_INSTALLATION_FAILURE for row in scanner_rows):
+            blockers.append("scanner_tool_installation_failed")
     if sbom.get("status") != "pass":
         blockers.append("sbom_not_generated")
     if tooling.get("status") == "blocked":
@@ -514,6 +575,8 @@ def certify(
         for row in scanner_rows
         if row.get("failure_class")
     }
+    for row in scanner_rows:
+        failure_classes.update(str(item) for item in row.get("failure_classes", []) if item)
     failure_classes.update(
         str(item)
         for item in tooling.get("failure_classes", [])
