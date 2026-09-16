@@ -493,6 +493,23 @@ def _decode_json_config(raw: str | None, fallback: Any) -> Any:
         return fallback
 
 
+def _project_record_belongs_to(record: dict[str, Any], project_id: UUID) -> bool:
+    """Compare storage-shaped project identifiers without assuming one type.
+
+    Postgres-backed storage commonly returns UUID columns as strings at the
+    application boundary, while FastAPI parses route parameters as ``UUID``
+    instances. Ownership checks must accept both representations and fail
+    closed for malformed or missing identifiers.
+    """
+    raw_project_id = record.get("project_id")
+    if raw_project_id is None:
+        return False
+    try:
+        return UUID(str(raw_project_id)) == project_id
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
 def _department_project_counts(projects: list[dict[str, Any]]) -> dict[str, int]:
     counts: dict[str, int] = {}
     for project in projects:
@@ -5369,7 +5386,7 @@ async def create_project_document_revision(
     """Append the next immutable version of a project document."""
     storage = _storage()
     source = await storage.get_document(doc_id)
-    if source is None or source.get("project_id") != project_id:
+    if source is None or not _project_record_belongs_to(source, project_id):
         raise HTTPException(404, f"Document {doc_id} not found")
     try:
         revision = await storage.create_document_revision(
@@ -5393,7 +5410,7 @@ async def update_project_document_status(
     """Move a document through its review lifecycle."""
     storage = _storage()
     document = await storage.get_document(doc_id)
-    if document is None or document.get("project_id") != project_id:
+    if document is None or not _project_record_belongs_to(document, project_id):
         raise HTTPException(404, f"Document {doc_id} not found")
     status = req.status.upper()
     if status not in DOCUMENT_STATUSES:
@@ -5410,7 +5427,7 @@ async def get_document(project_id: UUID, doc_id: UUID) -> dict[str, Any]:
     """Get document details including blob reference for download."""
     storage = _storage()
     doc = await storage.get_document(doc_id)
-    if doc is None or doc.get("project_id") != project_id:
+    if doc is None or not _project_record_belongs_to(doc, project_id):
         raise HTTPException(404, f"Document {doc_id} not found")
     return _serialize(doc)
 
@@ -5464,7 +5481,7 @@ async def _read_project_document_blob(project_id: UUID, document: dict[str, Any]
 async def preview_project_document(project_id: UUID, doc_id: UUID) -> Response:
     storage = _storage()
     document = await storage.get_document(doc_id)
-    if document is None or document.get("project_id") != project_id:
+    if document is None or not _project_record_belongs_to(document, project_id):
         raise HTTPException(404, f"Document {doc_id} not found")
     body, mime = await _read_project_document_blob(project_id, document)
     return Response(content=body, media_type=mime, headers={"X-AIAT-Document-SHA256": str(document.get("blob_sha256") or "")})
@@ -5474,7 +5491,7 @@ async def preview_project_document(project_id: UUID, doc_id: UUID) -> Response:
 async def download_project_document(project_id: UUID, doc_id: UUID) -> Response:
     storage = _storage()
     document = await storage.get_document(doc_id)
-    if document is None or document.get("project_id") != project_id:
+    if document is None or not _project_record_belongs_to(document, project_id):
         raise HTTPException(404, f"Document {doc_id} not found")
     body, mime = await _read_project_document_blob(project_id, document)
     filename = f"{str(document.get('doc_type') or 'document').lower()}-v{document.get('version') or 1}"
@@ -6277,7 +6294,7 @@ async def get_project_context_item(
     document_reader = getattr(storage, "get_document", None)
     if inspect.iscoroutinefunction(document_reader):
         document = await document_reader(item_id)
-        if document is not None and document.get("project_id") == project_id:
+        if document is not None and _project_record_belongs_to(document, project_id):
             return _serialize(document_to_context_item(document))
 
     raise HTTPException(404, f"Context item {item_id} not found")
@@ -6295,7 +6312,7 @@ async def delete_project_context_item(
         document_reader = getattr(storage, "get_document", None)
         if inspect.iscoroutinefunction(document_reader):
             document = await document_reader(item_id)
-            if document is not None and document.get("project_id") == project_id:
+            if document is not None and _project_record_belongs_to(document, project_id):
                 raise HTTPException(
                     405,
                     "Generated documents are read-only context. Use the document revision/status APIs.",

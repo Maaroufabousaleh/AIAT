@@ -541,14 +541,7 @@ async def test_list_documents_via_api(client):
 
 @pytest.mark.anyio
 async def test_get_single_document(client):
-    """GET /projects/{id}/documents/{doc_id} reads single document.
-
-    NOTE: The route checks doc.get('project_id') != project_id where project_id
-    is a UUID instance. Since storage returns project_id as string, this comparison
-    always fails — exposing a production gap where get_document always returns 404
-    even for valid documents unless the storage returns UUID objects.
-    This test documents the current behavior as a gap.
-    """
+    """GET /projects/{id}/documents/{doc_id} accepts DB-shaped UUID strings."""
     pid = uuid4()
     doc_id = uuid4()
     storage = MagicMock()
@@ -564,9 +557,9 @@ async def test_get_single_document(client):
     _patch(storage)
 
     r = await client.get(f"/projects/{pid}/documents/{doc_id}")
-    # Production gap: route compares str project_id to UUID, always 404.
-    # When fixed, this should be 200.
-    assert r.status_code in (200, 404)  # currently 404 due to type mismatch bug
+    assert r.status_code == 200
+    assert r.json()["id"] == str(doc_id)
+    assert r.json()["project_id"] == str(pid)
 
 
 @pytest.mark.anyio

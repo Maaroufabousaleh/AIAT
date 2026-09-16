@@ -130,6 +130,65 @@ async def test_get_document_found(client):
 
 
 @pytest.mark.anyio
+async def test_get_document_found_with_database_string_project_id(client):
+    """Document ownership accepts the string form returned by Postgres rows."""
+    doc = _fake_document("SPEC")
+    doc["project_id"] = str(PROJECT_ID)
+    doc["id"] = str(DOC_ID)
+    _patch_state(_make_storage(document=doc))
+
+    resp = await client.get(f"/projects/{PROJECT_ID}/documents/{DOC_ID}")
+
+    assert resp.status_code == 200
+    assert resp.json()["project_id"] == str(PROJECT_ID)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("method", "suffix", "payload"),
+    [
+        ("post", "revisions", {}),
+        ("patch", "status", {"status": "APPROVED"}),
+        ("get", "preview", None),
+        ("get", "download", None),
+    ],
+)
+async def test_document_mutation_and_body_routes_accept_database_string_project_id(
+    client,
+    method,
+    suffix,
+    payload,
+):
+    """All document ownership gates accept string IDs from storage rows."""
+    doc = _fake_document("SPEC")
+    doc.update(
+        {
+            "id": str(DOC_ID),
+            "project_id": str(PROJECT_ID),
+            "version": 1,
+            "content_text": "spec body",
+        }
+    )
+    storage = _make_storage(document=doc)
+    if suffix == "revisions":
+        storage.create_document_revision = AsyncMock(return_value=doc)
+    elif suffix == "status":
+        storage.get_document = AsyncMock(side_effect=[doc, doc])
+        storage.update_document_status = AsyncMock()
+    _patch_state(storage)
+
+    path = f"/projects/{PROJECT_ID}/documents/{DOC_ID}/{suffix}"
+    if method == "post":
+        resp = await client.post(path, json=payload)
+    elif method == "patch":
+        resp = await client.patch(path, json=payload)
+    else:
+        resp = await client.get(path)
+
+    assert resp.status_code == (201 if suffix == "revisions" else 200)
+
+
+@pytest.mark.anyio
 async def test_get_document_not_found(client):
     """GET /projects/{id}/documents/{doc_id} returns 404 when document missing."""
     _patch_state(_make_storage(document=None))
