@@ -59,6 +59,7 @@ jobs:
           cache-dependency-path: mas/apps/mas-dashboard/package-lock.json
       - run: npm ci
       - run: npm run typecheck
+      - run: npm run test:auth
   migration-and-compose:
     runs-on: ubuntu-latest
     steps:

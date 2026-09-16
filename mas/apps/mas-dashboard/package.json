@@ -11,6 +11,7 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit --pretty false",
+    "test:auth": "node scripts/test-auth.mjs",
     "test:protocol-fixtures": "node scripts/check-protocol-fixtures.mjs && tsc --noEmit --pretty false",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui"

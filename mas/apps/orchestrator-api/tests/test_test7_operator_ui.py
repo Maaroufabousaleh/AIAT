@@ -864,10 +864,7 @@ async def test_project_lifecycle_integration(client):
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# TODO: Next.js dashboard layer tests
-# ═════════════════════════════════════════════════════════════════════════════
-# GAP: The Next.js dashboard API routes (/api/auth/login, /api/projects, etc.)
-# are thin proxies that require a live Node.js server (npm run dev).
-# Covered by: apps/mas-dashboard/e2e/flow-builder.spec.ts (Playwright e2e).
-# The JWT/bcrypt auth logic in lib/auth.ts needs a Node.js test harness.
-# ═════════════════════════════════════════════════════════════════════════════
+# Dashboard authentication logic is covered by the Node-level harness at
+# `mas/apps/mas-dashboard/scripts/test-auth.mjs`, which compiles and exercises
+# the real `lib/auth.ts` module. API-route proxy and browser behavior remain
+# covered by the dashboard's Playwright suite.
