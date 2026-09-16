@@ -20,6 +20,10 @@ Projects are the primary ownership, security, cost, evidence, and lifecycle boun
 - Project state/history and project-transition notification intent commit atomically through `WorkflowController`/`AgentStorage`; the bounded outbox dispatcher publishes stable transition IDs and retains failed notifications for retry (migration `0043_project_transition_outbox`).
 - Default software lifecycle from feasibility through PDR/CDR, human approval, requirements review, sprint execution, retrospective, KPI persistence, completion, and archive.
 - Durable documents with lineage, immutable revisions, statuses, preview/download, and supersession.
+- Document ownership checks accept both UUID and database-string project IDs for
+  revision, status, read, preview/download, and document-backed context routes;
+  malformed or missing identifiers fail closed. Focused API regressions cover
+  the database-shaped row boundary (`66f8f80d`).
 - Review sessions/comments, CSO veto, approval gates, pending decisions, and audit timeline.
 - Sprints, issues, parent/dependencies, comments, links, KPI snapshots, agent performance observations, and estimation adjustment.
 - A first transition to `DONE`/`COMPLETED`/`CLOSED` on an assigned issue now automatically records its estimated-versus-actual hours in the durable agent profile; repeated terminal updates do not double-count the observation, and the response links the profile update to the source issue.
