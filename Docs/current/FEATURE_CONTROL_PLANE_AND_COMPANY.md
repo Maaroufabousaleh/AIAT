@@ -41,6 +41,9 @@ The control plane turns AIAT from a collection of agents into one governed compa
   bind-mount-sensitive config-lock rewrites, using a bounded inline commit
   identity.
 - Organisation and permissions data exposed to the dashboard.
+- `GET /teams` exposes the canonical 11-team registry with stable display names
+  and policy role tiers; the OpenAPI, generated Python SDK, generated dashboard
+  contract, and hierarchy tests cover the metadata contract.
 
 ## Code anchors
 
