@@ -1,8 +1,8 @@
 # AIAT Implementation Index
 
 **Scope:** personal/internal AIAT instance
-**Index revision:** `0f068476db908ee43bbc52900bf421394a121e6c` + working-tree implementation updates
-**Index date:** 2026-09-15
+**Refresh baseline:** `ace47b46b6ae33a55c6a230f64dc3ab8fcf3c1b0`
+**Index date:** 2026-09-18
 **Release status:** `NO-RELEASE / P0 INCOMPLETE`
 
 ## Purpose
@@ -37,22 +37,46 @@ individual function is enumerated.
 fixture does not prove production-provider, native-host, disaster-recovery, or
 operator-action completion.
 
+## Completion contract
+
+Every capability is tracked across four separate questions. A capability may
+be implemented and locally tested while still being unavailable for an
+operator-selected production run.
+
+| Dimension | Meaning | Evidence that belongs here |
+| --- | --- | --- |
+| **Implemented** | The intended code, schema, API, manifest, or UI boundary exists | Source paths, migrations, manifests, and focused unit/contract tests |
+| **Locally tested** | Deterministic repository tests exercise the supported behavior | Pytest/script/dashboard results, fixture certificates, static checkers |
+| **Release-certified** | The required host/provider/sandbox/recovery/security evidence exists for the active profile | Current release ledger and retained provenance artifact |
+| **Operator-complete** | A human has supplied the external state or approval that code cannot create | Native host, credentials, provider, outage, migration, or promotion evidence |
+
+The capability table below reports the first two dimensions together and calls
+out the latter two as remaining gates. When work advances, update the closest
+feature document and its evidence record in the same change; then refresh this
+index so the implementation and remaining-work views cannot drift apart.
+
 ## Latest local validation snapshot
 
-This snapshot is a local working-tree result dated 2026-09-15. It does not
+This snapshot was refreshed on 2026-09-18 against the refresh baseline above.
+It does not
 replace the release ledger or close native-host, provider, sandbox, disaster-
 recovery, or human/operator gates.
 
 | Check | Result | Scope and limitation |
 | --- | --- | --- |
-| Python repository test suite | **PASS** | `uv run --isolated pytest -q`; all collected tests passed, with two non-failing `AsyncMock` resource warnings in existing system tests. |
-| Script test suite | **PASS** | `uv run --isolated pytest -q scripts/tests`; all collected script tests passed; two existing Python 3.14 tar-extraction deprecation warnings remain non-failing. |
+| Source revision at refresh | **`ace47b46b6ae33a55c6a230f64dc3ab8fcf3c1b0`** | The refresh baseline is the implementation commit immediately before this documentation refresh; the checks below describe that code baseline and do not close live/operator gates. |
+| Documentation authority/index check | **PASS (2026-09-18)** | `../.venv/bin/python scripts/check_docs_index.py --json` reports 13 feature documents, 3 plans, 23 maintained/link-checked documents, and no link or policy errors. The standard isolated `uv` invocation could not acquire its read-only global cache in this sandbox; the repository-local checker was run from the existing environment. |
+| Migration source-head check | **PASS (2026-09-18)** | `../.venv/bin/python scripts/check_database_migration_head.py --json` reports one source head: `0045_worker_tool_effects`; no live database was touched. |
+| Release-environment identity probe | **PASS with Docker blocked (2026-09-19 UTC)** | `check_release_environment.py --json` sees Python, uv, Node, npm, and `runsc release-20260817.0`; the Docker executable is present but its Engine is unavailable from this WSL2 distribution. No deployment, provider, or sandbox mutation was performed. |
+| Standard dependency/test runner | **BLOCKED in this sandbox** | The standard isolated `uv` command could not download missing wheels because network access is restricted and its global cache is read-only. The repository-local fallback environment does not contain the workspace packages as installed distributions, so its broad fallback run is not accepted as suite evidence. The last authoritative green run remains the 2026-09-15 run recorded below. |
+| Python repository test suite | **PASS (last authoritative run: 2026-09-15)** | `uv run --isolated pytest -q`; all collected tests passed, with two non-failing `AsyncMock` resource warnings in existing system tests. |
+| Script test suite | **PASS (last authoritative run: 2026-09-15)** | `uv run --isolated pytest -q scripts/tests`; all collected script tests passed; two existing Python 3.14 tar-extraction deprecation warnings remained non-failing. |
+| Current focused architecture/documentation suites | **PASS (2026-09-18)** | The repository-local fallback environment passed `test_docs_index.py`, architecture invariants/adapter inventory, ProcessAdapter security, project outbox, runtime-binding/tool-effect, worker-governance, TeamRunner runtime-plane, and Redis characterization coverage. This narrower run does not replace the full standard suite. |
 | Bounded Python compilation | **PASS** | Checked-in `mas_core`, orchestrator, message-router, team-runner, tool-service, and `mas/scripts` Python roots; generated dashboard dependency trees excluded. |
 | Static release ledger | **PASS: 64/64 checks** | The ledger’s release decision remains **NO-RELEASE** because required live/operator evidence is still blocked or pending. The additional static guard verifies that the checked-in Alembic graph has the expected single head `0045_worker_tool_effects`. |
 | Database migration-head guard | **PASS static; BLOCKED live** | `check_database_migration_head.py --json` verifies source head `0045_worker_tool_effects`; the live read-only query is blocked in this WSL2/Compose profile because the migration-check DSN cannot reach the published database port. Independent read-only inspection still reports the running local database at `0042_worker_run_host_binding`; no migration or restart was performed. |
 | Authenticated local-Compose live release sweep | **83/89 pass; 0 fail; 6 blocked** | `check_release_ledger.py --live --compose-local --json` at `2026-09-15T12:11:27Z` using the configured operator/tool-service authentication aliases without retaining secrets. Bounded live tool trace, catalog/metrics/runtime/trace/SLO, and worker-reconciliation checks passed; the six remaining blockers are native-host/environment, database migration-head reachability, deployment-image provenance, Firecracker pool readiness, outbound mail lifecycle, and operator-selected self-improvement scope. Four pending evidence items and the dirty worktree keep the global decision **NO-RELEASE**. |
 | Source/deployment migration boundary | **SOURCE 0045; local Compose DB 0042** | Read-only inspection of the running local Postgres reports `0042_worker_run_host_binding`; migrations `0043_project_transition_outbox`, `0044_worker_run_runtime_bindings`, and `0045_worker_tool_effects` are present in source but not applied to that running database. No migration or service restart was performed in this pass. Source-level tests and static checks therefore do not constitute live evidence for those later tables. |
-| Documentation authority/index check | **PASS** | 13 feature documents, 3 plans, 23 maintained/link-checked documents; no link or policy errors. |
 | Runtime-adapter inventory/consolidation | **PASS** | Machine-checked reference inventory; LangGraph/CrewAI now share the canonical `runtime_adapters.py` implementation through compatibility shims, while the legacy factory, Letta dotted configuration, and MAF certification references still prevent full-family deletion. |
 | Optional memory/workflow service contract | **PASS: 3 candidates** | `check_optional_memory_services.py --json` and the focused 9-test suite validate exact Letta/Qdrant/Temporal adapter contracts, AIAT authority/data boundaries, disabled-by-default policy, measurable-value fields, outage/recovery declarations, and removal definitions without network or mutation. Live value/outage/restore/removal testing remains deliberately unstarted. |
 | Worker-placement policy contract | **PASS: 3 cases** | `check_worker_placement.py --json` validates eligible-host selection, capacity ordering, duplicate-host fail-closed behavior, and worker-plane isolation without dispatch or mutation. Durable host registration, live multi-host scheduling, lease settlement, and host-loss/split-brain evidence remain separate. |
@@ -61,16 +85,17 @@ recovery, or human/operator gates.
 | Reservation/binding settlement hardening | **PASS** | Normal commit/release now updates the reservation and run-host binding on one database connection; failed new assignments release their newly-created reservation. Host-loss reassignment and live fault evidence remain open. |
 | Worker lifecycle fixture | **PASS** | Checkpoint, pause/resume, cancellation, cold-crash normalization, lease recovery, and artifact/usage ordering; not a database, canary, sandbox, or live-run certificate. |
 | OpenCode candidate triage tooling | **PASS** | Focused parser/classification/image-identity regression suite; candidate remains inactive pending scanner/runtime review. |
-| Dashboard lint/typecheck/build | **PASS** | `npm run lint`, `npm run typecheck`, and `npm run build`; production UI/live-provider evidence remains separate. |
+| Dashboard lint/typecheck/build/auth | **PASS** | `npm run lint`, `npm run typecheck`, `npm run build`, and `npm run test:auth`; the Node-level harness exercises the real JWT/bcrypt module, while production UI/live-provider evidence remains separate. |
 | Dashboard protocol fixture check | **PASS** | Four `aiat.v1` protocol fixtures plus TypeScript typecheck. |
 | Restricted Redis ACL/Lua smoke | **PASS** | Local Redis service recreated from the current Compose ACL migration; authenticated router scripting, atomic stream append, and denied `CONFIG` access were verified, with the probe entry removed afterward. This is not a production outage or multi-host proof. |
 | Review-regression suite | **PASS** | Post-review focused coverage and the full Python suite pass on the current working tree: Redis ACL/script authorization, cancellation/recovery races, scanner failure classification and evidence hashes, migration-head compatibility, sandboxed image probing, governance model-provenance producer wiring, and all repository tests. The script suite also passes; the checks prove local behavior only, while live outage, host, provider, schema-migration, and operator gates remain separate. |
 
-Current environment boundary: Docker Desktop/Compose is available through the
-current WSL2 integration and the existing local Compose services report healthy
-health endpoints. The latest authenticated
-`check_release_ledger.py --live --compose-local --json` run at
-`2026-09-15T12:11:27Z` reports 83/89 pass, 0 fail, and 6 externally blocked.
+Current environment boundary: this WSL2 distribution has `runsc
+release-20260817.0`, but Docker Engine is currently unavailable to the Docker
+CLI, so Compose and gVisor registration/smoke cannot be refreshed in this
+session. The latest authenticated `check_release_ledger.py --live
+--compose-local --json` run at `2026-09-15T12:11:27Z` reports 83/89 pass, 0
+fail, and 6 externally blocked.
 The remaining blockers are native-host/environment, database migration-head
 reachability, deployment-image provenance, Firecracker worker-pool readiness,
 outbound mail lifecycle, and operator-selected self-improvement scope. Four
@@ -285,6 +310,16 @@ checked item is implemented, certified, or still bounded.
 | Optional memory/workflow service live value, outage, backup/restore, and removal tests | **Contract PASS; live not started; disabled by default** | The optional-service catalogue/checker and injected-backend Qdrant/Temporal tests pass locally; operator-selected exact endpoints, versions, budgets, certified sandboxes, value comparison, outage/restore, and clean removal remain required | [Optional-service contract](../../mas/docs/provenance/optional_memory_services_contract.json) · [P2 Workstream 2](plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md#workstream-2--optional-memory-and-workflow-services) |
 | External provider-backed dispatch across independent/multi-host Firecracker/gVisor boundaries | **Local provider-shaped retry only** | The local durable provider-shaped retry certificate passes; real provider execution, independent host/process loss, sandbox, callback/delivery, and recovery evidence remain required | [Provider-shaped recovery evidence](../../mas/docs/provenance/gateway_worker_mail_edge_provider_recovery_postgres_evidence.json) · [P2 Workstream 3](plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md#workstream-3--multi-host-and-high-risk-execution) |
 | Independent deployed-host loss, split-brain avoidance, queue recovery, duplicate-effect protection, and complete version pinning | **Local control-plane prerequisites pass; deployed proof absent** | Local multi-host, independent-process, lease/recovery, duplicate-effect, and version-pinning certificates are retained; two or more independently controlled hosts/processes, fault injection, durable replay/reconciliation, and zero duplicate protected effects remain required | [Multi-host evidence](../../mas/docs/provenance/worker_multi_host_execution_postgres_evidence.json) · [Independent-process evidence](../../mas/docs/provenance/worker_independent_process_execution_postgres_evidence.json) · [P2 Workstream 3](plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md#workstream-3--multi-host-and-high-risk-execution) |
+
+### Feature-spec-only release gate
+
+The following gate is intentionally listed separately because it is an open
+checkbox in a maintained feature specification, not one of the three unchecked
+P2 plan checkpoints:
+
+| Gate | Current state | Required evidence | Authority |
+| --- | --- | --- | --- |
+| gVisor smoke/network behavior and optional Firecracker host proof | **Static contract PASS; runtime proof blocked** | A certified native host must run the gVisor deny/allow matrix and the optional Firecracker launcher/readiness, network, cleanup, and recovery checks. `runsc release-20260817.0` is installed in the current WSL2 environment, but Docker Engine registration/smoke is unavailable and the Firecracker launcher/binary is absent; no weaker runtime fallback is permitted. | [Workers, Stewards, Tools, and Models](FEATURE_WORKERS_STEWARDS_AND_MODELS.md) · [P2 Workstream 3](plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md#workstream-3--multi-host-and-high-risk-execution) · [Native-Linux exit runbook](../../mas/docs/P0_NATIVE_LINUX_EXIT_RUNBOOK.md) |
 
 ## Completed implementation slices tracked here
 

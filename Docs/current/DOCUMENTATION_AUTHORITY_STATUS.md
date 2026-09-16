@@ -1,6 +1,6 @@
 # Documentation Authority Status
 
-**Updated:** 2026-09-13
+**Updated:** 2026-09-18
 **Roadmap:** [AIAT Roadmap](../../ROADMAP.md)
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 **Scope:** personal/internal AIAT instance
@@ -8,8 +8,8 @@
 ## Current integrated baseline
 
 The maintained authority set now describes the **Integrated Development &
-System Testing** phase on integration baseline `2c99b75a`. The merged clean
-tree's static release ledger is 63/63 pass with 2 pending evidence items and
+System Testing** phase on integration baseline `ace47b46b6ae33a55c6a230f64dc3ab8fcf3c1b0`. The merged clean
+tree's static release ledger is 64/64 pass with 2 pending evidence items and
 global `NO-RELEASE`; OpenHands v1.43.0 remains inactive/certifying, OpenCode
 remains the unchanged default, and scanner coverage remains independently
 `BLOCKED_SCANNER_COVERAGE`. Current status is led by

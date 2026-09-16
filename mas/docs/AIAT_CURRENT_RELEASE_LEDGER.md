@@ -33,7 +33,7 @@ sandbox, KMS, recovery, security, and worker/provider gates remain open.
 
 The repository is entering the **Integrated Development & System Testing**
 phase. This development transition does not close P0 release gates. The actual
-`check_release_ledger.py --json` result from the merged clean tree is **63/63
+`check_release_ledger.py --json` result from the merged clean tree is **64/64
 pass**, with 0 failed, 0 blocked, and 2 pending evidence items; the checker
 still returns `NO-RELEASE` because no live profile is included and pending
 evidence remains.
