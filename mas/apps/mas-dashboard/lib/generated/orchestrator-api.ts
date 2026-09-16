@@ -17,6 +17,8 @@ export type AgentProfileObservationRequest = {
   team_id?: (string | null);
 };
 
+export type AgentRole = ("orchestrator" | "executive" | "c_suite" | "admin" | "worker" | "sub_agent");
+
 export type BootstrapAction = {
   action: string;
   current?: ({
@@ -1060,6 +1062,12 @@ export type StewardCreateRequest = {
   source_provider?: string;
   source_repo?: (string | null);
   transport_type?: string;
+};
+
+export type TeamDescriptor = {
+  name: string;
+  role: AgentRole;
+  team_id: string;
 };
 
 export type TeamRunnerStorageRequest = {
@@ -4608,9 +4616,7 @@ export type OrchestratorApiOperations = {
     method: "GET";
     path: "/teams";
     responses: {
-      "200": Array<{
-  [key: string]: string;
-}>;
+      "200": Array<TeamDescriptor>;
     };
   };
   "get_usage_event_evidence_usage_events__event_id__get": {

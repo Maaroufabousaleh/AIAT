@@ -37,6 +37,23 @@ TEAM_TIERS: dict[str, AgentRole] = {
     **{t: AgentRole.ADMIN for t in DEPT_TEAMS},
 }
 
+# Stable operator-facing labels for the canonical team registry. Keep these
+# beside the tier map so API consumers and the dashboard do not have to infer
+# names from team IDs or duplicate the organization chart.
+TEAM_DISPLAY_NAMES: dict[str, str] = {
+    ORCHESTRATOR_TEAM: "Chief Executive Officer",
+    EXECUTIVE_TEAM: "Chief Operating Officer",
+    "office_cfo": "Chief Financial Officer",
+    "office_cio": "Chief Information Officer",
+    "office_chrm": "Chief Human Resources Manager",
+    "office_cso": "Chief Security Officer",
+    "office_cto": "Chief Technology Officer",
+    "dept_production": "Production",
+    "dept_system": "System",
+    "dept_qa": "Quality Assurance",
+    "dept_devops": "DevOps",
+}
+
 # ---------------------------------------------------------------------------
 # Allowed message types per role  (sets for O(1) membership tests)
 # ---------------------------------------------------------------------------

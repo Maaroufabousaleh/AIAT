@@ -69,6 +69,19 @@
         "title": "AgentProfileObservationRequest",
         "type": "object"
       },
+      "AgentRole": {
+        "description": "Corporate hierarchy roles mapped to MAS communication policy roles.",
+        "enum": [
+          "orchestrator",
+          "executive",
+          "c_suite",
+          "admin",
+          "worker",
+          "sub_agent"
+        ],
+        "title": "AgentRole",
+        "type": "string"
+      },
       "BootstrapAction": {
         "additionalProperties": false,
         "properties": {
@@ -6010,6 +6023,29 @@
           }
         },
         "title": "StewardCreateRequest",
+        "type": "object"
+      },
+      "TeamDescriptor": {
+        "description": "Stable metadata for one canonical AIAT team stream.",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/AgentRole"
+          },
+          "team_id": {
+            "title": "Team Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "team_id",
+          "name",
+          "role"
+        ],
+        "title": "TeamDescriptor",
         "type": "object"
       },
       "TeamRunnerStorageRequest": {
@@ -19998,7 +20034,7 @@
     },
     "/teams": {
       "get": {
-        "description": "List all known default AIAT team IDs from the policy registry.",
+        "description": "List canonical team IDs with stable operator-facing metadata.",
         "operationId": "list_teams_teams_get",
         "responses": {
           "200": {
@@ -20006,10 +20042,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "additionalProperties": {
-                      "type": "string"
-                    },
-                    "type": "object"
+                    "$ref": "#/components/schemas/TeamDescriptor"
                   },
                   "title": "Response List Teams Teams Get",
                   "type": "array"

@@ -1205,6 +1205,14 @@ class CreateProjectRequest(BaseModel):
         return normalized
 
 
+class TeamDescriptor(BaseModel):
+    """Stable metadata for one canonical AIAT team stream."""
+
+    team_id: str
+    name: str
+    role: AgentRole
+
+
 class SelfImprovementReferenceRequest(BaseModel):
     """Link an existing canonical record to an improvement lifecycle."""
 
@@ -6755,13 +6763,20 @@ async def get_task(task_id: UUID) -> dict[str, Any]:
     return _serialize(task)
 
 
-@app.get("/teams")
-async def list_teams() -> list[dict[str, str]]:
-    """List all known default AIAT team IDs from the policy registry."""
-    from mas_core.policy.rules import TEAM_TIERS
+@app.get("/teams", response_model=list[TeamDescriptor])
+async def list_teams() -> list[TeamDescriptor]:
+    """List canonical team IDs with stable operator-facing metadata."""
+    from mas_core.policy.rules import TEAM_DISPLAY_NAMES, TEAM_TIERS
 
     teams = sorted(TEAM_TIERS)
-    return [{"team_id": t} for t in teams]
+    return [
+        TeamDescriptor(
+            team_id=team_id,
+            name=TEAM_DISPLAY_NAMES.get(team_id, team_id),
+            role=TEAM_TIERS[team_id],
+        )
+        for team_id in teams
+    ]
 
 
 # ═════════════════════════════════════════════════════════════════════════════

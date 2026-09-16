@@ -17,6 +17,8 @@ class AgentProfileObservationRequest(TypedDict):
     tasks_completed: NotRequired[int]
     team_id: NotRequired[str | Any]
 
+AgentRole: TypeAlias = Literal['orchestrator', 'executive', 'c_suite', 'admin', 'worker', 'sub_agent']
+
 class BootstrapAction(TypedDict):
     action: Required[str]
     current: NotRequired[dict[str, Any] | Any]
@@ -847,6 +849,11 @@ class StewardCreateRequest(TypedDict):
     source_provider: NotRequired[str]
     source_repo: NotRequired[str | Any]
     transport_type: NotRequired[str]
+
+class TeamDescriptor(TypedDict):
+    name: Required[str]
+    role: Required[AgentRole]
+    team_id: Required[str]
 
 class TeamRunnerStorageRequest(TypedDict):
     operation: Required[Literal['storage_health', 'checkpoint_save', 'checkpoint_load', 'checkpoint_latest', 'checkpoint_delete', 'usage_record', 'model_resolution_snapshot_get', 'document_get', 'document_create', 'document_update_status', 'review_create', 'review_get', 'review_update', 'review_comment_add', 'review_comments_get', 'review_list']]
@@ -3514,7 +3521,7 @@ OPERATIONS: dict[str, ApiOperation] = {
     ),
 }
 
-MODEL_COUNT = 135
+MODEL_COUNT = 137
 OPERATION_COUNT = 271
 
 __all__ = [
@@ -3524,6 +3531,7 @@ __all__ = [
     "OPERATIONS",
     'AgentEstimateRequest',
     'AgentProfileObservationRequest',
+    'AgentRole',
     'BootstrapAction',
     'BootstrapPlan',
     'CandidateApprovalRequest',
@@ -3637,6 +3645,7 @@ __all__ = [
     'SelfImprovementActionRequest',
     'SelfImprovementReferenceRequest',
     'StewardCreateRequest',
+    'TeamDescriptor',
     'TeamRunnerStorageRequest',
     'TraceEvidence',
     'TraceEvidenceItem',

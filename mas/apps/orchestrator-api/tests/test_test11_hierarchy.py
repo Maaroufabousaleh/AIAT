@@ -16,7 +16,7 @@ The MAS team hierarchy is:
           ├── dept_qa
           └── dept_devops
 
-The /teams endpoint returns team metadata. The policy/rules.py defines tiers.
+The /teams endpoint returns team metadata and policy tiers.
 A Playwright e2e spec is included for the interactive hierarchy graph UI (requires
 live server — left as TODO if server not available).
 """
@@ -99,23 +99,20 @@ async def test_get_teams_returns_all_teams(client):
 
 @pytest.mark.anyio
 async def test_get_teams_includes_required_fields(client):
-    """Each team entry must have at least team_id field (name/role are a gap)."""
+    """Each team entry exposes stable operator-facing metadata."""
     r = await client.get("/teams")
     assert r.status_code == 200
     teams = r.json()
     for team in teams:
-        assert "team_id" in team, f"Team missing team_id: {team}"
-    # NOTE: Production gap — the /teams endpoint does not return 'name' or 'role' fields.
-    # These would be needed for the hierarchy graph UI to show labels and tiers.
+        assert team["team_id"]
+        assert team["name"]
+        assert team["role"]
 
 
 @pytest.mark.anyio
 async def test_get_teams_roles_match_policy(client):
-    """Teams returned by /teams endpoint only have team_id.
-    Role information is in the policy module, not the /teams response.
-    This test verifies policy role assignment for teams that appear in the state machine.
-    """
-    from mas_core.policy.rules import TEAM_TIERS
+    """The endpoint's role metadata matches the canonical policy registry."""
+    from mas_core.policy.rules import TEAM_DISPLAY_NAMES, TEAM_TIERS
 
     r = await client.get("/teams")
     assert r.status_code == 200
@@ -123,8 +120,8 @@ async def test_get_teams_roles_match_policy(client):
     for team in teams:
         tid = team.get("team_id")
         if tid in TEAM_TIERS:
-            # Verify that policy knows this team
-            assert TEAM_TIERS[tid] is not None
+            assert team["role"] == TEAM_TIERS[tid].value
+            assert team["name"] == TEAM_DISPLAY_NAMES[tid]
 
 
 @pytest.mark.anyio
@@ -159,13 +156,14 @@ async def test_get_teams_coo_is_executive(client):
 @pytest.mark.anyio
 async def test_get_teams_dept_teams_are_admin(client):
     """dept_devops appears in /teams (handles INFRA_PROVISIONING state).
-    Other dept_* teams are not in the state machine and are absent from /teams.
-    Production gap: dept_production, dept_system, dept_qa are not in /teams.
+    All canonical department teams are present even when they do not currently
+    own a project state-machine transition.
     """
     r = await client.get("/teams")
     assert r.status_code == 200
     teams = {t["team_id"] for t in r.json()}
     assert "dept_devops" in teams, "dept_devops must appear (handles INFRA_PROVISIONING)"
+    assert {"dept_production", "dept_system", "dept_qa"} <= teams
 
 
 # ---------------------------------------------------------------------------
