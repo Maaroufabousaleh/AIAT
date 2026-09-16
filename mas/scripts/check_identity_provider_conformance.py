@@ -31,11 +31,11 @@ IDENTITY_ROOT = Path(__file__).resolve().parents[1] / "apps" / "identity-service
 if str(IDENTITY_ROOT) not in sys.path:
     sys.path.insert(0, str(IDENTITY_ROOT))
 
-from identity_service.providers.resend import ResendRelayAdapter  # noqa: E402
 from identity_service.providers.inbound.cloudflare import (  # noqa: E402
     CloudflareEdgeFixture,
     CloudflareInboundAdapter,
 )
+from identity_service.providers.resend import ResendRelayAdapter  # noqa: E402
 from identity_service.providers.stalwart import StalwartAdapter, StalwartAdapterError  # noqa: E402
 
 CHECK_SCHEMA = "aiat.identity-provider-conformance.v1"

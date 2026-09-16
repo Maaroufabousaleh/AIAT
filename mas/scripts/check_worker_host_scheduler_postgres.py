@@ -41,7 +41,7 @@ from mas_core.worker_registry.host_scheduler import (  # noqa: E402
 from mas_core.worker_registry.placement import WorkerPlacementRequest  # noqa: E402
 
 CHECK_SCHEMA = "aiat.worker-host-scheduler-postgres-certification.v1"
-EXPECTED_MIGRATION = "0042_worker_run_host_binding"
+EXPECTED_MIGRATION = "0045_worker_tool_effects"
 HOST_PREFIX = "aiat-cert-worker-host-scheduler-v1-"
 HOST_A = f"{HOST_PREFIX}a"
 HOST_B = f"{HOST_PREFIX}b"

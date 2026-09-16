@@ -34,7 +34,7 @@ from mas_core.memory import models as t  # noqa: E402
 from mas_core.memory.storage import AgentStorage  # noqa: E402
 
 CHECK_SCHEMA = "aiat.flow-instance-recovery-postgres-certification.v1"
-EXPECTED_MIGRATION = "0042_worker_run_host_binding"
+EXPECTED_MIGRATION = "0045_worker_tool_effects"
 COMPANY_ID = UUID("00000000-0000-4000-a000-000000000e21")
 PROJECT_ID = UUID("00000000-0000-4000-a000-000000000e22")
 PROJECT_SWITCH_ID = UUID("00000000-0000-4000-a000-000000000e23")
