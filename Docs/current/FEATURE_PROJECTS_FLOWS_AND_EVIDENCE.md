@@ -29,6 +29,9 @@ Projects are the primary ownership, security, cost, evidence, and lifecycle boun
 - A first transition to `DONE`/`COMPLETED`/`CLOSED` on an assigned issue now automatically records its estimated-versus-actual hours in the durable agent profile; repeated terminal updates do not double-count the observation, and the response links the profile update to the source issue.
 - The same first terminal transition for a sprint issue persists a `sprint_retrospective` KPI snapshot with aggregate completion/velocity/estimation values and raw source issue IDs, completed issue IDs, status counts, and assigned-agent profile lineage; the existing project KPI API is the read surface.
 - Project context items/chunks/tags/relations with text, semantic, and hybrid search through pgvector.
+- Context-item chunk creation verifies that the project exists before inserting
+  metadata or chunks; unknown-project requests fail closed and are covered by
+  the retrieval API regression suite (`90ac61ff`).
 - Artifact and usage APIs plus a consolidated project workspace/evidence view.
 - Versioned flow definitions, React Flow editor, validation/dry run, instances, execution history, actions, node actions, switch, override, context, escalation, and retry.
 - The Flows list reads `/api/flows` with `cache: "no-store"`, retains the last successful definitions through a failed refresh, keeps rows visible while retrying, labels the list as showing last-known flows, and exposes header Refresh plus banner Retry controls. Its table now has an accessible name/caption, scoped headers, responsive overflow, and 44px targets for refresh/create/search/filter/selection/link/delete controls. Focused source-built coverage passes 1/1 (`6b0413b`); native/live flow evidence remains open.
