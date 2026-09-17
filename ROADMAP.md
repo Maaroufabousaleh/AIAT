@@ -45,7 +45,7 @@ without a snapshot are now rejected rather than falling back to a configured or
 automatic model. Direct AgentBase compatibility fixtures remain explicitly
 unbound; this does not merge TeamRunner/AgentBase into `WorkerAdapter`.
 
-## Current integrated baseline — 2026-09-18
+## Current integrated baseline — 2026-09-19
 
 AIAT is closing the reviewed OpenHands certification cycle and beginning a new
 Integrated Development & System Testing phase. This is a development-phase
@@ -55,7 +55,7 @@ carryovers, and the global decision remains **NO-RELEASE**.
 
 | Area | Current state |
 | --- | --- |
-| Integration baseline | Reviewed implementation work is present at implementation baseline `f49f7501`; the canonical OSS audit remains frozen to its separate audited SHA, and the reviewed OpenHands tip is `15d2c1a874a2748548338066782b89561353de2e`. |
+| Integration baseline | Reviewed implementation work is present at implementation baseline `32e02942`; the canonical OSS audit remains frozen to its separate audited SHA, and the reviewed OpenHands tip is `15d2c1a874a2748548338066782b89561353de2e`. |
 | Static release ledger | The merged clean tree reports **64/64 pass**, 0 failed, 0 blocked, and 2 pending evidence items; the checker still returns `NO-RELEASE` because a live profile is not included and pending evidence remains. |
 | OpenHands | v1.43.0 remains an inactive/certifying candidate. Exact source/image pins and provider-route evidence are retained; real file editing and passing tests are proven, but successful live terminal worker completion is not. The latest classification is `BLOCKED_EXECUTION_COMPLETION` with the final model turn unresolved historically. |
 | OpenCode | Current default and unchanged. OpenHands remains a subordinate candidate and has not been activated. |

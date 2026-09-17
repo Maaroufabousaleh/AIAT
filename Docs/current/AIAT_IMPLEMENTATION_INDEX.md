@@ -1,7 +1,7 @@
 # AIAT Implementation Index
 
 **Scope:** personal/internal AIAT instance
-**Refresh baseline:** `f49f7501`
+**Refresh baseline:** `32e02942`
 **Index date:** 2026-09-19
 **Release status:** `NO-RELEASE / P0 INCOMPLETE`
 
@@ -64,14 +64,14 @@ recovery, or human/operator gates.
 
 | Check | Result | Scope and limitation |
 | --- | --- | --- |
-| Source revision at refresh | **`f49f7501`** | The refresh baseline is the implementation commit immediately before this documentation refresh; the checks below describe that code baseline and do not close live/operator gates. |
+| Source revision at refresh | **`32e02942`** | The refresh baseline is the current `origin/main` tip at the time of this refresh; the checks below describe that code baseline and do not close live/operator gates. |
 | Documentation authority/index check | **PASS (2026-09-19)** | `../.venv/bin/python scripts/check_docs_index.py --json` reports 13 feature documents, 3 plans, 23 maintained/link-checked documents, and no link or policy errors. The standard isolated `uv` invocation could not acquire its read-only global cache in this sandbox; the repository-local checker was run from the existing environment. |
 | Migration source-head check | **PASS (2026-09-18)** | `../.venv/bin/python scripts/check_database_migration_head.py --json` reports one source head: `0045_worker_tool_effects`; no live database was touched. |
 | Release-environment identity probe | **PASS with Docker blocked (2026-09-19 UTC)** | `check_release_environment.py --json` sees Python, uv, Node, npm, and `runsc release-20260817.0`; the Docker executable is present but its Engine is unavailable from this WSL2 distribution. No deployment, provider, or sandbox mutation was performed. |
 | Standard dependency/test runner | **BLOCKED in this sandbox** | The standard isolated `uv` command could not download missing wheels because network access is restricted and its global cache is read-only. The repository-local fallback environment does not contain the workspace packages as installed distributions, so its broad fallback run is not accepted as suite evidence. The last authoritative green run remains the 2026-09-15 run recorded below. |
 | Python repository test suite | **PASS (last authoritative run: 2026-09-15)** | `uv run --isolated pytest -q`; all collected tests passed, with two non-failing `AsyncMock` resource warnings in existing system tests. |
 | Script test suite | **PASS (last authoritative run: 2026-09-15)** | `uv run --isolated pytest -q scripts/tests`; all collected script tests passed; two existing Python 3.14 tar-extraction deprecation warnings remained non-failing. |
-| Current focused architecture/documentation suites | **PASS (2026-09-18)** | The repository-local fallback environment passed `test_docs_index.py`, architecture invariants/adapter inventory, ProcessAdapter security, project outbox, runtime-binding/tool-effect, worker-governance, TeamRunner runtime-plane, and Redis characterization coverage. This narrower run does not replace the full standard suite. |
+| Current focused architecture/documentation suites | **PASS (2026-09-19)** | The repository-local fallback environment passed `test_docs_index.py`, architecture invariants/adapter inventory, ProcessAdapter security, project outbox, runtime-binding/tool-effect, worker-governance, TeamRunner runtime-plane, Redis characterization, and project state-history ownership coverage. This narrower run does not replace the full standard suite. |
 | Bounded Python compilation | **PASS** | Checked-in `mas_core`, orchestrator, message-router, team-runner, tool-service, and `mas/scripts` Python roots; generated dashboard dependency trees excluded. |
 | Static release ledger | **PASS: 64/64 checks (2026-09-19)** | The current static invocation passes all 64 checks and confirms source migration head `0045_worker_tool_effects`; the ledger still returns **NO-RELEASE** because two pending evidence items, no live profile, and the unrelated untracked operator file keep the worktree/release decision open. |
 | Database migration-head guard | **PASS static; BLOCKED live** | `check_database_migration_head.py --json` verifies source head `0045_worker_tool_effects`; the live read-only query is blocked in this WSL2/Compose profile because the migration-check DSN cannot reach the published database port. Independent read-only inspection still reports the running local database at `0042_worker_run_host_binding`; no migration or restart was performed. |
@@ -92,7 +92,7 @@ recovery, or human/operator gates.
 | Context chunk project ownership | **PASS** | `POST /projects/{project_id}/context/chunks` checks project existence before metadata/chunk insertion; the retrieval API suite passes the unknown-project regression. |
 | Project state-history ownership | **PASS** | `GET /projects/{project_id}/state-history` verifies project existence before reading history; existing-project audit reads and unknown-project 404 coverage pass across project, flow, operator, and security suites. |
 | Restricted Redis ACL/Lua smoke | **PASS** | Local Redis service recreated from the current Compose ACL migration; authenticated router scripting, atomic stream append, and denied `CONFIG` access were verified, with the probe entry removed afterward. This is not a production outage or multi-host proof. |
-| Review-regression suite | **PASS** | Post-review focused coverage and the full Python suite pass on the current working tree: Redis ACL/script authorization, cancellation/recovery races, scanner failure classification and evidence hashes, migration-head compatibility, sandboxed image probing, governance model-provenance producer wiring, and all repository tests. The script suite also passes; the checks prove local behavior only, while live outage, host, provider, schema-migration, and operator gates remain separate. |
+| Review-regression suite | **PASS for focused coverage; full-suite evidence is historical** | Post-review focused coverage passes for Redis ACL/script authorization, cancellation/recovery races, scanner failure classification and evidence hashes, migration-head compatibility, sandboxed image probing, governance model-provenance producer wiring, project ownership, and state-history ownership. The last authoritative full Python and script-suite run remains 2026-09-15; the later broad rerun was not completed in this environment and is not represented as a fresh full-suite result. Live outage, host, provider, schema-migration, and operator gates remain separate. |
 
 Current environment boundary: this WSL2 distribution has `runsc
 release-20260817.0`, but Docker Engine is currently unavailable to the Docker
