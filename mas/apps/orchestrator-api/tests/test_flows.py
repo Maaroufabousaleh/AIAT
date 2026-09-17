@@ -584,6 +584,7 @@ async def test_override_flow_instance_rejects_unknown_node(client):
 @pytest.mark.anyio
 async def test_state_history_returns_override_audit_payload(client):
     storage = MagicMock()
+    storage.get_project = AsyncMock(return_value={"id": str(PROJECT_ID)})
     storage.get_project_history = AsyncMock(
         return_value=[
             {

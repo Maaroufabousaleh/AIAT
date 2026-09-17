@@ -5179,6 +5179,8 @@ async def get_state_history(
 ) -> list[dict[str, Any]]:
     """Audit log of all state transitions for a project."""
     storage = _storage()
+    if await storage.get_project(project_id) is None:
+        raise HTTPException(404, f"Project {project_id} not found")
     history = await storage.get_project_history(project_id, limit=limit)
     return [_serialize(h) for h in history]
 

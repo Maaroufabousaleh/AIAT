@@ -201,6 +201,7 @@ async def test_project_state_history(client):
             "created_at": NOW_ISO,
         }
     ]
+    storage.get_project = AsyncMock(return_value=_fake_project("INIT"))
     storage.get_project_history = AsyncMock(return_value=history)
     _patch(storage)
     r = await client.get(f"/projects/{PROJECT_ID}/state-history")

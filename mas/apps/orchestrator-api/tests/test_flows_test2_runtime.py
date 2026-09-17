@@ -618,6 +618,7 @@ async def test_escalation_visible_in_state_history_route(client):
     This is the operator-visible audit trail for escalation.
     """
     storage = MagicMock()
+    storage.get_project = AsyncMock(return_value={"id": str(PROJECT_ID)})
     storage.get_project_history = AsyncMock(
         return_value=[
             {

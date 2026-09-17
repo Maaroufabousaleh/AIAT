@@ -996,6 +996,7 @@ async def test_state_history_returns_audit_trail(client):
 async def test_state_history_returns_audit_trail(client):
     """GET /projects/{id}/state-history returns an audit trail."""
     storage = MagicMock()
+    storage.get_project = AsyncMock(return_value=_fake_project("IN_PROGRESS"))
     storage.get_project_history = AsyncMock(
         return_value=[
             {
@@ -1022,14 +1023,15 @@ async def test_state_history_returns_audit_trail(client):
 
 @pytest.mark.anyio
 async def test_state_history_empty_project_returns_empty_list(client):
-    """GET /projects/{id}/state-history for project with no history → 200 empty list."""
+    """GET /projects/{id}/state-history for an unknown project → 404."""
     storage = MagicMock()
+    storage.get_project = AsyncMock(return_value=None)
     storage.get_project_history = AsyncMock(return_value=[])
     _patch(storage)
 
     r = await client.get(f"/projects/{uuid4()}/state-history")
-    assert r.status_code == 200
-    assert r.json() == []
+    assert r.status_code == 404
+    storage.get_project_history.assert_not_awaited()
 
 
 # ─────────────────────────────────────────────────────────────────────────────

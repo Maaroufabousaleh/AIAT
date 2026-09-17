@@ -389,7 +389,7 @@ async def test_allowed_transitions_not_found(client):
 @pytest.mark.anyio
 async def test_state_history_empty(client):
     """GET /projects/{id}/state-history returns empty list when no history."""
-    storage = _make_storage()
+    storage = _make_storage(project=_fake_project("INIT"))
     storage.get_project_history = AsyncMock(return_value=[])
     _patch_state(storage)
     resp = await client.get(f"/projects/{PROJECT_ID}/state-history")

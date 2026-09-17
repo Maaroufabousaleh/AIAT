@@ -418,15 +418,15 @@ async def test_state_history_persists_across_reads(client):
 
 @pytest.mark.anyio
 async def test_state_history_unknown_project(client):
-    """State history for unknown project → 404 or empty list (route behavior)."""
+    """State history for an unknown project is not an empty audit trail."""
     storage = MagicMock()
     storage.get_project = AsyncMock(return_value=None)
     storage.get_project_history = AsyncMock(return_value=[])
     _patch(storage)
 
     r = await client.get(f"/projects/{uuid4()}/state-history")
-    # The route may return 404 or empty list depending on implementation
-    assert r.status_code in (200, 404)
+    assert r.status_code == 404
+    storage.get_project_history.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
