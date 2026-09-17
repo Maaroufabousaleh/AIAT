@@ -12,7 +12,7 @@
 ## Current development phase — Integrated Development & System Testing
 
 The reviewed implementation is entering a new integrated development/testing
-phase on the `origin/main` integration baseline `90ac61ffa1858ae6279a9dd4143c550cb00729d8`. This phase expands
+phase on the `origin/main` integration baseline `f49f7501`. This phase expands
 end-to-end user-flow, control-plane, worker/department orchestration,
 workflow/project lifecycle, dashboard, Playwright, failure/recovery,
 permissions, identity/credentials, storage/recovery, interoperability,

@@ -17,6 +17,9 @@ Projects are the primary ownership, security, cost, evidence, and lifecycle boun
 ## Implemented now
 
 - Canonical projects with state, history, revision, owner/requester, company, configuration, retry, archive, and deletion paths.
+- Project state-history reads verify that the project exists before returning
+  audit rows; an unknown project is a 404 rather than an indistinguishable
+  empty history (`f49f7501`).
 - Project state/history and project-transition notification intent commit atomically through `WorkflowController`/`AgentStorage`; the bounded outbox dispatcher publishes stable transition IDs and retains failed notifications for retry (migration `0043_project_transition_outbox`).
 - Default software lifecycle from feasibility through PDR/CDR, human approval, requirements review, sprint execution, retrospective, KPI persistence, completion, and archive.
 - Durable documents with lineage, immutable revisions, statuses, preview/download, and supersession.
