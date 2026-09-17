@@ -2,7 +2,7 @@
 
 **Scope:** personal/internal AIAT instance
 **Refresh baseline:** `90ac61ffa1858ae6279a9dd4143c550cb00729d8`
-**Index date:** 2026-09-18
+**Index date:** 2026-09-19
 **Release status:** `NO-RELEASE / P0 INCOMPLETE`
 
 ## Purpose
@@ -65,7 +65,7 @@ recovery, or human/operator gates.
 | Check | Result | Scope and limitation |
 | --- | --- | --- |
 | Source revision at refresh | **`90ac61ffa1858ae6279a9dd4143c550cb00729d8`** | The refresh baseline is the implementation commit immediately before this documentation refresh; the checks below describe that code baseline and do not close live/operator gates. |
-| Documentation authority/index check | **PASS (2026-09-18)** | `../.venv/bin/python scripts/check_docs_index.py --json` reports 13 feature documents, 3 plans, 23 maintained/link-checked documents, and no link or policy errors. The standard isolated `uv` invocation could not acquire its read-only global cache in this sandbox; the repository-local checker was run from the existing environment. |
+| Documentation authority/index check | **PASS (2026-09-19)** | `../.venv/bin/python scripts/check_docs_index.py --json` reports 13 feature documents, 3 plans, 23 maintained/link-checked documents, and no link or policy errors. The standard isolated `uv` invocation could not acquire its read-only global cache in this sandbox; the repository-local checker was run from the existing environment. |
 | Migration source-head check | **PASS (2026-09-18)** | `../.venv/bin/python scripts/check_database_migration_head.py --json` reports one source head: `0045_worker_tool_effects`; no live database was touched. |
 | Release-environment identity probe | **PASS with Docker blocked (2026-09-19 UTC)** | `check_release_environment.py --json` sees Python, uv, Node, npm, and `runsc release-20260817.0`; the Docker executable is present but its Engine is unavailable from this WSL2 distribution. No deployment, provider, or sandbox mutation was performed. |
 | Standard dependency/test runner | **BLOCKED in this sandbox** | The standard isolated `uv` command could not download missing wheels because network access is restricted and its global cache is read-only. The repository-local fallback environment does not contain the workspace packages as installed distributions, so its broad fallback run is not accepted as suite evidence. The last authoritative green run remains the 2026-09-15 run recorded below. |
