@@ -475,12 +475,9 @@ async def test_create_context_chunk(client):
 
 @pytest.mark.anyio
 async def test_create_context_chunk_unknown_project(client):
-    """Creating a chunk under unknown project: route calls create_context_item directly.
-    If storage raises ValueError (e.g. FK violation), it propagates as 500.
-    Validate that at minimum the route is reachable and responds."""
+    """Creating a chunk under an unknown project is rejected before insertion."""
     storage = MagicMock()
-    # The /context/chunks route does NOT validate project existence before inserting;
-    # it calls create_context_item directly. Mock it to succeed.
+    storage.get_project = AsyncMock(return_value=None)
     storage.create_context_item = AsyncMock(
         return_value={"id": str(uuid4()), "project_id": str(uuid4())}
     )
@@ -494,8 +491,8 @@ async def test_create_context_chunk_unknown_project(client):
             "content_text": "content",
         },
     )
-    # Route does not check project FK — returns 200 if storage doesn't raise
-    assert r.status_code in (200, 201, 404)
+    assert r.status_code == 404
+    storage.create_context_item.assert_not_awaited()
 
 
 # ═════════════════════════════════════════════════════════════════════════════

@@ -6230,6 +6230,8 @@ async def create_context_chunk(
 ) -> dict[str, Any]:
     """Create a context item and auto-chunk its content for RAG."""
     storage = _storage()
+    if await storage.get_project(project_id) is None:
+        raise HTTPException(404, f"Project {project_id} not found")
 
     item = await storage.create_context_item(
         project_id=project_id,
