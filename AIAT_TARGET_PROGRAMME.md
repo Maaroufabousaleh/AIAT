@@ -1,7 +1,7 @@
 # AIAT Target Programme
 
 **Authoritative personal programme and implementation target**  
-**Baseline reviewed:** 2026-09-09
+**Baseline reviewed:** 2026-09-19
 **Programme status:** active  
 **Applies to:** the AIAT repository, personal instance, deployment profiles, agents, workers, adapters, integrations, and operator dashboard
 
@@ -12,14 +12,14 @@
 ## Current development phase — Integrated Development & System Testing
 
 The reviewed implementation is entering a new integrated development/testing
-phase on the `origin/main` integration baseline `2c99b75a`. This phase expands
+phase on the `origin/main` integration baseline `66f8f80d39855a2b5d0dc9d35d28ad45b6977b59`. This phase expands
 end-to-end user-flow, control-plane, worker/department orchestration,
 workflow/project lifecycle, dashboard, Playwright, failure/recovery,
 permissions, identity/credentials, storage/recovery, interoperability,
 evidence/audit, performance, and deployment-readiness testing.
 
 This phase is not a release declaration. The static ledger currently reports
-63/63 checks passing with pending live evidence, the global release decision is
+64/64 checks passing with pending live evidence, the global release decision is
 **NO-RELEASE**, OpenCode remains the unchanged default, and OpenHands v1.43.0
 remains an inactive candidate with live terminal completion still unproven.
 The scanner state remains independently `BLOCKED_SCANNER_COVERAGE`. External
