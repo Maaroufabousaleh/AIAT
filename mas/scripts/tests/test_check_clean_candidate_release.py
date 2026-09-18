@@ -23,9 +23,9 @@ def test_current_clean_candidate_certificate_passes() -> None:
     assert report["status"] == "PASS"
     assert report["candidate_revision_matches"] is True
     assert report["clean_clone"] is True
-    assert report["candidate_is_current_checkout"] is False
+    assert report["candidate_is_current_checkout"] is True
     assert report["current_checkout_match_required"] is False
-    assert report["static_ledger"]["checks_passed"] == 63
+    assert report["static_ledger"]["checks_passed"] == 64
     assert report["static_ledger"]["release_decision"] == "NO-RELEASE"
     assert report["current_checkout_clean"] is False
 
@@ -48,15 +48,15 @@ def test_default_validation_uses_retained_candidate_evidence() -> None:
     report = _module().validate()
     assert report["status"] == "PASS"
     assert report["candidate_revision_matches"] is True
-    assert report["candidate_is_current_checkout"] is False
+    assert report["candidate_is_current_checkout"] is True
 
 
 def test_strict_current_checkout_validation_remains_available() -> None:
     report = _module().validate(require_current_checkout=True)
-    assert report["status"] == "BLOCKED"
+    assert report["status"] == "PASS"
     assert report["candidate_revision_matches"] is True
-    assert report["candidate_is_current_checkout"] is False
-    assert any("not the current checkout revision" in error for error in report["errors"])
+    assert report["candidate_is_current_checkout"] is True
+    assert report["current_checkout_clean"] is False
 
 
 def test_payload_retention_is_blocked(tmp_path: pathlib.Path) -> None:

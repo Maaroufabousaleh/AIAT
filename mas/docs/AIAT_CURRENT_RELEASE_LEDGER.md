@@ -41,6 +41,11 @@ one existing non-failing `AsyncMock` resource warning; the separately run
 identity-service, PM/mail, SDK, and script-test roots also pass. Explicit
 isolated-`uv`, live-provider, native-host, Docker/Compose, and operator gates
 remain outside this refresh.
+The fresh clean-clone certificate for candidate baseline
+`76272905db777829ccf21b61748eb467cafaf645` also reproduces 64/64 static checks
+with zero changed paths; its two pending evidence items and `NO-RELEASE`
+decision remain recorded in
+[`release_ledger_clean_candidate_static.json`](provenance/release_ledger_clean_candidate_static.json).
 The global release decision remains `NO-RELEASE`.
 
 ## Current integrated summary
