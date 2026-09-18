@@ -31,8 +31,8 @@ sandbox, KMS, recovery, security, and worker/provider gates remain open.
 
 ## Repository validation refresh — 2026-09-19
 
-The implementation/test baseline for this refresh is `fe2b768e`; the evidence
-note is published at documentation tip `a4b12646`. The checked-in API contract
+The implementation/test baseline for this refresh is `fe2b768e`; this evidence
+note is published separately from that implementation baseline. The checked-in API contract
 contains 238 OpenAPI paths, 137 schemas/models, and 271 operations. The static
 API, Python SDK, TypeScript, documentation-index, and migration-head checks
 pass. The broad repository-local Python suite also
