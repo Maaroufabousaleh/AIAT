@@ -1,7 +1,7 @@
 # AIAT Implementation Index
 
 **Scope:** personal/internal AIAT instance
-**Refresh baseline:** `2939d25e`
+**Refresh baseline:** `fe2b768e`
 **Index date:** 2026-09-19
 **Release status:** `NO-RELEASE / P0 INCOMPLETE`
 
@@ -64,11 +64,12 @@ recovery, or human/operator gates.
 
 | Check | Result | Scope and limitation |
 | --- | --- | --- |
-| Source revision at refresh | **`2939d25e`** | The refresh baseline is the implementation/test commit immediately before this documentation-only refresh; the checks below describe that code baseline and do not close live/operator gates. |
+| Source revision at refresh | **`fe2b768e`** | The checks below were rerun against the current repository HEAD, including the documentation refresh commits; they do not close live/operator gates. |
 | Documentation authority/index check | **PASS (2026-09-19)** | `../.venv/bin/python scripts/check_docs_index.py --json` reports 13 feature documents, 3 plans, 23 maintained/link-checked documents, and no link or policy errors. The standard isolated `uv` invocation could not acquire its read-only global cache in this sandbox; the repository-local checker was run from the existing environment. |
 | Migration source-head check | **PASS (2026-09-18)** | `../.venv/bin/python scripts/check_database_migration_head.py --json` reports one source head: `0045_worker_tool_effects`; no live database was touched. |
 | Release-environment identity probe | **PASS with Docker blocked (2026-09-19 UTC)** | `check_release_environment.py --json` sees Python, uv, Node, npm, and `runsc release-20260817.0`; the Docker executable is present but its Engine is unavailable from this WSL2 distribution. No deployment, provider, or sandbox mutation was performed. |
-| Standard dependency/test runner | **BLOCKED in this sandbox** | The standard isolated `uv` command could not download missing wheels because network access is restricted and its global cache is read-only. The repository-local fallback environment does not contain the workspace packages as installed distributions, so its broad fallback run is not accepted as suite evidence. The last authoritative green run remains the 2026-09-15 run recorded below. |
+| Standard dependency/test runner | **BLOCKED in this sandbox** | The standard isolated `uv` command could not download missing wheels because network access is restricted and its global cache is read-only. The broad repository-local fallback is recorded separately as supplemental local coverage; the last authoritative isolated green run remains the 2026-09-15 run recorded below. |
+| Broad repository-local Python suite | **PASS (2026-09-19)** | `PYTHONPATH=packages/mas-core:packages/mas-api-sdk:packages/mas-tools-sdk:apps/orchestrator-api:apps/team-runner:apps/message-router:apps/tool-service:apps/identity-service:apps/pm-gateway:scripts ../.venv/bin/python -m pytest -q` passes the configured `mas/pyproject.toml` test paths at 100%; one existing `AsyncMock` resource warning remains. This is stronger local coverage, but does not replace the isolated-`uv` evidence or live/provider/operator gates. |
 | Python repository test suite | **PASS (last authoritative run: 2026-09-15)** | `uv run --isolated pytest -q`; all collected tests passed, with two non-failing `AsyncMock` resource warnings in existing system tests. |
 | Current repository-local Python component suites | **PASS (2026-09-19)** | Fresh fallback-environment runs pass `packages/mas-core/tests`, `packages/mas-api-sdk/tests`, `apps/orchestrator-api/tests`, `apps/tool-service/tests`, `apps/team-runner/tests`, `apps/message-router/tests`, `apps/identity-service/tests`, `apps/pm-gateway/tests`, `infra/mail-edge/tests`, `infra/smtp-gateway/tests`, and `scripts/tests`; identity/tool suites retain their explicit skips and the orchestrator suite retains two existing non-failing `AsyncMock` warnings. The three live model-smoke CLI scripts under `packages/mas-core/scripts` are not pytest suites and require provider credentials. |
 | Script test suite | **PASS (2026-09-19)** | Repository-local fallback: `PYTHONPATH=packages/mas-core:packages/mas-api-sdk:apps/orchestrator-api:apps/team-runner:apps/message-router:apps/tool-service:scripts ../.venv/bin/python -m pytest -q scripts/tests`; all collected script tests passed; two existing Python 3.14 tar-extraction deprecation warnings remained non-failing. The standard isolated `uv` invocation remains blocked by this environment. |

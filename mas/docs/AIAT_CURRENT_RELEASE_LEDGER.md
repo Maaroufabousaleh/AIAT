@@ -31,14 +31,15 @@ sandbox, KMS, recovery, security, and worker/provider gates remain open.
 
 ## Repository validation refresh — 2026-09-19
 
-The current published documentation tip before this refresh is `1312a589`;
-the implementation baseline for the refreshed index is `2939d25e`. The checked-in API contract
-now contains 238 OpenAPI paths, 137 schemas/models, and 271 operations. The
-static API, Python SDK, TypeScript, documentation-index, and migration-head
-checks pass. Current repository-local Python component suites also pass across
-the core, orchestrator, tool-service, team-runner, message-router,
-identity-service, PM/mail, SDK, and script-test roots; explicit live-provider,
-native-host, Docker/Compose, and operator gates remain outside this refresh.
+The current repository tip for this refresh is `fe2b768e`. The checked-in API
+contract now contains 238 OpenAPI paths, 137 schemas/models, and 271
+operations. The static API, Python SDK, TypeScript, documentation-index, and
+migration-head checks pass. The broad repository-local Python suite also
+passes at 100% against the configured `mas/pyproject.toml` test paths, with
+one existing non-failing `AsyncMock` resource warning; the separately run
+identity-service, PM/mail, SDK, and script-test roots also pass. Explicit
+isolated-`uv`, live-provider, native-host, Docker/Compose, and operator gates
+remain outside this refresh.
 The global release decision remains `NO-RELEASE`.
 
 ## Current integrated summary
