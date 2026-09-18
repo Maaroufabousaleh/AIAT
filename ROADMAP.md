@@ -358,7 +358,7 @@ credentials, logs, or disposable state; it remains descriptive with
 The supported repository regression suite also passes after `dc8a19e`
 reconciled stale contract expectations with the current implementation: the
 canonical storage metadata includes the worker-host tables and the generated
-OpenAPI/SDK surfaces are verified at 135 schemas/models and 271 operations.
+OpenAPI/SDK surfaces are verified at 137 schemas/models and 271 operations.
 This repairs test-contract drift only; it does not advance any blocked live
 release gate or change the `NO-RELEASE` decision.
 
@@ -1380,7 +1380,7 @@ The codebase already includes:
   schedule defaults, clock-tool responses, dashboard display, and Compose
   environment defaults; scheduler/display fallback hardening is committed as
   `ee1361f` and durable records remain UTC.
-- the generated dashboard and Python SDK contract surfaces both contain 135
+- the generated dashboard and Python SDK contract surfaces both contain 137
   models and 271 operation records tied to the same OpenAPI/provenance hash;
   the three role-scoped executive action routes and typed retention-plan
   response are included in that export. Commit `8f46ed1` reconciles the

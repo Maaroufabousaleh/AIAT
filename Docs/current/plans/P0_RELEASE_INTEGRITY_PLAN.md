@@ -276,7 +276,7 @@ AIAT already implements most core control-plane concepts. The immediate risk is 
 - [x] Cover healthy, degraded, unconfigured, unavailable-storage, and
   payload-redaction behavior in the operational API suite; generated OpenAPI,
   dashboard TypeScript, Python SDK, and contract provenance are regenerated
-  together (238 paths, 135 schemas, 271 operations); the current generated
+  together (238 paths, 137 schemas, 271 operations); the current generated
   contract includes the typed read-only retention-plan response.
 - [x] Add the API-facing `scripts/mas-ctl` wrapper for `status`,
   `diagnostics`, and a fail-closed `bootstrap` preflight, plus explicit
@@ -294,7 +294,7 @@ AIAT already implements most core control-plane concepts. The immediate risk is 
   (`2360e07`) instead of adding Docker authority to the API.
 - `uv run --isolated pytest packages/mas-api-sdk/tests -q` passes the generated
   SDK transport/contract tests; `scripts/check_api_contract.py --json` reports
-  238 OpenAPI paths, 135 models, and 271 operations with matching generated
+  238 OpenAPI paths, 137 models, and 271 operations with matching generated
   TypeScript/Python/protocol hashes, including the typed read-only
   retention-plan response. Commit `8f46ed1` reconciles the checked-in
   `aiat.v1` `WorkerManifest.transport` enum with the runtime `aiat_gateway`

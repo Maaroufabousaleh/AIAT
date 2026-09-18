@@ -1,6 +1,6 @@
 # Documentation Authority Status
 
-**Updated:** 2026-09-18
+**Updated:** 2026-09-19
 **Roadmap:** [AIAT Roadmap](../../ROADMAP.md)
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 **Scope:** personal/internal AIAT instance
@@ -8,7 +8,7 @@
 ## Current integrated baseline
 
 The maintained authority set now describes the **Integrated Development &
-System Testing** phase on integration baseline `23838249a1b15d3a3cd9fb028d1ca1ef55cb5ceb`. The merged clean
+System Testing** phase on integration baseline `42ea1428aba99c75cb93dc6b184f759f41e9bc4a`. The merged clean
 tree's static release ledger is 64/64 pass with 2 pending evidence items and
 global `NO-RELEASE`; OpenHands v1.43.0 remains inactive/certifying, OpenCode
 remains the unchanged default, and scanner coverage remains independently
@@ -33,7 +33,7 @@ set is intentionally smaller:
 The current implementation verification also includes `dc8a19e`: the
 supported repository regression suite passes after its storage metadata and
 generated API contract assertions were reconciled to the implemented
-worker-host tables and 135-model/271-operation artifact set. This is a
+worker-host tables and 137-model/271-operation artifact set. This is a
 contract-test repair only; it does not promote any blocked live release gate.
 
 The same verification pass includes `3edff39`/`35e52e1`: the mail-edge
@@ -186,7 +186,7 @@ maintained authority set: the checked-in `aiat.v1` schema's
 `WorkerManifest.transport` enum includes the runtime `aiat_gateway` transport,
 and `scripts/check_api_contract.py --json` passes against the updated protocol
 provenance hash. The OpenAPI, dashboard, and Python SDK counts remain 238
-paths, 135 models, and 271 operations; this is contract-integrity evidence,
+paths, 137 models, and 271 operations; this is contract-integrity evidence,
 not a live-provider or release approval claim.
 
 The 2026-08-18 model-route refresh (`68e0b03`, repeatable checker `f6ed16f`)
