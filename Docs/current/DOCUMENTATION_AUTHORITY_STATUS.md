@@ -8,7 +8,7 @@
 ## Current integrated baseline
 
 The maintained authority set now describes the **Integrated Development &
-System Testing** phase on integration baseline `42ea1428aba99c75cb93dc6b184f759f41e9bc4a`. The merged clean
+System Testing** phase on integration baseline `1312a589129c018cfbf0db96040b55639f3742cb`. The merged clean
 tree's static release ledger is 64/64 pass with 2 pending evidence items and
 global `NO-RELEASE`; OpenHands v1.43.0 remains inactive/certifying, OpenCode
 remains the unchanged default, and scanner coverage remains independently

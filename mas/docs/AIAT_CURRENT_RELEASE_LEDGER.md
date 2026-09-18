@@ -31,8 +31,8 @@ sandbox, KMS, recovery, security, and worker/provider gates remain open.
 
 ## Repository validation refresh — 2026-09-19
 
-The current published documentation tip is `42ea1428`; the implementation
-baseline for the refreshed index is `32e02942`. The checked-in API contract
+The current published documentation tip before this refresh is `1312a589`;
+the implementation baseline for the refreshed index is `2939d25e`. The checked-in API contract
 now contains 238 OpenAPI paths, 137 schemas/models, and 271 operations. The
 static API, Python SDK, TypeScript, documentation-index, and migration-head
 checks pass. Current repository-local Python component suites also pass across

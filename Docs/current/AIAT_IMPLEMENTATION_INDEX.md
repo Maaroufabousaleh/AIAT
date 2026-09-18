@@ -1,7 +1,7 @@
 # AIAT Implementation Index
 
 **Scope:** personal/internal AIAT instance
-**Refresh baseline:** `32e02942`
+**Refresh baseline:** `2939d25e`
 **Index date:** 2026-09-19
 **Release status:** `NO-RELEASE / P0 INCOMPLETE`
 
@@ -64,7 +64,7 @@ recovery, or human/operator gates.
 
 | Check | Result | Scope and limitation |
 | --- | --- | --- |
-| Source revision at refresh | **`32e02942`** | The refresh baseline is the implementation commit immediately before this documentation-only refresh; the checks below describe that code baseline and do not close live/operator gates. |
+| Source revision at refresh | **`2939d25e`** | The refresh baseline is the implementation/test commit immediately before this documentation-only refresh; the checks below describe that code baseline and do not close live/operator gates. |
 | Documentation authority/index check | **PASS (2026-09-19)** | `../.venv/bin/python scripts/check_docs_index.py --json` reports 13 feature documents, 3 plans, 23 maintained/link-checked documents, and no link or policy errors. The standard isolated `uv` invocation could not acquire its read-only global cache in this sandbox; the repository-local checker was run from the existing environment. |
 | Migration source-head check | **PASS (2026-09-18)** | `../.venv/bin/python scripts/check_database_migration_head.py --json` reports one source head: `0045_worker_tool_effects`; no live database was touched. |
 | Release-environment identity probe | **PASS with Docker blocked (2026-09-19 UTC)** | `check_release_environment.py --json` sees Python, uv, Node, npm, and `runsc release-20260817.0`; the Docker executable is present but its Engine is unavailable from this WSL2 distribution. No deployment, provider, or sandbox mutation was performed. |
