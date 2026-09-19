@@ -56,6 +56,11 @@ also validated locally: 48 fixed cases, 288 planned runs, no dependency
 installation or activation, no provider/credential activity, and
 `execution_status: NOT_RUN`. It is readiness evidence only; AgentBase remains
 the current path and no adoption decision is claimed.
+The dependency-free Playwright/browser-agent benchmark-corpus contract is also
+validated locally: 30 fixed workflows, 180 planned runs, no browser launch,
+credential activity, external effect, or Stagehand activation, and
+`execution_status: NOT_RUN`. It is readiness evidence only; Playwright remains
+the current default and no fallback decision is claimed.
 The global release decision remains `NO-RELEASE`.
 
 ## Current integrated summary

@@ -1,0 +1,95 @@
+{
+  "schema_version": "aiat.browser-runtime-benchmark-corpus.v1",
+  "corpus_id": "aiat-browser-runtime-30-v1",
+  "status": "READY_NOT_RUN",
+  "workflow_count": 30,
+  "categories": {
+    "form_fill_submit": 4,
+    "login_session_continuation": 3,
+    "navigation_and_tabs": 3,
+    "structured_extraction": 4,
+    "downloads_and_uploads": 3,
+    "dynamic_selector_changes": 4,
+    "iframe_and_shadow_dom": 3,
+    "post_action_verification": 3,
+    "changed_dom_fixtures": 3
+  },
+  "candidates": {
+    "playwright": {
+      "status": "CURRENT_DEFAULT_UNCHANGED",
+      "mode": "deterministic_first"
+    },
+    "agent_assisted_fallback": {
+      "status": "EXPERIMENTAL_NOT_ENABLED",
+      "mode": "only_after_deterministic_failure"
+    }
+  },
+  "execution_policy": {
+    "workspace": "disposable_local_fixture",
+    "network": "deny_except_explicit_fixture",
+    "credentials": "none_for_corpus",
+    "governed_identity_required_for_persistent_profiles": true,
+    "consequential_external_effects": "forbidden",
+    "shadow_effects": "read_only_or_disposable_fixture_only",
+    "duplicate_submissions": "forbidden",
+    "cross_origin_access": "forbidden",
+    "payloads_retained": false,
+    "production_activation": false,
+    "stagehand_dependency_added": false
+  },
+  "run_plan": {
+    "candidates": ["playwright", "agent_assisted_fallback"],
+    "repetitions_per_workflow": 3,
+    "runs_per_candidate": 90,
+    "total_runs": 180,
+    "fallback_only_on_deterministic_failure": true,
+    "winner_requires_complete_governed_evidence": true
+  },
+  "required_metrics": [
+    "workflow_success",
+    "post_action_verification",
+    "dynamic_recovery",
+    "duplicate_effects",
+    "credential_policy_violations",
+    "cross_origin_violations",
+    "median_latency_ms",
+    "p95_latency_ms",
+    "model_calls",
+    "approximate_model_cost",
+    "human_interventions",
+    "cleanup",
+    "evidence_completeness"
+  ],
+  "workflows": [
+    {"id": "form-01", "category": "form_fill_submit", "title": "fill a disposable text form", "description": "Fill a local fixture form and submit once.", "acceptance": ["one submission", "success state verified"]},
+    {"id": "form-02", "category": "form_fill_submit", "title": "validate required fields", "description": "Submit an incomplete local fixture form and report validation without retrying blindly.", "acceptance": ["validation shown", "zero duplicate submissions"]},
+    {"id": "form-03", "category": "form_fill_submit", "title": "select a bounded option", "description": "Fill a local form with a select and checkbox and verify the resulting summary.", "acceptance": ["selected values exact", "summary verified"]},
+    {"id": "form-04", "category": "form_fill_submit", "title": "upload a fixture file", "description": "Upload a disposable fixture file through a local form and verify its checksum.", "acceptance": ["path remains in fixture root", "checksum verified"]},
+    {"id": "login-01", "category": "login_session_continuation", "title": "continue a disposable session", "description": "Continue a local fixture session using an opaque session handle.", "acceptance": ["session owner matches", "no credential value exposed"]},
+    {"id": "login-02", "category": "login_session_continuation", "title": "reject an expired session", "description": "Attempt a local fixture operation with an expired session and recover read-only.", "acceptance": ["expired lease denied", "no new credential requested"]},
+    {"id": "login-03", "category": "login_session_continuation", "title": "revoke a session", "description": "Revoke a disposable browser session and verify subsequent navigation is denied.", "acceptance": ["revocation takes effect", "audit is scalar"]},
+    {"id": "tabs-01", "category": "navigation_and_tabs", "title": "navigate two local pages", "description": "Navigate between two local fixture pages and preserve the active page identity.", "acceptance": ["page IDs are scoped", "no cross-session access"]},
+    {"id": "tabs-02", "category": "navigation_and_tabs", "title": "open and close a tab", "description": "Open a local fixture tab, read its title, and close it cleanly.", "acceptance": ["tab closes", "zero residue"]},
+    {"id": "tabs-03", "category": "navigation_and_tabs", "title": "reject a private redirect", "description": "Follow a fixture redirect that targets a private address and verify network denial.", "acceptance": ["redirect blocked", "no private request"]},
+    {"id": "extract-01", "category": "structured_extraction", "title": "extract a table", "description": "Extract scalar rows from a local fixture table.", "acceptance": ["row count exact", "content is bounded"]},
+    {"id": "extract-02", "category": "structured_extraction", "title": "extract a list", "description": "Extract a local fixture list into a typed result.", "acceptance": ["order preserved", "result schema valid"]},
+    {"id": "extract-03", "category": "structured_extraction", "title": "extract a download link", "description": "Identify a local fixture download link without downloading outside the fixture root.", "acceptance": ["URL is same-origin", "path boundary holds"]},
+    {"id": "extract-04", "category": "structured_extraction", "title": "extract post-load content", "description": "Wait for local fixture content to load and extract its final scalar state.", "acceptance": ["load condition observed", "no arbitrary sleep required"]},
+    {"id": "file-01", "category": "downloads_and_uploads", "title": "download a fixture artifact", "description": "Download a disposable local artifact and verify its checksum.", "acceptance": ["artifact is scoped", "checksum verified"]},
+    {"id": "file-02", "category": "downloads_and_uploads", "title": "reject an unsafe upload path", "description": "Attempt an upload path outside the disposable workspace and fail closed.", "acceptance": ["path rejected", "no outside file created"]},
+    {"id": "file-03", "category": "downloads_and_uploads", "title": "cancel a slow download", "description": "Cancel a local fixture download and verify cleanup of the partial file.", "acceptance": ["cancel acknowledged", "partial file removed"]},
+    {"id": "dynamic-01", "category": "dynamic_selector_changes", "title": "recover a changed label", "description": "Handle a fixture whose visible label changes while its semantic role remains stable.", "acceptance": ["action succeeds", "no broad selector escape"]},
+    {"id": "dynamic-02", "category": "dynamic_selector_changes", "title": "recover delayed content", "description": "Handle a fixture whose content appears after a bounded asynchronous delay.", "acceptance": ["bounded wait", "final state verified"]},
+    {"id": "dynamic-03", "category": "dynamic_selector_changes", "title": "recover reordered controls", "description": "Handle a fixture that reorders controls without changing their names.", "acceptance": ["correct control selected", "no duplicate action"]},
+    {"id": "dynamic-04", "category": "dynamic_selector_changes", "title": "fallback after selector failure", "description": "Allow the agent-assisted candidate only after deterministic selection fails on the fixture.", "acceptance": ["fallback condition recorded", "fallback is bounded"]},
+    {"id": "dom-01", "category": "iframe_and_shadow_dom", "title": "read an iframe", "description": "Read a same-origin iframe fixture and reject cross-origin access.", "acceptance": ["same-origin read succeeds", "cross-origin read denied"]},
+    {"id": "dom-02", "category": "iframe_and_shadow_dom", "title": "read shadow content", "description": "Extract a scalar from a local shadow-DOM fixture.", "acceptance": ["shadow content found", "result is bounded"]},
+    {"id": "dom-03", "category": "iframe_and_shadow_dom", "title": "click inside a frame", "description": "Click a disposable same-origin frame control and verify one local state change.", "acceptance": ["one effect", "post-action state verified"]},
+    {"id": "verify-01", "category": "post_action_verification", "title": "verify a local mutation", "description": "Perform one disposable local mutation and verify the resulting state independently.", "acceptance": ["mutation count one", "verification succeeds"]},
+    {"id": "verify-02", "category": "post_action_verification", "title": "detect a missing effect", "description": "Detect when a local fixture action did not produce its expected state change.", "acceptance": ["false success rejected", "diagnostic is scalar"]},
+    {"id": "verify-03", "category": "post_action_verification", "title": "verify a download", "description": "Verify a local downloaded artifact using size and checksum metadata.", "acceptance": ["metadata matches", "content is not retained in evidence"]},
+    {"id": "changed-01", "category": "changed_dom_fixtures", "title": "changed button structure", "description": "Run the baseline against a fixture with changed button nesting.", "acceptance": ["baseline result classified", "fallback remains conditional"]},
+    {"id": "changed-02", "category": "changed_dom_fixtures", "title": "changed field attributes", "description": "Run the baseline against a fixture with changed non-semantic attributes.", "acceptance": ["semantic action preserved", "no arbitrary evaluation"]},
+    {"id": "changed-03", "category": "changed_dom_fixtures", "title": "changed navigation layout", "description": "Run the baseline against a fixture with changed navigation layout and verify the target page.", "acceptance": ["target page exact", "cross-origin policy unchanged"]}
+  ]
+}
