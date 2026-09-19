@@ -46,6 +46,11 @@ The fresh clean-clone certificate for candidate baseline
 with zero changed paths; its two pending evidence items and `NO-RELEASE`
 decision remain recorded in
 [`release_ledger_clean_candidate_static.json`](provenance/release_ledger_clean_candidate_static.json).
+The dependency-free OpenCode/OpenHands benchmark-corpus contract is also
+validated locally: 40 fixed tasks, 160 planned runs, no network/provider/
+credential activity, and `execution_status: NOT_RUN`. It is readiness evidence
+only; neither runtime was started and no winner or release certification is
+claimed.
 The global release decision remains `NO-RELEASE`.
 
 ## Current integrated summary

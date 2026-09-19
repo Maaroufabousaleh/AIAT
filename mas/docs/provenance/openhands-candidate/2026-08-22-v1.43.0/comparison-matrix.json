@@ -19,8 +19,11 @@
     }
   },
   "task": {
-    "fixture": "mas/scripts/fixtures/openhands-coding-task",
-    "task_spec": "coding-task-spec.json",
+    "fixture": "mas/scripts/fixtures/coding-runtime-benchmark/corpus.json",
+    "task_spec": "aiat.coding-runtime-benchmark-corpus.v1",
+    "task_count": 40,
+    "runs_per_candidate": 80,
+    "total_runs": 160,
     "same_task_and_budget_required": true,
     "same_provider_and_model_required": true
   },
