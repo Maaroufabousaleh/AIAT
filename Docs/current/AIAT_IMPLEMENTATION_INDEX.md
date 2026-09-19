@@ -71,6 +71,7 @@ recovery, or human/operator gates.
 | Documentation authority/index check | **PASS (2026-09-19)** | `../.venv/bin/python scripts/check_docs_index.py --json` reports 13 feature documents, 3 plans, 23 maintained/link-checked documents, and no link or policy errors. The standard isolated `uv` invocation could not acquire its read-only global cache in this sandbox; the repository-local checker was run from the existing environment. |
 | Migration source-head check | **PASS (2026-09-18)** | `../.venv/bin/python scripts/check_database_migration_head.py --json` reports one source head: `0045_worker_tool_effects`; no live database was touched. |
 | Release-environment identity probe | **PASS with Docker blocked (2026-09-19 UTC)** | `check_release_environment.py --json` sees Python, uv, Node, npm, and `runsc release-20260817.0`; the Docker executable is present but its Engine is unavailable from this WSL2 distribution. No deployment, provider, or sandbox mutation was performed. |
+| Native-host, Firecracker, and live-network probes | **BLOCKED by current host (2026-09-19 06:34 UTC)** | Fresh `check_release_environment.py --require-native-linux --json`, `check_firecracker_worker_pool.py --live --json`, and `check_network_boundary.py --live --json` runs confirm WSL2/non-native Linux, unavailable Docker Engine/Compose, missing certified Firecracker launcher, and unavailable live container inspection. The probes performed no deployment mutation, provider call, network test, or sandbox execution; repeat them on the certified native-Linux host described by the exit runbook. |
 | Standard dependency/test runner | **BLOCKED in this sandbox** | The standard isolated `uv` command could not download missing wheels because network access is restricted and its global cache is read-only. The broad repository-local fallback is recorded separately as supplemental local coverage; the last authoritative isolated green run remains the 2026-09-15 run recorded below. |
 | Broad repository-local Python suite | **PASS (2026-09-19)** | `PYTHONPATH=packages/mas-core:packages/mas-api-sdk:packages/mas-tools-sdk:apps/orchestrator-api:apps/team-runner:apps/message-router:apps/tool-service:apps/identity-service:apps/pm-gateway:scripts ../.venv/bin/python -m pytest -q` passes the configured `mas/pyproject.toml` test paths at 100%; one existing `AsyncMock` resource warning remains. This is stronger local coverage, but does not replace the isolated-`uv` evidence or live/provider/operator gates. |
 | Python repository test suite | **PASS (last authoritative run: 2026-09-15)** | `uv run --isolated pytest -q`; all collected tests passed, with two non-failing `AsyncMock` resource warnings in existing system tests. |
@@ -104,12 +105,13 @@ recovery, or human/operator gates.
 | Restricted Redis ACL/Lua smoke | **PASS** | Local Redis service recreated from the current Compose ACL migration; authenticated router scripting, atomic stream append, and denied `CONFIG` access were verified, with the probe entry removed afterward. This is not a production outage or multi-host proof. |
 | Review-regression suite | **PASS for focused coverage; Python full-suite evidence is historical** | Post-review focused coverage passes for Redis ACL/script authorization, cancellation/recovery races, scanner failure classification and evidence hashes, migration-head compatibility, sandboxed image probing, governance model-provenance producer wiring, project ownership, and state-history ownership. The current repository-local script suite also passes; the last authoritative full Python suite remains 2026-09-15 and the later broad Python rerun was not completed in this environment. Live outage, host, provider, schema-migration, and operator gates remain separate. |
 
-Current environment boundary: this WSL2 distribution has `runsc
-release-20260817.0`, but Docker Engine is currently unavailable to the Docker
-CLI, so Compose and gVisor registration/smoke cannot be refreshed in this
-session. The latest authenticated `check_release_ledger.py --live
---compose-local --json` run at `2026-09-15T12:11:27Z` reports 83/89 pass, 0
-fail, and 6 externally blocked.
+Current environment boundary: a fresh probe at `2026-09-19T06:34:01Z`
+confirms that this WSL2 distribution has `runsc release-20260817.0`, but no
+usable Docker Engine/Compose, no certified Firecracker launcher, and no live
+container inspection path. Compose, gVisor smoke, Firecracker readiness, and
+live network checks therefore remain blocked in this session. The latest
+authenticated `check_release_ledger.py --live --compose-local --json` run at
+`2026-09-15T12:11:27Z` reports 83/89 pass, 0 fail, and 6 externally blocked.
 The remaining blockers are native-host/environment, database migration-head
 reachability, deployment-image provenance, Firecracker worker-pool readiness,
 outbound mail lifecycle, and operator-selected self-improvement scope. Four
