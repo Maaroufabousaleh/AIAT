@@ -734,14 +734,24 @@ def _sandbox_for_hiring_text(text: str) -> str:
     for profile in (
         "vm_isolated",
         "sandboxed",
-        "trusted",
         "firecracker",
         "gvisor",
         "restricted",
         "standard",
+        "trusted",
     ):
         if re.search(rf"\b{profile}\b", lowered):
-            return profile
+            # Persist only the canonical policy class. Historical names are
+            # accepted for read compatibility and normalize at the authority
+            # boundary; a hiring request must never create a VMM-specific
+            # worker policy.
+            sandbox_class = canonical_sandbox_class(profile)
+            # External hires are never AIAT-owned trusted infrastructure.
+            # Treat explicit trusted/standard/restricted wording as an unsafe
+            # request and retain the fail-closed external-worker default.
+            if sandbox_class == "trusted":
+                continue
+            return sandbox_class
     # An automatically hired external worker must never default to the
     # trusted/runc class. It remains inactive until the steward assigns a
     # certified sandboxed or vm_isolated profile.
@@ -7476,7 +7486,7 @@ async def check_docling_certification(req: DoclingCertificationRequest) -> dict[
             "content_inline_allowed": False,
             "mime_type": req.mime_type,
         },
-        "sandbox": {"required_profile": "gvisor", "network_mode": "egress-deny-all"},
+        "sandbox": {"required_profile": "sandboxed", "network_mode": "egress-deny-all"},
         "blocked_reason": None
         if certified_refs
         else "No approved active Docling worker is registered; ingestion remains blocked.",
@@ -8373,7 +8383,7 @@ async def register_worker(req: RegisterWorkerRequest) -> dict[str, Any]:
     """Register a new worker (called by team-runner on startup)."""
     storage = _storage()
     try:
-        canonical_sandbox_class(req.sandbox_profile)
+        sandbox_class = canonical_sandbox_class(req.sandbox_profile)
     except ValueError:
         raise HTTPException(
             422,
@@ -8386,6 +8396,11 @@ async def register_worker(req: RegisterWorkerRequest) -> dict[str, Any]:
         raise HTTPException(
             422,
             "External workers require an immutable version_pin before they can enter the steward pipeline",
+        )
+    if is_external_candidate and sandbox_class not in HARDENED_SANDBOX_PROFILES:
+        raise HTTPException(
+            422,
+            "External workers require canonical sandboxed (gVisor) or vm_isolated (Kata) isolation; trusted/runc is reserved for AIAT-owned infrastructure",
         )
     _validate_worker_tool_grants(
         req.required_tools,
@@ -8409,7 +8424,7 @@ async def register_worker(req: RegisterWorkerRequest) -> dict[str, Any]:
         name=req.name,
         adapter_type=req.adapter_type,
         adapter_config={**req.adapter_config, "identity_mailbox_class": req.identity_mailbox_class.strip().lower()},
-        sandbox_profile=req.sandbox_profile,
+        sandbox_profile=sandbox_class,
         capability_ids=capability_ids,
         team_id=req.team_id,
         status="INACTIVE" if is_external_candidate else "ACTIVE",
@@ -8811,7 +8826,7 @@ async def transition_worker_status(
                 if model_mode != "none" and not (existing.get("model_profile_id") or governance.get("model_profile_id")):
                     raise HTTPException(409, "Model-governed external workers require an approved Model Profile")
         if new_status == "ACTIVE" and _is_medium_or_dual_use_worker(existing):
-            profile = existing.get("sandbox_profile") or "restricted"
+            profile = existing.get("sandbox_profile") or "trusted"
             try:
                 sandbox_class = canonical_sandbox_class(profile)
             except ValueError:

@@ -8,7 +8,7 @@ iteration summaries and never forwards child payloads or diagnostic text.
 
 This is repeated same-Compose-host recovery evidence.  It does not claim
 independent deployed hosts, split-brain protection across machines, gVisor,
-Firecracker, provider outage recovery, or disaster recovery.
+sandboxed/vm_isolated runtime, provider outage recovery, or disaster recovery.
 """
 
 from __future__ import annotations
@@ -274,7 +274,7 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
             "payload_free_scalar_projection": "checked",
             "independent_deployed_hosts": "not_checked",
             "split_brain_across_machines": "not_checked",
-            "gvisor_or_firecracker": "not_checked",
+            "sandboxed_or_vm_isolated": "not_checked",
             "external_provider_or_outage_recovery": "not_checked",
             "clean_host_or_disaster_recovery": "not_checked",
         },

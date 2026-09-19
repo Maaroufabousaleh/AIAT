@@ -122,7 +122,7 @@ class OpenCodeWorkspacePytestTool(BaseTool):
                 "passed": 0,
                 "failed": 0,
                 "skipped": 0,
-                "sandbox_profile": "gvisor",
+                "sandbox_profile": "sandboxed",
                 "reason": str(completed.get("reason") or completed.get("error") or "sandbox unavailable"),
             }
         output = "\n".join(
@@ -142,6 +142,6 @@ class OpenCodeWorkspacePytestTool(BaseTool):
             if exit_code == 0 and counts["passed"] > 0 and counts["failed"] == 0
             else "FAILED",
             **counts,
-            "sandbox_profile": "gvisor",
+            "sandbox_profile": "sandboxed",
             "network_mode": "egress-deny-all",
         }

@@ -347,7 +347,7 @@ async def _run(dsn: str | None) -> dict[str, Any]:
                 "draining_or_unleased_filter": "checked",
                 "live_worker_dispatch": "not_checked",
                 "host_loss_or_split_brain": "not_checked",
-                "firecracker": "not_checked",
+                "sandboxed_or_vm_isolated": "not_checked",
             },
         }
     except Exception as exc:  # pragma: no cover - live environment diagnostic

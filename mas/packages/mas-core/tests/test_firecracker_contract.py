@@ -72,6 +72,7 @@ def test_firecracker_adapter_and_oci_factory_use_the_explicit_launcher() -> None
     config = {
         "image": "unused@sha256:" + "c" * 64,
         "sandbox_profile": "firecracker",
+        "legacy_direct_firecracker": True,
         "kernel_path": "/var/lib/aiat/firecracker/kernel-v1",
         "kernel_sha256": KERNEL_SHA,
         "rootfs_path": "/var/lib/aiat/firecracker/rootfs-v1.ext4",
@@ -83,15 +84,42 @@ def test_firecracker_adapter_and_oci_factory_use_the_explicit_launcher() -> None
     adapter = adapter_for_transport("oci", worker_id="firecracker-worker", config=config)
 
     assert isinstance(adapter, FirecrackerAdapter)
-    assert adapter.sandbox_profile == "firecracker"
+    assert adapter.sandbox_profile == "vm_isolated"
     assert adapter.command[0] == "aiat-firecracker-launcher"
     assert "--runtime" not in adapter.command
 
 
-def test_direct_oci_adapter_does_not_silently_fallback_to_firecracker() -> None:
-    with pytest.raises(ValueError, match="certified Firecracker launcher"):
-        OCIAdapter(
-            "example/worker@sha256:" + "d" * 64,
-            worker_id="oci-worker",
-            sandbox_profile="firecracker",
-        )
+def test_historical_firecracker_alias_resolves_to_kata_oci() -> None:
+    adapter = OCIAdapter(
+        "example/worker@sha256:" + "d" * 64,
+        worker_id="oci-worker",
+        sandbox_profile="firecracker",
+    )
+
+    assert isinstance(adapter, OCIAdapter)
+    assert adapter.sandbox_class == "vm_isolated"
+    assert adapter.sandbox_profile == "vm_isolated"
+    assert adapter.sandbox_runtime == "kata"
+    assert adapter.command[adapter.command.index("--runtime") + 1] == "kata"
+
+
+def test_direct_firecracker_compatibility_requires_explicit_legacy_switch() -> None:
+    config = {
+        "image": "unused@sha256:" + "e" * 64,
+        "sandbox_profile": "firecracker",
+        "kernel_path": "/var/lib/aiat/firecracker/kernel-v1",
+        "kernel_sha256": KERNEL_SHA,
+        "rootfs_path": "/var/lib/aiat/firecracker/rootfs-v1.ext4",
+        "rootfs_sha256": ROOTFS_SHA,
+        "artifact_dir": "/var/lib/aiat/firecracker/artifacts/run-v1",
+        "secret_refs": ["gateway/worker-token"],
+    }
+
+    adapter = adapter_for_transport("oci", worker_id="legacy-firecracker", config=config)
+
+    assert isinstance(adapter, OCIAdapter)
+    assert adapter.sandbox_class == "vm_isolated"
+
+    config["legacy_direct_firecracker"] = True
+    legacy = adapter_for_transport("oci", worker_id="legacy-firecracker", config=config)
+    assert isinstance(legacy, FirecrackerAdapter)

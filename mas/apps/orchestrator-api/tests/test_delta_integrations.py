@@ -76,7 +76,7 @@ async def test_docling_certification_check_blocks_until_worker_is_approved(clien
     assert "adapter contract" in data["missing_gates"]
     assert data["artifact_contract"]["mode"] == "artifact_reference"
     assert data["artifact_contract"]["content_inline_allowed"] is False
-    assert data["sandbox"]["required_profile"] == "gvisor"
+    assert data["sandbox"]["required_profile"] == "sandboxed"
 
 
 @pytest.mark.anyio

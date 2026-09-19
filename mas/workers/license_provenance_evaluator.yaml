@@ -21,6 +21,6 @@ capabilities:
     description: Record license posture, provenance, version pins, notices, and operator-visible restrictions without making license a hiring or activation gate.
     required_tools: [file_read, web_search, web_fetch, blob.upload]
 sandbox:
-  profile: restricted
+  profile: trusted
   network_mode: egress-allowlist
   egress_allowlist: [api.github.com:443]

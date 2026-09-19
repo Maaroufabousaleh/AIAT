@@ -9,10 +9,11 @@ selected model-resolution host-execution, and the fail-closed legacy Firecracker
 compatibility contract are implemented; normal binding commit/release now settles
 the reservation and binding in one database transaction and failed new
 assignments compensate their newly-created reservation. The current WSL2
-development host is `DEV_READY` for Docker/Compose and gVisor/runsc-backed
-development; native-Linux release certification, provider evidence,
-independent-host recovery, host-loss fault evidence, and Kata `vm_isolated`
-certification remain separate.
+development host is `DEV_READY` for Docker/Compose, gVisor/runsc-backed
+development, and Kata runtime-rs/QEMU `vm_isolated` guest execution;
+native-Linux release certification, provider evidence, independent-host
+recovery, host-loss fault evidence, and native release certification of Kata
+remain separate.
 
 **Implementation:** `73c0bda`, `f9c717b`, `d45e4dd`, `7c1ef74`, `893293a`, `424805c`, `2bc7ca5`, `6cef1b8`, `9a7db70`, `5ed0a0b`
 
@@ -56,10 +57,10 @@ runc, or gVisor. Static readiness passes, while the current live probe is
 blocked because the launcher and Firecracker binary are unavailable. Evidence
 is [`firecracker_worker_pool_readiness.json`](../../mas/docs/provenance/firecracker_worker_pool_readiness.json).
 It is retained for compatibility/benchmark evidence rather than exposed as a
-fourth AIAT sandbox class. The future `vm_isolated` class uses a certified Kata
+fourth AIAT sandbox class. The `vm_isolated` class uses a certified Kata
 runtime selected by the host; the current WSL2 development profile reports
-`OPTIONAL_UNAVAILABLE` because no Kata runtime is registered. The repeatable
-host result is [`dev_host_readiness.json`](../../mas/docs/provenance/dev_host_readiness.json).
+`AVAILABLE` for the pinned runtime-rs/QEMU guest smoke. The repeatable host
+result is [`dev_host_readiness.json`](../../mas/docs/provenance/dev_host_readiness.json).
 
 ## Contract
 
@@ -322,8 +323,9 @@ artifact policy, and recovery policy before it can claim a real run.
   worker hosts and prove concurrent admission, host loss, split-brain fencing,
   requeue, and duplicate-effect protection under real host/process boundaries;
   the local duplicate-claim and replay boundary is already certified.
-- Certify gVisor on supported hosts and certify a Kata `vm_isolated` host for
-  high-risk or gVisor-incompatible profiles. Keep direct Firecracker as a
+- Retain the native gVisor release certificate and separately certify Kata
+  `vm_isolated` on the final native release host for high-risk or
+  gVisor-incompatible profiles. Keep direct Firecracker as a
   compatibility/benchmark path unless it is used as the selected Kata VMM.
 - Add provider-backed execution, callback/bounce evidence, outage recovery, and
   restore/rollback exercises.

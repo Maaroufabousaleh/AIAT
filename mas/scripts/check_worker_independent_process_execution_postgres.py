@@ -7,7 +7,7 @@ settle one run.  The parent reopens the store, verifies payload-free evidence,
 and removes only the fixture namespace.
 
 This is a local process-isolation certificate on one Compose host.  It does not
-claim independent machines, Firecracker/gVisor, external providers, provider
+claim independent machines, sandboxed/vm_isolated runtime, external providers, provider
 outage recovery, or a production host-loss drill.  Licence metadata is not an
 operational gate.
 """
@@ -809,7 +809,7 @@ async def _run(dsn: str | None) -> dict[str, Any]:
             "host_loss_or_split_brain": "not_checked",
             "external_provider_dispatch": "not_checked",
             "provider_outage_recovery": "not_checked",
-            "sandbox_runtime_gvisor_or_firecracker": "not_checked",
+            "sandbox_runtime_sandboxed_or_vm_isolated": "not_checked",
         },
         "licence_metadata_is_gate": False,
     }

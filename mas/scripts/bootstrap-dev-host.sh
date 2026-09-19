@@ -31,6 +31,21 @@ NEXT_DYNAMIC_PORT=18200
 GVISOR_VERSION="${AIAT_GVISOR_VERSION:-20260914.0}"
 GVISOR_DEB_SHA256="${AIAT_GVISOR_DEB_SHA256:-d2f167823d8112fb2ec9151c2645b06c095aee97159700385d90843dd6b3bdd9}"
 GVISOR_SMOKE_IMAGE="${AIAT_GVISOR_SMOKE_IMAGE:-ubuntu@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517}"
+# Kata runtime-rs is distributed as a static archive containing the runtime,
+# QEMU, the guest kernel/rootfs, and the QEMU runtime-rs configuration.  The
+# archive digest is an explicit provenance pin; do not replace it with a
+# floating GitHub release URL without updating the operator pin catalogue.
+KATA_VERSION="${AIAT_KATA_VERSION:-4.2.0}"
+KATA_ARCHIVE_SHA256="${AIAT_KATA_ARCHIVE_SHA256:-b828904fa3f1e49ddd7dc799c72cb1503cd1e772d354c3987c8d4189b2a623a8}"
+KATA_ARCHIVE_URL="${AIAT_KATA_ARCHIVE_URL:-https://github.com/kata-containers/kata-containers/releases/download/${KATA_VERSION}/kata-static-${KATA_VERSION}-amd64.tar.zst}"
+KATA_CACHE_PATH="${AIAT_KATA_CACHE_PATH:-/var/cache/aiat/kata-static-${KATA_VERSION}-amd64.tar.zst}"
+KATA_INSTALL_ROOT="${AIAT_KATA_INSTALL_ROOT:-/opt/kata}"
+KATA_RUNTIME_NAME="${AIAT_KATA_RUNTIME_NAME:-kata}"
+KATA_RUNTIME_SHIM="${AIAT_KATA_RUNTIME_SHIM:-/opt/kata/runtime-rs/bin/containerd-shim-kata-v2}"
+KATA_RUNTIME_CONFIG="${AIAT_KATA_RUNTIME_CONFIG:-/opt/kata/share/defaults/kata-containers/runtime-rs/configuration-qemu-runtime-rs.toml}"
+KATA_QEMU_BINARY="${AIAT_KATA_QEMU_BINARY:-/opt/kata/bin/qemu-system-x86_64}"
+KATA_GUEST_IMAGE="${AIAT_KATA_GUEST_IMAGE:-/opt/kata/share/kata-containers/kata-containers.img}"
+KATA_VMM="qemu"
 PORT_PROBE_IMAGE="alpine:3.21.3@sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c"
 
 DOCKER_REPO="https://download.docker.com/linux/ubuntu"
@@ -43,8 +58,11 @@ SKIP_TESTS=0
 SKIP_COMPOSE=0
 FORCE_PACKAGE_REFRESH=0
 FORCE_COMPOSE_BUILD=0
+REQUIRE_KATA=0
 STARTED_AT="$(date --iso-8601=seconds)"
 TEMP_FILES=()
+KATA_INSTALL_READY=0
+KATA_GUEST_KERNEL=""
 
 declare -A STATE=(
   [status]="DEV_BLOCKED"
@@ -56,6 +74,11 @@ declare -A STATE=(
   [runsc_registered]="not_checked"
   [gvisor_smoke]="not_checked"
   [sandbox_readiness]="not_checked"
+  [kata_install]="not_checked"
+  [kata_runtime_registered]="not_checked"
+  [kata_smoke]="not_checked"
+  [kata_guest_kernel]=""
+  [kata_vmm]="qemu"
   [kata]="OPTIONAL_UNAVAILABLE"
   [compose]="not_checked"
   [migration]="not_checked"
@@ -109,6 +132,7 @@ Options:
   --skip-tests      Start/migrate/check services but skip the broad repository suite.
   --rebuild         Rebuild local Compose images before starting services.
   --refresh         Refresh apt metadata even when installed packages look current.
+  --require-kata    Require Kata runtime-rs/QEMU and fail closed when unavailable.
   -h, --help        Show this help.
 EOF
 }
@@ -120,6 +144,7 @@ while [ "$#" -gt 0 ]; do
     --skip-tests) SKIP_TESTS=1 ;;
     --rebuild) FORCE_COMPOSE_BUILD=1 ;;
     --refresh) FORCE_PACKAGE_REFRESH=1 ;;
+    --require-kata) REQUIRE_KATA=1 ;;
     -h|--help) usage; exit 0 ;;
     *) fail "unknown option: $1" ;;
   esac
@@ -245,13 +270,13 @@ package_installed() {
 }
 
 ensure_packages() {
-  local packages=(docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin)
+  local packages=(docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin zstd)
   local package
   ensure_docker_repository
   ensure_gvisor_repository
   if ! package_installed docker-ce || ! package_installed docker-ce-cli || ! package_installed containerd.io ||
-     ! package_installed docker-buildx-plugin || ! package_installed docker-compose-plugin; then
-    log "installing Docker Engine, containerd, Buildx, and Compose v2"
+     ! package_installed docker-buildx-plugin || ! package_installed docker-compose-plugin || ! package_installed zstd; then
+    log "installing Docker Engine, containerd, Buildx, Compose v2, and archive tooling"
     root_exec env DEBIAN_FRONTEND=noninteractive apt-get install -y "${packages[@]}"
   fi
   local installed_gvisor
@@ -274,8 +299,112 @@ ensure_packages() {
   fi
 }
 
+kata_install_failure() {
+  local reason="$1"
+  STATE[kata_install]="unavailable"
+  STATE[kata]="UNAVAILABLE_ON_THIS_HOST"
+  if [ "$REQUIRE_KATA" -eq 1 ]; then
+    fail "Kata runtime-rs/QEMU is required but unavailable: ${reason}"
+  fi
+  warn "Kata runtime-rs/QEMU is unavailable; vm_isolated remains fail-closed: ${reason}"
+}
+
+kata_install_ready() {
+  local installed_version
+  installed_version="$(root_exec cat "$KATA_INSTALL_ROOT/VERSION" 2>/dev/null || true)"
+  [ "$installed_version" = "$KATA_VERSION" ] || return 1
+  root_exec test -x "$KATA_RUNTIME_SHIM" || return 1
+  root_exec test -x "$KATA_QEMU_BINARY" || return 1
+  root_exec test -x "$KATA_INSTALL_ROOT/libexec/virtiofsd" || return 1
+  root_exec test -f "$KATA_RUNTIME_CONFIG" || return 1
+  root_exec test -f "$KATA_GUEST_IMAGE" || return 1
+}
+
+kata_kvm_ready() {
+  # The dedicated Docker daemon runs as root.  The actual Kata guest smoke
+  # below is the authoritative read/write test; requiring the invoking shell
+  # to have refreshed its supplementary kvm group would create a false
+  # negative immediately after an idempotent host bootstrap.
+  [ -e /dev/kvm ]
+}
+
+ensure_kvm_operator_group() {
+  local operator_user
+  operator_user="$(id -un)"
+  if ! root_exec test -e /dev/kvm || id -nG "$operator_user" 2>/dev/null | tr ' ' '\n' | grep -qx kvm; then
+    return 0
+  fi
+  if root_exec getent group kvm >/dev/null 2>&1; then
+    root_exec usermod -aG kvm "$operator_user" || warn "could not add ${operator_user} to the kvm group; Docker root access will still be tested"
+    log "added ${operator_user} to kvm; a new WSL shell is required for direct operator access"
+  fi
+}
+
+ensure_kata_runtime() {
+  local architecture archive_tmp cached_digest
+  architecture="$(uname -m)"
+  if [ "$architecture" != "x86_64" ]; then
+    kata_install_failure "the pinned development archive is currently amd64-only (host=${architecture})"
+    return 0
+  fi
+  ensure_kvm_operator_group
+  if kata_install_ready; then
+    KATA_INSTALL_READY=1
+    STATE[kata_install]="${KATA_VERSION}"
+    log "Kata runtime-rs ${KATA_VERSION} with QEMU is already installed"
+    return 0
+  fi
+
+  log "provisioning pinned Kata runtime-rs ${KATA_VERSION} with QEMU"
+  if ! root_exec install -d -m 0755 "$(dirname "$KATA_CACHE_PATH")"; then
+    kata_install_failure "cannot create the Kata archive cache directory"
+    return 0
+  fi
+  cached_digest="$(root_exec sha256sum "$KATA_CACHE_PATH" 2>/dev/null | awk '{print $1}' || true)"
+  if [ "$cached_digest" != "$KATA_ARCHIVE_SHA256" ]; then
+    archive_tmp="$(mktemp)"
+    TEMP_FILES+=("$archive_tmp")
+    if ! curl --fail --silent --show-error --location --retry 3 "$KATA_ARCHIVE_URL" -o "$archive_tmp"; then
+      kata_install_failure "could not download the pinned Kata archive"
+      return 0
+    fi
+    if [ "$(sha256sum "$archive_tmp" | awk '{print $1}')" != "$KATA_ARCHIVE_SHA256" ]; then
+      kata_install_failure "the pinned Kata archive checksum does not match"
+      return 0
+    fi
+    if ! root_exec install -m 0644 "$archive_tmp" "$KATA_CACHE_PATH"; then
+      kata_install_failure "could not cache the pinned Kata archive"
+      return 0
+    fi
+  fi
+  if [ "$(root_exec sha256sum "$KATA_CACHE_PATH" | awk '{print $1}')" != "$KATA_ARCHIVE_SHA256" ]; then
+    kata_install_failure "the cached Kata archive checksum does not match"
+    return 0
+  fi
+  if ! root_exec tar --zstd -xf "$KATA_CACHE_PATH" -C /; then
+    kata_install_failure "the pinned Kata archive could not be extracted"
+    return 0
+  fi
+  if ! kata_install_ready; then
+    kata_install_failure "the extracted Kata runtime-rs/QEMU inputs are incomplete"
+    return 0
+  fi
+  KATA_INSTALL_READY=1
+  STATE[kata_install]="${KATA_VERSION}"
+  log "Kata runtime-rs ${KATA_VERSION} with QEMU installed"
+}
+
 ensure_local_docker_service() {
-  local config service changed=0
+  local config service changed=0 kata_runtime_json=""
+  if [ "$KATA_INSTALL_READY" -eq 1 ]; then
+    kata_runtime_json=",
+    \"kata\": {
+      \"runtimeType\": \"$KATA_RUNTIME_SHIM\",
+      \"options\": {
+        \"ConfigPath\": \"$KATA_RUNTIME_CONFIG\"
+      }
+    }"
+  fi
   config="$(cat <<EOF
 {
   "data-root": "$DOCKER_DATA_ROOT",
@@ -287,7 +416,7 @@ ensure_local_docker_service() {
   "runtimes": {
     "runsc": {
       "path": "/usr/bin/runsc"
-    }
+    }$kata_runtime_json
   }
 }
 EOF
@@ -477,7 +606,7 @@ ensure_docker_context() {
 }
 
 verify_host_runtime() {
-  local runtimes runsc_version kata_runtime kata_check
+  local runtimes runsc_version kata_runtime
   docker_cli version >/dev/null || fail "Docker version check failed"
   docker_cli compose version >/dev/null || fail "Docker Compose v2 check failed"
   docker_cli info >/dev/null || fail "Docker info check failed"
@@ -486,15 +615,14 @@ verify_host_runtime() {
     || fail "runsc is not registered in the AIAT Docker daemon"
   runsc_version="$(runsc --version 2>/dev/null | awk '/release-/{sub(/^release-/, "", $3); print $3; exit}' || true)"
   [ "$runsc_version" = "$GVISOR_VERSION" ] || fail "runsc binary version does not match ${GVISOR_VERSION}"
-  kata_runtime="$(printf '%s' "$runtimes" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("available" if any(k == "kata" or k.startswith("kata-") for k in d) else "optional_unavailable")')"
-  kata_check="optional_unavailable"
-  if command -v kata-check >/dev/null 2>&1; then
-    kata-check >/dev/null 2>&1 && kata_check="pass" || kata_check="fail"
-  fi
-  if [ "$kata_runtime" = "available" ] && [ "$kata_check" != "fail" ]; then
-    STATE[kata]="AVAILABLE"
+  kata_runtime="$(printf '%s' "$runtimes" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("available" if "kata" in d else "missing")')"
+  if [ "$KATA_INSTALL_READY" -eq 1 ] && [ "$kata_runtime" = "available" ]; then
+    STATE[kata_runtime_registered]="pass"
   else
-    STATE[kata]="OPTIONAL_UNAVAILABLE"
+    STATE[kata_runtime_registered]="not_registered"
+  fi
+  if [ "$KATA_INSTALL_READY" -eq 1 ] && [ "$kata_runtime" != "available" ]; then
+    kata_install_failure "Kata was installed but the Docker daemon did not register runtime ${KATA_RUNTIME_NAME}"
   fi
   STATE[docker_engine]="pass"
   STATE[docker_compose]="pass"
@@ -511,13 +639,67 @@ run_gvisor_smoke() {
   STATE[gvisor_smoke]="pass"
 }
 
+run_kata_smoke() {
+  local runtimes container_name container_id runtime_seen guest_kernel host_kernel
+  if [ "$KATA_INSTALL_READY" -ne 1 ]; then
+    return 0
+  fi
+  if ! kata_kvm_ready; then
+    kata_install_failure "${KATA_RUNTIME_NAME} requires readable and writable /dev/kvm on this host"
+    STATE[kata_smoke]="not_checked"
+    return 0
+  fi
+  runtimes="$(docker_cli info --format '{{json .Runtimes}}')"
+  if ! printf '%s' "$runtimes" | python3 -c 'import json,sys; d=json.load(sys.stdin); raise SystemExit(0 if "kata" in d else 1)'; then
+    kata_install_failure "${KATA_RUNTIME_NAME} is not registered with the AIAT Docker daemon"
+    STATE[kata_smoke]="not_checked"
+    return 0
+  fi
+  container_name="aiat-kata-smoke-$$-${RANDOM}"
+  container_id=""
+  if ! container_id="$(docker_cli create --name "$container_name" --runtime="$KATA_RUNTIME_NAME" \
+      --network=none --read-only --cap-drop=ALL --security-opt=no-new-privileges \
+      --pids-limit=64 --memory=128m --cpus=0.25 "$GVISOR_SMOKE_IMAGE" \
+      /bin/sh -c 'sleep 10' 2>/dev/null)"; then
+    kata_install_failure "Kata QEMU container creation failed"
+    STATE[kata_smoke]="fail"
+    return 0
+  fi
+  if ! docker_cli start "$container_id" >/dev/null 2>&1; then
+    docker_cli rm -f "$container_id" >/dev/null 2>&1 || true
+    kata_install_failure "Kata QEMU guest failed to start"
+    STATE[kata_smoke]="fail"
+    return 0
+  fi
+  runtime_seen="$(docker_cli inspect --format '{{.HostConfig.Runtime}}' "$container_id" 2>/dev/null || true)"
+  guest_kernel="$(docker_cli exec "$container_id" /bin/uname -r 2>/dev/null || true)"
+  host_kernel="$(uname -r)"
+  docker_cli wait "$container_id" >/dev/null 2>&1 || true
+  docker_cli rm -f "$container_id" >/dev/null 2>&1 || true
+  if [ "$runtime_seen" != "$KATA_RUNTIME_NAME" ]; then
+    kata_install_failure "Kata smoke did not retain the requested Docker runtime"
+    STATE[kata_smoke]="fail"
+    return 0
+  fi
+  if [ -z "$guest_kernel" ] || [ "$guest_kernel" = "$host_kernel" ]; then
+    kata_install_failure "Kata smoke did not prove a distinct guest kernel"
+    STATE[kata_smoke]="fail"
+    return 0
+  fi
+  KATA_GUEST_KERNEL="$guest_kernel"
+  STATE[kata_guest_kernel]="$guest_kernel"
+  STATE[kata_smoke]="pass"
+  STATE[kata]="AVAILABLE"
+  log "Kata runtime-rs/QEMU guest smoke passed (guest kernel ${guest_kernel})"
+}
+
 run_sandbox_readiness() {
   local output
   output="$(mktemp)"
   TEMP_FILES+=("$output")
   if DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" AIAT_DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" \
       uv run --isolated python "$SCRIPT_DIR/check_sandbox_runtime_readiness.py" \
-      --live --smoke --check-kata --image "$GVISOR_SMOKE_IMAGE" --json >"$output"; then
+      --live --smoke --check-kata --image "$GVISOR_SMOKE_IMAGE" --kata-image "$GVISOR_SMOKE_IMAGE" --json >"$output"; then
     STATE[sandbox_readiness]="pass"
   else
     cat "$output" >&2 || true
@@ -720,7 +902,8 @@ from pathlib import Path
 artifact_path = Path(sys.argv[1])
 state = {key: os.environ.get(f"AIAT_BOOTSTRAP_STATE_{key.upper()}", "") for key in (
     "status", "failure_reason", "docker_daemon_before", "docker_engine", "docker_compose",
-    "runsc_package", "runsc_registered", "gvisor_smoke", "sandbox_readiness", "kata",
+    "runsc_package", "runsc_registered", "gvisor_smoke", "sandbox_readiness",
+    "kata_install", "kata_runtime_registered", "kata_smoke", "kata_guest_kernel", "kata_vmm", "kata",
     "compose", "migration", "network_boundary", "release_ledger", "tests",
 )}
 def read_json(name):
@@ -756,12 +939,22 @@ report = {
         "smoke_image": os.environ.get("AIAT_BOOTSTRAP_SMOKE_IMAGE", ""),
         "package_sha256": os.environ.get("AIAT_BOOTSTRAP_GVISOR_DEB_SHA256", ""),
     },
-    "sandbox_readiness": read_json("AIAT_BOOTSTRAP_SANDBOX_FILE"),
     "kata": {
         "status": state["kata"],
+        "install": state["kata_install"],
+        "runtime_registered": state["kata_runtime_registered"],
+        "smoke": state["kata_smoke"],
+        "guest_kernel": state["kata_guest_kernel"] or None,
+        "runtime_version": os.environ.get("AIAT_BOOTSTRAP_KATA_VERSION", ""),
+        "archive_sha256": os.environ.get("AIAT_BOOTSTRAP_KATA_ARCHIVE_SHA256", ""),
+        "vmm": state["kata_vmm"],
+        "runtime_shim": os.environ.get("AIAT_BOOTSTRAP_KATA_RUNTIME_SHIM", ""),
+        "runtime_config": os.environ.get("AIAT_BOOTSTRAP_KATA_RUNTIME_CONFIG", ""),
         "kvm_present": Path("/dev/kvm").exists(),
-        "runtime_registered": any(name == "kata" or name.startswith("kata-") for name in os.environ.get("AIAT_BOOTSTRAP_RUNTIMES", "").split()),
+        "kvm_readable": os.access("/dev/kvm", os.R_OK),
+        "kvm_writable": os.access("/dev/kvm", os.W_OK),
     },
+    "sandbox_readiness": read_json("AIAT_BOOTSTRAP_SANDBOX_FILE"),
     "development": {
         "status": state["status"],
         "compose": state["compose"],
@@ -813,6 +1006,11 @@ export AIAT_BOOTSTRAP_STATE_RUNSC_PACKAGE="${STATE[runsc_package]}"
 export AIAT_BOOTSTRAP_STATE_RUNSC_REGISTERED="${STATE[runsc_registered]}"
 export AIAT_BOOTSTRAP_STATE_GVISOR_SMOKE="${STATE[gvisor_smoke]}"
 export AIAT_BOOTSTRAP_STATE_SANDBOX_READINESS="${STATE[sandbox_readiness]}"
+export AIAT_BOOTSTRAP_STATE_KATA_INSTALL="${STATE[kata_install]}"
+export AIAT_BOOTSTRAP_STATE_KATA_RUNTIME_REGISTERED="${STATE[kata_runtime_registered]}"
+export AIAT_BOOTSTRAP_STATE_KATA_SMOKE="${STATE[kata_smoke]}"
+export AIAT_BOOTSTRAP_STATE_KATA_GUEST_KERNEL="${STATE[kata_guest_kernel]}"
+export AIAT_BOOTSTRAP_STATE_KATA_VMM="${STATE[kata_vmm]}"
 export AIAT_BOOTSTRAP_STATE_KATA="${STATE[kata]}"
 export AIAT_BOOTSTRAP_STATE_COMPOSE="${STATE[compose]}"
 export AIAT_BOOTSTRAP_STATE_MIGRATION="${STATE[migration]}"
@@ -823,6 +1021,10 @@ export AIAT_BOOTSTRAP_DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME"
 export AIAT_BOOTSTRAP_DOCKER_ENDPOINT="$DOCKER_SOCKET"
 export AIAT_BOOTSTRAP_SMOKE_IMAGE="$GVISOR_SMOKE_IMAGE"
 export AIAT_BOOTSTRAP_GVISOR_DEB_SHA256="$GVISOR_DEB_SHA256"
+export AIAT_BOOTSTRAP_KATA_VERSION="$KATA_VERSION"
+export AIAT_BOOTSTRAP_KATA_ARCHIVE_SHA256="$KATA_ARCHIVE_SHA256"
+export AIAT_BOOTSTRAP_KATA_RUNTIME_SHIM="$KATA_RUNTIME_SHIM"
+export AIAT_BOOTSTRAP_KATA_RUNTIME_CONFIG="$KATA_RUNTIME_CONFIG"
 
 if ! is_wsl2; then
   fail "this bootstrap is only supported inside WSL2"
@@ -830,11 +1032,13 @@ fi
 require_root_path
 detect_current_docker
 ensure_packages
+ensure_kata_runtime
 ensure_local_docker_service
 ensure_docker_context
 verify_host_runtime
 export AIAT_BOOTSTRAP_RUNTIMES="$(docker_cli info --format '{{json .Runtimes}}' | python3 -c 'import json,sys; print(" ".join(sorted(json.load(sys.stdin))))')"
 run_gvisor_smoke
+run_kata_smoke
 run_sandbox_readiness
 
 if [ "$HOST_ONLY" -eq 0 ] && [ "$SKIP_COMPOSE" -eq 0 ]; then
@@ -861,6 +1065,7 @@ for key in "${!STATE[@]}"; do
   printf -v "$variable" '%s' "${STATE[$key]}"
   export "$variable"
 done
+sync_artifact_state
 export AIAT_BOOTSTRAP_SANDBOX_FILE="${SANDBOX_READINESS_FILE:-}"
 export AIAT_BOOTSTRAP_MIGRATION_FILE="${MIGRATION_CHECK_FILE:-}"
 export AIAT_BOOTSTRAP_NETWORK_FILE="${NETWORK_CHECK_FILE:-}"

@@ -35,9 +35,10 @@ at migration head `0045_worker_tool_effects`, and the local network-boundary
 check passed. The development result is therefore `DEV_READY`.
 
 This does not revise the audited release baseline or claim native-Linux release
-certification. Kata was not installed; `/dev/kvm` was visible but no Kata
-runtime was registered, so the host reports `vm_isolated =
-OPTIONAL_UNAVAILABLE`. The corresponding release result remains
+certification. The current host bootstrap also installed the pinned Kata
+runtime-rs 4.2.0 archive, registered Docker's `kata` runtime with the QEMU
+configuration, and proved a distinct Kata guest kernel. The current host
+therefore reports `vm_isolated = AVAILABLE` in development. The corresponding release result remains
 `RELEASE_CERTIFICATION_PENDING` because native-Linux, provider, deployment,
 operator, and other release-only evidence remain separate gates.
 
@@ -550,7 +551,7 @@ permissions but cannot assume control of the remote implementation.
 | `HTTPAdapter` | **External trust boundary** | Remote implementation decides | Remote by definition | Headers/configuration may authenticate the remote runtime | AIAT sees the adapter contract, not remote internals | Certified endpoint, scoped auth, provenance, timeout, reconciliation, and egress controls |
 | `MCPAdapter` | **Capability-dependent external boundary** | Depends on MCP server | Depends on MCP server | Depends on client/server configuration | MCP is explicit, but server capabilities still require grants | Per-run server/tool grants; no broad privileged server by default |
 | `OCIAdapter` with gVisor | **Sandboxed runtime** | Read-only root plus scoped workspace/tmpfs under the profile | Deny by default where configured | Explicit values only; no parent environment inheritance | AIAT-mediated | Preferred boundary for untrusted local workers after host certification |
-| `OCIAdapter` with Kata | **VM-isolated runtime** | Guest-kernel VM boundary with OCI workspace semantics | Host-certified deny-by-default policy | Host selects Kata profile/VMM; worker receives no VMM authority | AIAT-mediated | Future high-risk or gVisor-incompatible path; disabled until host certification |
+| `OCIAdapter` with Kata | **VM-isolated runtime** | Guest-kernel VM boundary with OCI workspace semantics | Host-certified deny-by-default policy | Host selects Kata profile/VMM; worker receives no VMM authority | AIAT-mediated | Canonical high-risk or gVisor-incompatible path when the host's Kata guest smoke is certified |
 | Direct `FirecrackerAdapter` | **Legacy host-VMM compatibility path** | MicroVM boundary and controlled rootfs | Deny-all default with explicit allowlist | Controlled launch specification or capability references | AIAT-mediated | Retain only for compatibility/benchmarking; it is no longer an AIAT policy class |
 | OpenCode | **Governed coding runtime** | Workspace/runtime access constrained by deployment | Runtime service network is deployment-dependent | Current adapter uses run-scoped gateway/tool material; host handling still follows ProcessAdapter rules where applicable | Native capabilities denied in the inspected path; AIAT MCP bridge mediates tools | Keep as default coding runtime and retain its certification evidence |
 | OpenHands Agent Server/Sandbox | **Candidate sandboxed external runtime** | Mutable sandbox workspace; upstream recommends container deployment | Sandbox/deployment dependent | Candidate gateway/profile lifecycle must be scoped and redacted | AIAT bridge/certification path exists | Candidate only until live certification and benchmark gates pass |
@@ -893,7 +894,7 @@ four independently managed runtime tiers:
 | --- | --- | --- |
 | `trusted` | normal Docker/runc | Available for AIAT-owned trusted services and reviewed workers |
 | `sandboxed` | Docker/containerd gVisor `runsc` | Current external-worker baseline; native-host certification exists and the WSL2 development host now has a separate live registration/smoke result |
-| `vm_isolated` | Kata Containers runtime; host selects Dragonball/QEMU or another certified Kata VMM | Contract and adapter selection are present; no Kata host is activated or required for the current release |
+| `vm_isolated` | Kata Containers runtime-rs; current host profile is QEMU | Canonical implementation; WSL2 development guest smoke is available, while native-Linux release certification remains separate |
 
 The historical profile names remain accepted during the migration window:
 
@@ -922,26 +923,27 @@ metadata:
 
 The worker and governance agents receive only the AIAT policy class; they do
 not choose the VMM. Direct Firecracker remains in the repository because its
-launch contract and compatibility tests are still useful, but the new policy
-path does not activate it. Current host evidence remains explicit: gVisor is
-the default development and external-worker direction, while Kata is
-unavailable on the current WSL2 profile. The host bootstrap records `runsc
-20260914.0`, the registered Docker runtime, the immutable smoke image, the
-Compose/migration/network results, and `vm_isolated = OPTIONAL_UNAVAILABLE` in
+launch contract and compatibility tests are still useful, but it is no longer
+an AIAT sandbox class. Current host evidence is explicit: gVisor remains the
+default external-worker path and Kata runtime-rs/QEMU is the available
+`vm_isolated` path on this WSL2 development host. The host bootstrap records
+the pinned Kata archive digest, Docker registration, guest-kernel proof,
+`runsc` smoke, immutable smoke image, Compose/migration/network results, and
+`vm_isolated = AVAILABLE` in
 [`provenance/dev_host_readiness.json`](provenance/dev_host_readiness.json).
-The read-only checker supports an explicit `--check-kata` probe and a
-fail-closed `--require-kata`/`--require-vm-isolated` probe for a future native
-or supported VM-capable host, but Kata is not a current WSL development gate.
+The read-only checker supports `--check-kata` and a fail-closed
+`--require-kata`/`--require-vm-isolated` probe; Kata remains independently
+subject to native-Linux release certification.
 
 The reproducible operator entry point is
 [`mas/scripts/bootstrap-dev-host.sh`](../scripts/bootstrap-dev-host.sh). It is
 host provisioning code, not an AIAT worker capability: it detects WSL2,
 selects the dedicated configurable Docker daemon, installs only the pinned
 Docker/gVisor components that are missing, registers `runsc` idempotently,
-runs the bounded digest-pinned smoke, starts/migrates local Compose, and
-writes a secret-safe readiness artifact. It never mounts the Docker socket into
-an application worker, grants worker privilege, installs Kata merely to make
-development pass, or downgrades an unavailable policy class to runc.
+runs the bounded digest-pinned gVisor and Kata guest smokes, starts/migrates
+local Compose, and writes a secret-safe readiness artifact. It never mounts
+the Docker socket into an application worker, grants worker privilege, or
+downgrades an unavailable policy class to runc.
 
 The upstream technical boundary is documented by [gVisor's compatibility
 guide](https://gvisor.dev/docs/user_guide/compatibility/), [Kata's quick-start
@@ -964,11 +966,13 @@ The implementation surface is:
 - [`infra/sandbox/README.md`](../infra/sandbox/README.md) for operator setup and
   fail-closed evidence boundaries.
 
-This migration does not install Kata, delete Firecracker, change the current
-OpenCode default, or claim live VM isolation. A future Kata activation still
-requires immutable host/runtime provenance, `/dev/kvm` or supported nested
-virtualization, sandbox/network/credential tests, recovery evidence, and an
-operator-owned release decision.
+This migration installs and verifies Kata on the supported development host,
+does not delete historical Firecracker evidence, does not change the current
+OpenCode default, and does not claim native-Linux release certification. A
+Kata activation on another host still requires immutable host/runtime
+provenance, `/dev/kvm` or supported nested virtualization, guest-kernel proof,
+sandbox/network/credential tests, recovery evidence, and an operator-owned
+release decision.
 
 ## 15. Codex versus human/manual work
 

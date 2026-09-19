@@ -1374,7 +1374,7 @@ class OCIAdapter(ProcessAdapter):
         worker_id: str,
         launcher: str = "docker",
         sandbox_profile: str | None = None,
-        sandbox_runtime: str = "runsc",
+        sandbox_runtime: str | None = None,
         memory_limit: str = "512m",
         cpu_limit: str = "1.0",
         pids_limit: int = 256,
@@ -1383,8 +1383,6 @@ class OCIAdapter(ProcessAdapter):
         if "@sha256:" not in image:
             raise ValueError("OCI workers must use an immutable image digest")
         raw_profile = str(sandbox_profile or "").strip().lower()
-        if raw_profile == "firecracker":
-            raise ValueError("Firecracker OCI execution requires a certified Firecracker launcher")
         try:
             sandbox_class = canonical_sandbox_class(raw_profile)
         except ValueError as exc:
@@ -1397,7 +1395,10 @@ class OCIAdapter(ProcessAdapter):
             )
         if launcher != "docker":
             raise ValueError("AIAT OCI sandbox execution currently requires the certified Docker launcher")
-        sandbox_runtime = str(sandbox_runtime or "").strip().lower()
+        sandbox_runtime = str(
+            sandbox_runtime
+            or ("runsc" if sandbox_class == "sandboxed" else "kata")
+        ).strip().lower()
         required_runtime = required_runtime_for_sandbox(sandbox_class)
         if not runtime_implements_sandbox(sandbox_runtime, sandbox_class):
             raise ValueError(
@@ -1431,17 +1432,19 @@ class OCIAdapter(ProcessAdapter):
         ]
         super().__init__(command, worker_id=worker_id, **kwargs)
         self.image = image
-        self.sandbox_profile = sandbox_profile
+        self.sandbox_profile = sandbox_class
         self.sandbox_class = sandbox_class
         self.sandbox_runtime = sandbox_runtime
 
 
 class FirecrackerAdapter(ProcessAdapter):
-    """Run a worker through an AIAT-certified Firecracker launcher.
+    """Retain the historical direct Firecracker launcher compatibility path.
 
     The adapter only constructs a validated argv and delegates execution to a
-    launcher supplied by the host profile. It never accepts secret values or
-    falls back to Docker/runc when the launcher is unavailable.
+    launcher supplied by the host profile. It is not an AIAT sandbox class:
+    callers must opt into this legacy path explicitly, while the canonical
+    ``vm_isolated`` provider is Kata. It never accepts secret values or falls
+    back to Docker/runc when the launcher is unavailable.
     """
 
     runtime_type = "firecracker"
@@ -1492,7 +1495,7 @@ class FirecrackerAdapter(ProcessAdapter):
             runtime_version=runtime_version,
         )
         self.launch_spec = spec
-        self.sandbox_profile = "firecracker"
+        self.sandbox_profile = "vm_isolated"
         self.sandbox_class = "vm_isolated"
 
 
@@ -2463,7 +2466,7 @@ def adapter_for_transport(
         return MCPAdapter(mcp, worker_id=worker_id, context=context)
     if normalized == "oci":
         raw_profile = str(config.get("sandbox_profile") or "").strip().lower()
-        if raw_profile == "firecracker":
+        if raw_profile == "firecracker" and bool(config.get("legacy_direct_firecracker", False)):
             return FirecrackerAdapter(
                 worker_id=worker_id,
                 context=context,
@@ -2485,6 +2488,10 @@ def adapter_for_transport(
                 runtime_version=config.get("runtime_version"),
             )
         sandbox_class = canonical_sandbox_class(raw_profile)
+        # ``firecracker`` is a read-compatible historical alias for the
+        # canonical vm_isolated policy class.  Direct launcher execution is
+        # available only through the explicit legacy compatibility switch.
+        canonical_profile = "vm_isolated" if raw_profile == "firecracker" else sandbox_class
         sandbox_runtime = str(
             config.get("sandbox_runtime")
             or ("runsc" if sandbox_class == "sandboxed" else "kata")
@@ -2494,7 +2501,7 @@ def adapter_for_transport(
             worker_id=worker_id,
             context=context,
             launcher=config.get("launcher", "docker"),
-            sandbox_profile=config.get("sandbox_profile"),
+            sandbox_profile=canonical_profile,
             sandbox_runtime=sandbox_runtime,
             memory_limit=config.get("memory_limit", "512m"),
             cpu_limit=config.get("cpu_limit", "1.0"),

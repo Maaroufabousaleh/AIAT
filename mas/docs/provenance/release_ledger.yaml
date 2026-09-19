@@ -118,13 +118,17 @@ checks:
     retained_live_evidence:
       path: docs/provenance/native_gvisor_certification_live.json
       schema_version: aiat.native-gvisor-certification-live.v1
+    development_evidence:
+      path: docs/provenance/dev_host_readiness.json
+      kata_status: AVAILABLE
+      vmm: qemu
   - id: firecracker_worker_pool_readiness
     category: integration
     script: scripts/check_firecracker_worker_pool.py
     args: [--json]
     live_args: [--live, --json]
     scope_status: superseded
-    scope_reason: Direct Firecracker is a historical compatibility implementation; vm_isolated is provided by optional Kata and is not active on the WSL development profile.
+    scope_reason: Direct Firecracker is a superseded historical compatibility implementation. The active vm_isolated provider is Kata runtime-rs; direct Firecracker is not an active release or development sandbox requirement.
   - id: worker_runtime_readiness
     category: static
     script: scripts/check_worker_runtime_readiness.py

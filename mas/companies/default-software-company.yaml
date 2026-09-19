@@ -31,7 +31,7 @@ model_policy:
   allow_gateway_failover: true
 deployment:
   profile: local
-  sandbox_profile: gvisor
+  sandbox_profile: sandboxed
   require_immutable_images: true
   allowed_regions: []
 departments:
@@ -119,4 +119,4 @@ budgets:
   max_concurrent_runs: 20
 policy:
   require_human_approval_for_external_workers: true
-  default_sandbox_profile: gvisor
+  default_sandbox_profile: sandboxed

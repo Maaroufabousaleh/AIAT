@@ -105,10 +105,18 @@ pins:
     reason: "A native Firecracker binary and measured host profile are not present in the current evidence environment; direct Firecracker is not an AIAT policy class."
   - id: kata-containers
     kind: host-vm-sandbox-runtime
-    version: null
-    status: unavailable
+    version: "4.2.0"
+    status: locked
     scope: vm-isolated-worker-sandbox
-    reason: "No Kata runtime/profile is registered or certified in the current WSL2 environment; vm_isolated remains optional and fail-closed."
+    source: https://github.com/kata-containers/kata-containers/releases/tag/4.2.0
+    archive_sha256: b828904fa3f1e49ddd7dc799c72cb1503cd1e772d354c3987c8d4189b2a623a8
+    vmm: qemu
+    runtime_provider: runtime-rs
+    assertions:
+      - {file: scripts/bootstrap-dev-host.sh, contains: 'KATA_VERSION="${AIAT_KATA_VERSION:-4.2.0}"'}
+      - {file: scripts/bootstrap-dev-host.sh, contains: 'KATA_ARCHIVE_SHA256="${AIAT_KATA_ARCHIVE_SHA256:-b828904fa3f1e49ddd7dc799c72cb1503cd1e772d354c3987c8d4189b2a623a8}"'}
+      - {file: scripts/bootstrap-dev-host.sh, contains: 'KATA_VMM="qemu"'}
+    reason: "Pinned Kata runtime-rs/QEMU is installed and guest-smoke verified by the WSL development bootstrap; native-Linux release certification remains separate."
   - id: skillspector
     kind: security-cli
     version: null

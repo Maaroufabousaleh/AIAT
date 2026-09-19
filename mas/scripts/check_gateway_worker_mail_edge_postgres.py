@@ -1483,7 +1483,7 @@ async def _run(
             "external_provider_transient_recovery": (
                 "checked" if live_provider and provider_recovery else "not_checked"
             ),
-            "sandbox_runtime_gvisor_or_firecracker": "not_checked",
+            "sandbox_runtime_sandboxed_or_vm_isolated": "not_checked",
         },
         "licence_metadata_is_gate": False,
     }

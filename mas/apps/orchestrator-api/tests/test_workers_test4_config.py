@@ -94,7 +94,7 @@ def _worker_row(
 @pytest.mark.anyio
 async def test_register_worker_with_all_fields_succeeds(client):
     """POST /capabilities/workers with full config → 201, all fields reflected."""
-    row = _worker_row()
+    row = _worker_row(sandbox_profile="sandboxed")
     storage = MagicMock()
     storage.register_worker = AsyncMock(return_value=row)
     _patch(storage)
@@ -105,7 +105,7 @@ async def test_register_worker_with_all_fields_succeeds(client):
             "name": "code_reviewer",
             "adapter_type": "process",
             "adapter_config": {"entrypoint": "CodeReviewerAgent"},
-            "sandbox_profile": "restricted",
+            "sandbox_profile": "sandboxed",
             "capability_ids": [str(CAP_ID)],
             "team_id": "dept_qa",
             "source_repo": "https://github.com/example/code-reviewer",
@@ -117,7 +117,7 @@ async def test_register_worker_with_all_fields_succeeds(client):
     body = resp.json()
     assert body["name"] == "code_reviewer"
     assert body["status"] == "ACTIVE"
-    assert body["sandbox_profile"] == "restricted"
+    assert body["sandbox_profile"] == "sandboxed"
     assert body["source_repo"] == "https://github.com/example/code-reviewer"
     assert body["version_pin"] == "v1.2.3"
     assert body["update_policy"] == "manual"
@@ -149,6 +149,28 @@ async def test_register_worker_missing_adapter_type_returns_422(client):
         json={"name": "code_reviewer"},  # missing adapter_type
     )
     assert resp.status_code == 422
+
+
+@pytest.mark.anyio
+async def test_register_external_worker_rejects_trusted_runc_profile(client):
+    """External candidates cannot bypass the required sandbox boundary."""
+    storage = MagicMock()
+    _patch(storage)
+
+    resp = await client.post(
+        "/capabilities/workers",
+        json={
+            "name": "unsafe-external-worker",
+            "adapter_type": "process",
+            "sandbox_profile": "trusted",
+            "source_repo": "https://github.com/example/unsafe-worker",
+            "version_pin": "v1.0.0",
+        },
+    )
+
+    assert resp.status_code == 422
+    assert "trusted/runc" in resp.text
+    storage.register_worker.assert_not_called()
 
 
 # ── 2. Worker appears in registry listing ─────────────────────────────────────
@@ -734,7 +756,7 @@ async def test_reclassify_worker_updates_entrypoint(client):
 async def test_worker_full_lifecycle(client):
     """Integration: register → verify listing → update config → deactivate → reactivate."""
     # Step 1: Register
-    registered = _worker_row()
+    registered = _worker_row(sandbox_profile="sandboxed")
     storage = MagicMock()
     storage.register_worker = AsyncMock(return_value=registered)
     _patch(storage)
@@ -744,7 +766,7 @@ async def test_worker_full_lifecycle(client):
         json={
             "name": "code_reviewer",
             "adapter_type": "process",
-            "sandbox_profile": "restricted",
+            "sandbox_profile": "sandboxed",
             "source_repo": "https://github.com/example/code-reviewer",
             "version_pin": "v1.2.3",
             "update_policy": "manual",

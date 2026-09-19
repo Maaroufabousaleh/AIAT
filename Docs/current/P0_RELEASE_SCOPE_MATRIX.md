@@ -1,6 +1,6 @@
 # P0 Release-Scope and External-Prerequisite Matrix
 
-**Updated:** 2026-09-13
+**Updated:** 2026-09-19
 **Decision owner:** personal operator
 **Authority:** [AIAT target programme](../../AIAT_TARGET_PROGRAMME.md), [roadmap](../../ROADMAP.md), [P0 status](P0_RELEASE_INTEGRITY_STATUS.md), and [P0 plan](plans/P0_RELEASE_INTEGRITY_PLAN.md)
 
@@ -60,9 +60,11 @@ clean-clone static ledger certificate with 63/63 checks passing and zero
 changed paths. The certificate is scalar-only and does not substitute for
 native-host, provider, live, pending-evidence, or activation gates.
 
-The latest host-safe local Compose ledger remains a scalar summary of 79/85
-passes, 0 failures, 6 blocked checks, and 4 pending items. The retained
-release evidence is [`release_ledger_live_compose_local_current.json`](../../mas/docs/provenance/release_ledger_live_compose_local_current.json).
+The latest host-safe local Compose ledger is a scalar summary of 74 passes, 0
+failures, 10 blocked checks, and 5 not-in-scope checks across 89 checks. The
+current scalar result is retained in the development-host readiness artifact
+[`dev_host_readiness.json`](../../mas/docs/provenance/dev_host_readiness.json)
+and was produced through the dedicated `aiat-wsl` Docker daemon.
 The aggregate is intentionally not reinterpreted by this matrix; a later
 ledger commit may reclassify rows only after the operator signs the scope
 choices below.
@@ -166,8 +168,8 @@ classification or the global `NO-RELEASE` decision.
 | Capability / gate | Current evidence and blocker class | Proposed current classification | Operator action before resuming release work |
 | --- | --- | --- | --- |
 | Native-Linux certification host | WSL2 remains the local environment. Retained native Ubuntu GitHub-hosted evidence from run `32541110299` proves the runsc sandbox path, but does not certify a persistent/operator-controlled release host or the remaining native release checks. **Infrastructure/environment.** | `REQUIRED_FOR_RELEASE` | Use the retained gVisor artifact as evidence, then run the remaining native release checks on an accepted host if the release rule requires one. `ubuntu-slim` is not acceptable; do not rerun unchanged gVisor CI evidence. |
-| Default gVisor worker sandbox (`runsc`) | The target programme requires gVisor as the default external-worker sandbox; the retained native Ubuntu artifact [`native_gvisor_certification_live.json`](../../mas/docs/provenance/native_gvisor_certification_live.json) records `runsc` registration, digest-pinned smoke, sandbox, cleanup, and zero-residue PASS in run `32541110299`. WSL2 Docker Desktop still cannot register the WSL-installed runtime. **Infrastructure/runtime evidence.** | `REQUIRED_FOR_RELEASE` | Treat the retained native CI certificate as the current gVisor evidence. Keep the local WSL diagnostic and broader native-host checks separate; no silent `runc` fallback is permitted. |
-| Kata `vm_isolated` high-risk/gVisor-incompatible isolation | The target architecture uses Kata as the high-risk policy provider; no certified Kata runtime/profile or live VM-capable host is available in the current WSL2 environment. **Infrastructure/conditional.** | `OPTIONAL_UNVERIFIED` | Keep `vm_isolated` workers disabled for this release. Promote to `REQUIRED_FOR_RELEASE` only if the operator includes that tier in scope, then provide Kata runtime/VMM, VM-capable host, smoke/network, cleanup, and recovery evidence. |
+| Default gVisor worker sandbox (`runsc`) | The target programme requires gVisor as the default external-worker sandbox; the retained native Ubuntu artifact [`native_gvisor_certification_live.json`](../../mas/docs/provenance/native_gvisor_certification_live.json) records `runsc` registration, digest-pinned smoke, sandbox, cleanup, and zero-residue PASS in run `32541110299`. The current WSL2 development host independently registers pinned `runsc` and passes its digest-pinned smoke through the dedicated `aiat-wsl` daemon. **Infrastructure/runtime evidence.** | `REQUIRED_FOR_RELEASE` | Treat the retained native CI certificate as the release gVisor evidence and the WSL result as development evidence. Keep broader native-host checks separate; no silent `runc` fallback is permitted. |
+| Kata `vm_isolated` high-risk/gVisor-incompatible isolation | The target architecture uses Kata as the canonical high-risk policy provider. The current WSL2 development host registers pinned Kata runtime-rs/QEMU and passes a bounded guest-kernel smoke, proving `vm_isolated` is available for development. **Infrastructure/conditional.** | `OPTIONAL_UNVERIFIED` | Keep the row outside the current native release certificate until a supported native/KVM-capable host provides Kata runtime/VMM, network, cleanup, recovery, and release evidence. A host without Kata remains unschedulable for `vm_isolated`; it must not downgrade to gVisor or runc. |
 | Direct Firecracker compatibility path | The legacy launch contract is statically valid, but no launcher/binary/KVM evidence is present. Direct Firecracker is not an AIAT policy class and is not required for `vm_isolated` when Kata selects another VMM. **Infrastructure/conditional.** | `DEFERRED` | Do not activate direct Firecracker. Retain its contract for compatibility/benchmarking or certify it only as a selected Kata host VMM with an explicit operator decision. |
 | Deployment image identity, SBOM, scan, and clean native build | Local image observations exist, but deployment-supplied immutable refs, native build reconciliation, SBOM/scan artifacts, and vulnerability dispositions are not complete. **Infrastructure/operator evidence.** | `REQUIRED_FOR_RELEASE` | Provide the ten immutable deployment refs and matching SBOM/scan/disposition artifacts on the certification host. |
 | Provider-managed object-store SSE/KMS and external key custody | The OCI-native adapter and deterministic mocked contract pass; no provider target, bucket customer-managed key, custody, rotation, or live read-back evidence is configured. **External configuration.** | `REQUIRED_FOR_RELEASE` | Supply the real OCI Object Storage + Vault/KMS target and governed auth reference, then run the live adapter for bucket/key identity, PUT/read/checksum, multipart/abort, provider metadata, delete, and zero residue. Do not claim the fixture as live evidence. |
@@ -205,8 +207,9 @@ The certification host must provide native Linux, Docker/Compose, registered
 `vm_isolated` is conditional: if promoted, the host must additionally provide
 `/dev/kvm` or another supported virtualization path, a pinned Kata runtime and
 VMM profile, immutable worker images, bounded network/filesystem policy, and
-cleanup/recovery evidence. No Kata runtime value is currently configured in
-the repository. Direct Firecracker is not required for this class; it may be
+cleanup/recovery evidence. The current WSL development host has a pinned Kata
+runtime-rs/QEMU configuration and a passing guest-kernel smoke; this is local
+development evidence, not native release certification. Direct Firecracker is not required for this class; it may be
 evaluated only as a selected Kata VMM or explicit compatibility benchmark.
 
 ### OCI Object Storage plus Vault/KMS proposal

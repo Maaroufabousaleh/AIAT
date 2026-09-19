@@ -22,6 +22,6 @@ capabilities:
     description: Evaluate test logs, browser screenshots, coverage, and release readiness evidence.
     required_tools: [file_read, web_search, browser_screenshot, blob.upload]
 sandbox:
-  profile: gvisor
+  profile: sandboxed
   network_mode: egress-allowlist
   egress_allowlist: [api.github.com:443]

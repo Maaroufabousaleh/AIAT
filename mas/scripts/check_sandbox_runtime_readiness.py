@@ -3,8 +3,10 @@
 Static mode reconciles worker sandbox declarations with the hardened runtime
 contract. ``--live`` performs a non-secret Docker Engine inspection and exits
 with code 2 when Docker or the required development runtime is unavailable.
-The development profile requires gVisor/runsc for ``sandboxed`` workers;
-Kata is an optional ``vm_isolated`` provider and is never a silent fallback.
+The development profile requires gVisor/runsc for ``sandboxed`` workers and
+uses Kata runtime-rs/QEMU for ``vm_isolated`` workers when the host is capable.
+Kata is never a silent fallback and the selected Kata VMM is host metadata,
+not a worker policy value.
 The live check does not claim a worker canary, network negative matrix, or
 native-Linux release certification. Pass ``--smoke --image`` with an
 immutable image reference for an explicit, bounded smoke command.
@@ -14,10 +16,14 @@ Licence/restriction metadata is outside this operational check.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
+import platform
+import re
 import shutil
 import subprocess
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +51,27 @@ OPENCODE_NETWORK = "internal"
 OPENCODE_MAX_MEMORY_BYTES = 1024 * 1024 * 1024
 OPENCODE_MAX_CPUS = 1.0
 OPENCODE_MAX_PIDS = 256
+KATA_RUNTIME_NAME = os.environ.get("AIAT_KATA_RUNTIME_NAME", "kata")
+KATA_INSTALL_ROOT = Path(os.environ.get("AIAT_KATA_INSTALL_ROOT", "/opt/kata"))
+KATA_RUNTIME_SHIM = Path(
+    os.environ.get(
+        "AIAT_KATA_RUNTIME_SHIM",
+        "/opt/kata/runtime-rs/bin/containerd-shim-kata-v2",
+    )
+)
+KATA_RUNTIME_CONFIG = Path(
+    os.environ.get(
+        "AIAT_KATA_RUNTIME_CONFIG",
+        "/opt/kata/share/defaults/kata-containers/runtime-rs/configuration-qemu-runtime-rs.toml",
+    )
+)
+KATA_QEMU_BINARY = Path(os.environ.get("AIAT_KATA_QEMU_BINARY", "/opt/kata/bin/qemu-system-x86_64"))
+KATA_VIRTIOFS_BINARY = KATA_INSTALL_ROOT / "libexec" / "virtiofsd"
+KATA_GUEST_IMAGE = Path(
+    os.environ.get("AIAT_KATA_GUEST_IMAGE", "/opt/kata/share/kata-containers/kata-containers.img")
+)
+KATA_VERSION_FILE = KATA_INSTALL_ROOT / "VERSION"
+DIGEST_RE = re.compile(r"@sha256:[0-9a-fA-F]{64}$")
 
 
 def _sandbox_value(manifest: WorkerManifest, name: str, default: Any = None) -> Any:
@@ -251,9 +278,16 @@ def _docker_runtimes() -> tuple[set[str], str | None]:
     return {str(name) for name in value}, None
 
 
-def _run_smoke(image: str, *, runtime: str) -> tuple[bool, str]:
-    if "@sha256:" not in image:
+def _validate_digest_image(image: str | None) -> tuple[bool, str]:
+    if not image or not DIGEST_RE.search(image.strip()):
         return False, "smoke image must be pinned by an OCI digest"
+    return True, ""
+
+
+def _run_smoke(image: str, *, runtime: str) -> tuple[bool, str]:
+    valid, reason = _validate_digest_image(image)
+    if not valid:
+        return False, reason
     runtime_name = str(runtime or "").strip().lower()
     if not runtime_name:
         return False, "smoke runtime is required"
@@ -284,10 +318,129 @@ def _run_smoke(image: str, *, runtime: str) -> tuple[bool, str]:
     )
 
 
+def _kata_host_prerequisites() -> dict[str, Any]:
+    """Inspect the host-side Kata runtime-rs/QEMU installation.
+
+    Package/archive presence is deliberately insufficient.  A Kata host must
+    have the selected runtime inputs and a usable KVM device before a guest
+    smoke can be considered.
+    """
+
+    paths = {
+        "runtime_shim": KATA_RUNTIME_SHIM,
+        "runtime_config": KATA_RUNTIME_CONFIG,
+        "qemu_binary": KATA_QEMU_BINARY,
+        "virtiofsd": KATA_VIRTIOFS_BINARY,
+        "guest_image": KATA_GUEST_IMAGE,
+    }
+    # The dedicated Docker daemon launches these root-owned host files.  The
+    # readiness process may be the unprivileged operator and therefore cannot
+    # use its own execute bit as a proxy for daemon access; the guest smoke is
+    # the authoritative execution check.
+    missing = [name for name, path in paths.items() if not path.is_file()]
+    kvm = Path("/dev/kvm")
+    kvm_present = kvm.exists()
+    kvm_readable = os.access(kvm, os.R_OK)
+    kvm_writable = os.access(kvm, os.W_OK)
+    version = ""
+    with contextlib.suppress(OSError):
+        version = KATA_VERSION_FILE.read_text(encoding="utf-8").strip()
+    result: dict[str, Any] = {
+        "vmm": "qemu",
+        "runtime_version": version or None,
+        "runtime_shim": str(KATA_RUNTIME_SHIM),
+        "runtime_config": str(KATA_RUNTIME_CONFIG),
+        "qemu_binary": str(KATA_QEMU_BINARY),
+        "guest_image": str(KATA_GUEST_IMAGE),
+        "kvm_present": kvm_present,
+        "kvm_readable": kvm_readable,
+        "kvm_writable": kvm_writable,
+        "missing_inputs": missing,
+    }
+    if missing:
+        result.update(status="FAILED", reason="Kata runtime-rs/QEMU inputs are incomplete")
+    elif not kvm_present:
+        result.update(status="UNAVAILABLE_ON_THIS_HOST", reason="Kata QEMU requires usable /dev/kvm")
+    else:
+        # The AIAT Docker daemon is a root-owned host service.  The operator
+        # shell may not have refreshed its supplementary kvm group yet; the
+        # guest smoke below is the authoritative proof that the daemon can
+        # actually open /dev/kvm.
+        result["kvm_access"] = "direct" if kvm_readable and kvm_writable else "docker_daemon_root"
+        result.update(status="READY", reason="Kata runtime-rs/QEMU inputs and /dev/kvm are ready for guest smoke")
+    return result
+
+
+def _run_kata_smoke(image: str, *, runtime: str = KATA_RUNTIME_NAME) -> tuple[bool, str, dict[str, Any]]:
+    """Run a bounded Kata guest smoke and prove guest-kernel execution."""
+
+    valid, reason = _validate_digest_image(image)
+    if not valid:
+        return False, reason, {}
+    runtime_name = str(runtime or "").strip().lower()
+    if not runtime_name or (runtime_name != "kata" and not runtime_name.startswith("kata-")):
+        return False, "Kata smoke requires a Kata Docker runtime", {}
+    name = f"aiat-kata-readiness-{uuid.uuid4().hex[:12]}"
+    create = [
+        *_docker_command(),
+        "create",
+        "--name",
+        name,
+        f"--runtime={runtime_name}",
+        "--network=none",
+        "--read-only",
+        "--cap-drop=ALL",
+        "--security-opt=no-new-privileges",
+        "--pids-limit=64",
+        "--memory=128m",
+        "--cpus=0.25",
+        image,
+        "/bin/sh",
+        "-c",
+        "sleep 10",
+    ]
+    container_id = ""
+    evidence: dict[str, Any] = {"runtime": runtime_name, "image": image}
+    try:
+        created = _run(create, timeout=60.0)
+        if created.returncode != 0 or not created.stdout.strip():
+            return False, "Kata guest container creation failed", evidence
+        container_id = created.stdout.strip().splitlines()[-1]
+        inspected = _run(
+            [*_docker_command(), "inspect", "--format", "{{.HostConfig.Runtime}}", container_id],
+            timeout=20.0,
+        )
+        runtime_seen = inspected.stdout.strip() if inspected.returncode == 0 else ""
+        evidence["runtime_seen"] = runtime_seen
+        if runtime_seen != runtime_name:
+            return False, "Kata smoke did not retain the requested Docker runtime", evidence
+        started = _run([*_docker_command(), "start", container_id], timeout=30.0)
+        if started.returncode != 0:
+            return False, "Kata guest container failed to start", evidence
+        guest = _run([*_docker_command(), "exec", container_id, "/bin/uname", "-r"], timeout=30.0)
+        guest_kernel = guest.stdout.strip() if guest.returncode == 0 else ""
+        host_kernel = platform.release()
+        evidence["guest_kernel"] = guest_kernel or None
+        evidence["host_kernel"] = host_kernel
+        if not guest_kernel or guest_kernel == host_kernel:
+            return False, "Kata smoke did not prove a distinct guest kernel", evidence
+        waited = _run([*_docker_command(), "wait", container_id], timeout=30.0)
+        if waited.returncode != 0:
+            return False, "Kata guest container did not complete cleanly", evidence
+        return True, f"Kata ({runtime_name}) QEMU guest smoke completed", evidence
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return False, f"Kata smoke command unavailable ({type(exc).__name__})", evidence
+    finally:
+        if container_id:
+            with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+                _run([*_docker_command(), "rm", "-f", container_id], timeout=20.0)
+
+
 def inspect_live(
     *,
     smoke: bool = False,
     image: str | None = None,
+    kata_image: str | None = None,
     require_firecracker: bool = False,
     require_kata: bool = False,
     check_kata: bool = False,
@@ -295,19 +448,22 @@ def inspect_live(
     report: dict[str, Any] = {
         "schema_version": SANDBOX_SCHEMA,
         "mode": "live",
-        "scope": "Docker runtime registration",
+        "scope": "Docker runtime registration and selected sandbox smoke",
         "status": "blocked",
         "errors": [],
+        "warnings": [],
         "sandbox_profile": "sandboxed",
         "sandbox_class": "sandboxed",
         "smoke": "not_checked",
-        "kata": "optional_unavailable",
-        "vm_isolated": "optional_unavailable",
+        "kata_status": "NOT_SELECTED",
+        "vm_isolated_status": "NOT_SELECTED",
+        "kata": "not_selected",
+        "vm_isolated": "not_selected",
+        "kata_smoke": "not_checked",
         "firecracker": "superseded",
     }
     runtimes, error = _docker_runtimes()
     report["registered_runtimes"] = sorted(runtimes)
-    smoke_reason: str | None = None
     if error:
         report["reason"] = error
         return report
@@ -315,26 +471,89 @@ def inspect_live(
         runtime for runtime in runtimes if runtime == "kata" or runtime.startswith("kata-")
     )
     report["kata_runtimes"] = kata_runtimes
-    if kata_runtimes:
-        report["kata"] = "available"
-        report["vm_isolated"] = "available"
-    elif check_kata or require_kata:
-        report["kata"] = "optional_unavailable"
-        report["vm_isolated"] = "optional_unavailable"
-    if require_kata:
-        report["sandbox_profile"] = "vm_isolated"
-        report["sandbox_class"] = "vm_isolated"
-        report["kata"] = "available" if kata_runtimes else "blocked_missing_runtime"
-        report["vm_isolated"] = report["kata"]
+    if check_kata or require_kata:
         if not kata_runtimes:
-            report["reason"] = "Kata was required but no Kata Docker runtime is registered"
-            return report
-        selected_runtime = kata_runtimes[0]
-    elif "runsc" not in runtimes:
+            state = "REQUIRED_UNAVAILABLE" if require_kata else "OPTIONAL_UNAVAILABLE"
+            report["kata_status"] = state
+            report["vm_isolated_status"] = state
+            report["kata"] = state.lower()
+            report["vm_isolated"] = state.lower()
+            if require_kata:
+                report["sandbox_profile"] = "vm_isolated"
+                report["sandbox_class"] = "vm_isolated"
+                report["reason"] = "Kata was required but no Kata Docker runtime is registered"
+                return report
+        else:
+            selected_kata_runtime = kata_runtimes[0]
+            prerequisites = _kata_host_prerequisites()
+            report["kata_prerequisites"] = prerequisites
+            if prerequisites.get("status") != "READY":
+                state = (
+                    "REQUIRED_UNAVAILABLE"
+                    if require_kata and prerequisites.get("status") == "UNAVAILABLE_ON_THIS_HOST"
+                    else "FAILED"
+                    if prerequisites.get("status") == "FAILED"
+                    else "OPTIONAL_UNAVAILABLE"
+                )
+                report["kata_status"] = state
+                report["vm_isolated_status"] = state
+                report["kata"] = state.lower()
+                report["vm_isolated"] = state.lower()
+                report["reason"] = str(prerequisites.get("reason", "Kata host prerequisites are unavailable"))
+                if require_kata:
+                    report["sandbox_profile"] = "vm_isolated"
+                    report["sandbox_class"] = "vm_isolated"
+                    return report
+                if state == "FAILED":
+                    report["warnings"].append(
+                        str(report.get("reason", "Kata readiness failed; vm_isolated remains unavailable"))
+                    )
+            else:
+                report["kata_vmm"] = str(prerequisites.get("vmm", "qemu"))
+                kata_smoke_image = kata_image or image
+                if not kata_smoke_image:
+                    state = "REQUIRED_UNAVAILABLE" if require_kata else "OPTIONAL_UNAVAILABLE"
+                    report["kata_status"] = state
+                    report["vm_isolated_status"] = state
+                    report["kata"] = state.lower()
+                    report["vm_isolated"] = state.lower()
+                    report["reason"] = "Kata readiness requires --kata-image or --image with an immutable digest"
+                    if require_kata:
+                        report["sandbox_profile"] = "vm_isolated"
+                        report["sandbox_class"] = "vm_isolated"
+                        return report
+                else:
+                    passed, kata_reason, kata_evidence = _run_kata_smoke(
+                        kata_smoke_image,
+                        runtime=selected_kata_runtime,
+                    )
+                    report["kata_smoke"] = "pass" if passed else "fail"
+                    report["kata_smoke_evidence"] = kata_evidence
+                    if passed:
+                        report["kata_status"] = "AVAILABLE"
+                        report["vm_isolated_status"] = "AVAILABLE"
+                        report["kata"] = "available"
+                        report["vm_isolated"] = "available"
+                        report["kata_guest_kernel"] = kata_evidence.get("guest_kernel")
+                    else:
+                        report["kata_status"] = "FAILED"
+                        report["vm_isolated_status"] = "FAILED"
+                        report["kata"] = "failed"
+                        report["vm_isolated"] = "failed"
+                        report["reason"] = kata_reason
+                        report["warnings"].append(kata_reason)
+                    if require_kata:
+                        report["sandbox_profile"] = "vm_isolated"
+                        report["sandbox_class"] = "vm_isolated"
+                        report["sandbox_runtime"] = selected_kata_runtime
+                        report["smoke"] = "pass" if passed else "fail"
+                        report["status"] = "pass" if passed else "fail"
+                        return report
+
+    if "runsc" not in runtimes:
         report["reason"] = "gVisor runsc runtime is not registered; no runc fallback is permitted"
         return report
-    else:
-        selected_runtime = "runsc"
+    selected_runtime = "runsc"
     report["sandbox_runtime"] = selected_runtime
     if require_firecracker:
         # Kept solely for callers that explicitly request the historical
@@ -349,7 +568,6 @@ def inspect_live(
             report["reason"] = "--smoke requires --image with an immutable digest"
             return report
         passed, reason = _run_smoke(image, runtime=selected_runtime)
-        smoke_reason = reason
         report["smoke"] = "pass" if passed else "fail"
         if not passed:
             report["status"] = "fail"
@@ -360,7 +578,7 @@ def inspect_live(
     report["reason"] = (
         f"{selected_runtime} is registered; sandbox smoke/canary/network negative evidence remains separate"
         if not smoke
-        else smoke_reason
+        else reason
     )
     return report
 
@@ -372,6 +590,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--live", action="store_true", help="inspect the Docker runtime registry")
     parser.add_argument("--smoke", action="store_true", help="run a bounded smoke command using the selected runtime")
     parser.add_argument("--image", help="immutable OCI image for --smoke")
+    parser.add_argument(
+        "--kata-image",
+        help="immutable OCI image for the Kata guest readiness smoke; defaults to --image",
+    )
     parser.add_argument(
         "--require-firecracker",
         action="store_true",
@@ -399,6 +621,7 @@ def main(argv: list[str] | None = None) -> int:
             "live": inspect_live(
                 smoke=args.smoke,
                 image=args.image,
+                kata_image=args.kata_image,
                 require_firecracker=args.require_firecracker,
                 require_kata=args.require_kata,
                 check_kata=args.check_kata,

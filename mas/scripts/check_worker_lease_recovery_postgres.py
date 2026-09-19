@@ -412,7 +412,7 @@ async def _run(dsn: str | None) -> dict[str, Any]:
             "canonical_host_registry": "not_checked",
             "placement_constraints": "not_checked",
             "multi_host_scheduler": "not_checked",
-            "gvisor_or_firecracker_host_certification": "not_checked",
+            "sandboxed_or_vm_isolated_host_certification": "not_checked",
             "real_host_loss_or_split_brain": "not_checked",
         },
         "licence_metadata_is_gate": False,

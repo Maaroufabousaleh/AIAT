@@ -22,6 +22,6 @@ capabilities:
     description: Evaluate cost posture, expected usage, and budget risk for candidate workers or tools.
     required_tools: [kpi.compute, kpi.query_history, web_search, blob.upload]
 sandbox:
-  profile: standard
+  profile: trusted
   network_mode: egress-allowlist
   egress_allowlist: [api.github.com:443]

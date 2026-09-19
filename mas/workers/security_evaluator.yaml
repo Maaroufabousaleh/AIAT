@@ -27,6 +27,6 @@ capabilities:
     description: Evaluate candidate code or worker packages with the configured Semgrep, SkillSpector, and TruffleHog scanner adapters plus sandbox evidence.
     required_tools: [file_read, repo.read, repo.search, security.scan, web_search, blob.upload]
 sandbox:
-  profile: gvisor
+  profile: sandboxed
   network_mode: egress-allowlist
   egress_allowlist: [api.github.com:443]

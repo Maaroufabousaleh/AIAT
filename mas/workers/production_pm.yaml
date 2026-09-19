@@ -24,6 +24,6 @@ capabilities:
     description: Route research and document-fetch subtasks to approved workers.
     required_tools: [web_search, web_fetch, blob.upload]
 sandbox:
-  profile: restricted
+  profile: trusted
   network_mode: egress-allowlist
   egress_allowlist: [api.github.com:443]

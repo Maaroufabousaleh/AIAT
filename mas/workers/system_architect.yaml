@@ -24,6 +24,6 @@ capabilities:
     description: Produce system architecture, interfaces, constraints, and Mermaid diagrams.
     required_tools: [document.get_latest, document.list, web_search, web_fetch, blob.upload]
 sandbox:
-  profile: standard
+  profile: trusted
   network_mode: egress-allowlist
   egress_allowlist: [api.github.com:443]

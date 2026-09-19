@@ -26,7 +26,7 @@ aiat_bindings:
   model_gateway_url: http://litellm:4000
   model_gateway_auth_scope: workflow_run_generated
   workspace_policy: isolated_run_scoped
-  sandbox_profile: gvisor
+  sandbox_profile: sandboxed
   network_policy:
     mode: egress-allowlist
     allowlist: [litellm:4000, tool-service:8002]

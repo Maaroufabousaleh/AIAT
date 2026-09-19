@@ -6,12 +6,12 @@ from uuid import UUID
 
 import httpx
 import pytest
-
 from orchestrator_api.main import (
-    _ceo_operator_intent_is_api_owned,
     _ceo_action_evidence,
     _ceo_fallback_evidence,
+    _ceo_operator_intent_is_api_owned,
     _ceo_response_evidence,
+    _ceo_stream_instruction,
     _department_for_hiring_text,
     _handle_ceo_confirmation_intent,
     _handle_ceo_credential_intent,
@@ -20,7 +20,7 @@ from orchestrator_api.main import (
     _handle_ceo_system_intent,
     _handle_ceo_worker_intent,
     _queue_ceo_confirmation,
-    _ceo_stream_instruction,
+    _sandbox_for_hiring_text,
     _target_department_for_reclassification_text,
     _worker_name_from_hiring_text,
 )
@@ -60,6 +60,14 @@ def test_hiring_worker_name_uses_explicit_name_when_provided():
         _worker_name_from_hiring_text(instruction, "https://github.com/example/opencode")
         == "coding_specialist"
     )
+
+
+def test_external_hiring_never_selects_trusted_runc() -> None:
+    assert _sandbox_for_hiring_text("hire this worker with trusted access") == "sandboxed"
+    assert _sandbox_for_hiring_text("hire this worker with standard isolation") == "sandboxed"
+    assert _sandbox_for_hiring_text("hire this worker with restricted isolation") == "sandboxed"
+    assert _sandbox_for_hiring_text("hire this worker with gvisor") == "sandboxed"
+    assert _sandbox_for_hiring_text("hire this worker with firecracker") == "vm_isolated"
 
 
 @pytest.mark.anyio

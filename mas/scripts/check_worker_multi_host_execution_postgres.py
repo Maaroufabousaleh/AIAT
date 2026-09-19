@@ -7,7 +7,7 @@ host claim for one run, and replays both the terminal and alias idempotency
 requests without redispatch. It reopens Postgres and removes only its fixture
 namespace. It proves multi-host native adapter execution, host-specific lease
 admission, and bounded duplicate-effect protection; it does not claim gVisor,
-Firecracker, provider, remote-runtime, independent-machine, or outage-recovery
+sandboxed/vm_isolated runtime, provider, remote-runtime, independent-machine, or outage-recovery
 evidence.
 """
 
@@ -832,7 +832,7 @@ async def _run(dsn: str | None) -> dict[str, Any]:
             "durable_usage_artifact_trace_evidence": "checked",
             "binding_and_reservation_release": "checked",
             "postgres_connection_reopen": "checked",
-            "sandbox_runtime_gvisor_or_firecracker": "not_checked",
+            "sandbox_runtime_sandboxed_or_vm_isolated": "not_checked",
             "external_provider_or_remote_runtime": "not_checked",
             "host_loss_split_brain_recovery": "not_checked",
             "provider_backed_recovery": "not_checked",

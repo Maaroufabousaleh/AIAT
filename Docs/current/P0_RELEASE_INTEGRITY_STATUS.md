@@ -1,21 +1,20 @@
 # P0 Release Integrity Status
 
-**Updated:** 2026-09-15
+**Updated:** 2026-09-19
 
-## Current working-tree release snapshot — 2026-09-15
+## Current working-tree release snapshot — 2026-09-19
 
-The current static release ledger reports **64/64 pass** with the global
-decision **NO-RELEASE**. The authenticated local-Compose live sweep at
-`2026-09-15T12:11:27Z` reports **83/89 pass, 0 fail, 6 blocked**, and four
-pending evidence items. The blockers are native-host/environment,
- database migration-head reachability, deployment-image provenance,
- Kata `vm_isolated` host readiness, outbound mail lifecycle, and
-operator-selected self-improvement scope. The source migration head is
-`0045_worker_tool_effects`; read-only inspection of the currently running local
-Compose database reports `0042_worker_run_host_binding`, and no migration or
-service restart was performed. The migration-head guard is therefore a source
-PASS/live BLOCKED deployment check, not a claim that the running database is
-current.
+The current static release ledger remains **NO-RELEASE** because release
+evidence is intentionally broader than local development. The authenticated
+local-Compose live sweep at `2026-09-19T22:09:06Z` reports **74 pass, 0 fail,
+10 blocked, and 5 not-in-scope** across 89 checks. The source and running local
+Compose database are both at `0045_worker_tool_effects`; the normal Alembic
+path applied the pending local migrations. WSL2 Docker/Compose, gVisor/runsc,
+Kata runtime-rs/QEMU guest execution, local Compose, and the live network
+boundary pass for development. Remaining blocked rows are native-host,
+deployment-image, operator/provider/observability, runtime-catalogue, and
+selected live-worker evidence gates. Direct Firecracker is superseded and
+self-improvement remains deferred; neither is an ordinary development blocker.
 
 ## Current integrated status — 2026-09-09
 
@@ -189,7 +188,9 @@ explicit blocked outputs when Agent Server health never becomes ready.
 The [P0 release-scope and external-prerequisite matrix](P0_RELEASE_SCOPE_MATRIX.md)
 now records the frozen operator boundary. Native Linux and default gVisor are
 required for this release; Kata `vm_isolated` is an optional unverified
-high-risk/gVisor-incompatible class and direct Firecracker is compatibility-only.
+high-risk/gVisor-incompatible release class, although the current WSL2
+development host passes the pinned runtime-rs/QEMU guest smoke. Direct
+Firecracker is compatibility-only.
 Provider-managed KMS/SSE is release-required but still operator-target
  blocked; external mail is release-required only if email remains in scope;
  self-improvement is deferred for this release. Security dispositions and the

@@ -382,7 +382,7 @@ async def _run(
             "gateway_provider_dispatch": "checked" if passed and not injected_gateway else "not_checked",
             "durable_postgres_worker_evidence": "not_checked",
             "independent_host": "not_checked",
-            "sandbox_runtime_gvisor_or_firecracker": "not_checked",
+            "sandbox_runtime_sandboxed_or_vm_isolated": "not_checked",
             "provider_backed_recovery": "not_checked",
             "provider_mail_callback_and_bounce": "not_checked",
         },

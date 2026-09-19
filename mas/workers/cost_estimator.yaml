@@ -22,6 +22,6 @@ capabilities:
     description: Estimate implementation cost, budget risk, and contingency needs.
     required_tools: [kpi.compute, kpi.query_history, web_search, blob.upload]
 sandbox:
-  profile: standard
+  profile: trusted
   network_mode: egress-allowlist
   egress_allowlist: [api.github.com:443]

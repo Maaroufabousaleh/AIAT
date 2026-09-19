@@ -31,7 +31,7 @@ capabilities:
   required_tools:
   - web_search
 sandbox:
-  profile: restricted
+  profile: trusted
   filesystem: {}
   network_mode: egress-allowlist
   egress_allowlist:

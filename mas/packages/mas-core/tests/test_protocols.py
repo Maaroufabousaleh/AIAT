@@ -13,8 +13,8 @@ Covers:
 
 from __future__ import annotations
 
-import json
 import importlib.util
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
@@ -24,6 +24,7 @@ import yaml
 
 from mas_core.protocols import (
     MAX_PAYLOAD_BYTES,
+    WORKER_SDK_VERSION,
     AgentProfile,
     AgentRole,
     BlobRef,
@@ -63,7 +64,6 @@ from mas_core.protocols import (
     ToolResponse,
     WorkerCapabilityRecord,
     WorkerManifest,
-    WORKER_SDK_VERSION,
     WSAckFrame,
     WSMessageFrame,
     WSNackFrame,
@@ -1111,7 +1111,7 @@ class TestWorkerManifestModel:
             manifest = WorkerManifest.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
             assert manifest.metadata.evaluation_status == "pending"
             assert "placeholder" in manifest.metadata.tags
-            assert manifest.sandbox.profile == "gvisor"
+            assert manifest.sandbox.profile == "sandboxed"
 
 
 class TestProtocolContractVersioning:

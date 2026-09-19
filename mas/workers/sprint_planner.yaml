@@ -23,6 +23,6 @@ capabilities:
     description: Build sprint plans from issues, capacity, and team capability data.
     required_tools: [capability.search, capability.list_workers, kpi.query_history, blob.upload]
 sandbox:
-  profile: standard
+  profile: trusted
   network_mode: egress-allowlist
   egress_allowlist: [api.github.com:443]

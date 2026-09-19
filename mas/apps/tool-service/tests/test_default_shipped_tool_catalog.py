@@ -179,6 +179,9 @@ async def test_command_run_safe_fails_closed_without_sandbox(make_registry, tmp_
         "available": False,
         "configured": False,
         "reason": "TOOL_SANDBOX_COMMAND_not_configured",
+        "sandbox_profile": "sandboxed",
+        "sandbox_class": "sandboxed",
+        "sandbox_runtime": "runsc",
     }
 
 
@@ -214,9 +217,9 @@ async def test_command_run_safe_delegates_worker_command_to_gvisor_adapter(
     assert response.success is True
     assert captured["adapter_argv"] == ["sandbox-runner", "--json-stdin"]
     assert captured["payload"]["argv"] == ["pytest", "tests"]
-    assert captured["payload"]["profile"] == "gvisor"
+    assert captured["payload"]["profile"] == "sandboxed"
     assert captured["payload"]["network_mode"] == "egress-deny-all"
-    assert response.result["sandbox_profile"] == "gvisor"
+    assert response.result["sandbox_profile"] == "sandboxed"
 
 
 @pytest.mark.anyio
@@ -257,7 +260,9 @@ async def test_command_run_safe_reports_degraded_sandbox_output(
         "available": False,
         "configured": True,
         "backend": "sandbox_adapter",
-        "sandbox_profile": "gvisor",
+        "sandbox_profile": "sandboxed",
+        "sandbox_class": "sandboxed",
+        "sandbox_runtime": "runsc",
         "degraded": True,
         "reason": reason,
     }

@@ -4,7 +4,7 @@ The probe uses a deterministic AIAT-owned worker-plane host, a committed run
 binding, the real ``WorkerHostExecutor``, ``WorkerRunController``, and a native
 fixture adapter.  It proves host admission, Worker Run claiming, durable
 terminal evidence, binding release, connection-reopen read-back, and scoped
-cleanup.  It does not claim a real gVisor/Firecracker sandbox, a provider call,
+cleanup.  It does not claim a real sandboxed/vm_isolated runtime, a provider call,
 or a remote worker runtime.
 """
 
@@ -578,7 +578,7 @@ async def _run(dsn: str | None) -> dict[str, Any]:
             "binding_and_reservation_release": "checked",
             "postgres_connection_reopen": "checked",
             "payload_free_trace_projection": "checked",
-            "sandbox_runtime_gvisor_or_firecracker": "not_checked",
+            "sandbox_runtime_sandboxed_or_vm_isolated": "not_checked",
             "external_provider_or_remote_runtime": "not_checked",
             "provider_backed_recovery": "not_checked",
         },

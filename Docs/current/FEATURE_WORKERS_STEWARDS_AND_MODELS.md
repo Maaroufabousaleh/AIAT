@@ -778,7 +778,7 @@ response evidence.
 - Runtime catalogue and manifest reconciliation (`80e0ca3`): [`mas/packages/mas-core/mas_core/worker_registry/runtime_catalog.py`](../../mas/packages/mas-core/mas_core/worker_registry/runtime_catalog.py), [`mas/scripts/check_worker_reconciliation.py`](../../mas/scripts/check_worker_reconciliation.py), and [`test_worker_reconciliation.py`](../../mas/packages/mas-core/tests/test_worker_reconciliation.py). Static mode reconciles all 39 manifests and the read-only live mode compares persisted adapter/model/sandbox/source bindings without treating licence metadata as a gate; package availability, security, sandbox, canary, and live-run evidence remain separate.
 - Runtime readiness probe (`4c5fd68`): [`mas/scripts/check_worker_runtime_readiness.py`](../../mas/scripts/check_worker_runtime_readiness.py). Static mode reconciles all 39 manifests; the local Compose image import probe passes required LangGraph/CrewAI imports, while host-package, external-adapter, security, sandbox, canary, and live-run evidence remain separate.
 - Runtime install-profile contract (`9a10a4b`): [`mas/scripts/check_runtime_install_profile.py`](../../mas/scripts/check_runtime_install_profile.py). The `runtime-default` extra, lock metadata, runtime catalogue, and production Dockerfile install command reconcile to LangGraph `0.6.11` and CrewAI `1.6.1`.
-- Sandbox runtime readiness probe (`a24c554`): [`mas/scripts/check_sandbox_runtime_readiness.py`](../../mas/scripts/check_sandbox_runtime_readiness.py) and [`test_sandbox_runtime_readiness.py`](../../mas/packages/mas-core/tests/test_sandbox_runtime_readiness.py). Static reconciliation passes all 39 manifests with 10 hardened external workers; the dedicated WSL2 `aiat-wsl` Docker host now registers pinned `runsc 20260914.0` and passes the digest-pinned bounded smoke without a `runc` fallback. The separate retained native Ubuntu certificate [`native_gvisor_certification_live.json`](../../mas/docs/provenance/native_gvisor_certification_live.json) from workflow run `32541110299` passes `runsc` registration, smoke, sandbox, cleanup, and zero-residue checks; broader native-host and network-denial release evidence remain separate. Kata `vm_isolated` remains optional/unavailable on this WSL profile.
+- Sandbox runtime readiness probe (`a24c554`): [`mas/scripts/check_sandbox_runtime_readiness.py`](../../mas/scripts/check_sandbox_runtime_readiness.py) and [`test_sandbox_runtime_readiness.py`](../../mas/packages/mas-core/tests/test_sandbox_runtime_readiness.py). Static reconciliation passes all 39 manifests with 10 hardened external workers; the dedicated WSL2 `aiat-wsl` Docker host registers pinned `runsc 20260914.0` and Kata runtime-rs/QEMU 4.2.0, and both digest-pinned bounded smokes pass without a `runc` fallback. The separate retained native Ubuntu certificate [`native_gvisor_certification_live.json`](../../mas/docs/provenance/native_gvisor_certification_live.json) from workflow run `32541110299` passes `runsc` registration, smoke, sandbox, cleanup, and zero-residue checks; broader native-host, Kata release, and network-denial release evidence remain separate.
 - Runtime benchmark probe (`ad31793`, bounded endpoint hardening `4d61279`): [`mas/scripts/check_runtime_benchmarks.py`](../../mas/scripts/check_runtime_benchmarks.py), [`test_runtime_benchmarks.py`](../../mas/packages/mas-core/tests/test_runtime_benchmarks.py), and [`test_epsilon_runtimes.py`](../../mas/apps/orchestrator-api/tests/test_epsilon_runtimes.py). It runs third-party imports off the API event loop, enforces a capped timeout, and reports explicit `blocked`/`benchmark_timeout`/`benchmark_error` status when the API, package, validation, or dependency path is unavailable; a dependency dry-run does not certify a worker canary or rollback.
 - Runtime adapter conformance probe (`9a10a4b`): [`mas/scripts/check_runtime_adapter_conformance.py`](../../mas/scripts/check_runtime_adapter_conformance.py) and [`runtime_adapter_conformance_live.json`](../../mas/docs/provenance/runtime_adapter_conformance_live.json). Deterministic LangGraph/CrewAI fixtures pass manifest/message translation, bounded completion, health, and shutdown; package-import and worker-canary evidence remain separate.
 - MAF/MCP compatibility contract, isolated profile, and deterministic certification (`b937a89`, extending `fc528a8`): [`mas/docs/provenance/runtime_compatibility.yaml`](../../mas/docs/provenance/runtime_compatibility.yaml), [`mas/infra/runtime/maf/README.md`](../../mas/infra/runtime/maf/README.md), [`mas/infra/runtime/maf/requirements.txt`](../../mas/infra/runtime/maf/requirements.txt), [`mas/packages/mas-core/mas_core/worker_registry/maf_compatibility.py`](../../mas/packages/mas-core/mas_core/worker_registry/maf_compatibility.py), [`mas/packages/mas-core/mas_core/worker_registry/microsoft_agent_framework_adapter.py`](../../mas/packages/mas-core/mas_core/worker_registry/microsoft_agent_framework_adapter.py), [`mas/scripts/check_runtime_compatibility.py`](../../mas/scripts/check_runtime_compatibility.py), [`mas/scripts/check_maf_runtime.py`](../../mas/scripts/check_maf_runtime.py), and [`maf_runtime_certification.json`](../../mas/docs/provenance/maf_runtime_certification.json)
@@ -891,9 +891,11 @@ response evidence.
 - [x] Make the local deterministic diff reviewer the default and record all
   external code-review candidates in an explicit catalogue; exact external
   repository/revision/version pins and representative reviews remain open.
-- [x] Reconcile sandbox declarations and add a fail-closed gVisor runtime
-  registration probe. The current host reports no registered `runsc`, so no
-  weaker `runc` fallback is accepted.
+- [x] Reconcile sandbox declarations and add fail-closed gVisor and Kata
+  runtime registration probes. The current WSL host reports registered
+  `runsc` and `kata` runtimes with passing digest-pinned guest smokes; hosts
+  without a required runtime remain unschedulable and no weaker `runc`
+  fallback is accepted.
 - [x] Add the AIAT-owned direct Firecracker compatibility launch contract and
   [`check_firecracker_worker_pool.py`](../../mas/scripts/check_firecracker_worker_pool.py)
   (`5ed0a0b`). `FirecrackerLaunchSpec` validates immutable kernel/rootfs
@@ -903,7 +905,8 @@ response evidence.
   launcher and cannot silently fall back to Docker/runc. Static contract
   evidence passes; the current live readiness certificate is blocked because
   neither the launcher nor the Firecracker binary is available. It is not a
-  separate AIAT policy tier; future high-risk workers use Kata `vm_isolated`.
+  separate AIAT policy tier; high-risk or gVisor-incompatible workers use Kata
+  `vm_isolated` when the host passes its guest smoke.
 - [x] Preserve governance model provenance through AgentBase checkpoint
   shutdown/startup resumes and snapshot-bearing direct dispatch; the runtime
   resolves only an existing scoped snapshot and fails closed when it is
@@ -913,8 +916,10 @@ response evidence.
   Explicit direct-AgentBase compatibility fixtures remain unbound and are
   tracked separately from provider-backed evidence. Snapshot-bearing opt-in
   legacy CEO fallback is bound to the exact persisted decision.
-- [ ] Prove gVisor smoke/network behaviour and optional Firecracker with real
-  host evidence; these remain release gates.
+- [x] Prove the WSL development gVisor and Kata runtime smokes through the
+  host bootstrap and readiness checker. Native-Linux release-host, network
+  denial, independent-host, and recovery evidence remain release gates;
+  direct Firecracker remains historical compatibility evidence only.
 - [x] Add a deterministic real-controller lifecycle fixture for checkpoint persistence, pause/resume/checkpoint reference, cold cancellation, cold-crash failure normalization, lease expiry/requeue, and artifact/usage-before-terminal ordering; database, sandbox, live worker, canary, and rollback proof remain separate evidence gates.
 - [x] Add bounded local Postgres lease/recovery evidence (`a413997`) for claim
   exclusivity, owner-bound heartbeat renewal, one explicitly simulated host-loss

@@ -1,7 +1,8 @@
-"""Hardened gVisor adapter for worker-controlled commands.
+"""Hardened container adapter for worker-controlled commands.
 
-This executable intentionally requires a Docker daemon with the ``runsc``
-runtime registered. It never falls back to runc.
+This executable intentionally requires a Docker daemon with the runtime
+selected by the canonical sandbox class registered. It never falls back to
+runc.
 """
 
 from __future__ import annotations
@@ -38,8 +39,10 @@ def _read_payload() -> dict[str, Any]:
     return value
 
 
-def _runtime_probe(docker: str) -> tuple[bool, str]:
+def _runtime_probe(docker: str, runtime: str = "runsc") -> tuple[bool, str]:
     """Return a scalar runtime result without exposing Docker error text."""
+    runtime_name = str(runtime or "").strip().lower()
+    reason_prefix = "kata" if runtime_name == "kata" or runtime_name.startswith("kata-") else "gvisor"
     try:
         probe = subprocess.run(
             [docker, "info", "--format", "{{json .Runtimes}}"],
@@ -49,19 +52,20 @@ def _runtime_probe(docker: str) -> tuple[bool, str]:
             timeout=10,
         )
     except subprocess.TimeoutExpired:
-        return False, "gvisor_runtime_probe_timeout"
+        return False, f"{reason_prefix}_runtime_probe_timeout"
     except OSError:
-        return False, "gvisor_runtime_probe_failed"
+        return False, f"{reason_prefix}_runtime_probe_failed"
     if probe.returncode != 0:
-        return False, "gvisor_runtime_probe_failed"
+        return False, f"{reason_prefix}_runtime_probe_failed"
     try:
         runtimes = json.loads(probe.stdout)
     except json.JSONDecodeError:
-        return False, "gvisor_runtime_probe_invalid_response"
+        return False, f"{reason_prefix}_runtime_probe_invalid_response"
     if not isinstance(runtimes, dict):
-        return False, "gvisor_runtime_probe_invalid_response"
-    if "runsc" not in runtimes:
-        return False, "gvisor_runsc_runtime_not_available"
+        return False, f"{reason_prefix}_runtime_probe_invalid_response"
+    if runtime_name not in runtimes:
+        suffix = "runsc_runtime_not_available" if runtime_name == "runsc" else "runtime_not_available"
+        return False, f"{reason_prefix}_{suffix}"
     return True, ""
 
 
@@ -76,10 +80,11 @@ def execute(payload: dict[str, Any]) -> dict[str, Any]:
         sandbox_class = canonical_sandbox_class(profile)
     except ValueError as exc:
         raise ValueError("sandbox profile must be trusted, sandboxed, or vm_isolated") from exc
-    if sandbox_class != "sandboxed":
-        raise ValueError("the Docker sandbox runner only implements the sandboxed/gVisor class")
+    if sandbox_class == "trusted":
+        raise ValueError("trusted workloads must not use the untrusted Docker sandbox runner")
     if payload.get("network_mode") != "egress-deny-all":
         raise ValueError("only egress-deny-all is supported")
+    runtime_name = "runsc" if sandbox_class == "sandboxed" else "kata"
 
     argv = payload.get("argv")
     if not isinstance(argv, list) or not argv or not all(isinstance(v, str) for v in argv):
@@ -110,18 +115,20 @@ def execute(payload: dict[str, Any]) -> dict[str, Any]:
         return {
             "available": False,
             "configured": True,
-            "reason": "gvisor_docker_cli_not_available",
-            "sandbox_profile": profile,
+            "reason": f"{runtime_name}_docker_cli_not_available",
+            "sandbox_profile": sandbox_class,
             "sandbox_class": sandbox_class,
+            "sandbox_runtime": runtime_name,
         }
-    runtime_available, runtime_reason = _runtime_probe(docker)
+    runtime_available, runtime_reason = _runtime_probe(docker, runtime_name)
     if not runtime_available:
         return {
             "available": False,
             "configured": True,
             "reason": runtime_reason,
-            "sandbox_profile": profile,
+            "sandbox_profile": sandbox_class,
             "sandbox_class": sandbox_class,
+            "sandbox_runtime": runtime_name,
         }
 
     image = os.getenv("AIAT_SANDBOX_IMAGE", "mas/tool-service:latest")
@@ -135,7 +142,7 @@ def execute(payload: dict[str, Any]) -> dict[str, Any]:
         "--rm",
         "--name",
         container_name,
-        "--runtime=runsc",
+        f"--runtime={runtime_name}",
         "--network=none",
         "--read-only",
         "--cap-drop=ALL",
@@ -176,9 +183,10 @@ def execute(payload: dict[str, Any]) -> dict[str, Any]:
             return {
                 "available": False,
                 "configured": True,
-                "reason": "gvisor_container_launch_failed",
-                "sandbox_profile": profile,
+                "reason": f"{runtime_name}_container_launch_failed",
+                "sandbox_profile": sandbox_class,
                 "sandbox_class": sandbox_class,
+                "sandbox_runtime": runtime_name,
             }
         try:
             returncode: int | None = process.wait(timeout=timeout)
@@ -211,8 +219,9 @@ def execute(payload: dict[str, Any]) -> dict[str, Any]:
         "stderr_truncated": stderr_size > output_limit,
         "timed_out": timed_out,
         "duration_ms": round((time.monotonic() - started) * 1000, 2),
-        "sandbox_profile": profile,
+        "sandbox_profile": sandbox_class,
         "sandbox_class": sandbox_class,
+        "sandbox_runtime": runtime_name,
         "network_mode": "egress-deny-all",
     }
 
@@ -228,24 +237,27 @@ def main() -> None:
             "available": False,
             "configured": True,
             "reason": "sandbox_request_invalid",
-            "sandbox_profile": "gvisor",
+            "sandbox_profile": "sandboxed",
             "sandbox_class": "sandboxed",
+            "sandbox_runtime": "runsc",
         }
     except (OSError, subprocess.SubprocessError):
         result = {
             "available": False,
             "configured": True,
             "reason": "sandbox_runtime_error",
-            "sandbox_profile": "gvisor",
+            "sandbox_profile": "sandboxed",
             "sandbox_class": "sandboxed",
+            "sandbox_runtime": "runsc",
         }
     except Exception:
         result = {
             "available": False,
             "configured": True,
             "reason": "sandbox_execution_error",
-            "sandbox_profile": "gvisor",
+            "sandbox_profile": "sandboxed",
             "sandbox_class": "sandboxed",
+            "sandbox_runtime": "runsc",
         }
     json.dump(result, sys.stdout)
     sys.stdout.write("\n")

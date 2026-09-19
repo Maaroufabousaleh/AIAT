@@ -21,6 +21,6 @@ capabilities:
     description: Coordinate technical policy, budget, adapter, and sandbox review for candidate workers; record licence/notices as optional metadata only.
     required_tools: [capability.search, capability.list_workers, kpi.query_history, blob.upload]
 sandbox:
-  profile: restricted
+  profile: trusted
   network_mode: egress-allowlist
   egress_allowlist: [api.github.com:443]

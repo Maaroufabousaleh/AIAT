@@ -26,7 +26,7 @@ def test_sandbox_runner_never_falls_back_when_runsc_is_missing(tmp_path, monkeyp
     monkeypatch.setattr("tool_service.sandbox_runner.shutil.which", lambda _name: "/usr/bin/docker")
     monkeypatch.setattr(
         "tool_service.sandbox_runner._runtime_probe",
-        lambda _docker: (False, "gvisor_runsc_runtime_not_available"),
+        lambda *_args: (False, "gvisor_runsc_runtime_not_available"),
     )
 
     result = execute_sandbox(
@@ -41,7 +41,43 @@ def test_sandbox_runner_never_falls_back_when_runsc_is_missing(tmp_path, monkeyp
 
     assert result["available"] is False
     assert result["reason"] == "gvisor_runsc_runtime_not_available"
-    assert result["sandbox_profile"] == "gvisor"
+    assert result["sandbox_profile"] == "sandboxed"
+
+
+def test_sandbox_runner_selects_kata_for_vm_isolated_without_runc_fallback(tmp_path, monkeypatch):
+    captured: dict[str, object] = {}
+    monkeypatch.setattr("tool_service.sandbox_runner.shutil.which", lambda _name: "/usr/bin/docker")
+    def runtime_probe(_docker, runtime):
+        captured["runtime"] = runtime
+        return True, ""
+
+    monkeypatch.setattr("tool_service.sandbox_runner._runtime_probe", runtime_probe)
+
+    class CompletedProcess:
+        def wait(self, timeout=None):
+            return 0
+
+    monkeypatch.setattr(
+        "tool_service.sandbox_runner.subprocess.Popen",
+        lambda command, **_kwargs: captured.setdefault("command", command) and CompletedProcess(),
+    )
+
+    result = execute_sandbox(
+        {
+            "argv": ["pytest"],
+            "workspace_root": str(tmp_path),
+            "cwd": ".",
+            "profile": "vm_isolated",
+            "network_mode": "egress-deny-all",
+        }
+    )
+
+    assert result["available"] is True
+    assert result["sandbox_class"] == "vm_isolated"
+    assert result["sandbox_runtime"] == "kata"
+    assert captured["runtime"] == "kata"
+    assert "--runtime=kata" in captured["command"]
+    assert "--runtime=runsc" not in captured["command"]
 
 
 def test_sandbox_runner_scrubs_service_environment_and_can_mount_read_only(tmp_path, monkeypatch):
@@ -55,7 +91,7 @@ def test_sandbox_runner_scrubs_service_environment_and_can_mount_read_only(tmp_p
     monkeypatch.setattr("tool_service.sandbox_runner.shutil.which", lambda _name: "/usr/bin/docker")
     monkeypatch.setattr(
         "tool_service.sandbox_runner._runtime_probe",
-        lambda _docker: (True, ""),
+        lambda *_args: (True, ""),
     )
     monkeypatch.setattr(
         "tool_service.sandbox_runner.subprocess.Popen",
@@ -113,8 +149,9 @@ def test_sandbox_runner_classifies_runtime_probe_failures_without_raw_errors(
         "available": False,
         "configured": True,
         "reason": reason,
-        "sandbox_profile": "gvisor",
+        "sandbox_profile": "sandboxed",
         "sandbox_class": "sandboxed",
+        "sandbox_runtime": "runsc",
     }
 
 
@@ -122,7 +159,7 @@ def test_sandbox_runner_classifies_container_launch_failure_without_raw_errors(t
     monkeypatch.setattr("tool_service.sandbox_runner.shutil.which", lambda _name: "/usr/bin/docker")
     monkeypatch.setattr(
         "tool_service.sandbox_runner._runtime_probe",
-        lambda _docker: (True, ""),
+        lambda *_args: (True, ""),
     )
 
     def fail_launch(*_args, **_kwargs):
@@ -143,9 +180,10 @@ def test_sandbox_runner_classifies_container_launch_failure_without_raw_errors(t
     assert result == {
         "available": False,
         "configured": True,
-        "reason": "gvisor_container_launch_failed",
-        "sandbox_profile": "gvisor",
+        "reason": "runsc_container_launch_failed",
+        "sandbox_profile": "sandboxed",
         "sandbox_class": "sandboxed",
+        "sandbox_runtime": "runsc",
     }
 
 
@@ -160,8 +198,9 @@ def test_sandbox_runner_cli_does_not_emit_raw_request_errors(monkeypatch, capsys
         "available": False,
         "configured": True,
         "reason": "sandbox_request_invalid",
-        "sandbox_profile": "gvisor",
+        "sandbox_profile": "sandboxed",
         "sandbox_class": "sandboxed",
+        "sandbox_runtime": "runsc",
     }
 
 

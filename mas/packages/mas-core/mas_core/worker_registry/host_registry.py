@@ -249,7 +249,7 @@ class WorkerHostRegistry:
         labels: Mapping[str, Any] | None = None,
         capabilities: Sequence[str] | None = None,
         host_plane: str = "worker",
-        sandbox_profile: str = "standard",
+        sandbox_profile: str = "trusted",
         sandbox_runtime: str | None = None,
         isolation_mode: str = "native",
         capacity: Mapping[str, Any] | None = None,
@@ -274,10 +274,10 @@ class WorkerHostRegistry:
         # The profile is the AIAT policy class. The runtime is a host
         # implementation detail (runc, runsc, or Kata); a Kata VMM such as
         # Firecracker belongs in separate host metadata, not this field.
-        canonical_sandbox_class(sandbox_profile)
+        canonical_profile = canonical_sandbox_class(sandbox_profile)
         normalized_metadata["sandbox_runtime"] = _normalize_sandbox_runtime(
             sandbox_runtime or normalized_metadata.get("sandbox_runtime"),
-            sandbox_profile=sandbox_profile,
+            sandbox_profile=canonical_profile,
         )
         digest = token_sha256(registration_token)
         now = datetime.now(tz=UTC)
@@ -301,7 +301,7 @@ class WorkerHostRegistry:
                         labels=normalized_labels,
                         capabilities=normalized_capabilities,
                         host_plane=normalized_host_plane,
-                        sandbox_profile=str(sandbox_profile).strip() or "standard",
+                        sandbox_profile=canonical_profile,
                         isolation_mode=str(isolation_mode).strip() or "native",
                         capacity=normalized_capacity,
                         priority=int(priority),
@@ -332,7 +332,7 @@ class WorkerHostRegistry:
                         labels=normalized_labels,
                         capabilities=normalized_capabilities,
                         host_plane=normalized_host_plane,
-                        sandbox_profile=str(sandbox_profile).strip() or "standard",
+                        sandbox_profile=canonical_profile,
                         isolation_mode=str(isolation_mode).strip() or "native",
                         capacity=normalized_capacity,
                         priority=int(priority),

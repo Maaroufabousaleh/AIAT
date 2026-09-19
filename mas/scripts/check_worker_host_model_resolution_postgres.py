@@ -7,7 +7,7 @@ Dispatch uses the production ``GatewayWorkerAdapter`` against a bounded local
 gateway double: no model provider or remote runtime is contacted.  The probe
 therefore certifies control-plane model selection, gateway-adapter propagation,
 and durable settlement, not provider availability, provider recovery, or a
-gVisor/Firecracker sandbox.
+sandboxed/vm_isolated runtime execution.
 """
 
 from __future__ import annotations
@@ -765,7 +765,7 @@ async def _run(dsn: str | None) -> dict[str, Any]:
             "payload_free_trace_projection": "checked",
             "external_model_provider_or_network": "not_checked",
             "provider_backed_recovery": "not_checked",
-            "sandbox_runtime_gvisor_or_firecracker": "not_checked",
+            "sandbox_runtime_sandboxed_or_vm_isolated": "not_checked",
             "independent_host_or_remote_runtime": "not_checked",
         },
         "licence_metadata_is_gate": False,

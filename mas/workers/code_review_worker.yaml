@@ -24,6 +24,6 @@ capabilities:
     description: Review pull requests and code changes for defects, tests, and maintainability.
     required_tools: [file_read, web_search, blob.upload]
 sandbox:
-  profile: gvisor
+  profile: sandboxed
   network_mode: egress-allowlist
   egress_allowlist: [api.github.com:443]

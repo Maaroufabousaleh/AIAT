@@ -24,6 +24,6 @@ capabilities:
     description: Translate architecture into implementation-ready solution designs and integration contracts.
     required_tools: [document.get_latest, capability.search, web_search, blob.upload]
 sandbox:
-  profile: standard
+  profile: trusted
   network_mode: egress-allowlist
   egress_allowlist: [api.github.com:443]

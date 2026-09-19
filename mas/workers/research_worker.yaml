@@ -23,6 +23,6 @@ capabilities:
     description: Fetch and summarize web or document sources with network/action limits.
     required_tools: [web_search, web_fetch, document.get_latest, blob.upload]
 sandbox:
-  profile: gvisor
+  profile: sandboxed
   network_mode: egress-allowlist
   egress_allowlist: [api.github.com:443]

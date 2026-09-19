@@ -24,6 +24,6 @@ capabilities:
     description: Update issue status from test and review evidence.
     required_tools: [issue.update_status, blob.upload]
 sandbox:
-  profile: restricted
+  profile: trusted
   network_mode: egress-allowlist
   egress_allowlist: [api.github.com:443]

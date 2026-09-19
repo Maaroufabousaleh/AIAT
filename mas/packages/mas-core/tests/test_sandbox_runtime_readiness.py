@@ -101,10 +101,29 @@ def test_live_sandbox_probe_requires_runsc_and_separates_smoke(monkeypatch) -> N
     assert "requires --image" in smoke["reason"]
 
     monkeypatch.setattr(module, "_docker_runtimes", lambda: ({"kata-qemu"}, None))
-    kata = module.inspect_live(require_kata=True)
+    monkeypatch.setattr(
+        module,
+        "_kata_host_prerequisites",
+        lambda: {"status": "READY", "vmm": "qemu"},
+    )
+    monkeypatch.setattr(
+        module,
+        "_run_kata_smoke",
+        lambda image, *, runtime: (
+            True,
+            f"Kata ({runtime}) QEMU guest smoke completed",
+            {"runtime": runtime, "guest_kernel": "kata-guest"},
+        ),
+    )
+    kata = module.inspect_live(
+        require_kata=True,
+        image="example/smoke@sha256:" + "a" * 64,
+    )
     assert kata["status"] == "pass"
     assert kata["sandbox_class"] == "vm_isolated"
     assert kata["kata"] == "available"
+    assert kata["vm_isolated_status"] == "AVAILABLE"
+    assert kata["kata_guest_kernel"] == "kata-guest"
 
 
 def test_kata_smoke_uses_the_discovered_runtime_name(monkeypatch) -> None:
@@ -121,19 +140,94 @@ def test_kata_smoke_uses_the_discovered_runtime_name(monkeypatch) -> None:
     def fake_run(command: list[str], *, timeout: float):
         del timeout
         commands.append(command)
-        return subprocess.CompletedProcess(command, 0, "", "")
+        if "create" in command:
+            return subprocess.CompletedProcess(command, 0, "kata-container-id\n", "")
+        if "inspect" in command:
+            return subprocess.CompletedProcess(command, 0, "kata-qemu\n", "")
+        if "exec" in command:
+            return subprocess.CompletedProcess(command, 0, "kata-guest-kernel\n", "")
+        return subprocess.CompletedProcess(command, 0, "0\n", "")
 
-    monkeypatch.setattr(module, "_docker_runtimes", lambda: ({"kata-qemu"}, None))
     monkeypatch.setattr(module, "_run", fake_run)
+    monkeypatch.setattr(module.platform, "release", lambda: "wsl-host-kernel")
 
+    passed, reason, evidence = module._run_kata_smoke(
+        "example/smoke@sha256:" + "a" * 64,
+        runtime="kata-qemu",
+    )
+
+    assert passed is True
+    assert reason == "Kata (kata-qemu) QEMU guest smoke completed"
+    assert evidence["guest_kernel"] == "kata-guest-kernel"
+    assert "--runtime=kata-qemu" in commands[0]
+
+
+def test_optional_kata_unavailable_does_not_block_runsc(monkeypatch) -> None:
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("check_sandbox_runtime_readiness", SCRIPT)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    monkeypatch.setattr(module, "_docker_runtimes", lambda: ({"runsc"}, None))
+    report = module.inspect_live(check_kata=True)
+
+    assert report["status"] == "pass"
+    assert report["sandbox_runtime"] == "runsc"
+    assert report["kata_status"] == "OPTIONAL_UNAVAILABLE"
+    assert report["vm_isolated_status"] == "OPTIONAL_UNAVAILABLE"
+
+
+def test_required_kata_unavailable_fails_closed(monkeypatch) -> None:
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("check_sandbox_runtime_readiness", SCRIPT)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    monkeypatch.setattr(module, "_docker_runtimes", lambda: ({"runsc"}, None))
     report = module.inspect_live(
         require_kata=True,
+        image="example/smoke@sha256:" + "a" * 64,
+    )
+
+    assert report["status"] == "blocked"
+    assert report["kata_status"] == "REQUIRED_UNAVAILABLE"
+    assert report["vm_isolated_status"] == "REQUIRED_UNAVAILABLE"
+    assert "no Kata Docker runtime" in report["reason"]
+
+
+def test_optional_kata_smoke_failure_does_not_block_runsc(monkeypatch) -> None:
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("check_sandbox_runtime_readiness", SCRIPT)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    monkeypatch.setattr(module, "_docker_runtimes", lambda: ({"runsc", "kata"}, None))
+    monkeypatch.setattr(
+        module,
+        "_kata_host_prerequisites",
+        lambda: {"status": "READY", "vmm": "qemu"},
+    )
+    monkeypatch.setattr(
+        module,
+        "_run_kata_smoke",
+        lambda image, *, runtime: (False, "Kata guest smoke failed", {"runtime": runtime}),
+    )
+    monkeypatch.setattr(module, "_run_smoke", lambda image, *, runtime: (True, "runsc smoke passed"))
+
+    report = module.inspect_live(
+        check_kata=True,
         smoke=True,
         image="example/smoke@sha256:" + "a" * 64,
     )
 
     assert report["status"] == "pass"
-    assert report["sandbox_runtime"] == "kata-qemu"
-    assert report["smoke"] == "pass"
-    assert report["reason"] == "Kata (kata-qemu) digest-pinned smoke completed"
-    assert "--runtime=kata-qemu" in commands[0]
+    assert report["sandbox_runtime"] == "runsc"
+    assert report["kata_status"] == "FAILED"
+    assert report["vm_isolated_status"] == "FAILED"
+    assert report["warnings"] == ["Kata guest smoke failed"]

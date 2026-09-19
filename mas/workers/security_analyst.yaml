@@ -25,6 +25,6 @@ capabilities:
     description: Analyze security posture and prepare evidence-backed CSO review findings.
     required_tools: [file_read, repo.read, repo.search, security.scan, web_search, blob.upload]
 sandbox:
-  profile: gvisor
+  profile: sandboxed
   network_mode: egress-allowlist
   egress_allowlist: [api.github.com:443]

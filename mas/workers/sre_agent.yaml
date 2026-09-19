@@ -23,6 +23,6 @@ capabilities:
     description: Run health checks and summarize routing/LLM observability signals.
     required_tools: [web_fetch, browser_navigate, browser_screenshot, blob.upload]
 sandbox:
-  profile: gvisor
+  profile: sandboxed
   network_mode: egress-allowlist
   egress_allowlist: [api.github.com:443]

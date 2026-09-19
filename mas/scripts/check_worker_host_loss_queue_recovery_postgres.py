@@ -6,7 +6,7 @@ requeues the run through the canonical storage recovery loop, rejects a stale
 executor attempt, reassigns the queued run to a second worker host, and
 executes the retry through ``WorkerHostExecutor``.  It proves AIAT-owned
 fencing and queue/reassignment semantics only; independent machines, gVisor,
-Firecracker, external providers, and provider-backed recovery are not claimed.
+sandboxed/vm_isolated runtime, external providers, and provider-backed recovery are not claimed.
 """
 
 from __future__ import annotations
@@ -720,7 +720,7 @@ async def _run(dsn: str | None) -> dict[str, Any]:
             "payload_free_usage_artifact_trace_evidence": "checked",
             "postgres_connection_reopen": "checked",
             "independent_deployed_hosts": "not_checked",
-            "sandbox_runtime_gvisor_or_firecracker": "not_checked",
+            "sandbox_runtime_sandboxed_or_vm_isolated": "not_checked",
             "external_provider_or_remote_runtime": "not_checked",
             "provider_backed_recovery": "not_checked",
         },

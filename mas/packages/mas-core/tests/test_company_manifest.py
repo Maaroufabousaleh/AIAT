@@ -26,7 +26,7 @@ def test_default_company_manifest_compiles_with_stable_digest() -> None:
     assert manifest.evidence_policy is not None
     assert manifest.evidence_policy.default_policy.policy_id == "software_delivery"
     assert manifest.deployment is not None
-    assert manifest.deployment.sandbox_profile == "gvisor"
+    assert manifest.deployment.sandbox_profile == "sandboxed"
 
 
 def test_company_manifest_rejects_unknown_worker_department() -> None:

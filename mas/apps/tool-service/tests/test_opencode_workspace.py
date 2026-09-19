@@ -121,7 +121,7 @@ async def test_opencode_workspace_runs_bounded_pytest(monkeypatch, tmp_path) -> 
         "passed": 2,
         "failed": 0,
         "skipped": 0,
-        "sandbox_profile": "gvisor",
+        "sandbox_profile": "sandboxed",
         "network_mode": "egress-deny-all",
     }
     assert captured["argv"] == [
@@ -148,7 +148,7 @@ async def test_opencode_workspace_pytest_fails_closed_without_sandbox(monkeypatc
         return {
             "available": False,
             "reason": "gvisor_runsc_runtime_not_available",
-            "sandbox_profile": "gvisor",
+            "sandbox_profile": "sandboxed",
         }
 
     monkeypatch.setenv("OPENCODE_WORKSPACE_ROOT", str(tmp_path))
@@ -173,6 +173,6 @@ async def test_opencode_workspace_pytest_fails_closed_without_sandbox(monkeypatc
         "passed": 0,
         "failed": 0,
         "skipped": 0,
-        "sandbox_profile": "gvisor",
+        "sandbox_profile": "sandboxed",
         "reason": "gvisor_runsc_runtime_not_available",
     }

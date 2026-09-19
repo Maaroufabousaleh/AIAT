@@ -97,13 +97,16 @@ components:
   - id: kata-containers
     role: vm-isolation-runtime
     license: Apache-2.0
-    version: null
+    version: "4.2.0"
     source: https://github.com/kata-containers/kata-containers
     license_evidence: https://github.com/kata-containers/kata-containers/blob/main/LICENSE
     integration: host-runtime-profile
-    status: unavailable-until-host-pinned
-    unavailable_reason: No Kata runtime/profile or live VM-capable host evidence is present in the current WSL2 environment; vm_isolated remains optional and fail-closed.
-    operator_notice: Kata is the provider for the AIAT vm_isolated policy class; the selected Kata VMM/profile is host metadata and is not exposed as a separate AIAT policy tier.
+    status: available-local-dev
+    runtime_provider: runtime-rs
+    vmm: qemu
+    archive_sha256: b828904fa3f1e49ddd7dc799c72cb1503cd1e772d354c3987c8d4189b2a623a8
+    evidence: docs/provenance/dev_host_readiness.json
+    operator_notice: Kata is the canonical provider for the AIAT vm_isolated policy class. The selected QEMU VMM is host metadata and is not exposed as a separate AIAT policy tier; native-Linux release certification remains separate.
   - id: firecracker
     role: host-vmm-compatibility
     license: Apache-2.0

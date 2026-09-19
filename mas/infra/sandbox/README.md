@@ -8,7 +8,7 @@ selects the concrete runtime.
 | --- | --- | --- |
 | `trusted` | normal Docker/runc | AIAT-owned services and reviewed trusted workers |
 | `sandboxed` | gVisor `runsc` | Default external-worker boundary |
-| `vm_isolated` | Kata Containers runtime | High-risk or gVisor-incompatible workers; not currently activated |
+| `vm_isolated` | Kata Containers runtime-rs (QEMU profile) | High-risk or gVisor-incompatible workers; host availability is verified before scheduling |
 
 Compatibility values are still accepted: `standard` and `restricted` resolve
 to `trusted`, `gvisor` resolves to `sandboxed`, and `firecracker` resolves to
@@ -22,11 +22,12 @@ Implemented profile files:
 Default external-worker execution:
 - `command.run_safe`, `security.scan`, and `test.run` delegate worker-controlled
   commands through `TOOL_SANDBOX_COMMAND`.
-- The shipped sandbox adapter requires `profile: sandboxed` (or the legacy
-  `gvisor` alias) and
+- The shipped sandbox adapter resolves `sandboxed` (or the legacy `gvisor`
+  alias) to `runsc`, and resolves `vm_isolated` to `kata`.
+- It requires
   `network_mode: egress-deny-all`.
-- The adapter requires Docker to have the `runsc` runtime registered.
-- The adapter never falls back to Docker's default `runc` runtime.
+- The adapter requires Docker to have the selected runtime registered.
+- It never falls back to Docker's default `runc` runtime.
 
 VM-isolated execution is selected explicitly with `profile: vm_isolated` and a
 host-certified `sandbox_runtime: kata`. It never falls back to `runsc` or
@@ -45,12 +46,13 @@ reason: gvisor_runsc_runtime_not_available
 no runc fallback
 ```
 
-## WSL2 operator bootstrap: Docker Engine and gVisor `runsc`
+## WSL2 operator bootstrap: Docker Engine, gVisor `runsc`, and Kata
 
 For the supported AIAT development WSL2 profile, run the idempotent host
 bootstrap from the repository root. It installs/configures the WSL-local Docker
-Engine and pinned gVisor package when needed, registers `runsc` with that
-daemon, executes the digest-pinned smoke, starts/migrates local Compose, and
+Engine, pinned gVisor package, and pinned Kata runtime-rs/QEMU archive when
+needed, registers `runsc` and `kata` with that daemon, executes bounded
+digest-pinned gVisor and Kata guest smokes, starts/migrates local Compose, and
 writes [`dev_host_readiness.json`](../../docs/provenance/dev_host_readiness.json):
 
 ```bash
@@ -108,29 +110,36 @@ no runc fallback
 
 ## Kata VM-isolated worker boundary
 
-Kata is a future host capability, not a current release requirement. A host
-must advertise the policy class and runtime in its registration metadata:
+Kata is the canonical `vm_isolated` provider. A host must advertise the policy
+class and logical runtime in its registration metadata:
 
 ```yaml
 sandbox_profile: vm_isolated
 metadata:
   sandbox_runtime: kata
-  kata_profile: dragonball
+  kata_profile: qemu
 ```
 
-The worker adapter emits an OCI command using `--runtime kata`; it does not
-install Kata, select a VMM, or claim that a VM boundary is certified. Run the
-explicit read-only probe from `mas/` on the certified Linux host when Kata is
-being evaluated:
+Worker manifests request only `vm_isolated`; they never request QEMU,
+Dragonball, Cloud Hypervisor, or Firecracker. The worker adapter emits an OCI
+command using `--runtime kata`; the host selects the VMM. The WSL bootstrap
+installs the pinned runtime-rs/QEMU profile and proves the guest boundary with
+the digest-pinned smoke. Run the maintained probe from `mas/` when checking a
+host:
 
 ```bash
 uv run --isolated python scripts/check_sandbox_runtime_readiness.py \
-  --live --require-kata --json
+  --live --require-kata --smoke \
+  --image ubuntu@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517 \
+  --json
 ```
 
 Kata requires a supported virtualization environment, commonly hardware
-virtualization or approved nested virtualization. The current WSL2/Docker
-profile is not a Kata certification environment.
+virtualization or approved nested virtualization. If the host lacks it,
+`vm_isolated` is unavailable and required work is unschedulable; no gVisor or
+runc downgrade is permitted. The current WSL2 profile has `/dev/kvm` and a
+successful QEMU guest smoke, so it reports `vm_isolated = AVAILABLE` for local
+development. Native-Linux release certification remains separate.
 
 ## Direct Firecracker compatibility boundary
 
@@ -150,9 +159,10 @@ Run the read-only readiness check from `mas/`:
 uv run --isolated python scripts/check_firecracker_worker_pool.py --live --json
 ```
 
-The current host result is static-pass/live-blocked because neither
-`aiat-firecracker-launcher` nor `firecracker` is installed. No launch, network
-probe, mutation, or weaker-runtime fallback is attempted. Retained evidence:
+The current host result is historical static-pass/live-blocked because neither
+`aiat-firecracker-launcher` nor direct `firecracker` is installed. No direct
+launch, network probe, mutation, or weaker-runtime fallback is attempted.
+Retained evidence:
 [`firecracker_worker_pool_readiness.json`](../../docs/provenance/firecracker_worker_pool_readiness.json).
 If Firecracker is used in the future, prefer it as a Kata host VMM and certify
 the `vm_isolated` class; direct launcher activation requires a separate

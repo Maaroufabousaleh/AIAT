@@ -11,6 +11,7 @@ import sys
 from typing import TYPE_CHECKING, Any
 
 from mas_core.protocols.enums import AgentRole
+from mas_core.sandbox_policy import canonical_sandbox_class
 from mas_tools_sdk.base import BaseTool
 from mas_tools_sdk.groups import ToolGroup
 
@@ -328,6 +329,7 @@ async def _run_sandboxed_process(
     max_output_bytes: int,
     workspace_root: Path | None = None,
     workspace_read_only: bool = False,
+    sandbox_profile: str = "sandboxed",
 ) -> dict[str, Any]:
     """Delegate worker-controlled execution to the configured hardened sandbox adapter.
 
@@ -344,11 +346,22 @@ async def _run_sandboxed_process(
         )
     )
     raw_adapter = os.getenv("TOOL_SANDBOX_COMMAND", "").strip()
+    requested_profile = str(sandbox_profile or "sandboxed").strip().lower()
+    try:
+        sandbox_class = canonical_sandbox_class(requested_profile)
+    except ValueError as exc:
+        raise ValueError("sandbox_profile must be trusted, sandboxed, or vm_isolated") from exc
+    if sandbox_class == "trusted":
+        raise ValueError("trusted workloads must not use the untrusted sandbox adapter")
+    runtime_name = "runsc" if sandbox_class == "sandboxed" else "kata"
     if not raw_adapter:
         return {
             "available": False,
             "configured": False,
             "reason": "TOOL_SANDBOX_COMMAND_not_configured",
+            "sandbox_profile": requested_profile,
+            "sandbox_class": sandbox_class,
+            "sandbox_runtime": runtime_name,
         }
 
     root = (workspace_root or _workspace_root()).resolve()
@@ -362,7 +375,7 @@ async def _run_sandboxed_process(
         "workspace_root": str(root),
         "cwd": str(relative_cwd),
         "workspace_read_only": bool(workspace_read_only),
-        "profile": "gvisor",
+        "profile": sandbox_class,
         "network_mode": "egress-deny-all",
         "timeout_seconds": timeout,
         "max_output_bytes": max_output_bytes,
@@ -379,6 +392,9 @@ async def _run_sandboxed_process(
             **adapter_result,
             "configured": True,
             "backend": "sandbox_adapter",
+            "sandbox_profile": sandbox_class,
+            "sandbox_class": sandbox_class,
+            "sandbox_runtime": runtime_name,
         }
     raw_output = adapter_result.get("stdout")
     if not isinstance(raw_output, str) or not raw_output.strip():
@@ -386,7 +402,9 @@ async def _run_sandboxed_process(
             "available": False,
             "configured": True,
             "backend": "sandbox_adapter",
-            "sandbox_profile": "gvisor",
+            "sandbox_profile": sandbox_class,
+            "sandbox_class": sandbox_class,
+            "sandbox_runtime": runtime_name,
             "degraded": True,
             "reason": "sandbox_adapter_empty_output",
         }
@@ -397,7 +415,9 @@ async def _run_sandboxed_process(
             "available": False,
             "configured": True,
             "backend": "sandbox_adapter",
-            "sandbox_profile": "gvisor",
+            "sandbox_profile": sandbox_class,
+            "sandbox_class": sandbox_class,
+            "sandbox_runtime": runtime_name,
             "degraded": True,
             "reason": "sandbox_adapter_invalid_json",
         }
@@ -406,14 +426,18 @@ async def _run_sandboxed_process(
             "available": False,
             "configured": True,
             "backend": "sandbox_adapter",
-            "sandbox_profile": "gvisor",
+            "sandbox_profile": sandbox_class,
+            "sandbox_class": sandbox_class,
+            "sandbox_runtime": runtime_name,
             "degraded": True,
             "reason": "sandbox_adapter_invalid_result_shape",
         }
     result.setdefault("available", True)
     result["configured"] = True
     result["backend"] = "sandbox_adapter"
-    result["sandbox_profile"] = "gvisor"
+    result["sandbox_profile"] = sandbox_class
+    result["sandbox_class"] = sandbox_class
+    result["sandbox_runtime"] = runtime_name
     return result
 
 
@@ -444,6 +468,7 @@ class CommandRunSafeTool(BaseTool):
             cwd=cwd,
             timeout=float(kwargs.get("timeout_seconds", 30)),
             max_output_bytes=int(kwargs.get("max_output_bytes", 64_000)),
+            sandbox_profile=str(kwargs.get("sandbox_profile") or kwargs.get("profile") or "sandboxed"),
         )
 
 
@@ -598,6 +623,7 @@ class SecurityScanTool(BaseTool):
                 cwd=cwd,
                 timeout=float(kwargs.get("timeout_seconds", 90)),
                 max_output_bytes=int(kwargs.get("max_output_bytes", 512_000)),
+                sandbox_profile=str(kwargs.get("sandbox_profile") or kwargs.get("profile") or "sandboxed"),
             )
             findings_count: int | None = None
             raw_value = result.get("stdout")
@@ -646,6 +672,7 @@ class SecurityScanTool(BaseTool):
                 cwd=cwd,
                 timeout=float(kwargs.get("timeout_seconds", 90)),
                 max_output_bytes=int(kwargs.get("max_output_bytes", 512_000)),
+                sandbox_profile=str(kwargs.get("sandbox_profile") or kwargs.get("profile") or "sandboxed"),
             )
             findings = [
                 line for line in str(result.get("stdout") or "").splitlines() if line.strip()
@@ -689,6 +716,7 @@ class SecurityScanTool(BaseTool):
             cwd=cwd,
             timeout=float(kwargs.get("timeout_seconds", 90)),
             max_output_bytes=int(kwargs.get("max_output_bytes", 512_000)),
+            sandbox_profile=str(kwargs.get("sandbox_profile") or kwargs.get("profile") or "sandboxed"),
         )
         raw_output = result.get("stdout")
         if result.get("available") and result.get("returncode") == 0 and (

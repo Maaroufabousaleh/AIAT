@@ -23,6 +23,6 @@ capabilities:
     description: Convert requirements into issue/sprint-ready work packages.
     required_tools: [capability.search, capability.list_workers, document.get_latest, blob.upload]
 sandbox:
-  profile: standard
+  profile: trusted
   network_mode: egress-allowlist
   egress_allowlist: [api.github.com:443]

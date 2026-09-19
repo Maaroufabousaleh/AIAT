@@ -22,7 +22,7 @@
     "migration": "applied",
     "network_boundary": "pass",
     "status": "DEV_READY",
-    "tests": "pass"
+    "tests": "skipped_by_operator"
   },
   "docker": {
     "compose_v2": "pass",
@@ -32,6 +32,7 @@
     "engine": "pass",
     "registered_runtimes": [
       "io.containerd.runc.v2",
+      "kata",
       "runc",
       "runsc"
     ]
@@ -45,9 +46,19 @@
     "smoke_image": "ubuntu@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517"
   },
   "kata": {
+    "archive_sha256": "b828904fa3f1e49ddd7dc799c72cb1503cd1e772d354c3987c8d4189b2a623a8",
+    "guest_kernel": "6.18.35",
+    "install": "4.2.0",
     "kvm_present": true,
-    "runtime_registered": false,
-    "status": "OPTIONAL_UNAVAILABLE"
+    "kvm_readable": false,
+    "kvm_writable": false,
+    "runtime_config": "/opt/kata/share/defaults/kata-containers/runtime-rs/configuration-qemu-runtime-rs.toml",
+    "runtime_registered": "pass",
+    "runtime_shim": "/opt/kata/runtime-rs/bin/containerd-shim-kata-v2",
+    "runtime_version": "4.2.0",
+    "smoke": "pass",
+    "status": "AVAILABLE",
+    "vmm": "qemu"
   },
   "migration_check": {
     "expected_migration_head": "0045_worker_tool_effects",
@@ -162,7 +173,7 @@
     },
     "compose": "/mnt/c/projects/aiat/mas/infra/compose/docker-compose.yml",
     "errors": [],
-    "generated_at": "2026-09-19T20:16:06.008677+00:00",
+    "generated_at": "2026-09-19T22:38:49.952342+00:00",
     "identity_services": [],
     "live": {
       "containers": [
@@ -1015,11 +1026,11 @@
       "optional identity database services are not in the base Compose profile: identity-postgres, identity-db"
     ]
   },
-  "observed_at": "2026-09-19T20:21:24.059200+00:00",
+  "observed_at": "2026-09-19T22:39:32.329034+00:00",
   "release": {
     "ledger": {
       "active_check_count": 84,
-      "checked_at": "2026-09-19T20:21:23.906782+00:00",
+      "checked_at": "2026-09-19T22:39:32.062699+00:00",
       "checks": [
         {
           "base_id": "provenance",
@@ -1063,11 +1074,11 @@
             "errors": [],
             "git": {
               "branch": "agent/fix-review-p1",
-              "changed_path_count": 36,
-              "revision": "f68ce9cc137d9803345abd63be1446a65ac279c1",
+              "changed_path_count": 81,
+              "revision": "549eae3378cb2de8759b51ba7f64df3dd25145b4",
               "working_tree_clean": false
             },
-            "manifest_digest": "30552d898c1f8ab1b7c2ca377d30197470184894d6d496ba25cdd1a7275dc415",
+            "manifest_digest": "becc867c36594235d5fb641b8e8f78f1daa8950b3dac5c3a63979420589e2dbf",
             "status": "pass",
             "tracked_input_count": 15
           }
@@ -1564,7 +1575,7 @@
           "scope_status": "superseded",
           "status": "not_in_scope",
           "summary": {
-            "reason": "Direct Firecracker is a historical compatibility implementation; vm_isolated is provided by optional Kata and is not active on the WSL development profile.",
+            "reason": "Direct Firecracker is a superseded historical compatibility implementation. The active vm_isolated provider is Kata runtime-rs; direct Firecracker is not an active release or development sandbox requirement.",
             "scope_status": "superseded",
             "status": "not_in_scope"
           }
@@ -1687,10 +1698,10 @@
           "status": "pass",
           "summary": {
             "errors": [],
-            "locked_count": 10,
+            "locked_count": 11,
             "pin_count": 17,
             "status": "pass",
-            "unavailable_count": 7
+            "unavailable_count": 6
           }
         },
         {
@@ -1847,15 +1858,15 @@
           "status": "pass",
           "summary": {
             "cleanup_verified": true,
-            "cpu_time_ms": 52.782,
+            "cpu_time_ms": 51.164,
             "error_count": 0,
             "measurement_source": "procfs",
             "mode": "fixture",
-            "rss_after_bytes": 93163520,
-            "rss_before_bytes": 93134848,
-            "rss_peak_bytes": 130818048,
+            "rss_after_bytes": 93159424,
+            "rss_before_bytes": 92954624,
+            "rss_peak_bytes": 130637824,
             "status": "pass",
-            "wall_time_ms": 52.739
+            "wall_time_ms": 51.169
           }
         },
         {
@@ -2494,11 +2505,11 @@
             "errors": [],
             "git": {
               "branch": "agent/fix-review-p1",
-              "changed_path_count": 36,
-              "revision": "f68ce9cc137d9803345abd63be1446a65ac279c1",
+              "changed_path_count": 81,
+              "revision": "549eae3378cb2de8759b51ba7f64df3dd25145b4",
               "working_tree_clean": false
             },
-            "manifest_digest": "30552d898c1f8ab1b7c2ca377d30197470184894d6d496ba25cdd1a7275dc415",
+            "manifest_digest": "becc867c36594235d5fb641b8e8f78f1daa8950b3dac5c3a63979420589e2dbf",
             "native_release": {
               "blockers": [
                 "host is not a native Linux release host",
@@ -2849,7 +2860,7 @@
           "scope_status": "superseded",
           "status": "not_in_scope",
           "summary": {
-            "reason": "Direct Firecracker is a historical compatibility implementation; vm_isolated is provided by optional Kata and is not active on the WSL development profile.",
+            "reason": "Direct Firecracker is a superseded historical compatibility implementation. The active vm_isolated provider is Kata runtime-rs; direct Firecracker is not an active release or development sandbox requirement.",
             "scope_status": "superseded",
             "status": "not_in_scope"
           }
@@ -3331,9 +3342,9 @@
       },
       "git": {
         "branch": "agent/fix-review-p1",
-        "changed_path_count": 36,
+        "changed_path_count": 81,
         "clean": false,
-        "revision": "f68ce9cc137d9803345abd63be1446a65ac279c1"
+        "revision": "549eae3378cb2de8759b51ba7f64df3dd25145b4"
       },
       "pending_evidence_count": 4,
       "policy": {
@@ -3358,12 +3369,41 @@
     "live": {
       "errors": [],
       "firecracker": "superseded",
-      "kata": "optional_unavailable",
-      "kata_runtimes": [],
+      "kata": "available",
+      "kata_guest_kernel": "6.18.35",
+      "kata_prerequisites": {
+        "guest_image": "/opt/kata/share/kata-containers/kata-containers.img",
+        "kvm_access": "docker_daemon_root",
+        "kvm_present": true,
+        "kvm_readable": false,
+        "kvm_writable": false,
+        "missing_inputs": [],
+        "qemu_binary": "/opt/kata/bin/qemu-system-x86_64",
+        "reason": "Kata runtime-rs/QEMU inputs and /dev/kvm are ready for guest smoke",
+        "runtime_config": "/opt/kata/share/defaults/kata-containers/runtime-rs/configuration-qemu-runtime-rs.toml",
+        "runtime_shim": "/opt/kata/runtime-rs/bin/containerd-shim-kata-v2",
+        "runtime_version": "4.2.0",
+        "status": "READY",
+        "vmm": "qemu"
+      },
+      "kata_runtimes": [
+        "kata"
+      ],
+      "kata_smoke": "pass",
+      "kata_smoke_evidence": {
+        "guest_kernel": "6.18.35",
+        "host_kernel": "6.6.87.2-microsoft-standard-WSL2",
+        "image": "ubuntu@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517",
+        "runtime": "kata",
+        "runtime_seen": "kata"
+      },
+      "kata_status": "AVAILABLE",
+      "kata_vmm": "qemu",
       "mode": "live",
       "reason": "gVisor (runsc) digest-pinned smoke completed",
       "registered_runtimes": [
         "io.containerd.runc.v2",
+        "kata",
         "runc",
         "runsc"
       ],
@@ -3371,10 +3411,12 @@
       "sandbox_profile": "sandboxed",
       "sandbox_runtime": "runsc",
       "schema_version": "aiat.sandbox-runtime-readiness.v1",
-      "scope": "Docker runtime registration",
+      "scope": "Docker runtime registration and selected sandbox smoke",
       "smoke": "pass",
       "status": "pass",
-      "vm_isolated": "optional_unavailable"
+      "vm_isolated": "available",
+      "vm_isolated_status": "AVAILABLE",
+      "warnings": []
     },
     "live_scope": "Docker runtime registration; gVisor smoke, optional Kata probe, canary, and network evidence are separate",
     "mode": "static",
@@ -3406,7 +3448,7 @@
         "network_mode": "egress-allowlist",
         "runtime_tier": "langgraph",
         "sandbox_class": "trusted",
-        "sandbox_profile": "standard",
+        "sandbox_profile": "trusted",
         "status": "pass",
         "worker": "adapter_certifier"
       },
@@ -3414,7 +3456,7 @@
         "network_mode": "egress-allowlist",
         "runtime_tier": "langgraph",
         "sandbox_class": "trusted",
-        "sandbox_profile": "standard",
+        "sandbox_profile": "trusted",
         "status": "pass",
         "worker": "budget_evaluator"
       },
@@ -3422,7 +3464,7 @@
         "network_mode": "egress-allowlist",
         "runtime_tier": "builtin",
         "sandbox_class": "trusted",
-        "sandbox_profile": "restricted",
+        "sandbox_profile": "trusted",
         "status": "pass",
         "worker": "ceo"
       },
@@ -3430,7 +3472,7 @@
         "network_mode": "egress-allowlist",
         "runtime_tier": "builtin",
         "sandbox_class": "trusted",
-        "sandbox_profile": "restricted",
+        "sandbox_profile": "trusted",
         "status": "pass",
         "worker": "cfo"
       },
@@ -3438,7 +3480,7 @@
         "network_mode": "egress-allowlist",
         "runtime_tier": "builtin",
         "sandbox_class": "trusted",
-        "sandbox_profile": "restricted",
+        "sandbox_profile": "trusted",
         "status": "pass",
         "worker": "chrm"
       },
@@ -3446,7 +3488,7 @@
         "network_mode": "egress-allowlist",
         "runtime_tier": "builtin",
         "sandbox_class": "trusted",
-        "sandbox_profile": "restricted",
+        "sandbox_profile": "trusted",
         "status": "pass",
         "worker": "cio"
       },
@@ -3454,7 +3496,7 @@
         "network_mode": "egress-allowlist",
         "runtime_tier": "external",
         "sandbox_class": "sandboxed",
-        "sandbox_profile": "gvisor",
+        "sandbox_profile": "sandboxed",
         "status": "pass",
         "worker": "code_review_worker"
       },
@@ -3462,7 +3504,7 @@
         "network_mode": "egress-allowlist",
         "runtime_tier": "external",
         "sandbox_class": "sandboxed",
-        "sandbox_profile": "gvisor",
+        "sandbox_profile": "sandboxed",
         "status": "pass",
         "worker": "coding_worker"
       },
@@ -3470,7 +3512,7 @@
         "network_mode": "egress-allowlist",
         "runtime_tier": "builtin",
         "sandbox_class": "trusted",
-        "sandbox_profile": "restricted",
+        "sandbox_profile": "trusted",
         "status": "pass",
         "worker": "coo"
       },
@@ -3478,7 +3520,7 @@
         "network_mode": "egress-allowlist",
         "runtime_tier": "langgraph",
         "sandbox_class": "trusted",
-        "sandbox_profile": "standard",
+        "sandbox_profile": "trusted",
         "status": "pass",
         "worker": "cost_estimator"
       },
@@ -3486,7 +3528,7 @@
         "network_mode": "egress-allowlist",
         "runtime_tier": "builtin",
         "sandbox_class": "trusted",
-        "sandbox_profile": "restricted",
+        "sandbox_profile": "trusted",
         "status": "pass",
         "worker": "cso"
       },
@@ -3494,7 +3536,7 @@
         "network_mode": "egress-allowlist",
         "runtime_tier": "builtin",
         "sandbox_class": "trusted",
-        "sandbox_profile": "restricted",
+        "sandbox_profile": "trusted",
         "status": "pass",
         "worker": "cto"
       },
@@ -3502,7 +3544,7 @@
         "network_mode": "egress-allowlist",
         "runtime_tier": "external",
         "sandbox_class": "sandboxed",
-        "sandbox_profile": "gvisor",
+        "sandbox_profile": "sandboxed",
         "status": "pass",
         "worker": "devops_eng"
       },
@@ -3510,7 +3552,7 @@
         "network_mode": "egress-allowlist",
         "runtime_tier": "builtin",
         "sandbox_class": "trusted",
-        "sandbox_profile": "restricted",
+        "sandbox_profile": "trusted",
         "status": "pass",
         "worker": "devops_pm"
       },
@@ -3518,7 +3560,7 @@
         "network_mode": "egress-allowlist",
         "runtime_tier": "langgraph",
         "sandbox_class": "trusted",
-        "sandbox_profile": "standard",
+        "sandbox_profile": "trusted",
         "status": "pass",
         "worker": "financial_analyst"
       },
@@ -3526,7 +3568,7 @@
         "network_mode": "egress-allowlist",
         "runtime_tier": "builtin",
         "sandbox_class": "trusted",
-        "sandbox_profile": "restricted",
+        "sandbox_profile": "trusted",
         "status": "pass",
         "worker": "hiring_agent"
       },
@@ -3534,7 +3576,7 @@
         "network_mode": "egress-allowlist",
         "runtime_tier": "langgraph",
         "sandbox_class": "trusted",
-        "sandbox_profile": "standard",
+        "sandbox_profile": "trusted",
         "status": "pass",
         "worker": "hr_analyst"
       },
@@ -3542,7 +3584,7 @@
         "network_mode": "egress-deny-all",
         "runtime_tier": "builtin",
         "sandbox_class": "trusted",
-        "sandbox_profile": "restricted",
+        "sandbox_profile": "trusted",
         "status": "pass",
         "worker": "human_approval_gate"
       },
@@ -3550,7 +3592,7 @@
         "network_mode": "egress-allowlist",
         "runtime_tier": "langgraph",
         "sandbox_class": "trusted",
-        "sandbox_profile": "standard",
+        "sandbox_profile": "trusted",
         "status": "pass",
         "worker": "kpi_analyst"
       },
@@ -3558,7 +3600,7 @@
         "network_mode": "egress-allowlist",
         "runtime_tier": "builtin",
         "sandbox_class": "trusted",
-        "sandbox_profile": "restricted",
+        "sandbox_profile": "trusted",
         "status": "pass",
         "worker": "license_provenance_evaluator"
       },
@@ -3566,7 +3608,7 @@
         "network_mode": "egress-allowlist",
         "runtime_tier": "langgraph",
         "sandbox_class": "trusted",
-        "sandbox_profile": "standard",
+        "sandbox_profile": "trusted",
         "status": "pass",
         "worker": "planner"
       },
@@ -3574,7 +3616,7 @@
         "network_mode": "egress-allowlist",
         "runtime_tier": "builtin",
         "sandbox_class": "trusted",
-        "sandbox_profile": "restricted",
+        "sandbox_profile": "trusted",
         "status": "pass",
         "worker": "policy_grant_reviewer"
       },
@@ -3582,7 +3624,7 @@
         "network_mode": "egress-allowlist",
         "runtime_tier": "builtin",
         "sandbox_class": "trusted",
-        "sandbox_profile": "restricted",
+        "sandbox_profile": "trusted",
         "status": "pass",
         "worker": "production_pm"
       },
@@ -3590,7 +3632,7 @@
         "network_mode": "egress-allowlist",
         "runtime_tier": "builtin",
         "sandbox_class": "trusted",
-        "sandbox_profile": "restricted",
+        "sandbox_profile": "trusted",
         "status": "pass",
         "worker": "qa_lead"
       },
@@ -3598,7 +3640,7 @@
         "network_mode": "egress-allowlist",
         "runtime_tier": "langgraph",
         "sandbox_class": "trusted",
-        "sandbox_profile": "standard",
+        "sandbox_profile": "trusted",
         "status": "pass",
         "worker": "requirements_writer"
       },
@@ -3606,7 +3648,7 @@
         "network_mode": "egress-allowlist",
         "runtime_tier": "external",
         "sandbox_class": "sandboxed",
-        "sandbox_profile": "gvisor",
+        "sandbox_profile": "sandboxed",
         "status": "pass",
         "worker": "research_worker"
       },
@@ -3622,7 +3664,7 @@
         "network_mode": "egress-allowlist",
         "runtime_tier": "external",
         "sandbox_class": "sandboxed",
-        "sandbox_profile": "gvisor",
+        "sandbox_profile": "sandboxed",
         "status": "pass",
         "worker": "security_analyst"
       },
@@ -3630,7 +3672,7 @@
         "network_mode": "egress-allowlist",
         "runtime_tier": "external",
         "sandbox_class": "sandboxed",
-        "sandbox_profile": "gvisor",
+        "sandbox_profile": "sandboxed",
         "status": "pass",
         "worker": "security_evaluator"
       },
@@ -3638,7 +3680,7 @@
         "network_mode": "egress-allowlist",
         "runtime_tier": "langgraph",
         "sandbox_class": "trusted",
-        "sandbox_profile": "standard",
+        "sandbox_profile": "trusted",
         "status": "pass",
         "worker": "solution_designer"
       },
@@ -3646,7 +3688,7 @@
         "network_mode": "egress-allowlist",
         "runtime_tier": "langgraph",
         "sandbox_class": "trusted",
-        "sandbox_profile": "standard",
+        "sandbox_profile": "trusted",
         "status": "pass",
         "worker": "sprint_planner"
       },
@@ -3654,7 +3696,7 @@
         "network_mode": "egress-allowlist",
         "runtime_tier": "external",
         "sandbox_class": "sandboxed",
-        "sandbox_profile": "gvisor",
+        "sandbox_profile": "sandboxed",
         "status": "pass",
         "worker": "sre_agent"
       },
@@ -3662,7 +3704,7 @@
         "network_mode": "egress-allowlist",
         "runtime_tier": "crewai",
         "sandbox_class": "trusted",
-        "sandbox_profile": "standard",
+        "sandbox_profile": "trusted",
         "status": "pass",
         "worker": "system_architect"
       },
@@ -3670,7 +3712,7 @@
         "network_mode": "egress-allowlist",
         "runtime_tier": "builtin",
         "sandbox_class": "trusted",
-        "sandbox_profile": "restricted",
+        "sandbox_profile": "trusted",
         "status": "pass",
         "worker": "system_pm"
       },
@@ -3678,7 +3720,7 @@
         "network_mode": "egress-allowlist",
         "runtime_tier": "langgraph",
         "sandbox_class": "trusted",
-        "sandbox_profile": "standard",
+        "sandbox_profile": "trusted",
         "status": "pass",
         "worker": "tech_analyst"
       },
@@ -3686,7 +3728,7 @@
         "network_mode": "egress-allowlist",
         "runtime_tier": "langgraph",
         "sandbox_class": "trusted",
-        "sandbox_profile": "standard",
+        "sandbox_profile": "trusted",
         "status": "pass",
         "worker": "tech_writer"
       },
@@ -3694,7 +3736,7 @@
         "network_mode": "egress-allowlist",
         "runtime_tier": "external",
         "sandbox_class": "sandboxed",
-        "sandbox_profile": "gvisor",
+        "sandbox_profile": "sandboxed",
         "status": "pass",
         "worker": "test_evaluation_worker"
       },
@@ -3702,7 +3744,7 @@
         "network_mode": "egress-allowlist",
         "runtime_tier": "external",
         "sandbox_class": "sandboxed",
-        "sandbox_profile": "gvisor",
+        "sandbox_profile": "sandboxed",
         "status": "pass",
         "worker": "tester"
       },
@@ -3710,7 +3752,7 @@
         "network_mode": "egress-allowlist",
         "runtime_tier": "langgraph",
         "sandbox_class": "trusted",
-        "sandbox_profile": "standard",
+        "sandbox_profile": "trusted",
         "status": "pass",
         "worker": "tool_interface_auditor"
       }

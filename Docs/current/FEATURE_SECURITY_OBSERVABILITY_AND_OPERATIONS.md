@@ -10,7 +10,8 @@ digest-pinned gVisor smoke, local Compose health, migration head `0045`, and
 live network-boundary check pass. The secret-safe host record is
 [`dev_host_readiness.json`](../../mas/docs/provenance/dev_host_readiness.json).
 This does not change the native-Linux release boundary: the release result is
-`RELEASE_CERTIFICATION_PENDING`, Kata is `OPTIONAL_UNAVAILABLE`, and direct
+`RELEASE_CERTIFICATION_PENDING`, Kata is `AVAILABLE` for the current WSL2
+development host but remains outside native release certification, and direct
 Firecracker is compatibility/superseded evidence rather than an active policy
 tier.
 
@@ -45,8 +46,9 @@ AIAT must make dangerous automation bounded, attributable, observable, and recov
   launcher and never falls back to Docker/runc/gVisor; the current readiness
   certificate is static-pass/live-blocked because the host lacks the launcher
   and Firecracker binary. New high-risk policy requests use `vm_isolated` and
-  require an explicitly configured Kata host runtime; Kata is not installed or
-  required by the current release.
+  require an explicitly configured Kata host runtime; the WSL2 bootstrap
+  installs pinned runtime-rs/QEMU and proves a distinct guest kernel, while
+  native release certification remains separate.
 - Router recovery using pending entries, reclaim, retry, TTL, durable DLQ, safe trimming, and audited replay.
 - Point-to-point and broadcast publication now use a Redis-atomic dedupe/XADD
   script, and production reclaim requeue uses one script for replacement XADD,

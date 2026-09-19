@@ -72,7 +72,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--require-sandbox",
         action="store_true",
-        help="require a hardened gVisor or Firecracker worker profile",
+        help="require a hardened sandboxed (gVisor) or vm_isolated (Kata) worker profile",
     )
     parser.add_argument("--timeout", type=float, default=15.0, help="HTTP read timeout in seconds")
     return parser

@@ -23,11 +23,11 @@ test.describe('Epsilon Runtime Status Panel', () => {
     await expect(card.getByText('CrewAI', { exact: true })).toBeVisible();
   });
 
-  test('autogen runtime shows firecracker requirement', async ({ page }) => {
+  test('autogen runtime shows vm-isolated requirement', async ({ page }) => {
     const card = page.locator('[data-runtime="autogen"]');
     await expect(card).toBeVisible();
     await expect(card.getByText('AutoGen', { exact: true })).toBeVisible();
-    await expect(card.getByText('firecracker')).toBeVisible();
+    await expect(card.getByText('vm_isolated')).toBeVisible();
   });
 
   test('letta runtime shows read-only policy', async ({ page }) => {

@@ -21,5 +21,5 @@ capabilities:
     description: Prepare and track human approval requests with audit-ready decision context.
     required_tools: [human.notify, human.await_decision, blob.upload]
 sandbox:
-  profile: restricted
+  profile: trusted
   network_mode: egress-deny-all

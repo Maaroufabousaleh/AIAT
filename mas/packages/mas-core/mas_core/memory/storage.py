@@ -39,6 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from ..company_manifest import DEFAULT_COMPANY_ID
 from ..observability.native_spans import build_native_trace_span
 from ..observability.tracing import current_span_id, current_trace_id, new_span_id
+from ..sandbox_policy import canonical_sandbox_class
 from . import models as t
 
 if TYPE_CHECKING:
@@ -6638,7 +6639,7 @@ class AgentStorage:
         name: str,
         adapter_type: str,
         adapter_config: dict | None = None,
-        sandbox_profile: str = "standard",
+        sandbox_profile: str = "trusted",
         capability_ids: list[UUID] | None = None,
         team_id: str | None = None,
         status: str = "ACTIVE",
@@ -6662,12 +6663,13 @@ class AgentStorage:
         """Register or re-register a worker (upsert on name)."""
         wid = worker_id or uuid4()
         now = datetime.now(tz=UTC)
+        canonical_profile = canonical_sandbox_class(sandbox_profile)
         values = {
             "id": wid,
             "name": name,
             "adapter_type": adapter_type,
             "adapter_config": adapter_config or {},
-            "sandbox_profile": sandbox_profile,
+            "sandbox_profile": canonical_profile,
             "capability_ids": capability_ids or [],
             "team_id": team_id,
             "status": status,
@@ -6692,7 +6694,7 @@ class AgentStorage:
         updates = {
             "adapter_type": adapter_type,
             "adapter_config": adapter_config or {},
-            "sandbox_profile": sandbox_profile,
+            "sandbox_profile": canonical_profile,
             "capability_ids": capability_ids or [],
             "team_id": team_id,
             "status": status,
@@ -6948,7 +6950,7 @@ class AgentStorage:
         if adapter_config is not None:
             values["adapter_config"] = adapter_config
         if sandbox_profile is not None:
-            values["sandbox_profile"] = sandbox_profile
+            values["sandbox_profile"] = canonical_sandbox_class(sandbox_profile)
         if capability_ids is not None:
             values["capability_ids"] = capability_ids
         if team_id is not None:

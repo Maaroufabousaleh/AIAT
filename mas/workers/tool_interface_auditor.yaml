@@ -22,6 +22,6 @@ capabilities:
     description: Audit candidate tool manifests, schemas, transports, and contract compatibility.
     required_tools: [capability.search, capability.list_workers, web_search, file_read, blob.upload]
 sandbox:
-  profile: standard
+  profile: trusted
   network_mode: egress-allowlist
   egress_allowlist: [api.github.com:443]

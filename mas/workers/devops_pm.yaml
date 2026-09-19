@@ -24,6 +24,6 @@ capabilities:
     description: Coordinate approved secrets-management requests without exposing raw secrets.
     required_tools: [secrets.manage, blob.upload]
 sandbox:
-  profile: restricted
+  profile: trusted
   network_mode: egress-allowlist
   egress_allowlist: [api.github.com:443]
