@@ -86,7 +86,7 @@ recovery, or human/operator gates.
 
 | Check | Result | Scope and limitation |
 | --- | --- | --- |
-| Source revision at refresh | **`f68ce9cc` working-tree baseline** | The local validation was produced from the current implementation tree before this documentation refresh. The final commit SHA is intentionally not embedded until the change is committed. These checks do not close live/operator gates. |
+| Source revision at refresh | **`617b62fc`** | The validation run was executed from its parent implementation tree `f68ce9cc`; the resulting architecture/host-readiness change is committed as `617b62fc`. These checks do not close live/operator gates. |
 | Documentation authority/index check | **PASS (2026-09-19)** | `uv run --isolated python scripts/check_docs_index.py --json` reports 13 feature documents, 3 plans, 23 maintained/link-checked documents, and no link or policy errors. |
 | Migration source-head check | **PASS (2026-09-19)** | `uv run --isolated python scripts/check_database_migration_head.py --json` reports one source head: `0045_worker_tool_effects`; the live development database is also at that head. |
 | Release-environment identity probe | **PASS (2026-09-19 UTC)** | The host bootstrap verifies Python, uv, Node, npm, Docker Engine `29.8.1`, Compose `v5.0.0-desktop.1`, and pinned `runsc 20260914.0` through the dedicated `aiat-wsl` context. |

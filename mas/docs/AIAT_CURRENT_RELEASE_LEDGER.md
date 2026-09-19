@@ -2,7 +2,7 @@
 
 **Run date:** 2026-09-19
 **Integration baseline:** reviewed OpenHands work is merged on the temporary integration branch from `origin/main` at `2c99b75a`; the reviewed OpenHands tip before integration is `15d2c1a874a2748548338066782b89561353de2e`.
-**Current published revision:** current pushed `main` plus the current architecture/host-readiness working tree (final commit SHA is recorded after commit)
+**Current published revision:** `617b62fc` (`feat: make WSL gVisor development host reproducible`)
 **Working-tree state:** published `main` tree with the protected untracked operator file `OpenTerminal-integration.md`; this ledger is a P0 progress ledger, not a production release certificate
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -35,8 +35,8 @@ sandbox, KMS, recovery, security, and worker/provider gates remain open.
 
 ## Repository validation refresh — 2026-09-19
 
-The implementation/test baseline for this refresh is the current working tree
-from `f68ce9cc` before the final commit; the checked-in API contract
+The implementation/test baseline for this refresh was the working tree from
+`f68ce9cc` before the final commit `617b62fc`; the checked-in API contract
 contains 238 OpenAPI paths, 137 schemas/models, and 271 operations. The static
 API, Python SDK, TypeScript, documentation-index, and migration-head checks
 pass. The broad isolated-`uv` Python suite also passes at 100% against the

@@ -68,7 +68,7 @@ carryovers, and the global decision remains **NO-RELEASE**.
 
 | Area | Current state |
 | --- | --- |
-| Integration baseline | Reviewed implementation work is present in the current working tree from `f68ce9cc`; this refresh is being committed as a coherent architecture/host-readiness change. The canonical OSS audit remains frozen to its separate audited SHA, and the reviewed OpenHands tip is `15d2c1a874a2748548338066782b89561353de2e`. |
+| Integration baseline | Reviewed architecture/host-readiness implementation is committed at `617b62fc` (validation source tree `f68ce9cc`). The canonical OSS audit remains frozen to its separate audited SHA, and the reviewed OpenHands tip is `15d2c1a874a2748548338066782b89561353de2e`. |
 | Static release ledger | The current tree reports **61 active pass + 3 not-in-scope = 64 checks**, with 0 failures/blocked checks and 2 pending evidence items; the checker still returns `NO-RELEASE` because a live profile is not included, pending evidence remains, and the worktree is dirty until this change is committed. |
 | OpenHands | v1.43.0 remains an inactive/certifying candidate. Exact source/image pins and provider-route evidence are retained; real file editing and passing tests are proven, but successful live terminal worker completion is not. The latest classification is `BLOCKED_EXECUTION_COMPLETION` with the final model turn unresolved historically. |
 | OpenCode | Current default and unchanged. OpenHands remains a subordinate candidate and has not been activated. |
