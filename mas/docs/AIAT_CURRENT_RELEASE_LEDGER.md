@@ -51,6 +51,11 @@ validated locally: 40 fixed tasks, 160 planned runs, no network/provider/
 credential activity, and `execution_status: NOT_RUN`. It is readiness evidence
 only; neither runtime was started and no winner or release certification is
 claimed.
+The dependency-free Pydantic AI versus AgentBase benchmark-corpus contract is
+also validated locally: 48 fixed cases, 288 planned runs, no dependency
+installation or activation, no provider/credential activity, and
+`execution_status: NOT_RUN`. It is readiness evidence only; AgentBase remains
+the current path and no adoption decision is claimed.
 The global release decision remains `NO-RELEASE`.
 
 ## Current integrated summary

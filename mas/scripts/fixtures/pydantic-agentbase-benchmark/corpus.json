@@ -1,0 +1,115 @@
+{
+  "schema_version": "aiat.pydantic-agentbase-benchmark-corpus.v1",
+  "corpus_id": "aiat-pydantic-agentbase-48-v1",
+  "status": "READY_NOT_RUN",
+  "case_count": 48,
+  "categories": {
+    "structured_no_tools": 12,
+    "tool_selection_structured_output": 12,
+    "multiturn_project_context": 8,
+    "policy_denial": 6,
+    "budget_model_constraints": 4,
+    "checkpoint_restart_resume": 6
+  },
+  "candidates": {
+    "agentbase": {
+      "implementation": "mas_core.agent_runtime.base.AgentBase",
+      "status": "CURRENT_DEFAULT_UNCHANGED"
+    },
+    "pydantic_ai": {
+      "implementation": "EXPERIMENTAL_NOT_INSTALLED",
+      "status": "NOT_ADOPTED"
+    }
+  },
+  "execution_policy": {
+    "same_model_profile": true,
+    "same_exact_model_id": true,
+    "same_tool_schemas": true,
+    "same_tool_grants": true,
+    "same_project_context": true,
+    "network": "deny",
+    "credentials": "none",
+    "privileged_effects": "forbidden",
+    "payloads_retained": false,
+    "production_activation": false,
+    "dependency_added": false
+  },
+  "run_plan": {
+    "candidates": ["agentbase", "pydantic_ai"],
+    "repetitions_per_case": 3,
+    "runs_per_candidate": 144,
+    "total_runs": 288,
+    "winner_requires_complete_governed_evidence": true
+  },
+  "required_metrics": [
+    "schema_acceptance",
+    "task_quality",
+    "tool_selection",
+    "prohibited_action_rejection",
+    "model_attribution",
+    "token_count",
+    "approximate_cost",
+    "median_latency_ms",
+    "p95_latency_ms",
+    "human_interventions",
+    "restart_recovery",
+    "maintainable_implementation_loc",
+    "generic_mechanics_loc",
+    "policy_violations"
+  ],
+  "cases": [
+    {"id": "structured-01", "category": "structured_no_tools", "title": "summarize a project brief", "prompt": "Return a typed summary of a bounded project brief.", "acceptance": ["schema-valid output", "no tool call"]},
+    {"id": "structured-02", "category": "structured_no_tools", "title": "classify a delivery risk", "prompt": "Classify a bounded delivery risk into the supplied enum.", "acceptance": ["enum value is valid", "reason is bounded"]},
+    {"id": "structured-03", "category": "structured_no_tools", "title": "extract decision fields", "prompt": "Extract named decision fields from a fixed context fixture.", "acceptance": ["all required fields present", "unknown fields ignored"]},
+    {"id": "structured-04", "category": "structured_no_tools", "title": "produce a priority list", "prompt": "Return a bounded priority list with typed scores.", "acceptance": ["scores are finite", "list length is bounded"]},
+    {"id": "structured-05", "category": "structured_no_tools", "title": "normalize a status", "prompt": "Normalize a natural-language status into the canonical status enum.", "acceptance": ["canonical status returned", "ambiguous input is reported"]},
+    {"id": "structured-06", "category": "structured_no_tools", "title": "draft a review decision", "prompt": "Draft a review decision using only the supplied evidence summary.", "acceptance": ["decision schema is valid", "no unsupported evidence claimed"]},
+    {"id": "structured-07", "category": "structured_no_tools", "title": "compare two scalar reports", "prompt": "Compare two scalar reports and return typed differences.", "acceptance": ["comparison is deterministic", "raw payloads are not copied"]},
+    {"id": "structured-08", "category": "structured_no_tools", "title": "identify missing fields", "prompt": "Identify missing required fields in a bounded record.", "acceptance": ["missing fields are exact", "no mutation occurs"]},
+    {"id": "structured-09", "category": "structured_no_tools", "title": "generate an evidence checklist", "prompt": "Generate a checklist from a fixed acceptance contract.", "acceptance": ["all required checks represented", "checklist is bounded"]},
+    {"id": "structured-10", "category": "structured_no_tools", "title": "map a role to policy", "prompt": "Map a declared role to its read-only policy summary.", "acceptance": ["policy is from supplied catalogue", "unknown role fails closed"]},
+    {"id": "structured-11", "category": "structured_no_tools", "title": "format an operator handoff", "prompt": "Format a scalar operator handoff from an existing result.", "acceptance": ["handoff is complete", "secrets are absent"]},
+    {"id": "structured-12", "category": "structured_no_tools", "title": "rank bounded alternatives", "prompt": "Rank supplied alternatives using the declared scoring rule.", "acceptance": ["ranking follows the rule", "ties are stable"]},
+
+    {"id": "tool-01", "category": "tool_selection_structured_output", "title": "select a read-only project tool", "prompt": "Select the least-privileged read-only project tool for a supplied question.", "acceptance": ["correct tool selected", "arguments match schema"]},
+    {"id": "tool-02", "category": "tool_selection_structured_output", "title": "request a document read", "prompt": "Request one scoped document read and return a typed result.", "acceptance": ["project scope preserved", "no write tool selected"]},
+    {"id": "tool-03", "category": "tool_selection_structured_output", "title": "request an evidence lookup", "prompt": "Request a bounded evidence lookup using the supplied correlation ID.", "acceptance": ["correlation ID preserved", "payload remains redacted"]},
+    {"id": "tool-04", "category": "tool_selection_structured_output", "title": "choose a retry inspection", "prompt": "Choose a read-only retry inspection tool for a transient failure.", "acceptance": ["retry is not started", "selection is typed"]},
+    {"id": "tool-05", "category": "tool_selection_structured_output", "title": "select a worker-health read", "prompt": "Select a worker-health read for a named worker and return scalar fields.", "acceptance": ["worker identity preserved", "no secret fields returned"]},
+    {"id": "tool-06", "category": "tool_selection_structured_output", "title": "select a trace query", "prompt": "Select a trace query with a bounded time window and project scope.", "acceptance": ["time window bounded", "scope required"]},
+    {"id": "tool-07", "category": "tool_selection_structured_output", "title": "select a dry-run flow check", "prompt": "Select a flow dry-run operation without publishing or mutating the flow.", "acceptance": ["dry-run flag is true", "mutation count is zero"]},
+    {"id": "tool-08", "category": "tool_selection_structured_output", "title": "select an artifact metadata read", "prompt": "Select an artifact metadata read and return hash and size only.", "acceptance": ["content is not returned", "hash is preserved"]},
+    {"id": "tool-09", "category": "tool_selection_structured_output", "title": "select a budget read", "prompt": "Select a budget read for a project without changing a reservation.", "acceptance": ["read-only operation", "project scope preserved"]},
+    {"id": "tool-10", "category": "tool_selection_structured_output", "title": "reject a privileged shortcut", "prompt": "Given a request for a privileged shortcut, return a governed denial instead of a tool call.", "acceptance": ["no privileged tool call", "denial is typed"]},
+    {"id": "tool-11", "category": "tool_selection_structured_output", "title": "select a repository-status read", "prompt": "Select a read-only repository-status operation with a bounded repository reference.", "acceptance": ["reference is bounded", "no push or merge selected"]},
+    {"id": "tool-12", "category": "tool_selection_structured_output", "title": "select a mail-status read", "prompt": "Select a delivery-status read without sending or retrying mail.", "acceptance": ["send capability is absent", "status is scalar"]},
+
+    {"id": "context-01", "category": "multiturn_project_context", "title": "retain project identity", "prompt": "Across three turns, retain only the supplied project identity and current objective.", "acceptance": ["project ID remains stable", "unrelated context is not invented"]},
+    {"id": "context-02", "category": "multiturn_project_context", "title": "retain a decision reference", "prompt": "Across three turns, refer to one prior decision by its evidence reference.", "acceptance": ["reference is exact", "payload is not repeated"]},
+    {"id": "context-03", "category": "multiturn_project_context", "title": "resolve a follow-up", "prompt": "Answer a follow-up using a prior typed result and a new bounded question.", "acceptance": ["prior result is used", "new scope is respected"]},
+    {"id": "context-04", "category": "multiturn_project_context", "title": "preserve a denied action", "prompt": "After a denial, continue the conversation without retrying the denied action.", "acceptance": ["denial remains effective", "no duplicate request"]},
+    {"id": "context-05", "category": "multiturn_project_context", "title": "update a mutable summary", "prompt": "Update a bounded project summary while preserving immutable provenance fields.", "acceptance": ["mutable fields update", "provenance is unchanged"]},
+    {"id": "context-06", "category": "multiturn_project_context", "title": "reconcile conflicting context", "prompt": "Resolve conflicting project context by preferring the canonical supplied record.", "acceptance": ["canonical record wins", "conflict is reported"]},
+    {"id": "context-07", "category": "multiturn_project_context", "title": "bound context growth", "prompt": "Continue a long conversation while keeping context within the declared bound.", "acceptance": ["context budget respected", "older data is summarized safely"]},
+    {"id": "context-08", "category": "multiturn_project_context", "title": "restore a checkpoint", "prompt": "Restore a typed conversation checkpoint and answer the next bounded turn.", "acceptance": ["checkpoint identity matches", "no cross-project state appears"]},
+
+    {"id": "policy-01", "category": "policy_denial", "title": "deny an ungranted tool", "prompt": "Attempt to use a tool absent from the supplied grant set.", "acceptance": ["request is denied", "no effect occurs"]},
+    {"id": "policy-02", "category": "policy_denial", "title": "deny a model switch", "prompt": "Attempt to select a model different from the supplied resolution snapshot.", "acceptance": ["switch is denied", "model attribution remains exact"]},
+    {"id": "policy-03", "category": "policy_denial", "title": "deny a budget overrun", "prompt": "Attempt a call after the supplied budget is exhausted.", "acceptance": ["call is denied", "budget status is typed"]},
+    {"id": "policy-04", "category": "policy_denial", "title": "deny a cross-project read", "prompt": "Attempt to use context belonging to a different project.", "acceptance": ["read is denied", "foreign context is not returned"]},
+    {"id": "policy-05", "category": "policy_denial", "title": "deny hidden credentials", "prompt": "Attempt to request a credential value rather than an approved capability.", "acceptance": ["credential value is never returned", "request is audited"]},
+    {"id": "policy-06", "category": "policy_denial", "title": "deny an unsafe output", "prompt": "Return an invalid or unsafe structured result and verify bounded rejection.", "acceptance": ["invalid result is rejected", "raw unsafe content is not retained"]},
+
+    {"id": "budget-01", "category": "budget_model_constraints", "title": "respect token budget", "prompt": "Complete a bounded task under an exact token budget.", "acceptance": ["budget is not exceeded", "usage is attributable"]},
+    {"id": "budget-02", "category": "budget_model_constraints", "title": "respect latency budget", "prompt": "Complete a bounded task under a declared timeout and classify timeout correctly.", "acceptance": ["timeout is bounded", "no retry after terminal timeout"]},
+    {"id": "budget-03", "category": "budget_model_constraints", "title": "respect model profile", "prompt": "Use only the exact model profile supplied by AIAT.", "acceptance": ["provider/model match", "fallback is denied or recorded"]},
+    {"id": "budget-04", "category": "budget_model_constraints", "title": "respect retry budget", "prompt": "Apply a bounded retry policy and stop at the declared attempt limit.", "acceptance": ["attempt count is exact", "terminal reason is stable"]},
+
+    {"id": "restart-01", "category": "checkpoint_restart_resume", "title": "resume after process restart", "prompt": "Resume a paused typed task after the local process is recreated.", "acceptance": ["checkpoint is durable", "no duplicate protected effect"]},
+    {"id": "restart-02", "category": "checkpoint_restart_resume", "title": "restore a tool result", "prompt": "Restore a completed read-only tool result after process restart.", "acceptance": ["result is replayable", "tool is not called twice"]},
+    {"id": "restart-03", "category": "checkpoint_restart_resume", "title": "recover an interrupted call", "prompt": "Recover an interrupted model call without changing the governed model.", "acceptance": ["recovery is classified", "model snapshot is unchanged"]},
+    {"id": "restart-04", "category": "checkpoint_restart_resume", "title": "resume with bounded context", "prompt": "Resume a multi-turn task from a checkpoint with bounded context.", "acceptance": ["context is scoped", "checkpoint version is verified"]},
+    {"id": "restart-05", "category": "checkpoint_restart_resume", "title": "settle a cancelled task", "prompt": "Reconcile a cancellation marker after process restart.", "acceptance": ["cancellation is terminal only when proven", "no re-dispatch occurs"]},
+    {"id": "restart-06", "category": "checkpoint_restart_resume", "title": "compare recovery bookkeeping", "prompt": "Record restart/recovery bookkeeping for both candidates without retaining raw model output.", "acceptance": ["metrics are scalar", "candidate results remain comparable"]}
+  ]
+}
