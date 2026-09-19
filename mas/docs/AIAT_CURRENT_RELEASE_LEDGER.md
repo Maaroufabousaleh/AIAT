@@ -2,7 +2,8 @@
 
 **Run date:** 2026-09-09
 **Integration baseline:** reviewed OpenHands work is merged on the temporary integration branch from `origin/main` at `2c99b75a`; the reviewed OpenHands tip before integration is `15d2c1a874a2748548338066782b89561353de2e`.
-**Working-tree state:** clean published `main` tree; this ledger is a P0 progress ledger, not a production release certificate
+**Current published revision:** `2645309f` on `main` (the timestamp-only history rewrite preserved the tree)
+**Working-tree state:** published `main` tree with the protected untracked operator file `OpenTerminal-integration.md`; this ledger is a P0 progress ledger, not a production release certificate
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
 ## Current working-tree refresh — 2026-09-15
@@ -31,7 +32,8 @@ sandbox, KMS, recovery, security, and worker/provider gates remain open.
 
 ## Repository validation refresh — 2026-09-19
 
-The implementation/test baseline for this refresh is `fe2b768e`; this evidence
+The implementation/test baseline for this refresh is current published `main`
+revision `2645309f`; this evidence
 note is published separately from that implementation baseline. The checked-in API contract
 contains 238 OpenAPI paths, 137 schemas/models, and 271 operations. The static
 API, Python SDK, TypeScript, documentation-index, and migration-head checks
@@ -41,11 +43,13 @@ one existing non-failing `AsyncMock` resource warning; the separately run
 identity-service, PM/mail, SDK, and script-test roots also pass. Explicit
 isolated-`uv`, live-provider, native-host, Docker/Compose, and operator gates
 remain outside this refresh.
-The fresh clean-clone certificate for candidate baseline
-`76272905db777829ccf21b61748eb467cafaf645` also reproduces 64/64 static checks
-with zero changed paths; its two pending evidence items and `NO-RELEASE`
-decision remain recorded in
+The retained clean-clone certificate is historical and remains pinned to exact
+candidate baseline `76272905db777829ccf21b61748eb467cafaf645`; it reproduces
+64/64 static checks with zero changed paths for that candidate only. Its two
+pending evidence items and `NO-RELEASE` decision remain recorded in
 [`release_ledger_clean_candidate_static.json`](provenance/release_ledger_clean_candidate_static.json).
+It is not evidence for current `main` revision `2645309f`; a new exact
+candidate certificate must be generated before release evidence is frozen.
 The dependency-free OpenCode/OpenHands benchmark-corpus contract is also
 validated locally: 40 fixed tasks, 160 planned runs, no network/provider/
 credential activity, and `execution_status: NOT_RUN`. It is readiness evidence
