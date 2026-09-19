@@ -2,7 +2,7 @@
 
 **Run date:** 2026-09-09
 **Integration baseline:** reviewed OpenHands work is merged on the temporary integration branch from `origin/main` at `2c99b75a`; the reviewed OpenHands tip before integration is `15d2c1a874a2748548338066782b89561353de2e`.
-**Current published revision:** `2645309f` on `main` (the timestamp-only history rewrite preserved the tree)
+**Current published revision:** current pushed `main` (implementation/content baseline `2645309f`; later commits are documentation-only)
 **Working-tree state:** published `main` tree with the protected untracked operator file `OpenTerminal-integration.md`; this ledger is a P0 progress ledger, not a production release certificate
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
