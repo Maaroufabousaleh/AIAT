@@ -2,7 +2,7 @@
 
 **Run date:** 2026-09-19
 **Integration baseline:** reviewed OpenHands work is merged on the temporary integration branch from `origin/main` at `2c99b75a`; the reviewed OpenHands tip before integration is `15d2c1a874a2748548338066782b89561353de2e`.
-**Current published revision:** `617b62fc` (`feat: make WSL gVisor development host reproducible`)
+**Current published revision:** `570083dc` (`feat: make Kata the canonical vm-isolated runtime`)
 **Working-tree state:** published `main` tree with the protected untracked operator file `OpenTerminal-integration.md`; this ledger is a P0 progress ledger, not a production release certificate
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
@@ -11,7 +11,7 @@
 The current static release-ledger invocation reports **61 active pass + 3
 not-in-scope = 64 checks**, with zero failures/blocked checks and two pending
 evidence items. The authenticated local-Compose live sweep at
-`2026-09-19T20:21:23Z` through the dedicated `aiat-wsl` Docker daemon reports
+`2026-09-19T22:39:32Z` through the dedicated `aiat-wsl` Docker daemon reports
 **74 pass, 0 fail, 10 blocked, 5 not-in-scope**, and four pending evidence
 items. The source and running local Compose database are both at
 `0045_worker_tool_effects`; the normal Alembic path applied the pending local
@@ -19,8 +19,9 @@ migrations. The scalar live summary is retained at
 [`provenance/release_ledger_live_compose_local_current.json`](provenance/release_ledger_live_compose_local_current.json).
 The WSL development status is **DEV_READY**; the global release decision
 remains **NO-RELEASE / RELEASE_CERTIFICATION_PENDING** because WSL2 is not
-native-Linux release evidence. Kata is `OPTIONAL_UNAVAILABLE` and
-`vm_isolated` remains fail-closed. Firecracker is superseded, self-improvement
+native-Linux release evidence. Kata runtime-rs/QEMU is `AVAILABLE` on this
+development host and `vm_isolated` remains fail-closed when Kata is unavailable
+on another host. Firecracker is superseded, self-improvement
 is deferred, and the maintained default email path is
 `PASS_FOR_DEFAULT_SCOPE`; those are not active blockers.
 
@@ -35,8 +36,8 @@ sandbox, KMS, recovery, security, and worker/provider gates remain open.
 
 ## Repository validation refresh — 2026-09-19
 
-The implementation/test baseline for this refresh was the working tree from
-`f68ce9cc` before the final commit `617b62fc`; the checked-in API contract
+The implementation/test baseline for this refresh was the Kata implementation
+committed at `570083dc`; the checked-in API contract
 contains 238 OpenAPI paths, 137 schemas/models, and 271 operations. The static
 API, Python SDK, TypeScript, documentation-index, and migration-head checks
 pass. The broad isolated-`uv` Python suite also passes at 100% against the
@@ -517,7 +518,8 @@ The [P0 release-scope and external-prerequisite matrix](../../Docs/current/P0_RE
 is the current operator decision boundary. It records the corrected
 MinIO/SeaweedFS resource wave as a pass, excludes the invalid network-alias
 attempt, keeps native Linux/default gVisor and required image/security gates in
-scope, and treats Kata `vm_isolated` as optional/unverified unless promoted;
+ scope, and treats native-Linux Kata `vm_isolated` release proof as pending
+ until a certified native host is used;
 direct Firecracker is compatibility evidence rather than a separate policy
 tier. It also
 records provider-managed KMS/SSE as required, external mail as conditional on
@@ -825,7 +827,8 @@ artifact output, and mandatory cleanup. The retained
 passes static validation but is live-blocked because the certified launcher and
 Firecracker binary are unavailable; no Docker/runc/gVisor fallback is allowed.
 Real microVM smoke/network, provider, recovery, and host certification remain
-open. Future high-risk policy execution is represented as Kata `vm_isolated`; a
+open. High-risk policy execution is represented by the active Kata
+`vm_isolated` class; a
 Firecracker VMM may be evaluated behind Kata without becoming another AIAT
 policy class.
 
@@ -1009,8 +1012,8 @@ release decision are intentionally not recomputed from the dirty working tree.
 | Default runtime install profile | static source/lock/Dockerfile contract | PASS | Commits `9a10a4b` and tracked workspace lock `2b13d89`; `uv lock --check` and `uv run --isolated python scripts/check_runtime_install_profile.py --json` reconcile the `runtime-default` LangGraph/CrewAI extra, locked versions (`langgraph` 0.6.11 and `crewai` 1.6.1), runtime-catalogue imports, and production Dockerfile install command; package imports and worker certification remain separate |
 | Workspace lock reproducibility | clean-archive/static packaging | PASS | Tracked lock commit `2b13d89`; `uv sync --locked --dev --dry-run` resolves 351 packages and would install the declared workspace without lock drift, while a clean Git archive contains `mas/uv.lock` and passes `check_docs_index.py` |
 | Default worker steward lifecycle | deterministic domain fixture + restart-safe persistence path | PASS (domain evidence; live open) | Existing steward contract `c80e339`, fixture coverage test `fe6fb8d`, durable compatibility-matrix writer/reader and bounded evidence test `ceb7011`; `uv run --isolated python scripts/check_worker_steward_contract.py --json` plus `uv run --isolated pytest packages/mas-core/tests/test_worker_steward_contract.py apps/orchestrator-api/tests/test_steward_rehydration.py packages/mas-core/tests/test_compatibility_matrix_persistence.py -q` exercises dedicated steward, immutable candidate, compatibility matrix, certification/approval, shadow → read-only canary → promotion, regression blocking, and pre-activation rollback for both externally sourced default workers; certification records the matrix in the same-process steward cache and durable store, while API rehydration restores durable active bundle/adapter IDs plus persisted compatibility-matrix rows, normalizing profile/capability JSON and failing closed on malformed evidence. Evidence is [`provenance/worker_steward_contract.json`](provenance/worker_steward_contract.json). Database reconciliation, security, sandbox, live canary, and worker-run evidence remain open |
-| Sandbox runtime readiness | static + native CI evidence + WSL development-host probe | PASS for development; release certification pending | Commits `a24c554`, `2c098f5`, native workflow hardening `d012ab9`, and the current host bootstrap; `uv run --isolated pytest packages/mas-core/tests/test_sandbox_runtime_readiness.py -q` and the native gVisor regression suite pass. The dedicated WSL2 `aiat-wsl` daemon registers pinned `runsc 20260914.0`; the digest-pinned smoke image `ubuntu@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517` passes with the bounded constraints, local Compose/migration/network checks pass, and the secret-safe result is [`provenance/dev_host_readiness.json`](provenance/dev_host_readiness.json). Kata is `OPTIONAL_UNAVAILABLE` on WSL2; native-Linux release, image, network-denial, canary, provider, and high-risk `vm_isolated` evidence remain separate. |
-| Direct Firecracker compatibility worker launch contract | static + read-only host readiness | PASS (contract); BLOCKED (host) | Commit `5ed0a0b`; focused contract/checker tests and Ruff pass. `check_firecracker_worker_pool.py --live --json` validates the immutable kernel/rootfs, bounded resource, read-only, deny-by-default egress, opaque-secret, artifact, and cleanup contract without launching a VM; the current host lacks both `aiat-firecracker-launcher` and `firecracker`, so compatibility smoke/network/provider/recovery are not checked and no weaker fallback is allowed. This is not a separate AIAT policy tier; future high-risk execution uses Kata `vm_isolated`, with Firecracker retained only as compatibility evidence or a selected Kata VMM. Evidence is [`provenance/firecracker_worker_pool_readiness.json`](provenance/firecracker_worker_pool_readiness.json) |
+| Sandbox runtime readiness | static + native CI evidence + WSL development-host probe | PASS for development; release certification pending | The dedicated WSL2 `aiat-wsl` daemon registers pinned `runsc 20260914.0` and Kata runtime-rs 4.2.0 with QEMU; the digest-pinned gVisor smoke and distinct Kata guest-kernel smoke pass with bounded constraints, local Compose/migration/network checks pass, and the secret-safe result is [`provenance/dev_host_readiness.json`](provenance/dev_host_readiness.json). Native-Linux release, image, network-denial, canary, provider, recovery, and high-risk `vm_isolated` release evidence remain separate. |
+| Direct Firecracker compatibility worker launch contract | static + read-only historical compatibility evidence | PASS (contract); NOT IN ACTIVE SCOPE | Commit `5ed0a0b`; focused contract/checker tests and Ruff pass. `check_firecracker_worker_pool.py --live --json` retains the immutable kernel/rootfs, bounded resource, read-only, deny-by-default egress, opaque-secret, artifact, and cleanup contract without launching a VM. Direct Firecracker is not an AIAT sandbox class or active blocker; high-risk execution uses Kata `vm_isolated`, while Firecracker may only be evaluated later as a Kata VMM. Evidence is [`provenance/firecracker_worker_pool_readiness.json`](provenance/firecracker_worker_pool_readiness.json) |
 | Runtime benchmark readiness | read-only live API probe | PASS (fresh Compose dependency dry-run; certification boundary remains open) | Base contract `ad31793`; bounded endpoint/test hardening `4d61279`; the secret-safe authenticated Compose run was refreshed 2026-08-18 in `cb47e3b`; `uv run --isolated pytest packages/mas-core/tests/test_runtime_benchmarks.py apps/orchestrator-api/tests/test_epsilon_runtimes.py -q` passes. Third-party imports execute off the API event loop with a capped timeout and explicit `benchmark_timeout`/`benchmark_error` responses; the live probe passes one LangGraph and one CrewAI dependency dry-run and is retained at [`runtime_benchmarks_live.json`](provenance/runtime_benchmarks_live.json). Missing API/package/validation evidence remains exit 2 when encountered; package benchmarks never certify a worker canary/live run/rollback |
 | Default runtime adapter conformance | unit/fixture + Compose package/lifecycle and lock-parity probe | PASS (adapter and exact-lock evidence; worker certification open) | Commit `c51b37d` fixes the framework envelope boundary: CrewAI now preserves project context and message history, while LangGraph and CrewAI normalize an absent project ID to `null`; focused adapter/conformance tests pass. The refreshed `docker exec mas-orchestrator-api-1 python /app/scripts/check_runtime_adapter_conformance.py --live --json` probe passes actual `LangGraphAdapter` and `CrewAIAdapter` classes with locked LangGraph `0.6.11` and CrewAI `1.6.1`, verifying project/message preservation, bounded completion, health, and shutdown without model/tool/provider/project calls; secret-safe evidence is [`provenance/runtime_adapter_conformance_live.json`](provenance/runtime_adapter_conformance_live.json). Sandbox, canary, live worker-run, and rollback evidence remain open |
 | Model override expiry and budget settlement replay | focused unit/storage | PASS (preparatory P1) | Commit `63b2db5`; `PYTHONPATH=mas/packages/mas-api-sdk ./.venv/bin/pytest -q apps/orchestrator-api/tests/test_worker_dispatch_governance.py packages/mas-core/tests/test_phase7_storage.py -k 'model_override_expiry or settle_budget_reservation'`; serialized expiry fails closed and terminal settlement retries are no-ops; provider-specific live recovery and settlement chaos evidence remain open |
