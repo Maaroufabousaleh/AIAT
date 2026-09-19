@@ -16,6 +16,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .sandbox_policy import SandboxProfileName, canonical_sandbox_class
+
 DEFAULT_COMPANY_ID = UUID("00000000-0000-4000-8000-000000000001")
 NonNegativeFiniteFloat = Annotated[float, Field(ge=0, allow_inf_nan=False)]
 UnitIntervalFiniteFloat = Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]
@@ -171,9 +173,15 @@ class DeploymentPolicyManifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     profile: Literal["local", "native-linux", "production"] = "local"
-    sandbox_profile: Literal["standard", "restricted", "gvisor", "firecracker"] = "gvisor"
+    sandbox_profile: SandboxProfileName = "sandboxed"
     require_immutable_images: bool = True
     allowed_regions: list[str] = Field(default_factory=list)
+
+    @property
+    def sandbox_class(self) -> str:
+        """Return the canonical isolation class for deployment decisions."""
+
+        return canonical_sandbox_class(self.sandbox_profile)
 
     @field_validator("allowed_regions")
     @classmethod

@@ -20,6 +20,19 @@ It is authoritative for OSS decisions and migration sequencing; the target
 programme and release ledger remain authoritative for broader architecture and
 release status.
 
+The standalone provider and research documents have been reconciled into the
+maintained authority set. The provider-neutral PM design is represented by
+[`Docs/current/FEATURE_INTEGRATIONS_PM_AND_SCM.md`](Docs/current/FEATURE_INTEGRATIONS_PM_AND_SCM.md);
+the current PM state is represented by the PM feature and certification ledger,
+not the older `Docs/PM_Platform_Integration_Plan.md` or its generated
+YouTrack bootstrap artifact. The email-provider topology is represented by
+[`Docs/current/FEATURE_IDENTITY_MAIL_AND_CREDENTIALS.md`](Docs/current/FEATURE_IDENTITY_MAIL_AND_CREDENTIALS.md)
+and the mail-edge/live-certification records. Historical research and prompt
+plans remain linked as design context through the [documentation authority
+status](Docs/current/DOCUMENTATION_AUTHORITY_STATUS.md); their Paperclip-first,
+licence-gating, legacy sandbox, and stale implementation-status claims do not
+override this roadmap.
+
 The maintained [AIAT Implementation Index](Docs/current/AIAT_IMPLEMENTATION_INDEX.md)
 is the compact feature-by-feature entry point to implementation status, evidence,
 remaining gates, and the next document to open. It complements this roadmap;
@@ -79,7 +92,7 @@ carryovers, and the global decision remains **NO-RELEASE**.
 | Phase | State | Evidence-backed status |
 | --- | --- | --- |
 | R0 — documentation authority | complete | Canonical target, thirteen feature documents, three plans, root navigation, the tracked `mas/uv.lock`, and the personal/internal metadata-only policy are present. Both the current workspace and a clean Git archive pass `check_docs_index.py`; regression coverage asserts the thirteen-feature/three-plan authority set (`0dbfdb7`), and concrete licence identifiers are kept in metadata surfaces by the scope guard (`dee1a7e`). |
-| R1 — P0 release integrity | in progress | Static ledger: 64/64 pass, including the Firecracker worker-pool readiness, bounded gateway-provider-recovery, security-finding-review, multipart, object-store resource-profile, object-store provider-outage, object-store lifecycle, trace-retention execution, encrypted object-store backup, fresh-process restore, AIAT credentials-manager, identity-provider-conformance, live-flow-runtime, and source migration-head guard children; release-ledger regression coverage asserts the registered children remain present and passing. The policy-backed network matrix contract feeds the same protected/allowed rows to static and live checks, the OpenCode Compose sandbox contract is statically enforced, and the refreshed local WSL2 run passes 11/11 runners. The latest authenticated local Compose live sweep at `2026-09-15T12:11:27Z` records 83 pass, 0 fail, 6 blocked, 4 pending, and `NO-RELEASE` across 89 checks; the database migration-head check is additionally blocked because the host-side read-only DSN cannot reach the published port while the running local database remains at `0042_worker_run_host_binding` and source is at `0045_worker_tool_effects`. Native-Linux, deployment image digests/SBOM/scan artifacts, gVisor/Firecracker, non-mail provider/KMS, clean-worktree, unresolved OpenCode findings, clean-host/disaster-recovery, worker canary/rollback, and selected self-improvement evidence remain open; the default Cloudflare/Resend email identity path is separately live-certified, while optional profile and broader mail-edge outage/restore evidence remain separate. |
+| R1 — P0 release integrity | in progress | Static ledger: 64/64 pass, including the retained Firecracker compatibility readiness, bounded gateway-provider-recovery, security-finding-review, multipart, object-store resource-profile, object-store provider-outage, object-store lifecycle, trace-retention execution, encrypted object-store backup, fresh-process restore, AIAT credentials-manager, identity-provider-conformance, live-flow-runtime, and source migration-head guard children; release-ledger regression coverage asserts the registered children remain present and passing. The policy-backed network matrix contract feeds the same protected/allowed rows to static and live checks, the OpenCode Compose sandbox contract is statically enforced, and the refreshed local WSL2 run passes 11/11 runners. The latest authenticated local Compose live sweep at `2026-09-15T12:11:27Z` records 83 pass, 0 fail, 6 blocked, 4 pending, and `NO-RELEASE` across 89 checks; the database migration-head check is additionally blocked because the host-side read-only DSN cannot reach the published port while the running local database remains at `0042_worker_run_host_binding` and source is at `0045_worker_tool_effects`. Native-Linux, deployment image digests/SBOM/scan artifacts, gVisor/Kata `vm_isolated`, non-mail provider/KMS, clean-worktree, unresolved OpenCode findings, clean-host/disaster-recovery, worker canary/rollback, and selected self-improvement evidence remain open; the default Cloudflare/Resend email identity path is separately live-certified, while optional profile and broader mail-edge outage/restore evidence remain separate. |
 | R2–R5 — P1 default programme completion | preparatory implementation | Control-plane, worker, flow, evidence, identity, provider, executive, SDK, and dashboard contracts are substantially implemented and statically tested; the current local Compose dashboard suite passes 58/59 tests (one explicit operator-fixture skip), including hierarchy communication-policy/path tracing, retained hiring evaluation details, focused 2/2 shell accessibility, 2/2 theme preference, identity stale-record/retry, PM integration conflict/stale retry, project-detail stale/retry, and system-visualization partial/offline retry coverage. Source-built governance, System Control, Projects list, Project evidence package, Tools catalogue, dead-letter queue, credentials, Metrics, Flows, flow editor, new-flow builder, project detail, project workspace, Container Logs, Agent Streams, Hiring Board, CEO Live Feed, CEO Command Center chat, evidence-detail, system-visualisation, PM integrations, System Overview, and shared identity-resource stale/recovery/accessibility tests also pass; selector repairs are recorded in `d5f596e` and `514aeeb`, the project evidence package stale/retry group is recorded in `bc80ad5`, its focused accessibility baseline in `89091c1`, the project evidence package denial recovery in `00f81b5` (source-built matrix 3/3), the Evidence Detail denial recovery in `23e2db9` (source-built matrix 11/11), the System Overview access-denied recovery in `b0ab779` (source-built 403 fixture 1/1), the new-flow builder access-denied recovery in `b07299b` (source-built matrix 3/3), the Tools catalogue focused accessibility baseline in `83e39e6`, the dead-letter queue focused accessibility baseline in `99a19a2`, the credentials focused accessibility baseline in `93fdfbc`, the Metrics focused accessibility baseline in `da113af`, the Container Logs focused accessibility baseline in `993b1cb`, the Agent Streams focused accessibility baseline in `d320383`, the Hiring Board focused accessibility baseline in `826b4c5`, the CEO Live Feed focused accessibility baseline in `1f947a9`, the CEO Command Center chat focused accessibility baseline in `8ffb5df`, the Governance focused accessibility baseline in `f4ae7eb`, the System Control focused accessibility baseline in `543f392`, the Project Detail focused accessibility baseline in `40b87dd`, the evidence-detail focused accessibility baseline in `32f3a76`, the system-visualisation focused accessibility baseline in `ed5e551`, the PM integrations focused accessibility baseline in `bbd6ba3`, the System Overview focused accessibility baseline in `c07b4a6`, and the shared identity-resource accessibility baseline in `a260e04`; flow-editor load/stale/retry recovery is recorded in `b5098e7`, project-detail first-load/retry recovery is recorded in `f364763`, project-workspace stale/retry recovery is recorded in `cb1c665`, Projects list read/mutation denial recovery is recorded in `17d25b0` (source-built denial matrix 4/4), Project Evidence canonical-read denial recovery is recorded in `00f81b5` (source-built denial matrix 3/3), and Evidence Detail bounded scalar-read denial recovery is recorded in `23e2db9` (source-built denial matrix 11/11). Compose also passes the bounded LangGraph/CrewAI adapter lifecycle probe with exact locked package parity (LangGraph `0.6.11`, CrewAI `1.6.1`); page-by-page light/dark parity, native-Linux, workforce, model-backed canary/live-run, sandbox, rollback, and provider certification remain open. |
 
 The current `check_release_ledger.py --json` static invocation reports 64/64
@@ -92,7 +105,8 @@ The latest authenticated local Compose live sweep at
 zero failures, six externally blocked checks, and four pending evidence items.
 It supersedes the older configured live aggregates for current local evidence;
 the remaining blockers are native-host/environment, database migration-head
-reachability, deployment-image provenance, Firecracker worker-pool readiness,
+reachability, deployment-image provenance, `vm_isolated`/Firecracker
+compatibility readiness,
 outbound mail lifecycle, and operator-selected self-improvement scope. The
 source migration head is `0045_worker_tool_effects`; the running local Compose
 database remains at `0042_worker_run_host_binding` and was not migrated in this
@@ -134,9 +148,14 @@ native-host portability, which are separate evidence gates.
 
 The current operator/external-state boundary is recorded in the [P0
 release-scope and external-prerequisite matrix](Docs/current/P0_RELEASE_SCOPE_MATRIX.md).
-It keeps native Linux and the default gVisor runtime required, classifies
-Firecracker as optional and unverified unless the operator promotes the
-high-risk tier. Provider-managed KMS/SSE remains required; the default
+The sandbox policy now has three classes: `trusted` uses runc for AIAT-owned
+code, `sandboxed` uses the default gVisor runtime for external workers, and
+`vm_isolated` uses Kata on a certified VM-capable host. Legacy `gvisor` and
+`firecracker` profile names are accepted as aliases; direct Firecracker is no
+longer a fourth AIAT policy tier and may remain only as a compatibility or Kata
+host-VMM path. External workers fail closed rather than falling back to runc.
+The current WSL2 environment has no certified Kata host, so `vm_isolated`
+remains unavailable for the current release. Provider-managed KMS/SSE remains required; the default
 Cloudflare/Resend email identity path is live-certified, while optional mail
 profiles and broader outage/restore evidence remain separate. Live
 self-improvement is deferred for the current internal release.
@@ -1196,6 +1215,7 @@ executive-form, and confirmation controls (`f4ae7eb`).
 | Compact index of implemented capabilities, evidence, remaining work, and next documents | [AIAT Implementation Index](Docs/current/AIAT_IMPLEMENTATION_INDEX.md) |
 | Programme vision, architecture laws, minimal/optional stack, consolidated decisions, programme completion | [AIAT Target Programme](AIAT_TARGET_PROGRAMME.md) |
 | Documentation audit, authority precedence, and clean-checkout limitation | [Documentation Authority Status](Docs/current/DOCUMENTATION_AUTHORITY_STATUS.md) |
+| Reconciled standalone PM, email, and research documents | [Documentation Authority Status](Docs/current/DOCUMENTATION_AUTHORITY_STATUS.md) · [PM/SCM feature](Docs/current/FEATURE_INTEGRATIONS_PM_AND_SCM.md) · [Identity/mail feature](Docs/current/FEATURE_IDENTITY_MAIL_AND_CREDENTIALS.md) |
 | Current control plane, company, authority, policy, and budget target | [Control Plane and Company](Docs/current/FEATURE_CONTROL_PLANE_AND_COMPANY.md) |
 | Worker contract, stewards, tools, models, certification, and runtime target | [Workers, Stewards, Tools, and Models](Docs/current/FEATURE_WORKERS_STEWARDS_AND_MODELS.md) |
 | Committed worker-plane host execution and admission | [Worker-Plane Host Execution](Docs/current/FEATURE_WORKER_HOST_EXECUTION.md) |
@@ -2492,7 +2512,9 @@ Required outcomes:
   static contract (`2760c7a`/`5d62ca6`, with the Letta boundary at `7052d33`)
   and adopted only after live
   measurable-value, outage, backup/restore, and removal gates;
-- multi-host gVisor pools and separately certified Firecracker high-risk pools.
+- multi-host gVisor pools and certified Kata-capable `vm_isolated` pools;
+  direct Firecracker remains compatibility/benchmark evidence or a selected
+  Kata host VMM.
 
 ### R7 — guarded self-improvement
 
@@ -2780,10 +2802,11 @@ native-Linux and broader WCAG/mobile/visual evidence remain open.
    multi-host selection/scheduling (`d9917f8`), durable Worker Run host
    assignment (`08f1610e`), and durable host
    fencing/recovery (`72e59ec`); [ ] prove live worker dispatch, provider/
-   sandbox recovery, and Firecracker worker pools. [x] Define the fail-closed
-   Firecracker launch contract and readiness checker (`5ed0a0b`); [ ] provide
-   a host-certified launcher, real microVM smoke/network evidence, and
-   provider/recovery proof.
+   sandbox recovery, and Kata-capable `vm_isolated` worker pools. [x] Define
+   the fail-closed direct Firecracker compatibility launch contract and
+   readiness checker (`5ed0a0b`); [ ] provide a certified Kata host profile
+   (or an explicitly approved compatibility benchmark), real sandbox
+   smoke/network evidence, and provider/recovery proof.
 
 The `d45e4dd` extension closes the bounded local duplicate-effect boundary:
 concurrent duplicate host claims are rejected before a second adapter dispatch,

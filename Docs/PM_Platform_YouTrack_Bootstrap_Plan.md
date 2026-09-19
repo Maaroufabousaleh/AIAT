@@ -4,6 +4,12 @@ This is the server-generated, digest-bound plan for the live AIAT YouTrack
 connection. It is intentionally a planning artifact: no YouTrack project,
 custom field, webhook, or AIAT binding was created when this file was written.
 
+> **Historical artifact notice (2026-09-19):** This digest-bound plan records
+> a pre-apply point in time and must not be replayed or used to infer current
+> provider state. The later PM certification ledger records connection
+> `ACTIVE` revision 2, binding `READ_ONLY` revision 8, and the uncompleted
+> browser-mediated ACTIVE command certification.
+
 ## Approval identity
 
 | Field | Value |

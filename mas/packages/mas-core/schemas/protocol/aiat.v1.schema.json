@@ -1181,7 +1181,16 @@
           "$ref": "#/$defs/ProtocolVersion"
         },
         "sandbox_profile": {
-          "default": "standard",
+          "default": "trusted",
+          "enum": [
+            "trusted",
+            "sandboxed",
+            "vm_isolated",
+            "standard",
+            "restricted",
+            "gvisor",
+            "firecracker"
+          ],
           "title": "Sandbox Profile",
           "type": "string"
         },
@@ -2614,8 +2623,11 @@
               "type": "string"
             },
             "profile": {
-              "default": "standard",
+              "default": "trusted",
               "enum": [
+                "trusted",
+                "sandboxed",
+                "vm_isolated",
                 "standard",
                 "restricted",
                 "gvisor",

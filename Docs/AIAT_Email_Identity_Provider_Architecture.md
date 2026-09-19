@@ -10,6 +10,12 @@ with `FINAL_EMAIL_SUBSYSTEM_STATUS = CERTIFIED`. Optional Stalwart/R2 profiles,
 broader outage/restore evidence, and unrelated programme release gates remain
 separate.
 
+> **Reconciliation notice (2026-09-19):** This document is the supporting
+> provider-topology source. The maintained identity and mail-edge feature
+> specifications incorporate its non-contradictory topology; current status,
+> certification, and remaining evidence are authoritative there and in the
+> live certification record.
+
 ## Default v1 topology
 
 The default production configuration is deliberately split by direction:

@@ -15,6 +15,8 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from mas_core.sandbox_policy import SandboxProfileName
+
 CONTRACT_VERSION = "aiat.worker.v1"
 ADAPTER_API_VERSION = "aiat.adapter.v1"
 SKILL_BUNDLE_FORMAT_VERSION = "aiat.skill-bundle.v1"
@@ -218,7 +220,7 @@ class WorkerManifest(_ContractModel):
     permissions: list[str] = Field(default_factory=list)
     tool_grants: list[str] = Field(default_factory=list)
     budget_limits: dict[str, float] = Field(default_factory=dict)
-    sandbox_profile: str = "standard"
+    sandbox_profile: SandboxProfileName = "trusted"
     transport: str = "native"
     adapter_type: str = "native"
     source_provenance: dict[str, Any] = Field(default_factory=dict)

@@ -16,6 +16,12 @@ from collections.abc import Iterable, Mapping
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from mas_core.sandbox_policy import (
+    HARDENED_SANDBOX_CLASSES,
+    SUPPORTED_SANDBOX_PROFILES,
+    canonical_sandbox_class,
+)
+
 WORKER_RUN_READINESS_SCHEMA = "aiat.worker-run-readiness.v1"
 
 # These are the project states in which a governed worker task can be
@@ -40,8 +46,8 @@ DISPATCHABLE_PROJECT_STATES = frozenset(
     }
 )
 TERMINAL_PROJECT_STATES = frozenset({"COMPLETED", "ARCHIVED", "FAILED"})
-VALID_SANDBOX_PROFILES = frozenset({"standard", "restricted", "gvisor", "firecracker"})
-HARDENED_SANDBOX_PROFILES = frozenset({"gvisor", "firecracker"})
+VALID_SANDBOX_PROFILES = SUPPORTED_SANDBOX_PROFILES
+HARDENED_SANDBOX_PROFILES = HARDENED_SANDBOX_CLASSES
 REQUIRED_BUDGETS = ("max_concurrent_runs", "max_cost_usd")
 REQUIRED_WORKER_POINTERS = (
     "active_shell_version_id",
@@ -160,10 +166,14 @@ def evaluate_worker_run_readiness(
             blockers.append(_blocker("non_model_worker_has_profile", "a non-model worker cannot select a model profile"))
 
         sandbox_profile = _text(worker.get("sandbox_profile")).lower()
-        if sandbox_profile not in VALID_SANDBOX_PROFILES:
+        try:
+            sandbox_class = canonical_sandbox_class(sandbox_profile)
+        except ValueError:
+            sandbox_class = None
             blockers.append(_blocker("sandbox_profile_invalid", "the worker has no recognized sandbox profile"))
-        elif require_sandbox and sandbox_profile not in HARDENED_SANDBOX_PROFILES:
-            blockers.append(_blocker("sandbox_profile_not_hardened", "the selected run requires gVisor or Firecracker sandboxing"))
+        else:
+            if require_sandbox and sandbox_class not in HARDENED_SANDBOX_PROFILES:
+                blockers.append(_blocker("sandbox_profile_not_hardened", "the selected run requires gVisor/runsc or Kata VM isolation"))
 
         if health is not None:
             health_status = _text(health.get("health_status")).lower()
@@ -256,6 +266,10 @@ def evaluate_worker_run_readiness(
     fetch_status.setdefault("model_profiles", "observed")
 
     sandbox_profile = _text(worker.get("sandbox_profile")).lower() if worker else "missing"
+    try:
+        sandbox_class = canonical_sandbox_class(sandbox_profile)
+    except ValueError:
+        sandbox_class = "invalid"
     health_status = _text(health.get("health_status")).lower() if health else "not_checked"
     report = {
         "schema_version": WORKER_RUN_READINESS_SCHEMA,
@@ -287,6 +301,7 @@ def evaluate_worker_run_readiness(
             "budgets": budget_status,
             "sandbox": {
                 "profile": sandbox_profile,
+                "class": sandbox_class,
                 "runtime_status": "not_checked",
                 "hardened_required": bool(require_sandbox),
             },

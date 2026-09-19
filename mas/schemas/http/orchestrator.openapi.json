@@ -10987,7 +10987,7 @@
     },
     "/evaluations/firecracker": {
       "get": {
-        "description": "Evaluate Firecracker microVM enforcement for highest-risk workloads.",
+        "description": "Report the retained direct-Firecracker compatibility evaluation.",
         "operationId": "evaluate_firecracker_integration_evaluations_firecracker_get",
         "responses": {
           "200": {

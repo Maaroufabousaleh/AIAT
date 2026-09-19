@@ -80,8 +80,8 @@ def test_runtime_benchmark_classifies_completed_and_unavailable(monkeypatch) -> 
         lambda *args, **kwargs: Response(
             {
                 "runtimes": [
-                    {"id": "langgraph", "status": "available", "policy": {"sandbox_required": "gvisor"}},
-                    {"id": "crewai", "status": "unavailable", "policy": {"sandbox_required": "gvisor"}},
+                    {"id": "langgraph", "status": "available", "policy": {"sandbox_required": "sandboxed"}},
+                    {"id": "crewai", "status": "unavailable", "policy": {"sandbox_required": "sandboxed"}},
                 ]
             }
         ),

@@ -8,6 +8,10 @@
 > resource selection or execution. Technical security, compatibility,
 > provenance, resource, and approval boundaries remain current.
 
+> **Reconciliation notice (2026-09-19):** This report is historical design
+> evidence. Its Paperclip-first proposal is superseded by the AIAT-only
+> control-plane decision in the [canonical OSS plan](../../mas/docs/AIAT_OSS_ARCHITECTURE_AND_IMPLEMENTATION_PLAN.md).
+
 ## Executive summary
 
 Enabled connector scope for this research pass: **GitHub**. Repo-level inspection was limited to **`Maaroufabousaleh/AIAT`**, then expanded with uploaded project files and official documentation for external tools and runtimes.

@@ -7,6 +7,13 @@
 > and licence-based activation gates below are superseded. Licence/notices are
 > metadata only and never block normal use in the personal AIAT instance.
 
+> **Reconciliation notice (2026-09-19):** The later [canonical OSS
+> architecture and implementation plan](../mas/docs/AIAT_OSS_ARCHITECTURE_AND_IMPLEMENTATION_PLAN.md)
+> incorporates the usable conclusions from this historical plan. Current
+> repository status, sandbox policy, runtime defaults, and release evidence
+> come from the target programme, roadmap, current feature set, and release
+> ledger.
+
 ## Summary
 
 This plan reconciles the archived
@@ -58,10 +65,11 @@ package is not installed by default because its current MCP dependency range
 conflicts with the tool-service's pinned `mcp==1.23.3`. Letta, Qdrant,
 Temporal, OpenHands, Scrapling, ccpm, and code-review integrations remain
 optional adapter work until their runtime and operational evidence is added.
-Likewise, gVisor/Firecracker execution profiles and production identity
-topology require environment-specific live validation; this branch adds the
-policy, persistence, and documentation hooks without pretending that a local
-test is production proof.
+Likewise, gVisor `sandboxed` and future Kata `vm_isolated` execution profiles
+and production identity topology require environment-specific live validation;
+direct Firecracker remains compatibility/benchmark evidence rather than a
+separate AIAT policy class. This branch adds policy, persistence, and
+documentation hooks without pretending that a local test is production proof.
 
 Validation evidence for this branch: the complete `mas` pytest suite passes
 (with the repository's existing live/infrastructure skips), focused manifest,
@@ -90,7 +98,7 @@ into unrelated unit-test configuration.
 | LangGraph/CrewAI execution | Truthful readiness implemented; adapters return unavailable instead of reporting stub success when dependencies/configuration are absent |
 | Microsoft Agent Framework, OpenHands core, Scrapling, ccpm | Adapter/readiness or provenance declarations exist; external runtime certification remains pending |
 | Letta, Qdrant, Temporal | Missing or placeholder-only |
-| gVisor/Firecracker production execution | Policy exists; live runtime proof is incomplete |
+| gVisor/Kata hardened production execution | Policy exists; live runtime proof is incomplete; direct Firecracker is compatibility-only |
 | SBOM, third-party notices, automated CI | Implemented with provenance checker, SBOM script, notices, and CI workflow |
 | Documentation consistency | Reconciled in this branch; external research citations and live deployment evidence still require periodic refresh |
 
@@ -173,8 +181,9 @@ into unrelated unit-test configuration.
   whichever profile is selected without exposing the service publicly.
 - Prevent peer team containers from communicating directly unless explicitly
   allowed by policy.
-- Provide Linux gVisor and optional Firecracker profiles, failing closed when a
-  required sandbox is unavailable.
+- Provide Linux gVisor `sandboxed` and optional Kata `vm_isolated` profiles,
+  failing closed when a required hardened sandbox is unavailable. Retain
+  direct Firecracker only for compatibility/benchmark evidence.
 - Add company/manifest, department, run lease, budget, adapter readiness, and
   execution-overlay dashboard surfaces.
 - Add TLS/reverse-proxy, authentication throttling, signed alert, backup, and
@@ -212,7 +221,8 @@ into unrelated unit-test configuration.
   The branch adds truthful unavailable states and a Microsoft Agent Framework
   adapter contract, but does not certify unavailable external runtimes.
 - Company isolation, signed caller attribution, credential revocation, sandbox
-  escape, network/filesystem, secret-redaction, provenance, and license tests.
+  escape, network/filesystem, secret-redaction, provenance, and licence-metadata
+  collection tests; licence metadata must not become an activation gate.
 - Fresh deployment golden path: compile company → CEO → certify worker → queue
   task → governed tool → artifact → approval → cost/evidence.
 - Migration, restart, database/Redis/object-store interruption, TLS deployment,
@@ -225,13 +235,17 @@ into unrelated unit-test configuration.
   source is not copied.
 - The default company preserves current single-company behavior while enabling
   tenant isolation.
-- LangGraph, CrewAI, and Microsoft Agent Framework are default runtimes;
-  AutoGen and OpenClaw remain experimental and disabled by default.
+- LangGraph, CrewAI, and Microsoft Agent Framework are preferred runtime
+  candidates behind AIAT adapters; provider/canary/live activation remains
+  evidence-gated. AutoGen and OpenClaw remain experimental and disabled by
+  default.
 - Semgrep is the default scanner; TruffleHog is optional/user-installed.
 - GitHub Issues/ccpm is the default planning path; Plane/OpenProject remain
   external-only.
 - LiteLLM and OmniRoute remain default analytics; Prometheus metrics are
   optional.
-- gVisor is the default hardened sandbox; Firecracker is for high-risk work.
+- gVisor is the default `sandboxed` boundary; Kata is the future `vm_isolated`
+  boundary for high-risk or gVisor-incompatible work. Direct Firecracker is a
+  compatibility/benchmark path, not a separate AIAT policy tier.
 - Postgres/MinIO remain authoritative until a separately approved storage
   migration has benchmark, rollback, and recovery evidence.

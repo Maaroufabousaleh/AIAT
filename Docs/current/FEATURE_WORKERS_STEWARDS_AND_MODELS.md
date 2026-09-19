@@ -894,7 +894,7 @@ response evidence.
 - [x] Reconcile sandbox declarations and add a fail-closed gVisor runtime
   registration probe. The current host reports no registered `runsc`, so no
   weaker `runc` fallback is accepted.
-- [x] Add the AIAT-owned Firecracker high-risk launch contract and
+- [x] Add the AIAT-owned direct Firecracker compatibility launch contract and
   [`check_firecracker_worker_pool.py`](../../mas/scripts/check_firecracker_worker_pool.py)
   (`5ed0a0b`). `FirecrackerLaunchSpec` validates immutable kernel/rootfs
   digests, bounded CPU/memory/PID/disk/output/time limits, read-only rootfs,
@@ -902,7 +902,8 @@ response evidence.
   cleanup; `FirecrackerAdapter` emits argv only through an explicit certified
   launcher and cannot silently fall back to Docker/runc. Static contract
   evidence passes; the current live readiness certificate is blocked because
-  neither the launcher nor the Firecracker binary is available.
+  neither the launcher nor the Firecracker binary is available. It is not a
+  separate AIAT policy tier; future high-risk workers use Kata `vm_isolated`.
 - [x] Preserve governance model provenance through AgentBase checkpoint
   shutdown/startup resumes and snapshot-bearing direct dispatch; the runtime
   resolves only an existing scoped snapshot and fails closed when it is

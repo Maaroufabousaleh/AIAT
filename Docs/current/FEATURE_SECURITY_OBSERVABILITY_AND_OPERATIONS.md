@@ -14,7 +14,11 @@ AIAT must make dangerous automation bounded, attributable, observable, and recov
 - Redis ACL users with separate router and tool-cache key/command permissions.
 - Worker-only Docker network separated from the Redis/Postgres internal network in current Compose. The machine-readable [`network_boundary_policy.yaml`](../../mas/docs/provenance/network_boundary_policy.yaml) is the single deny/allow matrix source for runner identity variables, forbidden mounts/env names, protected services, allowed gateways, internal-network flags, and the bounded external-denial probe; `check_network_boundary.py` consumes it for both static Compose validation and live probes (`96fb71f`).
 - Non-root containers, resource limits, internal networks, read-only manifest mounts, and no published production Redis/Postgres ports.
-- Semgrep CLI and SkillSpector security evaluator policy; gVisor default and optional Firecracker profiles.
+- Semgrep CLI and SkillSpector security evaluator policy; the three-class
+  isolation policy is `trusted` → normal Docker/runc, `sandboxed` → gVisor
+  `runsc`, and `vm_isolated` → Kata. Legacy `standard`/`restricted`/`gvisor`/
+  `firecracker` values remain compatibility aliases; direct Firecracker is no
+  longer a separate AIAT policy tier.
 - `check_sandbox_runtime_readiness.py` validates the 39 worker sandbox
   declarations, the 10 hardened external workers, and the AIAT-owned
   `opencode-runtime` Compose boundary: internal-only networking, no host
@@ -22,14 +26,17 @@ AIAT must make dangerous automation bounded, attributable, observable, and recov
   `no-new-privileges`, bounded CPU/memory/PIDs, and noexec/nosuid tmpfs
   paths (`2c098f5`). It also provides a fail-closed Docker `runsc`
   registration probe; optional digest-pinned smoke, network-denial, canary,
-  and Firecracker checks remain explicit evidence stages.
-- The AIAT-owned Firecracker contract (`5ed0a0b`) validates immutable
+  and Kata `vm_isolated` checks remain explicit evidence stages. Direct
+  Firecracker checks are compatibility/benchmark evidence only.
+- The AIAT-owned direct Firecracker compatibility contract (`5ed0a0b`) validates immutable
   kernel/rootfs digests, bounded CPU/memory/PID/disk/output/time limits,
   read-only rootfs, deny-by-default egress, opaque secret references, artifact
   output, and cleanup. Its adapter requires an explicitly named certified
   launcher and never falls back to Docker/runc/gVisor; the current readiness
   certificate is static-pass/live-blocked because the host lacks the launcher
-  and Firecracker binary.
+  and Firecracker binary. New high-risk policy requests use `vm_isolated` and
+  require an explicitly configured Kata host runtime; Kata is not installed or
+  required by the current release.
 - Router recovery using pending entries, reclaim, retry, TTL, durable DLQ, safe trimming, and audited replay.
 - Point-to-point and broadcast publication now use a Redis-atomic dedupe/XADD
   script, and production reclaim requeue uses one script for replacement XADD,
@@ -172,7 +179,9 @@ AIAT must make dangerous automation bounded, attributable, observable, and recov
 ## Security target
 
 - Default deny at every trust boundary.
-- External workers run under gVisor; Firecracker is required where the high-risk policy says so.
+- External workers run under `sandboxed`/gVisor by default; `vm_isolated`/Kata is
+  required where the high-risk policy says so. Direct Firecracker is not a
+  separate AIAT policy class.
 - No fallback to an uncertified weaker sandbox.
 - Workers cannot reach Redis, Postgres, PgBouncer, object storage, provider
   APIs, or container sockets directly. Checkpoints, usage, and review metadata
@@ -238,10 +247,10 @@ AIAT must make dangerous automation bounded, attributable, observable, and recov
   need a native-Linux release run. A blocked Docker/configuration result is not
   a pass.
 - The worker/Compose sandbox contract and `runsc` registration probe are
-  implemented, but gVisor was unavailable in the current host evidence. The Firecracker
-  launch contract is implemented and statically checked, while digest-pinned
-  smoke, network-denial, host-certified launcher, and live Firecracker
-  certification remain open.
+  implemented, but gVisor was unavailable in the current host evidence. The
+  `vm_isolated`/Kata policy and direct Firecracker compatibility launch
+  contracts are statically checked, while digest-pinned smoke, network-denial,
+  host-certified Kata runtime, and live high-risk certification remain open.
 - A historical tool-service image was approximately 19.3 GB because Docling/Torch/CUDA and browser assets were combined. The core/extension profile split and explicit image ceilings are now checked in. A local Linux engine probe measured core at 267,957,904 bytes with 26,836 ms/112.3 MiB health startup and extensions at 4,155,668,123 bytes with 29,913 ms/137.7 MiB; the secret-safe record is [`mas/docs/provenance/image_budgets_live.json`](../../mas/docs/provenance/image_budgets_live.json). Compressed archive size, clean native-Linux build/pull, SBOM, and vulnerability evidence remain open.
 - [x] HTTP request trace propagation is bounded and context-safe in the
   orchestrator API, message router, and tool service; envelope correlation IDs

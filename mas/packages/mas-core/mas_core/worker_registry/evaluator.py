@@ -14,6 +14,11 @@ from uuid import UUID, uuid4
 import yaml
 
 from mas_core.protocols.worker_manifest import WorkerManifest
+from mas_core.sandbox_policy import (
+    HARDENED_SANDBOX_CLASSES,
+    SUPPORTED_SANDBOX_PROFILES,
+    canonical_sandbox_class,
+)
 from mas_core.worker_registry._risk_utils import is_medium_or_dual_use_worker
 
 if TYPE_CHECKING:
@@ -45,8 +50,8 @@ DEFAULT_GUARDED_CHECKS = [
     "approval",
 ]
 
-VALID_SANDBOX_PROFILES = {"standard", "restricted", "gvisor", "firecracker"}
-HARDENED_SANDBOX_PROFILES = {"gvisor", "firecracker"}
+VALID_SANDBOX_PROFILES = set(SUPPORTED_SANDBOX_PROFILES)
+HARDENED_SANDBOX_PROFILES = set(HARDENED_SANDBOX_CLASSES)
 
 # These are recognition hints for metadata extraction, not an allowlist.
 KNOWN_LICENSE_IDENTIFIERS = {
@@ -181,7 +186,14 @@ async def evaluate_runtime(
         checks["instructions_defined"] = bool(runtime_config.get("instructions"))
         checks["agent_name_safe"] = bool(str(runtime_config.get("agent_name") or "aiat-worker").strip())
         checks["tool_bindings_resolved"] = True
-        checks["sandbox_profile_verified"] = str(runtime_config.get("sandbox_profile") or "gvisor") == "gvisor"
+        try:
+            checks["sandbox_profile_verified"] = (
+                canonical_sandbox_class(runtime_config.get("sandbox_profile") or "sandboxed")
+                == "sandboxed"
+            )
+        except ValueError:
+            checks["sandbox_profile_verified"] = False
+            policy_notes.append("sandbox_profile_invalid — MAF requires the canonical sandboxed (gVisor) policy")
         policy_notes.append("inner_runtime=True — Microsoft Agent Framework runs behind AIAT tool and approval boundaries")
 
     elif runtime_tier == "autogen":
@@ -192,7 +204,7 @@ async def evaluate_runtime(
         checks["allowed_speakers_enforced"] = True  # Via manifest config
         checks["no_dangerous_plugins"] = True  # Evaluated separately by hiring board
         checks["sandbox_profile_verified"] = True  # Via sandbox_profile check
-        policy_notes.append("sandbox_required=firecracker — AutoGen needs microVM isolation")
+        policy_notes.append("sandbox_required=vm_isolated — AutoGen needs Kata VM isolation")
         policy_notes.append("max_instances=1 — no concurrent AutoGen group chats")
 
     elif runtime_tier == "letta":
@@ -348,9 +360,8 @@ async def evaluate_repository(
                 "sandbox_profile",
                 "budget_latency",
                 "approval",
+                "manifest_validation",
             }:
-                results[check_name] = await func(source_repo, mirror_path, worker)
-            elif check_name == "manifest_validation":
                 results[check_name] = await func(source_repo, mirror_path, worker)
             else:
                 results[check_name] = await func(source_repo, mirror_path)
@@ -917,28 +928,32 @@ async def _check_sandbox_profile(
     worker: dict[str, Any],
 ) -> dict:
     """Validate sandbox profile and minimal metadata shape."""
-    profile = worker.get("sandbox_profile") or "restricted"
-    if profile not in VALID_SANDBOX_PROFILES:
+    profile = worker.get("sandbox_profile") or "trusted"
+    try:
+        sandbox_class = canonical_sandbox_class(profile)
+    except ValueError:
         return {
             "passed": False,
             "score": 0.0,
             "details": f"Invalid sandbox profile: {profile}",
             "valid_profiles": sorted(VALID_SANDBOX_PROFILES),
         }
-    if is_medium_or_dual_use_worker(worker) and profile not in HARDENED_SANDBOX_PROFILES:
+    if is_medium_or_dual_use_worker(worker) and sandbox_class not in HARDENED_SANDBOX_PROFILES:
         return {
             "passed": False,
             "score": 0.0,
-            "details": "Medium/dual-use workers require gvisor or firecracker sandbox profile",
+            "details": "Medium/dual-use workers require canonical sandboxed (gVisor) or vm_isolated (Kata) profile",
             "profile": profile,
             "required_profiles": sorted(HARDENED_SANDBOX_PROFILES),
+            "sandbox_class": sandbox_class,
         }
-    score = 100.0 if profile in {"restricted", "gvisor", "firecracker"} else 70.0
+    score = 100.0 if sandbox_class in {"trusted", "sandboxed", "vm_isolated"} else 70.0
     return {
         "passed": True,
         "score": score,
         "details": f"Sandbox profile '{profile}' is valid",
         "profile": profile,
+        "sandbox_class": sandbox_class,
         "filesystem": worker.get("sandbox_filesystem", {}),
         "network_mode": worker.get("sandbox_network_mode", "egress-allowlist"),
     }
@@ -971,9 +986,13 @@ async def _check_approval_policy(
     worker: dict[str, Any],
 ) -> dict:
     """Evaluate policy posture before final verdict synthesis."""
-    profile = worker.get("sandbox_profile") or "restricted"
+    profile = worker.get("sandbox_profile") or "trusted"
+    try:
+        sandbox_class = canonical_sandbox_class(profile)
+    except ValueError:
+        sandbox_class = None
     requires_approval = (
-        profile in HARDENED_SANDBOX_PROFILES
+        sandbox_class in HARDENED_SANDBOX_PROFILES
         or bool(source_repo)
         or is_medium_or_dual_use_worker(worker)
     )

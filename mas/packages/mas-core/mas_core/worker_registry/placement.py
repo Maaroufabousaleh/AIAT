@@ -13,6 +13,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from mas_core.sandbox_policy import (
+    canonical_sandbox_class,
+    required_runtime_for_sandbox,
+    runtime_implements_sandbox,
+)
+
 PLACEMENT_SCHEMA = "aiat.worker-placement.v1"
 READY_HOST_STATUS = "READY"
 HOST_PLANES = frozenset({"control", "tool", "data", "worker"})
@@ -97,6 +103,7 @@ class WorkerHostSnapshot:
     labels: tuple[tuple[str, str], ...] = ()
     capabilities: frozenset[str] = frozenset()
     sandbox_profiles: frozenset[str] = frozenset()
+    sandbox_runtimes: frozenset[str] = frozenset()
     isolation_modes: frozenset[str] = frozenset()
     capacity: HostCapacity = HostCapacity(0)
     lease_valid: bool = True
@@ -162,11 +169,25 @@ def evaluate_host(
             break
     if not request.required_capabilities.issubset(host.capabilities):
         reasons.append("capability_missing")
-    if (
-        request.required_sandbox_profile
-        and request.required_sandbox_profile not in host.sandbox_profiles
-    ):
-        reasons.append("sandbox_profile_unsupported")
+    if request.required_sandbox_profile:
+        try:
+            required_class = canonical_sandbox_class(request.required_sandbox_profile)
+            host_classes = {
+                canonical_sandbox_class(profile)
+                for profile in host.sandbox_profiles
+                if str(profile).strip()
+            }
+        except ValueError:
+            reasons.append("sandbox_profile_invalid")
+        else:
+            if required_class not in host_classes:
+                reasons.append("sandbox_profile_unsupported")
+            else:
+                if host.sandbox_runtimes and not any(
+                    runtime_implements_sandbox(runtime, required_class)
+                    for runtime in host.sandbox_runtimes
+                ):
+                    reasons.append("sandbox_runtime_unsupported")
     if (
         request.required_isolation_mode
         and request.required_isolation_mode not in host.isolation_modes
@@ -279,13 +300,28 @@ def mapping_to_host_snapshot(value: Mapping[str, Any]) -> WorkerHostSnapshot:
     capacity = value.get("capacity")
     if not isinstance(capacity, Mapping):
         capacity = {}
+    sandbox_profiles = frozenset(str(item) for item in (value.get("sandbox_profiles") or ()))
+    sandbox_runtimes = frozenset(str(item) for item in (value.get("sandbox_runtimes") or ()))
+    if not sandbox_runtimes:
+        runtime = str(value.get("sandbox_runtime") or "").strip().lower()
+        if runtime:
+            sandbox_runtimes = frozenset({runtime})
+    if not sandbox_runtimes:
+        inferred_runtimes: set[str] = set()
+        for profile in sandbox_profiles:
+            try:
+                inferred_runtimes.add(required_runtime_for_sandbox(profile))
+            except ValueError:
+                continue
+        sandbox_runtimes = frozenset(inferred_runtimes)
     return WorkerHostSnapshot(
         host_id=str(value.get("host_id") or ""),
         status=str(value.get("status") or ""),
         host_plane=str(value.get("host_plane") or "worker"),
         labels=tuple(sorted((str(key), str(item)) for key, item in (value.get("labels") or {}).items())),
         capabilities=frozenset(str(item) for item in (value.get("capabilities") or ())),
-        sandbox_profiles=frozenset(str(item) for item in (value.get("sandbox_profiles") or ())),
+        sandbox_profiles=sandbox_profiles,
+        sandbox_runtimes=sandbox_runtimes,
         isolation_modes=frozenset(str(item) for item in (value.get("isolation_modes") or ())),
         capacity=HostCapacity(
             slots_total=int(capacity.get("slots_total") or 0),

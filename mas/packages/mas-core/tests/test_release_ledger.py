@@ -240,9 +240,9 @@ def test_static_release_ledger_aggregates_bounded_verifiers_without_release_clai
     }
     operator_pins = next(row for row in report["checks"] if row["id"] == "operator_pins")
     assert operator_pins["status"] == "pass"
-    assert operator_pins["summary"]["pin_count"] == 16
+    assert operator_pins["summary"]["pin_count"] == 17
     assert operator_pins["summary"]["locked_count"] == 9
-    assert operator_pins["summary"]["unavailable_count"] == 7
+    assert operator_pins["summary"]["unavailable_count"] == 8
     release_environment = next(
         row for row in report["checks"] if row["id"] == "release_environment"
     )

@@ -1,5 +1,11 @@
 # Apply Deep Research Delta Plan
 
+> **Historical planning input (2026-09-19):** The active authority is the
+> target programme, roadmap, current feature set, release ledger, and
+> canonical OSS plan. This prompt records an earlier integration phase; its
+> current-progress claims are historical and its external tools remain subject
+> to the current AIAT adapter, sandbox, approval, and evidence boundaries.
+
 ## Executive Summary
 
 Delta starts the low-risk integration phase after Gamma. The goal is to make

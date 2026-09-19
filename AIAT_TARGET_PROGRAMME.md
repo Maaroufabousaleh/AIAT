@@ -111,7 +111,7 @@ The core database migration graph has a single current head at `0045_worker_tool
 | PM provider control plane | **Implemented; ACTIVE command certification pending** | Provider-neutral ports, YouTrack adapter, canonical issues, mappings, inbox/outbox, CAS, actor mappings, canaries, lifecycle plans, reconciliation, conflicts, evidence, dashboard, and gateway exist. The real YouTrack declaration and mocked HTTP health/configuration, projection/read-back, cursor, comment/link, actor, and webhook paths are fixture-reconciled without external calls; the latest live evidence ends with the connection ACTIVE and binding READ_ONLY after the required human browser action timed out. |
 | Source-control integration | **Partial** | Provider contract and governed GitHub installation/branch/PR/comment/check/commit/run-credential operations exist. GitHub `pm`/`delivery`/`checks` capability declarations, bounded path guards, and mocked HTTP health/issue/branch/PR/check/review/commit/webhook paths are fixture-reconciled without external provider calls; a complete production GitHub App certification matrix remains required. |
 | Coding and test worker | **Implemented; fresh candidate security certification pending** | OpenCode 1.17.13 Phase 0B interface evidence remains approved, but its historical exact-source scan is now classified `FAILED_UNREPRODUCIBLE` because raw findings/source were not retained. The fresh pinned v1.18.21 candidate (`826d9ad46a22bef0294998e08daa3c4904fea28f`, immutable Linux amd64 image digest recorded in `mas/docs/provenance/opencode-candidate/`) passes the AIAT boundary regression. Its workflow now provisions the exact scanner/SBOM toolchain and records separate installation, execution, finding, and SBOM outcomes; coding/tester manifests remain non-activatable until a fresh technical scan passes. The machine-checked operator register remains a review contract, not a waiver. |
-| Security evaluation and sandboxing | **Partial** | Semgrep/SkillSpector paths and bounded `semgrep`/`skillspector`/`trufflehog` aliases, worker sandbox policy, and AIAT-owned OpenCode Compose hardening (internal-only network, non-root/read-only, dropped capabilities, no-new-privileges, bounded resources, noexec/nosuid tmpfs) are implemented (`2c098f5`); gVisor remains the default and Firecracker the high-risk option. Live host proof for `runsc`/Firecracker, upstream OpenCode finding disposition, and provider-specific scanner certification remain environment dependent. |
+| Security evaluation and sandboxing | **Partial** | Semgrep/SkillSpector paths and bounded `semgrep`/`skillspector`/`trufflehog` aliases, worker sandbox policy, and AIAT-owned OpenCode Compose hardening (internal-only network, non-root/read-only, dropped capabilities, no-new-privileges, bounded resources, noexec/nosuid tmpfs) are implemented (`2c098f5`); `sandboxed`/gVisor is the default external-worker boundary and `vm_isolated`/Kata is the future high-risk or gVisor-incompatible path. Direct Firecracker is compatibility/benchmark evidence only. Live host proof for `runsc`/Kata, upstream OpenCode finding disposition, and provider-specific scanner certification remain environment dependent. |
 | Network isolation | **Policy-backed static contract and local live matrix implemented; native retest required** | Team runners now receive only router/tool/orchestrator/model-gateway variables and use the authenticated control-plane storage API for checkpoints, usage, documents, and reviews. `mas/docs/provenance/network_boundary_policy.yaml` (`aiat.network-boundary-policy.v1`) is consumed by both static and live checks for protected services, allowed gateways, internal-network flags, identities, forbidden mounts/env names, and external denial. PgBouncer and MinIO remain internal-only and are not on the `workers` network. The refreshed local 11-runner matrix passes; the old critical defect must be closed only after a clean native-Linux negative connectivity test. |
 | LLM/routing analytics | **Implemented foundation** | LiteLLM and OmniRoute services and dashboard surfaces exist. The target-specific monitoring adapter emits a non-networking `aiat.monitoring-analytics-plan.v1` for their health/dashboard surfaces; AIAT metrics and optional Prometheus-compatible scraping remain complementary. Grafana is not part of the target. |
 | Trace evidence and retention | **Bounded query, incident summary/chronology, operator deep link, core native spans, local transport read-back, durable local worker-run read-back, planner legal-hold guard, local Postgres retention certificate, and deterministic worker↔mail-edge evidence join implemented; live model/provider evidence pending** | Request/message/tool/agent propagation and operator-only `aiat.trace-evidence.v1` joins over payload-free API request observations, task logs, project usage, worker-run transitions, direct trace-correlated model-usage/worker-artifact/integration-evidence metadata, PM inbound correlations, native transport/model/tool/audit/worker/integration spans, and optional identity delivery-attempt spans exist with secret-safe fields and company trace sampling/retention metadata. The refreshed local orchestrator is at migration `0036_native_trace_spans`; a bounded `/health` transport span and API-request read-back pass and are retained in [`mas/docs/provenance/trace_observability_live.json`](mas/docs/provenance/trace_observability_live.json). `acd3f06` additionally certifies the real worker controller/native adapter against local Postgres, reopens the store, and verifies payload-free worker usage/artifact/model/worker/audit trace read-back; evidence is [`mas/docs/provenance/worker_run_postgres_evidence.json`](mas/docs/provenance/worker_run_postgres_evidence.json). The `aiat.worker-mail-edge-coverage.v1` evaluator and deterministic certificate (`1d8aed5`) require explicit worker/trace scope and join worker source counts with verified delivery/bounce observations without selecting or dispatching a worker; evidence is [`mas/docs/provenance/worker_mail_edge_coverage_fixture.json`](mas/docs/provenance/worker_mail_edge_coverage_fixture.json). The non-mutating `aiat.trace-retention-plan.v1` classifies bounded span metadata as retain/archive/delete/invalid without deleting data; `9a80c6c` makes an explicit boolean `legal_hold` marker retain the row and exclude it from deletion IDs without treating the marker as live authority. `96f5fc0` adds a reserved local Postgres execution certificate with database-local backup/read-back parity, one trace-scoped delete, held-row preservation, and cleanup; evidence is [`mas/docs/provenance/trace_retention_execution_live.json`](mas/docs/provenance/trace_retention_execution_live.json). The read-only `aiat.trace-incident.v1` projection/checker (`c357fdf`) classifies scalar failures while keeping partial coverage independent. Commit `b4b7cef` adds the operator-only `GET /observability/incidents/{trace_id}` route, generated API contracts, the dashboard proxy, and the existing `/logs?trace_id=…` deep link summary; `869202c` renders bounded finding references and timestamps without payloads. Live model/tool/audit/worker/integration coverage, provider mail-edge spans, production hold authority/durable audit/erasure/restore retention, and richer live incident chronology remain P2/live work. |
@@ -267,7 +267,7 @@ flowchart TB
 | Worker | Team runners and certified worker sandboxes | No provider keys; no direct Redis/Postgres/object-store access except an explicitly certified narrow path; all tools and models mediated. |
 | Tool/integration | Tool service, PM gateway, identity service, mail edge, runtime sidecars | Least-privilege service identities, per-operation grants, egress allowlists, audit and bounded payloads. |
 | Data | Postgres, Redis, object storage | Internal only, encrypted credentials, scoped database users, backups, retention, migration and restore tests. |
-| Untrusted runtime | External processes, containers, browsers, downloaded repositories | gVisor by default, Firecracker for high risk, immutable provenance, bounded mounts/network/time/output, no control-plane credentials. |
+| Untrusted runtime | External processes, containers, browsers, downloaded repositories | `sandboxed`/gVisor by default, `vm_isolated`/Kata for high risk or gVisor-incompatible work, immutable provenance, bounded mounts/network/time/output, no control-plane credentials. Direct Firecracker is compatibility-only. |
 
 ### 4.2 Target service boundaries
 
@@ -346,7 +346,8 @@ The Hiring Board is a governed virtual team, not a shortcut around the company m
 - `tool_interface_auditor` — validates API/MCP/CLI contracts and authority boundaries;
 - `adapter_certifier` — verifies the universal contract and adapter behaviour;
 - `security_evaluator` — Semgrep CLI, SkillSpector, dependency and sandbox evidence;
-- `sandbox_evaluator` — gVisor profile and optional Firecracker requirements;
+- `sandbox_evaluator` — `sandboxed`/gVisor baseline and `vm_isolated`/Kata
+  requirements; direct Firecracker compatibility evidence;
 - `budget_evaluator` — cost and resource-limit decision;
 - `policy_grant_reviewer` — least-privilege tool, model, network, filesystem, and credential grants;
 - `human_approval_gate` — records the required human decision without fabricating it.
@@ -511,7 +512,7 @@ optional dependency into an execution gate.
 | Browser automation | Playwright; browser-use only guardrailed | Per-worker isolated browser profile, approved egress/actions, no unrestricted mode. |
 | Code review | AIAT deterministic diff reviewer; optional pr-agent/open-code-review/stage-cli | Local default is reproducible; external adapters require exact repository/version pins and sandboxed evidence. |
 | Security | Semgrep CLI, SkillSpector, sandbox tests | TruffleHog and other scanners may be added through bounded adapters. |
-| Sandboxing | gVisor default; Firecracker optional for high risk | Host-certified runtime profiles. |
+| Sandboxing | `trusted` → runc; `sandboxed` → gVisor/runsc; `vm_isolated` → Kata when a certified VM host is available | External workers never fall back to runc; direct Firecracker remains a compatibility/host-VMM path, not a fourth AIAT policy class. |
 | DevOps | OpenTofu and GitHub Actions | External CLI/provider adapter; Ansible and other tools may use the same boundary. |
 | Planning | ccpm and GitHub Issues starting profile | Plane/OpenProject are normal provider adapters; AIAT remains canonical. |
 | Monitoring | LiteLLM UI, OmniRoute analytics, Playwright/API checks | AIAT audit and health remain authoritative; Prometheus-compatible metrics optional. |
@@ -532,7 +533,8 @@ optional dependency into an execution gate.
 | AutoGen | **Experimental runtime** | MAF remains the preferred new Microsoft path; AutoGen is usable through a certified adapter. |
 | OpenClaw | **Experimental runtime** | Do not make it the CEO/control plane because of operational and supply-chain risk; bounded specialist use is allowed. |
 | Browser-use | **Available only with guardrails** | Browser autonomy requires network, file, action, identity, and audit limits for security reasons. |
-| Firecracker | **Optional high-risk mode** | Higher host and operational complexity than gVisor. |
+| Kata Containers | **Available future `vm_isolated` provider** | Use only on a certified VM-capable host; the host selects the Kata VMM/profile. No current WSL2 activation. |
+| Firecracker | **Compatibility/benchmark path** | May be used as a Kata host VMM or retained for legacy evidence; it is not a separate AIAT policy class. |
 | Grafana | **Not part of the default target** | LiteLLM and OmniRoute are the model/routing surfaces; Prometheus-compatible platform metrics remain optional. |
 | Paperclip/Zeenie/TinyHumans | **Design references only** | Useful patterns may be adapted, but none becomes a second control plane or default embedded authority. |
 
@@ -901,7 +903,28 @@ GitHub Issues is a default planning projection. GitHub Actions is a default CI/C
 
 ### 12.2 Runtime isolation
 
-The default external-worker sandbox is gVisor. Firecracker is the optional high-risk mode. A production sandbox profile defines:
+AIAT exposes three sandbox policy classes to worker placement and execution:
+
+| Policy class | Host runtime | Intended use |
+| --- | --- | --- |
+| `trusted` | runc / ordinary container execution | AIAT-owned infrastructure and reviewed internal code only |
+| `sandboxed` | gVisor `runsc` | Default for external or automatically hired workers |
+| `vm_isolated` | Kata Containers | High-risk or gVisor-incompatible workers on a certified VM-capable host |
+
+The legacy profile names remain accepted during migration: `standard` and
+`restricted` map to `trusted`, `gvisor` maps to `sandboxed`, and `firecracker`
+maps to `vm_isolated`. Direct `FirecrackerAdapter` support remains only as a
+compatibility/benchmark path; Firecracker is not a fourth AIAT policy class.
+The host may select Kata's VMM implementation (for example Dragonball, QEMU,
+or a separately certified Firecracker-backed Kata configuration) without
+exposing that implementation detail to workers or project policy.
+
+External workers must resolve to `sandboxed` or `vm_isolated`. If gVisor is
+incompatible or unavailable, AIAT may select Kata only when the host advertises
+a certified Kata runtime. It must fail closed when neither hardened class is
+available; it must never silently fall back to runc.
+
+A production sandbox profile defines:
 
 - immutable image/root filesystem;
 - non-root UID/GID;
@@ -916,14 +939,23 @@ The default external-worker sandbox is gVisor. Firecracker is the optional high-
 
 If the required host runtime is absent, high-risk work is blocked. Falling back silently to ordinary Docker is prohibited.
 
-The AIAT-owned Firecracker launch contract is implemented in
-`5ed0a0b`: immutable kernel/rootfs digests, bounded CPU/memory/PID/disk/output/
-wall-clock limits, read-only rootfs, deny-by-default egress, opaque secret
-references, artifact output, and mandatory cleanup are validated before a
-launcher command can be constructed. The current host-side readiness
-certificate [`firecracker_worker_pool_readiness.json`](mas/docs/provenance/firecracker_worker_pool_readiness.json)
-passes the static contract but is blocked because the certified launcher and
-Firecracker binary are unavailable; no weaker runtime fallback is permitted.
+The existing Firecracker launch contract remains retained for compatibility
+and benchmark evidence. Its immutable kernel/rootfs digests, bounded
+CPU/memory/PID/disk/output/wall-clock limits, read-only rootfs, deny-by-default
+egress, opaque secret references, artifact output, and mandatory cleanup are
+not a reason to create a separate AIAT policy tier. The current host-side
+readiness certificate [`firecracker_worker_pool_readiness.json`](mas/docs/provenance/firecracker_worker_pool_readiness.json)
+is static evidence only; the certified launcher and Firecracker binary are
+unavailable in the current environment. No weaker runtime fallback is
+permitted.
+
+Kata is an available target capability, not a current release prerequisite.
+The current WSL2 environment has no certified Kata runtime or live VM-host
+evidence. Native Linux host certification must prove `/dev/kvm` or another
+supported virtualization path, the selected Kata runtime/profile, network and
+filesystem restrictions, cleanup, and recovery before `vm_isolated` work can
+activate. Use `scripts/check_sandbox_runtime_readiness.py --live --require-kata`
+for the explicit host probe.
 
 ### 12.3 Network architecture
 
@@ -1236,7 +1268,8 @@ The copilot cannot bypass tool grants, project scope, approvals, budget, model p
 - local development using Compose plus development-only port/observability helpers;
 - single-host self-hosted production with internal networks and no database/cache host ports;
 - hardened Linux production with systemd-managed Compose, gVisor, backups, TLS edge, and optional mail gateway;
-- optional high-risk Firecracker worker hosts;
+- optional Kata-capable worker hosts for `vm_isolated` jobs; the host may use a
+  certified Dragonball, QEMU, or Firecracker-backed Kata profile;
 - optional external managed Postgres/object storage/KMS when explicitly configured and certified.
 
 ### 15.2 Production image policy
@@ -1362,8 +1395,9 @@ The programme is organised around completing and hardening the existing architec
   separate from security, sandbox, canary, live-run, and rollback certification.
 - [x] Reconcile all worker sandbox declarations and add the fail-closed
   `scripts/check_sandbox_runtime_readiness.py` `runsc` registration probe;
-  digest-pinned smoke/network, canary, and Firecracker certification remain
-  native-host evidence.
+  digest-pinned smoke/network, canary, and Kata `vm_isolated` certification
+  remain native-host evidence. Direct Firecracker evidence is retained only
+  for the compatibility/benchmark path.
 - [x] Add the read-only `scripts/check_runtime_benchmarks.py --live --json`
   probe for orchestrator dependency-backed LangGraph/CrewAI dry-runs;
   package/API readiness is kept separate from worker canary/live-run and
@@ -1453,7 +1487,8 @@ The programme is organised around completing and hardening the existing architec
   evidence remain open because protected `.tmp-*` paths are still traversed.
 - Split heavyweight tool images and enforce resource budgets.
 - Prove gVisor on supported hosts with the sandbox readiness probe and a
-  digest-pinned smoke/network run; certify Firecracker separately.
+  digest-pinned smoke/network run; certify a Kata `vm_isolated` host profile
+  separately. Keep direct Firecracker evidence compatibility-only.
 - [x] Add bounded HTTP trace propagation across the orchestrator API, message
   router, and tool service, including safe incoming IDs, orchestrator/SDK
   forwarding, response IDs, tool request/response continuity, and async-context
@@ -1682,7 +1717,9 @@ The programme is organised around completing and hardening the existing architec
 
 1. SeaweedFS benchmark and reversible object-storage cutover if it wins the gate.
 2. Optional Letta/Qdrant/Temporal live certification after the bounded adapter contracts and operator-owned service evidence are available.
-3. Multi-host worker scheduling and high-risk Firecracker pools.
+3. Multi-host worker scheduling and Kata-capable `vm_isolated` pools; direct
+   Firecracker remains a compatibility/benchmark path rather than a separate
+   AIAT policy tier.
 4. Full governed self-development programme with measured canary and rollback outcomes.
 
 ---
@@ -2041,7 +2078,9 @@ These are snapshot facts as of the 2026-08-11 baseline and must be regenerated r
 - Current object store: MinIO.
 - Current default analytics services: LiteLLM and OmniRoute.
 - Current default PM/planning choices: ccpm and GitHub Issues; YouTrack is the implemented live provider adapter under governed lifecycle.
-- Current default security choices: Semgrep CLI, SkillSpector, gVisor; Firecracker optional.
+- Current default security choices: Semgrep CLI, SkillSpector, and gVisor for
+  `sandboxed` workers; Kata is the future `vm_isolated` provider when a host is
+  certified, while direct Firecracker remains compatibility-only.
 - Current dashboard: Next.js 16.2.10, React 19.2.0, React Flow, Recharts.
 - Current PM live stable state recorded locally: connection ACTIVE revision 2, binding READ_ONLY revision 8; ACTIVE command path not certified.
 

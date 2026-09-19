@@ -6,6 +6,12 @@
 > report are non-blocking metadata for personal internal use; historical
 > licence-based exclusions and distribution assumptions are superseded.
 
+> **Reconciliation notice (2026-09-19):** The Paperclip-first control-plane
+> recommendation in this historical report was not adopted. AIAT remains the
+> sole control plane; Paperclip is deferred to a disposable, deletion-gated
+> experiment only. Current runtime, sandbox, provider, and licence-policy
+> decisions are recorded in the [canonical OSS plan](../../mas/docs/AIAT_OSS_ARCHITECTURE_AND_IMPLEMENTATION_PLAN.md).
+
 ## Executive summary
 
 Your three plans describe a “company simulation” orchestration system with deterministic workflow control, durable messaging, role-gated tools, and restart-proof execution. fileciteturn0file0 fileciteturn0file1 fileciteturn0file2  

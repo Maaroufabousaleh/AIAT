@@ -1,19 +1,37 @@
-# Sandbox Profiles
+# Sandbox Policy Classes and Host Runtimes
 
-This directory holds worker sandbox profile definitions and operator notes for
-the hardened worker execution path.
+This directory holds worker profile definitions and operator notes for the
+hardened execution path. AIAT authorizes a policy class; the worker host
+selects the concrete runtime.
+
+| AIAT class | Host runtime | Use |
+| --- | --- | --- |
+| `trusted` | normal Docker/runc | AIAT-owned services and reviewed trusted workers |
+| `sandboxed` | gVisor `runsc` | Default external-worker boundary |
+| `vm_isolated` | Kata Containers runtime | High-risk or gVisor-incompatible workers; not currently activated |
+
+Compatibility values are still accepted: `standard` and `restricted` resolve
+to `trusted`, `gvisor` resolves to `sandboxed`, and `firecracker` resolves to
+`vm_isolated`. The direct Firecracker launcher remains a compatibility and
+benchmark path, not a fourth AIAT policy tier.
 
 Implemented profile files:
 - `tier0-standard.yaml`
 - `tier1-restricted.yaml`
 
-Default hardened worker execution:
+Default external-worker execution:
 - `command.run_safe`, `security.scan`, and `test.run` delegate worker-controlled
   commands through `TOOL_SANDBOX_COMMAND`.
-- The shipped sandbox adapter requires `profile: gvisor` and
+- The shipped sandbox adapter requires `profile: sandboxed` (or the legacy
+  `gvisor` alias) and
   `network_mode: egress-deny-all`.
 - The adapter requires Docker to have the `runsc` runtime registered.
 - The adapter never falls back to Docker's default `runc` runtime.
+
+VM-isolated execution is selected explicitly with `profile: vm_isolated` and a
+host-certified `sandbox_runtime: kata`. It never falls back to `runsc` or
+`runc`. The host may choose Kata's VMM/profile (for example Dragonball or QEMU)
+without exposing that choice to the worker.
 
 When Docker does not expose `runsc`, these tools should remain unavailable.
 That is the expected fail-closed state, not a code defect:
@@ -69,14 +87,40 @@ Tool availability: 73/73
 command.run_safe: available
 security.scan: available
 test.run: available
-sandbox_profile: gvisor
+sandbox_profile: sandboxed
 no runc fallback
 ```
 
-## Firecracker high-risk worker boundary
+## Kata VM-isolated worker boundary
 
-Firecracker is an optional high-risk worker mode, not a replacement for the
-default gVisor gate for these default tools. The AIAT-owned launch contract is
+Kata is a future host capability, not a current release requirement. A host
+must advertise the policy class and runtime in its registration metadata:
+
+```yaml
+sandbox_profile: vm_isolated
+metadata:
+  sandbox_runtime: kata
+  kata_profile: dragonball
+```
+
+The worker adapter emits an OCI command using `--runtime kata`; it does not
+install Kata, select a VMM, or claim that a VM boundary is certified. Run the
+explicit read-only probe from `mas/` on the certified Linux host when Kata is
+being evaluated:
+
+```bash
+uv run --isolated python scripts/check_sandbox_runtime_readiness.py \
+  --live --require-kata --json
+```
+
+Kata requires a supported virtualization environment, commonly hardware
+virtualization or approved nested virtualization. The current WSL2/Docker
+profile is not a Kata certification environment.
+
+## Direct Firecracker compatibility boundary
+
+Direct Firecracker is retained only as a legacy/experimental host-VMM path,
+not as an AIAT policy class. The AIAT-owned launch contract is
 implemented by `5ed0a0b` in
 `mas_core.worker_registry.firecracker.FirecrackerLaunchSpec` and
 `FirecrackerAdapter`. It requires immutable kernel/rootfs digests, bounded
@@ -95,5 +139,6 @@ The current host result is static-pass/live-blocked because neither
 `aiat-firecracker-launcher` nor `firecracker` is installed. No launch, network
 probe, mutation, or weaker-runtime fallback is attempted. Retained evidence:
 [`firecracker_worker_pool_readiness.json`](../../docs/provenance/firecracker_worker_pool_readiness.json).
-Host certification must add real microVM smoke/network, provider, and recovery
-evidence before high-risk pools are enabled.
+If Firecracker is used in the future, prefer it as a Kata host VMM and certify
+the `vm_isolated` class; direct launcher activation requires a separate
+operator-approved benchmark and evidence package.

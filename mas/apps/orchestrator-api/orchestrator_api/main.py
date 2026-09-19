@@ -45,6 +45,11 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from prometheus_client import Counter
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from mas_core.company_manifest import (
+    DEFAULT_COMPANY_ID,
+    CompanyManifestError,
+    compile_company_manifest,
+)
 from mas_core.integrations import ProviderRegistry
 from mas_core.integrations.contracts import (
     DEDICATED_PROJECT_MAPPING_PROFILE,
@@ -69,19 +74,18 @@ from mas_core.integrations.providers.base import (
     provider_failure_is_permanent,
     provider_ssl_context,
 )
-from mas_core.company_manifest import (
-    DEFAULT_COMPANY_ID,
-    CompanyManifestError,
-    compile_company_manifest,
-)
 from mas_core.llm_gateway.client import LLMGatewayClient
 from mas_core.memory import models as memory_models
 from mas_core.memory.storage import AgentStorage, document_to_context_item
 from mas_core.observability import configure_logging
 from mas_core.observability.metrics import (
     observe_project_state,
-    record_project_state_transition,
     reconcile_project_state_metrics,
+    record_project_state_transition,
+)
+from mas_core.observability.retention import (
+    TraceRetentionPlanResponse,
+    plan_native_span_retention,
 )
 from mas_core.observability.slo import (
     CapacityForecast,
@@ -89,10 +93,6 @@ from mas_core.observability.slo import (
     build_capacity_forecast,
     build_slo_report,
     default_slo_policy,
-)
-from mas_core.observability.retention import (
-    TraceRetentionPlanResponse,
-    plan_native_span_retention,
 )
 from mas_core.observability.trace_evidence import (
     TraceEvidence,
@@ -121,6 +121,11 @@ from mas_core.policy.dashboard_access import (
 )
 from mas_core.policy.tool_access import can_use_tool_with_metadata
 from mas_core.protocols.enums import AgentRole, MessageType
+from mas_core.sandbox_policy import (
+    HARDENED_SANDBOX_CLASSES,
+    SUPPORTED_SANDBOX_PROFILES,
+    canonical_sandbox_class,
+)
 from mas_core.worker_registry._risk_utils import is_medium_or_dual_use_worker, worker_risk_labels
 from mas_core.worker_registry.runtime_catalog import (
     OPTIONAL_RUNTIME_IDS,
@@ -149,8 +154,8 @@ from mas_core.workflow import (
 )
 from mas_core.workflow.states import ProjectState
 
-VALID_SANDBOX_PROFILES = {"standard", "restricted", "gvisor", "firecracker"}
-HARDENED_SANDBOX_PROFILES = {"gvisor", "firecracker"}
+VALID_SANDBOX_PROFILES = set(SUPPORTED_SANDBOX_PROFILES)
+HARDENED_SANDBOX_PROFILES = set(HARDENED_SANDBOX_CLASSES)
 WorkerUpdatePolicy = Literal["manual", "auto-patch", "auto-minor", "auto-all"]
 
 logger = logging.getLogger(__name__)
@@ -726,7 +731,15 @@ def _transport_for_hiring_text(text: str) -> str:
 
 def _sandbox_for_hiring_text(text: str) -> str:
     lowered = text.lower()
-    for profile in ("firecracker", "gvisor", "restricted", "standard"):
+    for profile in (
+        "vm_isolated",
+        "sandboxed",
+        "trusted",
+        "firecracker",
+        "gvisor",
+        "restricted",
+        "standard",
+    ):
         if re.search(rf"\b{profile}\b", lowered):
             return profile
     return "restricted"
@@ -2919,6 +2932,7 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
         # Seed workers from YAML manifests
         try:
             from pathlib import Path
+
             from mas_core.worker_registry.seeder import seed_workers_from_directory
 
             workers_dir = Path(os.environ.get("WORKERS_DIR", "workers"))
@@ -7686,7 +7700,7 @@ async def list_available_runtimes() -> dict[str, Any]:
                 "policy": {
                     "inner_runtime": True,
                     "requires_approval": False,
-                    "sandbox_required": "gvisor",
+                    "sandbox_required": "sandboxed",
                     "allowed_tools": "controlled_by_manifest",
                     "can_spawn_subgraph": True,
                     "max_concurrent_threads": 10,
@@ -7701,7 +7715,7 @@ async def list_available_runtimes() -> dict[str, Any]:
                 "policy": {
                     "inner_runtime": True,
                     "requires_approval": True,
-                    "sandbox_required": "gvisor",
+                    "sandbox_required": "sandboxed",
                     "allowed_tools": "controlled_by_manifest",
                     "crew_process": "sequential",
                 },
@@ -7715,7 +7729,7 @@ async def list_available_runtimes() -> dict[str, Any]:
                 "policy": {
                     "inner_runtime": True,
                     "requires_approval": False,
-                    "sandbox_required": "gvisor",
+                    "sandbox_required": "sandboxed",
                     "allowed_tools": "controlled_by_manifest",
                     "can_spawn_subgraph": False,
                 },
@@ -7729,7 +7743,7 @@ async def list_available_runtimes() -> dict[str, Any]:
                 "policy": {
                     "inner_runtime": False,
                     "requires_approval": True,
-                    "sandbox_required": "firecracker",
+                    "sandbox_required": "vm_isolated",
                     "allowed_tools": "tool_service_only",
                     "max_instances": 1,
                 },
@@ -7743,7 +7757,7 @@ async def list_available_runtimes() -> dict[str, Any]:
                 "policy": {
                     "inner_runtime": False,
                     "requires_approval": True,
-                    "sandbox_required": "gvisor",
+                    "sandbox_required": "sandboxed",
                     "allowed_tools": "read_only_by_default",
                     "memory_audit": True,
                     "read_only_by_default": True,
@@ -7958,17 +7972,17 @@ async def evaluate_garage_integration() -> dict[str, Any]:
 
 @app.get("/evaluations/firecracker")
 async def evaluate_firecracker_integration() -> dict[str, Any]:
-    """Evaluate Firecracker microVM enforcement for highest-risk workloads."""
+    """Report the retained direct-Firecracker compatibility evaluation."""
     return {
         "technology": "Firecracker",
-        "current_aiat_state": "gVisor as hardened profile label (not yet enforced)",
-        "benefit": "Hardware-virtualized isolation for untrusted workloads",
-        "integration_points": ["team-runner container isolation", "worker sandboxing"],
+        "current_aiat_state": "Compatibility/benchmark path; vm_isolated policy is provided by Kata",
+        "benefit": "Optional Kata VMM implementation for vm_isolated hosts",
+        "integration_points": ["Kata host VMM selection", "direct compatibility benchmark"],
         "effort_weeks": 5,
         "risk": "high",
         "status": "deferred",
-        "next_step": "Implement gVisor enforcement first; evaluate Firecracker if gVisor proves insufficient",
-        "prerequisites": ["KVM access in deployment environment", "gVisor operational"],
+        "next_step": "Certify Kata vm_isolated first; benchmark direct Firecracker only if a host-specific benefit is demonstrated",
+        "prerequisites": ["Kata-capable host", "KVM or supported virtualization", "operator-approved benchmark"],
     }
 
 
@@ -8355,7 +8369,9 @@ async def list_capability_workers(
 async def register_worker(req: RegisterWorkerRequest) -> dict[str, Any]:
     """Register a new worker (called by team-runner on startup)."""
     storage = _storage()
-    if req.sandbox_profile not in VALID_SANDBOX_PROFILES:
+    try:
+        canonical_sandbox_class(req.sandbox_profile)
+    except ValueError:
         raise HTTPException(
             422,
             f"Invalid sandbox_profile '{req.sandbox_profile}'. Allowed: {sorted(VALID_SANDBOX_PROFILES)}",
@@ -8408,8 +8424,9 @@ async def register_worker(req: RegisterWorkerRequest) -> dict[str, Any]:
     # activated without this dedicated steward reference.
     if is_external_candidate:
         if inspect.iscoroutinefunction(getattr(storage, "create_external_provenance", None)) and inspect.iscoroutinefunction(getattr(storage, "create_steward", None)):
-            from hashlib import sha256
             import json as _json_module
+            from hashlib import sha256
+
             from mas_core.worker_registry.steward import ExternalProvenance
 
             provenance_evidence = dict(req.adapter_config.get("provenance") or {})
@@ -8569,7 +8586,9 @@ async def update_worker(worker_id: UUID, req: UpdateWorkerRequest) -> dict[str, 
     if req.adapter_config is not None:
         update_kwargs["adapter_config"] = req.adapter_config
     if req.sandbox_profile is not None:
-        if req.sandbox_profile not in VALID_SANDBOX_PROFILES:
+        try:
+            canonical_sandbox_class(req.sandbox_profile)
+        except ValueError:
             raise HTTPException(
                 422,
                 f"Invalid sandbox_profile '{req.sandbox_profile}'. Allowed: {sorted(VALID_SANDBOX_PROFILES)}",
@@ -8790,11 +8809,15 @@ async def transition_worker_status(
                     raise HTTPException(409, "Model-governed external workers require an approved Model Profile")
         if new_status == "ACTIVE" and _is_medium_or_dual_use_worker(existing):
             profile = existing.get("sandbox_profile") or "restricted"
+            try:
+                sandbox_class = canonical_sandbox_class(profile)
+            except ValueError:
+                sandbox_class = None
             evaluation_status = (existing.get("evaluation_status") or "").lower()
-            if profile not in HARDENED_SANDBOX_PROFILES:
+            if sandbox_class not in HARDENED_SANDBOX_PROFILES:
                 raise HTTPException(
                     409,
-                    "Medium/dual-use worker activation requires gvisor or firecracker sandbox profile",
+                    "Medium/dual-use worker activation requires canonical sandboxed (gVisor) or vm_isolated (Kata) sandbox profile",
                 )
             if evaluation_status != "approved":
                 raise HTTPException(
@@ -8848,8 +8871,8 @@ async def upgrade_worker(
     if not worker.get("source_repo"):
         raise HTTPException(400, "Worker has no source_repo configured")
 
-    from mas_core.worker_registry.ingestion import pull_upstream
     from mas_core.worker_registry.compat_tests import run_compatibility_tests
+    from mas_core.worker_registry.ingestion import pull_upstream
 
     try:
         commit_sha = await pull_upstream(
@@ -9074,6 +9097,7 @@ async def _steward_runtime(storage: AgentStorage, worker_id: UUID) -> Any | None
     and rollout records are rehydrated from storage so an API restart cannot
     make a governed worker appear to have lost its hiring history.
     """
+    from mas_core.worker_contract import WorkerCapabilities
     from mas_core.worker_registry.steward import (
         CandidateRecord,
         CapabilitySnapshot,
@@ -9086,7 +9110,6 @@ async def _steward_runtime(storage: AgentStorage, worker_id: UUID) -> Any | None
         RolloutRecord,
         StewardStatus,
     )
-    from mas_core.worker_contract import WorkerCapabilities
 
     key = str(worker_id)
     cached = _worker_steward_runtimes.get(key)
@@ -9438,8 +9461,9 @@ async def create_worker_steward(worker_id: UUID, req: StewardCreateRequest) -> d
     if str(worker_id) in _worker_steward_runtimes or await storage.get_steward_by_worker(worker_id):
         raise HTTPException(409, "Worker already has a dedicated Steward Agent")
     provenance = _governed_external_provenance(worker, req)
-    from hashlib import sha256
     import json as _json_module
+    from hashlib import sha256
+
     from mas_core.worker_registry.steward import ExternalWorkerSteward
 
     provenance_hash = sha256(_json_module.dumps(provenance.model_dump(mode="json"), sort_keys=True).encode()).hexdigest()
@@ -10231,7 +10255,12 @@ async def rollback_steward_rollout(worker_id: UUID, rollout_id: UUID, req: Rollb
 
 def _model_profile_from_row(row: dict[str, Any]) -> Any:
     """Rehydrate the immutable resolver model from its persisted rows."""
-    from mas_core.llm_gateway import ModelProfile, ModelProfileStatus, ModelProfileVersion, PrivacyClass
+    from mas_core.llm_gateway import (
+        ModelProfile,
+        ModelProfileStatus,
+        ModelProfileVersion,
+        PrivacyClass,
+    )
 
     versions: list[Any] = []
     for raw in row.get("versions") or []:
@@ -11173,7 +11202,12 @@ async def dispatch_worker_run(req: WorkerRunDispatchRequest) -> dict[str, Any]:
         raise HTTPException(422, "resolved_model_profile is control-plane output and cannot be supplied by a caller")
     if model_mode != "none" and not (req.requested_model_profile or worker.get("model_profile_id")):
         raise HTTPException(409, "model-governed workers require an approved Model Profile")
-    from mas_core.worker_contract import CapabilityRequirement, ModelProfileReference, WorkerRunController, WorkerRunRequest
+    from mas_core.worker_contract import (
+        CapabilityRequirement,
+        ModelProfileReference,
+        WorkerRunController,
+        WorkerRunRequest,
+    )
 
     resolved_model_profile = None
     model_resolution_snapshot_id = None
@@ -11184,7 +11218,11 @@ async def dispatch_worker_run(req: WorkerRunDispatchRequest) -> dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     if model_mode != "none":
-        from mas_core.llm_gateway import ModelProfileResolver, ModelResolutionError, ModelResolutionRequest
+        from mas_core.llm_gateway import (
+            ModelProfileResolver,
+            ModelResolutionError,
+            ModelResolutionRequest,
+        )
 
         requested_profile_id = (
             provided_requested_model_profile.profile_id
@@ -11675,7 +11713,7 @@ async def list_flow_templates() -> dict[str, Any]:
 @app.post("/flows", status_code=201)
 async def create_flow(req: CreateFlowRequest) -> dict[str, Any]:
     """Create a new flow definition."""
-    from mas_core.workflow import parse_flow_definition, validate_flow, FlowValidationError
+    from mas_core.workflow import FlowValidationError, parse_flow_definition, validate_flow
 
     try:
         definition = parse_flow_definition(req.definition_json)
@@ -12278,7 +12316,7 @@ async def deprecate_flow(flow_id: UUID) -> dict[str, Any]:
 @app.put("/flows/{flow_id}")
 async def update_flow(flow_id: UUID, req: UpdateFlowRequest) -> dict[str, Any]:
     """Update a flow definition."""
-    from mas_core.workflow import parse_flow_definition, validate_flow, FlowValidationError
+    from mas_core.workflow import FlowValidationError, parse_flow_definition, validate_flow
 
     definition_payload = req.definition_json
     if req.definition_json is not None:
@@ -12355,6 +12393,7 @@ async def get_project_flow_instance(project_id: UUID) -> dict[str, Any]:
 async def flow_instance_action(instance_id: UUID, req: FlowInstanceActionRequest) -> dict[str, Any]:
     """Perform an action on a flow instance (start, pause, resume, cancel)."""
     from datetime import UTC, datetime
+
     from mas_core.workflow import FlowNodeType, parse_flow_definition
 
     storage = _storage()
@@ -12463,6 +12502,7 @@ async def flow_instance_action(instance_id: UUID, req: FlowInstanceActionRequest
 async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dict[str, Any]:
     """Perform an action on a node within a flow instance."""
     from datetime import UTC, datetime
+
     from mas_core.workflow import FlowNodeType, get_next_nodes, parse_flow_definition
 
     storage = _storage()

@@ -1,5 +1,11 @@
 # Apply Deep Research Gamma Plan
 
+> **Historical planning input (2026-09-19):** The active authority is the
+> target programme, roadmap, current feature set, release ledger, and
+> canonical OSS plan. This prompt records an earlier dashboard phase; its
+> current-status claims and legacy Firecracker/licence-gate wording are not
+> active policy. Licence metadata is non-gating.
+
 ## Executive Summary
 
 Gamma applies the next slice of `Docs/archive/deep-research-report.md`: AIAT should feel
@@ -69,7 +75,7 @@ items are not implemented during this phase.
 | Bucket | Tools / systems | Gamma action |
 |---|---|---|
 | Default onboard-now | Docling, TruffleHog, Semgrep, React Flow, Cytoscape.js, Mermaid, GitHub REST API, MCP bridge support, gVisor | Implement the visual/dashboard parts now; expose or preserve readiness for guarded worker/tool adoption |
-| Guardrailed | browser-use, AutoGen, Letta, CrewAI, LangGraph, n8n, Firecracker, Vault, ZITADEL, Qdrant, Neo4j, Temporal | Keep as later-phase candidates with explicit adapter, policy, and source-of-truth constraints |
+| Guardrailed | browser-use, AutoGen, Letta, CrewAI, LangGraph, n8n, Kata, Vault, ZITADEL, Qdrant, Neo4j, Temporal | Keep as later-phase candidates with explicit adapter, policy, and source-of-truth constraints; direct Firecracker is compatibility evidence |
 | Rejected for direct integration | offensive exploit tooling, stealth/anti-detect stacks, jailbreak/censorship-removal tooling, deepfake systems, and abuse-centered repos | Do not add to app defaults, worker catalog, or dashboard workflows |
 
 This does not mean Gamma must build every integration. It means Gamma should
@@ -94,7 +100,7 @@ Gamma should also preserve the report's keep/adopt split:
 | Telemetry | Improve visibility over current logs/metrics/costs; VictoriaMetrics remains only a later scaling option |
 | Object store | Keep current object storage; Garage/SeaweedFS remain later storage evaluations |
 | Graph analytics | Use dashboard graph read models now; Neo4j remains optional later analytics, not source of truth |
-| Sandboxing | Preserve gVisor as the target default for external-worker sandboxing, with restricted profiles as an interim/local policy where needed; Firecracker remains highest-risk future runtime, not Gamma implementation |
+| Sandboxing | Preserve `sandboxed`/gVisor as the target default for external workers; `vm_isolated`/Kata is the future high-risk or gVisor-incompatible path, while direct Firecracker remains compatibility evidence |
 
 ## Preconditions
 
@@ -285,7 +291,7 @@ admin-only backend feature. Gamma should make that model visible:
 ```mermaid
 flowchart LR
     Candidate[Candidate worker manifest] --> Intake[Registry intake]
-    Intake --> Audit[Security + license + provenance audit]
+    Intake --> Audit[Security + provenance metadata audit]
     Audit --> Interface[Interface audit]
     Interface --> Sandbox[Sandbox evaluation]
     Sandbox --> Budget[Budget latency cost scoring]
@@ -497,7 +503,7 @@ looking like a disconnected dashboard-only plan.
 | Beta | Worker Adapter SDK v1, hiring board UI, manifest evaluator, sandbox defaults, TruffleHog/Semgrep checks | Complete prerequisite plus UI/read-model continuity |
 | Gamma | dashboard expansion with React Flow, graph view, Mermaid, project workspace, approvals/logs/artifacts/cost surfaces | Current implementation target |
 | Delta | Docling, GitHub API, defensive security tools, optional n8n edge automations | Keep visible as governed next-step integrations, not erased from the plan |
-| Epsilon | LangGraph, CrewAI, selected AutoGen/Letta specialists, optional Vault/ZITADEL, evaluate Temporal/Garage/Firecracker | Keep visible as guardrailed future workers/systems below AIAT |
+| Epsilon | LangGraph, CrewAI, selected AutoGen/Letta specialists, optional Vault/ZITADEL, evaluate Temporal/Garage/Kata | Keep visible as guardrailed future workers/systems below AIAT; direct Firecracker remains compatibility evidence |
 
 ```mermaid
 gantt

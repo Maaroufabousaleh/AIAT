@@ -8,8 +8,8 @@ The current static release ledger reports **64/64 pass** with the global
 decision **NO-RELEASE**. The authenticated local-Compose live sweep at
 `2026-09-15T12:11:27Z` reports **83/89 pass, 0 fail, 6 blocked**, and four
 pending evidence items. The blockers are native-host/environment,
-database migration-head reachability, deployment-image provenance,
-Firecracker worker-pool readiness, outbound mail lifecycle, and
+ database migration-head reachability, deployment-image provenance,
+ Kata `vm_isolated` host readiness, outbound mail lifecycle, and
 operator-selected self-improvement scope. The source migration head is
 `0045_worker_tool_effects`; read-only inspection of the currently running local
 Compose database reports `0042_worker_run_host_binding`, and no migration or
@@ -188,8 +188,9 @@ explicit blocked outputs when Agent Server health never becomes ready.
 
 The [P0 release-scope and external-prerequisite matrix](P0_RELEASE_SCOPE_MATRIX.md)
 now records the frozen operator boundary. Native Linux and default gVisor are
-required for this release; Firecracker is an optional unverified high-risk
-tier. Provider-managed KMS/SSE is release-required but still operator-target
+required for this release; Kata `vm_isolated` is an optional unverified
+high-risk/gVisor-incompatible class and direct Firecracker is compatibility-only.
+Provider-managed KMS/SSE is release-required but still operator-target
  blocked; external mail is release-required only if email remains in scope;
  self-improvement is deferred for this release. Security dispositions and the
  two protected memory files remain required human actions. This documentation
@@ -461,15 +462,17 @@ tier. Provider-managed KMS/SSE is release-required but still operator-target
   sequence verifies cooldown arming and clearance without external network,
   worker dispatch, or durable state. This is local routing evidence only;
   durable external-provider outage recovery remains open.
-- Commit `5ed0a0b` adds the fail-closed Firecracker high-risk worker launch
+- Commit `5ed0a0b` adds the fail-closed direct Firecracker compatibility launch
   contract and read-only readiness checker. Static validation passes for
   immutable kernel/rootfs digests, bounded resources, read-only rootfs,
   deny-by-default egress, opaque secret references, artifact output, and
   cleanup; the current host certificate is live-blocked because the certified
   launcher and Firecracker binary are unavailable. No Docker/runc/gVisor
-  fallback is allowed. Evidence is
+  fallback is allowed. New high-risk policy requests use the separate
+  Kata-backed `vm_isolated` class when a certified VM host exists. Evidence is
   [`firecracker_worker_pool_readiness.json`](../../mas/docs/provenance/firecracker_worker_pool_readiness.json);
-  real microVM, provider, recovery, and gVisor evidence remain open.
+  real compatibility/VMM, provider, recovery, and gVisor/Kata evidence remain
+  open.
 - Governance denial-state recovery (`888fde3`) is covered by source-built stale, first-load-denial, and post-read-denial fixture coverage 3/3; denied combined reads hide Refresh/Retry and executive action forms while preserving only last-known read context. Native/live ACL and WCAG evidence remain open.
 - PM integrations denial-state recovery (`7373360`) is covered by source-built stale, first-load-denial, and post-read-denial fixture coverage 3/3; denied reads hide Refresh/Retry and lifecycle-plan mutations while preserving only last-known reconciliation context. Native/live ACL and provider evidence remain open.
 - Hiring Board denial-state recovery (`553f196`) is covered by source-built stale, first-load-denial, and post-read-denial fixture coverage 3/3; denied worker reads hide Refresh/Retry and registration, evaluation, status, drain, and deletion controls while preserving only last-known rows. Native/live ACL and worker evidence remain open.

@@ -1,5 +1,11 @@
 # Apply Deep Research Alpha+Beta Plan
 
+> **Historical planning input (2026-09-19):** The active authority is the
+> target programme, roadmap, current feature set, release ledger, and
+> canonical OSS plan. The current sandbox policy uses `trusted`, `sandboxed`,
+> and `vm_isolated` classes; the legacy profile names below are compatibility
+> history only. Licence metadata is non-gating.
+
 ## Summary
 Implement the safe first slice from `Docs/archive/deep-research-report.md`: keep AIAT as the control plane, harden its contracts, add a first-run/default-company path, and turn worker hiring into a guarded adapter/evaluation workflow. Do not integrate advanced runtimes, replace storage, or replace the dashboard in this pass.
 
@@ -24,16 +30,19 @@ Implement the safe first slice from `Docs/archive/deep-research-report.md`: keep
 - Keep the existing Compose flow; do not replace startup with a new installer.
 
 ### Sandbox Defaults
-- Treat `standard`, `restricted`, `gvisor`, and `firecracker` as the only valid sandbox profiles.
-- Current default for new external workers: `restricted`.
-- Medium/dual-use workers require `gvisor` or higher and human approval before activation.
-- Firecracker remains a declared profile only; no Firecracker runtime implementation in this pass.
+- The current policy classes are `trusted`, `sandboxed`, and `vm_isolated`.
+  `standard`/`restricted`/`gvisor`/`firecracker` are legacy aliases only.
+- External workers default to `sandboxed`/gVisor and never fall back to
+  `trusted`/runc; high-risk or gVisor-incompatible work requires certified
+  `vm_isolated`/Kata and human approval.
+- Direct Firecracker remains compatibility/benchmark evidence, not a separate
+  AIAT policy class.
 - Add validation tests for filesystem, network-mode metadata, and invalid sandbox profile rejection.
 
 ### Guarded External Tool Adoption
 - Adopt now as guarded integrations: TruffleHog, Semgrep, GitHub repository metadata, and existing React Flow dashboard flows.
 - Add placeholders/manifests only for Docling and MCP worker mode; no full Docling ingestion UI unless the SDK and evaluator work is complete.
-- Defer Cytoscape, Mermaid, LangGraph, CrewAI, AutoGen, Letta, browser-use, OpenCode default-worker status, SeaweedFS, Garage, Vault, ZITADEL, Temporal, and Firecracker runtime implementation.
+- Defer Cytoscape, Mermaid, LangGraph, CrewAI, AutoGen, Letta, browser-use, OpenCode default-worker status, SeaweedFS, Garage, Vault, ZITADEL, Temporal, and Kata `vm_isolated` runtime implementation; retain direct Firecracker only as compatibility evidence.
 
 ## Public Interfaces
 - `GET /capabilities/workers/{worker_id}/evaluations` should return the new evaluator fields while preserving existing fields.

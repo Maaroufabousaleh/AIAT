@@ -92,11 +92,17 @@ pins:
     scope: external-worker-sandbox
     reason: "Native runsc registration is not present in the current Docker host; no runc fallback is permitted."
   - id: firecracker
-    kind: host-sandbox-runtime
+    kind: host-vmm-compatibility
     version: null
     status: unavailable
-    scope: high-risk-worker-sandbox
-    reason: "A native Firecracker binary and measured host profile are not present in the current evidence environment."
+    scope: kata-vmm-compatibility
+    reason: "A native Firecracker binary and measured host profile are not present in the current evidence environment; direct Firecracker is not an AIAT policy class."
+  - id: kata-containers
+    kind: host-vm-sandbox-runtime
+    version: null
+    status: unavailable
+    scope: vm-isolated-worker-sandbox
+    reason: "No certified Kata runtime/profile or live VM-capable host is available in the current WSL2 environment."
   - id: skillspector
     kind: security-cli
     version: null

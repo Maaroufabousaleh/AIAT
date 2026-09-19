@@ -108,7 +108,7 @@ RUNTIME_POLICY_GATES: dict[str, dict[str, Any]] = {
         "max_concurrent_threads": 10,
         "inner_runtime": True,
         "requires_approval": False,
-        "sandbox_required": "gvisor",
+        "sandbox_required": "sandboxed",
     },
     "crewai": {
         "can_spawn_subgraph": True,
@@ -118,7 +118,7 @@ RUNTIME_POLICY_GATES: dict[str, dict[str, Any]] = {
         "crew_process": "sequential",
         "inner_runtime": True,
         "requires_approval": True,
-        "sandbox_required": "gvisor",
+        "sandbox_required": "sandboxed",
     },
     "autogen": {
         "can_spawn_subgraph": False,
@@ -128,7 +128,7 @@ RUNTIME_POLICY_GATES: dict[str, dict[str, Any]] = {
         "max_instances": 1,
         "inner_runtime": False,
         "requires_approval": True,
-        "sandbox_required": "firecracker",
+        "sandbox_required": "vm_isolated",
     },
     "letta": {
         "can_spawn_subgraph": False,
@@ -139,7 +139,7 @@ RUNTIME_POLICY_GATES: dict[str, dict[str, Any]] = {
         "read_only_by_default": True,
         "inner_runtime": False,
         "requires_approval": True,
-        "sandbox_required": "gvisor",
+        "sandbox_required": "sandboxed",
     },
 }
 

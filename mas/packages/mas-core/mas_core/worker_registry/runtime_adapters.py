@@ -24,6 +24,11 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 import httpx
 
+from mas_core.sandbox_policy import (
+    canonical_sandbox_class,
+    required_runtime_for_sandbox,
+    runtime_implements_sandbox,
+)
 from mas_core.worker_contract import (
     AdapterContext,
     BaseWorkerAdapter,
@@ -1352,7 +1357,13 @@ def _framework_runner(callable_worker: Callable[..., Any], *, call_style: str) -
 
 
 class OCIAdapter(ProcessAdapter):
-    """OCI adapter using a pinned image digest and a certified launcher."""
+    """OCI adapter using a pinned image digest and a certified runtime.
+
+    ``sandboxed`` maps to Docker's gVisor ``runsc`` runtime.  ``vm_isolated``
+    maps to a Kata runtime registered on the worker host.  The adapter never
+    selects runc and never treats the direct Firecracker launcher as a
+    substitute for Kata.
+    """
 
     runtime_type = "oci"
 
@@ -1371,14 +1382,27 @@ class OCIAdapter(ProcessAdapter):
     ) -> None:
         if "@sha256:" not in image:
             raise ValueError("OCI workers must use an immutable image digest")
-        if sandbox_profile not in {"gvisor", "firecracker"}:
-            raise ValueError("OCI workers require a certified gvisor or firecracker sandbox profile")
-        if sandbox_profile == "firecracker":
+        raw_profile = str(sandbox_profile or "").strip().lower()
+        if raw_profile == "firecracker":
             raise ValueError("Firecracker OCI execution requires a certified Firecracker launcher")
+        try:
+            sandbox_class = canonical_sandbox_class(raw_profile)
+        except ValueError as exc:
+            raise ValueError(
+                "OCI workers require a hardened sandbox profile (sandboxed or vm_isolated)"
+            ) from exc
+        if sandbox_class not in {"sandboxed", "vm_isolated"}:
+            raise ValueError(
+                "OCI workers require a hardened sandbox profile (sandboxed or vm_isolated)"
+            )
         if launcher != "docker":
-            raise ValueError("gVisor OCI execution currently requires the certified docker/runsc launcher")
-        if sandbox_runtime != "runsc":
-            raise ValueError("gVisor OCI execution requires the runsc sandbox runtime")
+            raise ValueError("AIAT OCI sandbox execution currently requires the certified Docker launcher")
+        sandbox_runtime = str(sandbox_runtime or "").strip().lower()
+        required_runtime = required_runtime_for_sandbox(sandbox_class)
+        if not runtime_implements_sandbox(sandbox_runtime, sandbox_class):
+            raise ValueError(
+                f"{sandbox_class} OCI execution requires the {required_runtime} sandbox runtime"
+            )
         if pids_limit <= 0:
             raise ValueError("OCI pids_limit must be positive")
         command = [
@@ -1408,6 +1432,8 @@ class OCIAdapter(ProcessAdapter):
         super().__init__(command, worker_id=worker_id, **kwargs)
         self.image = image
         self.sandbox_profile = sandbox_profile
+        self.sandbox_class = sandbox_class
+        self.sandbox_runtime = sandbox_runtime
 
 
 class FirecrackerAdapter(ProcessAdapter):
@@ -1467,6 +1493,7 @@ class FirecrackerAdapter(ProcessAdapter):
         )
         self.launch_spec = spec
         self.sandbox_profile = "firecracker"
+        self.sandbox_class = "vm_isolated"
 
 
 @dataclass(frozen=True, slots=True)
@@ -2435,7 +2462,8 @@ def adapter_for_transport(
         )
         return MCPAdapter(mcp, worker_id=worker_id, context=context)
     if normalized == "oci":
-        if str(config.get("sandbox_profile") or "").strip().lower() == "firecracker":
+        raw_profile = str(config.get("sandbox_profile") or "").strip().lower()
+        if raw_profile == "firecracker":
             return FirecrackerAdapter(
                 worker_id=worker_id,
                 context=context,
@@ -2456,13 +2484,18 @@ def adapter_for_transport(
                 secret_refs=tuple(config.get("secret_refs") or ()),
                 runtime_version=config.get("runtime_version"),
             )
+        sandbox_class = canonical_sandbox_class(raw_profile)
+        sandbox_runtime = str(
+            config.get("sandbox_runtime")
+            or ("runsc" if sandbox_class == "sandboxed" else "kata")
+        )
         return OCIAdapter(
             config["image"],
             worker_id=worker_id,
             context=context,
             launcher=config.get("launcher", "docker"),
             sandbox_profile=config.get("sandbox_profile"),
-            sandbox_runtime=config.get("sandbox_runtime", "runsc"),
+            sandbox_runtime=sandbox_runtime,
             memory_limit=config.get("memory_limit", "512m"),
             cpu_limit=config.get("cpu_limit", "1.0"),
             pids_limit=int(config.get("pids_limit", 256)),

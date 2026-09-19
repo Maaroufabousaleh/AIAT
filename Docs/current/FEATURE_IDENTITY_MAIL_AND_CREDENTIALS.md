@@ -8,6 +8,26 @@
 
 This boundary gives workers stable identities and tightly controlled access to mailboxes, external accounts, browser sessions, and secrets. It prevents credentials from leaking into prompts, manifests, worker containers, logs, or model requests.
 
+## Reconciled provider topology
+
+The supporting provider-architecture document is consistent with the current
+default profile and is integrated here as the topology summary:
+
+- Inbound mail: Cloudflare Email Routing → Cloudflare Worker/D1 → signed
+  synchronization → AIAT identity-service/Postgres.
+- Outbound mail: worker/tool request → signed identity-service approval,
+  ownership, policy, quota, rate, and idempotency gates → direct Resend HTTPS
+  API.
+- Cloudflare and Resend are untrusted transport/provider edges. AIAT remains
+  authoritative for worker identity, ownership, approvals, credentials,
+  outbox, reconciliation, audit, and dashboard state.
+- Worker R2 and Stalwart/full-mailbox profiles remain optional and do not
+  change the default Cloudflare/Resend path.
+
+The detailed source is [`Docs/AIAT_Email_Identity_Provider_Architecture.md`](../AIAT_Email_Identity_Provider_Architecture.md).
+Current certification and remaining evidence are determined by this feature,
+the mail-edge feature, and [`AIAT_Email_Identity_Live_Certification.md`](../AIAT_Email_Identity_Live_Certification.md), not by an older topology draft.
+
 ## Implemented now
 
 - Dedicated identity-service application and independent Postgres migration.
@@ -51,6 +71,7 @@ This boundary gives workers stable identities and tightly controlled access to m
 - Signed orchestrator client and safe mail SLO projection: [`mas/apps/orchestrator-api/orchestrator_api/identity_client.py`](../../mas/apps/orchestrator-api/orchestrator_api/identity_client.py)
 - Identity migrations: [`mas/apps/identity-service/migrations/versions/0001_identity_control_plane.py`](../../mas/apps/identity-service/migrations/versions/0001_identity_control_plane.py), [`0002_mail_trace_correlation.py`](../../mas/apps/identity-service/migrations/versions/0002_mail_trace_correlation.py), and [`0004_provider_neutral_mail.py`](../../mas/apps/identity-service/migrations/versions/0004_provider_neutral_mail.py)
 - Credential manager: [`mas/packages/mas-core/mas_core/credentials/`](../../mas/packages/mas-core/mas_core/credentials/)
+- Reconciled provider architecture: [`Docs/AIAT_Email_Identity_Provider_Architecture.md`](../AIAT_Email_Identity_Provider_Architecture.md)
 - Dashboard credentials list: [`mas/apps/mas-dashboard/app/(dashboard)/credentials/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/credentials/page.tsx>) and [`credentials-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/credentials-states.spec.ts)
 - Shared identity-resource dashboard surface: [`IdentityResourcePage.tsx`](../../mas/apps/mas-dashboard/components/identity/IdentityResourcePage.tsx) and [`identity-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/identity-states.spec.ts)
 - Tool identity client/grants: [`mas/apps/tool-service/tool_service/identity_client.py`](../../mas/apps/tool-service/tool_service/identity_client.py) and [`tool_grants.py`](../../mas/apps/tool-service/tool_service/tool_grants.py)

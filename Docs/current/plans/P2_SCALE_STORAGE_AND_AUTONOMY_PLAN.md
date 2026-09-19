@@ -428,13 +428,14 @@
   external network call, worker dispatch, or durable write; durable
   external-provider outage recovery remains a separate gate.
 - [ ] Extend durable external provider-backed dispatch beyond the retained
-  single-worker certificate to independent/multi-host Firecracker/gVisor
-  operation and external provider-backed recovery. The local provider-shaped
-  retry certificate above is a prerequisite, not a substitute for that
-  boundary.
+  single-worker certificate to independent/multi-host `sandboxed`/gVisor or
+  `vm_isolated`/Kata operation and external provider-backed recovery. Direct
+  Firecracker remains compatibility/benchmark evidence. The local
+  provider-shaped retry certificate above is a prerequisite, not a substitute
+  for that boundary.
 - Certify gVisor across supported hosts.
-- [x] Define the AIAT-owned Firecracker high-risk launch contract and
-  fail-closed pool-readiness checker (`5ed0a0b`). The contract requires
+- [x] Define the AIAT-owned direct Firecracker compatibility launch contract
+  and fail-closed readiness checker (`5ed0a0b`). The contract requires
   immutable kernel/rootfs digests, bounded vCPU/memory/PID/disk/output/time
   limits, read-only rootfs, deny-by-default egress, opaque secret references,
   artifact output, and mandatory cleanup. The adapter emits argv only through
@@ -442,6 +443,8 @@
   Static contract evidence passes, while the current host remains blocked by
   the missing launcher and Firecracker binary; real microVM smoke/network,
   provider, and recovery evidence remain open.
+- [ ] Certify a Kata `vm_isolated` host profile for high-risk or
+  gVisor-incompatible work; no weaker-runtime fallback is permitted.
 - [x] Prove complete local governed run-version pinning with migration
   `0042_worker_run_host_binding` and
   [`check_worker_version_pinning_postgres.py`](../../../mas/scripts/check_worker_version_pinning_postgres.py)
@@ -739,7 +742,9 @@
 - Storage migration, if selected, is checksum-complete, reversible, and restore-tested.
 - Optional memory/workflow services have clear measurable benefit and clean disable/removal paths.
 - Multi-host worker loss does not duplicate or lose canonical work.
-- Firecracker high-risk execution is independently certified.
+- Kata `vm_isolated` high-risk execution is independently certified; direct
+  Firecracker remains compatibility/benchmark evidence unless selected as the
+  certified Kata host VMM.
 - One AIAT self-improvement completes issue-to-canary-to-promotion and a separate exercise proves exact rollback.
 - SLO policy/report and capacity forecast contracts are implemented and
   deterministic; production-like/native evidence, load/soak/chaos, and

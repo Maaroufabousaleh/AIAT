@@ -2,10 +2,11 @@
 
 Static mode reconciles worker sandbox declarations with the hardened runtime
 contract. ``--live`` performs a non-secret Docker Engine inspection and exits
-with code 2 when Docker or gVisor is unavailable. The live check proves only
-that ``runsc`` is registered; it does not claim a worker canary, network
-negative matrix, or Firecracker certification. Pass ``--smoke --image`` with
-an immutable image reference for an explicit, bounded gVisor smoke command.
+with code 2 when Docker or the selected hardened runtime is unavailable. The
+live check proves only that ``runsc`` (or a selected Kata runtime) is
+registered; it does not claim a worker canary, network negative matrix, or
+Firecracker certification. Pass ``--smoke --image`` with an immutable image
+reference for an explicit, bounded smoke command using the selected runtime.
 Licence/restriction metadata is outside this operational check.
 """
 
@@ -22,14 +23,21 @@ import yaml
 from pydantic import ValidationError
 
 from mas_core.protocols.worker_manifest import WorkerManifest
+from mas_core.sandbox_policy import (
+    CANONICAL_SANDBOX_CLASSES,
+    HARDENED_SANDBOX_CLASSES,
+    SUPPORTED_SANDBOX_PROFILES,
+    canonical_sandbox_class,
+)
 
 MAS_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_WORKERS_DIR = MAS_ROOT / "workers"
 DEFAULT_COMPOSE = MAS_ROOT / "infra" / "compose" / "docker-compose.yml"
 SANDBOX_SCHEMA = "aiat.sandbox-runtime-readiness.v1"
-ALLOWED_PROFILES = frozenset({"standard", "restricted", "gvisor", "firecracker"})
+ALLOWED_PROFILES = SUPPORTED_SANDBOX_PROFILES
+CANONICAL_PROFILES = CANONICAL_SANDBOX_CLASSES
 ALLOWED_NETWORK_MODES = frozenset({"unrestricted", "egress-allowlist", "egress-deny-all"})
-HARDENED_PROFILES = frozenset({"gvisor", "firecracker"})
+HARDENED_PROFILES = HARDENED_SANDBOX_CLASSES
 OPENCODE_SERVICE = "opencode-runtime"
 OPENCODE_NETWORK = "internal"
 OPENCODE_MAX_MEMORY_BYTES = 1024 * 1024 * 1024
@@ -163,12 +171,17 @@ def inspect_static(
             rows.append({"worker": path.stem, "status": "fail", "error_type": type(exc).__name__})
             continue
         profile = str(_sandbox_value(manifest, "profile", ""))
+        try:
+            sandbox_class = canonical_sandbox_class(profile)
+        except ValueError:
+            sandbox_class = "invalid"
         network_mode = str(_sandbox_value(manifest, "network_mode", ""))
         runtime_tier = str(getattr(manifest, "runtime_tier", ""))
         row: dict[str, Any] = {
             "worker": path.stem,
             "runtime_tier": runtime_tier,
             "sandbox_profile": profile,
+            "sandbox_class": sandbox_class,
             "network_mode": network_mode,
             "status": "pass",
         }
@@ -178,12 +191,12 @@ def inspect_static(
         if network_mode not in ALLOWED_NETWORK_MODES:
             row["status"] = "fail"
             errors.append(f"{path.name}: unsupported sandbox network mode {network_mode!r}")
-        if profile in HARDENED_PROFILES and network_mode == "unrestricted":
+        if sandbox_class in HARDENED_PROFILES and network_mode == "unrestricted":
             row["status"] = "fail"
             errors.append(f"{path.name}: hardened sandbox cannot use unrestricted egress")
-        if runtime_tier == "external" and profile not in HARDENED_PROFILES:
+        if runtime_tier == "external" and sandbox_class not in HARDENED_PROFILES:
             row["status"] = "fail"
-            errors.append(f"{path.name}: external worker requires gvisor or firecracker")
+            errors.append(f"{path.name}: external worker requires sandboxed (gVisor) or vm_isolated (Kata)")
         rows.append(row)
     if not rows:
         errors.append("no worker manifests found")
@@ -195,7 +208,7 @@ def inspect_static(
         "status": "fail" if errors else "pass",
         "errors": errors,
         "worker_count": len(rows),
-        "hardened_worker_count": sum(row.get("sandbox_profile") in HARDENED_PROFILES for row in rows),
+        "hardened_worker_count": sum(row.get("sandbox_class") in HARDENED_PROFILES for row in rows),
         "workers": rows,
         "compose": str(compose_path),
         "opencode_runtime": opencode_runtime,
@@ -225,14 +238,18 @@ def _docker_runtimes() -> tuple[set[str], str | None]:
     return {str(name) for name in value}, None
 
 
-def _run_smoke(image: str) -> tuple[bool, str]:
+def _run_smoke(image: str, *, runtime: str) -> tuple[bool, str]:
     if "@sha256:" not in image:
         return False, "smoke image must be pinned by an OCI digest"
+    runtime_name = str(runtime or "").strip().lower()
+    if not runtime_name:
+        return False, "smoke runtime is required"
+    runtime_label = "Kata" if runtime_name == "kata" or runtime_name.startswith("kata-") else "gVisor"
     command = [
         "docker",
         "run",
         "--rm",
-        "--runtime=runsc",
+        f"--runtime={runtime_name}",
         "--network=none",
         "--read-only",
         "--cap-drop=ALL",
@@ -246,15 +263,21 @@ def _run_smoke(image: str) -> tuple[bool, str]:
     try:
         result = _run(command, timeout=60.0)
     except (OSError, subprocess.TimeoutExpired) as exc:
-        return False, f"gVisor smoke command unavailable ({type(exc).__name__})"
+        return False, f"{runtime_label} smoke command unavailable ({type(exc).__name__})"
     return result.returncode == 0, (
-        "gVisor digest-pinned smoke completed"
+        f"{runtime_label} ({runtime_name}) digest-pinned smoke completed"
         if result.returncode == 0
-        else "gVisor smoke command failed"
+        else f"{runtime_label} ({runtime_name}) smoke command failed"
     )
 
 
-def inspect_live(*, smoke: bool = False, image: str | None = None, require_firecracker: bool = False) -> dict[str, Any]:
+def inspect_live(
+    *,
+    smoke: bool = False,
+    image: str | None = None,
+    require_firecracker: bool = False,
+    require_kata: bool = False,
+) -> dict[str, Any]:
     report: dict[str, Any] = {
         "schema_version": SANDBOX_SCHEMA,
         "mode": "live",
@@ -262,17 +285,35 @@ def inspect_live(*, smoke: bool = False, image: str | None = None, require_firec
         "status": "blocked",
         "errors": [],
         "sandbox_profile": "gvisor",
+        "sandbox_class": "sandboxed",
         "smoke": "not_checked",
+        "kata": "not_checked",
         "firecracker": "not_checked",
     }
     runtimes, error = _docker_runtimes()
     report["registered_runtimes"] = sorted(runtimes)
+    smoke_reason: str | None = None
     if error:
         report["reason"] = error
         return report
-    if "runsc" not in runtimes:
+    kata_runtimes = sorted(
+        runtime for runtime in runtimes if runtime == "kata" or runtime.startswith("kata-")
+    )
+    report["kata_runtimes"] = kata_runtimes
+    if require_kata:
+        report["sandbox_profile"] = "vm_isolated"
+        report["sandbox_class"] = "vm_isolated"
+        report["kata"] = "available" if kata_runtimes else "blocked_missing_runtime"
+        if not kata_runtimes:
+            report["reason"] = "Kata was required but no Kata Docker runtime is registered"
+            return report
+        selected_runtime = kata_runtimes[0]
+    elif "runsc" not in runtimes:
         report["reason"] = "gVisor runsc runtime is not registered; no runc fallback is permitted"
         return report
+    else:
+        selected_runtime = "runsc"
+    report["sandbox_runtime"] = selected_runtime
     if require_firecracker:
         firecracker = shutil.which("firecracker")
         report["firecracker"] = "available" if firecracker else "blocked_missing_binary"
@@ -283,7 +324,8 @@ def inspect_live(*, smoke: bool = False, image: str | None = None, require_firec
         if not image:
             report["reason"] = "--smoke requires --image with an immutable digest"
             return report
-        passed, reason = _run_smoke(image)
+        passed, reason = _run_smoke(image, runtime=selected_runtime)
+        smoke_reason = reason
         report["smoke"] = "pass" if passed else "fail"
         if not passed:
             report["status"] = "fail"
@@ -292,9 +334,9 @@ def inspect_live(*, smoke: bool = False, image: str | None = None, require_firec
             return report
     report["status"] = "pass"
     report["reason"] = (
-        "runsc is registered; sandbox smoke/canary/network negative evidence remains separate"
+        f"{selected_runtime} is registered; sandbox smoke/canary/network negative evidence remains separate"
         if not smoke
-        else "runsc registration and digest-pinned smoke passed"
+        else smoke_reason
     )
     return report
 
@@ -304,9 +346,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--workers-dir", type=Path, default=DEFAULT_WORKERS_DIR)
     parser.add_argument("--compose", type=Path, default=DEFAULT_COMPOSE)
     parser.add_argument("--live", action="store_true", help="inspect the Docker runtime registry")
-    parser.add_argument("--smoke", action="store_true", help="run a bounded gVisor smoke command")
+    parser.add_argument("--smoke", action="store_true", help="run a bounded smoke command using the selected runtime")
     parser.add_argument("--image", help="immutable OCI image for --smoke")
     parser.add_argument("--require-firecracker", action="store_true")
+    parser.add_argument("--require-kata", action="store_true", help="require a registered Kata Docker runtime")
     parser.add_argument("--json", action="store_true", help="emit JSON")
     args = parser.parse_args(argv)
     static = inspect_static(workers_dir=args.workers_dir, compose_path=args.compose)
@@ -318,6 +361,7 @@ def main(argv: list[str] | None = None) -> int:
                 smoke=args.smoke,
                 image=args.image,
                 require_firecracker=args.require_firecracker,
+                require_kata=args.require_kata,
             ),
         }
     if args.json:

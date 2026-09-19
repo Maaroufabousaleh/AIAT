@@ -124,6 +124,18 @@ The root `ROADMAP.md` links to it as the canonical OSS decision document. It
 is intentionally not added to `Docs/current/plans/`, whose maintained-plan
 count is machine-checked by the repository documentation index.
 
+The reconciled source set includes the historical deep-research report and
+implementation plan under `Docs/`, the `.github/prompts/deep-research-report.md`
+and Alpha–Epsilon prompt plans, the Paperclip/three-plan analysis under
+`Docs/obs/`, and the archived PDR/CDR and external-worker design drafts. Those
+documents supplied candidate ideas and historical snapshots; they do not
+override this plan's later repository audit or the current target programme,
+roadmap, feature specifications, release ledger, and operator policy. In
+particular, the current synthesis rejects a second Paperclip control plane,
+treats licence information as metadata rather than a gate, and maps the old
+Firecracker-only high-risk wording to the current `vm_isolated`/Kata policy
+with direct Firecracker retained only for compatibility/benchmark evidence.
+
 ## 3. How the three research passes changed the architecture
 
 | Topic | First pass | Second pass | Final/third-pass conclusion | Reason |
@@ -424,11 +436,11 @@ flowchart TB
         SCHED --> EXEC --> RUN --> SPI
         OC[OpenCode default]
         OCI[OCI / gVisor]
-        FC[Firecracker high-risk profile]
+        KATA[Kata vm_isolated]
         HTTP[HTTP / MCP / process adapters]
         SPI --> OC
         SPI --> OCI
-        SPI --> FC
+        SPI --> KATA
         SPI --> HTTP
     end
 
@@ -509,7 +521,8 @@ permissions but cannot assume control of the remote implementation.
 | `HTTPAdapter` | **External trust boundary** | Remote implementation decides | Remote by definition | Headers/configuration may authenticate the remote runtime | AIAT sees the adapter contract, not remote internals | Certified endpoint, scoped auth, provenance, timeout, reconciliation, and egress controls |
 | `MCPAdapter` | **Capability-dependent external boundary** | Depends on MCP server | Depends on MCP server | Depends on client/server configuration | MCP is explicit, but server capabilities still require grants | Per-run server/tool grants; no broad privileged server by default |
 | `OCIAdapter` with gVisor | **Sandboxed runtime** | Read-only root plus scoped workspace/tmpfs under the profile | Deny by default where configured | Explicit values only; no parent environment inheritance | AIAT-mediated | Preferred boundary for untrusted local workers after host certification |
-| `FirecrackerAdapter` | **Strong sandbox/high-risk profile** | MicroVM boundary and controlled rootfs | Deny-all default with explicit allowlist | Controlled launch specification or capability references | AIAT-mediated | Keep as a high-risk option; current host evidence remains separate and may be unavailable |
+| `OCIAdapter` with Kata | **VM-isolated runtime** | Guest-kernel VM boundary with OCI workspace semantics | Host-certified deny-by-default policy | Host selects Kata profile/VMM; worker receives no VMM authority | AIAT-mediated | Future high-risk or gVisor-incompatible path; disabled until host certification |
+| Direct `FirecrackerAdapter` | **Legacy host-VMM compatibility path** | MicroVM boundary and controlled rootfs | Deny-all default with explicit allowlist | Controlled launch specification or capability references | AIAT-mediated | Retain only for compatibility/benchmarking; it is no longer an AIAT policy class |
 | OpenCode | **Governed coding runtime** | Workspace/runtime access constrained by deployment | Runtime service network is deployment-dependent | Current adapter uses run-scoped gateway/tool material; host handling still follows ProcessAdapter rules where applicable | Native capabilities denied in the inspected path; AIAT MCP bridge mediates tools | Keep as default coding runtime and retain its certification evidence |
 | OpenHands Agent Server/Sandbox | **Candidate sandboxed external runtime** | Mutable sandbox workspace; upstream recommends container deployment | Sandbox/deployment dependent | Candidate gateway/profile lifecycle must be scoped and redacted | AIAT bridge/certification path exists | Candidate only until live certification and benchmark gates pass |
 | LangGraph/CrewAI/AutoGen/Letta/MAF in-process workers | **Trusted only if reviewed; not a sandbox** | In-process host permissions | In-process host network | Process environment unless explicitly constrained | Depends on adapter implementation | Consolidate behind `WorkerAdapter`; only retain for a measured active workload |
@@ -842,6 +855,78 @@ No PR in this roadmap adds a generic `ExecutionBackend`. No PR activates
 Pydantic AI, DBOS, Paperclip, OpenHands, or Stagehand by default. Every
 experimental route has a per-worker or per-feature rollback switch.
 
+## 18. Isolation policy migration: runc → gVisor → Kata
+
+The repository now models isolation as three AIAT policy classes rather than
+four independently managed runtime tiers:
+
+| AIAT policy class | Default host implementation | Current status |
+| --- | --- | --- |
+| `trusted` | normal Docker/runc | Available for AIAT-owned trusted services and reviewed workers |
+| `sandboxed` | Docker/containerd gVisor `runsc` | Current external-worker baseline; native-host certification exists, while the current WSL2 Docker path remains blocked |
+| `vm_isolated` | Kata Containers runtime; host selects Dragonball/QEMU or another certified Kata VMM | Contract and adapter selection are present; no Kata host is activated or required for the current release |
+
+The historical profile names remain accepted during the migration window:
+
+| Historical value | Canonical class | Important meaning |
+| --- | --- | --- |
+| `standard` | `trusted` | Legacy normal-runtime label |
+| `restricted` | `trusted` | Legacy governance/policy label; it was not proof of a hardened runtime |
+| `gvisor` | `sandboxed` | Compatibility alias for the gVisor class |
+| `firecracker` | `vm_isolated` | Compatibility alias; direct Firecracker launch is legacy/experimental, not the policy implementation |
+
+This mapping is deliberately fail-closed. External workers require
+`sandboxed` or `vm_isolated` after alias resolution. `vm_isolated` selects
+`docker --runtime kata` only when the host/runtime adapter is explicitly
+configured for Kata; it never falls back to `runsc` or runc. Trusted execution
+is never used as a compatibility fallback for an external worker.
+
+The host owns the concrete VMM choice. A host registration may advertise
+metadata such as:
+
+```yaml
+sandbox_profile: vm_isolated
+metadata:
+  sandbox_runtime: kata
+  kata_profile: dragonball
+```
+
+The worker and governance agents receive only the AIAT policy class; they do
+not choose the VMM. Direct Firecracker remains in the repository because its
+launch contract and compatibility tests are still useful, but the new policy
+path does not activate it. Current host evidence remains explicit: gVisor is
+the default certified direction, while Kata and direct Firecracker are
+unavailable/uncertified in the current WSL2 environment. The read-only checker
+supports an explicit `--require-kata` probe for a future certified host, but
+Kata is not a current release gate.
+
+The upstream technical boundary is documented by [gVisor's compatibility
+guide](https://gvisor.dev/docs/user_guide/compatibility/), [Kata's quick-start
+guide](https://github.com/kata-containers/kata-containers/blob/main/docs/quick-start-guide.md),
+[Kata's virtualization notes](https://github.com/kata-containers/documentation/blob/master/design/virtualization.md),
+and [Firecracker's design/FAQ](https://github.com/firecracker-microvm/firecracker/blob/main/FAQ.md).
+Those sources support the architectural judgment that gVisor is the dense
+default and Kata is the OCI-compatible escape hatch for high-risk or
+gVisor-incompatible workers; they do not constitute AIAT host certification.
+
+The implementation surface is:
+
+- [`mas_core/sandbox_policy.py`](../packages/mas-core/mas_core/sandbox_policy.py)
+  for canonical classes, alias resolution, and runtime requirements;
+- worker/company/capability models for canonical values plus legacy aliases;
+- worker readiness, evaluator, placement, host registration, and sandbox
+  readiness checks for canonical hardening decisions;
+- [`runtime_adapters.py`](../packages/mas-core/mas_core/worker_registry/runtime_adapters.py)
+  for `sandboxed/runsc` and `vm_isolated/kata` OCI command selection; and
+- [`infra/sandbox/README.md`](../infra/sandbox/README.md) for operator setup and
+  fail-closed evidence boundaries.
+
+This migration does not install Kata, delete Firecracker, change the current
+OpenCode default, or claim live VM isolation. A future Kata activation still
+requires immutable host/runtime provenance, `/dev/kvm` or supported nested
+virtualization, sandbox/network/credential tests, recovery evidence, and an
+operator-owned release decision.
+
 ## 15. Codex versus human/manual work
 
 ### Codex can implement
@@ -875,8 +960,8 @@ The following cannot be honestly replaced by local mocks or static analysis:
 - real provider credentials and exact model/profile selection for live runtime
   comparison;
 - OpenHands Agent Server/sandbox live certification and failure cleanup;
-- native Linux, gVisor, Firecracker, container, network, and filesystem
-  boundary verification;
+- native Linux, gVisor, Kata, container, network, and filesystem boundary
+  verification;
 - independent-host, host-loss, Redis outage, Postgres interruption, and
   deployment failover tests;
 - browser workflows using real authenticated external accounts or

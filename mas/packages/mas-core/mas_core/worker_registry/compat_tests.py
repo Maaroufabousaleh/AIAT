@@ -24,6 +24,7 @@ from uuid import UUID
 import yaml
 
 from mas_core.protocols.worker_manifest import WorkerManifest
+from mas_core.sandbox_policy import SUPPORTED_SANDBOX_PROFILES
 
 if TYPE_CHECKING:
     from mas_core.memory.storage import AgentStorage
@@ -131,8 +132,8 @@ async def _test_sandbox_compliance(
     storage: AgentStorage,
 ) -> dict:
     """Verify the worker's sandbox profile is valid."""
-    profile = worker.get("sandbox_profile", "standard")
-    valid_profiles = {"standard", "restricted", "gvisor", "firecracker"}
+    profile = worker.get("sandbox_profile", "trusted")
+    valid_profiles = SUPPORTED_SANDBOX_PROFILES
 
     if profile not in valid_profiles:
         return {

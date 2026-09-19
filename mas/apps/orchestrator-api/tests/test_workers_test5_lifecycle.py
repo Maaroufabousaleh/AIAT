@@ -1261,7 +1261,7 @@ async def test_sandbox_profile_check_rejects_invalid_profile(tmp_path):
 
 @pytest.mark.anyio
 async def test_medium_dual_use_worker_requires_hardened_sandbox(tmp_path):
-    """Medium/dual-use workers require gvisor or firecracker before activation."""
+    """Medium/dual-use workers require canonical hardened isolation before activation."""
     from mas_core.worker_registry.evaluator import _check_sandbox_profile
 
     result = await _check_sandbox_profile(
@@ -1270,7 +1270,7 @@ async def test_medium_dual_use_worker_requires_hardened_sandbox(tmp_path):
         {"sandbox_profile": "restricted", "adapter_config": {"dual_use": True}},
     )
     assert result["passed"] is False
-    assert "gvisor or firecracker" in result["details"]
+    assert "sandboxed (gVisor) or vm_isolated (Kata)" in result["details"]
 
     hardened = await _check_sandbox_profile(
         "https://github.com/example/repo",
@@ -1348,7 +1348,7 @@ async def test_activate_medium_dual_use_worker_requires_hardened_sandbox_and_app
         json={"action": "ACTIVATE"},
     )
     assert resp.status_code == 409
-    assert "gvisor or firecracker" in resp.json()["detail"]
+    assert "sandboxed (gVisor) or vm_isolated (Kata)" in resp.json()["detail"]
     storage.update_worker_status.assert_not_awaited()
 
     pending_approval_row = dict(restricted_row)

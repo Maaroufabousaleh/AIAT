@@ -19,6 +19,11 @@ from uuid import UUID, uuid4
 
 import sqlalchemy as sa
 
+from mas_core.sandbox_policy import (
+    canonical_sandbox_class,
+    required_runtime_for_sandbox,
+    runtime_implements_sandbox,
+)
 from mas_core.worker_registry.placement import HostCapacity, mapping_to_host_snapshot
 
 from ..memory import models as t
@@ -116,6 +121,26 @@ def _normalize_metadata(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
     return dict(metadata)
 
 
+def _normalize_sandbox_runtime(value: str | None, *, sandbox_profile: str) -> str:
+    """Resolve the host runtime without making it a worker policy class."""
+
+    sandbox_class = canonical_sandbox_class(sandbox_profile)
+    required_runtime = required_runtime_for_sandbox(sandbox_class)
+    requested = str(value or "").strip().lower()
+    if not requested:
+        return required_runtime
+    if requested not in {"runc", "runsc", "kata"} and not (
+        requested.startswith("kata-") and len(requested) > len("kata-")
+    ):
+        raise ValueError(f"unsupported host sandbox runtime: {value!r}")
+    if not runtime_implements_sandbox(requested, sandbox_class):
+        raise ValueError(
+            f"host sandbox runtime {requested!r} does not implement "
+            f"sandbox class {sandbox_class!r} (requires {required_runtime})"
+        )
+    return requested
+
+
 def _lease_generation(value: Any, *, required: bool = True) -> int:
     if value is None and not required:
         return 0
@@ -165,6 +190,12 @@ def public_host_row(row: Mapping[str, Any], *, now: datetime | None = None) -> d
     """Project a database row without credential or lease-owner secrets."""
 
     current = now or datetime.now(tz=UTC)
+    sandbox_profile = str(row.get("sandbox_profile") or "")
+    try:
+        sandbox_class = canonical_sandbox_class(sandbox_profile)
+    except ValueError:
+        sandbox_class = "invalid"
+    metadata = dict(row.get("metadata") or {})
     return {
         "id": row.get("id"),
         "host_id": str(row.get("host_id") or ""),
@@ -172,7 +203,9 @@ def public_host_row(row: Mapping[str, Any], *, now: datetime | None = None) -> d
         "host_plane": _validate_host_plane(row.get("host_plane") or "worker"),
         "labels": dict(row.get("labels") or {}),
         "capabilities": sorted(str(value) for value in (row.get("capabilities") or [])),
-        "sandbox_profile": str(row.get("sandbox_profile") or ""),
+        "sandbox_profile": sandbox_profile,
+        "sandbox_class": sandbox_class,
+        "sandbox_runtime": str(metadata.get("sandbox_runtime") or ""),
         "isolation_mode": str(row.get("isolation_mode") or ""),
         "capacity": dict(row.get("capacity") or {}),
         "priority": int(row.get("priority") or 0),
@@ -182,7 +215,7 @@ def public_host_row(row: Mapping[str, Any], *, now: datetime | None = None) -> d
         "last_seen_at": row.get("last_seen_at"),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
-        "metadata": dict(row.get("metadata") or {}),
+        "metadata": metadata,
     }
 
 
@@ -193,6 +226,9 @@ def host_snapshot_row(row: Mapping[str, Any], *, now: datetime | None = None) ->
     public.update(
         {
             "sandbox_profiles": [public["sandbox_profile"]],
+            "sandbox_runtimes": [public["sandbox_runtime"]]
+            if public["sandbox_runtime"]
+            else [],
             "isolation_modes": [public["isolation_mode"]],
         }
     )
@@ -214,6 +250,7 @@ class WorkerHostRegistry:
         capabilities: Sequence[str] | None = None,
         host_plane: str = "worker",
         sandbox_profile: str = "standard",
+        sandbox_runtime: str | None = None,
         isolation_mode: str = "native",
         capacity: Mapping[str, Any] | None = None,
         priority: int = 0,
@@ -234,6 +271,14 @@ class WorkerHostRegistry:
         normalized_capabilities = _normalize_capabilities(capabilities)
         normalized_capacity = _normalize_capacity(capacity)
         normalized_metadata = _normalize_metadata(metadata)
+        # The profile is the AIAT policy class. The runtime is a host
+        # implementation detail (runc, runsc, or Kata); a Kata VMM such as
+        # Firecracker belongs in separate host metadata, not this field.
+        canonical_sandbox_class(sandbox_profile)
+        normalized_metadata["sandbox_runtime"] = _normalize_sandbox_runtime(
+            sandbox_runtime or normalized_metadata.get("sandbox_runtime"),
+            sandbox_profile=sandbox_profile,
+        )
         digest = token_sha256(registration_token)
         now = datetime.now(tz=UTC)
         async with self._storage.engine.begin() as connection:

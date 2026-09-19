@@ -6,7 +6,7 @@
 bounded duplicate-effect/replay protection, complete local governed run-version
 pinning, fenced host-loss queue-recovery, a repeated same-host recovery soak,
 selected model-resolution host-execution, and the fail-closed Firecracker launch
-contract are implemented; normal binding commit/release now settles the
+compatibility contract are implemented; normal binding commit/release now settles the
 reservation and binding in one database transaction and failed new assignments
 compensate their newly-created reservation; deployed runtime, host-certified
 sandbox, provider, independent-host recovery, and host-loss reassignment fault
@@ -42,7 +42,7 @@ evidence and zero residual rows. This makes the local certificate reproducible;
 it does not advance the independent-host, sandbox, provider, canary, or
 rollback boundaries.
 
-The high-risk launch contract in
+The legacy high-risk launch contract in
 [`firecracker.py`](../../mas/packages/mas-core/mas_core/worker_registry/firecracker.py)
 and [`FirecrackerAdapter`](../../mas/packages/mas-core/mas_core/worker_registry/runtime_adapters.py)
 (`5ed0a0b`) validates immutable kernel/rootfs digests, bounded vCPU/memory/PID/
@@ -52,6 +52,10 @@ through an explicitly named certified launcher; it never falls back to Docker,
 runc, or gVisor. Static readiness passes, while the current live probe is
 blocked because the launcher and Firecracker binary are unavailable. Evidence
 is [`firecracker_worker_pool_readiness.json`](../../mas/docs/provenance/firecracker_worker_pool_readiness.json).
+It is retained for compatibility/benchmark evidence rather than exposed as a
+fourth AIAT sandbox class. The future `vm_isolated` class uses a certified Kata
+runtime selected by the host; the current WSL2 environment has no Kata
+certification.
 
 ## Contract
 
@@ -314,8 +318,9 @@ artifact policy, and recovery policy before it can claim a real run.
   worker hosts and prove concurrent admission, host loss, split-brain fencing,
   requeue, and duplicate-effect protection under real host/process boundaries;
   the local duplicate-claim and replay boundary is already certified.
-- Certify gVisor on supported hosts and independently certify Firecracker for
-  high-risk profiles.
+- Certify gVisor on supported hosts and certify a Kata `vm_isolated` host for
+  high-risk or gVisor-incompatible profiles. Keep direct Firecracker as a
+  compatibility/benchmark path unless it is used as the selected Kata VMM.
 - Add provider-backed execution, callback/bounce evidence, outage recovery, and
   restore/rollback exercises.
 - Inject failures across reservation creation, binding persistence, normal

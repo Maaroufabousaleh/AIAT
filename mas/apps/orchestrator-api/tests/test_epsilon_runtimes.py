@@ -13,7 +13,7 @@ async def test_langgraph_runtime_status_reported(client):
     assert langgraph["tier"] == "departmental"
     assert "status" in langgraph
     assert langgraph["policy"]["inner_runtime"] is True
-    assert langgraph["policy"]["sandbox_required"] == "gvisor"
+    assert langgraph["policy"]["sandbox_required"] == "sandboxed"
 
 
 @pytest.mark.anyio
@@ -33,7 +33,7 @@ async def test_autogen_requires_firecracker_sandbox(client):
     data = resp.json()
     autogen = next(r for r in data["runtimes"] if r["id"] == "autogen")
     assert autogen["optional"] is True
-    assert autogen["policy"]["sandbox_required"] == "firecracker"
+    assert autogen["policy"]["sandbox_required"] == "vm_isolated"
     assert autogen["policy"]["max_instances"] == 1
     assert autogen["policy"]["inner_runtime"] is False
 
@@ -132,6 +132,33 @@ async def test_runtime_validate_autogen_passes_with_valid_config(client):
     assert resp.status_code == 200
     data = resp.json()
     assert data["runtime_tier"] == "autogen"
+
+
+@pytest.mark.anyio
+async def test_runtime_validate_maf_invalid_sandbox_profile_is_bounded(client):
+    config = {
+        "agent_name": "invalid-sandbox-maf",
+        "instructions": "Return a bounded result.",
+        "sandbox_profile": "runc",
+    }
+
+    validation = await client.post(
+        "/runtimes/validate",
+        json={"runtime_tier": "microsoft_agent_framework", "runtime_config": config},
+    )
+    assert validation.status_code == 200
+    validation_data = validation.json()
+    assert validation_data["passed"] is False
+    assert validation_data["checks"]["sandbox_profile_verified"] is False
+    assert "sandbox_profile_verified" in validation_data["blocked_reason"]
+
+    benchmark = await client.post(
+        "/runtimes/benchmark",
+        json={"runtime_tier": "microsoft_agent_framework", "runtime_config": config},
+    )
+    assert benchmark.status_code == 200
+    benchmark_data = benchmark.json()
+    assert benchmark_data["status"] == "skipped"
 
 
 @pytest.mark.anyio

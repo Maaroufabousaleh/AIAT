@@ -1,7 +1,14 @@
 # Apply Deep Research Epsilon Plan
 
+> **Historical planning input (2026-09-19):** The active authority is the
+> target programme, roadmap, current feature set, release ledger, and
+> canonical OSS plan. This prompt records an earlier runtime-evaluation phase;
+> current high-risk isolation is `vm_isolated`/Kata, with direct Firecracker
+> retained only for compatibility or benchmark evidence. Licence metadata is
+> non-gating.
+
 ## Summary
-Create `.github/prompts/PLAN_epsilon.md` as the final deep-research implementation plan. Epsilon completes the remaining report scope using the **Guarded Default** decision: advanced runtimes become usable only through AIAT adapters, policy gates, sandboxing, approval, audit, and dashboard visibility; Vault/ZITADEL/Temporal/Garage/Firecracker are not default replacements until their readiness gates pass.
+Create `.github/prompts/PLAN_epsilon.md` as the final deep-research implementation plan. Epsilon completes the remaining report scope using the **Guarded Default** decision: advanced runtimes become usable only through AIAT adapters, policy gates, sandboxing, approval, audit, and dashboard visibility; Vault/ZITADEL/Temporal/Garage/Kata are not default replacements until their readiness gates pass, and direct Firecracker remains compatibility/benchmark evidence.
 
 Epsilon must preserve AIAT as the control plane: Dashboard -> Orchestrator API -> worker registry -> adapter SDK -> tool-service -> audited artifacts/state. No external runtime may bypass AIAT protocol, credentials, approvals, budget controls, or observability.
 
@@ -13,9 +20,12 @@ Current repo truth to reflect in the plan: Epsilon-shaped code exists for runtim
   - CrewAI as a crew-style departmental runtime.
   - AutoGen as a disabled-by-default specialist runtime requiring human approval and the strongest available sandbox.
   - Letta as a read-only, memory-heavy research specialist with memory audit and no write tools by default.
-  - gVisor enforcement as the default advanced/external worker sandbox before Firecracker is attempted.
+  - gVisor enforcement as the default `sandboxed` external-worker boundary, with
+    `vm_isolated`/Kata as the future high-risk path.
   - Vault and ZITADEL as optional production-hardening profiles only after migration and rollback plans.
-  - Temporal, Garage, and Firecracker as measured evaluations, not silent replacements for Redis/router flows, MinIO, or current sandbox behavior.
+  - Temporal, Garage, and Kata as measured evaluations, not silent replacements
+    for Redis/router flows, MinIO, or current sandbox behavior; direct
+    Firecracker remains compatibility/benchmark evidence.
 - Include an official-doc research refresh gate before dependency edits:
   - LangGraph package/install source: https://docs.langchain.com/oss/python/langgraph/install
   - CrewAI install/runtime constraints: https://docs.crewai.com/en/installation

@@ -1,5 +1,13 @@
 # AIAT Provider-Neutral PM Platform Integration Plan
 
+> **Reconciliation notice (2026-09-19):** This is a retained design snapshot
+> from the 2026-07-28 implementation stage. Its provider-neutral contracts,
+> AIAT-canonical authority model, plan/apply lifecycle, projection, webhook,
+> idempotency, reconciliation, and rollback design are incorporated in
+> [`../Docs/current/FEATURE_INTEGRATIONS_PM_AND_SCM.md`](../Docs/current/FEATURE_INTEGRATIONS_PM_AND_SCM.md).
+> The `SHADOW` state and migration-head statements below are historical; use
+> the current PM feature and certification ledger for live status.
+
 ## Status and decision record
 
 **Status:** Approved implementation plan

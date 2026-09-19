@@ -48,6 +48,8 @@ External project-management and source-control systems are governed collaboratio
 - PM gateway: [`mas/apps/pm-gateway/`](../../mas/apps/pm-gateway/)
 - Current PM ledger: [`mas/docs/PM_ACTIVE_CERTIFICATION_LEDGER.md`](../../mas/docs/PM_ACTIVE_CERTIFICATION_LEDGER.md)
 - Current rollout plan: [`mas/docs/PM_INTEGRATION_PLAN.md`](../../mas/docs/PM_INTEGRATION_PLAN.md)
+- Reconciled historical design plan: [`Docs/PM_Platform_Integration_Plan.md`](../PM_Platform_Integration_Plan.md)
+- Point-in-time YouTrack approval artifact: [`Docs/PM_Platform_YouTrack_Bootstrap_Plan.md`](../PM_Platform_YouTrack_Bootstrap_Plan.md)
 - Operator runbook: [`mas/docs/PM_INTEGRATION_RUNBOOK.md`](../../mas/docs/PM_INTEGRATION_RUNBOOK.md)
 - Binding readiness policy: [`mas/docs/PM_ACTIVE_READINESS.md`](../../mas/docs/PM_ACTIVE_READINESS.md)
 - Active deployment gates: [`mas/docs/PM_ACTIVE_DEPLOYMENT.md`](../../mas/docs/PM_ACTIVE_DEPLOYMENT.md)
@@ -75,6 +77,21 @@ Unknown actors fail closed. Integration identities cannot be mapped as humans to
 
 The control plane, lifecycle, doctor, rollback, reconciliation, and READ_ONLY operation have live evidence. Two ACTIVE attempts rolled back safely because the required browser-mediated human action was unavailable or timed out. No synthetic event or API token was used as a substitute. The ACTIVE command path is therefore not certified.
 
+## Reconciled standalone PM documents
+
+The older provider-neutral plan supplies the design that is now implemented by
+this feature: AIAT remains canonical; provider changes use digest-bound,
+operator-approved plan/apply operations; projections, webhooks, outbox/inbox,
+idempotency, reconciliation, and rollback are bounded at the adapter boundary.
+Its 2026-07-28 `SHADOW` status is only a historical snapshot. The later
+certification ledger is authoritative for the current connection `ACTIVE`
+revision 2, binding `READ_ONLY` revision 8, and the uncompleted browser-
+mediated ACTIVE command certification.
+
+The generated YouTrack bootstrap plan is retained as an immutable approval
+artifact. It describes what was proposed before apply and must not be replayed
+or used to infer current provider state.
+
 ## GitHub target
 
 - GitHub App installation with repository-scoped permissions.
@@ -94,7 +111,9 @@ The control plane, lifecycle, doctor, rollback, reconciliation, and READ_ONLY op
   YouTrack/GitHub mocked HTTP fixture are implemented, but live provider
   evidence remains.
 - Finish dashboard drill-down for lifecycle plans, evidence, actor maps, canaries, dispositions, and reconciliation diffs.
-- Reconcile the older `Docs/PM_Platform_*` ledger with the current `mas/docs/PM_ACTIVE_*` evidence without overwriting history.
+- Keep the older `Docs/PM_Platform_*` material linked as historical design and
+  approval provenance; current status and certification truth remain in the
+  feature and `mas/docs/PM_ACTIVE_*` records.
 - Certify a second work-management provider only after the provider conformance suite is stable.
 
 ## Acceptance criteria

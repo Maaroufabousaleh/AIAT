@@ -23,6 +23,7 @@ from uuid import UUID
 
 import httpx
 
+from mas_core.sandbox_policy import canonical_sandbox_class
 from mas_core.worker_contract import (
     AdapterContext,
     ArtifactKind,
@@ -180,8 +181,12 @@ def issue_openhands_certification_authorization(
         raise ValueError("certification controller run ID must be a bounded numeric GitHub run ID")
     if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,127}", candidate_identity):
         raise ValueError("OpenHands certification requires a bounded candidate worker identity")
-    if profile != _CERTIFICATION_SANDBOX_PROFILE:
-        raise ValueError("OpenHands certification requires the gVisor sandbox profile")
+    try:
+        sandbox_class = canonical_sandbox_class(profile)
+    except ValueError as exc:
+        raise ValueError("OpenHands certification requires the gVisor/sandboxed policy class") from exc
+    if sandbox_class != "sandboxed":
+        raise ValueError("OpenHands certification requires the gVisor/sandboxed policy class")
     if runtime != _CERTIFICATION_SANDBOX_RUNTIME:
         raise ValueError("OpenHands certification requires the runsc sandbox runtime")
     if not re.fullmatch(r"[0-9a-fA-F]{40}", verification.commit_sha):
@@ -208,13 +213,19 @@ def _valid_certification_authorization(
     *,
     expected_worker_id: str | None = None,
 ) -> bool:
+    try:
+        authorization_sandbox_class = canonical_sandbox_class(
+            authorization.sandbox_profile if authorization is not None else None
+        )
+    except ValueError:
+        authorization_sandbox_class = None
     return bool(
         isinstance(authorization, OpenHandsCertificationAuthorization)
         and authorization._authority is _CERTIFICATION_AUTHORITY
         and authorization.controller_run_id
         and authorization.candidate_commit == verification.commit_sha
         and authorization.image_digest == verification.image_digest
-        and authorization.sandbox_profile == _CERTIFICATION_SANDBOX_PROFILE
+        and authorization_sandbox_class == "sandboxed"
         and authorization.sandbox_runtime == _CERTIFICATION_SANDBOX_RUNTIME
         and authorization.controller == _CERTIFICATION_CONTROLLER
         and (expected_worker_id is None or authorization.worker_id == expected_worker_id)
@@ -1249,8 +1260,13 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             blockers.append("an AIAT-governed OpenHands agent_profile_id is required (run-scoped during certification)")
         if self._certification_mode:
             checks["certification_authorized"] = True
+            certification_profile = self.context.metadata.get("openhands_certification_sandbox_profile")
+            try:
+                certification_class = canonical_sandbox_class(certification_profile)
+            except ValueError:
+                certification_class = None
             checks["certification_gvisor_policy"] = (
-                self.context.metadata.get("openhands_certification_sandbox_profile") == _CERTIFICATION_SANDBOX_PROFILE
+                certification_class == "sandboxed"
                 and self.context.metadata.get("openhands_certification_sandbox_runtime") == _CERTIFICATION_SANDBOX_RUNTIME
             )
             if not checks["certification_gvisor_policy"]:

@@ -62,6 +62,17 @@ from .envelope import (
     MessageEnvelope,
     TaskBudget,
 )
+from .sandbox import (
+    CANONICAL_SANDBOX_CLASSES,
+    HARDENED_SANDBOX_CLASSES,
+    LEGACY_SANDBOX_PROFILES,
+    SANDBOX_CLASS_RUNTIME,
+    SANDBOX_PROFILE_ALIASES,
+    SUPPORTED_SANDBOX_PROFILES,
+    canonical_sandbox_class,
+    is_hardened_sandbox,
+    required_runtime_for_sandbox,
+)
 from .schema_export import (
     PROTOCOL_SCHEMA_VERSION,
     protocol_schema_bundle,
@@ -73,7 +84,6 @@ from .tool import (
     ToolRequest,
     ToolResponse,
 )
-from .worker_manifest import WORKER_SDK_VERSION, WorkerManifest
 from .worker_contract import (
     WorkerArtifact,
     WorkerCapabilities,
@@ -82,6 +92,7 @@ from .worker_contract import (
     WorkerRunAccepted,
     WorkerRunRequest,
 )
+from .worker_manifest import WORKER_SDK_VERSION, WorkerManifest
 from .ws import (
     AgentFrame,
     RouterFrame,
@@ -118,6 +129,15 @@ __all__ = [
     "PROTOCOL_SCHEMA_VERSION",
     "protocol_schema_bundle",
     "write_protocol_schema_bundle",
+    "CANONICAL_SANDBOX_CLASSES",
+    "HARDENED_SANDBOX_CLASSES",
+    "LEGACY_SANDBOX_PROFILES",
+    "SANDBOX_CLASS_RUNTIME",
+    "SANDBOX_PROFILE_ALIASES",
+    "SUPPORTED_SANDBOX_PROFILES",
+    "canonical_sandbox_class",
+    "is_hardened_sandbox",
+    "required_runtime_for_sandbox",
     # Tool
     "CircuitState",
     "ToolRequest",

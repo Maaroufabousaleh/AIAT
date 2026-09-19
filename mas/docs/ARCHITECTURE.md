@@ -111,8 +111,10 @@ governed service boundary.
 
 This boundary does not make a process trusted: a process still has the host
 user's filesystem and network reach unless it is launched through a certified
-OCI/gVisor or Firecracker isolation profile. Known explicit secret values are
-redacted from normalized process output and diagnostics.
+OCI/gVisor `sandboxed` or Kata `vm_isolated` profile. Direct Firecracker is
+retained only as a compatibility/host-VMM path, not a fourth AIAT policy tier.
+Known explicit secret values are redacted from normalized process output and
+diagnostics.
 
 The separate legacy/parallel adapter family under
 `mas/packages/mas-core/mas_core/worker_registry/` is inventoried in the

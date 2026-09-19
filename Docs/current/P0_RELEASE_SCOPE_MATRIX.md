@@ -167,7 +167,8 @@ classification or the global `NO-RELEASE` decision.
 | --- | --- | --- | --- |
 | Native-Linux certification host | WSL2 remains the local environment. Retained native Ubuntu GitHub-hosted evidence from run `32541110299` proves the runsc sandbox path, but does not certify a persistent/operator-controlled release host or the remaining native release checks. **Infrastructure/environment.** | `REQUIRED_FOR_RELEASE` | Use the retained gVisor artifact as evidence, then run the remaining native release checks on an accepted host if the release rule requires one. `ubuntu-slim` is not acceptable; do not rerun unchanged gVisor CI evidence. |
 | Default gVisor worker sandbox (`runsc`) | The target programme requires gVisor as the default external-worker sandbox; the retained native Ubuntu artifact [`native_gvisor_certification_live.json`](../../mas/docs/provenance/native_gvisor_certification_live.json) records `runsc` registration, digest-pinned smoke, sandbox, cleanup, and zero-residue PASS in run `32541110299`. WSL2 Docker Desktop still cannot register the WSL-installed runtime. **Infrastructure/runtime evidence.** | `REQUIRED_FOR_RELEASE` | Treat the retained native CI certificate as the current gVisor evidence. Keep the local WSL diagnostic and broader native-host checks separate; no silent `runc` fallback is permitted. |
-| Firecracker high-risk isolation tier | The target programme calls Firecracker optional for high-risk work; the launch contract is statically valid, but launcher/binary/KVM evidence is absent. **Infrastructure/conditional.** | `OPTIONAL_UNVERIFIED` | Keep high-risk Firecracker workers disabled for this release. Promote to `REQUIRED_FOR_RELEASE` only if the operator includes that tier in scope, then provide KVM, launcher, microVM smoke/network, cleanup, and recovery evidence. |
+| Kata `vm_isolated` high-risk/gVisor-incompatible isolation | The target architecture uses Kata as the high-risk policy provider; no certified Kata runtime/profile or live VM-capable host is available in the current WSL2 environment. **Infrastructure/conditional.** | `OPTIONAL_UNVERIFIED` | Keep `vm_isolated` workers disabled for this release. Promote to `REQUIRED_FOR_RELEASE` only if the operator includes that tier in scope, then provide Kata runtime/VMM, VM-capable host, smoke/network, cleanup, and recovery evidence. |
+| Direct Firecracker compatibility path | The legacy launch contract is statically valid, but no launcher/binary/KVM evidence is present. Direct Firecracker is not an AIAT policy class and is not required for `vm_isolated` when Kata selects another VMM. **Infrastructure/conditional.** | `DEFERRED` | Do not activate direct Firecracker. Retain its contract for compatibility/benchmarking or certify it only as a selected Kata host VMM with an explicit operator decision. |
 | Deployment image identity, SBOM, scan, and clean native build | Local image observations exist, but deployment-supplied immutable refs, native build reconciliation, SBOM/scan artifacts, and vulnerability dispositions are not complete. **Infrastructure/operator evidence.** | `REQUIRED_FOR_RELEASE` | Provide the ten immutable deployment refs and matching SBOM/scan/disposition artifacts on the certification host. |
 | Provider-managed object-store SSE/KMS and external key custody | The OCI-native adapter and deterministic mocked contract pass; no provider target, bucket customer-managed key, custody, rotation, or live read-back evidence is configured. **External configuration.** | `REQUIRED_FOR_RELEASE` | Supply the real OCI Object Storage + Vault/KMS target and governed auth reference, then run the live adapter for bucket/key identity, PUT/read/checksum, multipart/abort, provider metadata, delete, and zero residue. Do not claim the fixture as live evidence. |
 | External mail relay and delivery | The default Cloudflare Worker/D1-only inbound edge, public identity ingress, direct Resend transport, signed webhook, governed approval/send/idempotency/accounting/audit path, delivery correlation, and certification cleanup are live-certified in [`AIAT_Email_Identity_Live_Certification.md`](../AIAT_Email_Identity_Live_Certification.md). Optional Worker R2 and Stalwart full-mailbox evidence remain separate; broader provider outage/restore evidence is not part of this bounded certificate. | `PASS_FOR_DEFAULT_SCOPE` | No additional operator action is required for the certified default path. Keep `DEFAULT_OUTBOUND_ENABLED=false` and direct MX outbound disabled; certify an optional Stalwart/R2 profile or broader outage/restore behavior separately if selected. |
@@ -196,16 +197,17 @@ inputs are configuration blockers, not provider failures. Values belong in the
 operator secret store or host configuration and must never be copied into
 evidence, commits, logs, or this document.
 
-### Native host and optional Firecracker
+### Native host and optional Kata `vm_isolated`
 
 The certification host must provide native Linux, Docker/Compose, registered
 `runsc`, the immutable `*_IMAGE_REF` values checked by
-`check_release_environment.py`, and a clean certification clone. Firecracker
-is conditional: if promoted, the host must additionally provide `/dev/kvm`,
-read/write KVM access, the certified `aiat-firecracker-launcher`, the
-`firecracker` binary, immutable kernel/rootfs inputs, and the bounded artifact
-directory expected by `check_firecracker_worker_pool.py`. No Firecracker value
-is currently configured in the repository.
+`check_release_environment.py`, and a clean certification clone. Kata
+`vm_isolated` is conditional: if promoted, the host must additionally provide
+`/dev/kvm` or another supported virtualization path, a pinned Kata runtime and
+VMM profile, immutable worker images, bounded network/filesystem policy, and
+cleanup/recovery evidence. No Kata runtime value is currently configured in
+the repository. Direct Firecracker is not required for this class; it may be
+evaluated only as a selected Kata VMM or explicit compatibility benchmark.
 
 ### OCI Object Storage plus Vault/KMS proposal
 
@@ -340,7 +342,7 @@ this document, and coding/tester activation remains blocked.
   profile. The local profile is not a production budget or portability
   certificate.
 - **Infrastructure/environment failure:** WSL2/no native Linux, unavailable
-  `runsc`, missing Firecracker host capability, and missing deployment image
+  `runsc`, missing Kata VM-host capability, and missing deployment image
   artifacts remain external host prerequisites.
 - **External configuration/governance:** the required OCI KMS/SSE target remains
   operator-owned; the default Cloudflare/Resend mail relay is configured and
@@ -358,7 +360,8 @@ release gate:
 
 | Capability | Decision (`REQUIRED_FOR_RELEASE` / `OPTIONAL_UNVERIFIED` / `DEFERRED` / `PASS_FOR_DEFAULT_SCOPE`) | Rationale and compensating controls | Owner/date | Evidence reference |
 | --- | --- | --- | --- | --- |
-| Firecracker |  |  |  |  |
+| Kata `vm_isolated` |  |  |  |  |
+| Direct Firecracker compatibility | `DEFERRED` | Not an independent AIAT sandbox class; revisit only for a measured compatibility benchmark or selected Kata VMM. | personal operator / 2026-09-19 | [`AIAT_OSS_ARCHITECTURE_AND_IMPLEMENTATION_PLAN.md`](../../mas/docs/AIAT_OSS_ARCHITECTURE_AND_IMPLEMENTATION_PLAN.md#isolation-policy-migration-runc--gvisor--kata) |
 | Provider-managed KMS/SSE |  |  |  |  |
 | External mail relay | `PASS_FOR_DEFAULT_SCOPE` | The default Cloudflare/Resend identity path is live-certified; keep default outbound and direct MX disabled, and treat optional profiles/broader outage and restore as separate evidence. | personal operator / 2026-09-13 | [`AIAT_Email_Identity_Live_Certification.md`](../AIAT_Email_Identity_Live_Certification.md) |
 | Self-improvement live path |  |  |  |  |

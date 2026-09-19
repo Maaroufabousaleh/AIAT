@@ -85,7 +85,7 @@ components:
     unavailable_reason: Exact SkillSpector repository/CLI identity is operator-supplied and is not present in this workspace.
     operator_notice: Exact SkillSpector repository/CLI identity may be recorded when configured; missing or unusual licence metadata is informational only for this personal internal-use programme.
   - id: gvisor
-    role: sandbox
+    role: default-sandbox-runtime
     license: Apache-2.0
     version: null
     source: https://github.com/google/gvisor
@@ -93,15 +93,26 @@ components:
     integration: runtime-profile
     status: unavailable-until-host-pinned
     unavailable_reason: Native runsc registration is not present in the current Docker host.
+  - id: kata-containers
+    role: vm-isolation-runtime
+    license: Apache-2.0
+    version: null
+    source: https://github.com/kata-containers/kata-containers
+    license_evidence: https://github.com/kata-containers/kata-containers/blob/main/LICENSE
+    integration: host-runtime-profile
+    status: unavailable-until-host-pinned
+    unavailable_reason: No certified Kata runtime/profile or live VM-capable host evidence is present in the current WSL2 environment.
+    operator_notice: Kata is the provider for the AIAT vm_isolated policy class; the selected Kata VMM/profile is host metadata and is not exposed as a separate AIAT policy tier.
   - id: firecracker
-    role: high-risk-sandbox
+    role: host-vmm-compatibility
     license: Apache-2.0
     version: null
     source: https://github.com/firecracker-microvm/firecracker
     license_evidence: https://github.com/firecracker-microvm/firecracker/blob/main/LICENSE-APACHE
-    integration: optional-runtime-profile
+    integration: compatibility-or-kata-vmm
     status: unavailable-until-host-pinned
-    unavailable_reason: A measured Firecracker host binary/profile is not present in the current evidence environment.
+    unavailable_reason: A measured direct Firecracker host binary/profile is not present in the current evidence environment; direct Firecracker is not an independent AIAT sandbox class.
+    operator_notice: Prefer certifying Kata vm_isolated and record Firecracker only when it is used as a host VMM or separately approved compatibility benchmark.
   - id: opentofu
     role: iac-adapter
     license: MPL-2.0

@@ -40,6 +40,7 @@ from mas_core.agent_runtime.tool_catalog import tool_definitions_for_agent
 from mas_core.observability import configure_logging
 from mas_core.protocols import AgentRole, MessageEnvelope, MessageType, TaskBudget
 from mas_core.protocols.ws import WSMessageFrame
+from mas_core.sandbox_policy import canonical_sandbox_class
 from mas_core.worker_registry.team_manifest_refs import (
     reconcile_team_worker_manifest_refs,
 )
@@ -797,18 +798,25 @@ class TeamRuntime:
         workers = self.team_config.workers
         if not workers:
             return
-        gvisor_workers = [
-            spec for spec in workers
-            if getattr(spec, "sandbox_profile", None) == "gvisor"
-            or getattr(spec, "sandbox", {}).get("profile") == "gvisor"
-        ]
+        gvisor_workers = []
+        for spec in workers:
+            profile = getattr(spec, "sandbox_profile", None)
+            sandbox = getattr(spec, "sandbox", {})
+            if isinstance(sandbox, dict):
+                profile = profile or sandbox.get("profile")
+            try:
+                requires_runsc = canonical_sandbox_class(profile) == "sandboxed"
+            except ValueError:
+                requires_runsc = False
+            if requires_runsc:
+                gvisor_workers.append(spec)
         if not gvisor_workers:
             return
         import shutil
         if shutil.which("runsc") is None:
             raise RuntimeError(
                 "gVisor required for workers %s but runsc not found in PATH. "
-                "Install gVisor or assign those workers a non-gvisor sandbox profile. "
+                "Install gVisor or assign those workers a different sandbox class. "
                 "See: https://gvisor.dev/docs/install/"
                 % [w.agent_id for w in gvisor_workers]
             )

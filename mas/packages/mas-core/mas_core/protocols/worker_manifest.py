@@ -7,6 +7,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from mas_core.sandbox_policy import SandboxProfileName, canonical_sandbox_class
+
 from .capability import CapabilityDef
 
 WORKER_SDK_VERSION = "aiat-worker-sdk.v1"
@@ -68,13 +70,19 @@ class WorkerLimits(BaseModel):
 
 
 class WorkerSandbox(BaseModel):
-    profile: Literal["standard", "restricted", "gvisor", "firecracker"] = "standard"
+    profile: SandboxProfileName = "trusted"
     filesystem: dict[str, Any] = Field(default_factory=dict)
     network_mode: Literal["egress-allowlist", "egress-deny-all", "unrestricted"] = (
         "egress-allowlist"
     )
     egress_allowlist: list[str] = Field(default_factory=list)
     linux_security: dict[str, Any] = Field(default_factory=dict)
+
+    @property
+    def sandbox_class(self) -> str:
+        """Return the canonical policy class without rewriting legacy YAML."""
+
+        return canonical_sandbox_class(self.profile)
 
 
 class WorkerCheckpointing(BaseModel):
@@ -138,6 +146,8 @@ class WorkerManifest(BaseModel):
             ProtocolVersion,
             WorkerCapabilities,
             WorkerIdentity,
+        )
+        from mas_core.worker_contract import (
             WorkerManifest as UniversalWorkerManifest,
         )
 

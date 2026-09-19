@@ -52,6 +52,26 @@ personal/internal instance. Technical source integrity, version, security,
 sandbox, privacy, compatibility, budget, approval, and recovery evidence
 remain independent controls.
 
+## Standalone-document reconciliation — 2026-09-19
+
+The unlinked standalone plans, papers, and provider documents were compared
+with the maintained authority set. Their useful architecture is now reflected
+in the current feature specifications and the canonical OSS plan; their older
+status snapshots remain provenance only.
+
+| Source document | Reconciled treatment |
+| --- | --- |
+| [`Docs/PM_Platform_Integration_Plan.md`](../../Docs/PM_Platform_Integration_Plan.md) | Its provider-neutral contracts, AIAT-canonical authority model, plan/apply lifecycle, projection, inbound/outbound, idempotency, and rollback design are incorporated in [the PM/SCM feature specification](FEATURE_INTEGRATIONS_PM_AND_SCM.md). Its 2026-07-28 `SHADOW` snapshot and migration-head claims are superseded by the later PM feature/ledger state. |
+| [`Docs/PM_Platform_YouTrack_Bootstrap_Plan.md`](../../Docs/PM_Platform_YouTrack_Bootstrap_Plan.md) | Retained as a digest-bound, point-in-time approval artifact. It must not be replayed or treated as current state; the later PM ledger is authoritative for the connection/binding state and certification result. |
+| [`Docs/AIAT_Email_Identity_Provider_Architecture.md`](../../Docs/AIAT_Email_Identity_Provider_Architecture.md) | Its Cloudflare/D1 inbound, direct Resend outbound, AIAT-owned identity boundary, and optional Stalwart/R2 topology are incorporated in [the identity feature specification](FEATURE_IDENTITY_MAIL_AND_CREDENTIALS.md). Current certification and remaining evidence come from the feature, mail-edge specification, and live certification record. |
+| [`Docs/AIAT_Deep_Research_Implementation_Plan.md`](../../Docs/AIAT_Deep_Research_Implementation_Plan.md), [`Docs/obs/deep-research-report.md`](../../Docs/obs/deep-research-report.md), [the `.github` research report](../../.github/prompts/deep-research-report.md), and [the Alpha–Epsilon prompt plans](../../.github/prompts/) | Historical design inputs. The current AIAT-only control-plane decision, adapter boundary, runtime choices, sandbox policy, licence-metadata treatment, and implementation order are governed by the target programme, roadmap, current feature set, and [the canonical OSS plan](../../mas/docs/AIAT_OSS_ARCHITECTURE_AND_IMPLEMENTATION_PLAN.md). |
+| [`.github/prompts/obsolete/AIAT_PLAN.md`](../../.github/prompts/obsolete/AIAT_PLAN.md) and archived PDR/CDR/plan drafts | Obsolete or historical provenance only. They are not active implementation instructions. |
+
+No historical source was deleted during this reconciliation. Keeping these
+files available with explicit precedence preserves provenance while preventing
+their stale status, Paperclip-first authority model, licence gates, or legacy
+Firecracker policy from being mistaken for current AIAT decisions.
+
 The archival [`deep-research-report.md`](../archive/deep-research-report.md) was
 reconciled in the current documentation pass: its former legal-risk appendix
 now redirects exact resource terms and notices to the provenance catalogue,
@@ -65,14 +85,14 @@ scoped cleanup. Broader provider outage, external callback/delivery,
 independent-host, and sandbox evidence remain explicitly separate roadmap
 items.
 
-The same maintained evidence set now includes the Firecracker high-risk worker
-contract/readiness certificate
+The same maintained evidence set now includes the direct Firecracker
+compatibility worker contract/readiness certificate
 [`firecracker_worker_pool_readiness.json`](../../mas/docs/provenance/firecracker_worker_pool_readiness.json)
 (`5ed0a0b`). It records static contract pass and current-host live blocking
 because the certified launcher and Firecracker binary are unavailable. This
-is a launch-boundary/readiness result only; host-certified microVM smoke,
-network, provider, recovery, and gVisor evidence remain separate. The adapter
-does not fall back to a weaker runtime.
+is a launch-boundary/readiness result only; host-certified Kata `vm_isolated`
+or compatibility/VMM smoke, network, provider, recovery, and gVisor evidence
+remain separate. The adapter does not fall back to a weaker runtime.
 
 The object-storage documentation now records the local encrypted-restore
 prerequisite (`b0f27f6`/`59294c0`) consistently across the target programme,

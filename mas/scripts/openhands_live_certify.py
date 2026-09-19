@@ -21,6 +21,7 @@ from uuid import UUID, uuid4
 
 import httpx
 
+from mas_core.sandbox_policy import canonical_sandbox_class
 from mas_core.worker_contract import (
     AdapterContext,
     ModelProfileReference,
@@ -656,8 +657,12 @@ async def certify(
         blockers.append("certification_controller_attestation_missing")
     if not controller_run_id:
         blockers.append("certification_controller_run_id_missing")
-    if sandbox_profile.lower() != "gvisor":
-        blockers.append("certification_sandbox_profile_must_be_gvisor")
+    try:
+        sandbox_class = canonical_sandbox_class(sandbox_profile)
+    except ValueError:
+        sandbox_class = None
+    if sandbox_class != "sandboxed":
+        blockers.append("certification_sandbox_profile_must_be_sandboxed")
     if sandbox_runtime.lower() != "runsc":
         blockers.append("certification_sandbox_runtime_must_be_runsc")
     if os.getenv("OPENHANDS_MCP_PRECONFIGURED") == "1":

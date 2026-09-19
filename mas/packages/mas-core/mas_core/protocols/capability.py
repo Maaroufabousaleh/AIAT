@@ -7,6 +7,8 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 
+from mas_core.sandbox_policy import SandboxProfileName
+
 from .enums import AgentRole
 
 
@@ -32,7 +34,7 @@ class WorkerCapabilityRecord(BaseModel):
     name: str
     role: AgentRole | None = None
     adapter_type: Literal["process", "http", "oci", "mcp", "human"] = "process"
-    sandbox_profile: Literal["standard", "restricted", "gvisor", "firecracker"] = "standard"
+    sandbox_profile: SandboxProfileName = "trusted"
     capabilities: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -47,4 +49,3 @@ class CapabilitySearchResponse(BaseModel):
     query: CapabilitySearchRequest
     workers: list[WorkerCapabilityRecord] = Field(default_factory=list)
     count: int = 0
-
