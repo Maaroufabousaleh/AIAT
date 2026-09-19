@@ -87,12 +87,13 @@ components:
   - id: gvisor
     role: default-sandbox-runtime
     license: Apache-2.0
-    version: null
+    version: "20260914.0"
     source: https://github.com/google/gvisor
     license_evidence: https://github.com/google/gvisor/blob/master/LICENSE
     integration: runtime-profile
-    status: unavailable-until-host-pinned
-    unavailable_reason: Native runsc registration is not present in the current Docker host.
+    status: available-local-dev
+    unavailable_reason: Native-Linux release certification remains separate from the current WSL2 development-host result.
+    operator_notice: The current WSL2 host records the pinned archive digest and digest-pinned smoke image in dev_host_readiness.json; external workers still fail closed when runsc is unavailable.
   - id: kata-containers
     role: vm-isolation-runtime
     license: Apache-2.0
@@ -101,7 +102,7 @@ components:
     license_evidence: https://github.com/kata-containers/kata-containers/blob/main/LICENSE
     integration: host-runtime-profile
     status: unavailable-until-host-pinned
-    unavailable_reason: No certified Kata runtime/profile or live VM-capable host evidence is present in the current WSL2 environment.
+    unavailable_reason: No Kata runtime/profile or live VM-capable host evidence is present in the current WSL2 environment; vm_isolated remains optional and fail-closed.
     operator_notice: Kata is the provider for the AIAT vm_isolated policy class; the selected Kata VMM/profile is host metadata and is not exposed as a separate AIAT policy tier.
   - id: firecracker
     role: host-vmm-compatibility

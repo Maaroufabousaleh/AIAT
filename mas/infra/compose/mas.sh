@@ -214,10 +214,10 @@ case "$CMD" in
                 warn "python3 is unavailable; skipping OmniRoute configuration."
             fi
         fi
-        success "Containers started. Dashboard: http://localhost:4000"
-        success "LiteLLM analytics: http://localhost:4001/ui/"
-        success "OmniRoute analytics: http://localhost:20128/dashboard/analytics"
-        success "API: http://localhost:8000  Platform metrics: http://localhost:9090"
+        success "Containers started. Dashboard: http://localhost:${AIAT_DEV_DASHBOARD_PORT:-4000}"
+        success "LiteLLM analytics: http://localhost:${AIAT_DEV_LITELLM_PORT:-4001}/ui/"
+        success "OmniRoute analytics: http://localhost:${AIAT_DEV_OMNIROUTE_API_PORT:-20128}/dashboard/analytics"
+        success "API: http://localhost:${AIAT_DEV_ORCHESTRATOR_PORT:-8000}  Platform metrics: http://localhost:${AIAT_DEV_PROMETHEUS_PORT:-9090}"
         ;;
 
     down)
@@ -293,6 +293,21 @@ case "$CMD" in
         docker compose $COMPOSE_FILES run --rm orchestrator-api \
             python -m alembic -c /app/alembic.ini upgrade heads
         success "Migrations applied."
+        ;;
+
+    migrate-no-deps)
+        info "Running Alembic migrations without starting application dependencies..."
+        # The API lifespan reads migrated tables during startup. Host/bootstrap
+        # workflows therefore start only Postgres/PgBouncer first, apply the
+        # schema in an ephemeral API container, and start the full profile
+        # afterward. Migrations deliberately target Postgres directly instead
+        # of a possibly stale PgBouncer pool after a database restart. This
+        # remains an operator command; it does not weaken the normal migrate
+        # command used against an already-running stack.
+        docker compose $COMPOSE_FILES run --rm --no-deps \
+            -e "PGBOUNCER_DSN=postgresql://mas_user:${POSTGRES_PASSWORD}@postgres:5432/mas" \
+            orchestrator-api python -m alembic -c /app/alembic.ini upgrade heads
+        success "Migrations applied without starting application dependencies."
         ;;
 
     migrate-status)
@@ -483,7 +498,8 @@ print('Worker registry seeded.')
         echo "  rebuild [service]     Rebuild images (no cache)"
         echo ""
         echo -e "${YELLOW}Database:${NC}"
-        echo "  migrate               Apply all pending Alembic migrations"
+       echo "  migrate               Apply all pending Alembic migrations"
+        echo "  migrate-no-deps       Apply migrations without starting dependencies"
         echo "  migrate-status        Show current migration revision"
         echo "  migrate-history       Show full migration history"
         echo "  migrate-rollback [n]  Roll back n migration steps (default: 1)"

@@ -5050,7 +5050,7 @@
             "title": "Role"
           },
           "sandbox_profile": {
-            "default": "restricted",
+            "default": "sandboxed",
             "title": "Sandbox Profile",
             "type": "string"
           },

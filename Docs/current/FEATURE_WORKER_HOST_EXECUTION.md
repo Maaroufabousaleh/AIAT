@@ -5,12 +5,14 @@
 **Status:** local Compose Postgres single-host, concurrent two-host native,
 bounded duplicate-effect/replay protection, complete local governed run-version
 pinning, fenced host-loss queue-recovery, a repeated same-host recovery soak,
-selected model-resolution host-execution, and the fail-closed Firecracker launch
-compatibility contract are implemented; normal binding commit/release now settles the
-reservation and binding in one database transaction and failed new assignments
-compensate their newly-created reservation; deployed runtime, host-certified
-sandbox, provider, independent-host recovery, and host-loss reassignment fault
-evidence remain open
+selected model-resolution host-execution, and the fail-closed legacy Firecracker
+compatibility contract are implemented; normal binding commit/release now settles
+the reservation and binding in one database transaction and failed new
+assignments compensate their newly-created reservation. The current WSL2
+development host is `DEV_READY` for Docker/Compose and gVisor/runsc-backed
+development; native-Linux release certification, provider evidence,
+independent-host recovery, host-loss fault evidence, and Kata `vm_isolated`
+certification remain separate.
 
 **Implementation:** `73c0bda`, `f9c717b`, `d45e4dd`, `7c1ef74`, `893293a`, `424805c`, `2bc7ca5`, `6cef1b8`, `9a7db70`, `5ed0a0b`
 
@@ -30,8 +32,9 @@ certifies local host admission, deterministic model-profile resolution and
 snapshot propagation, native adapter lifecycle, concurrent execution against
 two distinct durable worker-host records, duplicate claim rejection and
 terminal/alias replay without redispatch, and explicit queue recovery after a
-fenced host lease is lost. It keeps gVisor, Firecracker, external providers,
-remote runtimes, and independent-host outage recovery as separate evidence
+fenced host lease is lost. The active sandbox policy is `trusted → runc`,
+`sandboxed → gVisor/runsc`, and `vm_isolated → Kata`; runtime-specific sandbox
+certification and independent-host outage recovery remain separate evidence
 boundaries.
 
 The 2026-08-18 continuation (`2bc7ca5`) isolated the local Postgres fixtures
@@ -54,8 +57,9 @@ blocked because the launcher and Firecracker binary are unavailable. Evidence
 is [`firecracker_worker_pool_readiness.json`](../../mas/docs/provenance/firecracker_worker_pool_readiness.json).
 It is retained for compatibility/benchmark evidence rather than exposed as a
 fourth AIAT sandbox class. The future `vm_isolated` class uses a certified Kata
-runtime selected by the host; the current WSL2 environment has no Kata
-certification.
+runtime selected by the host; the current WSL2 development profile reports
+`OPTIONAL_UNAVAILABLE` because no Kata runtime is registered. The repeatable
+host result is [`dev_host_readiness.json`](../../mas/docs/provenance/dev_host_readiness.json).
 
 ## Contract
 

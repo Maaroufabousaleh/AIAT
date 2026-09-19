@@ -233,7 +233,7 @@ services:
 
   # ── 4. MinIO ────────────────────────────────────────────────────────────────
   minio:
-    image: minio/minio:latest@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    image: quay.io/minio/minio:latest@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
     restart: unless-stopped
     env_file:
       - path: ../../../.env
@@ -257,7 +257,7 @@ services:
 
   # MinIO init: create bucket + access key for agents
   minio-init:
-    image: minio/mc:latest@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
+    image: quay.io/minio/mc:latest@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
     restart: "no"
     env_file:
       - path: ../../../.env
@@ -559,7 +559,7 @@ services:
       - workers
       - public
     ports:
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:${AIAT_DEV_ORCHESTRATOR_PORT:-8000}:8000"
     depends_on:
       redis:
         condition: service_healthy
@@ -632,7 +632,7 @@ services:
       - internal
       - public
     ports:
-      - "127.0.0.1:8010:8010"
+      - "127.0.0.1:${AIAT_DEV_PM_GATEWAY_PORT:-8010}:8010"
     depends_on:
       orchestrator-api:
         condition: service_healthy
@@ -694,7 +694,7 @@ services:
       - internal
       - public
     ports:
-      - "4000:3000"
+      - "${AIAT_DEV_DASHBOARD_PORT:-4000}:3000"
     depends_on:
       orchestrator-api:
         condition: service_healthy

@@ -114,6 +114,7 @@ def test_sandbox_runner_classifies_runtime_probe_failures_without_raw_errors(
         "configured": True,
         "reason": reason,
         "sandbox_profile": "gvisor",
+        "sandbox_class": "sandboxed",
     }
 
 
@@ -144,6 +145,7 @@ def test_sandbox_runner_classifies_container_launch_failure_without_raw_errors(t
         "configured": True,
         "reason": "gvisor_container_launch_failed",
         "sandbox_profile": "gvisor",
+        "sandbox_class": "sandboxed",
     }
 
 
@@ -159,6 +161,7 @@ def test_sandbox_runner_cli_does_not_emit_raw_request_errors(monkeypatch, capsys
         "configured": True,
         "reason": "sandbox_request_invalid",
         "sandbox_profile": "gvisor",
+        "sandbox_class": "sandboxed",
     }
 
 

@@ -2,7 +2,7 @@ metadata:
   id: sandbox_evaluator
   name: Sandbox Evaluator
   version: "1.0"
-  description: Default sandbox evaluator for gVisor and optional Firecracker high-risk worker isolation.
+  description: Default sandbox evaluator for the sandboxed gVisor class and optional vm_isolated Kata execution.
   source_repo: local
   source_revision: working-tree
   tags: [worker, office_cso]
@@ -12,8 +12,8 @@ runtime:
   transport: process
   adapter_config:
     entrypoint: WorkerAgent
-    default_sandbox: gvisor
-    high_risk_sandbox: firecracker
+    default_sandbox: sandboxed
+    high_risk_sandbox: vm_isolated
 integration:
   adapter_entrypoint: WorkerAgent
   isolation_mode: wrapper
@@ -23,6 +23,6 @@ capabilities:
     description: Evaluate sandbox profile, filesystem/network limits, and high-risk isolation requirements.
     required_tools: [file_read, web_search, blob.upload]
 sandbox:
-  profile: gvisor
+  profile: sandboxed
   network_mode: egress-allowlist
   egress_allowlist: [api.github.com:443]

@@ -87,10 +87,16 @@ pins:
     reason: "The isolated profile is pinned and certified, but the package is intentionally not installed in the default workspace; default MCP 1.23.3 remains below the MAF compatibility floor."
   - id: gvisor
     kind: host-sandbox-runtime
-    version: null
-    status: unavailable
+    version: "20260914.0"
+    status: locked
     scope: external-worker-sandbox
-    reason: "Native runsc registration is not present in the current Docker host; no runc fallback is permitted."
+    source: https://gvisor.dev/
+    archive_sha256: d2f167823d8112fb2ec9151c2645b06c095aee97159700385d90843dd6b3bdd9
+    smoke_image: "ubuntu@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517"
+    assertions:
+      - {file: scripts/bootstrap-dev-host.sh, contains: 'GVISOR_VERSION="${AIAT_GVISOR_VERSION:-20260914.0}"'}
+      - {file: scripts/bootstrap-dev-host.sh, contains: 'GVISOR_DEB_SHA256="${AIAT_GVISOR_DEB_SHA256:-d2f167823d8112fb2ec9151c2645b06c095aee97159700385d90843dd6b3bdd9}"'}
+    reason: "Pinned runsc is registered in the dedicated AIAT WSL Docker daemon and the digest-pinned smoke passes; native-Linux release certification remains separate."
   - id: firecracker
     kind: host-vmm-compatibility
     version: null
@@ -102,7 +108,7 @@ pins:
     version: null
     status: unavailable
     scope: vm-isolated-worker-sandbox
-    reason: "No certified Kata runtime/profile or live VM-capable host is available in the current WSL2 environment."
+    reason: "No Kata runtime/profile is registered or certified in the current WSL2 environment; vm_isolated remains optional and fail-closed."
   - id: skillspector
     kind: security-cli
     version: null

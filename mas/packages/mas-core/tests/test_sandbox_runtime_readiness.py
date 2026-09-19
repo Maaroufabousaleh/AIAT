@@ -59,19 +59,23 @@ def test_static_sandbox_contract_rejects_unsafe_opencode_runtime(tmp_path: Path)
     assert "cap_drop must include ALL" in errors
 
 
-def test_live_sandbox_readiness_is_blocked_without_docker_engine() -> None:
-    result = subprocess.run(
-        [sys.executable, str(SCRIPT), "--live", "--json"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+def test_live_sandbox_readiness_is_blocked_without_docker_engine(monkeypatch) -> None:
+    """Keep the fail-closed case deterministic on hosts that have Docker."""
 
-    assert result.returncode == 2, result.stderr
-    report = json.loads(result.stdout)
-    assert report["status"] == "pass"
-    assert report["live"]["status"] == "blocked"
-    assert report["live"]["sandbox_profile"] == "gvisor"
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("check_sandbox_runtime_readiness", SCRIPT)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    monkeypatch.setattr(module, "_docker_runtimes", lambda: (set(), "Docker Engine unavailable"))
+    report = module.inspect_live()
+
+    assert report["status"] == "blocked"
+    assert report["sandbox_profile"] == "sandboxed"
+    assert report["sandbox_class"] == "sandboxed"
+    assert report["reason"] == "Docker Engine unavailable"
 
 
 def test_live_sandbox_probe_requires_runsc_and_separates_smoke(monkeypatch) -> None:

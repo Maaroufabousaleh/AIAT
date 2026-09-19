@@ -123,6 +123,8 @@ checks:
     script: scripts/check_firecracker_worker_pool.py
     args: [--json]
     live_args: [--live, --json]
+    scope_status: superseded
+    scope_reason: Direct Firecracker is a historical compatibility implementation; vm_isolated is provided by optional Kata and is not active on the WSL development profile.
   - id: worker_runtime_readiness
     category: static
     script: scripts/check_worker_runtime_readiness.py
@@ -253,6 +255,12 @@ checks:
     script: scripts/check_outbound_mail_lifecycle.py
     args: [--json]
     live_args: [--live, --json]
+    scope_status: pass_for_default_scope
+    scope_reason: >-
+      The maintained Cloudflare/Resend default email identity certificate is
+      current and records PASS for the governed default path; optional
+      Stalwart/SMTP profiles remain disabled and are not a development gate.
+      Evidence: Docs/AIAT_Email_Identity_Live_Certification.md.
   - id: flow_instance_recovery
     category: recovery
     script: scripts/check_flow_instance_recovery.py
@@ -313,8 +321,12 @@ checks:
     category: governance
     script: scripts/check_self_improvement_lifecycle.py
     args: [--json]
+    scope_status: deferred
+    scope_reason: Live self-improvement execution is deliberately deferred for the current release and remains disabled unless explicitly promoted by the operator.
   - id: self_improvement_candidate_detection
     category: governance
     script: scripts/check_self_improvement_candidates.py
     args: [--json]
     live_args: [--live, --json]
+    scope_status: deferred
+    scope_reason: Live self-improvement execution is deliberately deferred for the current release and remains disabled unless explicitly promoted by the operator.

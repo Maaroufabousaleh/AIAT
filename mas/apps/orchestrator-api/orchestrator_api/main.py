@@ -742,7 +742,10 @@ def _sandbox_for_hiring_text(text: str) -> str:
     ):
         if re.search(rf"\b{profile}\b", lowered):
             return profile
-    return "restricted"
+    # An automatically hired external worker must never default to the
+    # trusted/runc class. It remains inactive until the steward assigns a
+    # certified sandboxed or vm_isolated profile.
+    return "sandboxed"
 
 
 def _version_pin_for_hiring_text(text: str) -> str | None:
@@ -1787,7 +1790,7 @@ class RegisterWorkerRequest(BaseModel):
     name: str
     adapter_type: str
     adapter_config: dict[str, Any] = Field(default_factory=dict)
-    sandbox_profile: str = "restricted"
+    sandbox_profile: str = "sandboxed"
     capability_ids: list[UUID] = Field(default_factory=list)
     capability_names: list[str] = Field(default_factory=list)
     required_tools: list[str] = Field(default_factory=list)

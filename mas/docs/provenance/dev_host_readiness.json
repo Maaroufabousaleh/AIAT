@@ -1,0 +1,3726 @@
+{
+  "authority": "operator_host_bootstrap_only",
+  "development": {
+    "compose": "started",
+    "host_ports": {
+      "AIAT_DEV_DASHBOARD_PORT": "18040",
+      "AIAT_DEV_LITELLM_PORT": "18037",
+      "AIAT_DEV_MESSAGE_ROUTER_PORT": "18042",
+      "AIAT_DEV_MINIO_API_PORT": "9000",
+      "AIAT_DEV_MINIO_CONSOLE_PORT": "9001",
+      "AIAT_DEV_OMNIROUTE_API_PORT": "18038",
+      "AIAT_DEV_OMNIROUTE_METRICS_PORT": "18039",
+      "AIAT_DEV_ORCHESTRATOR_PORT": "18041",
+      "AIAT_DEV_PGADMIN_PORT": "18034",
+      "AIAT_DEV_PM_GATEWAY_PORT": "18044",
+      "AIAT_DEV_POSTGRES_PORT": "5432",
+      "AIAT_DEV_PROMETHEUS_PORT": "18036",
+      "AIAT_DEV_REDIS_PORT": "6379",
+      "AIAT_DEV_TOOL_SERVICE_PORT": "18043",
+      "REDIS_INSIGHT_PORT": "18200"
+    },
+    "migration": "applied",
+    "network_boundary": "pass",
+    "status": "DEV_READY",
+    "tests": "pass"
+  },
+  "docker": {
+    "compose_v2": "pass",
+    "context": "aiat-wsl",
+    "daemon_before": "configurable:aiat-wsl:unix:///run/aiat-docker/docker.sock",
+    "endpoint": "unix:///run/aiat-docker/docker.sock",
+    "engine": "pass",
+    "registered_runtimes": [
+      "io.containerd.runc.v2",
+      "runc",
+      "runsc"
+    ]
+  },
+  "failure_reason": null,
+  "gvisor": {
+    "package_sha256": "d2f167823d8112fb2ec9151c2645b06c095aee97159700385d90843dd6b3bdd9",
+    "package_version": "20260914.0",
+    "registered": "pass",
+    "smoke": "pass",
+    "smoke_image": "ubuntu@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517"
+  },
+  "kata": {
+    "kvm_present": true,
+    "runtime_registered": false,
+    "status": "OPTIONAL_UNAVAILABLE"
+  },
+  "migration_check": {
+    "expected_migration_head": "0045_worker_tool_effects",
+    "external_network_access_performed": false,
+    "external_provider_mutation_performed": false,
+    "licence_metadata_is_gate": false,
+    "live_database_head": "0045_worker_tool_effects",
+    "local_database_access_performed": true,
+    "migration_source_heads": [
+      "0045_worker_tool_effects"
+    ],
+    "migration_source_revision_count": 47,
+    "mode": "live",
+    "mutation_performed": false,
+    "reason": "source and deployed migration heads agree",
+    "schema_version": "aiat.database-migration-head-check.v1",
+    "status": "pass"
+  },
+  "network_check": {
+    "allowed_gateways": [
+      "message-router",
+      "tool-service",
+      "orchestrator-api",
+      "litellm"
+    ],
+    "boundary_policy": {
+      "allowed": [
+        {
+          "network": "workers",
+          "port": 8001,
+          "service": "message-router"
+        },
+        {
+          "network": "workers",
+          "port": 8002,
+          "service": "tool-service"
+        },
+        {
+          "network": "workers",
+          "port": 8000,
+          "service": "orchestrator-api"
+        },
+        {
+          "network": "workers",
+          "port": 4000,
+          "service": "litellm"
+        }
+      ],
+      "ceo_service": "team-exec-ceo",
+      "external_denied": [
+        {
+          "host": "1.1.1.1",
+          "port": 443
+        }
+      ],
+      "forbidden_env_names": [
+        "MAS_API_KEY",
+        "PGBOUNCER_DSN",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN"
+      ],
+      "forbidden_env_prefixes": [
+        "MINIO_"
+      ],
+      "forbidden_mounts": [
+        "/var/run/docker.sock"
+      ],
+      "identity_env": {
+        "ceo": "AIAT_CEO_API_KEY",
+        "worker": "AIAT_WORKER_API_KEY"
+      },
+      "identity_service_port": 5432,
+      "networks": {
+        "internal": {
+          "internal": true
+        },
+        "workers": {
+          "internal": true
+        }
+      },
+      "protected": [
+        {
+          "network": "internal",
+          "port": 6379,
+          "service": "redis"
+        },
+        {
+          "network": "internal",
+          "port": 5432,
+          "service": "postgres"
+        },
+        {
+          "network": "internal",
+          "port": 5432,
+          "service": "pgbouncer"
+        },
+        {
+          "network": "internal",
+          "port": 9000,
+          "service": "minio"
+        },
+        {
+          "network": "internal",
+          "port": 4096,
+          "service": "opencode-runtime"
+        }
+      ],
+      "runner_network": "workers",
+      "schema_version": "aiat.network-boundary-policy.v1",
+      "service_prefix": "team-"
+    },
+    "compose": "/mnt/c/projects/aiat/mas/infra/compose/docker-compose.yml",
+    "errors": [],
+    "generated_at": "2026-09-19T20:16:06.008677+00:00",
+    "identity_services": [],
+    "live": {
+      "containers": [
+        {
+          "allowed": [
+            {
+              "host": "message-router",
+              "port": 8001,
+              "reachable": true
+            },
+            {
+              "host": "tool-service",
+              "port": 8002,
+              "reachable": true
+            },
+            {
+              "host": "orchestrator-api",
+              "port": 8000,
+              "reachable": true
+            },
+            {
+              "host": "litellm",
+              "port": 4000,
+              "reachable": true
+            }
+          ],
+          "container_id": "7225a94749c5",
+          "denied": [
+            {
+              "denied": true,
+              "host": "redis",
+              "port": 6379
+            },
+            {
+              "denied": true,
+              "host": "postgres",
+              "port": 5432
+            },
+            {
+              "denied": true,
+              "host": "pgbouncer",
+              "port": 5432
+            },
+            {
+              "denied": true,
+              "host": "minio",
+              "port": 9000
+            },
+            {
+              "denied": true,
+              "host": "opencode-runtime",
+              "port": 4096
+            },
+            {
+              "denied": true,
+              "host": "1.1.1.1",
+              "port": 443
+            }
+          ],
+          "docker_socket_present": false,
+          "forbidden_env": [],
+          "logical_networks": [
+            "workers"
+          ],
+          "networks": [
+            "mas_workers"
+          ],
+          "service": "team-dept-devops",
+          "status": "pass",
+          "storage_health": true
+        },
+        {
+          "allowed": [
+            {
+              "host": "message-router",
+              "port": 8001,
+              "reachable": true
+            },
+            {
+              "host": "tool-service",
+              "port": 8002,
+              "reachable": true
+            },
+            {
+              "host": "orchestrator-api",
+              "port": 8000,
+              "reachable": true
+            },
+            {
+              "host": "litellm",
+              "port": 4000,
+              "reachable": true
+            }
+          ],
+          "container_id": "92aa9aaccefa",
+          "denied": [
+            {
+              "denied": true,
+              "host": "redis",
+              "port": 6379
+            },
+            {
+              "denied": true,
+              "host": "postgres",
+              "port": 5432
+            },
+            {
+              "denied": true,
+              "host": "pgbouncer",
+              "port": 5432
+            },
+            {
+              "denied": true,
+              "host": "minio",
+              "port": 9000
+            },
+            {
+              "denied": true,
+              "host": "opencode-runtime",
+              "port": 4096
+            },
+            {
+              "denied": true,
+              "host": "1.1.1.1",
+              "port": 443
+            }
+          ],
+          "docker_socket_present": false,
+          "forbidden_env": [],
+          "logical_networks": [
+            "workers"
+          ],
+          "networks": [
+            "mas_workers"
+          ],
+          "service": "team-dept-production",
+          "status": "pass",
+          "storage_health": true
+        },
+        {
+          "allowed": [
+            {
+              "host": "message-router",
+              "port": 8001,
+              "reachable": true
+            },
+            {
+              "host": "tool-service",
+              "port": 8002,
+              "reachable": true
+            },
+            {
+              "host": "orchestrator-api",
+              "port": 8000,
+              "reachable": true
+            },
+            {
+              "host": "litellm",
+              "port": 4000,
+              "reachable": true
+            }
+          ],
+          "container_id": "5ad1c17de36e",
+          "denied": [
+            {
+              "denied": true,
+              "host": "redis",
+              "port": 6379
+            },
+            {
+              "denied": true,
+              "host": "postgres",
+              "port": 5432
+            },
+            {
+              "denied": true,
+              "host": "pgbouncer",
+              "port": 5432
+            },
+            {
+              "denied": true,
+              "host": "minio",
+              "port": 9000
+            },
+            {
+              "denied": true,
+              "host": "opencode-runtime",
+              "port": 4096
+            },
+            {
+              "denied": true,
+              "host": "1.1.1.1",
+              "port": 443
+            }
+          ],
+          "docker_socket_present": false,
+          "forbidden_env": [],
+          "logical_networks": [
+            "workers"
+          ],
+          "networks": [
+            "mas_workers"
+          ],
+          "service": "team-dept-qa",
+          "status": "pass",
+          "storage_health": true
+        },
+        {
+          "allowed": [
+            {
+              "host": "message-router",
+              "port": 8001,
+              "reachable": true
+            },
+            {
+              "host": "tool-service",
+              "port": 8002,
+              "reachable": true
+            },
+            {
+              "host": "orchestrator-api",
+              "port": 8000,
+              "reachable": true
+            },
+            {
+              "host": "litellm",
+              "port": 4000,
+              "reachable": true
+            }
+          ],
+          "container_id": "6f518f74140c",
+          "denied": [
+            {
+              "denied": true,
+              "host": "redis",
+              "port": 6379
+            },
+            {
+              "denied": true,
+              "host": "postgres",
+              "port": 5432
+            },
+            {
+              "denied": true,
+              "host": "pgbouncer",
+              "port": 5432
+            },
+            {
+              "denied": true,
+              "host": "minio",
+              "port": 9000
+            },
+            {
+              "denied": true,
+              "host": "opencode-runtime",
+              "port": 4096
+            },
+            {
+              "denied": true,
+              "host": "1.1.1.1",
+              "port": 443
+            }
+          ],
+          "docker_socket_present": false,
+          "forbidden_env": [],
+          "logical_networks": [
+            "workers"
+          ],
+          "networks": [
+            "mas_workers"
+          ],
+          "service": "team-dept-system",
+          "status": "pass",
+          "storage_health": true
+        },
+        {
+          "allowed": [
+            {
+              "host": "message-router",
+              "port": 8001,
+              "reachable": true
+            },
+            {
+              "host": "tool-service",
+              "port": 8002,
+              "reachable": true
+            },
+            {
+              "host": "orchestrator-api",
+              "port": 8000,
+              "reachable": true
+            },
+            {
+              "host": "litellm",
+              "port": 4000,
+              "reachable": true
+            }
+          ],
+          "container_id": "f21b28c1f954",
+          "denied": [
+            {
+              "denied": true,
+              "host": "redis",
+              "port": 6379
+            },
+            {
+              "denied": true,
+              "host": "postgres",
+              "port": 5432
+            },
+            {
+              "denied": true,
+              "host": "pgbouncer",
+              "port": 5432
+            },
+            {
+              "denied": true,
+              "host": "minio",
+              "port": 9000
+            },
+            {
+              "denied": true,
+              "host": "opencode-runtime",
+              "port": 4096
+            },
+            {
+              "denied": true,
+              "host": "1.1.1.1",
+              "port": 443
+            }
+          ],
+          "docker_socket_present": false,
+          "forbidden_env": [],
+          "logical_networks": [
+            "workers"
+          ],
+          "networks": [
+            "mas_workers"
+          ],
+          "service": "team-exec-ceo",
+          "status": "pass",
+          "storage_health": true
+        },
+        {
+          "allowed": [
+            {
+              "host": "message-router",
+              "port": 8001,
+              "reachable": true
+            },
+            {
+              "host": "tool-service",
+              "port": 8002,
+              "reachable": true
+            },
+            {
+              "host": "orchestrator-api",
+              "port": 8000,
+              "reachable": true
+            },
+            {
+              "host": "litellm",
+              "port": 4000,
+              "reachable": true
+            }
+          ],
+          "container_id": "c2bd60cedb7a",
+          "denied": [
+            {
+              "denied": true,
+              "host": "redis",
+              "port": 6379
+            },
+            {
+              "denied": true,
+              "host": "postgres",
+              "port": 5432
+            },
+            {
+              "denied": true,
+              "host": "pgbouncer",
+              "port": 5432
+            },
+            {
+              "denied": true,
+              "host": "minio",
+              "port": 9000
+            },
+            {
+              "denied": true,
+              "host": "opencode-runtime",
+              "port": 4096
+            },
+            {
+              "denied": true,
+              "host": "1.1.1.1",
+              "port": 443
+            }
+          ],
+          "docker_socket_present": false,
+          "forbidden_env": [],
+          "logical_networks": [
+            "workers"
+          ],
+          "networks": [
+            "mas_workers"
+          ],
+          "service": "team-exec-coo",
+          "status": "pass",
+          "storage_health": true
+        },
+        {
+          "allowed": [
+            {
+              "host": "message-router",
+              "port": 8001,
+              "reachable": true
+            },
+            {
+              "host": "tool-service",
+              "port": 8002,
+              "reachable": true
+            },
+            {
+              "host": "orchestrator-api",
+              "port": 8000,
+              "reachable": true
+            },
+            {
+              "host": "litellm",
+              "port": 4000,
+              "reachable": true
+            }
+          ],
+          "container_id": "31e19d489477",
+          "denied": [
+            {
+              "denied": true,
+              "host": "redis",
+              "port": 6379
+            },
+            {
+              "denied": true,
+              "host": "postgres",
+              "port": 5432
+            },
+            {
+              "denied": true,
+              "host": "pgbouncer",
+              "port": 5432
+            },
+            {
+              "denied": true,
+              "host": "minio",
+              "port": 9000
+            },
+            {
+              "denied": true,
+              "host": "opencode-runtime",
+              "port": 4096
+            },
+            {
+              "denied": true,
+              "host": "1.1.1.1",
+              "port": 443
+            }
+          ],
+          "docker_socket_present": false,
+          "forbidden_env": [],
+          "logical_networks": [
+            "workers"
+          ],
+          "networks": [
+            "mas_workers"
+          ],
+          "service": "team-office-cfo",
+          "status": "pass",
+          "storage_health": true
+        },
+        {
+          "allowed": [
+            {
+              "host": "message-router",
+              "port": 8001,
+              "reachable": true
+            },
+            {
+              "host": "tool-service",
+              "port": 8002,
+              "reachable": true
+            },
+            {
+              "host": "orchestrator-api",
+              "port": 8000,
+              "reachable": true
+            },
+            {
+              "host": "litellm",
+              "port": 4000,
+              "reachable": true
+            }
+          ],
+          "container_id": "4a2701c6ccce",
+          "denied": [
+            {
+              "denied": true,
+              "host": "redis",
+              "port": 6379
+            },
+            {
+              "denied": true,
+              "host": "postgres",
+              "port": 5432
+            },
+            {
+              "denied": true,
+              "host": "pgbouncer",
+              "port": 5432
+            },
+            {
+              "denied": true,
+              "host": "minio",
+              "port": 9000
+            },
+            {
+              "denied": true,
+              "host": "opencode-runtime",
+              "port": 4096
+            },
+            {
+              "denied": true,
+              "host": "1.1.1.1",
+              "port": 443
+            }
+          ],
+          "docker_socket_present": false,
+          "forbidden_env": [],
+          "logical_networks": [
+            "workers"
+          ],
+          "networks": [
+            "mas_workers"
+          ],
+          "service": "team-office-chrm",
+          "status": "pass",
+          "storage_health": true
+        },
+        {
+          "allowed": [
+            {
+              "host": "message-router",
+              "port": 8001,
+              "reachable": true
+            },
+            {
+              "host": "tool-service",
+              "port": 8002,
+              "reachable": true
+            },
+            {
+              "host": "orchestrator-api",
+              "port": 8000,
+              "reachable": true
+            },
+            {
+              "host": "litellm",
+              "port": 4000,
+              "reachable": true
+            }
+          ],
+          "container_id": "ddd7fab26634",
+          "denied": [
+            {
+              "denied": true,
+              "host": "redis",
+              "port": 6379
+            },
+            {
+              "denied": true,
+              "host": "postgres",
+              "port": 5432
+            },
+            {
+              "denied": true,
+              "host": "pgbouncer",
+              "port": 5432
+            },
+            {
+              "denied": true,
+              "host": "minio",
+              "port": 9000
+            },
+            {
+              "denied": true,
+              "host": "opencode-runtime",
+              "port": 4096
+            },
+            {
+              "denied": true,
+              "host": "1.1.1.1",
+              "port": 443
+            }
+          ],
+          "docker_socket_present": false,
+          "forbidden_env": [],
+          "logical_networks": [
+            "workers"
+          ],
+          "networks": [
+            "mas_workers"
+          ],
+          "service": "team-office-cio",
+          "status": "pass",
+          "storage_health": true
+        },
+        {
+          "allowed": [
+            {
+              "host": "message-router",
+              "port": 8001,
+              "reachable": true
+            },
+            {
+              "host": "tool-service",
+              "port": 8002,
+              "reachable": true
+            },
+            {
+              "host": "orchestrator-api",
+              "port": 8000,
+              "reachable": true
+            },
+            {
+              "host": "litellm",
+              "port": 4000,
+              "reachable": true
+            }
+          ],
+          "container_id": "ce9fd721cf29",
+          "denied": [
+            {
+              "denied": true,
+              "host": "redis",
+              "port": 6379
+            },
+            {
+              "denied": true,
+              "host": "postgres",
+              "port": 5432
+            },
+            {
+              "denied": true,
+              "host": "pgbouncer",
+              "port": 5432
+            },
+            {
+              "denied": true,
+              "host": "minio",
+              "port": 9000
+            },
+            {
+              "denied": true,
+              "host": "opencode-runtime",
+              "port": 4096
+            },
+            {
+              "denied": true,
+              "host": "1.1.1.1",
+              "port": 443
+            }
+          ],
+          "docker_socket_present": false,
+          "forbidden_env": [],
+          "logical_networks": [
+            "workers"
+          ],
+          "networks": [
+            "mas_workers"
+          ],
+          "service": "team-office-cso",
+          "status": "pass",
+          "storage_health": true
+        },
+        {
+          "allowed": [
+            {
+              "host": "message-router",
+              "port": 8001,
+              "reachable": true
+            },
+            {
+              "host": "tool-service",
+              "port": 8002,
+              "reachable": true
+            },
+            {
+              "host": "orchestrator-api",
+              "port": 8000,
+              "reachable": true
+            },
+            {
+              "host": "litellm",
+              "port": 4000,
+              "reachable": true
+            }
+          ],
+          "container_id": "576699aaa6e6",
+          "denied": [
+            {
+              "denied": true,
+              "host": "redis",
+              "port": 6379
+            },
+            {
+              "denied": true,
+              "host": "postgres",
+              "port": 5432
+            },
+            {
+              "denied": true,
+              "host": "pgbouncer",
+              "port": 5432
+            },
+            {
+              "denied": true,
+              "host": "minio",
+              "port": 9000
+            },
+            {
+              "denied": true,
+              "host": "opencode-runtime",
+              "port": 4096
+            },
+            {
+              "denied": true,
+              "host": "1.1.1.1",
+              "port": 443
+            }
+          ],
+          "docker_socket_present": false,
+          "forbidden_env": [],
+          "logical_networks": [
+            "workers"
+          ],
+          "networks": [
+            "mas_workers"
+          ],
+          "service": "team-office-cto",
+          "status": "pass",
+          "storage_health": true
+        }
+      ],
+      "errors": [],
+      "mode": "live",
+      "status": "pass",
+      "warnings": []
+    },
+    "mode": "static",
+    "policy": "/mnt/c/projects/aiat/mas/docs/provenance/network_boundary_policy.yaml",
+    "protected_services": [
+      "redis",
+      "postgres",
+      "pgbouncer",
+      "minio",
+      "opencode-runtime"
+    ],
+    "status": "pass",
+    "team_environment": {
+      "team-dept-devops": {
+        "forbidden": [],
+        "identity": [
+          "AIAT_WORKER_API_KEY"
+        ]
+      },
+      "team-dept-production": {
+        "forbidden": [],
+        "identity": [
+          "AIAT_WORKER_API_KEY"
+        ]
+      },
+      "team-dept-qa": {
+        "forbidden": [],
+        "identity": [
+          "AIAT_WORKER_API_KEY"
+        ]
+      },
+      "team-dept-system": {
+        "forbidden": [],
+        "identity": [
+          "AIAT_WORKER_API_KEY"
+        ]
+      },
+      "team-exec-ceo": {
+        "forbidden": [],
+        "identity": [
+          "AIAT_CEO_API_KEY"
+        ]
+      },
+      "team-exec-coo": {
+        "forbidden": [],
+        "identity": [
+          "AIAT_WORKER_API_KEY"
+        ]
+      },
+      "team-office-cfo": {
+        "forbidden": [],
+        "identity": [
+          "AIAT_WORKER_API_KEY"
+        ]
+      },
+      "team-office-chrm": {
+        "forbidden": [],
+        "identity": [
+          "AIAT_WORKER_API_KEY"
+        ]
+      },
+      "team-office-cio": {
+        "forbidden": [],
+        "identity": [
+          "AIAT_WORKER_API_KEY"
+        ]
+      },
+      "team-office-cso": {
+        "forbidden": [],
+        "identity": [
+          "AIAT_WORKER_API_KEY"
+        ]
+      },
+      "team-office-cto": {
+        "forbidden": [],
+        "identity": [
+          "AIAT_WORKER_API_KEY"
+        ]
+      }
+    },
+    "team_services": [
+      "team-dept-devops",
+      "team-dept-production",
+      "team-dept-qa",
+      "team-dept-system",
+      "team-exec-ceo",
+      "team-exec-coo",
+      "team-office-cfo",
+      "team-office-chrm",
+      "team-office-cio",
+      "team-office-cso",
+      "team-office-cto"
+    ],
+    "warnings": [
+      "optional identity database services are not in the base Compose profile: identity-postgres, identity-db"
+    ]
+  },
+  "observed_at": "2026-09-19T20:21:24.059200+00:00",
+  "release": {
+    "ledger": {
+      "active_check_count": 84,
+      "checked_at": "2026-09-19T20:21:23.906782+00:00",
+      "checks": [
+        {
+          "base_id": "provenance",
+          "category": "static",
+          "exit_code": 0,
+          "id": "provenance",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "summary": "provenance: validated 32 components"
+          }
+        },
+        {
+          "base_id": "documentation_index",
+          "category": "documentation",
+          "exit_code": 0,
+          "id": "documentation_index",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "errors": [],
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "release_environment",
+          "category": "release",
+          "exit_code": 0,
+          "id": "release_environment",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "available_tool_count": 6,
+            "configured_environment_input_count": 2,
+            "errors": [],
+            "git": {
+              "branch": "agent/fix-review-p1",
+              "changed_path_count": 36,
+              "revision": "f68ce9cc137d9803345abd63be1446a65ac279c1",
+              "working_tree_clean": false
+            },
+            "manifest_digest": "30552d898c1f8ab1b7c2ca377d30197470184894d6d496ba25cdd1a7275dc415",
+            "status": "pass",
+            "tracked_input_count": 15
+          }
+        },
+        {
+          "base_id": "database_migration_head",
+          "category": "release",
+          "exit_code": 0,
+          "id": "database_migration_head",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "external_network_access_performed": false,
+            "external_provider_mutation_performed": false,
+            "mode": "static",
+            "reason": "source migration graph has the expected single head",
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "api_contract",
+          "category": "contract",
+          "exit_code": 0,
+          "id": "api_contract",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "errors": [],
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "api_observability",
+          "category": "contract",
+          "exit_code": 0,
+          "id": "api_observability",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "mode": "fixture",
+            "payload_free": true,
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "trace_evidence",
+          "category": "contract",
+          "exit_code": 0,
+          "id": "trace_evidence",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "coverage": {
+              "api_requests": "observed",
+              "integration_evidence": "observed",
+              "native_audit_spans": "empty",
+              "native_integration_spans": "empty",
+              "native_mail_spans": "empty",
+              "native_model_spans": "empty",
+              "native_spans": "observed",
+              "native_tool_spans": "empty",
+              "native_transport_spans": "observed",
+              "native_worker_spans": "empty",
+              "pm_inbox_events": "observed",
+              "project_usage_events": "observed",
+              "task_log": "observed",
+              "worker_artifacts": "observed",
+              "worker_run_transitions": "observed",
+              "worker_usage_records": "observed"
+            },
+            "mode": "fixture",
+            "notice_codes": [
+              "PARTIAL_TRACE_SOURCES"
+            ],
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "live_trace_observability",
+          "category": "integration",
+          "exit_code": 0,
+          "id": "live_trace_observability",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "mode": "fixture",
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "live_tool_trace",
+          "category": "integration",
+          "exit_code": 0,
+          "id": "live_tool_trace",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "mode": "fixture",
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "native_trace_spans",
+          "category": "contract",
+          "exit_code": 0,
+          "id": "native_trace_spans",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "trace_retention_plan",
+          "category": "contract",
+          "exit_code": 0,
+          "id": "trace_retention_plan",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "plan_schema": "aiat.trace-retention-plan.v1",
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "slo_capacity",
+          "category": "contract",
+          "exit_code": 0,
+          "id": "slo_capacity",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "capacity_status": "clear",
+            "mode": "fixture",
+            "slo_status": "healthy",
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "prompt_tool_reconciliation",
+          "category": "static",
+          "exit_code": 0,
+          "id": "prompt_tool_reconciliation",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "errors": [],
+            "manifest_tool_count": 114,
+            "prompt_count": 11,
+            "registered_tool_count": 108,
+            "status": "pass",
+            "warnings": []
+          }
+        },
+        {
+          "base_id": "worker_reconciliation",
+          "category": "static",
+          "exit_code": 0,
+          "id": "worker_reconciliation",
+          "mode": "static",
+          "pending_evidence_count": 2,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "errors": [],
+            "pending_evidence": [
+              {
+                "evidence": "security_scan_status",
+                "evidence_status": "findings_review_required",
+                "finding_count": 316,
+                "security_scan_evidence_ref": "mas/docs/provenance/security_scan_evidence.yaml#opencode-1.17.13-semgrep-2026-08-10",
+                "status": "findings_review_required",
+                "worker": "coding_worker"
+              },
+              {
+                "evidence": "security_scan_status",
+                "evidence_status": "findings_review_required",
+                "finding_count": 316,
+                "security_scan_evidence_ref": "mas/docs/provenance/security_scan_evidence.yaml#opencode-1.17.13-semgrep-2026-08-10",
+                "status": "findings_review_required",
+                "worker": "tester"
+              }
+            ],
+            "runtime_counts": {
+              "builtin": 15,
+              "crewai": 1,
+              "external": 10,
+              "langgraph": 13
+            },
+            "status": "pass",
+            "transport_counts": {
+              "human": 1,
+              "opencode": 2,
+              "process": 36
+            },
+            "warnings": [],
+            "worker_count": 39
+          }
+        },
+        {
+          "base_id": "default_worker_bindings",
+          "category": "contract",
+          "exit_code": 0,
+          "id": "default_worker_bindings",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "errors": [],
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "worker_run_lifecycle",
+          "category": "recovery",
+          "exit_code": 0,
+          "id": "worker_run_lifecycle",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "certification_boundary": {
+              "artifact_before_terminal": "checked",
+              "canary": "not_checked",
+              "checkpoint_persistence": "checked",
+              "cold_cancellation": "checked",
+              "cold_crash": "checked",
+              "controller_contract": "checked",
+              "database": "not_checked",
+              "lease_expiry_recovery": "checked",
+              "live_worker_run": "not_checked",
+              "pause_resume": "checked",
+              "rollback": "not_checked",
+              "sandbox": "not_checked"
+            },
+            "mode": "fixture",
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "network_boundary",
+          "category": "static",
+          "exit_code": 0,
+          "id": "network_boundary",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "errors": [],
+            "mode": "static",
+            "status": "pass",
+            "warnings": [
+              "optional identity database services are not in the base Compose profile: identity-postgres, identity-db"
+            ]
+          }
+        },
+        {
+          "base_id": "image_provenance",
+          "category": "static",
+          "exit_code": 0,
+          "id": "image_provenance",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "errors": [],
+            "mode": "static",
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "image_budgets",
+          "category": "static",
+          "exit_code": 0,
+          "id": "image_budgets",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "summary": "image-budget: tool-service-core PASS"
+          }
+        },
+        {
+          "base_id": "metric_series_budget",
+          "category": "operations",
+          "exit_code": 0,
+          "id": "metric_series_budget",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "budget": 2000,
+            "declared_label_inventory": {
+              "mas_agent_correction_factor": [
+                "agent_id"
+              ],
+              "mas_budget_exhausted": [
+                "agent_id",
+                "budget_type"
+              ],
+              "mas_dlq_depth": [
+                "stream"
+              ],
+              "mas_infra_lead_time": [
+                "le"
+              ],
+              "mas_llm_calls": [
+                "agent_id",
+                "model"
+              ],
+              "mas_messages": [
+                "direction",
+                "msg_type",
+                "team"
+              ],
+              "mas_project_state": [
+                "state"
+              ],
+              "mas_review_circuit_open": [],
+              "mas_tool_calls": [
+                "status",
+                "tool_name"
+              ],
+              "mas_tool_circuit_state": [
+                "tool_name"
+              ]
+            },
+            "family_budgets": {
+              "mas_infra_lead_time": 20,
+              "mas_project_state": 32,
+              "mas_review_circuit_open": 4
+            },
+            "family_counts": {
+              "mas_agent_correction_factor": 0,
+              "mas_budget_exhausted": 0,
+              "mas_dlq_depth": 0,
+              "mas_infra_lead_time": 12,
+              "mas_llm_calls": 0,
+              "mas_messages": 0,
+              "mas_project_state": 18,
+              "mas_review_circuit_open": 1,
+              "mas_tool_calls": 0,
+              "mas_tool_circuit_state": 0
+            },
+            "label_inventory": {
+              "mas_agent_correction_factor": [],
+              "mas_budget_exhausted": [],
+              "mas_dlq_depth": [],
+              "mas_infra_lead_time": [
+                "le"
+              ],
+              "mas_llm_calls": [],
+              "mas_messages": [],
+              "mas_project_state": [
+                "state"
+              ],
+              "mas_review_circuit_open": [],
+              "mas_tool_calls": [],
+              "mas_tool_circuit_state": []
+            },
+            "label_policies": {
+              "mas_agent_correction_factor": {
+                "agent_id": {
+                  "basis": "active-worker-registry",
+                  "classification": "bounded"
+                }
+              },
+              "mas_budget_exhausted": {
+                "agent_id": {
+                  "basis": "active-worker-registry",
+                  "classification": "bounded"
+                },
+                "budget_type": {
+                  "basis": "budget-type-enum",
+                  "classification": "bounded"
+                }
+              },
+              "mas_dlq_depth": {
+                "stream": {
+                  "basis": "known-stream-catalogue",
+                  "classification": "bounded"
+                }
+              },
+              "mas_infra_lead_time": {
+                "le": {
+                  "basis": "declared-histogram-buckets",
+                  "classification": "bounded"
+                }
+              },
+              "mas_llm_calls": {
+                "agent_id": {
+                  "basis": "active-worker-registry",
+                  "classification": "bounded"
+                },
+                "model": {
+                  "basis": "approved-model-profile-catalogue",
+                  "classification": "bounded"
+                }
+              },
+              "mas_messages": {
+                "direction": {
+                  "basis": "message-direction-enum",
+                  "classification": "bounded"
+                },
+                "msg_type": {
+                  "basis": "message-type-enum",
+                  "classification": "bounded"
+                },
+                "team": {
+                  "basis": "known-team-catalogue",
+                  "classification": "bounded"
+                }
+              },
+              "mas_project_state": {
+                "state": {
+                  "basis": "project-state-enum",
+                  "classification": "bounded"
+                }
+              },
+              "mas_review_circuit_open": {},
+              "mas_tool_calls": {
+                "status": {
+                  "basis": "tool-outcome-enum",
+                  "classification": "bounded"
+                },
+                "tool_name": {
+                  "basis": "registered-tool-catalogue",
+                  "classification": "bounded"
+                }
+              },
+              "mas_tool_circuit_state": {
+                "tool_name": {
+                  "basis": "registered-tool-catalogue",
+                  "classification": "bounded"
+                }
+              }
+            },
+            "mode": "fixture",
+            "project_id_label_present": false,
+            "status": "pass",
+            "synthetic_project_count": 10000,
+            "total": 31
+          }
+        },
+        {
+          "base_id": "sandbox_runtime_readiness",
+          "category": "static",
+          "exit_code": 0,
+          "id": "sandbox_runtime_readiness",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "errors": [],
+            "mode": "static",
+            "status": "pass",
+            "worker_count": 39
+          }
+        },
+        {
+          "base_id": "firecracker_worker_pool_readiness",
+          "category": "integration",
+          "exit_code": 0,
+          "id": "firecracker_worker_pool_readiness",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "superseded",
+          "status": "not_in_scope",
+          "summary": {
+            "reason": "Direct Firecracker is a historical compatibility implementation; vm_isolated is provided by optional Kata and is not active on the WSL development profile.",
+            "scope_status": "superseded",
+            "status": "not_in_scope"
+          }
+        },
+        {
+          "base_id": "worker_runtime_readiness",
+          "category": "static",
+          "exit_code": 0,
+          "id": "worker_runtime_readiness",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "certification_boundary": {
+              "canary": "not_checked",
+              "live_worker_run": "not_checked",
+              "package_imports": "declared_only",
+              "rollback": "not_checked",
+              "sandbox": "not_checked",
+              "security_scan": "not_checked"
+            },
+            "errors": [],
+            "mode": "static",
+            "reason": null,
+            "status": "pass",
+            "worker_count": 39
+          }
+        },
+        {
+          "base_id": "runtime_benchmarks",
+          "category": "integration",
+          "exit_code": 0,
+          "id": "runtime_benchmarks",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "certification_boundary": {
+              "canary": "not_checked",
+              "live_worker_run": "not_checked",
+              "package_benchmark": "not_checked",
+              "rollback": "not_checked",
+              "sandbox": "not_checked"
+            },
+            "mode": "static",
+            "reason": "live mode was not requested",
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "model_profile_catalogue",
+          "category": "packaging",
+          "exit_code": 0,
+          "id": "model_profile_catalogue",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "covered_profile_version_count": 0,
+            "duplicate_profile_bindings": [],
+            "finding_count": 0,
+            "profile_count": 0,
+            "profile_coverage": "pending_persisted_profile_bindings",
+            "profile_pending_model_count": 92,
+            "profile_version_count": 0,
+            "registry_model_count": 92,
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "runtime_install_profile",
+          "category": "packaging",
+          "exit_code": 0,
+          "id": "runtime_install_profile",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "certification_boundary": {
+              "canary": "not_checked",
+              "live_worker_run": "not_checked",
+              "lock_resolution": "checked",
+              "production_image_install_command": "checked",
+              "rollback": "not_checked",
+              "runtime_imports": "not_checked",
+              "sandbox": "not_checked",
+              "security_scan": "not_checked",
+              "source_declaration": "checked"
+            },
+            "declared_dependencies": {
+              "crewai": "crewai==1.6.1",
+              "langgraph": "langgraph>=0.2,<1.0"
+            },
+            "dockerfile_installs_profile": true,
+            "errors": [],
+            "lock_profile": {
+              "crewai": "==1.6.1",
+              "langgraph": ">=0.2,<1.0"
+            },
+            "locked_versions": {
+              "crewai": "1.6.1",
+              "langgraph": "0.6.11"
+            },
+            "profile": "runtime-default",
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "operator_pins",
+          "category": "packaging",
+          "exit_code": 0,
+          "id": "operator_pins",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "errors": [],
+            "locked_count": 10,
+            "pin_count": 17,
+            "status": "pass",
+            "unavailable_count": 7
+          }
+        },
+        {
+          "base_id": "runtime_compatibility",
+          "category": "packaging",
+          "exit_code": 0,
+          "id": "runtime_compatibility",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "code_review_adapters",
+          "category": "contract",
+          "exit_code": 0,
+          "id": "code_review_adapters",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "errors": [],
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "security_adapters",
+          "category": "contract",
+          "exit_code": 0,
+          "id": "security_adapters",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "errors": [],
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "security_scan_review",
+          "category": "security",
+          "exit_code": 0,
+          "id": "security_scan_review",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "engine_warning_count": 54,
+            "errors": [],
+            "finding_count": 316,
+            "mode": "static",
+            "review_required_count": 1,
+            "scan_count": 1,
+            "status": "pass",
+            "technical_gate_status": "blocked"
+          }
+        },
+        {
+          "base_id": "opencode_candidate_certification",
+          "category": "security",
+          "exit_code": 0,
+          "id": "opencode_candidate_certification",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "errors": [],
+            "finding_count": 644,
+            "mode": "static",
+            "status": "pass",
+            "technical_gate_status": "blocked"
+          }
+        },
+        {
+          "base_id": "worker_steward_contract",
+          "category": "governance",
+          "exit_code": 0,
+          "id": "worker_steward_contract",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "errors": [],
+            "external_worker_count": 2,
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "object_store_conformance",
+          "category": "contract",
+          "exit_code": 0,
+          "id": "object_store_conformance",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "counts": {
+              "FAIL": 0,
+              "PASS": 8
+            },
+            "mode": "fixture",
+            "passed": true
+          }
+        },
+        {
+          "base_id": "object_store_oci_sse_kms_contract",
+          "category": "contract",
+          "exit_code": 0,
+          "id": "object_store_oci_sse_kms_contract",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "errors": [],
+            "mode": "fixture",
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "object_store_multipart",
+          "category": "contract",
+          "exit_code": 0,
+          "id": "object_store_multipart",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "abort_verified": true,
+            "cleanup_verified": true,
+            "error_count": 0,
+            "mode": "fixture",
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "object_store_resource_profile",
+          "category": "operations",
+          "exit_code": 0,
+          "id": "object_store_resource_profile",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "cleanup_verified": true,
+            "cpu_time_ms": 52.782,
+            "error_count": 0,
+            "measurement_source": "procfs",
+            "mode": "fixture",
+            "rss_after_bytes": 93163520,
+            "rss_before_bytes": 93134848,
+            "rss_peak_bytes": 130818048,
+            "status": "pass",
+            "wall_time_ms": 52.739
+          }
+        },
+        {
+          "base_id": "object_store_provider_outage",
+          "category": "recovery",
+          "exit_code": 0,
+          "id": "object_store_provider_outage",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "external_network_access_performed": false,
+            "external_provider_mutation_performed": false,
+            "mode": "fixture",
+            "payload_free": true,
+            "providers": [
+              {
+                "checksum_readback_verified": true,
+                "cleanup_deleted_count": 2,
+                "cleanup_verified": true,
+                "container_removed": "not_applicable",
+                "external_network_access_performed": false,
+                "external_provider_mutation_performed": false,
+                "failure_classification": {
+                  "harness_or_configuration_failure": "not_observed",
+                  "infrastructure_or_environment_failure": "not_checked",
+                  "provider_functional_failure": "not_checked",
+                  "provider_resource_limit_failure": "not_checked"
+                },
+                "licence_metadata_is_gate": false,
+                "local_database_access_performed": false,
+                "mode": "fixture",
+                "mutation_performed": false,
+                "network": "mas_internal",
+                "payload_free": true,
+                "process_outage_observed": "not_checked",
+                "provider": "minio",
+                "recovery_readback_verified": "not_checked",
+                "remaining_fixture_count": 0,
+                "reserved_project": "aiat-object-store-outage-fixture-v1",
+                "schema_version": "aiat.object-store-provider-outage.v1",
+                "scope": "fixture checksum/read-back and scoped cleanup; live process outage not asserted",
+                "secret_free": true,
+                "status": "pass",
+                "workload": {
+                  "object_count": 2,
+                  "payload_sizes_bytes": [
+                    65536,
+                    1048576
+                  ],
+                  "total_payload_bytes": 1114112
+                }
+              },
+              {
+                "checksum_readback_verified": true,
+                "cleanup_deleted_count": 2,
+                "cleanup_verified": true,
+                "container_removed": "not_applicable",
+                "external_network_access_performed": false,
+                "external_provider_mutation_performed": false,
+                "failure_classification": {
+                  "harness_or_configuration_failure": "not_observed",
+                  "infrastructure_or_environment_failure": "not_checked",
+                  "provider_functional_failure": "not_checked",
+                  "provider_resource_limit_failure": "not_checked"
+                },
+                "licence_metadata_is_gate": false,
+                "local_database_access_performed": false,
+                "mode": "fixture",
+                "mutation_performed": false,
+                "network": "mas_internal",
+                "payload_free": true,
+                "process_outage_observed": "not_checked",
+                "provider": "seaweedfs",
+                "recovery_readback_verified": "not_checked",
+                "remaining_fixture_count": 0,
+                "reserved_project": "aiat-object-store-outage-fixture-v1",
+                "schema_version": "aiat.object-store-provider-outage.v1",
+                "scope": "fixture checksum/read-back and scoped cleanup; live process outage not asserted",
+                "secret_free": true,
+                "status": "pass",
+                "workload": {
+                  "object_count": 2,
+                  "payload_sizes_bytes": [
+                    65536,
+                    1048576
+                  ],
+                  "total_payload_bytes": 1114112
+                }
+              }
+            ],
+            "reserved_project": "aiat-object-store-outage-fixture-v1",
+            "status": "pass",
+            "workload": {
+              "object_count": 2,
+              "payload_sizes_bytes": [
+                65536,
+                1048576
+              ],
+              "total_payload_bytes": 1114112
+            }
+          }
+        },
+        {
+          "base_id": "object_store_lifecycle",
+          "category": "recovery",
+          "exit_code": 0,
+          "id": "object_store_lifecycle",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "external_network_access_performed": false,
+            "external_provider_mutation_performed": false,
+            "failure_classification": {
+              "harness_configuration_failure": "not_observed",
+              "infrastructure_environment_failure": "not_checked",
+              "provider_functional_failure": "not_checked",
+              "provider_resource_limit_failure": "not_checked"
+            },
+            "mode": "fixture",
+            "payload_free": true,
+            "remaining_fixture_count": 0,
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "trace_retention_execution",
+          "category": "recovery",
+          "exit_code": 0,
+          "id": "trace_retention_execution",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "apply": {
+              "archived_count": 1,
+              "audit_count": 1,
+              "backup_parity_verified": true,
+              "deleted_count": 1,
+              "held_count": 2,
+              "legal_hold_snapshot_verified": true,
+              "mutation_performed": true,
+              "status": "applied"
+            },
+            "execution_schema": "aiat.trace-retention-execution.v1",
+            "plan_schema": "aiat.trace-retention-plan.v1",
+            "preview": {
+              "action_count": 2,
+              "held_count": 2,
+              "invalid_count": 1,
+              "mutation_performed": false,
+              "status": "preview"
+            },
+            "project_scope": {
+              "explicit_project_id": true,
+              "incomplete_mapping_rejected": true,
+              "missing_project_id_rejected": true,
+              "scope": "project:project-1"
+            },
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "credentials_manager_live",
+          "category": "security",
+          "exit_code": 0,
+          "id": "credentials_manager_live",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "external_network_access_performed": false,
+            "external_provider_mutation_performed": false,
+            "failure_classification": {
+              "harness_configuration_failure": "not_observed",
+              "infrastructure_environment_failure": "not_observed",
+              "provider_functional_failure": "not_applicable_aiat_owned_boundary",
+              "provider_resource_limit_failure": "not_checked"
+            },
+            "key_material_retained": false,
+            "mode": "fixture",
+            "payload_free": true,
+            "provider_managed_kms_checked": false,
+            "provider_managed_kms_status": "not_configured",
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "provider_conformance",
+          "category": "contract",
+          "exit_code": 0,
+          "id": "provider_conformance",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "mode": "fixture",
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "provider_adapter_declarations",
+          "category": "contract",
+          "exit_code": 0,
+          "id": "provider_adapter_declarations",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "errors": [],
+            "mode": "fixture",
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "provider_adapter_http_conformance",
+          "category": "contract",
+          "exit_code": 0,
+          "id": "provider_adapter_http_conformance",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "case_count": 8,
+            "errors": [],
+            "mode": "mocked_fixture",
+            "passed_case_count": 8,
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "identity_provider_conformance",
+          "category": "contract",
+          "exit_code": 0,
+          "id": "identity_provider_conformance",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "case_count": 17,
+            "error_count": 0,
+            "errors": [],
+            "external_network_access_performed": false,
+            "external_provider_mutation_performed": false,
+            "failure_classification": {
+              "external_network_access": "not_performed",
+              "external_provider_mutation": "not_performed",
+              "provider_permanent_failure": "checked",
+              "provider_transient_failure": "checked"
+            },
+            "mode": "mocked-provider-conformance",
+            "passed_case_count": 17,
+            "payload_free": true,
+            "providers": [
+              "cloudflare",
+              "resend",
+              "stalwart"
+            ],
+            "secret_safe_report": true,
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "gateway_provider_recovery",
+          "category": "recovery",
+          "exit_code": 0,
+          "id": "gateway_provider_recovery",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "external_provider_call_performed": false,
+            "mode": "fixture",
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "external_account_action_policy",
+          "category": "governance",
+          "exit_code": 0,
+          "id": "external_account_action_policy",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "errors": [],
+            "mode": "fixture",
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "external_account_lifecycle",
+          "category": "governance",
+          "exit_code": 0,
+          "id": "external_account_lifecycle",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "case_count": 8,
+            "errors": [],
+            "mode": "fixture",
+            "passed_case_count": 8,
+            "secret_safe_report": true,
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "outbound_mail_lifecycle",
+          "category": "governance",
+          "exit_code": 0,
+          "id": "outbound_mail_lifecycle",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "pass_for_default_scope",
+          "status": "pass",
+          "summary": {
+            "reason": "The maintained Cloudflare/Resend default email identity certificate is current and records PASS for the governed default path; optional Stalwart/SMTP profiles remain disabled and are not a development gate. Evidence: Docs/AIAT_Email_Identity_Live_Certification.md.",
+            "scope_status": "pass_for_default_scope",
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "flow_instance_recovery",
+          "category": "recovery",
+          "exit_code": 0,
+          "id": "flow_instance_recovery",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "mode": "static",
+            "reason": "live mode was not requested",
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "flow_topology",
+          "category": "contract",
+          "exit_code": 0,
+          "id": "flow_topology",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "flow_execution_semantics",
+          "category": "contract",
+          "exit_code": 0,
+          "id": "flow_execution_semantics",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "flow_runtime_live",
+          "category": "recovery",
+          "exit_code": 0,
+          "id": "flow_runtime_live",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "case_count": 8,
+            "cleanup_verified": false,
+            "cold_crash_recovery_status": "not_checked",
+            "external_network_access_performed": false,
+            "external_provider_mutation_performed": false,
+            "failed_case_count": 0,
+            "failure_classification": {
+              "harness_configuration_failure": "not_observed",
+              "infrastructure_environment_failure": "not_observed",
+              "provider_functional_failure": "not_observed",
+              "provider_resource_limit_failure": "not_checked"
+            },
+            "mode": "fixture",
+            "native_watchdog_status": "not_checked",
+            "passed_case_count": 8,
+            "payload_free": true,
+            "reason": "deterministic contract shape; live API was not requested",
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "flow_worker_binding",
+          "category": "contract",
+          "exit_code": 0,
+          "id": "flow_worker_binding",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "live": {
+              "reason": "static contract fixture",
+              "status": "not_checked"
+            },
+            "mode": "static",
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "workflow_watchdog_recovery",
+          "category": "recovery",
+          "exit_code": 0,
+          "id": "workflow_watchdog_recovery",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "live": {
+              "reason": "native watchdog and cold-recovery proof remains an operator gate",
+              "status": "not_checked"
+            },
+            "mode": "fixture",
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "project_evidence_package",
+          "category": "evidence",
+          "exit_code": 0,
+          "id": "project_evidence_package",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "mode": "fixture",
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "evidence_policy_resolution",
+          "category": "evidence",
+          "exit_code": 0,
+          "id": "evidence_policy_resolution",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "case_count": 7,
+            "errors": [],
+            "mode": "fixture",
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "object_store_copy",
+          "category": "recovery",
+          "exit_code": 0,
+          "id": "object_store_copy",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "counts": {
+              "FAIL": 0,
+              "PASS": 2
+            },
+            "passed": true
+          }
+        },
+        {
+          "base_id": "object_store_backup_restore",
+          "category": "recovery",
+          "exit_code": 0,
+          "id": "object_store_backup_restore",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "mode": "fixture",
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "object_store_encryption",
+          "category": "recovery",
+          "exit_code": 0,
+          "id": "object_store_encryption",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "certification_boundary": {
+              "aiat_owned_aes_256_gcm_envelope": "checked",
+              "ciphertext_checksum_and_readback": "checked",
+              "clean_environment_disaster_recovery": "not_checked",
+              "clean_target_preflight": "checked",
+              "external_garage_r2_b2_or_other_backend": "not_checked",
+              "independent_host_or_provider_outage": "not_checked",
+              "opaque_key_id_only_manifest": "checked",
+              "provider_managed_sse_or_kms": "not_checked",
+              "wrong_key_and_tamper_rejection": "checked"
+            },
+            "clean_target_rejected_before_mutation": true,
+            "encryption_algorithm": "AES-256-GCM",
+            "external_network_access_performed": false,
+            "external_provider_mutation_performed": false,
+            "manifest_secret_free": true,
+            "mode": "local-in-memory-encrypted-backup",
+            "payload_free": true,
+            "plaintext_keys_absent": true,
+            "provider_managed_sse_or_kms_checked": false,
+            "remaining_fixture_counts": {
+              "blocked_restore": 0,
+              "encrypted_backup": 0,
+              "encrypted_restore": 0,
+              "source": 0
+            },
+            "status": "pass",
+            "tamper_rejected": true,
+            "wrong_key_rejected": true
+          }
+        },
+        {
+          "base_id": "object_store_clean_environment_restore",
+          "category": "recovery",
+          "exit_code": 0,
+          "id": "object_store_clean_environment_restore",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "bundle_object_count": 2,
+            "bundle_removed_after_restore": true,
+            "certification_boundary": {
+              "bundle_cleanup": "checked",
+              "clean_host_or_filesystem_disaster_recovery": "not_checked",
+              "clean_target_before_restore": "checked",
+              "fresh_object_store_adapters": "checked",
+              "fresh_python_process": "checked",
+              "independent_machine_or_outage_recovery": "not_checked",
+              "persisted_ciphertext_and_scalar_manifest_bundle": "checked",
+              "plaintext_or_key_material_in_report": "not_observed",
+              "production_encrypted_restore_helper": "checked",
+              "provider_managed_sse_or_kms": "not_checked",
+              "provider_pair_or_external_backend": "not_checked"
+            },
+            "child_process_distinct": true,
+            "child_return_code": 0,
+            "external_network_access_performed": false,
+            "external_provider_mutation_performed": false,
+            "key_material_retained": false,
+            "mode": "local-fresh-process-encrypted-bundle",
+            "payload_free": true,
+            "provider_managed_sse_or_kms_checked": false,
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "object_store_migration",
+          "category": "recovery",
+          "exit_code": 0,
+          "id": "object_store_migration",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "mode": "fixture",
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "self_improvement_lifecycle",
+          "category": "governance",
+          "exit_code": 0,
+          "id": "self_improvement_lifecycle",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "deferred",
+          "status": "not_in_scope",
+          "summary": {
+            "reason": "Live self-improvement execution is deliberately deferred for the current release and remains disabled unless explicitly promoted by the operator.",
+            "scope_status": "deferred",
+            "status": "not_in_scope"
+          }
+        },
+        {
+          "base_id": "self_improvement_candidate_detection",
+          "category": "governance",
+          "exit_code": 0,
+          "id": "self_improvement_candidate_detection",
+          "mode": "static",
+          "pending_evidence_count": 0,
+          "scope_status": "deferred",
+          "status": "not_in_scope",
+          "summary": {
+            "reason": "Live self-improvement execution is deliberately deferred for the current release and remains disabled unless explicitly promoted by the operator.",
+            "scope_status": "deferred",
+            "status": "not_in_scope"
+          }
+        },
+        {
+          "base_id": "release_environment",
+          "category": "release",
+          "exit_code": 2,
+          "id": "release_environment:live",
+          "mode": "live",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "blocked",
+          "summary": {
+            "available_tool_count": 6,
+            "configured_environment_input_count": 2,
+            "errors": [],
+            "git": {
+              "branch": "agent/fix-review-p1",
+              "changed_path_count": 36,
+              "revision": "f68ce9cc137d9803345abd63be1446a65ac279c1",
+              "working_tree_clean": false
+            },
+            "manifest_digest": "30552d898c1f8ab1b7c2ca377d30197470184894d6d496ba25cdd1a7275dc415",
+            "native_release": {
+              "blockers": [
+                "host is not a native Linux release host",
+                "working tree is dirty",
+                "missing immutable image refs: AIAT_TEAM_RUNNER_IMAGE_REF, AIAT_REDIS_ACL_INIT_IMAGE_REF, AIAT_MESSAGE_ROUTER_IMAGE_REF, AIAT_TOOL_SERVICE_IMAGE_REF, AIAT_OPENCODE_RUNTIME_IMAGE_REF, AIAT_ORCHESTRATOR_IMAGE_REF, AIAT_PM_GATEWAY_IMAGE_REF, AIAT_DASHBOARD_IMAGE_REF, OMNIROUTE_IMAGE_REF, LITELLM_IMAGE_R"
+              ],
+              "docker": {
+                "compose_v2_available": true,
+                "engine_available": true,
+                "runsc_registered": true,
+                "runtimes_metadata_available": true
+              },
+              "image_refs": [
+                {
+                  "configured": false,
+                  "digest_pinned": false,
+                  "name": "AIAT_TEAM_RUNNER_IMAGE_REF"
+                },
+                {
+                  "configured": false,
+                  "digest_pinned": false,
+                  "name": "AIAT_REDIS_ACL_INIT_IMAGE_REF"
+                },
+                {
+                  "configured": false,
+                  "digest_pinned": false,
+                  "name": "AIAT_MESSAGE_ROUTER_IMAGE_REF"
+                },
+                {
+                  "configured": false,
+                  "digest_pinned": false,
+                  "name": "AIAT_TOOL_SERVICE_IMAGE_REF"
+                },
+                {
+                  "configured": false,
+                  "digest_pinned": false,
+                  "name": "AIAT_OPENCODE_RUNTIME_IMAGE_REF"
+                },
+                {
+                  "configured": false,
+                  "digest_pinned": false,
+                  "name": "AIAT_ORCHESTRATOR_IMAGE_REF"
+                },
+                {
+                  "configured": false,
+                  "digest_pinned": false,
+                  "name": "AIAT_PM_GATEWAY_IMAGE_REF"
+                },
+                {
+                  "configured": false,
+                  "digest_pinned": false,
+                  "name": "AIAT_DASHBOARD_IMAGE_REF"
+                },
+                {
+                  "configured": false,
+                  "digest_pinned": false,
+                  "name": "OMNIROUTE_IMAGE_REF"
+                },
+                {
+                  "configured": false,
+                  "digest_pinned": false,
+                  "name": "LITELLM_IMAGE_REF"
+                }
+              ],
+              "platform": {
+                "kernel": "6.6.87.2-microsoft-standard-WSL2",
+                "native_linux": false,
+                "system": "Linux"
+              },
+              "status": "blocked"
+            },
+            "status": "blocked",
+            "tracked_input_count": 15
+          }
+        },
+        {
+          "base_id": "database_migration_head",
+          "category": "release",
+          "exit_code": 0,
+          "id": "database_migration_head:live",
+          "mode": "live",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "external_network_access_performed": false,
+            "external_provider_mutation_performed": false,
+            "mode": "live",
+            "reason": "source and deployed migration heads agree",
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "trace_evidence",
+          "category": "contract",
+          "exit_code": 2,
+          "id": "trace_evidence:live",
+          "mode": "live",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "blocked",
+          "summary": {
+            "mode": "live",
+            "reason": "trace evidence unavailable: HTTPStatusError",
+            "status": "blocked",
+            "url_configured": true
+          }
+        },
+        {
+          "base_id": "live_trace_observability",
+          "category": "integration",
+          "exit_code": 2,
+          "id": "live_trace_observability:live",
+          "mode": "live",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "blocked",
+          "summary": {
+            "mode": "live",
+            "reason": "missing live configuration: operator API key",
+            "status": "blocked",
+            "url_configured": true
+          }
+        },
+        {
+          "base_id": "live_tool_trace",
+          "category": "integration",
+          "exit_code": 2,
+          "id": "live_tool_trace:live",
+          "mode": "live",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "blocked",
+          "summary": {
+            "mode": "live",
+            "reason": "missing live configuration: operator API key",
+            "status": "blocked"
+          }
+        },
+        {
+          "base_id": "slo_capacity",
+          "category": "contract",
+          "exit_code": 2,
+          "id": "slo_capacity:live",
+          "mode": "live",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "blocked",
+          "summary": {
+            "mode": "live",
+            "reason": "SLO/capacity endpoint unavailable: HTTPStatusError",
+            "status": "blocked",
+            "url_configured": true
+          }
+        },
+        {
+          "base_id": "worker_reconciliation",
+          "category": "static",
+          "exit_code": 2,
+          "id": "worker_reconciliation:live",
+          "mode": "live",
+          "pending_evidence_count": 2,
+          "scope_status": "active",
+          "status": "blocked",
+          "summary": {
+            "errors": [],
+            "live": {
+              "reason": "worker registry endpoint unavailable: HTTPStatusError",
+              "status": "blocked",
+              "url_configured": true
+            },
+            "mode": "live",
+            "pending_evidence": [
+              {
+                "evidence": "security_scan_status",
+                "evidence_status": "findings_review_required",
+                "finding_count": 316,
+                "security_scan_evidence_ref": "mas/docs/provenance/security_scan_evidence.yaml#opencode-1.17.13-semgrep-2026-08-10",
+                "status": "findings_review_required",
+                "worker": "coding_worker"
+              },
+              {
+                "evidence": "security_scan_status",
+                "evidence_status": "findings_review_required",
+                "finding_count": 316,
+                "security_scan_evidence_ref": "mas/docs/provenance/security_scan_evidence.yaml#opencode-1.17.13-semgrep-2026-08-10",
+                "status": "findings_review_required",
+                "worker": "tester"
+              }
+            ],
+            "runtime_counts": {
+              "builtin": 15,
+              "crewai": 1,
+              "external": 10,
+              "langgraph": 13
+            },
+            "status": "blocked",
+            "transport_counts": {
+              "human": 1,
+              "opencode": 2,
+              "process": 36
+            },
+            "warnings": [],
+            "worker_count": 39
+          }
+        },
+        {
+          "base_id": "default_worker_bindings",
+          "category": "contract",
+          "exit_code": 0,
+          "id": "default_worker_bindings:live",
+          "mode": "live",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "active_default_worker_count": 0,
+            "binding_mismatch_count": 0,
+            "certification_boundary": {
+              "adapter_sandbox_model_source_pin_capability_bindings": "checked",
+              "canary": "not_checked",
+              "live_worker_run": "not_checked",
+              "manifest_presence": "checked",
+              "rollback": "not_checked",
+              "sandbox": "not_checked",
+              "security_scan": "pending_findings_review"
+            },
+            "default_worker_count": 39,
+            "duplicate_name_count": 0,
+            "evidence_mode": "retained-live",
+            "evidence_ref": "docs/provenance/worker_reconciliation_live.json",
+            "evidence_schema": "aiat.worker-reconciliation-live-evidence.v1",
+            "matched_default_worker_count": 39,
+            "missing_default_worker_count": 0,
+            "mode": "compose-live",
+            "payload_free": true,
+            "pending_security_findings": {
+              "finding_count": 316,
+              "status": "findings_review_required",
+              "workers": [
+                "coding_worker",
+                "tester"
+              ]
+            },
+            "reason": "retained live evidence validated",
+            "status": "pass",
+            "untracked_active_worker_count": 0
+          }
+        },
+        {
+          "base_id": "network_boundary",
+          "category": "static",
+          "exit_code": 0,
+          "id": "network_boundary:live",
+          "mode": "live",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "errors": [],
+            "live": {
+              "container_count": 11,
+              "errors": [],
+              "status": "pass",
+              "warnings": []
+            },
+            "mode": "static",
+            "status": "pass",
+            "warnings": [
+              "optional identity database services are not in the base Compose profile: identity-postgres, identity-db"
+            ]
+          }
+        },
+        {
+          "base_id": "image_provenance",
+          "category": "static",
+          "exit_code": 2,
+          "id": "image_provenance:live",
+          "mode": "live",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "blocked",
+          "summary": {
+            "errors": [],
+            "live": {
+              "errors": [
+                "team-runner: missing AIAT_TEAM_RUNNER_IMAGE_REF deployment image ref",
+                "redis-acl-init: missing AIAT_REDIS_ACL_INIT_IMAGE_REF deployment image ref",
+                "message-router: missing AIAT_MESSAGE_ROUTER_IMAGE_REF deployment image ref",
+                "tool-service-core: missing AIAT_TOOL_SERVICE_IMAGE_REF deployment image ref",
+                "opencode-runtime: missing AIAT_OPENCODE_RUNTIME_IMAGE_REF deployment image ref",
+                "orchestrator-api: missing AIAT_ORCHESTRATOR_IMAGE_REF deployment image ref",
+                "pm-gateway: missing AIAT_PM_GATEWAY_IMAGE_REF deployment image ref",
+                "dashboard: missing AIAT_DASHBOARD_IMAGE_REF deployment image ref",
+                "omniroute: missing OMNIROUTE_IMAGE_REF deployment image ref",
+                "litellm: missing LITELLM_IMAGE_REF deployment image ref"
+              ],
+              "reason": "live image identity evidence is incomplete",
+              "status": "blocked"
+            },
+            "mode": "static",
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "metric_series_budget",
+          "category": "operations",
+          "exit_code": 2,
+          "id": "metric_series_budget:live",
+          "mode": "live",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "blocked",
+          "summary": {
+            "mode": "live",
+            "reason": "orchestrator metrics endpoint unavailable",
+            "status": "blocked",
+            "url_configured": true
+          }
+        },
+        {
+          "base_id": "sandbox_runtime_readiness",
+          "category": "static",
+          "exit_code": 0,
+          "id": "sandbox_runtime_readiness:live",
+          "mode": "live",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "cleanup_verified": true,
+            "evidence_mode": "retained-live",
+            "evidence_ref": "docs/provenance/native_gvisor_certification_live.json",
+            "evidence_schema": "aiat.native-gvisor-certification-live.v1",
+            "mode": "live",
+            "payload_free": true,
+            "reason": "retained live evidence validated",
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "firecracker_worker_pool_readiness",
+          "category": "integration",
+          "exit_code": 0,
+          "id": "firecracker_worker_pool_readiness:live",
+          "mode": "live",
+          "pending_evidence_count": 0,
+          "scope_status": "superseded",
+          "status": "not_in_scope",
+          "summary": {
+            "reason": "Direct Firecracker is a historical compatibility implementation; vm_isolated is provided by optional Kata and is not active on the WSL development profile.",
+            "scope_status": "superseded",
+            "status": "not_in_scope"
+          }
+        },
+        {
+          "base_id": "worker_runtime_readiness",
+          "category": "static",
+          "exit_code": 0,
+          "id": "worker_runtime_readiness:live",
+          "mode": "live",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "certification_boundary": {
+              "canary": "not_checked",
+              "live_worker_run": "not_checked",
+              "package_imports": "checked",
+              "rollback": "not_checked",
+              "sandbox": "not_checked",
+              "security_scan": "not_checked"
+            },
+            "errors": [],
+            "mode": "live",
+            "reason": null,
+            "status": "pass",
+            "worker_count": 39
+          }
+        },
+        {
+          "base_id": "runtime_benchmarks",
+          "category": "integration",
+          "exit_code": 2,
+          "id": "runtime_benchmarks:live",
+          "mode": "live",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "blocked",
+          "summary": {
+            "certification_boundary": {
+              "canary": "not_checked",
+              "live_worker_run": "not_checked",
+              "package_benchmark": "not_checked",
+              "rollback": "not_checked",
+              "sandbox": "not_checked"
+            },
+            "mode": "live",
+            "reason": "runtime catalogue unavailable: HTTPStatusError",
+            "status": "blocked",
+            "url_configured": true
+          }
+        },
+        {
+          "base_id": "model_profile_catalogue",
+          "category": "packaging",
+          "exit_code": 2,
+          "id": "model_profile_catalogue:live",
+          "mode": "live",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "blocked",
+          "summary": {
+            "mode": "live",
+            "reason": "orchestrator catalogue unavailable: HTTPStatusError",
+            "status": "blocked"
+          }
+        },
+        {
+          "base_id": "object_store_conformance",
+          "category": "contract",
+          "exit_code": 0,
+          "id": "object_store_conformance:live",
+          "mode": "live",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "counts": {
+              "FAIL": 0,
+              "PASS": 8
+            },
+            "mode": "local-live",
+            "passed": true,
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "object_store_multipart",
+          "category": "contract",
+          "exit_code": 0,
+          "id": "object_store_multipart:live",
+          "mode": "live",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "certification_boundary": {
+              "actual_provider_process_or_network_outage": "not_checked",
+              "clean_host_or_disaster_recovery": "not_checked",
+              "migration_cutover_or_rollback": "not_checked",
+              "multipart_abort_cleanup": "checked",
+              "multipart_upload_readback": "checked",
+              "provider_managed_encryption_or_kms": "not_checked",
+              "resource_profile": "not_checked",
+              "single_request_checksum_baseline": "checked by prior benchmark evidence"
+            },
+            "evidence_mode": "retained-live",
+            "evidence_ref": "docs/provenance/object_store_multipart_provider_diverse_evidence.json",
+            "evidence_schema": "aiat.object-store-multipart.v1",
+            "external_network_access_performed": true,
+            "external_provider_mutation_performed": true,
+            "mode": "live-bounded-multipart",
+            "payload_free": true,
+            "providers": {
+              "minio": {
+                "abort_verified": true,
+                "case_count": 2,
+                "cleanup_verified": true,
+                "error_count": 0,
+                "part_counts": [
+                  2,
+                  4
+                ],
+                "remaining_fixture_count": 0,
+                "status": "pass"
+              },
+              "seaweedfs": {
+                "abort_verified": true,
+                "case_count": 2,
+                "cleanup_verified": true,
+                "error_count": 0,
+                "part_counts": [
+                  2,
+                  4
+                ],
+                "remaining_fixture_count": 0,
+                "status": "pass"
+              }
+            },
+            "reason": "retained live evidence validated",
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "object_store_resource_profile",
+          "category": "operations",
+          "exit_code": 0,
+          "id": "object_store_resource_profile:live",
+          "mode": "live",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "evidence_mode": "retained-live",
+            "evidence_ref": "docs/provenance/object_store_resource_profile_provider_diverse_evidence.json",
+            "evidence_schema": "aiat.object-store-resource-profile.v1",
+            "failure_classification": {
+              "harness_or_configuration_failure": "The earlier nonexistent-network-alias attempt was invalid test harness execution and is excluded from this evidence and provider verdict.",
+              "infrastructure_or_environment_failure": "not observed after the canonical mas_internal/seaweedfs-resource alias was corrected",
+              "provider_functional_failure": "not observed in the corrected wave; both providers passed all bounded cases",
+              "provider_resource_limit_failure": "not asserted; this wave records scalar RSS/wall/CPU observations and has no production resource threshold"
+            },
+            "mode": "live-bounded-resource-profile",
+            "payload_free": true,
+            "providers": [
+              {
+                "checksum_readback": "checked",
+                "cleanup_verified": true,
+                "cpu_time_ms": 193.258,
+                "error_count": 0,
+                "measurement_source": "procfs",
+                "name": "minio",
+                "rss_after_bytes": 123170816,
+                "rss_before_bytes": 114196480,
+                "rss_peak_bytes": 192020480,
+                "status": "pass",
+                "wall_time_ms": 734.522
+              },
+              {
+                "checksum_readback": "checked",
+                "cleanup_verified": true,
+                "cpu_time_ms": 178.46,
+                "error_count": 0,
+                "measurement_source": "procfs",
+                "name": "seaweedfs",
+                "rss_after_bytes": 136896512,
+                "rss_before_bytes": 130871296,
+                "rss_peak_bytes": 195424256,
+                "status": "pass",
+                "wall_time_ms": 1298.131
+              }
+            ],
+            "reason": "retained live evidence validated",
+            "reserved_project": "aiat-resource-live-20260818-r4",
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "object_store_provider_outage",
+          "category": "recovery",
+          "exit_code": 0,
+          "id": "object_store_provider_outage:live",
+          "mode": "live",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "evidence_mode": "retained-live",
+            "evidence_ref": "docs/provenance/object_store_provider_outage_live_evidence.json",
+            "evidence_schema": "aiat.object-store-provider-outage.v1",
+            "failure_classification": {
+              "harness_or_configuration_failure": "not observed in corrected r3; earlier development attempts were excluded from provider evidence",
+              "infrastructure_or_environment_failure": "not observed after the reserved namespace, canonical network, and labelled disposable containers were validated",
+              "provider_functional_failure": "not observed; both providers retained and read back the reserved objects after restart",
+              "provider_resource_limit_failure": "not checked; this gate is process outage/recovery, not a production resource threshold"
+            },
+            "mode": "live-disposable-process-outage",
+            "payload_free": true,
+            "providers": [
+              {
+                "adapter": "s3-compatible/aioboto3",
+                "checksum_readback_verified": true,
+                "cleanup_deleted_count": 2,
+                "cleanup_verified": true,
+                "container_removed": true,
+                "disposable_storage_cleanup_verified": true,
+                "name": "minio",
+                "process_outage_observed": true,
+                "recovery_endpoint_observed": true,
+                "remaining_fixture_count": 0,
+                "resource_limit_status": "not_checked",
+                "restart_verified": true,
+                "status": "pass"
+              },
+              {
+                "adapter": "s3-compatible/aioboto3",
+                "checksum_readback_verified": true,
+                "cleanup_deleted_count": 2,
+                "cleanup_verified": true,
+                "container_removed": true,
+                "disposable_storage_cleanup_verified": true,
+                "name": "seaweedfs",
+                "process_outage_observed": true,
+                "recovery_endpoint_observed": true,
+                "remaining_fixture_count": 0,
+                "resource_limit_status": "not_checked",
+                "restart_verified": true,
+                "status": "pass"
+              }
+            ],
+            "reason": "retained live evidence validated",
+            "reserved_project": "aiat-outage-live-20260818-r3",
+            "status": "pass",
+            "workload": {
+              "object_count_per_provider": 2,
+              "operation_timeout_seconds": 5.0,
+              "payload_sizes_bytes": [
+                65536,
+                1048576
+              ],
+              "recovery_timeout_seconds": 30.0,
+              "same_workload_for_both_providers": true,
+              "total_payload_bytes_per_provider": 1114112
+            }
+          }
+        },
+        {
+          "base_id": "credentials_manager_live",
+          "category": "security",
+          "exit_code": 0,
+          "id": "credentials_manager_live:live",
+          "mode": "live",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "cleanup_counts": {
+              "before": 0,
+              "teardown": 2
+            },
+            "credential_names": 2,
+            "errors": [],
+            "external_network_access_performed": false,
+            "external_provider_mutation_performed": false,
+            "failure_classification": {
+              "harness_configuration_failure": "not_observed",
+              "infrastructure_environment_failure": "not_observed",
+              "provider_functional_failure": "not_applicable_aiat_owned_boundary",
+              "provider_resource_limit_failure": "not_checked"
+            },
+            "key_material_retained": false,
+            "mode": "compose-local-live",
+            "payload_free": true,
+            "provider_managed_kms_checked": false,
+            "provider_managed_kms_status": "not_configured",
+            "remaining_fixture_counts": {
+              "credential_resolve_approvals": 0,
+              "credential_resolve_rates": 0,
+              "credentials": 0,
+              "credentials_audit": 0
+            },
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "gateway_provider_recovery",
+          "category": "recovery",
+          "exit_code": 0,
+          "id": "gateway_provider_recovery:live",
+          "mode": "live",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "certification_boundary": {
+              "durable_worker_usage_artifact_trace": "checked",
+              "external_provider_callback": "not_checked",
+              "external_provider_dispatch": "checked",
+              "external_provider_model_listing": "checked",
+              "identity_postgres_connection_reopen": "checked",
+              "payload_free_projection": "checked",
+              "provider_backed_transient_recovery": "checked",
+              "provider_delivery_confirmation": "not_checked",
+              "provider_message_trace_correlation": "checked",
+              "provider_outage_recovery": "not_checked",
+              "resend_raw_body_provider_ingress": "checked",
+              "sandbox_runtime_gvisor_or_firecracker": "not_checked",
+              "scoped_cleanup": "checked",
+              "selected_live_worker": "checked",
+              "worker_postgres_connection_reopen": "checked",
+              "worker_trace_mail_edge_correlation": "checked"
+            },
+            "controller_terminal_state": "SUCCEEDED",
+            "durable_reopen": {
+              "identity_healthy": true,
+              "mail_observation_count": 3,
+              "native_span_count": 4,
+              "worker_artifact_count": 1,
+              "worker_healthy": true,
+              "worker_run_present": true,
+              "worker_usage_count": 1
+            },
+            "evidence_mode": "retained-live",
+            "evidence_ref": "docs/provenance/gateway_worker_provider_recovery_live.json",
+            "evidence_schema": "aiat.gateway-worker-provider-recovery-live.v1",
+            "exact_model_id": "llama-3.3-70b-versatile",
+            "external_network_access_performed": true,
+            "external_provider_call_performed": true,
+            "external_provider_completion_attempt_count": 1,
+            "external_provider_mutation_performed": false,
+            "gateway_call_count": 2,
+            "gateway_model_count": 9,
+            "generated_text_retained": false,
+            "live_provider": true,
+            "mode": "live-dual-postgres-worker-mail-edge-provider-recovery",
+            "payload_free": true,
+            "provider_attempts": 2,
+            "provider_id": "litellm",
+            "provider_ingress_conflict_rejected": true,
+            "provider_ingress_idempotent_duplicate": true,
+            "provider_ingress_statuses": {
+              "bounced": 200,
+              "conflict": 409,
+              "delivered": 200,
+              "duplicate": 200,
+              "tampered": 401
+            },
+            "provider_ingress_tampered_rejected": true,
+            "provider_recovery": true,
+            "provider_recovery_injected": true,
+            "provider_retry_count": 1,
+            "reason": "retained live evidence validated",
+            "remaining_identity_client_rows": 0,
+            "remaining_identity_fixture_rows": 0,
+            "remaining_worker_fixture_counts": {
+              "artifacts": 0,
+              "runs": 0,
+              "spans": 0,
+              "usage": 0,
+              "workers": 0
+            },
+            "run_state": "SUCCEEDED",
+            "status": "pass",
+            "worker_cleanup_deleted_counts": {
+              "artifacts": 1,
+              "spans": 4,
+              "worker_artifacts": 1,
+              "worker_runs": 1,
+              "workers": 1
+            },
+            "worker_mail_edge_coverage_status": "pass",
+            "worker_mail_edge_trace_item_count": 9
+          }
+        },
+        {
+          "base_id": "outbound_mail_lifecycle",
+          "category": "governance",
+          "exit_code": 0,
+          "id": "outbound_mail_lifecycle:live",
+          "mode": "live",
+          "pending_evidence_count": 0,
+          "scope_status": "pass_for_default_scope",
+          "status": "pass",
+          "summary": {
+            "reason": "The maintained Cloudflare/Resend default email identity certificate is current and records PASS for the governed default path; optional Stalwart/SMTP profiles remain disabled and are not a development gate. Evidence: Docs/AIAT_Email_Identity_Live_Certification.md.",
+            "scope_status": "pass_for_default_scope",
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "flow_runtime_live",
+          "category": "recovery",
+          "exit_code": 0,
+          "id": "flow_runtime_live:live",
+          "mode": "live",
+          "pending_evidence_count": 0,
+          "scope_status": "active",
+          "status": "pass",
+          "summary": {
+            "case_count": 12,
+            "cleanup_verified": true,
+            "cold_crash_recovery_status": "not_checked",
+            "evidence_mode": "retained-live",
+            "evidence_ref": "docs/provenance/flow_runtime_live_evidence.json",
+            "evidence_schema": "aiat.flow-runtime-live.v1",
+            "external_network_access_performed": true,
+            "external_provider_mutation_performed": false,
+            "failed_case_count": 0,
+            "failure_classification": {
+              "harness_configuration_failure": "not_observed",
+              "infrastructure_environment_failure": "not_observed",
+              "provider_functional_failure": "not_observed",
+              "provider_resource_limit_failure": "not_checked"
+            },
+            "flow_fixture_count": 2,
+            "mode": "live",
+            "native_watchdog_status": "not_checked",
+            "passed_case_count": 12,
+            "payload_free": true,
+            "project_fixture_count": 3,
+            "reason": "retained live evidence validated",
+            "status": "pass"
+          }
+        },
+        {
+          "base_id": "self_improvement_candidate_detection",
+          "category": "governance",
+          "exit_code": 0,
+          "id": "self_improvement_candidate_detection:live",
+          "mode": "live",
+          "pending_evidence_count": 0,
+          "scope_status": "deferred",
+          "status": "not_in_scope",
+          "summary": {
+            "reason": "Live self-improvement execution is deliberately deferred for the current release and remains disabled unless explicitly promoted by the operator.",
+            "scope_status": "deferred",
+            "status": "not_in_scope"
+          }
+        }
+      ],
+      "compose_local": true,
+      "counts": {
+        "blocked": 10,
+        "fail": 0,
+        "not_in_scope": 5,
+        "pass": 74,
+        "total": 89
+      },
+      "decision_reasons": [
+        "10 check(s) are externally blocked",
+        "4 pending evidence item(s) remain",
+        "worktree is dirty"
+      ],
+      "development_status": "DEV_READY",
+      "environment": {
+        "docker_cli_available": true,
+        "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+        "python": "3.12.3"
+      },
+      "git": {
+        "branch": "agent/fix-review-p1",
+        "changed_path_count": 36,
+        "clean": false,
+        "revision": "f68ce9cc137d9803345abd63be1446a65ac279c1"
+      },
+      "pending_evidence_count": 4,
+      "policy": {
+        "blocked_live_evidence_is_pass": false,
+        "licence_metadata_is_gate": false,
+        "programme_scope": "personal-internal-only"
+      },
+      "profile": "live-compose-local",
+      "release_decision": "NO-RELEASE",
+      "release_status": "RELEASE_CERTIFICATION_PENDING",
+      "schema_version": "aiat.release-ledger.v1",
+      "scope": "bounded release-evidence aggregation; no deployment mutation or credential output",
+      "status": "blocked"
+    },
+    "native_linux_required": true,
+    "status": "RELEASE_CERTIFICATION_PENDING"
+  },
+  "sandbox_readiness": {
+    "compose": "/mnt/c/projects/aiat/mas/infra/compose/docker-compose.yml",
+    "errors": [],
+    "hardened_worker_count": 10,
+    "live": {
+      "errors": [],
+      "firecracker": "superseded",
+      "kata": "optional_unavailable",
+      "kata_runtimes": [],
+      "mode": "live",
+      "reason": "gVisor (runsc) digest-pinned smoke completed",
+      "registered_runtimes": [
+        "io.containerd.runc.v2",
+        "runc",
+        "runsc"
+      ],
+      "sandbox_class": "sandboxed",
+      "sandbox_profile": "sandboxed",
+      "sandbox_runtime": "runsc",
+      "schema_version": "aiat.sandbox-runtime-readiness.v1",
+      "scope": "Docker runtime registration",
+      "smoke": "pass",
+      "status": "pass",
+      "vm_isolated": "optional_unavailable"
+    },
+    "live_scope": "Docker runtime registration; gVisor smoke, optional Kata probe, canary, and network evidence are separate",
+    "mode": "static",
+    "opencode_runtime": {
+      "cap_drop_all": true,
+      "cpus": 1.0,
+      "errors": [],
+      "memory_bytes": 1073741824,
+      "network": [
+        "internal"
+      ],
+      "no_new_privileges": true,
+      "pids_limit": 256,
+      "read_only": true,
+      "scope": "Compose boundary only; gVisor/Kata smoke, canary, and network evidence remain separate",
+      "service": "opencode-runtime",
+      "status": "pass",
+      "tmpfs_paths": [
+        "/runtime",
+        "/tmp"
+      ],
+      "user": "10001:10001"
+    },
+    "schema_version": "aiat.sandbox-runtime-readiness.v1",
+    "status": "pass",
+    "worker_count": 39,
+    "workers": [
+      {
+        "network_mode": "egress-allowlist",
+        "runtime_tier": "langgraph",
+        "sandbox_class": "trusted",
+        "sandbox_profile": "standard",
+        "status": "pass",
+        "worker": "adapter_certifier"
+      },
+      {
+        "network_mode": "egress-allowlist",
+        "runtime_tier": "langgraph",
+        "sandbox_class": "trusted",
+        "sandbox_profile": "standard",
+        "status": "pass",
+        "worker": "budget_evaluator"
+      },
+      {
+        "network_mode": "egress-allowlist",
+        "runtime_tier": "builtin",
+        "sandbox_class": "trusted",
+        "sandbox_profile": "restricted",
+        "status": "pass",
+        "worker": "ceo"
+      },
+      {
+        "network_mode": "egress-allowlist",
+        "runtime_tier": "builtin",
+        "sandbox_class": "trusted",
+        "sandbox_profile": "restricted",
+        "status": "pass",
+        "worker": "cfo"
+      },
+      {
+        "network_mode": "egress-allowlist",
+        "runtime_tier": "builtin",
+        "sandbox_class": "trusted",
+        "sandbox_profile": "restricted",
+        "status": "pass",
+        "worker": "chrm"
+      },
+      {
+        "network_mode": "egress-allowlist",
+        "runtime_tier": "builtin",
+        "sandbox_class": "trusted",
+        "sandbox_profile": "restricted",
+        "status": "pass",
+        "worker": "cio"
+      },
+      {
+        "network_mode": "egress-allowlist",
+        "runtime_tier": "external",
+        "sandbox_class": "sandboxed",
+        "sandbox_profile": "gvisor",
+        "status": "pass",
+        "worker": "code_review_worker"
+      },
+      {
+        "network_mode": "egress-allowlist",
+        "runtime_tier": "external",
+        "sandbox_class": "sandboxed",
+        "sandbox_profile": "gvisor",
+        "status": "pass",
+        "worker": "coding_worker"
+      },
+      {
+        "network_mode": "egress-allowlist",
+        "runtime_tier": "builtin",
+        "sandbox_class": "trusted",
+        "sandbox_profile": "restricted",
+        "status": "pass",
+        "worker": "coo"
+      },
+      {
+        "network_mode": "egress-allowlist",
+        "runtime_tier": "langgraph",
+        "sandbox_class": "trusted",
+        "sandbox_profile": "standard",
+        "status": "pass",
+        "worker": "cost_estimator"
+      },
+      {
+        "network_mode": "egress-allowlist",
+        "runtime_tier": "builtin",
+        "sandbox_class": "trusted",
+        "sandbox_profile": "restricted",
+        "status": "pass",
+        "worker": "cso"
+      },
+      {
+        "network_mode": "egress-allowlist",
+        "runtime_tier": "builtin",
+        "sandbox_class": "trusted",
+        "sandbox_profile": "restricted",
+        "status": "pass",
+        "worker": "cto"
+      },
+      {
+        "network_mode": "egress-allowlist",
+        "runtime_tier": "external",
+        "sandbox_class": "sandboxed",
+        "sandbox_profile": "gvisor",
+        "status": "pass",
+        "worker": "devops_eng"
+      },
+      {
+        "network_mode": "egress-allowlist",
+        "runtime_tier": "builtin",
+        "sandbox_class": "trusted",
+        "sandbox_profile": "restricted",
+        "status": "pass",
+        "worker": "devops_pm"
+      },
+      {
+        "network_mode": "egress-allowlist",
+        "runtime_tier": "langgraph",
+        "sandbox_class": "trusted",
+        "sandbox_profile": "standard",
+        "status": "pass",
+        "worker": "financial_analyst"
+      },
+      {
+        "network_mode": "egress-allowlist",
+        "runtime_tier": "builtin",
+        "sandbox_class": "trusted",
+        "sandbox_profile": "restricted",
+        "status": "pass",
+        "worker": "hiring_agent"
+      },
+      {
+        "network_mode": "egress-allowlist",
+        "runtime_tier": "langgraph",
+        "sandbox_class": "trusted",
+        "sandbox_profile": "standard",
+        "status": "pass",
+        "worker": "hr_analyst"
+      },
+      {
+        "network_mode": "egress-deny-all",
+        "runtime_tier": "builtin",
+        "sandbox_class": "trusted",
+        "sandbox_profile": "restricted",
+        "status": "pass",
+        "worker": "human_approval_gate"
+      },
+      {
+        "network_mode": "egress-allowlist",
+        "runtime_tier": "langgraph",
+        "sandbox_class": "trusted",
+        "sandbox_profile": "standard",
+        "status": "pass",
+        "worker": "kpi_analyst"
+      },
+      {
+        "network_mode": "egress-allowlist",
+        "runtime_tier": "builtin",
+        "sandbox_class": "trusted",
+        "sandbox_profile": "restricted",
+        "status": "pass",
+        "worker": "license_provenance_evaluator"
+      },
+      {
+        "network_mode": "egress-allowlist",
+        "runtime_tier": "langgraph",
+        "sandbox_class": "trusted",
+        "sandbox_profile": "standard",
+        "status": "pass",
+        "worker": "planner"
+      },
+      {
+        "network_mode": "egress-allowlist",
+        "runtime_tier": "builtin",
+        "sandbox_class": "trusted",
+        "sandbox_profile": "restricted",
+        "status": "pass",
+        "worker": "policy_grant_reviewer"
+      },
+      {
+        "network_mode": "egress-allowlist",
+        "runtime_tier": "builtin",
+        "sandbox_class": "trusted",
+        "sandbox_profile": "restricted",
+        "status": "pass",
+        "worker": "production_pm"
+      },
+      {
+        "network_mode": "egress-allowlist",
+        "runtime_tier": "builtin",
+        "sandbox_class": "trusted",
+        "sandbox_profile": "restricted",
+        "status": "pass",
+        "worker": "qa_lead"
+      },
+      {
+        "network_mode": "egress-allowlist",
+        "runtime_tier": "langgraph",
+        "sandbox_class": "trusted",
+        "sandbox_profile": "standard",
+        "status": "pass",
+        "worker": "requirements_writer"
+      },
+      {
+        "network_mode": "egress-allowlist",
+        "runtime_tier": "external",
+        "sandbox_class": "sandboxed",
+        "sandbox_profile": "gvisor",
+        "status": "pass",
+        "worker": "research_worker"
+      },
+      {
+        "network_mode": "egress-allowlist",
+        "runtime_tier": "external",
+        "sandbox_class": "sandboxed",
+        "sandbox_profile": "sandboxed",
+        "status": "pass",
+        "worker": "sandbox_evaluator"
+      },
+      {
+        "network_mode": "egress-allowlist",
+        "runtime_tier": "external",
+        "sandbox_class": "sandboxed",
+        "sandbox_profile": "gvisor",
+        "status": "pass",
+        "worker": "security_analyst"
+      },
+      {
+        "network_mode": "egress-allowlist",
+        "runtime_tier": "external",
+        "sandbox_class": "sandboxed",
+        "sandbox_profile": "gvisor",
+        "status": "pass",
+        "worker": "security_evaluator"
+      },
+      {
+        "network_mode": "egress-allowlist",
+        "runtime_tier": "langgraph",
+        "sandbox_class": "trusted",
+        "sandbox_profile": "standard",
+        "status": "pass",
+        "worker": "solution_designer"
+      },
+      {
+        "network_mode": "egress-allowlist",
+        "runtime_tier": "langgraph",
+        "sandbox_class": "trusted",
+        "sandbox_profile": "standard",
+        "status": "pass",
+        "worker": "sprint_planner"
+      },
+      {
+        "network_mode": "egress-allowlist",
+        "runtime_tier": "external",
+        "sandbox_class": "sandboxed",
+        "sandbox_profile": "gvisor",
+        "status": "pass",
+        "worker": "sre_agent"
+      },
+      {
+        "network_mode": "egress-allowlist",
+        "runtime_tier": "crewai",
+        "sandbox_class": "trusted",
+        "sandbox_profile": "standard",
+        "status": "pass",
+        "worker": "system_architect"
+      },
+      {
+        "network_mode": "egress-allowlist",
+        "runtime_tier": "builtin",
+        "sandbox_class": "trusted",
+        "sandbox_profile": "restricted",
+        "status": "pass",
+        "worker": "system_pm"
+      },
+      {
+        "network_mode": "egress-allowlist",
+        "runtime_tier": "langgraph",
+        "sandbox_class": "trusted",
+        "sandbox_profile": "standard",
+        "status": "pass",
+        "worker": "tech_analyst"
+      },
+      {
+        "network_mode": "egress-allowlist",
+        "runtime_tier": "langgraph",
+        "sandbox_class": "trusted",
+        "sandbox_profile": "standard",
+        "status": "pass",
+        "worker": "tech_writer"
+      },
+      {
+        "network_mode": "egress-allowlist",
+        "runtime_tier": "external",
+        "sandbox_class": "sandboxed",
+        "sandbox_profile": "gvisor",
+        "status": "pass",
+        "worker": "test_evaluation_worker"
+      },
+      {
+        "network_mode": "egress-allowlist",
+        "runtime_tier": "external",
+        "sandbox_class": "sandboxed",
+        "sandbox_profile": "gvisor",
+        "status": "pass",
+        "worker": "tester"
+      },
+      {
+        "network_mode": "egress-allowlist",
+        "runtime_tier": "langgraph",
+        "sandbox_class": "trusted",
+        "sandbox_profile": "standard",
+        "status": "pass",
+        "worker": "tool_interface_auditor"
+      }
+    ]
+  },
+  "schema_version": "aiat.dev-host-readiness.v1",
+  "secret_free": true,
+  "wsl": {
+    "detected": true,
+    "distribution": "Ubuntu",
+    "kernel": "6.6.87.2-microsoft-standard-WSL2"
+  }
+}

@@ -4,6 +4,16 @@
 **Status:** strong implementation foundation; request-level propagation, durable payload-free API observations, bounded trace evidence, native core spans, descriptive SLO/capacity projections, the typed read-only retention-plan API/live checker (`f8829d6`, `b3fca97`, `9a80c6c`), the hardened team-runner control-plane storage boundary (`22fc21a`), the policy-driven deny/allow matrix (`96fb71f`), sender role/team communication-policy enforcement (`fb39128`), the source-built hierarchy communication-policy overlay (`8b7d9f1`), secret-safe control-plane dependency diagnostics (`2860838`), the API-facing `mas-ctl` operator wrapper (`380daf5`), local API/transport read-back, and dashboard metrics partial/stale/retry recovery (`85596b0`, source-built `metrics-states.spec.ts` 1/1) are verified. The current dashboard image and focused hierarchy E2E now pass locally (`d5f596e`); broader release-image, native-Linux, sandbox, metrics, recovery, model/tool worker, mail-edge, live retention enforcement, and full cross-service span gates remain
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
+**Current WSL2 development result (2026-09-19):** `DEV_READY`. The
+dedicated `aiat-wsl` Docker Engine has Compose v2 and registered `runsc`; the
+digest-pinned gVisor smoke, local Compose health, migration head `0045`, and
+live network-boundary check pass. The secret-safe host record is
+[`dev_host_readiness.json`](../../mas/docs/provenance/dev_host_readiness.json).
+This does not change the native-Linux release boundary: the release result is
+`RELEASE_CERTIFICATION_PENDING`, Kata is `OPTIONAL_UNAVAILABLE`, and direct
+Firecracker is compatibility/superseded evidence rather than an active policy
+tier.
+
 ## Purpose
 
 AIAT must make dangerous automation bounded, attributable, observable, and recoverable. Security is enforced at identity, policy, network, process, data, supply-chain, and human-approval layers. Observability proves behaviour but does not become a second authority.
@@ -247,10 +257,11 @@ AIAT must make dangerous automation bounded, attributable, observable, and recov
   need a native-Linux release run. A blocked Docker/configuration result is not
   a pass.
 - The worker/Compose sandbox contract and `runsc` registration probe are
-  implemented, but gVisor was unavailable in the current host evidence. The
-  `vm_isolated`/Kata policy and direct Firecracker compatibility launch
-  contracts are statically checked, while digest-pinned smoke, network-denial,
+  implemented. The current WSL2 development host has a live registration and
+  digest-pinned smoke result; native-Linux denial/allow evidence, a
   host-certified Kata runtime, and live high-risk certification remain open.
+  Direct Firecracker launch is retained only as compatibility/benchmark
+  evidence and is not an active development blocker.
 - A historical tool-service image was approximately 19.3 GB because Docling/Torch/CUDA and browser assets were combined. The core/extension profile split and explicit image ceilings are now checked in. A local Linux engine probe measured core at 267,957,904 bytes with 26,836 ms/112.3 MiB health startup and extensions at 4,155,668,123 bytes with 29,913 ms/137.7 MiB; the secret-safe record is [`mas/docs/provenance/image_budgets_live.json`](../../mas/docs/provenance/image_budgets_live.json). Compressed archive size, clean native-Linux build/pull, SBOM, and vulnerability evidence remain open.
 - [x] HTTP request trace propagation is bounded and context-safe in the
   orchestrator API, message router, and tool service; envelope correlation IDs

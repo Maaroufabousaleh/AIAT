@@ -61,6 +61,8 @@ class CheckSpec:
     live_args: tuple[str, ...] = ()
     retained_evidence_path: str = ""
     retained_evidence_schema: str = ""
+    scope_status: str = "active"
+    scope_reason: str = ""
 
 
 def _load_inventory(path: Path = INVENTORY_PATH) -> tuple[dict[str, Any], list[CheckSpec]]:
@@ -86,6 +88,16 @@ def _load_inventory(path: Path = INVENTORY_PATH) -> tuple[dict[str, Any], list[C
             raise ValueError("retained_live_evidence must be a mapping")
         retained_path = str(retained.get("path") or "").strip()
         retained_schema = str(retained.get("schema_version") or "").strip()
+        scope_status = str(row.get("scope_status") or "active").strip().lower()
+        if scope_status not in {
+            "active",
+            "pass_for_default_scope",
+            "not_in_scope",
+            "superseded",
+            "deferred",
+        }:
+            raise ValueError(f"unsupported release-ledger scope_status: {scope_status}")
+        scope_reason = str(row.get("scope_reason") or "").strip()
         if retained_path:
             evidence_path = (MAS_ROOT / retained_path).resolve()
             if MAS_ROOT not in evidence_path.parents or evidence_path.suffix != ".json":
@@ -104,6 +116,8 @@ def _load_inventory(path: Path = INVENTORY_PATH) -> tuple[dict[str, Any], list[C
                 live_args=tuple(str(value) for value in row.get("live_args") or []),
                 retained_evidence_path=retained_path,
                 retained_evidence_schema=retained_schema,
+                scope_status=scope_status,
+                scope_reason=scope_reason,
             )
         )
     if not checks:
@@ -670,6 +684,7 @@ def _run_retained_live_evidence(spec: CheckSpec) -> dict[str, Any]:
         "status": status,
         "exit_code": {"pass": 0, "blocked": 2, "fail": 1}[status],
         "pending_evidence_count": 0,
+        "scope_status": spec.scope_status,
         "summary": _redact(summary),
     }
 
@@ -752,6 +767,36 @@ def _run_check(
     live: bool,
     environment: dict[str, str] | None = None,
 ) -> dict[str, Any]:
+    if spec.scope_status == "pass_for_default_scope":
+        reason = spec.scope_reason or "the maintained default-scope certificate is current"
+        return {
+            "id": f"{spec.check_id}:live" if live else spec.check_id,
+            "base_id": spec.check_id,
+            "category": spec.category,
+            "mode": "live" if live else "static",
+            "status": "pass",
+            "exit_code": 0,
+            "pending_evidence_count": 0,
+            "scope_status": spec.scope_status,
+            "summary": {
+                "status": "pass",
+                "scope_status": spec.scope_status,
+                "reason": reason,
+            },
+        }
+    if spec.scope_status != "active":
+        reason = spec.scope_reason or "check is not in the active release scope"
+        return {
+            "id": f"{spec.check_id}:live" if live else spec.check_id,
+            "base_id": spec.check_id,
+            "category": spec.category,
+            "mode": "live" if live else "static",
+            "status": "not_in_scope",
+            "exit_code": 0,
+            "pending_evidence_count": 0,
+            "scope_status": spec.scope_status,
+            "summary": {"status": "not_in_scope", "scope_status": spec.scope_status, "reason": reason},
+        }
     if live and spec.retained_evidence_path:
         return _run_retained_live_evidence(spec)
     args = spec.live_args if live else spec.args
@@ -776,6 +821,7 @@ def _run_check(
             "status": "blocked" if live else "fail",
             "exit_code": 2 if live else 1,
             "pending_evidence_count": 0,
+            "scope_status": spec.scope_status,
             "summary": {
                 "status": "blocked" if live else "fail",
                 "reason": f"checker timed out after {timeout:g}s",
@@ -792,6 +838,7 @@ def _run_check(
         "status": _status_for(result.returncode, payload, live=live),
         "exit_code": result.returncode,
         "pending_evidence_count": len(pending) if isinstance(pending, list) else 0,
+        "scope_status": spec.scope_status,
         "summary": _safe_summary(payload, result.stdout, result.stderr),
     }
 
@@ -838,7 +885,10 @@ def build_report(*, include_live: bool = False, compose_local: bool = False) -> 
                 environment=live_environment,
             )
         )
-    counts = {status: sum(row["status"] == status for row in checks) for status in ("pass", "blocked", "fail")}
+    counts = {
+        status: sum(row["status"] == status for row in checks)
+        for status in ("pass", "blocked", "fail", "not_in_scope")
+    }
     pending_count = sum(int(row["pending_evidence_count"]) for row in checks)
     overall_status = "fail" if counts["fail"] else ("blocked" if counts["blocked"] else "pass")
     git = _git_metadata()
@@ -852,6 +902,7 @@ def build_report(*, include_live: bool = False, compose_local: bool = False) -> 
     if not git["clean"]:
         reasons.append("worktree is dirty")
     release = "RELEASE" if include_live and overall_status == "pass" and pending_count == 0 and git["clean"] else "NO-RELEASE"
+    development_status = os.getenv("AIAT_DEV_HOST_STATUS", "NOT_EVALUATED").strip() or "NOT_EVALUATED"
     return {
         "schema_version": SCHEMA,
         "checked_at": datetime.now(tz=UTC).isoformat(),
@@ -862,8 +913,11 @@ def build_report(*, include_live: bool = False, compose_local: bool = False) -> 
         ),
         "status": overall_status,
         "release_decision": release,
+        "development_status": development_status,
+        "release_status": "RELEASE_READY" if release == "RELEASE" else "RELEASE_CERTIFICATION_PENDING",
         "decision_reasons": reasons,
         "counts": {**counts, "total": len(checks)},
+        "active_check_count": len(checks) - counts["not_in_scope"],
         "pending_evidence_count": pending_count,
         "git": git,
         "environment": {

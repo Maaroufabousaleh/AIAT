@@ -42,7 +42,10 @@ def test_omniroute_api_bridge_is_split_from_dashboard_and_litellm_uses_it() -> N
     assert omniroute["environment"]["DASHBOARD_PORT"] == "20128"
     assert omniroute["environment"]["API_PORT"] == "20129"
     assert omniroute["environment"]["API_HOST"] == "0.0.0.0"
-    assert dev_compose["services"]["omniroute"]["ports"] == ["20128:20128", "20129:20129"]
+    assert dev_compose["services"]["omniroute"]["ports"] == [
+        "${AIAT_DEV_OMNIROUTE_API_PORT:-20128}:20128",
+        "${AIAT_DEV_OMNIROUTE_METRICS_PORT:-20129}:20129",
+    ]
 
     litellm = yaml.safe_load((COMPOSE_ROOT / "litellm_config.yaml").read_text(encoding="utf-8"))
     routes = litellm["model_list"]

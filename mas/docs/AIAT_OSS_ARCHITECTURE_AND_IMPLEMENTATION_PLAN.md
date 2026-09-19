@@ -21,6 +21,26 @@ the [AIAT target programme](../../AIAT_TARGET_PROGRAMME.md), the
 [roadmap](../../ROADMAP.md), current feature specifications, or the release
 ledger for broader programme authority and release status.
 
+### Current development-host verification
+
+The synthesis baseline above remains intentionally frozen at the audited SHA.
+The current WSL2 development host was subsequently provisioned and verified by
+[`bootstrap-dev-host.sh`](../scripts/bootstrap-dev-host.sh) on 2026-09-19.
+The secret-safe machine-readable result is
+[`dev_host_readiness.json`](provenance/dev_host_readiness.json). At that
+observation the dedicated AIAT Docker Engine was reachable, Docker Compose v2
+was available, `runsc` was registered, the digest-pinned gVisor smoke passed,
+the local Compose profile was healthy, the source and live local database were
+at migration head `0045_worker_tool_effects`, and the local network-boundary
+check passed. The development result is therefore `DEV_READY`.
+
+This does not revise the audited release baseline or claim native-Linux release
+certification. Kata was not installed; `/dev/kvm` was visible but no Kata
+runtime was registered, so the host reports `vm_isolated =
+OPTIONAL_UNAVAILABLE`. The corresponding release result remains
+`RELEASE_CERTIFICATION_PENDING` because native-Linux, provider, deployment,
+operator, and other release-only evidence remain separate gates.
+
 ## 1. Executive verdict
 
 AIAT should keep its sovereign control plane and simplify at its existing
@@ -90,6 +110,11 @@ from the [current release ledger](AIAT_CURRENT_RELEASE_LEDGER.md) and the
 third-pass audit. It records extensive static/local verification but still
 has blocked or missing live/provider/operator evidence, including OpenHands
 activation evidence.
+
+The later WSL2 host-bootstrap result is a separate development-host evidence
+record, not a replacement for this baseline. It proves only the local Docker,
+Compose, gVisor, migration, service-health, and network checks recorded in the
+artifact; it does not upgrade any historical native-host or provider claim.
 
 ### Evidence vocabulary
 
@@ -275,7 +300,11 @@ it does not write canonical flow or worker-run state.
 ### Legacy/parallel adapter plane
 
 The repository also contains a pre-universal-contract family. The following
-inventory was rechecked at the current `HEAD` (`0f068476db908ee43bbc52900bf421394a121e6c`).
+inventory was produced by the maintained read-only inventory checker and
+rechecked against the current adapter source before the WSL host-bootstrap
+changes. The inventory is evidence about adapter references, not permission to
+delete a module; dynamic configuration and external imports still require a
+separate deletion review.
 “Production caller” means an indexed import or call from `mas/apps` or the
 non-test `mas_core` package; scripts, tests, compatibility checks, manifests,
 and documentation are listed separately. Absence from this inventory is not a
@@ -855,7 +884,7 @@ No PR in this roadmap adds a generic `ExecutionBackend`. No PR activates
 Pydantic AI, DBOS, Paperclip, OpenHands, or Stagehand by default. Every
 experimental route has a per-worker or per-feature rollback switch.
 
-## 18. Isolation policy migration: runc → gVisor → Kata
+## 7A. Isolation policy migration: runc → gVisor → Kata
 
 The repository now models isolation as three AIAT policy classes rather than
 four independently managed runtime tiers:
@@ -863,7 +892,7 @@ four independently managed runtime tiers:
 | AIAT policy class | Default host implementation | Current status |
 | --- | --- | --- |
 | `trusted` | normal Docker/runc | Available for AIAT-owned trusted services and reviewed workers |
-| `sandboxed` | Docker/containerd gVisor `runsc` | Current external-worker baseline; native-host certification exists, while the current WSL2 Docker path remains blocked |
+| `sandboxed` | Docker/containerd gVisor `runsc` | Current external-worker baseline; native-host certification exists and the WSL2 development host now has a separate live registration/smoke result |
 | `vm_isolated` | Kata Containers runtime; host selects Dragonball/QEMU or another certified Kata VMM | Contract and adapter selection are present; no Kata host is activated or required for the current release |
 
 The historical profile names remain accepted during the migration window:
@@ -895,10 +924,24 @@ The worker and governance agents receive only the AIAT policy class; they do
 not choose the VMM. Direct Firecracker remains in the repository because its
 launch contract and compatibility tests are still useful, but the new policy
 path does not activate it. Current host evidence remains explicit: gVisor is
-the default certified direction, while Kata and direct Firecracker are
-unavailable/uncertified in the current WSL2 environment. The read-only checker
-supports an explicit `--require-kata` probe for a future certified host, but
-Kata is not a current release gate.
+the default development and external-worker direction, while Kata is
+unavailable on the current WSL2 profile. The host bootstrap records `runsc
+20260914.0`, the registered Docker runtime, the immutable smoke image, the
+Compose/migration/network results, and `vm_isolated = OPTIONAL_UNAVAILABLE` in
+[`provenance/dev_host_readiness.json`](provenance/dev_host_readiness.json).
+The read-only checker supports an explicit `--check-kata` probe and a
+fail-closed `--require-kata`/`--require-vm-isolated` probe for a future native
+or supported VM-capable host, but Kata is not a current WSL development gate.
+
+The reproducible operator entry point is
+[`mas/scripts/bootstrap-dev-host.sh`](../scripts/bootstrap-dev-host.sh). It is
+host provisioning code, not an AIAT worker capability: it detects WSL2,
+selects the dedicated configurable Docker daemon, installs only the pinned
+Docker/gVisor components that are missing, registers `runsc` idempotently,
+runs the bounded digest-pinned smoke, starts/migrates local Compose, and
+writes a secret-safe readiness artifact. It never mounts the Docker socket into
+an application worker, grants worker privilege, installs Kata merely to make
+development pass, or downgrades an unavailable policy class to runc.
 
 The upstream technical boundary is documented by [gVisor's compatibility
 guide](https://gvisor.dev/docs/user_guide/compatibility/), [Kata's quick-start

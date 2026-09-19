@@ -9,7 +9,7 @@ set -Eeuo pipefail
 
 MINIO_CONTAINER="${MINIO_CONTAINER:-mas-minio-1}"
 AGENT_CONTAINER="${AGENT_CONTAINER:-mas-orchestrator-api-1}"
-MC_IMAGE="${MC_IMAGE:-minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727}"
+MC_IMAGE="${MC_IMAGE:-quay.io/minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727}"
 
 if ! docker inspect "$MINIO_CONTAINER" >/dev/null 2>&1; then
   echo "MinIO reconciliation requires a running MinIO container ($MINIO_CONTAINER)" >&2

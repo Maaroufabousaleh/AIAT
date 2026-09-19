@@ -31,7 +31,7 @@ network policy.
 | DevOps and IaC | plan/apply requests, CI/CD evidence, health checks | OpenTofu, GitHub Actions, monitoring adapters |
 | Diagrams and specifications | Mermaid and document/spec exports | Mermaid, Docling, GitHub Spec Kit |
 | Protocol bridge | typed external tool/worker calls | MCP SDKs and certified server adapters |
-| Isolation | worker/tool execution boundary | gVisor baseline; Firecracker optional for high-risk work |
+| Isolation | worker/tool execution boundary | `trusted` → runc; `sandboxed` → gVisor/runsc; `vm_isolated` → optional Kata; no runc fallback for external workers |
 
 ## Default personal-instance profile
 
@@ -56,7 +56,7 @@ unavailable result.
 ## Optional or replaceable integrations
 
 TruffleHog, Plane, OpenProject, ZITADEL, Vault, Ansible, Neo4j, Grafana,
-AutoGen, OpenClaw, browser-use, Firecracker, n8n, Garage, SeaweedFS, and other
+AutoGen, OpenClaw, browser-use, Kata, Firecracker, n8n, Garage, SeaweedFS, and other
 tools may be used normally in this personal instance when their technical
 boundary is useful. They are optional because of architecture, operations,
 resource cost, maturity, or deployment choice—not because AIAT applies a

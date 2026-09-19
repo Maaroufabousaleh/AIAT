@@ -2,11 +2,12 @@
 
 Static mode reconciles worker sandbox declarations with the hardened runtime
 contract. ``--live`` performs a non-secret Docker Engine inspection and exits
-with code 2 when Docker or the selected hardened runtime is unavailable. The
-live check proves only that ``runsc`` (or a selected Kata runtime) is
-registered; it does not claim a worker canary, network negative matrix, or
-Firecracker certification. Pass ``--smoke --image`` with an immutable image
-reference for an explicit, bounded smoke command using the selected runtime.
+with code 2 when Docker or the required development runtime is unavailable.
+The development profile requires gVisor/runsc for ``sandboxed`` workers;
+Kata is an optional ``vm_isolated`` provider and is never a silent fallback.
+The live check does not claim a worker canary, network negative matrix, or
+native-Linux release certification. Pass ``--smoke --image`` with an
+immutable image reference for an explicit, bounded smoke command.
 Licence/restriction metadata is outside this operational check.
 """
 
@@ -14,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -151,7 +153,7 @@ def _inspect_opencode_runtime(compose_path: Path) -> dict[str, Any]:
         "memory_bytes": memory,
         "cpus": cpus,
         "tmpfs_paths": sorted(tmpfs_by_path),
-        "scope": "Compose boundary only; gVisor/Firecracker smoke, canary, and network evidence remain separate",
+        "scope": "Compose boundary only; gVisor/Kata smoke, canary, and network evidence remain separate",
     }
 
 
@@ -212,7 +214,7 @@ def inspect_static(
         "workers": rows,
         "compose": str(compose_path),
         "opencode_runtime": opencode_runtime,
-        "live_scope": "Docker runtime registration; smoke/canary/network evidence is separate",
+        "live_scope": "Docker runtime registration; gVisor smoke, optional Kata probe, canary, and network evidence are separate",
     }
 
 
@@ -220,11 +222,22 @@ def _run(command: list[str], *, timeout: float = 10.0) -> subprocess.CompletedPr
     return subprocess.run(command, check=False, capture_output=True, text=True, timeout=timeout)
 
 
+def _docker_command(*args: str) -> list[str]:
+    """Build a Docker CLI command without depending on the ambient context."""
+
+    context = str(os.environ.get("AIAT_DOCKER_CONTEXT") or os.environ.get("DOCKER_CONTEXT") or "").strip()
+    command = ["docker"]
+    if context:
+        command.extend(("--context", context))
+    command.extend(args)
+    return command
+
+
 def _docker_runtimes() -> tuple[set[str], str | None]:
     if shutil.which("docker") is None:
         return set(), "Docker CLI is not installed"
     try:
-        result = _run(["docker", "info", "--format", "{{json .Runtimes}}"])
+        result = _run(_docker_command("info", "--format", "{{json .Runtimes}}"))
     except (OSError, subprocess.TimeoutExpired) as exc:
         return set(), f"Docker Engine is unavailable to the Docker CLI ({type(exc).__name__})"
     if result.returncode != 0:
@@ -246,7 +259,7 @@ def _run_smoke(image: str, *, runtime: str) -> tuple[bool, str]:
         return False, "smoke runtime is required"
     runtime_label = "Kata" if runtime_name == "kata" or runtime_name.startswith("kata-") else "gVisor"
     command = [
-        "docker",
+        *_docker_command(),
         "run",
         "--rm",
         f"--runtime={runtime_name}",
@@ -277,6 +290,7 @@ def inspect_live(
     image: str | None = None,
     require_firecracker: bool = False,
     require_kata: bool = False,
+    check_kata: bool = False,
 ) -> dict[str, Any]:
     report: dict[str, Any] = {
         "schema_version": SANDBOX_SCHEMA,
@@ -284,11 +298,12 @@ def inspect_live(
         "scope": "Docker runtime registration",
         "status": "blocked",
         "errors": [],
-        "sandbox_profile": "gvisor",
+        "sandbox_profile": "sandboxed",
         "sandbox_class": "sandboxed",
         "smoke": "not_checked",
-        "kata": "not_checked",
-        "firecracker": "not_checked",
+        "kata": "optional_unavailable",
+        "vm_isolated": "optional_unavailable",
+        "firecracker": "superseded",
     }
     runtimes, error = _docker_runtimes()
     report["registered_runtimes"] = sorted(runtimes)
@@ -300,10 +315,17 @@ def inspect_live(
         runtime for runtime in runtimes if runtime == "kata" or runtime.startswith("kata-")
     )
     report["kata_runtimes"] = kata_runtimes
+    if kata_runtimes:
+        report["kata"] = "available"
+        report["vm_isolated"] = "available"
+    elif check_kata or require_kata:
+        report["kata"] = "optional_unavailable"
+        report["vm_isolated"] = "optional_unavailable"
     if require_kata:
         report["sandbox_profile"] = "vm_isolated"
         report["sandbox_class"] = "vm_isolated"
         report["kata"] = "available" if kata_runtimes else "blocked_missing_runtime"
+        report["vm_isolated"] = report["kata"]
         if not kata_runtimes:
             report["reason"] = "Kata was required but no Kata Docker runtime is registered"
             return report
@@ -315,6 +337,8 @@ def inspect_live(
         selected_runtime = "runsc"
     report["sandbox_runtime"] = selected_runtime
     if require_firecracker:
+        # Kept solely for callers that explicitly request the historical
+        # direct launcher. It is not part of the active development profile.
         firecracker = shutil.which("firecracker")
         report["firecracker"] = "available" if firecracker else "blocked_missing_binary"
         if firecracker is None:
@@ -348,8 +372,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--live", action="store_true", help="inspect the Docker runtime registry")
     parser.add_argument("--smoke", action="store_true", help="run a bounded smoke command using the selected runtime")
     parser.add_argument("--image", help="immutable OCI image for --smoke")
-    parser.add_argument("--require-firecracker", action="store_true")
-    parser.add_argument("--require-kata", action="store_true", help="require a registered Kata Docker runtime")
+    parser.add_argument(
+        "--require-firecracker",
+        action="store_true",
+        help="legacy explicit direct-launcher check; not part of the active profile",
+    )
+    parser.add_argument(
+        "--check-kata",
+        action="store_true",
+        help="report optional Kata/vm_isolated availability without requiring it",
+    )
+    parser.add_argument(
+        "--require-kata",
+        "--require-vm-isolated",
+        dest="require_kata",
+        action="store_true",
+        help="require a registered Kata Docker runtime and fail closed if absent",
+    )
     parser.add_argument("--json", action="store_true", help="emit JSON")
     args = parser.parse_args(argv)
     static = inspect_static(workers_dir=args.workers_dir, compose_path=args.compose)
@@ -362,6 +401,7 @@ def main(argv: list[str] | None = None) -> int:
                 image=args.image,
                 require_firecracker=args.require_firecracker,
                 require_kata=args.require_kata,
+                check_kata=args.check_kata,
             ),
         }
     if args.json:

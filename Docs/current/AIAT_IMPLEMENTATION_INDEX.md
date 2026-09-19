@@ -1,8 +1,8 @@
 # AIAT Implementation Index
 
 **Scope:** personal/internal AIAT instance
-**Implementation/content baseline:** `886b0a22` plus the current uncommitted
-three-class sandbox policy migration
+**Implementation/content baseline:** current `main` working tree plus the
+three-class sandbox policy and WSL host-bootstrap changes recorded below
 **Index date:** 2026-09-19
 **Release status:** `NO-RELEASE / P0 INCOMPLETE`
 
@@ -22,6 +22,24 @@ architecture and capability-status document. This index is the compact entry
 point between them and the detailed feature specifications, plans, tests, and
 evidence. It is not a claim that every target is complete or that every
 individual function is enumerated.
+
+## Current development-host status
+
+The WSL2 development host is now independently reproducible through
+[`mas/scripts/bootstrap-dev-host.sh`](../../mas/scripts/bootstrap-dev-host.sh).
+The latest secret-safe artifact is
+[`dev_host_readiness.json`](../../mas/docs/provenance/dev_host_readiness.json).
+
+| Status | Result |
+| --- | --- |
+| Development | **`DEV_READY`** — dedicated Docker Engine, Compose v2, local Compose services, migration head `0045_worker_tool_effects`, gVisor registration/smoke, and the local network-boundary check pass. |
+| Release | **`RELEASE_CERTIFICATION_PENDING`** — WSL2 is not native-Linux release evidence. |
+| Sandbox policy | `trusted → runc`, `sandboxed → runsc`, `vm_isolated → Kata`; old profile names remain read-compatible aliases and required classes fail closed. |
+| Kata | **`OPTIONAL_UNAVAILABLE`** — `/dev/kvm` is visible, but no Kata runtime is registered or certified on this host. |
+
+This status is deliberately separate from the release ledger's global
+`NO-RELEASE` decision. Development is not blocked merely because native-host,
+provider, operator, or deployment certification remains open.
 
 ## Status vocabulary
 
@@ -68,23 +86,23 @@ recovery, or human/operator gates.
 
 | Check | Result | Scope and limitation |
 | --- | --- | --- |
-| Source revision at refresh | **`2645309f`** | The snapshot describes the current implementation/content tree. The validation evidence was produced against the same content before the timestamp-only history rewrite; later commits are documentation-only. These checks do not close live/operator gates. |
-| Documentation authority/index check | **PASS (2026-09-19)** | `../.venv/bin/python scripts/check_docs_index.py --json` reports 13 feature documents, 3 plans, 23 maintained/link-checked documents, and no link or policy errors. The standard isolated `uv` invocation could not acquire its read-only global cache in this sandbox; the repository-local checker was run from the existing environment. |
-| Migration source-head check | **PASS (2026-09-18)** | `../.venv/bin/python scripts/check_database_migration_head.py --json` reports one source head: `0045_worker_tool_effects`; no live database was touched. |
-| Release-environment identity probe | **PASS with Docker blocked (2026-09-19 UTC)** | `check_release_environment.py --json` sees Python, uv, Node, npm, and `runsc release-20260817.0`; the Docker executable is present but its Engine is unavailable from this WSL2 distribution. No deployment, provider, or sandbox mutation was performed. |
-| Native-host, gVisor/Kata, compatibility, and live-network probes | **BLOCKED by current host (2026-09-19 06:34 UTC)** | Fresh `check_release_environment.py --require-native-linux --json`, `check_firecracker_worker_pool.py --live --json`, and `check_network_boundary.py --live --json` runs confirm WSL2/non-native Linux, unavailable Docker Engine/Compose, missing certified Firecracker compatibility launcher, no certified Kata host, and unavailable live container inspection. The probes performed no deployment mutation, provider call, network test, or sandbox execution; repeat them on the certified native-Linux host described by the exit runbook. |
-| Standard dependency/test runner | **BLOCKED in this sandbox** | The standard isolated `uv` command could not download missing wheels because network access is restricted and its global cache is read-only. The broad repository-local fallback is recorded separately as supplemental local coverage; the last authoritative isolated green run remains the 2026-09-15 run recorded below. |
-| Broad repository-local Python suite | **PASS (2026-09-19)** | `PYTHONPATH=packages/mas-core:packages/mas-api-sdk:packages/mas-tools-sdk:apps/orchestrator-api:apps/team-runner:apps/message-router:apps/tool-service:apps/identity-service:apps/pm-gateway:scripts ../.venv/bin/python -m pytest -q` passes the configured `mas/pyproject.toml` test paths at 100%; one existing `AsyncMock` resource warning remains. This is stronger local coverage, but does not replace the isolated-`uv` evidence or live/provider/operator gates. |
-| Python repository test suite | **PASS (last authoritative run: 2026-09-15)** | `uv run --isolated pytest -q`; all collected tests passed, with two non-failing `AsyncMock` resource warnings in existing system tests. |
+| Source revision at refresh | **`f68ce9cc` working-tree baseline** | The local validation was produced from the current implementation tree before this documentation refresh. The final commit SHA is intentionally not embedded until the change is committed. These checks do not close live/operator gates. |
+| Documentation authority/index check | **PASS (2026-09-19)** | `uv run --isolated python scripts/check_docs_index.py --json` reports 13 feature documents, 3 plans, 23 maintained/link-checked documents, and no link or policy errors. |
+| Migration source-head check | **PASS (2026-09-19)** | `uv run --isolated python scripts/check_database_migration_head.py --json` reports one source head: `0045_worker_tool_effects`; the live development database is also at that head. |
+| Release-environment identity probe | **PASS (2026-09-19 UTC)** | The host bootstrap verifies Python, uv, Node, npm, Docker Engine `29.8.1`, Compose `v5.0.0-desktop.1`, and pinned `runsc 20260914.0` through the dedicated `aiat-wsl` context. |
+| Native-host, gVisor/Kata, compatibility, and live-network probes | **DEV PASS / RELEASE PENDING** | WSL2 Docker/gVisor registration, digest-pinned smoke, Kata optional probe, local Compose, migration, and live network checks pass. `--require-native-linux` remains a separate release gate; no Kata runtime is registered and direct Firecracker remains superseded compatibility evidence. |
+| Standard dependency/test runner | **PASS (2026-09-19)** | The isolated `uv` environment completed the configured repository suite. Two existing non-failing `AsyncMock` resource warnings remain in system tests; live/provider/operator gates remain separate. |
+| Broad repository Python suite | **PASS (2026-09-19)** | `uv run --isolated pytest -q` completed the configured `mas/pyproject.toml` test paths at 100%. |
+| Python repository test suite | **PASS (2026-09-19)** | `uv run --isolated pytest -q`; all collected tests passed, with two non-failing `AsyncMock` resource warnings in existing system tests. |
 | Current repository-local Python component suites | **PASS (2026-09-19)** | Fresh fallback-environment runs pass `packages/mas-core/tests`, `packages/mas-api-sdk/tests`, `apps/orchestrator-api/tests`, `apps/tool-service/tests`, `apps/team-runner/tests`, `apps/message-router/tests`, `apps/identity-service/tests`, `apps/pm-gateway/tests`, `infra/mail-edge/tests`, `infra/smtp-gateway/tests`, and `scripts/tests`; identity/tool suites retain their explicit skips and the orchestrator suite retains two existing non-failing `AsyncMock` warnings. The three live model-smoke CLI scripts under `packages/mas-core/scripts` are not pytest suites and require provider credentials. |
-| Script test suite | **PASS (2026-09-19)** | Repository-local fallback: `PYTHONPATH=packages/mas-core:packages/mas-api-sdk:apps/orchestrator-api:apps/team-runner:apps/message-router:apps/tool-service:scripts ../.venv/bin/python -m pytest -q scripts/tests`; all collected script tests passed; two existing Python 3.14 tar-extraction deprecation warnings remained non-failing. The standard isolated `uv` invocation remains blocked by this environment. |
+| Script test suite | **PASS (2026-09-19)** | `uv run --isolated pytest -q scripts/tests` and the repository-local fallback both pass; two existing Python 3.14 tar-extraction deprecation warnings remain non-failing. |
 | Current focused architecture/documentation suites | **PASS (2026-09-19)** | The repository-local fallback environment passed `test_docs_index.py`, architecture invariants/adapter inventory, ProcessAdapter security, project outbox, runtime-binding/tool-effect, worker-governance, TeamRunner runtime-plane, Redis characterization, and project state-history ownership coverage. This narrower run does not replace the full standard suite. |
 | Bounded Python compilation | **PASS** | Checked-in `mas_core`, orchestrator, message-router, team-runner, tool-service, and `mas/scripts` Python roots; generated dashboard dependency trees excluded. |
-| Static release ledger | **PASS: 64/64 checks (2026-09-19)** | The current static invocation passes all 64 checks and confirms source migration head `0045_worker_tool_effects`; the ledger still returns **NO-RELEASE** because two pending evidence items, no live profile, and the unrelated untracked operator file keep the worktree/release decision open. |
-| Clean-clone static release certificate | **PASS (historical candidate)** | The retained certificate covers the exact pre-repartition candidate `76272905db777829ccf21b61748eb467cafaf645`, with zero changed paths and 64/64 static checks. It is not a certificate for current `HEAD` `2645309f`; regenerate and deliberately freeze a new exact candidate before using it as release evidence. The scalar certificate is [`release_ledger_clean_candidate_static.json`](../../mas/docs/provenance/release_ledger_clean_candidate_static.json). |
-| Database migration-head guard | **PASS static; BLOCKED live** | `check_database_migration_head.py --json` verifies source head `0045_worker_tool_effects`; the live read-only query is blocked in this WSL2/Compose profile because the migration-check DSN cannot reach the published database port. Independent read-only inspection still reports the running local database at `0042_worker_run_host_binding`; no migration or restart was performed. |
-| Authenticated local-Compose live release sweep | **83/89 pass; 0 fail; 6 blocked** | `check_release_ledger.py --live --compose-local --json` at `2026-09-15T12:11:27Z` using the configured operator/tool-service authentication aliases without retaining secrets. Bounded live tool trace, catalog/metrics/runtime/trace/SLO, and worker-reconciliation checks passed; the six remaining blockers are native-host/environment, database migration-head reachability, deployment-image provenance, `vm_isolated`/Firecracker compatibility readiness, outbound mail lifecycle, and operator-selected self-improvement scope. Four pending evidence items and the dirty worktree keep the global decision **NO-RELEASE**. |
-| Source/deployment migration boundary | **SOURCE 0045; local Compose DB 0042** | Read-only inspection of the running local Postgres reports `0042_worker_run_host_binding`; migrations `0043_project_transition_outbox`, `0044_worker_run_runtime_bindings`, and `0045_worker_tool_effects` are present in source but not applied to that running database. No migration or service restart was performed in this pass. Source-level tests and static checks therefore do not constitute live evidence for those later tables. |
+| Static release ledger | **PASS: 61 active + 3 not-in-scope = 64 checks (2026-09-19)** | The current static invocation has 0 failures/blocked checks and confirms source migration head `0045_worker_tool_effects`; the ledger still returns **NO-RELEASE** because two pending evidence items, no live profile, and the dirty worktree keep the release decision open. |
+| Clean-clone static release certificate | **PASS (historical candidate)** | The retained certificate covers the exact pre-repartition candidate `76272905db777829ccf21b61748eb467cafaf645`, with zero changed paths and 64/64 static checks. It is not a certificate for the current working tree; regenerate and deliberately freeze a new exact candidate before using it as release evidence. The scalar certificate is [`release_ledger_clean_candidate_static.json`](../../mas/docs/provenance/release_ledger_clean_candidate_static.json). |
+| Database migration-head guard | **PASS static and live** | The normal local Alembic path applied migrations through `0045_worker_tool_effects`; the host-side read-only checker reports the same source and live head. |
+| Authenticated local-Compose live release sweep | **74 pass; 0 fail; 10 blocked; 5 not-in-scope** | The host bootstrap ran `check_release_ledger.py --live --compose-local --json` at `2026-09-19T20:21:23Z` through the dedicated `aiat-wsl` Docker daemon. The source/live database head is `0045_worker_tool_effects`; project/network/sandbox/local service checks pass. Remaining blockers are native-host/environment, trace/observability credentials or endpoint availability, deployment-image provenance, SLO/worker-reconciliation/runtime-catalog reachability, and pending operator evidence. Firecracker is superseded, self-improvement is deferred, and the maintained default mail path is `PASS_FOR_DEFAULT_SCOPE`; those are not active blockers. Four pending evidence items and the dirty worktree keep the global decision **NO-RELEASE**. |
+| Source/deployment migration boundary | **SOURCE 0045; local Compose DB 0045** | The local development database is current at `0045_worker_tool_effects`; no `alembic_version` shortcut or manual state edit was used. |
 | Runtime-adapter inventory/consolidation | **PASS** | Machine-checked reference inventory; LangGraph/CrewAI now share the canonical `runtime_adapters.py` implementation through compatibility shims, while the legacy factory, Letta dotted configuration, and MAF certification references still prevent full-family deletion. |
 | OpenCode/OpenHands benchmark plan | **PASS: ready, not run** | The fixed 40-task corpus and 160-run plan validate with no network, provider, credential, or payload activity; the checker deliberately emits `NOT_RUN` with no winner. Live candidate certification and benchmark execution remain operator/runtime gates. | [`check_coding_runtime_benchmark.py`](../../mas/scripts/check_coding_runtime_benchmark.py) · [`corpus.json`](../../mas/scripts/fixtures/coding-runtime-benchmark/corpus.json) · [benchmark specification](../../mas/docs/AIAT_OSS_ARCHITECTURE_AND_IMPLEMENTATION_PLAN.md#opencode-versus-openhands) |
 | Pydantic AI vs AgentBase benchmark plan | **PASS: ready, not run** | The fixed 48-case corpus and 288-run plan validate with no Pydantic AI dependency, activation, provider, credential, or payload activity; the checker deliberately emits `NOT_RUN` with no adoption decision. Provider execution and qualitative/code-deletion gates remain open. | [`check_pydantic_agentbase_benchmark.py`](../../mas/scripts/check_pydantic_agentbase_benchmark.py) · [`corpus.json`](../../mas/scripts/fixtures/pydantic-agentbase-benchmark/corpus.json) · [benchmark specification](../../mas/docs/AIAT_OSS_ARCHITECTURE_AND_IMPLEMENTATION_PLAN.md#pydantic-ai-versus-agentbase) |
@@ -106,25 +124,17 @@ recovery, or human/operator gates.
 | Restricted Redis ACL/Lua smoke | **PASS** | Local Redis service recreated from the current Compose ACL migration; authenticated router scripting, atomic stream append, and denied `CONFIG` access were verified, with the probe entry removed afterward. This is not a production outage or multi-host proof. |
 | Review-regression suite | **PASS for focused and broad repository-local coverage** | Post-review focused coverage passes for Redis ACL/script authorization, cancellation/recovery races, scanner failure classification and evidence hashes, migration-head compatibility, sandboxed image probing, governance model-provenance producer wiring, project ownership, and state-history ownership. The current configured repository-local Python suite also passes at 100%; one existing non-failing `AsyncMock` warning remains. Live outage, host, provider, schema-migration, and operator gates remain separate. |
 
-Current environment boundary: a fresh probe at `2026-09-19T06:34:01Z`
-confirms that this WSL2 distribution has `runsc release-20260817.0`, but no
-usable Docker Engine/Compose, no certified Firecracker compatibility launcher,
-no certified Kata host, and no live container inspection path. Compose, gVisor
-smoke, Kata `vm_isolated` readiness, compatibility, and live network checks
-therefore remain blocked in this session. The latest
-authenticated `check_release_ledger.py --live --compose-local --json` run at
-`2026-09-15T12:11:27Z` reports 83/89 pass, 0 fail, and 6 externally blocked.
-The remaining blockers are native-host/environment, database migration-head
-reachability, deployment-image provenance, `vm_isolated`/Firecracker
-compatibility readiness,
-outbound mail lifecycle, and operator-selected self-improvement scope. Four
-pending evidence items and the dirty worktree keep the global decision
-`NO-RELEASE`. This does not claim a
-fresh native Linux, Kata/Firecracker compatibility, independent-host, provider-backed worker,
-outbound-mail, or operator-selected self-improvement certification run.
-The source migration head is `0045_worker_tool_effects`, while the currently
-running local Compose database remains at `0042_worker_run_host_binding`; no
-deployment migration or service restart was performed during this validation.
+Current environment boundary: the WSL2 host-bootstrap result at
+`2026-09-19T20:21:24Z` reports `DEV_READY`. Docker Engine/Compose are
+reachable through the dedicated `aiat-wsl` context; `runsc` is registered and
+the digest-pinned smoke passes; local Compose, migration head `0045`, and the
+live network-boundary check pass. `/dev/kvm` is visible, but no Kata runtime is
+registered or certified, so `vm_isolated` is `OPTIONAL_UNAVAILABLE`.
+The release result remains `RELEASE_CERTIFICATION_PENDING`: this does not claim
+native Linux, provider-backed worker, independent-host, deployment, outbound-
+mail, operator-selected self-improvement, or Kata certification evidence. The
+historical direct Firecracker readiness record remains compatibility evidence
+only and is not an active development blocker.
 
 The current working tree is intentionally dirty with pre-existing/user changes;
 the validation rows above describe the checked files and do not imply a clean
@@ -356,7 +366,7 @@ P2 plan checkpoints:
 
 | Gate | Current state | Required evidence | Authority |
 | --- | --- | --- | --- |
-| gVisor smoke/network and Kata `vm_isolated` host proof | **Static contract PASS; runtime proof blocked** | A certified native host must run the gVisor deny/allow matrix and, for high-risk work, the Kata `vm_isolated` runtime/readiness, network, cleanup, and recovery checks. The direct Firecracker launcher/readiness remains compatibility/benchmark evidence. `runsc release-20260817.0` is installed in the current WSL2 environment, but Docker Engine registration/smoke and certified VM-host evidence are unavailable; no weaker runtime fallback is permitted. | [Workers, Stewards, Tools, and Models](FEATURE_WORKERS_STEWARDS_AND_MODELS.md) · [P2 Workstream 3](plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md#workstream-3--multi-host-and-high-risk-execution) · [Native-Linux exit runbook](../../mas/docs/P0_NATIVE_LINUX_EXIT_RUNBOOK.md) |
+| gVisor smoke/network and Kata `vm_isolated` host proof | **WSL development PASS; native release proof pending** | The dedicated WSL2 `aiat-wsl` Docker daemon registers pinned `runsc 20260914.0` and the digest-pinned smoke passes. The local network-boundary check also passes. A certified native host must still run the release gVisor deny/allow matrix and, for high-risk work, Kata `vm_isolated` runtime/readiness, network, cleanup, and recovery checks. Direct Firecracker remains compatibility/benchmark evidence; no weaker runtime fallback is permitted. | [Workers, Stewards, Tools, and Models](FEATURE_WORKERS_STEWARDS_AND_MODELS.md) · [P2 Workstream 3](plans/P2_SCALE_STORAGE_AND_AUTONOMY_PLAN.md#workstream-3--multi-host-and-high-risk-execution) · [Native-Linux exit runbook](../../mas/docs/P0_NATIVE_LINUX_EXIT_RUNBOOK.md) · [WSL readiness artifact](../../mas/docs/provenance/dev_host_readiness.json) |
 
 ## Completed implementation slices tracked here
 

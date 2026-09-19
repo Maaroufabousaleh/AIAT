@@ -45,12 +45,27 @@ reason: gvisor_runsc_runtime_not_available
 no runc fallback
 ```
 
-## Operator Task: Register gVisor `runsc`
+## WSL2 operator bootstrap: Docker Engine and gVisor `runsc`
 
-Run this on the Linux Docker host that actually runs AIAT containers. For
-Docker Desktop on Windows, installing `runsc` somewhere on Windows is not
-enough; the runtime has to be registered inside the Linux Docker daemon
-environment.
+For the supported AIAT development WSL2 profile, run the idempotent host
+bootstrap from the repository root. It installs/configures the WSL-local Docker
+Engine and pinned gVisor package when needed, registers `runsc` with that
+daemon, executes the digest-pinned smoke, starts/migrates local Compose, and
+writes [`dev_host_readiness.json`](../../docs/provenance/dev_host_readiness.json):
+
+```bash
+bash mas/scripts/bootstrap-dev-host.sh
+```
+
+This is an operator/host action. It does not run inside an AIAT application
+container and does not expose the Docker socket to workers. It protects an
+existing Docker Desktop daemon by using the dedicated `aiat-wsl` context and
+daemon socket. On another Linux host, configure the daemon that actually runs
+AIAT containers; installing `runsc` somewhere on Windows is not sufficient.
+
+The explicit lower-level installation sequence below is retained as historical
+diagnostic reference for a separately managed Linux host; it is not required
+for the supported WSL2 development workflow.
 
 ```bash
 (

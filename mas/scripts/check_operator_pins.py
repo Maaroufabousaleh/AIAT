@@ -20,7 +20,11 @@ import yaml
 MAS_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PINS = MAS_ROOT / "docs" / "provenance" / "operator_pins.yaml"
 CHECK_SCHEMA = "aiat.operator-pin-contract.v1"
-CONCRETE_VERSION_RE = re.compile(r"^(?:v)?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
+# Most package/tool pins use semver. Host runtimes such as gVisor publish
+# calendar-style release identifiers (YYYYMMDD.N); those are exact pins too.
+CONCRETE_VERSION_RE = re.compile(
+    r"^(?:(?:v)?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?|\d{8}\.\d+)$"
+)
 
 
 def _load(path: Path) -> dict[str, Any]:

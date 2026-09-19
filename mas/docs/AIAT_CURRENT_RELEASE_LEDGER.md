@@ -1,25 +1,28 @@
 # AIAT Current Release Ledger
 
-**Run date:** 2026-09-09
+**Run date:** 2026-09-19
 **Integration baseline:** reviewed OpenHands work is merged on the temporary integration branch from `origin/main` at `2c99b75a`; the reviewed OpenHands tip before integration is `15d2c1a874a2748548338066782b89561353de2e`.
-**Current published revision:** current pushed `main` (implementation/content baseline `2645309f`; later commits are documentation-only)
+**Current published revision:** current pushed `main` plus the current architecture/host-readiness working tree (final commit SHA is recorded after commit)
 **Working-tree state:** published `main` tree with the protected untracked operator file `OpenTerminal-integration.md`; this ledger is a P0 progress ledger, not a production release certificate
 **Decision:** **NO-RELEASE / P0 INCOMPLETE**
 
-## Current working-tree refresh — 2026-09-15
+## Current WSL development refresh — 2026-09-19
 
-The current static release-ledger invocation reports **64/64 pass**. The
-authenticated local-Compose live sweep at `2026-09-15T12:11:27Z` against
-revision `0f068476db908ee43bbc52900bf421394a121e6c` reports **83/89 pass,
-0 fail, 6 blocked**, and four pending evidence items. The blocked checks are
-native-host/environment, database migration-head reachability,
-deployment-image provenance, Kata `vm_isolated` host readiness, outbound mail
-lifecycle, and operator-selected self-improvement scope. The source migration
-head is `0045_worker_tool_effects`; the currently running local Compose
-database remains at `0042_worker_run_host_binding`, and no migration or
-service restart was performed. The scalar live summary is retained at
+The current static release-ledger invocation reports **61 active pass + 3
+not-in-scope = 64 checks**, with zero failures/blocked checks and two pending
+evidence items. The authenticated local-Compose live sweep at
+`2026-09-19T20:21:23Z` through the dedicated `aiat-wsl` Docker daemon reports
+**74 pass, 0 fail, 10 blocked, 5 not-in-scope**, and four pending evidence
+items. The source and running local Compose database are both at
+`0045_worker_tool_effects`; the normal Alembic path applied the pending local
+migrations. The scalar live summary is retained at
 [`provenance/release_ledger_live_compose_local_current.json`](provenance/release_ledger_live_compose_local_current.json).
-The global decision remains **NO-RELEASE**.
+The WSL development status is **DEV_READY**; the global release decision
+remains **NO-RELEASE / RELEASE_CERTIFICATION_PENDING** because WSL2 is not
+native-Linux release evidence. Kata is `OPTIONAL_UNAVAILABLE` and
+`vm_isolated` remains fail-closed. Firecracker is superseded, self-improvement
+is deferred, and the maintained default email path is
+`PASS_FOR_DEFAULT_SCOPE`; those are not active blockers.
 
 The default Cloudflare/Resend v1 email identity path is separately
 live-certified. The secret-safe evidence in
@@ -32,24 +35,23 @@ sandbox, KMS, recovery, security, and worker/provider gates remain open.
 
 ## Repository validation refresh — 2026-09-19
 
-The implementation/test baseline for this refresh is current published `main`
-revision `2645309f`; this evidence
-note is published separately from that implementation baseline. The checked-in API contract
+The implementation/test baseline for this refresh is the current working tree
+from `f68ce9cc` before the final commit; the checked-in API contract
 contains 238 OpenAPI paths, 137 schemas/models, and 271 operations. The static
 API, Python SDK, TypeScript, documentation-index, and migration-head checks
-pass. The broad repository-local Python suite also
-passes at 100% against the configured `mas/pyproject.toml` test paths, with
-one existing non-failing `AsyncMock` resource warning; the separately run
-identity-service, PM/mail, SDK, and script-test roots also pass. Explicit
-isolated-`uv`, live-provider, native-host, Docker/Compose, and operator gates
-remain outside this refresh.
+pass. The broad isolated-`uv` Python suite also passes at 100% against the
+configured `mas/pyproject.toml` test paths, with two existing non-failing
+`AsyncMock` resource warnings in system tests; the separately run
+identity-service, PM/mail, SDK, and script-test roots also pass. Live-provider,
+native-host, and operator gates remain outside this refresh.
 The retained clean-clone certificate is historical and remains pinned to exact
 candidate baseline `76272905db777829ccf21b61748eb467cafaf645`; it reproduces
 64/64 static checks with zero changed paths for that candidate only. Its two
 pending evidence items and `NO-RELEASE` decision remain recorded in
 [`release_ledger_clean_candidate_static.json`](provenance/release_ledger_clean_candidate_static.json).
-It is not evidence for current `main` revision `2645309f`; a new exact
-candidate certificate must be generated before release evidence is frozen.
+It is not evidence for the current architecture/host-readiness working tree;
+a new exact candidate certificate must be generated before release evidence is
+frozen.
 The dependency-free OpenCode/OpenHands benchmark-corpus contract is also
 validated locally: 40 fixed tasks, 160 planned runs, no network/provider/
 credential activity, and `execution_status: NOT_RUN`. It is readiness evidence
@@ -1007,7 +1009,7 @@ release decision are intentionally not recomputed from the dirty working tree.
 | Default runtime install profile | static source/lock/Dockerfile contract | PASS | Commits `9a10a4b` and tracked workspace lock `2b13d89`; `uv lock --check` and `uv run --isolated python scripts/check_runtime_install_profile.py --json` reconcile the `runtime-default` LangGraph/CrewAI extra, locked versions (`langgraph` 0.6.11 and `crewai` 1.6.1), runtime-catalogue imports, and production Dockerfile install command; package imports and worker certification remain separate |
 | Workspace lock reproducibility | clean-archive/static packaging | PASS | Tracked lock commit `2b13d89`; `uv sync --locked --dev --dry-run` resolves 351 packages and would install the declared workspace without lock drift, while a clean Git archive contains `mas/uv.lock` and passes `check_docs_index.py` |
 | Default worker steward lifecycle | deterministic domain fixture + restart-safe persistence path | PASS (domain evidence; live open) | Existing steward contract `c80e339`, fixture coverage test `fe6fb8d`, durable compatibility-matrix writer/reader and bounded evidence test `ceb7011`; `uv run --isolated python scripts/check_worker_steward_contract.py --json` plus `uv run --isolated pytest packages/mas-core/tests/test_worker_steward_contract.py apps/orchestrator-api/tests/test_steward_rehydration.py packages/mas-core/tests/test_compatibility_matrix_persistence.py -q` exercises dedicated steward, immutable candidate, compatibility matrix, certification/approval, shadow → read-only canary → promotion, regression blocking, and pre-activation rollback for both externally sourced default workers; certification records the matrix in the same-process steward cache and durable store, while API rehydration restores durable active bundle/adapter IDs plus persisted compatibility-matrix rows, normalizing profile/capability JSON and failing closed on malformed evidence. Evidence is [`provenance/worker_steward_contract.json`](provenance/worker_steward_contract.json). Database reconciliation, security, sandbox, live canary, and worker-run evidence remain open |
-| Sandbox runtime readiness | static + retained native CI evidence; local Docker runtime probe | PASS (static contract + native Ubuntu gVisor certificate; local WSL probe blocked) | Commits `a24c554`, `2c098f5`, and native workflow hardening `d012ab9`, with retained workflow run `32541110299`; `uv run --isolated pytest packages/mas-core/tests/test_sandbox_runtime_readiness.py -q` and the native gVisor regression suite pass. The workflow now verifies the exact checked-out candidate SHA, rejects mutable smoke/hello image references before Docker execution, and reuses the digest-pinned smoke image for both probes. `uv run --isolated python scripts/check_sandbox_runtime_readiness.py --json` reconciles 39 manifests, 10 hardened external workers, and the AIAT-owned `opencode-runtime` Compose boundary (internal-only network, no host ports, non-root/read-only, cap-drop ALL, no-new-privileges, bounded CPU/memory/PIDs, noexec/nosuid tmpfs). [`provenance/native_gvisor_certification_live.json`](provenance/native_gvisor_certification_live.json) records native Ubuntu, `runsc` registration, digest-pinned smoke, sandbox, cleanup, and zero-residue PASS; the local WSL `--live` probe remains blocked because `runsc` is not registered there, and broader native-host, image, network-denial, canary, and Firecracker checks remain separate. |
+| Sandbox runtime readiness | static + native CI evidence + WSL development-host probe | PASS for development; release certification pending | Commits `a24c554`, `2c098f5`, native workflow hardening `d012ab9`, and the current host bootstrap; `uv run --isolated pytest packages/mas-core/tests/test_sandbox_runtime_readiness.py -q` and the native gVisor regression suite pass. The dedicated WSL2 `aiat-wsl` daemon registers pinned `runsc 20260914.0`; the digest-pinned smoke image `ubuntu@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517` passes with the bounded constraints, local Compose/migration/network checks pass, and the secret-safe result is [`provenance/dev_host_readiness.json`](provenance/dev_host_readiness.json). Kata is `OPTIONAL_UNAVAILABLE` on WSL2; native-Linux release, image, network-denial, canary, provider, and high-risk `vm_isolated` evidence remain separate. |
 | Direct Firecracker compatibility worker launch contract | static + read-only host readiness | PASS (contract); BLOCKED (host) | Commit `5ed0a0b`; focused contract/checker tests and Ruff pass. `check_firecracker_worker_pool.py --live --json` validates the immutable kernel/rootfs, bounded resource, read-only, deny-by-default egress, opaque-secret, artifact, and cleanup contract without launching a VM; the current host lacks both `aiat-firecracker-launcher` and `firecracker`, so compatibility smoke/network/provider/recovery are not checked and no weaker fallback is allowed. This is not a separate AIAT policy tier; future high-risk execution uses Kata `vm_isolated`, with Firecracker retained only as compatibility evidence or a selected Kata VMM. Evidence is [`provenance/firecracker_worker_pool_readiness.json`](provenance/firecracker_worker_pool_readiness.json) |
 | Runtime benchmark readiness | read-only live API probe | PASS (fresh Compose dependency dry-run; certification boundary remains open) | Base contract `ad31793`; bounded endpoint/test hardening `4d61279`; the secret-safe authenticated Compose run was refreshed 2026-08-18 in `cb47e3b`; `uv run --isolated pytest packages/mas-core/tests/test_runtime_benchmarks.py apps/orchestrator-api/tests/test_epsilon_runtimes.py -q` passes. Third-party imports execute off the API event loop with a capped timeout and explicit `benchmark_timeout`/`benchmark_error` responses; the live probe passes one LangGraph and one CrewAI dependency dry-run and is retained at [`runtime_benchmarks_live.json`](provenance/runtime_benchmarks_live.json). Missing API/package/validation evidence remains exit 2 when encountered; package benchmarks never certify a worker canary/live run/rollback |
 | Default runtime adapter conformance | unit/fixture + Compose package/lifecycle and lock-parity probe | PASS (adapter and exact-lock evidence; worker certification open) | Commit `c51b37d` fixes the framework envelope boundary: CrewAI now preserves project context and message history, while LangGraph and CrewAI normalize an absent project ID to `null`; focused adapter/conformance tests pass. The refreshed `docker exec mas-orchestrator-api-1 python /app/scripts/check_runtime_adapter_conformance.py --live --json` probe passes actual `LangGraphAdapter` and `CrewAIAdapter` classes with locked LangGraph `0.6.11` and CrewAI `1.6.1`, verifying project/message preservation, bounded completion, health, and shutdown without model/tool/provider/project calls; secret-safe evidence is [`provenance/runtime_adapter_conformance_live.json`](provenance/runtime_adapter_conformance_live.json). Sandbox, canary, live worker-run, and rollback evidence remain open |

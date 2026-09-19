@@ -40,8 +40,10 @@ def test_static_release_ledger_aggregates_bounded_verifiers_without_release_clai
         row for row in report["checks"] if row["id"] == "firecracker_worker_pool_readiness"
     )
     assert firecracker["category"] == "integration"
-    assert firecracker["status"] == "pass"
-    assert firecracker["summary"] == {"status": "pass", "mode": "static"}
+    assert firecracker["scope_status"] == "superseded"
+    assert firecracker["status"] == "not_in_scope"
+    assert firecracker["summary"]["status"] == "not_in_scope"
+    assert firecracker["summary"]["scope_status"] == "superseded"
     provider_recovery = next(
         row for row in report["checks"] if row["id"] == "gateway_provider_recovery"
     )
@@ -118,11 +120,10 @@ def test_static_release_ledger_aggregates_bounded_verifiers_without_release_clai
     assert lifecycle["summary"]["passed_case_count"] == 8
     outbound = next(row for row in report["checks"] if row["id"] == "outbound_mail_lifecycle")
     assert outbound["status"] == "pass"
-    assert outbound["summary"]["errors"] == []
-    assert outbound["summary"]["mode"] == "fixture"
+    assert outbound["scope_status"] == "pass_for_default_scope"
     assert outbound["summary"]["status"] == "pass"
-    assert outbound["summary"]["case_count"] == 6
-    assert outbound["summary"]["passed_case_count"] == 6
+    assert outbound["summary"]["scope_status"] == "pass_for_default_scope"
+    assert "AIAT_Email_Identity_Live_Certification.md" in outbound["summary"]["reason"]
     lifecycle = next(row for row in report["checks"] if row["id"] == "worker_run_lifecycle")
     assert lifecycle["status"] == "pass"
     assert lifecycle["summary"]["mode"] == "fixture"
@@ -144,12 +145,10 @@ def test_static_release_ledger_aggregates_bounded_verifiers_without_release_clai
     candidates = next(
         row for row in report["checks"] if row["id"] == "self_improvement_candidate_detection"
     )
-    assert candidates["status"] == "pass"
-    assert candidates["summary"]["errors"] == []
-    assert candidates["summary"]["mode"] == "fixture"
-    assert candidates["summary"]["status"] == "pass"
-    assert candidates["summary"]["case_count"] == 6
-    assert candidates["summary"]["passed_case_count"] == 6
+    assert candidates["scope_status"] == "deferred"
+    assert candidates["status"] == "not_in_scope"
+    assert candidates["summary"]["scope_status"] == "deferred"
+    assert candidates["summary"]["status"] == "not_in_scope"
     flow_semantics = next(row for row in report["checks"] if row["id"] == "flow_execution_semantics")
     assert flow_semantics["status"] == "pass"
     flow_runtime = next(row for row in report["checks"] if row["id"] == "flow_runtime_live")
@@ -241,8 +240,8 @@ def test_static_release_ledger_aggregates_bounded_verifiers_without_release_clai
     operator_pins = next(row for row in report["checks"] if row["id"] == "operator_pins")
     assert operator_pins["status"] == "pass"
     assert operator_pins["summary"]["pin_count"] == 17
-    assert operator_pins["summary"]["locked_count"] == 9
-    assert operator_pins["summary"]["unavailable_count"] == 8
+    assert operator_pins["summary"]["locked_count"] == 10
+    assert operator_pins["summary"]["unavailable_count"] == 7
     release_environment = next(
         row for row in report["checks"] if row["id"] == "release_environment"
     )

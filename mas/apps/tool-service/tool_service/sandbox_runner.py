@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from mas_core.sandbox_policy import canonical_sandbox_class
+
 
 def _bounded_int(value: Any, *, minimum: int, maximum: int, name: str) -> int:
     try:
@@ -69,8 +71,13 @@ def _runtime_available(docker: str) -> bool:
 
 
 def execute(payload: dict[str, Any]) -> dict[str, Any]:
-    if payload.get("profile") != "gvisor":
-        raise ValueError("sandbox profile must be gvisor")
+    profile = str(payload.get("profile") or payload.get("sandbox_profile") or "sandboxed").strip().lower()
+    try:
+        sandbox_class = canonical_sandbox_class(profile)
+    except ValueError as exc:
+        raise ValueError("sandbox profile must be trusted, sandboxed, or vm_isolated") from exc
+    if sandbox_class != "sandboxed":
+        raise ValueError("the Docker sandbox runner only implements the sandboxed/gVisor class")
     if payload.get("network_mode") != "egress-deny-all":
         raise ValueError("only egress-deny-all is supported")
 
@@ -104,7 +111,8 @@ def execute(payload: dict[str, Any]) -> dict[str, Any]:
             "available": False,
             "configured": True,
             "reason": "gvisor_docker_cli_not_available",
-            "sandbox_profile": "gvisor",
+            "sandbox_profile": profile,
+            "sandbox_class": sandbox_class,
         }
     runtime_available, runtime_reason = _runtime_probe(docker)
     if not runtime_available:
@@ -112,7 +120,8 @@ def execute(payload: dict[str, Any]) -> dict[str, Any]:
             "available": False,
             "configured": True,
             "reason": runtime_reason,
-            "sandbox_profile": "gvisor",
+            "sandbox_profile": profile,
+            "sandbox_class": sandbox_class,
         }
 
     image = os.getenv("AIAT_SANDBOX_IMAGE", "mas/tool-service:latest")
@@ -168,7 +177,8 @@ def execute(payload: dict[str, Any]) -> dict[str, Any]:
                 "available": False,
                 "configured": True,
                 "reason": "gvisor_container_launch_failed",
-                "sandbox_profile": "gvisor",
+                "sandbox_profile": profile,
+                "sandbox_class": sandbox_class,
             }
         try:
             returncode: int | None = process.wait(timeout=timeout)
@@ -201,7 +211,8 @@ def execute(payload: dict[str, Any]) -> dict[str, Any]:
         "stderr_truncated": stderr_size > output_limit,
         "timed_out": timed_out,
         "duration_ms": round((time.monotonic() - started) * 1000, 2),
-        "sandbox_profile": "gvisor",
+        "sandbox_profile": profile,
+        "sandbox_class": sandbox_class,
         "network_mode": "egress-deny-all",
     }
 
@@ -218,6 +229,7 @@ def main() -> None:
             "configured": True,
             "reason": "sandbox_request_invalid",
             "sandbox_profile": "gvisor",
+            "sandbox_class": "sandboxed",
         }
     except (OSError, subprocess.SubprocessError):
         result = {
@@ -225,6 +237,7 @@ def main() -> None:
             "configured": True,
             "reason": "sandbox_runtime_error",
             "sandbox_profile": "gvisor",
+            "sandbox_class": "sandboxed",
         }
     except Exception:
         result = {
@@ -232,6 +245,7 @@ def main() -> None:
             "configured": True,
             "reason": "sandbox_execution_error",
             "sandbox_profile": "gvisor",
+            "sandbox_class": "sandboxed",
         }
     json.dump(result, sys.stdout)
     sys.stdout.write("\n")

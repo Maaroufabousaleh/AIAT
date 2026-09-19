@@ -645,7 +645,7 @@ function RegisterWorkerModal({
     version_pin: "",
     transport_mode: "process",
     adapter_entrypoint: "",
-    sandbox_profile: "restricted",
+    sandbox_profile: "sandboxed",
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -846,7 +846,7 @@ function RegisterWorkerModal({
                   setForm({ ...form, sandbox_profile: e.target.value })
                 }
               >
-                {["restricted", "standard", "gvisor", "firecracker"].map(
+                {["trusted", "sandboxed", "vm_isolated"].map(
                   (p) => (
                     <option key={p} value={p}>
                       {p}

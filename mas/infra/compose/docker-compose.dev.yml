@@ -8,23 +8,39 @@
 
 name: mas
 
+networks:
+  # Development-only host access for local diagnostics.  This network is
+  # intentionally separate from the application public network; its ports
+  # are bound to the WSL loopback interface below.
+  dev_host_access:
+    driver: bridge
+
 services:
 
   # Expose Redis on host for local debugging (e.g. RedisInsight)
   redis:
     ports:
-      - "6379:6379"
+      - "127.0.0.1:${AIAT_DEV_REDIS_PORT:-6379}:6379"
+    networks:
+      - internal
+      - dev_host_access
 
   # Expose Postgres on host for psql / pgAdmin
   postgres:
     ports:
-      - "5432:5432"
+      - "127.0.0.1:${AIAT_DEV_POSTGRES_PORT:-5432}:5432"
+    networks:
+      - internal
+      - dev_host_access
 
   # Expose MinIO console on host
   minio:
     ports:
-      - "9000:9000"
-      - "9001:9001"   # MinIO Web console
+      - "127.0.0.1:${AIAT_DEV_MINIO_API_PORT:-9000}:9000"
+      - "127.0.0.1:${AIAT_DEV_MINIO_CONSOLE_PORT:-9001}:9001"   # MinIO Web console
+    networks:
+      - internal
+      - dev_host_access
 
   # pgAdmin — Postgres GUI
   pgadmin:
@@ -34,7 +50,7 @@ services:
       - internal
       - public
     ports:
-      - "5050:80"
+      - "${AIAT_DEV_PGADMIN_PORT:-5050}:80"
     environment:
       PGADMIN_DEFAULT_EMAIL: admin@example.com
       PGADMIN_DEFAULT_PASSWORD: "${POSTGRES_PASSWORD}"
@@ -48,7 +64,7 @@ services:
       - internal
       - public
     ports:
-      - "8003:5540"
+      - "${REDIS_INSIGHT_PORT:-8003}:5540"
     mem_limit: 256m
 
   # ── Prometheus (Phase 12) ─────────────────────────────────────────────────
@@ -59,7 +75,7 @@ services:
       - internal
       - public
     ports:
-      - "9090:9090"
+      - "${AIAT_DEV_PROMETHEUS_PORT:-9090}:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
@@ -81,12 +97,12 @@ services:
   # Dashboard already uses host port 4000, so LiteLLM uses 4001 on the host.
   litellm:
     ports:
-      - "4001:4000"
+      - "${AIAT_DEV_LITELLM_PORT:-4001}:4000"
 
   omniroute:
     ports:
-      - "20128:20128"
-      - "20129:20129"
+      - "${AIAT_DEV_OMNIROUTE_API_PORT:-20128}:20128"
+      - "${AIAT_DEV_OMNIROUTE_METRICS_PORT:-20129}:20129"
 
   dashboard:
     depends_on:
@@ -123,7 +139,7 @@ services:
       - internal
       - public
     ports:
-      - "8001:8001"
+      - "${AIAT_DEV_MESSAGE_ROUTER_PORT:-8001}:8001"
     command: >
       uvicorn message_router.main:app
         --host 0.0.0.0 --port 8001
@@ -135,7 +151,7 @@ services:
 
   tool-service:
     ports:
-      - "8002:8002"
+      - "${AIAT_DEV_TOOL_SERVICE_PORT:-8002}:8002"
     command: >
       uvicorn tool_service.main:app
         --host 0.0.0.0 --port 8002
@@ -146,8 +162,6 @@ services:
       WATCHFILES_FORCE_POLLING: "true"
 
   pm-gateway:
-    ports:
-      - "8010:8010"
     command: >
       uvicorn pm_gateway.main:app
         --host 0.0.0.0 --port 8010

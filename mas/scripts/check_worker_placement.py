@@ -25,8 +25,8 @@ def _host(
     lease_valid: bool = True,
     priority: int = 0,
     capabilities: frozenset[str] = frozenset({"native", "gpu"}),
-    sandbox_profiles: frozenset[str] = frozenset({"standard", "gvisor"}),
-    isolation_modes: frozenset[str] = frozenset({"native", "gvisor"}),
+    sandbox_profiles: frozenset[str] = frozenset({"trusted", "sandboxed"}),
+    isolation_modes: frozenset[str] = frozenset({"native", "sandboxed"}),
     capacity: HostCapacity | None = None,
 ) -> WorkerHostSnapshot:
     return WorkerHostSnapshot(
@@ -56,8 +56,8 @@ def build_report() -> dict[str, Any]:
         worker_id="fixture-worker",
         required_capabilities=frozenset({"native", "gpu"}),
         required_labels=(("zone", "a"),),
-        required_sandbox_profile="gvisor",
-        required_isolation_mode="gvisor",
+        required_sandbox_profile="sandboxed",
+        required_isolation_mode="sandboxed",
         memory_bytes=1024**3,
         gpu_count=1,
         slots=1,

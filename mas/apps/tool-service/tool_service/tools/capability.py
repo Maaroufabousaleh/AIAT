@@ -109,7 +109,10 @@ class CapabilityRegisterTool(BaseTool):
             "name": kwargs.get("name", worker_id),
             "role": kwargs.get("role"),
             "capabilities": list(kwargs.get("capabilities", [])),
-            "sandbox_profile": kwargs.get("sandbox_profile", "standard"),
+            # New external-worker registrations use the canonical hardened
+            # class. Legacy callers may still pass standard/restricted and
+            # the API preserves those values for compatibility reads.
+            "sandbox_profile": kwargs.get("sandbox_profile", "sandboxed"),
             "adapter_type": kwargs.get("adapter_type", "process"),
         }
         adapter_config = dict(kwargs.get("adapter_config") or {})

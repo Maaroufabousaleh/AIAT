@@ -643,7 +643,7 @@ async def test_operator_send_to_ceo_hiring_request_registers_candidate(client, m
     assert kwargs["team_id"] == "dept_production"
     assert kwargs["status"] == "INACTIVE"
     assert kwargs["evaluation_status"] == "pending"
-    assert kwargs["sandbox_profile"] == "restricted"
+    assert kwargs["sandbox_profile"] == "sandboxed"
     assert kwargs["isolation_mode"] == "wrapper"
     manifest = kwargs["wrapper_config"]["aiat_manifest"]
     assert manifest["metadata"]["id"] == "opencode"

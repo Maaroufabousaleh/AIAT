@@ -11,7 +11,7 @@ openapi:
   artifact: schemas/http/orchestrator.openapi.json
   openapi_version: "3.1.0"
   path_count: 238
-  sha256: 25b6c18798715e8b75675f1dc7c7e98b246a59b1507f7a07e383d4ff9bf1e617
+  sha256: ed8e8737b8f65900c9e1f75873258617b4983cfdd30dda922c710bdd44cf7354
 
 protocol:
   artifact: mas/packages/mas-core/schemas/protocol/aiat.v1.schema.json

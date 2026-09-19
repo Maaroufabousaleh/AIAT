@@ -43,7 +43,7 @@ type WorkerManifestSample = {
   };
   capabilities: Array<{ name: string; risk_level: "low" | "medium" | "high" }>;
   sandbox: {
-    profile: "standard" | "restricted" | "gvisor" | "firecracker";
+    profile: "trusted" | "sandboxed" | "vm_isolated";
     network_mode: "egress-allowlist" | "egress-deny-all" | "unrestricted";
     egress_allowlist: string[];
   };
@@ -92,7 +92,7 @@ export const workerManifestSample = {
   },
   capabilities: [{ name: "validate_contract", risk_level: "low" }],
   sandbox: {
-    profile: "restricted",
+    profile: "sandboxed",
     network_mode: "egress-allowlist",
     egress_allowlist: ["api.github.com"],
   },
