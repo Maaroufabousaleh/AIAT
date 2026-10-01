@@ -1,41 +1,992 @@
 {
-  "schema_version": "aiat.network-boundary-live.v1",
-  "programme_scope": "personal-internal-only",
-  "observed_at": "2026-08-18T09:26:00Z",
-  "contract_commit": "96fb71f",
-  "checker": "scripts/check_network_boundary.py --live --json",
-  "policy": "mas/docs/provenance/network_boundary_policy.yaml",
-  "policy_schema": "aiat.network-boundary-policy.v1",
-  "environment": {
-    "host_class": "WSL2 with Docker Desktop Linux engine",
-    "platform": "linux/amd64",
-    "compose_profile": "mas.sh development overlay",
-    "volumes_removed": false,
-    "credentials_printed": false
-  },
-  "matrix": {
-    "status": "pass",
-    "runner_count": 11,
-    "runner_statuses": {
-      "pass": 11,
-      "fail": 0
-    },
-    "logical_networks": ["workers"],
-    "internal_networks": ["internal", "workers"],
-    "allowed_gateways": [
-      "message-router:8001",
-      "tool-service:8002",
-      "orchestrator-api:8000",
-      "litellm:4000"
+  "allowed_gateways": [
+    "message-router",
+    "tool-service",
+    "orchestrator-api",
+    "litellm"
+  ],
+  "boundary_policy": {
+    "allowed": [
+      {
+        "network": "workers",
+        "port": 8001,
+        "service": "message-router"
+      },
+      {
+        "network": "workers",
+        "port": 8002,
+        "service": "tool-service"
+      },
+      {
+        "network": "workers",
+        "port": 8000,
+        "service": "orchestrator-api"
+      },
+      {
+        "network": "workers",
+        "port": 4000,
+        "service": "litellm"
+      }
     ],
-    "allowed_gateway_reachability": "all_pass",
-    "protected_service_denials": "all_pass",
-    "internet_denial": "all_pass",
-    "control_plane_storage_health": "all_pass",
-    "forbidden_environment_names": [],
-    "docker_socket_mounts": "none"
+    "ceo_service": "team-exec-ceo",
+    "external_denied": [
+      {
+        "host": "1.1.1.1",
+        "port": 443
+      }
+    ],
+    "forbidden_env_names": [
+      "MAS_API_KEY",
+      "PGBOUNCER_DSN",
+      "AWS_ACCESS_KEY_ID",
+      "AWS_SECRET_ACCESS_KEY",
+      "AWS_SESSION_TOKEN"
+    ],
+    "forbidden_env_prefixes": [
+      "MINIO_"
+    ],
+    "forbidden_mounts": [
+      "/var/run/docker.sock"
+    ],
+    "identity_env": {
+      "ceo": "AIAT_CEO_API_KEY",
+      "worker": "AIAT_WORKER_API_KEY"
+    },
+    "identity_service_port": 5432,
+    "networks": {
+      "internal": {
+        "internal": true
+      },
+      "workers": {
+        "internal": true
+      }
+    },
+    "protected": [
+      {
+        "network": "internal",
+        "port": 6379,
+        "service": "redis"
+      },
+      {
+        "network": "internal",
+        "port": 5432,
+        "service": "postgres"
+      },
+      {
+        "network": "internal",
+        "port": 5432,
+        "service": "pgbouncer"
+      },
+      {
+        "network": "internal",
+        "port": 9000,
+        "service": "minio"
+      },
+      {
+        "network": "internal",
+        "port": 4096,
+        "service": "opencode-runtime"
+      }
+    ],
+    "runner_network": "workers",
+    "schema_version": "aiat.network-boundary-policy.v1",
+    "service_prefix": "team-"
   },
-  "services": [
+  "compose": "/mnt/c/projects/aiat/mas/infra/compose/docker-compose.yml",
+  "errors": [],
+  "generated_at": "2026-09-30T19:13:31.517816+00:00",
+  "identity_services": [],
+  "live": {
+    "containers": [
+      {
+        "allowed": [
+          {
+            "host": "message-router",
+            "port": 8001,
+            "reachable": false
+          },
+          {
+            "host": "tool-service",
+            "port": 8002,
+            "reachable": false
+          },
+          {
+            "host": "orchestrator-api",
+            "port": 8000,
+            "reachable": false
+          },
+          {
+            "host": "litellm",
+            "port": 4000,
+            "reachable": false
+          }
+        ],
+        "container_id": "7225a94749c5",
+        "denied": [
+          {
+            "denied": true,
+            "host": "redis",
+            "port": 6379
+          },
+          {
+            "denied": true,
+            "host": "postgres",
+            "port": 5432
+          },
+          {
+            "denied": true,
+            "host": "pgbouncer",
+            "port": 5432
+          },
+          {
+            "denied": true,
+            "host": "minio",
+            "port": 9000
+          },
+          {
+            "denied": true,
+            "host": "opencode-runtime",
+            "port": 4096
+          },
+          {
+            "denied": true,
+            "host": "1.1.1.1",
+            "port": 443
+          }
+        ],
+        "docker_socket_present": false,
+        "forbidden_env": [],
+        "logical_networks": [
+          "workers"
+        ],
+        "networks": [
+          "mas_workers"
+        ],
+        "service": "team-dept-devops",
+        "status": "fail",
+        "storage_health": false
+      },
+      {
+        "allowed": [
+          {
+            "host": "message-router",
+            "port": 8001,
+            "reachable": false
+          },
+          {
+            "host": "tool-service",
+            "port": 8002,
+            "reachable": false
+          },
+          {
+            "host": "orchestrator-api",
+            "port": 8000,
+            "reachable": false
+          },
+          {
+            "host": "litellm",
+            "port": 4000,
+            "reachable": false
+          }
+        ],
+        "container_id": "92aa9aaccefa",
+        "denied": [
+          {
+            "denied": true,
+            "host": "redis",
+            "port": 6379
+          },
+          {
+            "denied": true,
+            "host": "postgres",
+            "port": 5432
+          },
+          {
+            "denied": true,
+            "host": "pgbouncer",
+            "port": 5432
+          },
+          {
+            "denied": true,
+            "host": "minio",
+            "port": 9000
+          },
+          {
+            "denied": true,
+            "host": "opencode-runtime",
+            "port": 4096
+          },
+          {
+            "denied": true,
+            "host": "1.1.1.1",
+            "port": 443
+          }
+        ],
+        "docker_socket_present": false,
+        "forbidden_env": [],
+        "logical_networks": [
+          "workers"
+        ],
+        "networks": [
+          "mas_workers"
+        ],
+        "service": "team-dept-production",
+        "status": "fail",
+        "storage_health": false
+      },
+      {
+        "allowed": [
+          {
+            "host": "message-router",
+            "port": 8001,
+            "reachable": false
+          },
+          {
+            "host": "tool-service",
+            "port": 8002,
+            "reachable": false
+          },
+          {
+            "host": "orchestrator-api",
+            "port": 8000,
+            "reachable": false
+          },
+          {
+            "host": "litellm",
+            "port": 4000,
+            "reachable": false
+          }
+        ],
+        "container_id": "5ad1c17de36e",
+        "denied": [
+          {
+            "denied": true,
+            "host": "redis",
+            "port": 6379
+          },
+          {
+            "denied": true,
+            "host": "postgres",
+            "port": 5432
+          },
+          {
+            "denied": true,
+            "host": "pgbouncer",
+            "port": 5432
+          },
+          {
+            "denied": true,
+            "host": "minio",
+            "port": 9000
+          },
+          {
+            "denied": true,
+            "host": "opencode-runtime",
+            "port": 4096
+          },
+          {
+            "denied": true,
+            "host": "1.1.1.1",
+            "port": 443
+          }
+        ],
+        "docker_socket_present": false,
+        "forbidden_env": [],
+        "logical_networks": [
+          "workers"
+        ],
+        "networks": [
+          "mas_workers"
+        ],
+        "service": "team-dept-qa",
+        "status": "fail",
+        "storage_health": false
+      },
+      {
+        "allowed": [
+          {
+            "host": "message-router",
+            "port": 8001,
+            "reachable": false
+          },
+          {
+            "host": "tool-service",
+            "port": 8002,
+            "reachable": false
+          },
+          {
+            "host": "orchestrator-api",
+            "port": 8000,
+            "reachable": false
+          },
+          {
+            "host": "litellm",
+            "port": 4000,
+            "reachable": false
+          }
+        ],
+        "container_id": "6f518f74140c",
+        "denied": [
+          {
+            "denied": true,
+            "host": "redis",
+            "port": 6379
+          },
+          {
+            "denied": true,
+            "host": "postgres",
+            "port": 5432
+          },
+          {
+            "denied": true,
+            "host": "pgbouncer",
+            "port": 5432
+          },
+          {
+            "denied": true,
+            "host": "minio",
+            "port": 9000
+          },
+          {
+            "denied": true,
+            "host": "opencode-runtime",
+            "port": 4096
+          },
+          {
+            "denied": true,
+            "host": "1.1.1.1",
+            "port": 443
+          }
+        ],
+        "docker_socket_present": false,
+        "forbidden_env": [],
+        "logical_networks": [
+          "workers"
+        ],
+        "networks": [
+          "mas_workers"
+        ],
+        "service": "team-dept-system",
+        "status": "fail",
+        "storage_health": false
+      },
+      {
+        "allowed": [
+          {
+            "host": "message-router",
+            "port": 8001,
+            "reachable": false
+          },
+          {
+            "host": "tool-service",
+            "port": 8002,
+            "reachable": false
+          },
+          {
+            "host": "orchestrator-api",
+            "port": 8000,
+            "reachable": false
+          },
+          {
+            "host": "litellm",
+            "port": 4000,
+            "reachable": false
+          }
+        ],
+        "container_id": "f21b28c1f954",
+        "denied": [
+          {
+            "denied": true,
+            "host": "redis",
+            "port": 6379
+          },
+          {
+            "denied": true,
+            "host": "postgres",
+            "port": 5432
+          },
+          {
+            "denied": true,
+            "host": "pgbouncer",
+            "port": 5432
+          },
+          {
+            "denied": true,
+            "host": "minio",
+            "port": 9000
+          },
+          {
+            "denied": true,
+            "host": "opencode-runtime",
+            "port": 4096
+          },
+          {
+            "denied": true,
+            "host": "1.1.1.1",
+            "port": 443
+          }
+        ],
+        "docker_socket_present": false,
+        "forbidden_env": [],
+        "logical_networks": [
+          "workers"
+        ],
+        "networks": [
+          "mas_workers"
+        ],
+        "service": "team-exec-ceo",
+        "status": "fail",
+        "storage_health": false
+      },
+      {
+        "allowed": [
+          {
+            "host": "message-router",
+            "port": 8001,
+            "reachable": false
+          },
+          {
+            "host": "tool-service",
+            "port": 8002,
+            "reachable": false
+          },
+          {
+            "host": "orchestrator-api",
+            "port": 8000,
+            "reachable": false
+          },
+          {
+            "host": "litellm",
+            "port": 4000,
+            "reachable": false
+          }
+        ],
+        "container_id": "c2bd60cedb7a",
+        "denied": [
+          {
+            "denied": true,
+            "host": "redis",
+            "port": 6379
+          },
+          {
+            "denied": true,
+            "host": "postgres",
+            "port": 5432
+          },
+          {
+            "denied": true,
+            "host": "pgbouncer",
+            "port": 5432
+          },
+          {
+            "denied": true,
+            "host": "minio",
+            "port": 9000
+          },
+          {
+            "denied": true,
+            "host": "opencode-runtime",
+            "port": 4096
+          },
+          {
+            "denied": true,
+            "host": "1.1.1.1",
+            "port": 443
+          }
+        ],
+        "docker_socket_present": false,
+        "forbidden_env": [],
+        "logical_networks": [
+          "workers"
+        ],
+        "networks": [
+          "mas_workers"
+        ],
+        "service": "team-exec-coo",
+        "status": "fail",
+        "storage_health": false
+      },
+      {
+        "allowed": [
+          {
+            "host": "message-router",
+            "port": 8001,
+            "reachable": false
+          },
+          {
+            "host": "tool-service",
+            "port": 8002,
+            "reachable": false
+          },
+          {
+            "host": "orchestrator-api",
+            "port": 8000,
+            "reachable": false
+          },
+          {
+            "host": "litellm",
+            "port": 4000,
+            "reachable": false
+          }
+        ],
+        "container_id": "31e19d489477",
+        "denied": [
+          {
+            "denied": true,
+            "host": "redis",
+            "port": 6379
+          },
+          {
+            "denied": true,
+            "host": "postgres",
+            "port": 5432
+          },
+          {
+            "denied": true,
+            "host": "pgbouncer",
+            "port": 5432
+          },
+          {
+            "denied": true,
+            "host": "minio",
+            "port": 9000
+          },
+          {
+            "denied": true,
+            "host": "opencode-runtime",
+            "port": 4096
+          },
+          {
+            "denied": true,
+            "host": "1.1.1.1",
+            "port": 443
+          }
+        ],
+        "docker_socket_present": false,
+        "forbidden_env": [],
+        "logical_networks": [
+          "workers"
+        ],
+        "networks": [
+          "mas_workers"
+        ],
+        "service": "team-office-cfo",
+        "status": "fail",
+        "storage_health": false
+      },
+      {
+        "allowed": [
+          {
+            "host": "message-router",
+            "port": 8001,
+            "reachable": false
+          },
+          {
+            "host": "tool-service",
+            "port": 8002,
+            "reachable": false
+          },
+          {
+            "host": "orchestrator-api",
+            "port": 8000,
+            "reachable": false
+          },
+          {
+            "host": "litellm",
+            "port": 4000,
+            "reachable": false
+          }
+        ],
+        "container_id": "4a2701c6ccce",
+        "denied": [
+          {
+            "denied": true,
+            "host": "redis",
+            "port": 6379
+          },
+          {
+            "denied": true,
+            "host": "postgres",
+            "port": 5432
+          },
+          {
+            "denied": true,
+            "host": "pgbouncer",
+            "port": 5432
+          },
+          {
+            "denied": true,
+            "host": "minio",
+            "port": 9000
+          },
+          {
+            "denied": true,
+            "host": "opencode-runtime",
+            "port": 4096
+          },
+          {
+            "denied": true,
+            "host": "1.1.1.1",
+            "port": 443
+          }
+        ],
+        "docker_socket_present": false,
+        "forbidden_env": [],
+        "logical_networks": [
+          "workers"
+        ],
+        "networks": [
+          "mas_workers"
+        ],
+        "service": "team-office-chrm",
+        "status": "fail",
+        "storage_health": false
+      },
+      {
+        "allowed": [
+          {
+            "host": "message-router",
+            "port": 8001,
+            "reachable": false
+          },
+          {
+            "host": "tool-service",
+            "port": 8002,
+            "reachable": false
+          },
+          {
+            "host": "orchestrator-api",
+            "port": 8000,
+            "reachable": false
+          },
+          {
+            "host": "litellm",
+            "port": 4000,
+            "reachable": false
+          }
+        ],
+        "container_id": "ddd7fab26634",
+        "denied": [
+          {
+            "denied": true,
+            "host": "redis",
+            "port": 6379
+          },
+          {
+            "denied": true,
+            "host": "postgres",
+            "port": 5432
+          },
+          {
+            "denied": true,
+            "host": "pgbouncer",
+            "port": 5432
+          },
+          {
+            "denied": true,
+            "host": "minio",
+            "port": 9000
+          },
+          {
+            "denied": true,
+            "host": "opencode-runtime",
+            "port": 4096
+          },
+          {
+            "denied": true,
+            "host": "1.1.1.1",
+            "port": 443
+          }
+        ],
+        "docker_socket_present": false,
+        "forbidden_env": [],
+        "logical_networks": [
+          "workers"
+        ],
+        "networks": [
+          "mas_workers"
+        ],
+        "service": "team-office-cio",
+        "status": "fail",
+        "storage_health": false
+      },
+      {
+        "allowed": [
+          {
+            "host": "message-router",
+            "port": 8001,
+            "reachable": false
+          },
+          {
+            "host": "tool-service",
+            "port": 8002,
+            "reachable": false
+          },
+          {
+            "host": "orchestrator-api",
+            "port": 8000,
+            "reachable": false
+          },
+          {
+            "host": "litellm",
+            "port": 4000,
+            "reachable": false
+          }
+        ],
+        "container_id": "ce9fd721cf29",
+        "denied": [
+          {
+            "denied": true,
+            "host": "redis",
+            "port": 6379
+          },
+          {
+            "denied": true,
+            "host": "postgres",
+            "port": 5432
+          },
+          {
+            "denied": true,
+            "host": "pgbouncer",
+            "port": 5432
+          },
+          {
+            "denied": true,
+            "host": "minio",
+            "port": 9000
+          },
+          {
+            "denied": true,
+            "host": "opencode-runtime",
+            "port": 4096
+          },
+          {
+            "denied": true,
+            "host": "1.1.1.1",
+            "port": 443
+          }
+        ],
+        "docker_socket_present": false,
+        "forbidden_env": [],
+        "logical_networks": [
+          "workers"
+        ],
+        "networks": [
+          "mas_workers"
+        ],
+        "service": "team-office-cso",
+        "status": "fail",
+        "storage_health": false
+      },
+      {
+        "allowed": [
+          {
+            "host": "message-router",
+            "port": 8001,
+            "reachable": false
+          },
+          {
+            "host": "tool-service",
+            "port": 8002,
+            "reachable": false
+          },
+          {
+            "host": "orchestrator-api",
+            "port": 8000,
+            "reachable": false
+          },
+          {
+            "host": "litellm",
+            "port": 4000,
+            "reachable": false
+          }
+        ],
+        "container_id": "576699aaa6e6",
+        "denied": [
+          {
+            "denied": true,
+            "host": "redis",
+            "port": 6379
+          },
+          {
+            "denied": true,
+            "host": "postgres",
+            "port": 5432
+          },
+          {
+            "denied": true,
+            "host": "pgbouncer",
+            "port": 5432
+          },
+          {
+            "denied": true,
+            "host": "minio",
+            "port": 9000
+          },
+          {
+            "denied": true,
+            "host": "opencode-runtime",
+            "port": 4096
+          },
+          {
+            "denied": true,
+            "host": "1.1.1.1",
+            "port": 443
+          }
+        ],
+        "docker_socket_present": false,
+        "forbidden_env": [],
+        "logical_networks": [
+          "workers"
+        ],
+        "networks": [
+          "mas_workers"
+        ],
+        "service": "team-office-cto",
+        "status": "fail",
+        "storage_health": false
+      }
+    ],
+    "errors": [
+      "team-dept-devops: gateway message-router:8001 is unreachable",
+      "team-dept-devops: gateway tool-service:8002 is unreachable",
+      "team-dept-devops: gateway orchestrator-api:8000 is unreachable",
+      "team-dept-devops: gateway litellm:4000 is unreachable",
+      "team-dept-devops: control-plane storage health failed",
+      "team-dept-production: gateway message-router:8001 is unreachable",
+      "team-dept-production: gateway tool-service:8002 is unreachable",
+      "team-dept-production: gateway orchestrator-api:8000 is unreachable",
+      "team-dept-production: gateway litellm:4000 is unreachable",
+      "team-dept-production: control-plane storage health failed",
+      "team-dept-qa: gateway message-router:8001 is unreachable",
+      "team-dept-qa: gateway tool-service:8002 is unreachable",
+      "team-dept-qa: gateway orchestrator-api:8000 is unreachable",
+      "team-dept-qa: gateway litellm:4000 is unreachable",
+      "team-dept-qa: control-plane storage health failed",
+      "team-dept-system: gateway message-router:8001 is unreachable",
+      "team-dept-system: gateway tool-service:8002 is unreachable",
+      "team-dept-system: gateway orchestrator-api:8000 is unreachable",
+      "team-dept-system: gateway litellm:4000 is unreachable",
+      "team-dept-system: control-plane storage health failed",
+      "team-exec-ceo: gateway message-router:8001 is unreachable",
+      "team-exec-ceo: gateway tool-service:8002 is unreachable",
+      "team-exec-ceo: gateway orchestrator-api:8000 is unreachable",
+      "team-exec-ceo: gateway litellm:4000 is unreachable",
+      "team-exec-ceo: control-plane storage health failed",
+      "team-exec-coo: gateway message-router:8001 is unreachable",
+      "team-exec-coo: gateway tool-service:8002 is unreachable",
+      "team-exec-coo: gateway orchestrator-api:8000 is unreachable",
+      "team-exec-coo: gateway litellm:4000 is unreachable",
+      "team-exec-coo: control-plane storage health failed",
+      "team-office-cfo: gateway message-router:8001 is unreachable",
+      "team-office-cfo: gateway tool-service:8002 is unreachable",
+      "team-office-cfo: gateway orchestrator-api:8000 is unreachable",
+      "team-office-cfo: gateway litellm:4000 is unreachable",
+      "team-office-cfo: control-plane storage health failed",
+      "team-office-chrm: gateway message-router:8001 is unreachable",
+      "team-office-chrm: gateway tool-service:8002 is unreachable",
+      "team-office-chrm: gateway orchestrator-api:8000 is unreachable",
+      "team-office-chrm: gateway litellm:4000 is unreachable",
+      "team-office-chrm: control-plane storage health failed",
+      "team-office-cio: gateway message-router:8001 is unreachable",
+      "team-office-cio: gateway tool-service:8002 is unreachable",
+      "team-office-cio: gateway orchestrator-api:8000 is unreachable",
+      "team-office-cio: gateway litellm:4000 is unreachable",
+      "team-office-cio: control-plane storage health failed",
+      "team-office-cso: gateway message-router:8001 is unreachable",
+      "team-office-cso: gateway tool-service:8002 is unreachable",
+      "team-office-cso: gateway orchestrator-api:8000 is unreachable",
+      "team-office-cso: gateway litellm:4000 is unreachable",
+      "team-office-cso: control-plane storage health failed",
+      "team-office-cto: gateway message-router:8001 is unreachable",
+      "team-office-cto: gateway tool-service:8002 is unreachable",
+      "team-office-cto: gateway orchestrator-api:8000 is unreachable",
+      "team-office-cto: gateway litellm:4000 is unreachable",
+      "team-office-cto: control-plane storage health failed"
+    ],
+    "mode": "live",
+    "status": "fail",
+    "warnings": []
+  },
+  "mode": "static",
+  "policy": "/mnt/c/projects/aiat/mas/docs/provenance/network_boundary_policy.yaml",
+  "protected_services": [
+    "redis",
+    "postgres",
+    "pgbouncer",
+    "minio",
+    "opencode-runtime"
+  ],
+  "status": "pass",
+  "team_environment": {
+    "team-dept-devops": {
+      "forbidden": [],
+      "identity": [
+        "AIAT_WORKER_API_KEY"
+      ]
+    },
+    "team-dept-production": {
+      "forbidden": [],
+      "identity": [
+        "AIAT_WORKER_API_KEY"
+      ]
+    },
+    "team-dept-qa": {
+      "forbidden": [],
+      "identity": [
+        "AIAT_WORKER_API_KEY"
+      ]
+    },
+    "team-dept-system": {
+      "forbidden": [],
+      "identity": [
+        "AIAT_WORKER_API_KEY"
+      ]
+    },
+    "team-exec-ceo": {
+      "forbidden": [],
+      "identity": [
+        "AIAT_CEO_API_KEY"
+      ]
+    },
+    "team-exec-coo": {
+      "forbidden": [],
+      "identity": [
+        "AIAT_WORKER_API_KEY"
+      ]
+    },
+    "team-office-cfo": {
+      "forbidden": [],
+      "identity": [
+        "AIAT_WORKER_API_KEY"
+      ]
+    },
+    "team-office-chrm": {
+      "forbidden": [],
+      "identity": [
+        "AIAT_WORKER_API_KEY"
+      ]
+    },
+    "team-office-cio": {
+      "forbidden": [],
+      "identity": [
+        "AIAT_WORKER_API_KEY"
+      ]
+    },
+    "team-office-cso": {
+      "forbidden": [],
+      "identity": [
+        "AIAT_WORKER_API_KEY"
+      ]
+    },
+    "team-office-cto": {
+      "forbidden": [],
+      "identity": [
+        "AIAT_WORKER_API_KEY"
+      ]
+    }
+  },
+  "team_services": [
     "team-dept-devops",
     "team-dept-production",
     "team-dept-qa",
@@ -48,9 +999,7 @@
     "team-office-cso",
     "team-office-cto"
   ],
-  "notices": [
-    "This local Linux-engine result is descriptive and does not replace the native-Linux release-host matrix.",
-    "The pm-gateway host port 127.0.0.1:8010 was already occupied during recreation; it is outside the runner boundary matrix and was not used to claim this pass.",
-    "No licence or resource metadata was evaluated as a gate."
+  "warnings": [
+    "optional identity database services are not in the base Compose profile: identity-postgres, identity-db"
   ]
 }

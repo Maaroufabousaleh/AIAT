@@ -1,37 +1,274 @@
 {
-  "schema_version": "aiat.native-release-preflight-evidence.v1",
-  "programme_scope": "personal-internal-only",
-  "observed_at": "2026-08-21T17:38:47.047245+00:00",
-  "mode": "local-preflight",
-  "status": "blocked",
-  "source_command": "scripts/check_release_environment.py --require-native-linux --json",
-  "host": {
-    "system": "Linux",
-    "kernel": "6.6.87.2-microsoft-standard-WSL2",
-    "native_linux": false
-  },
+  "available_tool_count": 6,
+  "captured_at": "2026-09-30T19:07:29.574953+00:00",
+  "configured_environment_input_count": 0,
+  "environment_presence": [
+    {
+      "configured": false,
+      "name": "AIAT_ORCHESTRATOR_URL"
+    },
+    {
+      "configured": false,
+      "name": "ORCHESTRATOR_API_URL"
+    },
+    {
+      "configured": false,
+      "name": "AIAT_OPERATOR_API_KEY"
+    },
+    {
+      "configured": false,
+      "name": "AIAT_API_KEY"
+    },
+    {
+      "configured": false,
+      "name": "AIAT_CEO_API_KEY"
+    },
+    {
+      "configured": false,
+      "name": "AIAT_WORKER_API_KEY"
+    },
+    {
+      "configured": false,
+      "name": "AIAT_COMPANY_TIMEZONE"
+    },
+    {
+      "configured": false,
+      "name": "AIAT_IMAGE_REF"
+    },
+    {
+      "configured": false,
+      "name": "ORCHESTRATOR_IMAGE_REF"
+    },
+    {
+      "configured": false,
+      "name": "TOOL_SERVICE_IMAGE_REF"
+    }
+  ],
+  "errors": [],
   "git": {
-    "revision": "2dbad307243403b9e93fee3e1ade3a40aab38f3b",
+    "branch": "agent/fix-review-p1",
+    "changed_path_count": 71,
+    "revision": "571a6a496e83df816b19c1326070671f76074e89",
     "working_tree_clean": false
   },
-  "docker": {
-    "engine_available": true,
-    "compose_v2_available": true,
-    "runtimes_metadata_available": true,
-    "runsc_registered": false
+  "host": {
+    "machine": "x86_64",
+    "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+    "python": "3.11.15"
   },
-  "image_refs": {
-    "configured_count": 0,
-    "digest_pinned_count": 0,
-    "required_count": 10
+  "manifest_digest": "4edbf67caf19b5dd40ab3c21c6c4147779cfde623a83eae7a8023631056b3527",
+  "native_release": {
+    "blockers": [
+      "host is not a native Linux release host",
+      "working tree is dirty",
+      "missing immutable image refs: AIAT_TEAM_RUNNER_IMAGE_REF, AIAT_REDIS_ACL_INIT_IMAGE_REF, AIAT_MESSAGE_ROUTER_IMAGE_REF, AIAT_TOOL_SERVICE_IMAGE_REF, AIAT_OPENCODE_RUNTIME_IMAGE_REF, AIAT_ORCHESTRATOR_IMAGE_REF, AIAT_PM_GATEWAY_IMAGE_REF, AIAT_DASHBOARD_IMAGE_REF, OMNIROUTE_IMAGE_REF, LITELLM_IMAGE_REF"
+    ],
+    "docker": {
+      "compose_v2_available": true,
+      "engine_available": true,
+      "runsc_registered": true,
+      "runtimes_metadata_available": true
+    },
+    "git": {
+      "revision": "571a6a496e83df816b19c1326070671f76074e89",
+      "working_tree_clean": false
+    },
+    "image_refs": [
+      {
+        "configured": false,
+        "digest_pinned": false,
+        "name": "AIAT_TEAM_RUNNER_IMAGE_REF"
+      },
+      {
+        "configured": false,
+        "digest_pinned": false,
+        "name": "AIAT_REDIS_ACL_INIT_IMAGE_REF"
+      },
+      {
+        "configured": false,
+        "digest_pinned": false,
+        "name": "AIAT_MESSAGE_ROUTER_IMAGE_REF"
+      },
+      {
+        "configured": false,
+        "digest_pinned": false,
+        "name": "AIAT_TOOL_SERVICE_IMAGE_REF"
+      },
+      {
+        "configured": false,
+        "digest_pinned": false,
+        "name": "AIAT_OPENCODE_RUNTIME_IMAGE_REF"
+      },
+      {
+        "configured": false,
+        "digest_pinned": false,
+        "name": "AIAT_ORCHESTRATOR_IMAGE_REF"
+      },
+      {
+        "configured": false,
+        "digest_pinned": false,
+        "name": "AIAT_PM_GATEWAY_IMAGE_REF"
+      },
+      {
+        "configured": false,
+        "digest_pinned": false,
+        "name": "AIAT_DASHBOARD_IMAGE_REF"
+      },
+      {
+        "configured": false,
+        "digest_pinned": false,
+        "name": "OMNIROUTE_IMAGE_REF"
+      },
+      {
+        "configured": false,
+        "digest_pinned": false,
+        "name": "LITELLM_IMAGE_REF"
+      }
+    ],
+    "licence_metadata_is_gate": false,
+    "platform": {
+      "description": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+      "kernel": "6.6.87.2-microsoft-standard-WSL2",
+      "native_linux": false,
+      "system": "Linux"
+    },
+    "schema_version": "aiat.native-release-preflight.v1",
+    "scope": "native release-host prerequisite preflight; no deployment mutation or release decision",
+    "status": "blocked"
   },
-  "blockers": [
-    "host is not a native Linux release host",
-    "gVisor runsc runtime is not registered",
-    "working tree is dirty",
-    "missing immutable image refs: AIAT_TEAM_RUNNER_IMAGE_REF, AIAT_REDIS_ACL_INIT_IMAGE_REF, AIAT_MESSAGE_ROUTER_IMAGE_REF, AIAT_TOOL_SERVICE_IMAGE_REF, AIAT_OPENCODE_RUNTIME_IMAGE_REF, AIAT_ORCHESTRATOR_IMAGE_REF, AIAT_PM_GATEWAY_IMAGE_REF, AIAT_DASHBOARD_IMAGE_REF, OMNIROUTE_IMAGE_REF, LITELLM_IMAGE_REF"
+  "programme_scope": "personal-internal-only",
+  "schema_version": "aiat.release-environment.v1",
+  "scope": "secret-safe source/tool/environment identity; no deployment mutation or credential output",
+  "status": "blocked",
+  "tools": [
+    {
+      "available": true,
+      "executable_present": true,
+      "name": "python",
+      "version": "Python 3.11.15"
+    },
+    {
+      "available": true,
+      "executable_present": true,
+      "name": "uv",
+      "version": "uv 0.11.7 (x86_64-unknown-linux-gnu)"
+    },
+    {
+      "available": true,
+      "executable_present": true,
+      "name": "docker",
+      "version": "Docker version 29.8.1, build 4a63305"
+    },
+    {
+      "available": true,
+      "executable_present": true,
+      "name": "node",
+      "version": "v24.16.0"
+    },
+    {
+      "available": true,
+      "executable_present": true,
+      "name": "npm",
+      "version": "11.13.0"
+    },
+    {
+      "available": true,
+      "executable_present": true,
+      "name": "runsc",
+      "version": "runsc version release-20260914.0\nspec: 1.2.1"
+    }
   ],
-  "scope": "native release-host prerequisite preflight; no deployment mutation or release decision",
-  "licence_metadata_is_gate": false,
-  "secret_policy": "image values, credentials, and environment values are never retained"
+  "tracked_input_count": 15,
+  "tracked_inputs": [
+    {
+      "path": "../.env.example",
+      "present": true,
+      "sha256": "129b228fdf28ec25b24b9cfde60bf3a019d4f43be2938bc9f41fddaa66a69233",
+      "size_bytes": 6236
+    },
+    {
+      "path": "pyproject.toml",
+      "present": true,
+      "sha256": "765ad7715c84c681ce1e4c6a3394ad79f9f4ab99282015a3f8f904f85df8540a",
+      "size_bytes": 3494
+    },
+    {
+      "path": "uv.lock",
+      "present": true,
+      "sha256": "fd8f5dce4d2e55262d7aad1abcfd058e24de8e39c945ec7f1f2746cfe8d49def",
+      "size_bytes": 1499836
+    },
+    {
+      "path": "infra/compose/docker-compose.yml",
+      "present": true,
+      "sha256": "811cc7c225f89dd080eafa8dec157bac78c218af10b7cb00c519802d9fb5f4f2",
+      "size_bytes": 32015
+    },
+    {
+      "path": "infra/docker/Dockerfile.orchestrator-api",
+      "present": true,
+      "sha256": "c5d106927276afddee48a2114fc35f3fe95b17e50dee1967f12bf876b19fcd9a",
+      "size_bytes": 2515
+    },
+    {
+      "path": "infra/docker/Dockerfile.tool-service",
+      "present": true,
+      "sha256": "17be37a9ea57faee9ffb972c83a8edac51820d4a7a2cf4d285be51f0fa5f0762",
+      "size_bytes": 3145
+    },
+    {
+      "path": "docs/provenance/release_ledger.yaml",
+      "present": true,
+      "sha256": "2a7a6fd17dc78339d7c35bea20585b1808696d2d9d2523a0f8b6c36f330803ac",
+      "size_bytes": 11941
+    },
+    {
+      "path": "docs/provenance/production_images.yaml",
+      "present": true,
+      "sha256": "0cbd9ecbbc3f462bad8e91ad0e04a8aa0de98aaa87d551a146e667ea0861a804",
+      "size_bytes": 3710
+    },
+    {
+      "path": "docs/provenance/operator_pins.yaml",
+      "present": true,
+      "sha256": "6af298d0486b7702a6c26dec82ae0fc512d17fdb2402e1a18e316dcf883dd1d4",
+      "size_bytes": 6208
+    },
+    {
+      "path": "docs/provenance/security_scan_evidence.yaml",
+      "present": true,
+      "sha256": "4926918571bb94b24acbbea9ee6c7a73db8f9da292b3616cc8b0082de9c303f9",
+      "size_bytes": 9093
+    },
+    {
+      "path": "docs/provenance/security_scan_review.yaml",
+      "present": true,
+      "sha256": "5c8cec972e624ca10fceee66df0004a7ab36eca4d8944075e7cd9feed2678a27",
+      "size_bytes": 4630
+    },
+    {
+      "path": "docs/provenance/network_boundary_policy.yaml",
+      "present": true,
+      "sha256": "ca0e3f5df584407cfd08fa13f01f5d00652ae4f39dbe5577e82f5ccac328216a",
+      "size_bytes": 1378
+    },
+    {
+      "path": "docs/provenance/worker_certification_matrix.yaml",
+      "present": true,
+      "sha256": "e6dc07bbd9fd741675f86cd877625c3f66889fe87c78a00da86a56516600d7cd",
+      "size_bytes": 15430
+    },
+    {
+      "path": "workers/coding_worker.yaml",
+      "present": true,
+      "sha256": "1494e02f5a03584e26455ca15489306d4f3581b62bfd92c1139f56fd3b82a873",
+      "size_bytes": 1872
+    },
+    {
+      "path": "workers/tester.yaml",
+      "present": true,
+      "sha256": "ae5b0b40b3e4aa867387cae94916adb41bc41e48833b13d3e77a2e5334a636a4",
+      "size_bytes": 1823
+    }
+  ]
 }

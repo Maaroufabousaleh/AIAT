@@ -102,7 +102,10 @@ def test_retained_default_worker_binding_evidence_passes_without_certifying_work
     summary = _run_retained_live_evidence(spec)["summary"]
     assert summary["matched_default_worker_count"] == 39
     assert summary["binding_mismatch_count"] == 0
-    assert summary["pending_security_findings"]["finding_count"] == 316
+    assert summary["pending_security_findings"]["finding_count_status"] == (
+        "unavailable_no_retained_raw_evidence"
+    )
+    assert "finding_count" not in summary["pending_security_findings"]
 
 
 def test_retained_provider_evidence_is_scalar_and_passes() -> None:

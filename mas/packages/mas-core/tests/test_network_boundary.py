@@ -146,3 +146,47 @@ def test_live_probe_classifies_unavailable_engine_as_blocked(monkeypatch) -> Non
 
     assert report["status"] == "blocked"
     assert report["errors"] == ["Docker Engine is unavailable to the Docker CLI"]
+
+
+def test_live_probe_marks_runner_failed_when_its_storage_health_fails(monkeypatch) -> None:
+    boundary = _load_boundary_module()
+    monkeypatch.setattr(boundary.shutil, "which", lambda _name: "/usr/bin/docker")
+    monkeypatch.setattr(boundary, "_docker_engine_available", lambda: True)
+    monkeypatch.setattr(boundary, "_docker_container_for_service", lambda _service: "container-id")
+    monkeypatch.setattr(
+        boundary,
+        "_logical_networks",
+        lambda _container: ({"workers"}, {"workers"}),
+    )
+    monkeypatch.setattr(
+        boundary,
+        "_inspect_environment_names",
+        lambda _container: {"AIAT_WORKER_API_KEY"},
+    )
+    monkeypatch.setattr(boundary, "_probe_file", lambda _container, _path: False)
+    monkeypatch.setattr(
+        boundary,
+        "_probe_tcp",
+        lambda _container, host, _port: host == "tool-service",
+    )
+    monkeypatch.setattr(boundary, "_probe_storage_health", lambda _container, _team_id: False)
+
+    report = boundary.inspect_live(
+        {
+            "team_services": ["team-office-test"],
+            "boundary_policy": {
+                "protected": [{"service": "postgres", "port": 5432}],
+                "allowed": [{"service": "tool-service", "port": 8002}],
+                "external_denied": [{"host": "example.invalid", "port": 443}],
+                "identity_env": {"ceo": "AIAT_CEO_API_KEY", "worker": "AIAT_WORKER_API_KEY"},
+                "forbidden_env_names": [],
+                "forbidden_env_prefixes": [],
+                "runner_network": "workers",
+                "ceo_service": "team-exec-ceo",
+            },
+        }
+    )
+
+    assert report["status"] == "fail"
+    assert report["containers"][0]["storage_health"] is False
+    assert report["containers"][0]["status"] == "fail"

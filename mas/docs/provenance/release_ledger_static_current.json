@@ -1,5 +1,6 @@
 {
-  "checked_at": "2026-09-15T12:31:52.894917+00:00",
+  "active_check_count": 61,
+  "checked_at": "2026-09-30T19:08:32.968411+00:00",
   "checks": [
     {
       "base_id": "provenance",
@@ -8,9 +9,10 @@
       "id": "provenance",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
-        "summary": "provenance: validated 31 components"
+        "summary": "provenance: validated 32 components"
       }
     },
     {
@@ -20,6 +22,7 @@
       "id": "documentation_index",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "errors": [],
@@ -33,6 +36,7 @@
       "id": "release_environment",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "available_tool_count": 6,
@@ -40,11 +44,11 @@
         "errors": [],
         "git": {
           "branch": "agent/fix-review-p1",
-          "changed_path_count": 128,
-          "revision": "0f068476db908ee43bbc52900bf421394a121e6c",
+          "changed_path_count": 71,
+          "revision": "571a6a496e83df816b19c1326070671f76074e89",
           "working_tree_clean": false
         },
-        "manifest_digest": "70d8b6ac60c0ed5ba176eda5653f927de8b8feb976f96f647a63ab771fcb0446",
+        "manifest_digest": "4edbf67caf19b5dd40ab3c21c6c4147779cfde623a83eae7a8023631056b3527",
         "status": "pass",
         "tracked_input_count": 15
       }
@@ -56,6 +60,7 @@
       "id": "database_migration_head",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "external_network_access_performed": false,
@@ -72,6 +77,7 @@
       "id": "api_contract",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "errors": [],
@@ -85,6 +91,7 @@
       "id": "api_observability",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "mode": "fixture",
@@ -99,6 +106,7 @@
       "id": "trace_evidence",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "coverage": {
@@ -133,6 +141,7 @@
       "id": "live_trace_observability",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "mode": "fixture",
@@ -146,6 +155,7 @@
       "id": "live_tool_trace",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "mode": "fixture",
@@ -159,6 +169,7 @@
       "id": "native_trace_spans",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "status": "pass"
@@ -171,6 +182,7 @@
       "id": "trace_retention_plan",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "plan_schema": "aiat.trace-retention-plan.v1",
@@ -184,6 +196,7 @@
       "id": "slo_capacity",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "capacity_status": "clear",
@@ -199,6 +212,7 @@
       "id": "prompt_tool_reconciliation",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "errors": [],
@@ -216,22 +230,25 @@
       "id": "worker_reconciliation",
       "mode": "static",
       "pending_evidence_count": 2,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "errors": [],
         "pending_evidence": [
           {
             "evidence": "security_scan_status",
-            "evidence_status": "findings_review_required",
-            "finding_count": 316,
+            "evidence_status": "historical_unreproducible",
+            "finding_count_status": "unavailable_no_retained_raw_evidence",
+            "scan_classification": "FAILED_UNREPRODUCIBLE",
             "security_scan_evidence_ref": "mas/docs/provenance/security_scan_evidence.yaml#opencode-1.17.13-semgrep-2026-08-10",
             "status": "findings_review_required",
             "worker": "coding_worker"
           },
           {
             "evidence": "security_scan_status",
-            "evidence_status": "findings_review_required",
-            "finding_count": 316,
+            "evidence_status": "historical_unreproducible",
+            "finding_count_status": "unavailable_no_retained_raw_evidence",
+            "scan_classification": "FAILED_UNREPRODUCIBLE",
             "security_scan_evidence_ref": "mas/docs/provenance/security_scan_evidence.yaml#opencode-1.17.13-semgrep-2026-08-10",
             "status": "findings_review_required",
             "worker": "tester"
@@ -260,6 +277,7 @@
       "id": "default_worker_bindings",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "errors": [],
@@ -273,6 +291,7 @@
       "id": "worker_run_lifecycle",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "certification_boundary": {
@@ -300,6 +319,7 @@
       "id": "network_boundary",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "errors": [],
@@ -317,6 +337,7 @@
       "id": "image_provenance",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "errors": [],
@@ -331,6 +352,7 @@
       "id": "image_budgets",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "summary": "image-budget: tool-service-core PASS"
@@ -343,6 +365,7 @@
       "id": "metric_series_budget",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "budget": 2000,
@@ -505,6 +528,7 @@
       "id": "sandbox_runtime_readiness",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "errors": [],
@@ -520,10 +544,12 @@
       "id": "firecracker_worker_pool_readiness",
       "mode": "static",
       "pending_evidence_count": 0,
-      "status": "pass",
+      "scope_status": "superseded",
+      "status": "not_in_scope",
       "summary": {
-        "mode": "static",
-        "status": "pass"
+        "reason": "Direct Firecracker is a superseded historical compatibility implementation. The active vm_isolated provider is Kata runtime-rs; direct Firecracker is not an active release or development sandbox requirement.",
+        "scope_status": "superseded",
+        "status": "not_in_scope"
       }
     },
     {
@@ -533,6 +559,7 @@
       "id": "worker_runtime_readiness",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "certification_boundary": {
@@ -557,6 +584,7 @@
       "id": "runtime_benchmarks",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "certification_boundary": {
@@ -578,6 +606,7 @@
       "id": "model_profile_catalogue",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "covered_profile_version_count": 0,
@@ -598,6 +627,7 @@
       "id": "runtime_install_profile",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "certification_boundary": {
@@ -636,13 +666,14 @@
       "id": "operator_pins",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "errors": [],
-        "locked_count": 9,
-        "pin_count": 16,
+        "locked_count": 11,
+        "pin_count": 17,
         "status": "pass",
-        "unavailable_count": 7
+        "unavailable_count": 6
       }
     },
     {
@@ -652,6 +683,7 @@
       "id": "runtime_compatibility",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "status": "pass"
@@ -664,6 +696,7 @@
       "id": "code_review_adapters",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "errors": [],
@@ -677,6 +710,7 @@
       "id": "security_adapters",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "errors": [],
@@ -690,14 +724,15 @@
       "id": "security_scan_review",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "engine_warning_count": 54,
         "errors": [],
-        "finding_count": 316,
+        "finding_count": 762,
         "mode": "static",
-        "review_required_count": 1,
-        "scan_count": 1,
+        "review_required_count": 3,
+        "scan_count": 4,
         "status": "pass",
         "technical_gate_status": "blocked"
       }
@@ -709,10 +744,11 @@
       "id": "opencode_candidate_certification",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "errors": [],
-        "finding_count": 644,
+        "finding_count": 762,
         "mode": "static",
         "status": "pass",
         "technical_gate_status": "blocked"
@@ -725,6 +761,7 @@
       "id": "worker_steward_contract",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "errors": [],
@@ -739,6 +776,7 @@
       "id": "object_store_conformance",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "counts": {
@@ -756,6 +794,7 @@
       "id": "object_store_oci_sse_kms_contract",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "errors": [],
@@ -770,6 +809,7 @@
       "id": "object_store_multipart",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "abort_verified": true,
@@ -786,18 +826,19 @@
       "id": "object_store_resource_profile",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "cleanup_verified": true,
-        "cpu_time_ms": 56.881,
+        "cpu_time_ms": 53.104,
         "error_count": 0,
         "measurement_source": "procfs",
         "mode": "fixture",
-        "rss_after_bytes": 95260672,
-        "rss_before_bytes": 95145984,
-        "rss_peak_bytes": 132993024,
+        "rss_after_bytes": 94195712,
+        "rss_before_bytes": 94035968,
+        "rss_peak_bytes": 131719168,
         "status": "pass",
-        "wall_time_ms": 56.747
+        "wall_time_ms": 53.339
       }
     },
     {
@@ -807,6 +848,7 @@
       "id": "object_store_provider_outage",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "external_network_access_performed": false,
@@ -908,6 +950,7 @@
       "id": "object_store_lifecycle",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "external_network_access_performed": false,
@@ -931,6 +974,7 @@
       "id": "trace_retention_execution",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "apply": {
@@ -968,6 +1012,7 @@
       "id": "credentials_manager_live",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "external_network_access_performed": false,
@@ -993,6 +1038,7 @@
       "id": "provider_conformance",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "mode": "fixture",
@@ -1006,6 +1052,7 @@
       "id": "provider_adapter_declarations",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "errors": [],
@@ -1020,6 +1067,7 @@
       "id": "provider_adapter_http_conformance",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "case_count": 8,
@@ -1036,6 +1084,7 @@
       "id": "identity_provider_conformance",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "case_count": 17,
@@ -1068,6 +1117,7 @@
       "id": "gateway_provider_recovery",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "external_provider_call_performed": false,
@@ -1082,6 +1132,7 @@
       "id": "external_account_action_policy",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "errors": [],
@@ -1096,6 +1147,7 @@
       "id": "external_account_lifecycle",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "case_count": 8,
@@ -1113,13 +1165,11 @@
       "id": "outbound_mail_lifecycle",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "pass_for_default_scope",
       "status": "pass",
       "summary": {
-        "case_count": 6,
-        "errors": [],
-        "mode": "fixture",
-        "passed_case_count": 6,
-        "secret_safe_report": true,
+        "reason": "The maintained Cloudflare/Resend default email identity certificate is current and records PASS for the governed default path; optional Stalwart/SMTP profiles remain disabled and are not a development gate. Evidence: Docs/AIAT_Email_Identity_Live_Certification.md.",
+        "scope_status": "pass_for_default_scope",
         "status": "pass"
       }
     },
@@ -1130,6 +1180,7 @@
       "id": "flow_instance_recovery",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "mode": "static",
@@ -1144,6 +1195,7 @@
       "id": "flow_topology",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "status": "pass"
@@ -1156,6 +1208,7 @@
       "id": "flow_execution_semantics",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "status": "pass"
@@ -1168,6 +1221,7 @@
       "id": "flow_runtime_live",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "case_count": 8,
@@ -1197,6 +1251,7 @@
       "id": "flow_worker_binding",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "live": {
@@ -1214,6 +1269,7 @@
       "id": "workflow_watchdog_recovery",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "live": {
@@ -1231,6 +1287,7 @@
       "id": "project_evidence_package",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "mode": "fixture",
@@ -1244,6 +1301,7 @@
       "id": "evidence_policy_resolution",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "case_count": 7,
@@ -1259,6 +1317,7 @@
       "id": "object_store_copy",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "counts": {
@@ -1275,6 +1334,7 @@
       "id": "object_store_backup_restore",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "mode": "fixture",
@@ -1288,6 +1348,7 @@
       "id": "object_store_encryption",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "certification_boundary": {
@@ -1328,6 +1389,7 @@
       "id": "object_store_clean_environment_restore",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "bundle_object_count": 2,
@@ -1363,6 +1425,7 @@
       "id": "object_store_migration",
       "mode": "static",
       "pending_evidence_count": 0,
+      "scope_status": "active",
       "status": "pass",
       "summary": {
         "mode": "fixture",
@@ -1376,10 +1439,12 @@
       "id": "self_improvement_lifecycle",
       "mode": "static",
       "pending_evidence_count": 0,
-      "status": "pass",
+      "scope_status": "deferred",
+      "status": "not_in_scope",
       "summary": {
-        "mode": "fixture",
-        "status": "pass"
+        "reason": "Live self-improvement execution is deliberately deferred for the current release and remains disabled unless explicitly promoted by the operator.",
+        "scope_status": "deferred",
+        "status": "not_in_scope"
       }
     },
     {
@@ -1389,14 +1454,12 @@
       "id": "self_improvement_candidate_detection",
       "mode": "static",
       "pending_evidence_count": 0,
-      "status": "pass",
+      "scope_status": "deferred",
+      "status": "not_in_scope",
       "summary": {
-        "case_count": 6,
-        "errors": [],
-        "mode": "fixture",
-        "passed_case_count": 6,
-        "secret_safe_report": true,
-        "status": "pass"
+        "reason": "Live self-improvement execution is deliberately deferred for the current release and remains disabled unless explicitly promoted by the operator.",
+        "scope_status": "deferred",
+        "status": "not_in_scope"
       }
     }
   ],
@@ -1404,7 +1467,8 @@
   "counts": {
     "blocked": 0,
     "fail": 0,
-    "pass": 64,
+    "not_in_scope": 3,
+    "pass": 61,
     "total": 64
   },
   "decision_reasons": [
@@ -1412,16 +1476,17 @@
     "2 pending evidence item(s) remain",
     "worktree is dirty"
   ],
+  "development_status": "NOT_EVALUATED",
   "environment": {
     "docker_cli_available": true,
     "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
-    "python": "3.13.13"
+    "python": "3.11.15"
   },
   "git": {
     "branch": "agent/fix-review-p1",
-    "changed_path_count": 128,
+    "changed_path_count": 71,
     "clean": false,
-    "revision": "0f068476db908ee43bbc52900bf421394a121e6c"
+    "revision": "571a6a496e83df816b19c1326070671f76074e89"
   },
   "pending_evidence_count": 2,
   "policy": {
@@ -1431,6 +1496,7 @@
   },
   "profile": "static",
   "release_decision": "NO-RELEASE",
+  "release_status": "RELEASE_CERTIFICATION_PENDING",
   "schema_version": "aiat.release-ledger.v1",
   "scope": "bounded release-evidence aggregation; no deployment mutation or credential output",
   "status": "pass"

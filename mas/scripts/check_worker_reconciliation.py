@@ -39,7 +39,7 @@ DEFAULT_NOTICES = PROGRAMME_ROOT / "THIRD_PARTY_NOTICES.md"
 CHECK_SCHEMA = "aiat.worker-reconciliation.v1"
 
 SUPPORTED_TRANSPORTS = frozenset(
-    {"native", "process", "http", "oci", "mcp", "opencode", "aiat_gateway", "human"}
+    {"native", "process", "http", "oci", "mcp", "opencode", "aiat_gateway", "wasmtime", "human"}
 )
 CONCRETE_VERSION_RE = re.compile(r"^(?:v)?\d+(?:\.\d+){0,3}(?:[-+][0-9A-Za-z.-]+)?$")
 
@@ -196,12 +196,62 @@ def _security_evidence_index(path: Path, errors: list[str]) -> dict[str, dict[st
             errors.append(f"{scan_id}: source_repo and source_revision are required")
         if not isinstance(row.get("target_workers"), list) or not row.get("target_workers"):
             errors.append(f"{scan_id}: target_workers must be a non-empty list")
-        for field in ("scanned_file_count", "finding_count", "engine_warning_count"):
+        retained_findings = (
+            row.get("raw_findings_retained") is True
+            and row.get("source_snapshot_retained") is True
+        )
+        historical_unavailable = (
+            row.get("remediation_input") is False
+            and row.get("raw_findings_retained") is False
+            and row.get("source_snapshot_retained") is False
+        )
+        if not retained_findings and not historical_unavailable:
+            errors.append(
+                f"{scan_id}: scan evidence without retained findings and source must be marked "
+                "historical with remediation_input false"
+            )
+        if historical_unavailable:
+            for field in ("finding_count", "engine_warning_count", "scanned_file_count"):
+                if row.get(field) is not None:
+                    errors.append(
+                        f"{scan_id}: unreproducible historical evidence must not supply {field}"
+                    )
+            if row.get("rule_counts") not in (None, {}):
+                errors.append(
+                    f"{scan_id}: unreproducible historical evidence must not supply rule_counts"
+                )
+        scanned_file_count = row.get("scanned_file_count")
+        if historical_unavailable:
+            pass
+        elif scanned_file_count is None:
+            if row.get("scanned_file_count_status") != "not_reported_by_scanner":
+                errors.append(
+                    f"{scan_id}: scanned_file_count must be a non-negative integer or explicitly not reported"
+                )
             try:
-                if int(row.get(field)) < 0:
+                if int(row.get("source_snapshot_file_count")) < 0:
                     raise ValueError
             except (TypeError, ValueError):
-                errors.append(f"{scan_id}: {field} must be a non-negative integer")
+                errors.append(
+                    f"{scan_id}: source_snapshot_file_count must be a non-negative integer when scanner count is unavailable"
+                )
+            if row.get("source_snapshot_retained") is not True:
+                errors.append(
+                    f"{scan_id}: source_snapshot_retained must be true when scanner count is unavailable"
+                )
+        else:
+            try:
+                if int(scanned_file_count) < 0:
+                    raise ValueError
+            except (TypeError, ValueError):
+                errors.append(f"{scan_id}: scanned_file_count must be a non-negative integer")
+        if retained_findings:
+            for field in ("finding_count", "engine_warning_count"):
+                try:
+                    if int(row.get(field)) < 0:
+                        raise ValueError
+                except (TypeError, ValueError):
+                    errors.append(f"{scan_id}: {field} must be a non-negative integer")
         result[scan_id] = row
     if not result:
         errors.append("security scan evidence must contain at least one scan")
@@ -238,6 +288,15 @@ def _check_compose_links(
         config = manifest.runtime.adapter_config
         if transport == "process" and not str(config.get("entrypoint") or "").strip():
             errors.append(f"{path.name}: process transport requires runtime.adapter_config.entrypoint")
+        if transport == "wasmtime":
+            module_path = str(config.get("module_path") or "").strip()
+            module_digest = str(config.get("module_sha256") or "").strip().lower()
+            if not module_path:
+                errors.append(f"{path.name}: wasmtime transport requires runtime.adapter_config.module_path")
+            if not re.fullmatch(r"[0-9a-f]{64}", module_digest):
+                errors.append(
+                    f"{path.name}: wasmtime transport requires a 64-character module_sha256"
+                )
         if transport == "opencode":
             base_url = str(config.get("base_url") or "").strip()
             host = urlparse(base_url).hostname
@@ -284,7 +343,11 @@ def _binding_mismatches(manifest: WorkerManifest, row: dict[str, Any]) -> list[s
         "adapter_type": manifest.runtime.transport,
         "adapter_entrypoint": manifest.integration.adapter_entrypoint,
         "isolation_mode": manifest.integration.isolation_mode,
-        "sandbox_profile": manifest.sandbox.profile,
+        # The database stores the canonical policy class.  Historical
+        # manifests may still carry aliases such as ``gvisor`` or
+        # ``firecracker`` and must remain readable without producing a
+        # false live-reconciliation mismatch.
+        "sandbox_profile": manifest.sandbox.sandbox_class,
         "team_id": _manifest_team_id(manifest),
         "version_pin": manifest.metadata.version_pin,
         "source_revision": manifest.metadata.source_revision,
@@ -493,6 +556,21 @@ def reconcile(
         worker_ids.add(worker_id)
         manifests.append((path, manifest))
 
+        execution_policy = manifest.effective_execution_policy
+        is_external = manifest.runtime_tier == "external" or (
+            manifest.metadata.source_repo is not None
+            and manifest.metadata.source_repo != "local"
+        )
+        if is_external and execution_policy.effective_trust(external=True) == "trusted":
+            errors.append(f"{path.name}: external worker execution policy cannot select trusted/runc")
+        if is_external and execution_policy.effective_minimum_isolation(external=True) not in {
+            "sandboxed",
+            "vm_isolated",
+        }:
+            errors.append(f"{path.name}: external worker execution policy has no hardened isolation floor")
+        if manifest.runtime.transport == "wasmtime" and "wasm" not in execution_policy.formats:
+            errors.append(f"{path.name}: wasmtime transport requires the wasm execution format")
+
         definition = RUNTIME_CATALOG.get(manifest.runtime_tier)
         if definition is None:
             errors.append(f"{path.name}: runtime tier {manifest.runtime_tier!r} is not in the runtime catalogue")
@@ -616,8 +694,17 @@ def reconcile(
                                     f"{path.name}: security scan evidence {scan_id!r} source_revision disagrees"
                                 )
                             pending_row["security_scan_evidence_ref"] = evidence_ref
-                            pending_row["finding_count"] = int(scan.get("finding_count") or 0)
-                            pending_row["evidence_status"] = str(scan.get("status") or "")
+                            retained_findings = (
+                                scan.get("raw_findings_retained") is True
+                                and scan.get("source_snapshot_retained") is True
+                            )
+                            if retained_findings:
+                                pending_row["finding_count"] = int(scan["finding_count"])
+                                pending_row["evidence_status"] = str(scan.get("status") or "")
+                            else:
+                                pending_row["evidence_status"] = "historical_unreproducible"
+                                pending_row["finding_count_status"] = "unavailable_no_retained_raw_evidence"
+                                pending_row["scan_classification"] = str(scan.get("classification") or "")
                 pending.append(pending_row)
         else:
             errors.append(f"{path.name}: metadata.source_repo is required")

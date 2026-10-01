@@ -15,6 +15,20 @@ development host but remains outside native release certification, and direct
 Firecracker is compatibility/superseded evidence rather than an active policy
 tier.
 
+**Current certification refresh (2026-09-30):** the exact OpenCode v1.18.21
+candidate has a retained source snapshot, pinned image digest, per-scanner
+sanitized results, exact tool versions/invocations, result hashes, and
+CycloneDX SBOM under
+[`opencode-candidate/2026-09-30-v1.18.21`](../../mas/docs/provenance/opencode-candidate/2026-09-30-v1.18.21/).
+The technical gate remains blocked by 762 findings and 54 Semgrep
+coverage/execution errors. The older v1.17.13 record has no retained raw
+results or exact source snapshot; its scalar counts are removed from current
+machine-readable evidence and do not contribute to release or remediation
+totals. The current local-Compose ledger has 11 blocked checks, including
+worker reconciliation, network boundary, trace/SLO, object-store, and API
+evidence because project and worker inventory routes return HTTP 503. The
+current WSL host does not establish native-Linux certification.
+
 ## Purpose
 
 AIAT must make dangerous automation bounded, attributable, observable, and recoverable. Security is enforced at identity, policy, network, process, data, supply-chain, and human-approval layers. Observability proves behaviour but does not become a second authority.
@@ -136,6 +150,20 @@ AIAT must make dangerous automation bounded, attributable, observable, and recov
   `semgrep`, `skillspector`, and `trufflehog` names as aliases of the canonical
   `security.scan` contract (`965ba38`). Scanner execution remains sandboxed and
   governed by the existing grants, audit, rate, and approval controls.
+- The OpenCode candidate-certification harness provisions SkillSpector under an
+  explicit Python 3.12 runtime, retains the exact compressed source archive,
+  redacts scanner secret fields/source context before storing raw JSON, records
+  per-rule counts and sanitized-result hashes, and validates those artifacts
+  against the candidate package. The 2026-09-30 local v1.18.21 package has
+  passing tool provisioning, SBOM generation, and AIAT boundary regression;
+  its security gate remains blocked on 762 findings and 54 Semgrep
+  execution/coverage errors. See the [retained candidate report](../../mas/docs/provenance/opencode-candidate/2026-09-30-v1.18.21/candidate-certification.json)
+  and [review register](../../mas/docs/provenance/security_scan_review.yaml);
+  no worker activation is inferred.
+- Worker reconciliation uses a scanner-reported file count when the tool
+  provides one. If it does not, the record marks that metric unreported and
+  retains the source-snapshot inventory count separately; the inventory total
+  is not presented as a scanner measurement.
 - The deployment image lock template, provenance inventory, and image budgets
   are checked in under `mas/infra/compose/production-image-lock.example.env`
   (template coverage regression committed as `1d373ee`),

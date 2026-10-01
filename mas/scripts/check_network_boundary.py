@@ -553,6 +553,7 @@ def inspect_live(
     runner_network = str(policy.get("runner_network") or "workers")
     ceo_service = str(policy.get("ceo_service") or CEO_SERVICE)
     for service_name in static_report.get("team_services", []):
+        entry_error_count = len(errors)
         entry: dict[str, Any] = {"service": service_name}
         try:
             container_id = _docker_container_for_service(service_name)
@@ -607,7 +608,7 @@ def inspect_live(
                 errors.append(f"{service_name}: control-plane storage health failed")
             entry["denied"] = denied_results
             entry["allowed"] = allowed_results
-            entry["status"] = "pass"
+            entry["status"] = "pass" if len(errors) == entry_error_count else "fail"
         except (RuntimeError, OSError) as exc:
             entry["status"] = "error"
             errors.append(f"{service_name}: live probe failed: {exc}")
