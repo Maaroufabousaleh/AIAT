@@ -25,16 +25,36 @@ def test_current_review_register_covers_open_scan_without_waiving_gate() -> None
     report = module.inspect(SCAN, REVIEW)
 
     assert report["status"] == "pass", report["errors"]
-    assert report["scan_count"] == 1
-    assert report["finding_count"] == 316
+    assert report["scan_count"] == 4
+    assert report["active_scan_count"] == 3
+    assert report["historical_scan_count"] == 1
+    assert report["finding_count"] == 762
+    assert "historical_finding_count" not in report
     assert report["engine_warning_count"] == 54
-    assert report["review_required_count"] == 1
+    assert report["review_required_count"] == 3
     assert report["technical_gate_status"] == "blocked"
     assert report["licence_metadata_is_gate"] is False
     assert report["reviews"][0]["status"] == "open"
-    assert report["latest_reproduction"]["finding_count"] == 316
-    assert report["latest_reproduction"]["scanner_error_count"] == 55
+    assert report["latest_reproduction"]["finding_count"] == 762
+    assert report["latest_reproduction"]["scanner_error_count"] == 54
     assert report["latest_reproduction"]["technical_gate_status"] == "blocked"
+
+
+def test_unreproducible_historical_scan_rejects_scalar_counts(tmp_path: Path) -> None:
+    module = _load_module()
+    scans = yaml.safe_load(SCAN.read_text(encoding="utf-8"))
+    historical = next(row for row in scans["scans"] if row.get("historical_only") is True)
+    historical["finding_count"] = 316
+    scan_path = tmp_path / "security-scan-evidence.yaml"
+    scan_path.write_text(yaml.safe_dump(scans, sort_keys=False), encoding="utf-8")
+
+    report = module.inspect(scan_path, REVIEW)
+
+    assert report["status"] == "fail"
+    assert any(
+        "unreproducible historical evidence must not supply finding_count" in error
+        for error in report["errors"]
+    )
 
 
 def test_review_register_requires_latest_reproduction(tmp_path: Path) -> None:

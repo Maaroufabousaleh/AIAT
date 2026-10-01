@@ -9,7 +9,9 @@ never consulted as a gate.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -25,6 +27,7 @@ SCAN_SCHEMA = "aiat.security-scan-evidence.v1"
 REPRO_SCHEMA = "aiat.security-scan-reproduction-local.v1"
 SCAN_STATUSES = {"passed", "findings_review_required", "blocked"}
 REVIEW_STATUSES = {"open", "in_review", "resolved"}
+FINDING_DISPOSITIONS = {"unreviewed", "confirmed", "false_positive", "remediated", "accepted_by_operator"}
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -40,6 +43,18 @@ def _non_negative_int(value: Any) -> int | None:
     except (TypeError, ValueError):
         return None
     return parsed if parsed >= 0 else None
+
+
+def _is_historical(scan: dict[str, Any]) -> bool:
+    return scan.get("remediation_input") is False
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _resolve_scan_ref(reference: str, scan_path: Path) -> tuple[str, str] | None:
@@ -108,12 +123,29 @@ def _load_reproduction(
         errors.append("latest_reproduction scanner_error_count must be a non-negative integer")
     if scan.get("rule_total_matches_findings") is not True:
         errors.append("latest_reproduction must assert rule-total/finding parity")
-    if len(scan_index) == 1:
-        historical = next(iter(scan_index.values()))
-        if finding_count is not None and finding_count != _non_negative_int(historical.get("finding_count")):
-            errors.append("latest_reproduction finding_count disagrees with the registered scan")
-        if isinstance(source, dict) and str(source.get("commit") or "") != str(historical.get("source_commit") or ""):
-            errors.append("latest_reproduction source commit disagrees with the registered scan")
+    rule_counts = scan.get("rule_counts")
+    if not isinstance(rule_counts, dict):
+        errors.append("latest_reproduction rule_counts must be a mapping")
+    elif finding_count is not None:
+        normalized_total = sum(_non_negative_int(value) or 0 for value in rule_counts.values())
+        if normalized_total != finding_count:
+            errors.append("latest_reproduction rule_counts do not match finding_count")
+    active_scans = [row for row in scan_index.values() if not _is_historical(row)]
+    if active_scans:
+        active_findings = sum(_non_negative_int(row.get("finding_count")) or 0 for row in active_scans)
+        active_errors = sum(
+            _non_negative_int(row.get("scanner_error_count"))
+            if _non_negative_int(row.get("scanner_error_count")) is not None
+            else (_non_negative_int(row.get("engine_warning_count")) or 0)
+            for row in active_scans
+        )
+        if finding_count is not None and finding_count != active_findings:
+            errors.append("latest_reproduction finding_count disagrees with active registered scans")
+        if scanner_error_count is not None and scanner_error_count != active_errors:
+            errors.append("latest_reproduction scanner_error_count disagrees with active registered scans")
+        source_commits = {str(row.get("source_commit") or "") for row in active_scans}
+        if isinstance(source, dict) and source_commits != {str(source.get("commit") or "")}:
+            errors.append("latest_reproduction source commit disagrees with active registered scans")
     summary = {
         "path": raw_path,
         "status": str(reproduction.get("status") or ""),
@@ -171,6 +203,7 @@ def inspect(
     scan_index: dict[str, dict[str, Any]] = {}
     total_findings = 0
     total_warnings = 0
+    active_scan_count = 0
     technical_gate_status = "passed"
     for row in scans:
         if not isinstance(row, dict):
@@ -181,23 +214,41 @@ def inspect(
             errors.append("security scan IDs must be unique and non-blank")
             continue
         scan_index[scan_id] = row
+        historical = _is_historical(row)
         scan_status = str(row.get("status") or "").strip().lower()
         if scan_status not in SCAN_STATUSES:
             errors.append(f"{scan_id}: unsupported scan status {scan_status!r}")
-        if scan_status != "passed":
+        if scan_status != "passed" and not historical:
             technical_gate_status = "blocked"
+        retained_findings = (
+            row.get("raw_findings_retained") is True
+            and row.get("source_snapshot_retained") is True
+        )
         finding_count = _non_negative_int(row.get("finding_count"))
         warning_count = _non_negative_int(row.get("engine_warning_count"))
-        if finding_count is None:
+        if historical and not retained_findings:
+            for field in ("finding_count", "engine_warning_count", "scanned_file_count"):
+                if row.get(field) is not None:
+                    errors.append(
+                        f"{scan_id}: unreproducible historical evidence must not supply {field}"
+                    )
+        elif finding_count is None:
             errors.append(f"{scan_id}: finding_count must be a non-negative integer")
-        else:
+        elif not historical:
             total_findings += finding_count
-        if warning_count is None:
+        if not historical:
+            active_scan_count += 1
+        if not (historical and not retained_findings) and warning_count is None:
             errors.append(f"{scan_id}: engine_warning_count must be a non-negative integer")
-        else:
+        elif not historical and warning_count is not None:
             total_warnings += warning_count
         rule_counts = row.get("rule_counts")
-        if not isinstance(rule_counts, dict) or not rule_counts:
+        if historical and not retained_findings:
+            if rule_counts not in (None, {}):
+                errors.append(
+                    f"{scan_id}: unreproducible historical evidence must not supply rule_counts"
+                )
+        elif not isinstance(rule_counts, dict) or not rule_counts:
             errors.append(f"{scan_id}: rule_counts must be a non-empty mapping")
         else:
             rule_total = 0
@@ -211,6 +262,33 @@ def inspect(
                 errors.append(
                     f"{scan_id}: rule_counts total {rule_total} disagrees with finding_count {finding_count}"
                 )
+        if not historical:
+            for key in ("scanner_version", "result_path", "result_sha256", "owner", "next_action"):
+                if not str(row.get(key) or "").strip():
+                    errors.append(f"{scan_id}: {key} is required for active evidence")
+            if not isinstance(row.get("invocation"), list) or not row.get("invocation"):
+                errors.append(f"{scan_id}: exact invocation is required for active evidence")
+            if not re.fullmatch(r"[0-9a-f]{64}", str(row.get("result_sha256") or "")):
+                errors.append(f"{scan_id}: result_sha256 must be a full SHA-256")
+            disposition = str(row.get("finding_disposition") or "").strip().lower()
+            if disposition not in FINDING_DISPOSITIONS:
+                errors.append(f"{scan_id}: finding_disposition must be explicit")
+            result_path_value = str(row.get("result_path") or "").strip()
+            result_path = (REPO_ROOT / result_path_value).resolve()
+            if (
+                not result_path_value
+                or REPO_ROOT not in result_path.parents
+                or not result_path.is_file()
+            ):
+                errors.append(f"{scan_id}: sanitized result_path must identify a repository file")
+            else:
+                try:
+                    if _sha256(result_path) != row.get("result_sha256"):
+                        errors.append(f"{scan_id}: result_sha256 does not match the retained artifact")
+                except OSError:
+                    errors.append(f"{scan_id}: sanitized result_path could not be verified")
+            if row.get("raw_findings_retained") is not True or row.get("source_snapshot_retained") is not True:
+                errors.append(f"{scan_id}: raw sanitized findings and source snapshot must be retained")
 
     reviews = review_document.get("reviews")
     if not isinstance(reviews, list) or not reviews:
@@ -248,7 +326,9 @@ def inspect(
         if not str(review.get("engine_warning_action") or "").strip():
             errors.append(f"{review_id or '<unnamed>'}: engine_warning_action is required")
         scan = scan_index.get(scan_id)
-        if scan is not None:
+        if scan is not None and _is_historical(scan):
+            errors.append(f"{review_id}: historical unreproducible scans cannot have active review rows")
+        elif scan is not None:
             scan_status = str(scan.get("status") or "").strip().lower()
             gate_status = str(review.get("gate_status") or "").strip().lower()
             expected_gate = "passed" if scan_status == "passed" else "blocked"
@@ -312,7 +392,8 @@ def inspect(
             }
         )
 
-    missing_reviews = sorted(set(scan_index) - review_scan_ids)
+    active_scan_ids = {scan_id for scan_id, row in scan_index.items() if not _is_historical(row)}
+    missing_reviews = sorted(active_scan_ids - review_scan_ids)
     if missing_reviews:
         errors.append(f"scans without a review row: {missing_reviews}")
 
@@ -325,6 +406,8 @@ def inspect(
         "status": "fail" if errors else "pass",
         "errors": errors,
         "scan_count": len(scan_index),
+        "active_scan_count": active_scan_count,
+        "historical_scan_count": len(scan_index) - active_scan_count,
         "finding_count": total_findings,
         "engine_warning_count": total_warnings,
         "review_required_count": review_required_count,

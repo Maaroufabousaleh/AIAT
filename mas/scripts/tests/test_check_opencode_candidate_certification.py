@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[1] / "check_opencode_candidate_certification.py"
-EVIDENCE = SCRIPT.parents[1] / "docs" / "provenance" / "opencode-candidate" / "2026-08-21-v1.18.21" / "candidate-certification.json"
+EVIDENCE = SCRIPT.parents[1] / "docs" / "provenance" / "opencode-candidate" / "2026-09-30-v1.18.21" / "candidate-certification.json"
 
 
 def test_current_candidate_evidence_is_structurally_valid_but_technical_gate_blocked() -> None:
@@ -33,3 +33,15 @@ def test_candidate_checker_rejects_mutable_image(tmp_path: Path) -> None:
     assert result.returncode == 1
     report = json.loads(result.stdout)
     assert "candidate image must be digest pinned" in report["errors"]
+
+
+def test_candidate_checker_requires_retained_source_snapshot(tmp_path: Path) -> None:
+    value = json.loads(EVIDENCE.read_text(encoding="utf-8"))
+    path = tmp_path / "candidate.json"
+    path.write_text(json.dumps(value), encoding="utf-8")
+
+    result = subprocess.run([sys.executable, str(SCRIPT), "--path", str(path), "--json"], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 1
+    report = json.loads(result.stdout)
+    assert "candidate source snapshot path is missing or unsafe" in report["errors"]
