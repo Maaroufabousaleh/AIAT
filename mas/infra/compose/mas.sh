@@ -29,6 +29,12 @@ load_env_file() {
         elif [[ "$value" == \'*\' && "$value" == *\' ]]; then
             value="${value:1:${#value}-2}"
         fi
+        # Preserve caller values over dotenv defaults. Host bootstrap supplies
+        # selected ports this way, and operators use it to disable optional
+        # integration setup without editing their local .env file.
+        if [[ -v "$key" ]]; then
+            continue
+        fi
         export "$key=$value"
     done < "$file"
 }

@@ -13,9 +13,22 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
 
-BASE_URL = os.environ.get("OMNIROUTE_BOOTSTRAP_URL", "http://localhost:20128").rstrip("/")
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from typing import Any
+
+
+def _bootstrap_base_url(environ: Mapping[str, str]) -> str:
+    configured_url = environ.get("OMNIROUTE_BOOTSTRAP_URL", "").strip()
+    if configured_url:
+        return configured_url.rstrip("/")
+    port = environ.get("AIAT_DEV_OMNIROUTE_API_PORT", "20128").strip() or "20128"
+    return f"http://127.0.0.1:{port}"
+
+
+BASE_URL = _bootstrap_base_url(os.environ)
 MANAGEMENT_KEY = os.environ.get("OMNIROUTE_MANAGEMENT_KEY", "").strip()
 
 

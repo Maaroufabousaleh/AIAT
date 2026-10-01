@@ -321,15 +321,34 @@ ensure_packages() {
   if [ "$(dpkg-query -W -f='${Version}' runsc 2>/dev/null || true)" != "$GVISOR_VERSION" ]; then
     fail "installed runsc version does not match repository pin ${GVISOR_VERSION}"
   fi
-  local deb_dir deb
-  deb_dir="$(mktemp -d)"
-  TEMP_FILES+=("$deb_dir")
-  (cd "$deb_dir" && apt-get download "runsc=${GVISOR_VERSION}" >/dev/null)
-  deb="$(find "$deb_dir" -maxdepth 1 -type f -name 'runsc_*.deb' -print -quit)"
-  [ -n "$deb" ] || fail "apt did not provide the pinned runsc archive"
+  local deb_dir deb package version architecture
+  deb="${AIAT_GVISOR_DEB_PATH:-}"
+  if [ -n "$deb" ]; then
+    [ -f "$deb" ] || fail "AIAT_GVISOR_DEB_PATH does not name a readable package archive"
+  else
+    deb="$(find /var/cache/apt/archives -maxdepth 1 -type f \
+      -name "runsc_${GVISOR_VERSION}_*.deb" -print -quit 2>/dev/null || true)"
+  fi
+  if [ -z "$deb" ]; then
+    deb_dir="$(mktemp -d)"
+    TEMP_FILES+=("$deb_dir")
+    if ! (cd "$deb_dir" && apt-get download "runsc=${GVISOR_VERSION}" >/dev/null 2>&1); then
+      fail "pinned runsc archive is unavailable; provide AIAT_GVISOR_DEB_PATH with the reviewed package"
+    fi
+    deb="$(find "$deb_dir" -maxdepth 1 -type f \
+      -name "runsc_${GVISOR_VERSION}_*.deb" -print -quit)"
+  fi
+  [ -n "$deb" ] || fail "no package archive matches the pinned runsc version"
+  package="$(dpkg-deb -f "$deb" Package 2>/dev/null || true)"
+  version="$(dpkg-deb -f "$deb" Version 2>/dev/null || true)"
+  architecture="$(dpkg-deb -f "$deb" Architecture 2>/dev/null || true)"
+  [ "$package" = "runsc" ] && [ "$version" = "$GVISOR_VERSION" ] && \
+    [ "$architecture" = "$(dpkg --print-architecture)" ] ||
+      fail "runsc package archive identity does not match the pinned version and host architecture"
   if [ "$(sha256sum "$deb" | awk '{print $1}')" != "$GVISOR_DEB_SHA256" ]; then
     fail "pinned runsc archive checksum mismatch"
   fi
+  log "verified the pinned runsc package archive"
 }
 
 kata_install_failure() {
@@ -891,11 +910,13 @@ ensure_compose_port_bindings() {
     "redis 6379 AIAT_DEV_REDIS_PORT"
     "postgres 5432 AIAT_DEV_POSTGRES_PORT"
     "minio 9000 AIAT_DEV_MINIO_API_PORT"
+    "minio 9001 AIAT_DEV_MINIO_CONSOLE_PORT"
     "pgadmin 80 AIAT_DEV_PGADMIN_PORT"
     "redis-insight 5540 REDIS_INSIGHT_PORT"
     "prometheus 9090 AIAT_DEV_PROMETHEUS_PORT"
     "litellm 4000 AIAT_DEV_LITELLM_PORT"
     "omniroute 20128 AIAT_DEV_OMNIROUTE_API_PORT"
+    "omniroute 20129 AIAT_DEV_OMNIROUTE_METRICS_PORT"
     "dashboard 3000 AIAT_DEV_DASHBOARD_PORT"
     "orchestrator-api 8000 AIAT_DEV_ORCHESTRATOR_PORT"
     "message-router 8001 AIAT_DEV_MESSAGE_ROUTER_PORT"
