@@ -13,6 +13,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from mas_core.execution_policy import (
+    HostExecutionCapabilities,
+    WorkloadExecutionPolicy,
+    resolve_execution_target,
+)
 from mas_core.sandbox_policy import (
     canonical_sandbox_class,
     required_runtime_for_sandbox,
@@ -76,6 +81,7 @@ class WorkerPlacementRequest:
     required_host_plane: str | None = "worker"
     required_sandbox_profile: str | None = None
     required_isolation_mode: str | None = None
+    execution_policy: WorkloadExecutionPolicy | Mapping[str, Any] | None = None
     memory_bytes: int = 0
     gpu_count: int = 0
     slots: int = 1
@@ -109,6 +115,15 @@ class WorkerHostSnapshot:
     lease_valid: bool = True
     priority: int = 0
     lease_generation: int = 1
+    # New host-capability fields are additive.  Existing registry rows remain
+    # usable through the legacy sandbox profile/runtime projection.
+    execution_runtimes: frozenset[str] = frozenset()
+    workload_formats: frozenset[str] = frozenset()
+    kvm_available: bool = False
+    wasmtime_available: bool = False
+    remote_vm_available: bool = False
+    gvisor_platform: str = "systrap"
+    execution_capabilities_advertised: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +137,8 @@ class PlacementDecision:
     free_memory_bytes: int
     free_gpus: int
     priority: int
+    execution_runtime: str | None = None
+    execution_sandbox_class: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -132,6 +149,8 @@ class PlacementDecision:
             "free_memory_bytes": self.free_memory_bytes,
             "free_gpus": self.free_gpus,
             "priority": self.priority,
+            "execution_runtime": self.execution_runtime,
+            "execution_sandbox_class": self.execution_sandbox_class,
         }
 
 
@@ -147,6 +166,8 @@ def evaluate_host(
 
     capacity = host.capacity
     reasons: list[str] = []
+    execution_runtime: str | None = None
+    execution_sandbox_class: str | None = None
     if request.invalid():
         reasons.append("request_invalid")
     if not host.host_id.strip():
@@ -169,7 +190,12 @@ def evaluate_host(
             break
     if not request.required_capabilities.issubset(host.capabilities):
         reasons.append("capability_missing")
-    if request.required_sandbox_profile:
+    # The legacy profile predicate remains authoritative for callers that have
+    # not adopted the format-aware policy.  Once an explicit execution policy
+    # is supplied, its target resolution is the single host/runtime decision;
+    # otherwise a stronger Kata target would be rejected by a stale
+    # ``sandboxed -> runsc`` compatibility field.
+    if request.required_sandbox_profile and request.execution_policy is None:
         try:
             required_class = canonical_sandbox_class(request.required_sandbox_profile)
             host_classes = {
@@ -188,6 +214,40 @@ def evaluate_host(
                     for runtime in host.sandbox_runtimes
                 ):
                     reasons.append("sandbox_runtime_unsupported")
+    if request.execution_policy is not None:
+        try:
+            execution_policy = (
+                request.execution_policy
+                if isinstance(request.execution_policy, WorkloadExecutionPolicy)
+                else WorkloadExecutionPolicy.model_validate(request.execution_policy)
+            )
+            target = resolve_execution_target(
+                execution_policy,
+                HostExecutionCapabilities(
+                    runtimes=frozenset(
+                        host.execution_runtimes
+                        if host.execution_capabilities_advertised is True
+                        or (
+                            host.execution_capabilities_advertised is None
+                            and host.execution_runtimes
+                        )
+                        else frozenset()
+                    ),
+                    workload_formats=host.workload_formats,
+                    kvm_available=host.kvm_available,
+                    wasmtime_available=host.wasmtime_available,
+                    remote_vm_available=host.remote_vm_available,
+                    gvisor_platform=host.gvisor_platform,
+                ),
+                external=True,
+            )
+        except (TypeError, ValueError):
+            reasons.append("execution_policy_invalid")
+        else:
+            execution_runtime = target.runtime
+            execution_sandbox_class = target.sandbox_class
+            if not target.available:
+                reasons.append(target.reason_code)
     if (
         request.required_isolation_mode
         and request.required_isolation_mode not in host.isolation_modes
@@ -210,6 +270,8 @@ def evaluate_host(
         free_memory_bytes=capacity.free_memory_bytes,
         free_gpus=capacity.free_gpus,
         priority=host.priority,
+        execution_runtime=execution_runtime,
+        execution_sandbox_class=execution_sandbox_class,
     )
 
 
@@ -238,6 +300,8 @@ def select_host(
                 free_memory_bytes=decision.free_memory_bytes,
                 free_gpus=decision.free_gpus,
                 priority=decision.priority,
+                execution_runtime=decision.execution_runtime,
+                execution_sandbox_class=decision.execution_sandbox_class,
             )
             for decision in decisions
         )
@@ -314,6 +378,24 @@ def mapping_to_host_snapshot(value: Mapping[str, Any]) -> WorkerHostSnapshot:
             except ValueError:
                 continue
         sandbox_runtimes = frozenset(inferred_runtimes)
+    def _string_set(raw: Any) -> frozenset[str]:
+        values = (raw,) if isinstance(raw, str) else (raw or ())
+        return frozenset(str(item).strip().lower() for item in values if str(item).strip())
+
+    if "execution_runtimes" in value:
+        execution_runtimes = _string_set(value.get("execution_runtimes"))
+    elif "runtime_capabilities" in value:
+        execution_runtimes = _string_set(value.get("runtime_capabilities"))
+    else:
+        execution_runtimes = sandbox_runtimes
+    workload_formats = _string_set(
+        value.get("workload_formats") or value.get("execution_formats")
+    )
+    if not workload_formats:
+        if execution_runtimes & {"runc", "runsc", "kata"}:
+            workload_formats = frozenset({"oci", "linux"})
+        if value.get("wasmtime_available") or "wasmtime" in execution_runtimes:
+            workload_formats = workload_formats | {"wasm"}
     return WorkerHostSnapshot(
         host_id=str(value.get("host_id") or ""),
         status=str(value.get("status") or ""),
@@ -334,6 +416,28 @@ def mapping_to_host_snapshot(value: Mapping[str, Any]) -> WorkerHostSnapshot:
         lease_valid=bool(value.get("lease_valid", True)),
         priority=int(value.get("priority") or 0),
         lease_generation=max(1, int(value.get("lease_generation") or 1)),
+        execution_runtimes=execution_runtimes,
+        workload_formats=workload_formats,
+        kvm_available=bool(value.get("kvm_available", False)),
+        wasmtime_available=bool(value.get("wasmtime_available", "wasmtime" in execution_runtimes)),
+        remote_vm_available=bool(value.get("remote_vm_available", "remote_vm" in execution_runtimes)),
+        gvisor_platform=str(value.get("gvisor_platform") or "systrap"),
+        execution_capabilities_advertised=(
+            bool(value.get("execution_capabilities_advertised"))
+            if "execution_capabilities_advertised" in value
+            else any(
+                key in value
+                for key in (
+                    "execution_runtimes",
+                    "runtime_capabilities",
+                    "workload_formats",
+                    "execution_formats",
+                    "kvm_available",
+                    "wasmtime_available",
+                    "remote_vm_available",
+                )
+            )
+        ),
     )
 
 

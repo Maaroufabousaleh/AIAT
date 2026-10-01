@@ -87,6 +87,15 @@ native-Linux release boundary.
 | Docker/gVisor | Dedicated `aiat-wsl` Docker context; Docker Engine `29.8.1`; Compose `v5.0.0-desktop.1` (Compose v2-compatible); `runsc 20260914.0` registered; digest-pinned gVisor smoke passes. |
 | Sandbox policy | `trusted → runc`, `sandboxed → runsc`, `vm_isolated → Kata`; old `standard`/`restricted`/`gvisor`/`firecracker` values remain read-compatible aliases. Required classes fail closed; no runc downgrade is allowed. |
 | Kata | **`AVAILABLE` for local development** — pinned Kata runtime-rs 4.2.0 with QEMU is registered in the dedicated WSL Docker daemon and the bounded guest smoke proves a distinct guest kernel. Native-Linux release certification remains pending. |
+
+The current policy is also format- and host-capability-aware: certified WASM
+artifacts may use Wasmtime; untrusted OCI/Linux work prefers Kata when local
+KVM/Kata evidence is available and otherwise uses compatible gVisor/runsc;
+hostile or VM-required work uses Kata or an explicitly advertised remote VM and
+is unschedulable when neither is available. Worker manifests request only
+`vm_isolated`, never a Kata VMM name. This is implemented by the centralized
+`mas_core.execution_policy` resolver and additive host metadata, without a new
+execution backend abstraction.
 | Database | Source and live local Compose database are at `0045_worker_tool_effects`; the migration was applied through the normal Alembic path. |
 | Release status | **`RELEASE_CERTIFICATION_PENDING`** — WSL2 development evidence is not native-Linux release evidence. Native host, provider, deployment, operator, and other selected release gates remain separate. |
 
@@ -2635,7 +2644,7 @@ Project-detail stale/retry state is recorded in the dashboard evidence fixture; 
 
 1. [x] Remove licence/redistribution from code-level gate predicates and retain it as metadata/notices only.
 2. [x] Make the remaining operational certification gates consistent and executable in steward/API certification paths.
-3. [x] Reconcile OpenCode worker scan/certification records.
+3. [x] Reconcile OpenCode worker scan/certification records. [x] Provision the pinned scanner set under Python 3.12; retain the exact compressed v1.18.21 source snapshot, sanitized Semgrep/TruffleHog/SkillSpector outputs, per-rule counts/hashes, SBOM, and AIAT boundary result. [ ] Resolve the 54 Semgrep coverage/execution errors and disposition the 762 active findings before worker activation.
 4. [x] Reconcile all checked-in worker manifests with the runtime catalogue, company references, OpenCode Compose/version link, provenance, and metadata-only notices.
 5. [x] Add the fail-closed local image identity probe (`7d69fbd`) and development/release wrapper separation (`fd41874`); [x] add fail-closed CycloneDX artifact validation (`42b03a3`); resolve deployment image refs and generate matching source/version provenance/SBOM remain release work.
 6. [x] Add CEO identity/section ACL contract and API matrix. [x] Exercise the authenticated local operator/CEO/service/worker matrix. [x] Exercise the local Compose dashboard/UI matrix (58/59, one explicit DLQ-fixture skip; evidence at [`provenance/dashboard_e2e_live.json`](mas/docs/provenance/dashboard_e2e_live.json)), including hierarchy communication-policy/path tracing, retained hiring evaluation details, shell focus, identity stale-record/retry state, PM integration conflict/stale retry, and system-visualization partial/offline retry states. [x] Keep local wrapper principals distinct and propagate the company timezone (`fd41874`). [ ] Repeat the dashboard/UI matrix on native Linux.

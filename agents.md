@@ -55,7 +55,7 @@ licence-based bans.
 | Research/browser | Scrapling, guarded Playwright/browser-use | Other sandboxed fetch/browser tools |
 | Code review | AIAT deterministic diff reviewer; optional pr-agent/open-code-review/stage-cli | Other exact-pinned review tools |
 | Security | Semgrep, SkillSpector, TruffleHog, sandbox tests | Other scanners through bounded adapters |
-| Sandboxing | gVisor; Firecracker for high risk | Other host-certified isolation profiles |
+| Sandboxing | Wasmtime for WASM artifacts; gVisor for compatible OCI/Linux; Kata for high-risk or gVisor-incompatible work | Other host-certified isolation profiles; direct Firecracker only as a possible Kata VMM/legacy compatibility path |
 | DevOps | OpenTofu, GitHub Actions, Ansible | Other bounded infrastructure adapters |
 | Planning/PM | ccpm, GitHub Issues, YouTrack | Plane, OpenProject, and other providers |
 | Identity/secrets | AIAT identity/credentials, Stalwart, Resend | ZITADEL, Vault, OpenBao, cloud KMS |

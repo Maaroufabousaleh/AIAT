@@ -206,11 +206,27 @@ def inspect_static(
             sandbox_class = "invalid"
         network_mode = str(_sandbox_value(manifest, "network_mode", ""))
         runtime_tier = str(getattr(manifest, "runtime_tier", ""))
+        try:
+            execution_policy = manifest.effective_execution_policy
+            execution_trust = execution_policy.effective_trust(external=runtime_tier == "external")
+            execution_minimum = execution_policy.effective_minimum_isolation(
+                external=runtime_tier == "external"
+            )
+        except (TypeError, ValueError) as exc:
+            execution_policy = None
+            execution_trust = "invalid"
+            execution_minimum = "invalid"
+            errors.append(f"{path.name}: execution policy is invalid ({type(exc).__name__})")
         row: dict[str, Any] = {
             "worker": path.stem,
             "runtime_tier": runtime_tier,
             "sandbox_profile": profile,
             "sandbox_class": sandbox_class,
+            "execution_policy": (
+                execution_policy.model_dump(mode="json") if execution_policy is not None else None
+            ),
+            "execution_trust": execution_trust,
+            "execution_minimum_isolation": execution_minimum,
             "network_mode": network_mode,
             "status": "pass",
         }
@@ -226,6 +242,19 @@ def inspect_static(
         if runtime_tier == "external" and sandbox_class not in HARDENED_PROFILES:
             row["status"] = "fail"
             errors.append(f"{path.name}: external worker requires sandboxed (gVisor) or vm_isolated (Kata)")
+        if runtime_tier == "external" and execution_trust == "trusted":
+            row["status"] = "fail"
+            errors.append(f"{path.name}: external worker execution policy cannot be trusted/runc")
+        if runtime_tier == "external" and execution_minimum not in HARDENED_PROFILES:
+            row["status"] = "fail"
+            errors.append(f"{path.name}: external execution policy must require sandboxed or vm_isolated")
+        if (
+            manifest.runtime.transport == "wasmtime"
+            and execution_policy is not None
+            and "wasm" not in execution_policy.formats
+        ):
+            row["status"] = "fail"
+            errors.append(f"{path.name}: wasmtime transport requires the wasm execution format")
         rows.append(row)
     if not rows:
         errors.append("no worker manifests found")
@@ -247,6 +276,47 @@ def inspect_static(
 
 def _run(command: list[str], *, timeout: float = 10.0) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, check=False, capture_output=True, text=True, timeout=timeout)
+
+
+def _wasmtime_host_capability() -> dict[str, Any]:
+    """Report optional host Wasmtime availability without installing anything.
+
+    Wasmtime is a format-specific runtime.  Its absence must not block OCI/
+    Linux development, so this probe is informational unless a future
+    workload explicitly requests a Wasmtime target.
+    """
+
+    configured = str(os.environ.get("AIAT_WASMTIME_BINARY") or "wasmtime").strip()
+    binary = shutil.which(configured) or (configured if Path(configured).is_file() else None)
+    if not binary:
+        return {
+            "status": "OPTIONAL_UNAVAILABLE",
+            "available": False,
+            "binary": None,
+            "reason": "Wasmtime binary is not installed on this host",
+        }
+    try:
+        result = _run([binary, "--version"], timeout=10.0)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {
+            "status": "FAILED",
+            "available": False,
+            "binary": binary,
+            "reason": f"Wasmtime version probe failed ({type(exc).__name__})",
+        }
+    if result.returncode != 0:
+        return {
+            "status": "FAILED",
+            "available": False,
+            "binary": binary,
+            "reason": "Wasmtime version probe returned a non-zero exit code",
+        }
+    return {
+        "status": "AVAILABLE",
+        "available": True,
+        "binary": binary,
+        "version": result.stdout.strip()[:200] or None,
+    }
 
 
 def _docker_command(*args: str) -> list[str]:
@@ -462,6 +532,7 @@ def inspect_live(
         "kata_smoke": "not_checked",
         "firecracker": "superseded",
     }
+    report["wasmtime"] = _wasmtime_host_capability()
     runtimes, error = _docker_runtimes()
     report["registered_runtimes"] = sorted(runtimes)
     if error:

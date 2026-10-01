@@ -7,6 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from mas_core.execution_policy import WorkloadExecutionPolicy
 from mas_core.sandbox_policy import SandboxProfileName, canonical_sandbox_class
 
 from .capability import CapabilityDef
@@ -35,7 +36,17 @@ class WorkerMetadata(BaseModel):
 
 
 class WorkerRuntime(BaseModel):
-    transport: Literal["native", "process", "http", "oci", "mcp", "opencode", "aiat_gateway", "human"] = "process"
+    transport: Literal[
+        "native",
+        "process",
+        "http",
+        "oci",
+        "mcp",
+        "opencode",
+        "aiat_gateway",
+        "wasmtime",
+        "human",
+    ] = "process"
     adapter_config: dict[str, Any] = Field(default_factory=dict)
     timeout_seconds: int = Field(default=300, ge=1)
     stop_grace_seconds: int = Field(default=60, ge=1)
@@ -109,6 +120,10 @@ class WorkerManifest(BaseModel):
     integration: WorkerIntegration = Field(default_factory=WorkerIntegration)
     limits: WorkerLimits = Field(default_factory=WorkerLimits)
     sandbox: WorkerSandbox = Field(default_factory=WorkerSandbox)
+    # Workload format, trust, and host-capability requirements are separate
+    # from the legacy sandbox profile.  The latter remains read-compatible
+    # for persisted manifests and historical evidence.
+    execution: WorkloadExecutionPolicy | None = None
     checkpointing: WorkerCheckpointing = Field(default_factory=WorkerCheckpointing)
     observability: WorkerObservability = Field(default_factory=WorkerObservability)
     # Epsilon fields — runtime tier and configuration for advanced runtimes
@@ -138,6 +153,29 @@ class WorkerManifest(BaseModel):
     @property
     def is_legacy_external_wrapper(self) -> bool:
         return self.runtime_tier == "external" and self.integration.isolation_mode == "wrapper" and not self.integration.certified_adapter_version
+
+    @property
+    def effective_execution_policy(self) -> WorkloadExecutionPolicy:
+        """Return the explicit policy or a safe compatibility projection.
+
+        External manifests without the new field are never treated as trusted.
+        Their existing hardened sandbox profile becomes the minimum isolation
+        floor while host format/runtime selection remains centralized in
+        :mod:`mas_core.execution_policy`.
+        """
+
+        if self.execution is not None:
+            return self.execution
+        is_external = self.runtime_tier == "external" or (
+            self.metadata.source_repo is not None and self.metadata.source_repo != "local"
+        )
+        if not is_external:
+            sandbox_class = canonical_sandbox_class(self.sandbox.profile)
+            minimum = sandbox_class if sandbox_class in {"sandboxed", "vm_isolated"} else "trusted"
+            return WorkloadExecutionPolicy(trust="trusted", minimum_isolation=minimum)
+        sandbox_class = canonical_sandbox_class(self.sandbox.profile)
+        minimum = sandbox_class if sandbox_class in {"sandboxed", "vm_isolated"} else "sandboxed"
+        return WorkloadExecutionPolicy(trust="untrusted", minimum_isolation=minimum)
 
     def to_specialist_shell(self):
         """Translate a legacy YAML manifest into the universal shell model."""
@@ -175,7 +213,13 @@ class WorkerManifest(BaseModel):
                 model_mode=ModelMode(self.model_mode),
                 checkpoint_mode="native" if self.checkpointing.enabled else "unsupported",
                 workspace_mode="isolated",
-                extensions={"legacy_manifest": {"runtime_tier": self.runtime_tier, "isolation_mode": self.integration.isolation_mode}},
+                extensions={
+                    "legacy_manifest": {
+                        "runtime_tier": self.runtime_tier,
+                        "isolation_mode": self.integration.isolation_mode,
+                    },
+                    "execution_policy": self.effective_execution_policy.model_dump(mode="json"),
+                },
             ),
             model_requirements=set(self.model_requirements),
             permissions=list(self.permission_grants),

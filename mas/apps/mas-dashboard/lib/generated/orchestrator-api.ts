@@ -906,6 +906,7 @@ export type RegisterWorkerRequest = {
   adapter_type: string;
   capability_ids?: Array<string>;
   capability_names?: Array<string>;
+  execution?: (WorkloadExecutionPolicy | null);
   identity_mailbox_class?: string;
   model_mode?: string;
   model_profile_id?: (string | null);
@@ -1240,6 +1241,7 @@ export type UpdateWorkerRequest = {
   adapter_module?: (string | null);
   adapter_type?: (string | null);
   capability_ids?: (Array<string> | null);
+  execution?: (WorkloadExecutionPolicy | null);
   isolation_mode?: (string | null);
   model_mode?: (string | null);
   model_profile_id?: (string | null);
@@ -1339,6 +1341,20 @@ export type WorkerStatusTransition = {
 export type WorkerUpgradeRequest = {
   run_compat_tests?: boolean;
   source_revision?: (string | null);
+};
+
+export type WorkloadExecutionPolicy = {
+  allowed_runtimes?: Array<("runc" | "wasmtime" | "runsc" | "kata" | "remote_vm")>;
+  filesystem?: {
+  [key: string]: string;
+};
+  formats?: Array<("oci" | "linux" | "wasm")>;
+  gvisor_compatible?: boolean;
+  minimum_isolation?: (("trusted" | "sandboxed" | "vm_isolated" | "remote_vm") | null);
+  network?: ("none" | "egress-allowlist" | "egress-deny-all" | "unrestricted");
+  preferred_runtimes?: Array<("runc" | "wasmtime" | "runsc" | "kata" | "remote_vm")>;
+  remote_vm_allowed?: boolean;
+  trust?: (("trusted" | "untrusted" | "hostile") | null);
 };
 
 export type OrchestratorApiOperations = {

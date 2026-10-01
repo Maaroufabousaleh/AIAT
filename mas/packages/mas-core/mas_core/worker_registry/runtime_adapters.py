@@ -16,6 +16,7 @@ import logging
 import math
 import os
 import re
+import shutil
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -408,6 +409,81 @@ class ProcessAdapter(BaseWorkerAdapter):
                 details={"signal": "TERM", "process_returncode": process.returncode},
             )
         return receipt
+
+
+class WasmtimeAdapter(ProcessAdapter):
+    """Run an immutable WASM module through a host-certified Wasmtime binary.
+
+    WASM is a format-specific execution path, not a universal replacement for
+    OCI/Linux workers.  The module is digest-pinned at construction and the
+    command exposes no WASI directory or inherited environment by default.
+    Host certification remains responsible for pinning and validating the
+    Wasmtime binary itself.
+    """
+
+    runtime_type = "wasmtime"
+
+    def __init__(
+        self,
+        module_path: str,
+        *,
+        module_sha256: str,
+        worker_id: str,
+        wasmtime_binary: str = "wasmtime",
+        arguments: list[str] | tuple[str, ...] = (),
+        cwd: str | None = None,
+        environment: dict[str, str] | None = None,
+        context: AdapterContext | None = None,
+        runtime_version: str | None = None,
+    ) -> None:
+        path = Path(module_path).expanduser().resolve()
+        digest = str(module_sha256 or "").strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise ValueError("WASM workers require a 64-character module SHA-256 digest")
+        if not path.is_file():
+            raise ValueError("WASM module path must point to a regular file")
+        actual = hashlib.sha256(path.read_bytes()).hexdigest()
+        if actual != digest:
+            raise ValueError("WASM module digest does not match the declared immutable digest")
+        if not wasmtime_binary or any(not isinstance(value, str) or not value for value in arguments):
+            raise ValueError("Wasmtime command configuration is invalid")
+        command = [wasmtime_binary, "run", *arguments, str(path)]
+        super().__init__(
+            command,
+            worker_id=worker_id,
+            cwd=cwd,
+            environment=environment,
+            context=context,
+            capabilities=_external_capabilities(),
+            runtime_version=runtime_version,
+        )
+        self.module_path = path
+        self.module_sha256 = digest
+        self.wasmtime_binary = wasmtime_binary
+
+    async def readiness(self, request: WorkerRunRequest | None = None) -> WorkerReadiness:
+        readiness = await super().readiness(request)
+        blockers = list(readiness.blockers)
+        binary_available = bool(
+            shutil.which(self.wasmtime_binary) or Path(self.wasmtime_binary).is_file()
+        )
+        try:
+            module_digest_valid = (
+                hashlib.sha256(self.module_path.read_bytes()).hexdigest()
+                == self.module_sha256
+            )
+        except OSError:
+            module_digest_valid = False
+        if not binary_available:
+            blockers.append("wasmtime binary is unavailable")
+        if not module_digest_valid:
+            blockers.append("WASM module digest changed after adapter construction")
+        return WorkerReadiness(
+            worker_id=self.worker_id,
+            ready=not blockers,
+            checks={**readiness.checks, "wasmtime_binary": binary_available, "module_digest": module_digest_valid},
+            blockers=blockers,
+        )
 
 
 class HTTPAdapter(BaseWorkerAdapter):
@@ -2455,6 +2531,18 @@ def adapter_for_transport(
     normalized = transport.lower()
     if normalized == "process":
         return ProcessAdapter(config.get("command") or [config.get("entrypoint", "worker")], worker_id=worker_id, context=context, cwd=config.get("cwd"), environment=config.get("environment"))
+    if normalized in {"wasmtime", "wasm"}:
+        return WasmtimeAdapter(
+            str(config["module_path"]),
+            module_sha256=str(config["module_sha256"]),
+            worker_id=worker_id,
+            wasmtime_binary=str(config.get("wasmtime_binary") or "wasmtime"),
+            arguments=tuple(config.get("arguments") or ()),
+            cwd=config.get("cwd"),
+            environment=config.get("environment"),
+            context=context,
+            runtime_version=config.get("runtime_version"),
+        )
     if normalized == "http":
         return HTTPAdapter(config["base_url"], worker_id=worker_id, context=context, endpoints=config.get("endpoints"), headers=config.get("headers"))
     if normalized == "mcp":

@@ -718,6 +718,7 @@ class RegisterWorkerRequest(TypedDict):
     adapter_type: Required[str]
     capability_ids: NotRequired[list[str]]
     capability_names: NotRequired[list[str]]
+    execution: NotRequired[WorkloadExecutionPolicy | Any]
     identity_mailbox_class: NotRequired[str]
     model_mode: NotRequired[str]
     model_profile_id: NotRequired[str | Any]
@@ -995,6 +996,7 @@ class UpdateWorkerRequest(TypedDict):
     adapter_module: NotRequired[str | Any]
     adapter_type: NotRequired[str | Any]
     capability_ids: NotRequired[list[str] | Any]
+    execution: NotRequired[WorkloadExecutionPolicy | Any]
     isolation_mode: NotRequired[str | Any]
     model_mode: NotRequired[str | Any]
     model_profile_id: NotRequired[str | Any]
@@ -1067,6 +1069,17 @@ class WorkerStatusTransition(TypedDict):
 class WorkerUpgradeRequest(TypedDict):
     run_compat_tests: NotRequired[bool]
     source_revision: NotRequired[str | Any]
+
+class WorkloadExecutionPolicy(TypedDict):
+    allowed_runtimes: NotRequired[list[Literal['runc', 'wasmtime', 'runsc', 'kata', 'remote_vm']]]
+    filesystem: NotRequired[dict[str, str]]
+    formats: NotRequired[list[Literal['oci', 'linux', 'wasm']]]
+    gvisor_compatible: NotRequired[bool]
+    minimum_isolation: NotRequired[Literal['trusted', 'sandboxed', 'vm_isolated', 'remote_vm'] | Any]
+    network: NotRequired[Literal['none', 'egress-allowlist', 'egress-deny-all', 'unrestricted']]
+    preferred_runtimes: NotRequired[list[Literal['runc', 'wasmtime', 'runsc', 'kata', 'remote_vm']]]
+    remote_vm_allowed: NotRequired[bool]
+    trust: NotRequired[Literal['trusted', 'untrusted', 'hostile'] | Any]
 
 @dataclass(frozen=True, slots=True)
 class ApiOperation:
@@ -3521,7 +3534,7 @@ OPERATIONS: dict[str, ApiOperation] = {
     ),
 }
 
-MODEL_COUNT = 137
+MODEL_COUNT = 138
 OPERATION_COUNT = 271
 
 __all__ = [
@@ -3666,4 +3679,5 @@ __all__ = [
     'WorkerRunResumeRequest',
     'WorkerStatusTransition',
     'WorkerUpgradeRequest',
+    'WorkloadExecutionPolicy',
 ]

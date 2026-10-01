@@ -10,6 +10,7 @@ from mas_core.sandbox_policy import (
     canonical_sandbox_class,
     is_hardened_sandbox,
     required_runtime_for_sandbox,
+    runtime_implements_sandbox,
 )
 from mas_core.worker_registry.host_registry import _normalize_sandbox_runtime
 from mas_core.worker_registry.placement import (
@@ -90,6 +91,20 @@ def test_vm_isolated_oci_selection_accepts_discovered_kata_runtime_name() -> Non
     assert adapter.command[adapter.command.index("--runtime") + 1] == "kata-qemu"
 
 
+def test_sandboxed_oci_can_use_kata_when_host_selection_prefers_stronger_runtime() -> None:
+    image = "example/worker@sha256:" + "c" * 64
+    adapter = OCIAdapter(
+        image,
+        worker_id="stronger-sandboxed-worker",
+        sandbox_profile="sandboxed",
+        sandbox_runtime="kata",
+    )
+
+    assert adapter.sandbox_class == "sandboxed"
+    assert adapter.sandbox_runtime == "kata"
+    assert adapter.command[adapter.command.index("--runtime") + 1] == "kata"
+
+
 def test_unknown_sandbox_class_fails_closed() -> None:
     with pytest.raises(ValueError, match="unsupported sandbox"):
         canonical_sandbox_class("runc")
@@ -103,6 +118,11 @@ def test_host_runtime_cannot_weaken_or_mismatch_the_policy_class() -> None:
         _normalize_sandbox_runtime("runc", sandbox_profile="sandboxed")
     with pytest.raises(ValueError, match="unsupported host sandbox runtime"):
         _normalize_sandbox_runtime("firecracker", sandbox_profile="vm_isolated")
+
+
+def test_kata_can_satisfy_a_sandboxed_minimum_but_not_the_reverse() -> None:
+    assert runtime_implements_sandbox("kata", "sandboxed") is True
+    assert runtime_implements_sandbox("runsc", "vm_isolated") is False
 
 
 def test_placement_rejects_a_vm_policy_on_a_host_without_kata() -> None:

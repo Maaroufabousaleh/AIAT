@@ -34,9 +34,13 @@ snapshot propagation, native adapter lifecycle, concurrent execution against
 two distinct durable worker-host records, duplicate claim rejection and
 terminal/alias replay without redispatch, and explicit queue recovery after a
 fenced host lease is lost. The active sandbox policy is `trusted → runc`,
-`sandboxed → gVisor/runsc`, and `vm_isolated → Kata`; runtime-specific sandbox
-certification and independent-host outage recovery remain separate evidence
-boundaries.
+`sandboxed → gVisor/runsc`, and `vm_isolated → Kata`; the format-aware
+execution resolver may select Kata as the stronger runtime for an untrusted
+OCI/Linux workload when host KVM and Kata evidence are available, while a
+WASM workload uses Wasmtime only when it is explicitly a WASM artifact. A
+host without KVM uses gVisor for compatible OCI/Linux work and never silently
+downgrades VM-required work. Runtime-specific sandbox certification and
+independent-host outage recovery remain separate evidence boundaries.
 
 The 2026-08-18 continuation (`2bc7ca5`) isolated the local Postgres fixtures
 from one another with explicit fixture labels and deterministic priorities.

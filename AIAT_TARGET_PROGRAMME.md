@@ -924,6 +924,19 @@ incompatible or unavailable, AIAT may select Kata only when the host advertises
 a certified Kata runtime. It must fail closed when neither hardened class is
 available; it must never silently fall back to runc.
 
+Runtime selection is format- and host-capability-aware. WASM workers use
+Wasmtime when the host advertises a certified Wasmtime runtime; Wasmtime is not
+treated as a fallback for arbitrary OCI/Linux applications. Untrusted OCI/Linux
+work prefers Kata/runtime-rs when local KVM and a passing Kata guest smoke are
+available, and otherwise uses gVisor/runsc systrap when the workload is
+gVisor-compatible. Hostile or explicitly VM-required work uses Kata or an
+explicitly advertised remote VM; it is unschedulable when neither exists.
+Worker manifests request `vm_isolated`, not QEMU, Dragonball, Cloud Hypervisor,
+or Firecracker. The selected Kata VMM is host configuration. This policy is
+implemented by the centralized
+[`mas_core/execution_policy.py`](mas/packages/mas-core/mas_core/execution_policy.py)
+resolver and host-capability fields, not by another execution backend.
+
 A production sandbox profile defines:
 
 - immutable image/root filesystem;

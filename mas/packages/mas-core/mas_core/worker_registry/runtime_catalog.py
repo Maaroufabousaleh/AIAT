@@ -62,7 +62,7 @@ RUNTIME_CATALOG: dict[str, RuntimeDefinition] = {
     ),
     "external": RuntimeDefinition(
         "external",
-        supported_transports=("process", "http", "oci", "mcp", "opencode"),
+        supported_transports=("process", "http", "oci", "mcp", "opencode", "wasmtime"),
         supported_isolation_modes=("wrapper", "fork", "opencode"),
     ),
 }

@@ -50,6 +50,7 @@ from mas_core.company_manifest import (
     CompanyManifestError,
     compile_company_manifest,
 )
+from mas_core.execution_policy import WorkloadExecutionPolicy
 from mas_core.integrations import ProviderRegistry
 from mas_core.integrations.contracts import (
     DEDICATED_PROJECT_MAPPING_PROFILE,
@@ -803,6 +804,10 @@ def _wrapper_manifest_for_hiring(
     version_pin: str | None,
 ) -> dict[str, Any]:
     """Build the AIAT-owned adapter contract for an external OSS candidate."""
+    sandbox_class = canonical_sandbox_class(sandbox_profile)
+    execution_minimum = (
+        sandbox_class if sandbox_class in HARDENED_SANDBOX_PROFILES else "sandboxed"
+    )
     return {
         "protocol_version": "aiat.v1",
         "metadata": {
@@ -828,6 +833,19 @@ def _wrapper_manifest_for_hiring(
             "profile": sandbox_profile,
             "network_mode": "egress-allowlist",
             "egress_allowlist": ["api.github.com:443", "github.com:443"],
+        },
+        "execution": {
+            "trust": "untrusted",
+            "formats": ["oci", "linux"],
+            "preferred_runtime": [
+                "kata",
+                "runsc",
+            ]
+            if sandbox_class == "vm_isolated"
+            else ["runsc", "kata"],
+            "minimum_isolation": execution_minimum,
+            "gvisor_compatible": sandbox_class == "sandboxed",
+            "remote_vm_allowed": True,
         },
         "runtime_tier": "external",
     }
@@ -1801,6 +1819,7 @@ class RegisterWorkerRequest(BaseModel):
     adapter_type: str
     adapter_config: dict[str, Any] = Field(default_factory=dict)
     sandbox_profile: str = "sandboxed"
+    execution: WorkloadExecutionPolicy | None = None
     capability_ids: list[UUID] = Field(default_factory=list)
     capability_names: list[str] = Field(default_factory=list)
     required_tools: list[str] = Field(default_factory=list)
@@ -1818,6 +1837,7 @@ class UpdateWorkerRequest(BaseModel):
     adapter_type: str | None = None
     adapter_config: dict[str, Any] | None = None
     sandbox_profile: str | None = None
+    execution: WorkloadExecutionPolicy | None = None
     capability_ids: list[UUID] | None = None
     team_id: str | None = None
     version: str | None = None
@@ -8392,6 +8412,30 @@ async def register_worker(req: RegisterWorkerRequest) -> dict[str, Any]:
     if req.identity_mailbox_class.strip().lower() not in {"permanent", "temporary"}:
         raise HTTPException(422, "identity_mailbox_class must be permanent or temporary")
     is_external_candidate = bool(req.source_repo and str(req.source_repo).lower() != "local")
+    execution_policy = req.execution or WorkloadExecutionPolicy(
+        trust="untrusted" if is_external_candidate else "trusted",
+        minimum_isolation=(
+            sandbox_class
+            if is_external_candidate and sandbox_class in HARDENED_SANDBOX_PROFILES
+            else ("sandboxed" if is_external_candidate else "trusted")
+        ),
+    )
+    if is_external_candidate:
+        effective_external_minimum = execution_policy.effective_minimum_isolation(external=True)
+        if (
+            execution_policy.effective_trust(external=True) == "trusted"
+            or effective_external_minimum == "trusted"
+        ):
+            raise HTTPException(422, "External workers cannot select trusted/runc execution")
+        # The legacy sandbox_profile remains a compatibility projection.  If
+        # the canonical execution policy requires a VM (including hostile or
+        # gVisor-incompatible work), persist the matching policy class so old
+        # readers cannot accidentally display or dispatch it as sandboxed.
+        if (
+            effective_external_minimum in {"vm_isolated", "remote_vm"}
+            or not execution_policy.gvisor_compatible
+        ):
+            sandbox_class = "vm_isolated"
     if is_external_candidate and not req.version_pin:
         raise HTTPException(
             422,
@@ -8423,7 +8467,11 @@ async def register_worker(req: RegisterWorkerRequest) -> dict[str, Any]:
     worker = await storage.register_worker(
         name=req.name,
         adapter_type=req.adapter_type,
-        adapter_config={**req.adapter_config, "identity_mailbox_class": req.identity_mailbox_class.strip().lower()},
+        adapter_config={
+            **req.adapter_config,
+            "execution_policy": execution_policy.model_dump(mode="json"),
+            "identity_mailbox_class": req.identity_mailbox_class.strip().lower(),
+        },
         sandbox_profile=sandbox_class,
         capability_ids=capability_ids,
         team_id=req.team_id,
@@ -8599,19 +8647,45 @@ async def update_worker(worker_id: UUID, req: UpdateWorkerRequest) -> dict[str, 
         )
 
     update_kwargs: dict[str, Any] = {}
+    is_external_candidate = bool(
+        (req.source_repo if req.source_repo is not None else existing.get("source_repo"))
+        and str(req.source_repo if req.source_repo is not None else existing.get("source_repo")).lower()
+        != "local"
+    )
     if req.adapter_type is not None:
         update_kwargs["adapter_type"] = req.adapter_type
     if req.adapter_config is not None:
         update_kwargs["adapter_config"] = req.adapter_config
+    if req.execution is not None:
+        effective_external_minimum = req.execution.effective_minimum_isolation(
+            external=is_external_candidate
+        )
+        if is_external_candidate and (
+            req.execution.effective_trust(external=True) == "trusted"
+            or effective_external_minimum == "trusted"
+        ):
+            raise HTTPException(422, "External workers cannot select trusted/runc execution")
+        adapter_config = dict(
+            req.adapter_config
+            if req.adapter_config is not None
+            else existing.get("adapter_config") or {}
+        )
+        adapter_config["execution_policy"] = req.execution.model_dump(mode="json")
+        update_kwargs["adapter_config"] = adapter_config
+        if is_external_candidate and (
+            effective_external_minimum in {"vm_isolated", "remote_vm"}
+            or not req.execution.gvisor_compatible
+        ) and req.sandbox_profile is None:
+            update_kwargs["sandbox_profile"] = "vm_isolated"
     if req.sandbox_profile is not None:
         try:
-            canonical_sandbox_class(req.sandbox_profile)
+            canonical_profile = canonical_sandbox_class(req.sandbox_profile)
         except ValueError:
             raise HTTPException(
                 422,
                 f"Invalid sandbox_profile '{req.sandbox_profile}'. Allowed: {sorted(VALID_SANDBOX_PROFILES)}",
             )
-        update_kwargs["sandbox_profile"] = req.sandbox_profile
+        update_kwargs["sandbox_profile"] = canonical_profile
     if req.capability_ids is not None:
         update_kwargs["capability_ids"] = req.capability_ids
     if req.team_id is not None:

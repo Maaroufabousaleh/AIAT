@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from mas_core.protocols.worker_manifest import WorkerManifest
+if TYPE_CHECKING:
+    from mas_core.protocols.worker_manifest import WorkerManifest
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ class AutoGenCapabilities:
         self.allowed_speakers = allowed_speakers or []
 
     @classmethod
-    def from_config(cls, config: dict[str, Any]) -> "AutoGenCapabilities":
+    def from_config(cls, config: dict[str, Any]) -> AutoGenCapabilities:
         return cls(
             group_chat_config=config.get("group_chat_config"),
             termination_strategy=config.get("termination_strategy", {}),

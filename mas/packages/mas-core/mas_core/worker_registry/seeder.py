@@ -18,19 +18,20 @@ CLI::
 from __future__ import annotations
 
 import argparse
-from hashlib import sha256
 import inspect
 import json
 import logging
+from hashlib import sha256
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from uuid import UUID
 
 import yaml
 
 from mas_core.protocols.worker_manifest import WorkerManifest
 
 if TYPE_CHECKING:
+    from uuid import UUID
+
     from mas_core.memory.storage import AgentStorage
 
 logger = logging.getLogger(__name__)
@@ -130,6 +131,9 @@ async def _seed_single_manifest(
 
     team_tag = _extract_team_tag(manifest)
     adapter_config, status, evaluation_status = _seed_governance_state(manifest)
+    # Persist the format/trust policy in the existing JSON configuration so
+    # host placement can adopt the new resolver without a registry migration.
+    adapter_config["execution_policy"] = manifest.effective_execution_policy.model_dump(mode="json")
     # Startup seeding reconciles a declaration; it is not a lifecycle
     # transition.  In particular, an operator may already have promoted the
     # immutable shell/adapter/bundle for this worker.  Never turn that
@@ -265,10 +269,21 @@ async def _bootstrap_external_steward(
     raw_provenance.setdefault("protocol_api_version", manifest.integration.contract_version)
     provenance = ExternalProvenance.model_validate(raw_provenance)
     provenance_json = provenance.model_dump(mode="json")
+    # ``ExternalProvenance`` deliberately accepts forward-compatible metadata,
+    # while the normalized SQL table stores only its current named columns.
+    # Do not expand future/manifest-only fields into SQL INSERT column names;
+    # retain them in the steward metadata below instead.
+    persisted_fields = set(ExternalProvenance.model_fields)
+    persisted_provenance = {
+        key: value for key, value in provenance_json.items() if key in persisted_fields
+    }
+    extra_provenance = {
+        key: value for key, value in provenance_json.items() if key not in persisted_fields
+    }
     existing_provenance = await storage.get_external_provenance_by_worker(worker["id"])
     provenance_row = existing_provenance or await storage.create_external_provenance(
         worker_id=worker["id"],
-        provenance=provenance_json,
+        provenance=persisted_provenance,
         provenance_hash=sha256(
             json.dumps(provenance_json, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest(),
@@ -285,6 +300,7 @@ async def _bootstrap_external_steward(
                 "seeded_from_manifest": manifest.metadata.id,
                 "source_repository": manifest.metadata.source_repo,
                 "version_pin": manifest.metadata.version_pin,
+                **({"source_provenance_extra": extra_provenance} if extra_provenance else {}),
             },
         )
     jobs = await storage.list_update_monitoring_jobs(worker_id=worker["id"], limit=100)
