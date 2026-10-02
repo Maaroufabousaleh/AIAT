@@ -94,7 +94,7 @@
   },
   "compose": "/mnt/c/projects/aiat/mas/infra/compose/docker-compose.yml",
   "errors": [],
-  "generated_at": "2026-09-30T19:13:31.517816+00:00",
+  "generated_at": "2026-10-01T23:45:29.591343+00:00",
   "identity_services": [],
   "live": {
     "containers": [
@@ -103,25 +103,25 @@
           {
             "host": "message-router",
             "port": 8001,
-            "reachable": false
+            "reachable": true
           },
           {
             "host": "tool-service",
             "port": 8002,
-            "reachable": false
+            "reachable": true
           },
           {
             "host": "orchestrator-api",
             "port": 8000,
-            "reachable": false
+            "reachable": true
           },
           {
             "host": "litellm",
             "port": 4000,
-            "reachable": false
+            "reachable": true
           }
         ],
-        "container_id": "7225a94749c5",
+        "container_id": "328975de8839",
         "denied": [
           {
             "denied": true,
@@ -163,33 +163,33 @@
           "mas_workers"
         ],
         "service": "team-dept-devops",
-        "status": "fail",
-        "storage_health": false
+        "status": "pass",
+        "storage_health": true
       },
       {
         "allowed": [
           {
             "host": "message-router",
             "port": 8001,
-            "reachable": false
+            "reachable": true
           },
           {
             "host": "tool-service",
             "port": 8002,
-            "reachable": false
+            "reachable": true
           },
           {
             "host": "orchestrator-api",
             "port": 8000,
-            "reachable": false
+            "reachable": true
           },
           {
             "host": "litellm",
             "port": 4000,
-            "reachable": false
+            "reachable": true
           }
         ],
-        "container_id": "92aa9aaccefa",
+        "container_id": "924d842fa04e",
         "denied": [
           {
             "denied": true,
@@ -231,33 +231,33 @@
           "mas_workers"
         ],
         "service": "team-dept-production",
-        "status": "fail",
-        "storage_health": false
+        "status": "pass",
+        "storage_health": true
       },
       {
         "allowed": [
           {
             "host": "message-router",
             "port": 8001,
-            "reachable": false
+            "reachable": true
           },
           {
             "host": "tool-service",
             "port": 8002,
-            "reachable": false
+            "reachable": true
           },
           {
             "host": "orchestrator-api",
             "port": 8000,
-            "reachable": false
+            "reachable": true
           },
           {
             "host": "litellm",
             "port": 4000,
-            "reachable": false
+            "reachable": true
           }
         ],
-        "container_id": "5ad1c17de36e",
+        "container_id": "24dc992bcf4b",
         "denied": [
           {
             "denied": true,
@@ -299,33 +299,33 @@
           "mas_workers"
         ],
         "service": "team-dept-qa",
-        "status": "fail",
-        "storage_health": false
+        "status": "pass",
+        "storage_health": true
       },
       {
         "allowed": [
           {
             "host": "message-router",
             "port": 8001,
-            "reachable": false
+            "reachable": true
           },
           {
             "host": "tool-service",
             "port": 8002,
-            "reachable": false
+            "reachable": true
           },
           {
             "host": "orchestrator-api",
             "port": 8000,
-            "reachable": false
+            "reachable": true
           },
           {
             "host": "litellm",
             "port": 4000,
-            "reachable": false
+            "reachable": true
           }
         ],
-        "container_id": "6f518f74140c",
+        "container_id": "f1d8918f83e1",
         "denied": [
           {
             "denied": true,
@@ -367,33 +367,33 @@
           "mas_workers"
         ],
         "service": "team-dept-system",
-        "status": "fail",
-        "storage_health": false
+        "status": "pass",
+        "storage_health": true
       },
       {
         "allowed": [
           {
             "host": "message-router",
             "port": 8001,
-            "reachable": false
+            "reachable": true
           },
           {
             "host": "tool-service",
             "port": 8002,
-            "reachable": false
+            "reachable": true
           },
           {
             "host": "orchestrator-api",
             "port": 8000,
-            "reachable": false
+            "reachable": true
           },
           {
             "host": "litellm",
             "port": 4000,
-            "reachable": false
+            "reachable": true
           }
         ],
-        "container_id": "f21b28c1f954",
+        "container_id": "471d1ab6396a",
         "denied": [
           {
             "denied": true,
@@ -435,33 +435,33 @@
           "mas_workers"
         ],
         "service": "team-exec-ceo",
-        "status": "fail",
-        "storage_health": false
+        "status": "pass",
+        "storage_health": true
       },
       {
         "allowed": [
           {
             "host": "message-router",
             "port": 8001,
-            "reachable": false
+            "reachable": true
           },
           {
             "host": "tool-service",
             "port": 8002,
-            "reachable": false
+            "reachable": true
           },
           {
             "host": "orchestrator-api",
             "port": 8000,
-            "reachable": false
+            "reachable": true
           },
           {
             "host": "litellm",
             "port": 4000,
-            "reachable": false
+            "reachable": true
           }
         ],
-        "container_id": "c2bd60cedb7a",
+        "container_id": "ce2e460c3a68",
         "denied": [
           {
             "denied": true,
@@ -503,33 +503,33 @@
           "mas_workers"
         ],
         "service": "team-exec-coo",
-        "status": "fail",
-        "storage_health": false
+        "status": "pass",
+        "storage_health": true
       },
       {
         "allowed": [
           {
             "host": "message-router",
             "port": 8001,
-            "reachable": false
+            "reachable": true
           },
           {
             "host": "tool-service",
             "port": 8002,
-            "reachable": false
+            "reachable": true
           },
           {
             "host": "orchestrator-api",
             "port": 8000,
-            "reachable": false
+            "reachable": true
           },
           {
             "host": "litellm",
             "port": 4000,
-            "reachable": false
+            "reachable": true
           }
         ],
-        "container_id": "31e19d489477",
+        "container_id": "a4f4626dc281",
         "denied": [
           {
             "denied": true,
@@ -571,33 +571,33 @@
           "mas_workers"
         ],
         "service": "team-office-cfo",
-        "status": "fail",
-        "storage_health": false
+        "status": "pass",
+        "storage_health": true
       },
       {
         "allowed": [
           {
             "host": "message-router",
             "port": 8001,
-            "reachable": false
+            "reachable": true
           },
           {
             "host": "tool-service",
             "port": 8002,
-            "reachable": false
+            "reachable": true
           },
           {
             "host": "orchestrator-api",
             "port": 8000,
-            "reachable": false
+            "reachable": true
           },
           {
             "host": "litellm",
             "port": 4000,
-            "reachable": false
+            "reachable": true
           }
         ],
-        "container_id": "4a2701c6ccce",
+        "container_id": "fa51f32fc7fe",
         "denied": [
           {
             "denied": true,
@@ -639,33 +639,33 @@
           "mas_workers"
         ],
         "service": "team-office-chrm",
-        "status": "fail",
-        "storage_health": false
+        "status": "pass",
+        "storage_health": true
       },
       {
         "allowed": [
           {
             "host": "message-router",
             "port": 8001,
-            "reachable": false
+            "reachable": true
           },
           {
             "host": "tool-service",
             "port": 8002,
-            "reachable": false
+            "reachable": true
           },
           {
             "host": "orchestrator-api",
             "port": 8000,
-            "reachable": false
+            "reachable": true
           },
           {
             "host": "litellm",
             "port": 4000,
-            "reachable": false
+            "reachable": true
           }
         ],
-        "container_id": "ddd7fab26634",
+        "container_id": "d649ec5d97a0",
         "denied": [
           {
             "denied": true,
@@ -707,33 +707,33 @@
           "mas_workers"
         ],
         "service": "team-office-cio",
-        "status": "fail",
-        "storage_health": false
+        "status": "pass",
+        "storage_health": true
       },
       {
         "allowed": [
           {
             "host": "message-router",
             "port": 8001,
-            "reachable": false
+            "reachable": true
           },
           {
             "host": "tool-service",
             "port": 8002,
-            "reachable": false
+            "reachable": true
           },
           {
             "host": "orchestrator-api",
             "port": 8000,
-            "reachable": false
+            "reachable": true
           },
           {
             "host": "litellm",
             "port": 4000,
-            "reachable": false
+            "reachable": true
           }
         ],
-        "container_id": "ce9fd721cf29",
+        "container_id": "4872cf3cb846",
         "denied": [
           {
             "denied": true,
@@ -775,33 +775,33 @@
           "mas_workers"
         ],
         "service": "team-office-cso",
-        "status": "fail",
-        "storage_health": false
+        "status": "pass",
+        "storage_health": true
       },
       {
         "allowed": [
           {
             "host": "message-router",
             "port": 8001,
-            "reachable": false
+            "reachable": true
           },
           {
             "host": "tool-service",
             "port": 8002,
-            "reachable": false
+            "reachable": true
           },
           {
             "host": "orchestrator-api",
             "port": 8000,
-            "reachable": false
+            "reachable": true
           },
           {
             "host": "litellm",
             "port": 4000,
-            "reachable": false
+            "reachable": true
           }
         ],
-        "container_id": "576699aaa6e6",
+        "container_id": "1abe0cee8091",
         "denied": [
           {
             "denied": true,
@@ -843,69 +843,13 @@
           "mas_workers"
         ],
         "service": "team-office-cto",
-        "status": "fail",
-        "storage_health": false
+        "status": "pass",
+        "storage_health": true
       }
     ],
-    "errors": [
-      "team-dept-devops: gateway message-router:8001 is unreachable",
-      "team-dept-devops: gateway tool-service:8002 is unreachable",
-      "team-dept-devops: gateway orchestrator-api:8000 is unreachable",
-      "team-dept-devops: gateway litellm:4000 is unreachable",
-      "team-dept-devops: control-plane storage health failed",
-      "team-dept-production: gateway message-router:8001 is unreachable",
-      "team-dept-production: gateway tool-service:8002 is unreachable",
-      "team-dept-production: gateway orchestrator-api:8000 is unreachable",
-      "team-dept-production: gateway litellm:4000 is unreachable",
-      "team-dept-production: control-plane storage health failed",
-      "team-dept-qa: gateway message-router:8001 is unreachable",
-      "team-dept-qa: gateway tool-service:8002 is unreachable",
-      "team-dept-qa: gateway orchestrator-api:8000 is unreachable",
-      "team-dept-qa: gateway litellm:4000 is unreachable",
-      "team-dept-qa: control-plane storage health failed",
-      "team-dept-system: gateway message-router:8001 is unreachable",
-      "team-dept-system: gateway tool-service:8002 is unreachable",
-      "team-dept-system: gateway orchestrator-api:8000 is unreachable",
-      "team-dept-system: gateway litellm:4000 is unreachable",
-      "team-dept-system: control-plane storage health failed",
-      "team-exec-ceo: gateway message-router:8001 is unreachable",
-      "team-exec-ceo: gateway tool-service:8002 is unreachable",
-      "team-exec-ceo: gateway orchestrator-api:8000 is unreachable",
-      "team-exec-ceo: gateway litellm:4000 is unreachable",
-      "team-exec-ceo: control-plane storage health failed",
-      "team-exec-coo: gateway message-router:8001 is unreachable",
-      "team-exec-coo: gateway tool-service:8002 is unreachable",
-      "team-exec-coo: gateway orchestrator-api:8000 is unreachable",
-      "team-exec-coo: gateway litellm:4000 is unreachable",
-      "team-exec-coo: control-plane storage health failed",
-      "team-office-cfo: gateway message-router:8001 is unreachable",
-      "team-office-cfo: gateway tool-service:8002 is unreachable",
-      "team-office-cfo: gateway orchestrator-api:8000 is unreachable",
-      "team-office-cfo: gateway litellm:4000 is unreachable",
-      "team-office-cfo: control-plane storage health failed",
-      "team-office-chrm: gateway message-router:8001 is unreachable",
-      "team-office-chrm: gateway tool-service:8002 is unreachable",
-      "team-office-chrm: gateway orchestrator-api:8000 is unreachable",
-      "team-office-chrm: gateway litellm:4000 is unreachable",
-      "team-office-chrm: control-plane storage health failed",
-      "team-office-cio: gateway message-router:8001 is unreachable",
-      "team-office-cio: gateway tool-service:8002 is unreachable",
-      "team-office-cio: gateway orchestrator-api:8000 is unreachable",
-      "team-office-cio: gateway litellm:4000 is unreachable",
-      "team-office-cio: control-plane storage health failed",
-      "team-office-cso: gateway message-router:8001 is unreachable",
-      "team-office-cso: gateway tool-service:8002 is unreachable",
-      "team-office-cso: gateway orchestrator-api:8000 is unreachable",
-      "team-office-cso: gateway litellm:4000 is unreachable",
-      "team-office-cso: control-plane storage health failed",
-      "team-office-cto: gateway message-router:8001 is unreachable",
-      "team-office-cto: gateway tool-service:8002 is unreachable",
-      "team-office-cto: gateway orchestrator-api:8000 is unreachable",
-      "team-office-cto: gateway litellm:4000 is unreachable",
-      "team-office-cto: control-plane storage health failed"
-    ],
+    "errors": [],
     "mode": "live",
-    "status": "fail",
+    "status": "pass",
     "warnings": []
   },
   "mode": "static",
