@@ -218,6 +218,11 @@
     "snapshot_sha256": "e338f0fc18145f7fc0ac848da5593ae77ea63adbd5f1d386ca8d82151a280370",
     "tag": "v1.18.21"
   },
+  "source_scan_scope": {
+    "semgrep_path_exclusions": [],
+    "semgrep_rule_exclusions": [],
+    "source_tree": "complete exact-source git archive; repository metadata omitted"
+  },
   "status": "blocked",
   "tool_versions": {
     "semgrep": {

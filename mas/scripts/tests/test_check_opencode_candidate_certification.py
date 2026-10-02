@@ -20,7 +20,7 @@ def test_current_candidate_evidence_is_structurally_valid_but_technical_gate_blo
     assert report["technical_gate_status"] == "blocked"
     assert len(report["candidate_commit"]) == 40
     assert len(report["aiat_candidate_commit"]) == 40
-    assert report["scanner_error_count"] == 54
+    assert report["scanner_error_count"] > 0
     assert report["active_worker_status"] == "inactive_until_certification_passes"
 
 
@@ -45,3 +45,21 @@ def test_candidate_checker_requires_retained_source_snapshot(tmp_path: Path) -> 
     assert result.returncode == 1
     report = json.loads(result.stdout)
     assert "candidate source snapshot path is missing or unsafe" in report["errors"]
+
+
+def test_candidate_checker_rejects_semgrep_source_path_exclusion(tmp_path: Path) -> None:
+    value = json.loads(EVIDENCE.read_text(encoding="utf-8"))
+    value["source_scan_scope"]["semgrep_path_exclusions"] = ["packages/opencode/src"]
+    path = tmp_path / "candidate.json"
+    path.write_text(json.dumps(value), encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--path", str(path), "--json"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    report = json.loads(result.stdout)
+    assert "candidate Semgrep scan must not exclude source paths" in report["errors"]

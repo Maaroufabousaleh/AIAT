@@ -37,6 +37,10 @@ SCHEMA = "aiat.opencode-candidate-certification.v1"
 DEFAULT_REPOSITORY = "https://github.com/anomalyco/opencode.git"
 DEFAULT_VERSION = "1.18.21"
 DEFAULT_IMAGE = "ghcr.io/anomalyco/opencode:1.18.21@sha256:56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb"
+SEMGREP_RULES_WITH_INTERNAL_MATCHER_FAILURES = (
+    "yaml.github-actions.security.curl-eval.curl-eval",
+    "yaml.github-actions.security.gha-curl-pipe-shell.gha-curl-pipe-shell",
+)
 SENSITIVE_KEY = re.compile(
     r"(?i)(?:password|secret|token|authorization|cookie|private[_-]?key|api[_-]?key|credential|raw[_-]?secret)"
 )
@@ -286,6 +290,29 @@ def _has_bundled_skill_resources(source: Path) -> bool:
 
     skill_root = source / ".opencode" / "skills"
     return skill_root.is_dir() and any(path.is_file() for path in skill_root.rglob("SKILL.md"))
+
+
+def _semgrep_invocation(source: Path) -> list[str]:
+    """Run the full source scan while excluding only broken CI rules.
+
+    These two Semgrep rules fail internally on valid GitHub workflow syntax.
+    Their exact-source findings from the unfiltered run remain open in the
+    review register; the exclusion does not waive those findings or clear the
+    coverage gate. Actionlint and Zizmor also scan the workflow tree, but do
+    not claim equivalent rule coverage. No source paths are excluded.
+    """
+
+    command = [
+        "semgrep",
+        "--config",
+        "auto",
+        "--json",
+        "--no-git-ignore",
+    ]
+    for rule_id in SEMGREP_RULES_WITH_INTERNAL_MATCHER_FAILURES:
+        command.extend(("--exclude-rule", rule_id))
+    command.append(str(source))
+    return command
 
 
 def _tool_version(name: str, output_dir: Path) -> dict[str, Any]:
@@ -773,7 +800,7 @@ def certify(
                 tool_versions[name] = _tool_version(name, output_dir)
             scanner_rows.extend(
                 [
-                    _run_scanner("semgrep", ["semgrep", "--config", "auto", "--json", "--no-git-ignore", str(source)], source=source, output_dir=output_dir),
+                    _run_scanner("semgrep", _semgrep_invocation(source), source=source, output_dir=output_dir),
                     _run_scanner("trufflehog", ["trufflehog", "filesystem", "--json", "--no-update", str(source)], source=source, output_dir=output_dir),
                 ]
             )
@@ -884,6 +911,20 @@ def certify(
         "candidate_image_ref": image_ref,
         "candidate_image_digest": image_digest,
         "source": source_metadata or {"status": "not_prepared", "clone_retained": False},
+        "source_scan_scope": {
+            "source_tree": "complete exact-source git archive; repository metadata omitted",
+            "semgrep_path_exclusions": [],
+            "semgrep_rule_exclusions": [
+                {
+                    "rule_id": rule_id,
+                    "reason": "Semgrep 1.168.0 internal matching error on valid GitHub workflow syntax",
+                    "scope": "GitHub workflow YAML; no runtime source paths excluded",
+                    "compensating_scanners": ["actionlint", "zizmor"],
+                    "disposition": "review_required; does not imply equivalent rule coverage",
+                }
+                for rule_id in SEMGREP_RULES_WITH_INTERNAL_MATCHER_FAILURES
+            ],
+        },
         "scanners": scanner_rows,
         "tool_versions": tool_versions,
         "tooling_provisioning": tooling,

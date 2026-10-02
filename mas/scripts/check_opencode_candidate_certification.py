@@ -102,6 +102,42 @@ def inspect(path: Path = DEFAULT_PATH) -> dict[str, Any]:
                     errors.append("candidate source archive digest does not match its retained snapshot")
             except (OSError, EOFError, lzma.LZMAError):
                 errors.append("candidate source snapshot could not be verified")
+    scan_scope = report.get("source_scan_scope")
+    if not isinstance(scan_scope, dict):
+        errors.append("candidate source scan scope must be explicit")
+    else:
+        if scan_scope.get("semgrep_path_exclusions") != []:
+            errors.append("candidate Semgrep scan must not exclude source paths")
+        exclusions = scan_scope.get("semgrep_rule_exclusions")
+        expected_exclusions = {
+            "yaml.github-actions.security.curl-eval.curl-eval",
+            "yaml.github-actions.security.gha-curl-pipe-shell.gha-curl-pipe-shell",
+        }
+        exclusion_ids = (
+            [str(row.get("rule_id")) for row in exclusions]
+            if isinstance(exclusions, list) and all(isinstance(row, dict) for row in exclusions)
+            else None
+        )
+        if exclusion_ids not in ([], sorted(expected_exclusions)):
+            errors.append("Semgrep rule exclusions must match the reviewed CI matcher failures")
+        elif isinstance(exclusions, list) and any(
+            row.get("compensating_scanners") != ["actionlint", "zizmor"]
+            or row.get("disposition") != "review_required; does not imply equivalent rule coverage"
+            for row in exclusions
+        ):
+            errors.append("Semgrep rule exclusions must retain their compensating review boundary")
+        semgrep_row = next(
+            (row for row in report.get("scanners", []) if isinstance(row, dict) and row.get("name") == "semgrep"),
+            None,
+        )
+        invocation = semgrep_row.get("invocation") if isinstance(semgrep_row, dict) else None
+        invoked_exclusions = (
+            [str(invocation[index + 1]) for index, value in enumerate(invocation[:-1]) if value == "--exclude-rule"]
+            if isinstance(invocation, list)
+            else None
+        )
+        if exclusion_ids is not None and invoked_exclusions != exclusion_ids:
+            errors.append("Semgrep exclusion metadata must match the retained invocation")
     evidence_policy = report.get("evidence_policy")
     if not isinstance(evidence_policy, dict):
         errors.append("evidence policy is missing")

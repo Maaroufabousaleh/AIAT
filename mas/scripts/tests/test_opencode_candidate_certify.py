@@ -256,6 +256,28 @@ def test_semgrep_error_classes_separate_internal_execution_from_coverage():
     }
 
 
+def test_semgrep_invocation_excludes_only_rules_with_reproduced_engine_failures(tmp_path):
+    module = _module()
+
+    command = module._semgrep_invocation(tmp_path / "source")
+
+    assert command[:5] == [
+        "semgrep",
+        "--config",
+        "auto",
+        "--json",
+        "--no-git-ignore",
+    ]
+    excluded = [
+        command[index + 1]
+        for index, argument in enumerate(command[:-1])
+        if argument == "--exclude-rule"
+    ]
+    assert excluded == list(module.SEMGREP_RULES_WITH_INTERNAL_MATCHER_FAILURES)
+    assert command[-1] == str(tmp_path / "source")
+    assert "--exclude" not in command
+
+
 def test_semgrep_rule_counts_are_stable_and_match_findings():
     module = _module()
     counts = module._semgrep_rule_counts(
