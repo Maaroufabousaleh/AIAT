@@ -159,6 +159,12 @@ async def _expire_fixture_lease(storage: AgentStorage) -> None:
         raise RuntimeError("recovery fixture was not READY before lease expiry")
 
 
+async def _recover_fixture_host(recovery: HostLeaseRecovery) -> dict[str, Any]:
+    """Recover only this checker's reserved host, never unrelated expired hosts."""
+
+    return await recovery.reconcile_expired_hosts(host_ids=[HOST_ID])
+
+
 async def _run(dsn: str | None) -> dict[str, Any]:
     normalized_dsn = _normalize_dsn(dsn)
     if normalized_dsn is None:
@@ -259,7 +265,7 @@ async def _run(dsn: str | None) -> dict[str, Any]:
             lease_seconds=120,
         )
         await _expire_fixture_lease(storage)
-        recovery_report = await recovery.reconcile_expired_hosts()
+        recovery_report = await _recover_fixture_host(recovery)
         recovered = await registry.get_host(HOST_ID)
         lost_readback = await ledger.get(RESERVATION_LOST)
         stale_after_recovery = False
