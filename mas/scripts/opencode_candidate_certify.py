@@ -521,7 +521,14 @@ def _run_scanner(
     if scanner == "skillspector" and "--output" in command:
         output_index = command.index("--output")
         if output_index + 1 < len(command):
-            scanner_output_path = Path(command[output_index + 1])
+            # Scanners execute with ``cwd=source`` while ``output_dir`` is
+            # commonly supplied relative to the AIAT repository. Resolve the
+            # CLI output path from the caller's working directory before the
+            # subprocess changes directories, otherwise SkillSpector writes
+            # into the disposable source tree and its result is lost.
+            scanner_output_path = Path(command[output_index + 1]).resolve()
+            command = list(command)
+            command[output_index + 1] = str(scanner_output_path)
 
     def safe_invocation(arguments: list[str]) -> list[str]:
         safe: list[str] = []

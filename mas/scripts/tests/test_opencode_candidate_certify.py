@@ -469,6 +469,59 @@ def test_recursive_skillspector_reads_cli_output_file_and_redacts_paths(tmp_path
     assert raw_output.exists() is False
 
 
+def test_recursive_skillspector_resolves_relative_output_before_source_cwd(tmp_path, monkeypatch):
+    module = _module()
+    monkeypatch.chdir(tmp_path)
+    source = tmp_path / "source"
+    source.mkdir()
+    output_dir = Path("evidence")
+    output_dir.mkdir()
+
+    class Result:
+        returncode = 0
+        stdout = "recursive scan completed"
+        stderr = ""
+
+    def fake_run(command, **_kwargs):
+        output_path = Path(command[command.index("--output") + 1])
+        assert output_path.is_absolute()
+        output_path.write_text(
+            json.dumps(
+                {
+                    "execution_successful": True,
+                    "skills": [{"path": "example", "execution_successful": True, "issues": []}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return Result()
+
+    monkeypatch.setattr(module.shutil, "which", lambda _name: "/usr/bin/skillspector")
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    row = module._run_scanner(
+        "skillspector",
+        [
+            "skillspector",
+            "scan",
+            ".opencode/skills",
+            "--recursive",
+            "--no-llm",
+            "--format",
+            "json",
+            "--output",
+            str(output_dir / "skillspector-cli-output.json"),
+        ],
+        source=source,
+        output_dir=output_dir,
+    )
+
+    assert row["status"] == "pass"
+    assert row["finding_count"] == 0
+    assert "<skillspector-output>" in row["invocation"]
+    assert (output_dir / "skillspector-cli-output.json").exists() is False
+
+
 def test_unavailable_scanner_is_recorded_in_failure_classes(tmp_path, monkeypatch):
     module = _module()
     source = tmp_path / "source"
