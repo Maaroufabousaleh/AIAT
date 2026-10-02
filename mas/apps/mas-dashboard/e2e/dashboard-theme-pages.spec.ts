@@ -17,8 +17,8 @@ const OPERATOR_ROUTES = [
   "/identity-audit",
   "/auth-sessions",
   "/metrics",
-  // These two routes leave the Next.js dashboard for their standalone
-  // provider UIs, which do not share the dashboard's theme provider.
+  // The standalone /analytics/litellm and /analytics/omniroute pages leave
+  // the Next.js theme provider, so they cannot participate in this sweep.
   "/logs",
   "/streams",
   "/dlq",
