@@ -62,10 +62,10 @@ def test_static_release_ledger_aggregates_bounded_verifiers_without_release_clai
     assert security_review["summary"] == {
         "errors": [],
         "engine_warning_count": 54,
-        "finding_count": 762,
+        "finding_count": 507,
         "mode": "static",
-        "review_required_count": 3,
-        "scan_count": 4,
+        "review_required_count": 4,
+        "scan_count": 9,
         "status": "pass",
         "technical_gate_status": "blocked",
     }
