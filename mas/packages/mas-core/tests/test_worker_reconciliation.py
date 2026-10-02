@@ -220,6 +220,47 @@ def test_security_evidence_accepts_scanner_without_file_count_metric(tmp_path) -
     assert errors == []
 
 
+def test_security_evidence_accepts_retained_normalized_findings(tmp_path) -> None:
+    module, _ = _load_checker()
+    path = tmp_path / "security-scan-evidence.json"
+    path.write_text(
+        json.dumps(
+            {
+                "policy": {
+                    "security_scan_is_technical_gate": True,
+                    "licence_metadata_is_gate": False,
+                },
+                "scans": [
+                    {
+                        "id": "normalized-scanner",
+                        "scanner": "example-scanner",
+                        "scanner_version": "1.2.3",
+                        "source_repo": "https://example.invalid/source",
+                        "source_revision": "v1.2.3",
+                        "target_workers": ["coding_worker"],
+                        "status": "findings_review_required",
+                        "scanned_file_count": 12,
+                        "scanned_file_count_status": "reported_by_scanner",
+                        "source_snapshot_file_count": 12,
+                        "source_snapshot_retained": True,
+                        "raw_findings_retained": False,
+                        "normalized_result_retained": True,
+                        "finding_count": 3,
+                        "engine_warning_count": 0,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    errors = []
+
+    indexed = module._security_evidence_index(path, errors)
+
+    assert "normalized-scanner" in indexed
+    assert errors == []
+
+
 def test_unreproducible_historical_scan_cannot_supply_ghost_counts(tmp_path) -> None:
     module, repo_root = _load_checker()
     evidence = module._load_yaml(repo_root / "docs" / "provenance" / "security_scan_evidence.yaml")

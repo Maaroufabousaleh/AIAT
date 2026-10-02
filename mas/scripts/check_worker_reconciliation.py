@@ -196,13 +196,14 @@ def _security_evidence_index(path: Path, errors: list[str]) -> dict[str, dict[st
             errors.append(f"{scan_id}: source_repo and source_revision are required")
         if not isinstance(row.get("target_workers"), list) or not row.get("target_workers"):
             errors.append(f"{scan_id}: target_workers must be a non-empty list")
-        retained_findings = (
+        findings_retained = (
             row.get("raw_findings_retained") is True
-            and row.get("source_snapshot_retained") is True
+            or row.get("normalized_result_retained") is True
         )
+        retained_findings = findings_retained and row.get("source_snapshot_retained") is True
         historical_unavailable = (
             row.get("remediation_input") is False
-            and row.get("raw_findings_retained") is False
+            and not findings_retained
             and row.get("source_snapshot_retained") is False
         )
         if not retained_findings and not historical_unavailable:
