@@ -253,6 +253,42 @@ def test_generic_summary_reads_skillspector_issues_and_severity(tmp_path):
     assert shape is None
 
 
+def test_recursive_skillspector_summary_flattens_per_skill_findings(tmp_path):
+    module = _module()
+    path = tmp_path / "skillspector-recursive.json"
+    path.write_text(
+        json.dumps(
+            {
+                "execution_successful": True,
+                "skills": [
+                    {"execution_successful": True, "issues": [{"id": "E1", "severity": "HIGH"}]},
+                    {"execution_successful": True, "issues": [{"id": "SC2", "severity": "MEDIUM"}]},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    count, severities, errors, shape = module._generic_summary(path, "skillspector")
+
+    assert (count, severities, errors, shape) == (
+        2,
+        {"HIGH": 1, "MEDIUM": 1},
+        0,
+        None,
+    )
+    assert module._generic_rule_counts(path) == {"E1": 1, "SC2": 1}
+
+
+def test_skillspector_scope_requires_bundled_skill_resources(tmp_path):
+    module = _module()
+    assert module._has_bundled_skill_resources(tmp_path) is False
+    skill = tmp_path / ".opencode" / "skills" / "example" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("# bounded fixture\n", encoding="utf-8")
+    assert module._has_bundled_skill_resources(tmp_path) is True
+
+
 def test_generic_rule_counts_use_scalar_skill_rule_ids(tmp_path):
     module = _module()
     path = tmp_path / "skillspector-rules.json"
@@ -322,6 +358,67 @@ def test_scanner_retains_only_sanitized_output_and_hashes_that_artifact(tmp_path
     assert detector_value not in retained
     assert detector_value not in stderr
     assert "stderr omitted for secret safety" in stderr
+
+
+def test_recursive_skillspector_reads_cli_output_file_and_redacts_paths(tmp_path, monkeypatch):
+    module = _module()
+    source = tmp_path / "source"
+    source.mkdir()
+    output_dir = tmp_path / "evidence"
+    output_dir.mkdir()
+    raw_output = output_dir / "skillspector-cli-output.json"
+
+    class Result:
+        returncode = 0
+        stdout = "recursive scan completed"
+        stderr = ""
+
+    def fake_run(command, **_kwargs):
+        raw_output.write_text(
+            json.dumps(
+                {
+                    "execution_successful": True,
+                    "skills": [
+                        {
+                            "path": "example",
+                            "execution_successful": True,
+                            "issues": [{"id": "E1", "severity": "HIGH", "evidence": "private context"}],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return Result()
+
+    monkeypatch.setattr(module.shutil, "which", lambda _name: "/usr/bin/skillspector")
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    row = module._run_scanner(
+        "skillspector",
+        [
+            "skillspector",
+            "scan",
+            ".opencode/skills",
+            "--recursive",
+            "--no-llm",
+            "--format",
+            "json",
+            "--output",
+            str(raw_output),
+        ],
+        source=source,
+        output_dir=output_dir,
+    )
+
+    retained = (output_dir / "skillspector.json").read_text(encoding="utf-8")
+    assert row["status"] == "pass"
+    assert row["finding_count"] == 1
+    assert row["rule_counts"] == {"E1": 1}
+    assert "<bundled-skill-resources>" in row["invocation"]
+    assert "<skillspector-output>" in row["invocation"]
+    assert "private context" not in retained
+    assert raw_output.exists() is False
 
 
 def test_unavailable_scanner_is_recorded_in_failure_classes(tmp_path, monkeypatch):

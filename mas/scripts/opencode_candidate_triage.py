@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import posixpath
 import subprocess
 from collections import Counter
 from pathlib import Path
@@ -119,7 +120,9 @@ def _relative_path(value: Any) -> str:
         return path.rsplit(marker, 1)[1]
     if path.startswith("scan-source/"):
         return path.removeprefix("scan-source/")
-    return path.lstrip("./")
+    while path.startswith("./"):
+        path = path[2:]
+    return path.lstrip("/")
 
 
 def _error_type(value: Any) -> str:
@@ -446,20 +449,34 @@ def _skillspector_rows(value: dict[str, Any]) -> tuple[list[dict[str, Any]], Cou
     rows: list[dict[str, Any]] = []
     applicability: Counter[str] = Counter()
     by_rule: Counter[str] = Counter()
+    skill_issues: list[tuple[dict[str, Any], str]] = []
     issues = value.get("issues")
-    if not isinstance(issues, list):
-        return rows, applicability, by_rule
-    for index, issue in enumerate(issues, 1):
+    if isinstance(issues, list):
+        skill_issues.extend((issue, "") for issue in issues if isinstance(issue, dict))
+    skills = value.get("skills")
+    if isinstance(skills, list):
+        for skill in skills:
+            if not isinstance(skill, dict):
+                continue
+            skill_root = _relative_path(skill.get("path"))
+            nested = skill.get("issues")
+            if isinstance(nested, list):
+                skill_issues.extend((issue, skill_root) for issue in nested if isinstance(issue, dict))
+    for index, (issue, skill_root) in enumerate(skill_issues, 1):
         if not isinstance(issue, dict):
             continue
         rule_id = str(issue.get("id") or "unknown")
         location = issue.get("location")
-        path = _relative_path(location.get("file") if isinstance(location, dict) else "unknown")
+        raw_path = location.get("file") if isinstance(location, dict) else "unknown"
+        if skill_root and isinstance(raw_path, str) and not raw_path.startswith(("/", "\\")):
+            raw_path = posixpath.join(".opencode/skills", skill_root, raw_path)
+        path = _relative_path(raw_path)
         severity = str(issue.get("severity") or "UNKNOWN").upper()
         classification, reason = _skillspector_classification(rule_id, path)
         by_rule[rule_id] += 1
         applicability[classification] += 1
         runtime_reachable = _runtime_relevant(path)
+        evidence = issue.get("evidence")
         rows.append(
             {
                 "index": index,
@@ -467,7 +484,7 @@ def _skillspector_rows(value: dict[str, Any]) -> tuple[list[dict[str, Any]], Cou
                 "severity": severity,
                 "path": path,
                 "area": _path_area(path),
-                "local_only": bool((issue.get("evidence") or {}).get("local_only")),
+                "local_only": bool(evidence.get("local_only")) if isinstance(evidence, dict) else False,
                 "applicability": classification,
                 "reason": reason,
                 "image_disposition": _image_disposition(path),

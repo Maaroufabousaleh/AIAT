@@ -273,6 +273,13 @@ def _prepare_source(
     }, scan_source
 
 
+def _has_bundled_skill_resources(source: Path) -> bool:
+    """Only scan the candidate's bundled skill collection, never its whole tree."""
+
+    skill_root = source / ".opencode" / "skills"
+    return skill_root.is_dir() and any(path.is_file() for path in skill_root.rglob("SKILL.md"))
+
+
 def _tool_version(name: str, output_dir: Path) -> dict[str, Any]:
     path = shutil.which(name)
     if not path:
@@ -417,6 +424,24 @@ def _generic_summary(path: Path, scanner: str) -> tuple[int, Counter[str], int, 
         issue_rows = [item for item in value["issues"] if isinstance(item, dict)]
         severities = Counter(str(item.get("severity") or "HIGH").upper() for item in issue_rows)
         return len(issue_rows), severities, 0, None
+    elif isinstance(value, dict) and isinstance(value.get("skills"), list):
+        # Recursive SkillSpector output wraps one report per skill.  The
+        # top-level summary is not a findings array, so flatten only the
+        # exact nested issue rows while keeping each raw report intact.
+        issue_rows = [
+            issue
+            for skill in value["skills"]
+            if isinstance(skill, dict)
+            for issue in (skill.get("issues") or [])
+            if isinstance(issue, dict)
+        ]
+        if value.get("execution_successful") is False or any(
+            isinstance(skill, dict) and skill.get("execution_successful") is False
+            for skill in value["skills"]
+        ):
+            return len(issue_rows), Counter(), 1, "skillspector_recursive_execution_incomplete"
+        severities = Counter(str(item.get("severity") or "HIGH").upper() for item in issue_rows)
+        return len(issue_rows), severities, 0, None
     elif isinstance(value, dict) and value.get("status") in {"ok", "pass", "passed"}:
         findings = 0
     else:
@@ -431,6 +456,14 @@ def _generic_rule_counts(path: Path) -> Counter[str]:
     issues = value.get("issues")
     if not isinstance(issues, list):
         issues = value.get("findings")
+    if not isinstance(issues, list) and isinstance(value.get("skills"), list):
+        issues = [
+            issue
+            for skill in value["skills"]
+            if isinstance(skill, dict)
+            for issue in (skill.get("issues") or [])
+            if isinstance(issue, dict)
+        ]
     if not isinstance(issues, list):
         return Counter()
     return Counter(
@@ -449,7 +482,26 @@ def _run_scanner(
 ) -> dict[str, Any]:
     stdout_path = output_dir / f"{scanner}.json"
     stderr_path = output_dir / f"{scanner}.stderr.log"
-    requested_invocation = ["<source>" if argument == str(source) else argument for argument in command]
+    scanner_output_path: Path | None = None
+    if scanner == "skillspector" and "--output" in command:
+        output_index = command.index("--output")
+        if output_index + 1 < len(command):
+            scanner_output_path = Path(command[output_index + 1])
+
+    def safe_invocation(arguments: list[str]) -> list[str]:
+        safe: list[str] = []
+        for argument in arguments:
+            if argument == str(source):
+                safe.append("<source>")
+            elif argument == ".opencode/skills":
+                safe.append("<bundled-skill-resources>")
+            elif scanner_output_path is not None and argument == str(scanner_output_path):
+                safe.append("<skillspector-output>")
+            else:
+                safe.append(argument)
+        return safe
+
+    requested_invocation = safe_invocation(command)
     executable = shutil.which(command[0])
     if executable is None:
         return {
@@ -482,7 +534,7 @@ def _run_scanner(
             "name": scanner,
             "status": "blocked",
             "available": True,
-            "invocation": ["<source>" if argument == str(source) else argument for argument in actual_command],
+            "invocation": safe_invocation(actual_command),
             "working_directory": "<source>",
             "finding_count": 0,
             "rule_counts": {},
@@ -494,6 +546,13 @@ def _run_scanner(
             "raw_output_sanitized": False,
         }
     stdout_text = result.stdout or ""
+    if scanner_output_path is not None:
+        try:
+            stdout_text = scanner_output_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            stdout_text = ""
+        finally:
+            scanner_output_path.unlink(missing_ok=True)
     stderr_text = result.stderr or ""
     # Scanner output is evidence, but raw detections and source snippets can
     # carry credentials that do not match common token prefixes. Preserve the
@@ -549,7 +608,7 @@ def _run_scanner(
         "name": scanner,
         "status": "pass" if scanner_error_count == 0 else "blocked",
         "available": True,
-        "invocation": ["<source>" if argument == str(source) else argument for argument in actual_command],
+        "invocation": safe_invocation(actual_command),
         "working_directory": "<source>",
         "exit_status": result.returncode,
         "finding_count": finding_count,
@@ -708,9 +767,53 @@ def certify(
                 [
                     _run_scanner("semgrep", ["semgrep", "--config", "auto", "--json", "--no-git-ignore", str(source)], source=source, output_dir=output_dir),
                     _run_scanner("trufflehog", ["trufflehog", "filesystem", "--json", "--no-update", str(source)], source=source, output_dir=output_dir),
-                    _run_scanner("skillspector", ["skillspector", "scan", str(source), "--no-llm", "--format", "json"], source=source, output_dir=output_dir),
                 ]
             )
+            if _has_bundled_skill_resources(source):
+                scanner_rows.append(
+                    _run_scanner(
+                        "skillspector",
+                        [
+                            "skillspector",
+                            "scan",
+                            ".opencode/skills",
+                            "--recursive",
+                            "--no-llm",
+                            "--format",
+                            "json",
+                            "--output",
+                            str(output_dir / "skillspector-cli-output.json"),
+                        ],
+                        source=source,
+                        output_dir=output_dir,
+                    )
+                )
+            else:
+                scanner_rows.append(
+                    {
+                        "name": "skillspector",
+                        "status": "blocked",
+                        "available": shutil.which("skillspector") is not None,
+                        "invocation": [
+                            "skillspector",
+                            "scan",
+                            "<bundled-skill-resources>",
+                            "--recursive",
+                            "--no-llm",
+                            "--format",
+                            "json",
+                        ],
+                        "working_directory": "<source>",
+                        "finding_count": 0,
+                        "rule_counts": {},
+                        "scanner_error_count": 1,
+                        "scanner_errors": ["bundled_skill_resources_not_found"],
+                        "failure_class": SCANNER_COVERAGE_INCOMPLETE,
+                        "failure_classes": [SCANNER_COVERAGE_INCOMPLETE],
+                        "raw_output_retained": False,
+                        "raw_output_sanitized": False,
+                    }
+                )
             sbom = _run_sbom(source, output_dir)
             boundary = _run_boundary(boundary_command, output_dir)
         else:

@@ -62,6 +62,7 @@ def test_skillspector_classifies_reachable_runtime_findings_as_actionable() -> N
                     "id": "E1",
                     "severity": "HIGH",
                     "location": {"file": "packages/web/src/content/docs/security.md"},
+                    "evidence": "path-derived heuristic evidence",
                 },
             ]
         }
@@ -72,9 +73,39 @@ def test_skillspector_classifies_reachable_runtime_findings_as_actionable() -> N
     assert rows[0]["actionable"] is True
     assert rows[1]["applicability"] == "NON_RUNTIME"
     assert rows[1]["actionable"] is False
+    assert rows[1]["local_only"] is False
     assert applicability[module.RUNTIME_APPLICABLE] == 1
     assert applicability["NON_RUNTIME"] == 1
     assert rules["E1"] == 2
+
+
+def test_recursive_skillspector_findings_keep_the_skill_relative_path() -> None:
+    module = _module()
+    rows, applicability, rules = module._skillspector_rows(
+        {
+            "skills": [
+                {
+                    "name": "effect",
+                    "path": "effect",
+                    "issues": [
+                        {
+                            "id": "E1",
+                            "severity": "HIGH",
+                            "location": {"file": "SKILL.md"},
+                            "evidence": "scanner context",
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+
+    assert rows[0]["path"] == ".opencode/skills/effect/SKILL.md"
+    assert rows[0]["applicability"] == "NON_RUNTIME"
+    assert rows[0]["actionable"] is False
+    assert rows[0]["raw_snippet_retained"] is False
+    assert applicability["NON_RUNTIME"] == 1
+    assert rules["E1"] == 1
 
 
 def test_trufflehog_rows_do_not_copy_secret_material(tmp_path) -> None:
