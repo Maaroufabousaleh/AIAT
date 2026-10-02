@@ -63,6 +63,32 @@ def test_semgrep_sanitization_omits_source_context():
     assert '"lines": "[REDACTED_SOURCE_CONTEXT]"' in sanitized
 
 
+def test_scanner_output_normalizes_temporary_candidate_source_paths():
+    module = _module()
+    temporary_root = "/tmp/aiat-opencode-candidate-random/scan-source"
+    raw = json.dumps(
+        {
+            "paths": {"scanned": [{"path": f"{temporary_root}/packages/core/src/example.ts"}]},
+            "errors": [
+                {
+                    "type": [
+                        "PartialParsing",
+                        [{"path": f"{temporary_root}/.github/workflows/build.yml"}],
+                    ]
+                }
+            ],
+        }
+    )
+
+    sanitized, complete = module._sanitize_scanner_output("semgrep", raw)
+
+    assert complete is True
+    assert temporary_root not in sanitized
+    assert "scan-source" not in sanitized
+    assert "packages/core/src/example.ts" in sanitized
+    assert ".github/workflows/build.yml" in sanitized
+
+
 def test_skillspector_sanitization_redacts_freeform_finding_evidence():
     module = _module()
     private_context = "untrusted source evidence that must not persist"

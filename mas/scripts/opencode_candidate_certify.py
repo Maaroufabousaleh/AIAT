@@ -144,7 +144,15 @@ def _sanitize_scanner_value(value: Any, *, scanner: str, key: str = "") -> Any:
     if isinstance(value, list):
         return [_sanitize_scanner_value(child, scanner=scanner, key=key) for child in value]
     if isinstance(value, str):
-        return _redacted_text(value)
+        sanitized = _redacted_text(value)
+        # Scanner output often records the temporary checkout path. Retaining
+        # that random prefix makes otherwise identical candidate evidence
+        # differ across runs and leaks host filesystem layout. Keep the exact
+        # candidate-relative path so findings remain reviewable.
+        for marker in ("/scan-source/", "\\scan-source\\"):
+            if marker in sanitized:
+                return sanitized.rsplit(marker, 1)[-1]
+        return sanitized
     return value
 
 
