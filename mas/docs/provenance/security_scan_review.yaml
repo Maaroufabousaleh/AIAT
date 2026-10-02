@@ -1,4 +1,4 @@
-# Current per-scanner disposition register. Unreviewed findings block activation.
+# Open security findings remain active review items; this register does not waive any gate.
 schema_version: aiat.security-scan-review.v1
 programme_scope: personal-internal-only
 policy:
@@ -10,23 +10,23 @@ latest_reproduction:
   path: mas/docs/provenance/security_scan_reproduction_local.json
   schema_version: aiat.security-scan-reproduction-local.v1
 latest_candidate:
-  path: mas/docs/provenance/opencode-candidate/2026-09-30-v1.18.21/candidate-certification.json
+  path: mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21/candidate-certification.json
   schema_version: aiat.opencode-candidate-certification.v1
   status: blocked
   remediation_input: true
 reviews:
-- id: opencode-1.18.21-semgrep-2026-09-30-review
-  scan_ref: mas/docs/provenance/security_scan_evidence.yaml#opencode-1.18.21-semgrep-2026-09-30
+- id: opencode-1.18.21-semgrep-2026-10-02-review
+  scan_ref: mas/docs/provenance/security_scan_evidence.yaml#opencode-1.18.21-semgrep-2026-10-02
   owner: personal-operator
   status: open
   gate_status: blocked
   finding_disposition: unreviewed
-  next_action: Review each of the 335 semgrep findings against the retained exact-source snapshot; record confirmed,
-    false-positive, or remediated dispositions before OpenCode activation.
-  engine_warning_action: Resolve and reproduce all 54 scanner execution/coverage errors with the exact source and
-    pinned tool before activation.
+  next_action: Review all 335 exact-source Semgrep findings and retain an explicit disposition for every
+    rule/location. Activation remains blocked while findings or coverage gaps are unresolved.
+  engine_warning_action: 'Review the 54 normalized scanner errors: four internal rule failures and 50
+    explained parsing limitations; resolve by alternate security coverage or a new exact pinned scan.'
   rule_groups:
-  - id: semgrep-findings
+  - id: semgrep-rules
     rules:
     - dockerfile.security.missing-user-entrypoint.missing-user-entrypoint
     - dockerfile.security.missing-user.missing-user
@@ -43,20 +43,20 @@ reviews:
     - yaml.github-actions.security.github-actions-mutable-action-tag.github-actions-mutable-action-tag
     - yaml.github-actions.security.run-shell-injection.run-shell-injection
     finding_count: 335
-    next_action: Disposition every semgrep result in this rule group. Keep unresolved findings open and the technical
-      gate blocked.
-- id: opencode-1.18.21-trufflehog-2026-09-30-review
-  scan_ref: mas/docs/provenance/security_scan_evidence.yaml#opencode-1.18.21-trufflehog-2026-09-30
+    next_action: Disposition every retained Semgrep rule result; prioritize the two runtime process-launch
+      candidates and keep unresolved findings open.
+- id: opencode-1.18.21-trufflehog-2026-10-02-review
+  scan_ref: mas/docs/provenance/security_scan_evidence.yaml#opencode-1.18.21-trufflehog-2026-10-02
   owner: personal-operator
   status: open
   gate_status: blocked
   finding_disposition: unreviewed
-  next_action: Review each of the 53 trufflehog findings against the retained exact-source snapshot; record confirmed,
-    false-positive, or remediated dispositions before OpenCode activation.
-  engine_warning_action: Scanner execution completed without engine errors; review all retained findings and rerun
-    the exact pinned scan after remediation.
+  next_action: Review all 53 unverified detections from the exact source snapshot. No verified secret
+    was found; no raw values are retained.
+  engine_warning_action: No scanner execution errors were reported; all 53 detections remain unverified
+    and require review.
   rule_groups:
-  - id: trufflehog-findings
+  - id: trufflehog-detectors
     rules:
     - Box
     - DigitalOceanToken
@@ -66,39 +66,57 @@ reviews:
     - Postgres
     - URI
     finding_count: 53
-    next_action: Disposition every trufflehog result in this rule group. Keep unresolved findings open and the technical
-      gate blocked.
-- id: opencode-1.18.21-skillspector-2026-09-30-review
-  scan_ref: mas/docs/provenance/security_scan_evidence.yaml#opencode-1.18.21-skillspector-2026-09-30
+    next_action: Review each detector/path/line without exposing values; classify examples, fixtures,
+      false positives, or real credentials, and require rotation for any verified credential.
+- id: opencode-1.18.21-skillspector-2026-10-02-review
+  scan_ref: mas/docs/provenance/security_scan_evidence.yaml#opencode-1.18.21-skillspector-2026-10-02
+  owner: personal-operator
+  status: resolved
+  gate_status: passed
+  finding_disposition: no_findings
+  next_action: Re-run the recursive no-LLM scan whenever the source candidate or bundled skills change.
+  engine_warning_action: Scanner execution completed with zero findings on both discovered bundled skill
+    resources.
+  rule_groups: []
+- id: opencode-1.18.21-actionlint-2026-10-02-review
+  scan_ref: mas/docs/provenance/security_scan_evidence.yaml#opencode-1.18.21-actionlint-2026-10-02
   owner: personal-operator
   status: open
   gate_status: blocked
   finding_disposition: unreviewed
-  next_action: Review each of the 374 skillspector findings against the retained exact-source snapshot; record confirmed,
-    false-positive, or remediated dispositions before OpenCode activation.
-  engine_warning_action: Scanner execution completed without engine errors; review all retained findings and rerun
-    the exact pinned scan after remediation.
+  next_action: Review all 27 normalized actionlint diagnostics; confirm custom runner labels and workflow
+    expression/condition findings before activation.
+  engine_warning_action: Actionlint completed with diagnostics (exit 1); this exit reflects findings,
+    not a scanner execution failure.
   rule_groups:
-  - id: skillspector-findings
+  - id: actionlint-diagnostics
     rules:
-    - AE3
-    - AE4
-    - E1
-    - E2
-    - EA1
-    - EA2
-    - OH3
-    - P6
-    - PE2
-    - PE3
-    - RA2
-    - RP1
-    - SC1
-    - SC2
-    - SC9
-    - SSRF2
-    - TM1
-    - TM2
-    finding_count: 374
-    next_action: Disposition every skillspector result in this rule group. Keep unresolved findings open and the
-      technical gate blocked.
+    - runner-label
+    - if-cond
+    - expression
+    finding_count: 27
+    next_action: Review each runner-label, expression, and condition diagnostic against the configured
+      CI provider.
+- id: opencode-1.18.21-zizmor-2026-10-02-review
+  scan_ref: mas/docs/provenance/security_scan_evidence.yaml#opencode-1.18.21-zizmor-2026-10-02
+  owner: personal-operator
+  status: open
+  gate_status: blocked
+  finding_disposition: unreviewed
+  next_action: Review all 92 normalized Zizmor findings. Raw source-bearing output was not retained; deterministic
+    locations and rule/severity records are retained.
+  engine_warning_action: Zizmor completed and returned findings (exit 14); this exit reflects findings,
+    not a scanner execution failure.
+  rule_groups:
+  - id: zizmor-rules
+    rules:
+    - artipacked
+    - dangerous-triggers
+    - excessive-permissions
+    - github-app
+    - github-env
+    - self-repository
+    - template-injection
+    - unpinned-uses
+    finding_count: 92
+    next_action: Disposition each normalized workflow/action supply-chain rule result.

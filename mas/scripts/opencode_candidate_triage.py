@@ -254,6 +254,30 @@ def _semgrep_error_rows(value: dict[str, Any]) -> tuple[list[dict[str, Any]], Co
     return rows, counts
 
 
+def _semgrep_error_disposition_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
+    """Separate scanner execution errors from documented parser limitations."""
+
+    execution_errors = sum(
+        1 for row in rows if row.get("classification") == SCANNER_EXECUTION_FAILURE
+    )
+    explained_coverage = sum(
+        1
+        for row in rows
+        if row.get("classification")
+        in {
+            "embedded GitHub-expression/YAML parsing limitation",
+            "MDX/generated/documentation parsing limitation",
+            "source syntax genuinely unsupported",
+        }
+    )
+    return {
+        "total": len(rows),
+        "execution_errors": execution_errors,
+        "explained_coverage_gaps": explained_coverage,
+        "unexplained": len(rows) - execution_errors - explained_coverage,
+    }
+
+
 def _semgrep_result_summary(value: dict[str, Any]) -> dict[str, Any]:
     results = value.get("results")
     if not isinstance(results, list):
@@ -315,6 +339,14 @@ def _trufflehog_path(value: dict[str, Any]) -> str:
     data = metadata.get("Data") if isinstance(metadata, dict) else None
     filesystem = data.get("Filesystem") if isinstance(data, dict) else None
     return _relative_path(filesystem.get("file") if isinstance(filesystem, dict) else "unknown")
+
+
+def _trufflehog_line(value: dict[str, Any]) -> int | None:
+    metadata = value.get("SourceMetadata")
+    data = metadata.get("Data") if isinstance(metadata, dict) else None
+    filesystem = data.get("Filesystem") if isinstance(data, dict) else None
+    line = filesystem.get("line") if isinstance(filesystem, dict) else None
+    return int(line) if isinstance(line, int) and not isinstance(line, bool) and line > 0 else None
 
 
 def _trufflehog_classification(path: str, detector: str) -> str:
@@ -417,6 +449,7 @@ def _trufflehog_rows(path: Path) -> tuple[list[dict[str, Any]], Counter[str]]:
                 "index": index,
                 "detector": detector,
                 "path": relative,
+                "line": _trufflehog_line(value),
                 "verified": verified,
                 "verification_error_present": bool(value.get("VerificationError") or value.get("verification_error")),
                 "area": _path_area(relative),
@@ -688,9 +721,15 @@ def triage(*, report_path: Path, artifact_dir: Path, source_dir: Path, output_pa
             ("skillspector", skillspector_report),
         )
     }
+    semgrep_error_dispositions = _semgrep_error_disposition_counts(semgrep_errors)
+    trufflehog_artifact_error_count = int(trufflehog_counts.get(SCANNER_EXECUTION_FAILURE) or 0)
+    non_semgrep_execution_errors = (
+        max(report_scanner_error_counts["trufflehog"], trufflehog_artifact_error_count)
+        + report_scanner_error_counts["skillspector"]
+    )
     scanner_execution_failure = (
-        SCANNER_EXECUTION_FAILURE in report_failure_classes
-        or any(count > 0 for count in report_scanner_error_counts.values())
+        semgrep_error_dispositions["execution_errors"] > 0
+        or non_semgrep_execution_errors > 0
     )
     scanner_coverage_failure = SCANNER_COVERAGE_INCOMPLETE in report_failure_classes
     scanner_manifest_blocked = any(
@@ -707,11 +746,8 @@ def triage(*, report_path: Path, artifact_dir: Path, source_dir: Path, output_pa
         and not trufflehog_counts.get(SCANNER_EXECUTION_FAILURE)
         else "INCOMPLETE"
     )
-    trufflehog_artifact_error_count = int(trufflehog_counts.get(SCANNER_EXECUTION_FAILURE) or 0)
     scanner_execution_failure_count = (
-        report_scanner_error_counts["semgrep"]
-        + max(report_scanner_error_counts["trufflehog"], trufflehog_artifact_error_count)
-        + report_scanner_error_counts["skillspector"]
+        semgrep_error_dispositions["execution_errors"] + non_semgrep_execution_errors
     )
     runtime_actionable = semgrep_results["runtime_actionable_candidates"]
     skillspector_false = skillspector_applicability["FALSE_POSITIVE_OR_MISAPPLIED"]
@@ -840,10 +876,13 @@ def triage(*, report_path: Path, artifact_dir: Path, source_dir: Path, output_pa
                 int(report.get("raw_findings_count") or 0) == derived_raw_findings
             ),
             "SCANNER_EXECUTION_FAILURES": scanner_execution_failure_count,
+            "SEMGREP_EXECUTION_ERRORS": semgrep_error_dispositions["execution_errors"],
             "AIAT_WRAPPER_MITIGATED_FINDINGS": 0,
             "UPSTREAM_FIX_REQUIRED": 0,
             "FORK_REQUIRED": False,
             "NEWER_UPSTREAM_RELEASE_SHOULD_BE_TESTED": True,
+            "SEMGREP_EXPLAINED_COVERAGE_GAPS": semgrep_error_dispositions["explained_coverage_gaps"],
+            "UNEXPLAINED_SEMGREP_ERRORS": semgrep_error_dispositions["unexplained"],
             "CERTIFICATION_DECISION": certification_decision,
         },
         "remediation_order": [

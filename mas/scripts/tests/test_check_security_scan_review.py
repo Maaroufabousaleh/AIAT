@@ -25,19 +25,36 @@ def test_current_review_register_covers_open_scan_without_waiving_gate() -> None
     report = module.inspect(SCAN, REVIEW)
 
     assert report["status"] == "pass", report["errors"]
-    assert report["scan_count"] == 4
-    assert report["active_scan_count"] == 3
-    assert report["historical_scan_count"] == 1
-    assert report["finding_count"] == 762
+    assert report["scan_count"] == 9
+    assert report["active_scan_count"] == 5
+    assert report["historical_scan_count"] == 4
+    assert report["finding_count"] == 507
     assert "historical_finding_count" not in report
     assert report["engine_warning_count"] == 54
-    assert report["review_required_count"] == 3
+    assert report["review_required_count"] == 4
     assert report["technical_gate_status"] == "blocked"
     assert report["licence_metadata_is_gate"] is False
     assert report["reviews"][0]["status"] == "open"
-    assert report["latest_reproduction"]["finding_count"] == 762
+    assert report["latest_reproduction"]["finding_count"] == 507
     assert report["latest_reproduction"]["scanner_error_count"] == 54
     assert report["latest_reproduction"]["technical_gate_status"] == "blocked"
+
+
+def test_zero_finding_scanner_has_explicit_passed_review() -> None:
+    module = _load_module()
+    scan_document = yaml.safe_load(SCAN.read_text(encoding="utf-8"))
+    review_document = yaml.safe_load(REVIEW.read_text(encoding="utf-8"))
+    scan = next(row for row in scan_document["scans"] if row["scanner"] == "skillspector" and row.get("remediation_input") is not False)
+    review = next(row for row in review_document["reviews"] if row["scan_ref"].endswith("#" + scan["id"]))
+
+    assert scan["status"] == "passed"
+    assert scan["finding_count"] == 0
+    assert scan["rule_counts"] == {}
+    assert review["status"] == "resolved"
+    assert review["gate_status"] == "passed"
+    assert review["finding_disposition"] == "no_findings"
+    assert review["rule_groups"] == []
+    assert module.inspect(SCAN, REVIEW)["status"] == "pass"
 
 
 def test_unreproducible_historical_scan_rejects_scalar_counts(tmp_path: Path) -> None:

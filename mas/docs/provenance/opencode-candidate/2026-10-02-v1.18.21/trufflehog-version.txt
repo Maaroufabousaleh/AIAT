@@ -1,0 +1,1 @@
+trufflehog 3.97.0

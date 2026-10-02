@@ -1,7 +1,7 @@
 {
   "aiat_boundary_regression": {
     "activation_or_deployment_mutation": false,
-    "command": "uv run --isolated pytest packages/mas-core/tests/test_worker_governance.py packages/mas-core/tests/test_sandbox_runtime_readiness.py apps/tool-service/tests/test_opencode_workspace.py -q",
+    "command": "uv run --isolated pytest -q apps/tool-service/tests/test_opencode_workspace.py apps/tool-service/tests/test_signed_caller_auth.py::test_identity_tools_require_an_explicit_durable_grant packages/mas-core/tests/test_worker_runtime_bindings.py packages/mas-core/tests/test_sandbox_policy.py packages/mas-core/tests/test_process_adapter_security.py packages/mas-core/tests/test_worker_tool_effects.py scripts/tests/test_check_live_redis_restart_recovery.py",
     "status": "pass"
   },
   "failure_classification": {
@@ -9,21 +9,26 @@
     "infrastructure_environment_failure": "not_observed",
     "provider_functional_failure": "not_applicable_external_source_scan",
     "provider_resource_limit_failure": "not_tested",
-    "security_gate_failure": "unresolved_findings_and_semgrep_errors"
+    "security_gate_failure": "findings_review_required_and_semgrep_runtime_security_coverage_incomplete"
   },
-  "observed_at": "2026-09-30T17:12:50Z",
+  "observed_at": "2026-10-02T01:35:00.489979Z",
   "programme_scope": "personal-internal-only",
   "release_boundary": {
     "activation_or_deployment_mutation": false,
     "licence_metadata_is_gate": false,
     "operator_review_required": true,
     "raw_findings_and_source_snapshot_retained_separately": true,
-    "scope": "Exact-source scanner/SBOM reproduction. OpenCode remains inactive pending finding review and complete Semgrep coverage.",
+    "scope": "Exact-source primary security scan with normalized supplemental workflow scanners. OpenCode remains inactive pending operator finding review and complete runtime security coverage.",
     "technical_gate_status": "blocked"
   },
   "scan": {
-    "finding_count": 762,
+    "aggregate_count_semantics": "scanner records after per-scanner normalization; not unique vulnerabilities",
+    "finding_count": 507,
+    "primary_candidate_finding_count": 388,
     "rule_counts": {
+      "actionlint/expression": 1,
+      "actionlint/if-cond": 1,
+      "actionlint/runner-label": 25,
       "semgrep/dockerfile.security.missing-user-entrypoint.missing-user-entrypoint": 1,
       "semgrep/dockerfile.security.missing-user.missing-user": 1,
       "semgrep/javascript.audit.detect-replaceall-sanitization.detect-replaceall-sanitization": 16,
@@ -38,52 +43,48 @@
       "semgrep/yaml.github-actions.security.gha-curl-pipe-shell.gha-curl-pipe-shell": 7,
       "semgrep/yaml.github-actions.security.github-actions-mutable-action-tag.github-actions-mutable-action-tag": 1,
       "semgrep/yaml.github-actions.security.run-shell-injection.run-shell-injection": 5,
-      "skillspector/AE3": 14,
-      "skillspector/AE4": 18,
-      "skillspector/E1": 63,
-      "skillspector/E2": 2,
-      "skillspector/EA1": 2,
-      "skillspector/EA2": 5,
-      "skillspector/OH3": 2,
-      "skillspector/P6": 14,
-      "skillspector/PE2": 30,
-      "skillspector/PE3": 13,
-      "skillspector/RA2": 16,
-      "skillspector/RP1": 4,
-      "skillspector/SC1": 9,
-      "skillspector/SC2": 76,
-      "skillspector/SC9": 23,
-      "skillspector/SSRF2": 1,
-      "skillspector/TM1": 4,
-      "skillspector/TM2": 78,
       "trufflehog/Box": 3,
       "trufflehog/DigitalOceanToken": 1,
       "trufflehog/Gitlab": 24,
       "trufflehog/GoogleGeminiAPIKey": 1,
       "trufflehog/Honeycomb": 2,
       "trufflehog/Postgres": 1,
-      "trufflehog/URI": 21
+      "trufflehog/URI": 21,
+      "zizmor/artipacked": 27,
+      "zizmor/dangerous-triggers": 2,
+      "zizmor/excessive-permissions": 8,
+      "zizmor/github-app": 2,
+      "zizmor/github-env": 1,
+      "zizmor/self-repository": 27,
+      "zizmor/template-injection": 24,
+      "zizmor/unpinned-uses": 1
     },
     "rule_total_matches_findings": true,
     "scanner_error_count": 54,
-    "scanner_error_status": "semgrep_internal_or_coverage_errors",
+    "scanner_error_status": "54_semgrep_errors_classified; 4_rule_execution; 50_parser_coverage; 0_unexplained",
     "severity_counts": {
       "ERROR": 19,
-      "HIGH": 276,
+      "HIGH": 78,
       "INFO": 22,
-      "LOW": 10,
-      "MEDIUM": 142,
+      "INFORMATIONAL": 9,
+      "LOW": 27,
+      "MEDIUM": 32,
+      "UNSPECIFIED_BY_SCANNER": 27,
       "WARNING": 293
     },
-    "target_file_count": 6520
+    "supplemental_finding_count": 119,
+    "target_file_count": 6520,
+    "unexplained_scanner_error_count": 0
   },
   "scanner": {
-    "candidate_evidence_ref": "mas/docs/provenance/opencode-candidate/2026-09-30-v1.18.21/candidate-certification.json",
+    "candidate_evidence_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21/candidate-certification.json",
+    "coverage_review_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21/scanner-coverage-review.json",
     "external_network_access_performed": true,
-    "mode": "exact-source pinned multi-scanner candidate sweep",
-    "name": "semgrep+trufflehog+skillspector",
+    "mode": "exact-source pinned primary scan plus normalized CI coverage supplement",
+    "name": "semgrep+trufflehog+skillspector+actionlint+zizmor",
+    "normalized_outputs_retained_separately": true,
     "raw_output_retained": false,
-    "version": "Semgrep 1.168.0; TruffleHog 3.97.0; SkillSpector v2.9.6"
+    "version": "Semgrep 1.168.0; TruffleHog 3.97.0; SkillSpector 2.9.6; actionlint 1.7.12; zizmor 1.30.1"
   },
   "schema_version": "aiat.security-scan-reproduction-local.v1",
   "source": {
@@ -92,7 +93,7 @@
     "commit": "826d9ad46a22bef0294998e08daa3c4904fea28f",
     "release": "v1.18.21",
     "repository": "https://github.com/anomalyco/opencode",
-    "snapshot_ref": "mas/docs/provenance/opencode-candidate/2026-09-30-v1.18.21/source-snapshot.tar.xz",
+    "snapshot_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21/source-snapshot.tar.xz",
     "snapshot_retained": true,
     "snapshot_sha256": "e338f0fc18145f7fc0ac848da5593ae77ea63adbd5f1d386ca8d82151a280370"
   },

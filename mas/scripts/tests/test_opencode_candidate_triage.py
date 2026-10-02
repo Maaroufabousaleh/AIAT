@@ -47,6 +47,24 @@ def test_semgrep_errors_keep_runtime_coverage_visible() -> None:
     assert counts["embedded GitHub-expression/YAML parsing limitation"] == 1
 
 
+def test_semgrep_execution_errors_are_not_conflated_with_coverage_gaps() -> None:
+    module = _module()
+    rows = [
+        {"classification": module.SCANNER_EXECUTION_FAILURE},
+        {"classification": module.SCANNER_EXECUTION_FAILURE},
+        {"classification": "embedded GitHub-expression/YAML parsing limitation"},
+        {"classification": "source syntax genuinely unsupported"},
+        {"classification": "other"},
+    ]
+
+    assert module._semgrep_error_disposition_counts(rows) == {
+        "total": 5,
+        "execution_errors": 2,
+        "explained_coverage_gaps": 2,
+        "unexplained": 1,
+    }
+
+
 def test_skillspector_classifies_reachable_runtime_findings_as_actionable() -> None:
     module = _module()
     rows, applicability, rules = module._skillspector_rows(
@@ -118,7 +136,7 @@ def test_trufflehog_rows_do_not_copy_secret_material(tmp_path) -> None:
                 "Verified": False,
                 "Raw": "must-not-be-retained",
                 "SourceMetadata": {
-                    "Data": {"Filesystem": {"file": "/tmp/scan-source/tests/fixture.py"}}
+                    "Data": {"Filesystem": {"file": "/tmp/scan-source/tests/fixture.py", "line": 23}}
                 },
             }
         )
@@ -129,6 +147,7 @@ def test_trufflehog_rows_do_not_copy_secret_material(tmp_path) -> None:
     rows, counts = module._trufflehog_rows(path)
 
     assert rows[0]["path"] == "tests/fixture.py"
+    assert rows[0]["line"] == 23
     assert rows[0]["classification"] == "TEST_FIXTURE"
     assert rows[0]["raw_secret_material_retained"] is False
     assert "must-not-be-retained" not in json.dumps(rows)

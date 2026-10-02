@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[1] / "check_opencode_candidate_certification.py"
-EVIDENCE = SCRIPT.parents[1] / "docs" / "provenance" / "opencode-candidate" / "2026-09-30-v1.18.21" / "candidate-certification.json"
+EVIDENCE = SCRIPT.parents[1] / "docs" / "provenance" / "opencode-candidate" / "2026-10-02-v1.18.21" / "candidate-certification.json"
 
 
 def test_current_candidate_evidence_is_structurally_valid_but_technical_gate_blocked() -> None:

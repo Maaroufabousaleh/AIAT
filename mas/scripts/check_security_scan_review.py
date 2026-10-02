@@ -27,7 +27,14 @@ SCAN_SCHEMA = "aiat.security-scan-evidence.v1"
 REPRO_SCHEMA = "aiat.security-scan-reproduction-local.v1"
 SCAN_STATUSES = {"passed", "findings_review_required", "blocked"}
 REVIEW_STATUSES = {"open", "in_review", "resolved"}
-FINDING_DISPOSITIONS = {"unreviewed", "confirmed", "false_positive", "remediated", "accepted_by_operator"}
+FINDING_DISPOSITIONS = {
+    "unreviewed",
+    "confirmed",
+    "false_positive",
+    "remediated",
+    "accepted_by_operator",
+    "no_findings",
+}
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -221,7 +228,10 @@ def inspect(
         if scan_status != "passed" and not historical:
             technical_gate_status = "blocked"
         retained_findings = (
-            row.get("raw_findings_retained") is True
+            (
+                row.get("raw_findings_retained") is True
+                or row.get("normalized_result_retained") is True
+            )
             and row.get("source_snapshot_retained") is True
         )
         finding_count = _non_negative_int(row.get("finding_count"))
@@ -248,8 +258,10 @@ def inspect(
                 errors.append(
                     f"{scan_id}: unreproducible historical evidence must not supply rule_counts"
                 )
-        elif not isinstance(rule_counts, dict) or not rule_counts:
-            errors.append(f"{scan_id}: rule_counts must be a non-empty mapping")
+        elif not isinstance(rule_counts, dict):
+            errors.append(f"{scan_id}: rule_counts must be a mapping")
+        elif not rule_counts and finding_count != 0:
+            errors.append(f"{scan_id}: non-zero findings require a non-empty rule_counts mapping")
         else:
             rule_total = 0
             for rule, count in rule_counts.items():
@@ -287,8 +299,13 @@ def inspect(
                         errors.append(f"{scan_id}: result_sha256 does not match the retained artifact")
                 except OSError:
                     errors.append(f"{scan_id}: sanitized result_path could not be verified")
-            if row.get("raw_findings_retained") is not True or row.get("source_snapshot_retained") is not True:
-                errors.append(f"{scan_id}: raw sanitized findings and source snapshot must be retained")
+            if (
+                row.get("raw_findings_retained") is not True
+                and row.get("normalized_result_retained") is not True
+            ) or row.get("source_snapshot_retained") is not True:
+                errors.append(
+                    f"{scan_id}: sanitized raw or deterministic normalized findings and source snapshot must be retained"
+                )
 
     reviews = review_document.get("reviews")
     if not isinstance(reviews, list) or not reviews:
@@ -341,8 +358,13 @@ def inspect(
 
             rule_counts = scan.get("rule_counts") if isinstance(scan.get("rule_counts"), dict) else {}
             groups = review.get("rule_groups")
-            if not isinstance(groups, list) or not groups:
-                errors.append(f"{review_id}: rule_groups must be a non-empty list")
+            no_findings = (
+                _non_negative_int(scan.get("finding_count")) == 0
+                and scan_status == "passed"
+                and str(review.get("finding_disposition") or "").strip().lower() == "no_findings"
+            )
+            if not isinstance(groups, list) or (not groups and not no_findings):
+                errors.append(f"{review_id}: rule_groups must be a non-empty list unless a passed scan has no findings")
                 groups = []
             mapped_rules: dict[str, str] = {}
             group_count_total = 0
