@@ -225,7 +225,14 @@ def _security_evidence_index(path: Path, errors: list[str]) -> dict[str, dict[st
         if historical_unavailable:
             pass
         elif scanned_file_count is None:
-            if row.get("scanned_file_count_status") != "not_reported_by_scanner":
+            count_not_repeated = (
+                row.get("scanned_file_count_status") == "not_repeated_in_current_scan"
+                and row.get("scanner_status") == "prior_exact_source_scan_findings_carried_forward"
+            )
+            if (
+                row.get("scanned_file_count_status") != "not_reported_by_scanner"
+                and not count_not_repeated
+            ):
                 errors.append(
                     f"{scan_id}: scanned_file_count must be a non-negative integer or explicitly not reported"
                 )

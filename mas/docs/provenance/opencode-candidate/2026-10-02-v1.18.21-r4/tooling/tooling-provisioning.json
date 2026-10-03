@@ -1,0 +1,73 @@
+{
+  "credentials_persisted": false,
+  "failure_classes": [],
+  "installation_errors": [],
+  "licence_metadata_is_gate": false,
+  "path_entries": [
+    "/tmp/aiat-opencode-scan-tools-r4/install/venv/bin",
+    "/tmp/aiat-opencode-scan-tools-r4/install/bin"
+  ],
+  "payloads_persisted": false,
+  "required_tools": [
+    "semgrep",
+    "skillspector",
+    "trufflehog",
+    "syft"
+  ],
+  "schema_version": "aiat.opencode-tool-provisioning.v1",
+  "status": "pass",
+  "tools": [
+    {
+      "executable": "/tmp/aiat-opencode-scan-tools-r4/install/venv/bin/semgrep",
+      "exit_status": 0,
+      "kind": "python-package",
+      "name": "semgrep",
+      "pip_report_path": "semgrep.pip-report.json",
+      "requirement": "semgrep==1.168.0",
+      "source": "https://pypi.org/project/semgrep/1.168.0/",
+      "status": "pass",
+      "stderr_path": "semgrep.install.stderr.log",
+      "stdout_path": "semgrep.install.stdout.log",
+      "version": "1.168.0",
+      "version_exit_status": 0
+    },
+    {
+      "executable": "/tmp/aiat-opencode-scan-tools-r4/install/venv/bin/skillspector",
+      "exit_status": 0,
+      "kind": "git-package",
+      "name": "skillspector",
+      "pip_report_path": "skillspector.pip-report.json",
+      "requirement": "skillspector @ git+https://github.com/NVIDIA/skillspector@698e2bf29c7d32aa8211ada677382460c01900d7",
+      "source": "https://github.com/NVIDIA/skillspector/tree/698e2bf29c7d32aa8211ada677382460c01900d7",
+      "status": "pass",
+      "stderr_path": "skillspector.install.stderr.log",
+      "stdout_path": "skillspector.install.stdout.log",
+      "version": "SkillSpector v2.9.6",
+      "version_exit_status": 0
+    },
+    {
+      "actual_sha256": "62224de2f9dd7cd418800feb953760a302ed2f82a7c547fe1146a4874fb179e4",
+      "executable": "/tmp/aiat-opencode-scan-tools-r4/install/bin/trufflehog",
+      "expected_sha256": "62224de2f9dd7cd418800feb953760a302ed2f82a7c547fe1146a4874fb179e4",
+      "kind": "release-archive",
+      "name": "trufflehog",
+      "reported_version": "trufflehog 3.97.0",
+      "source": "https://github.com/trufflesecurity/trufflehog/releases/download/v3.97.0/trufflehog_3.97.0_linux_amd64.tar.gz",
+      "status": "pass",
+      "version": "3.97.0",
+      "version_probe_exit_status": 0
+    },
+    {
+      "actual_sha256": "2a2e837a2c8d59ec9af5472ee22d3b04ee463c4e44476ecf993fd1e5ab6ebc7f",
+      "executable": "/tmp/aiat-opencode-scan-tools-r4/install/bin/syft",
+      "expected_sha256": "2a2e837a2c8d59ec9af5472ee22d3b04ee463c4e44476ecf993fd1e5ab6ebc7f",
+      "kind": "release-archive",
+      "name": "syft",
+      "reported_version": "Application:   syft",
+      "source": "https://github.com/anchore/syft/releases/download/v1.51.0/syft_1.51.0_linux_amd64.tar.gz",
+      "status": "pass",
+      "version": "1.51.0",
+      "version_probe_exit_status": 0
+    }
+  ]
+}

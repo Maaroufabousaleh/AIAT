@@ -10,7 +10,7 @@ latest_reproduction:
   path: mas/docs/provenance/security_scan_reproduction_local.json
   schema_version: aiat.security-scan-reproduction-local.v1
 latest_candidate:
-  path: mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21/candidate-certification.json
+  path: mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/candidate-certification.json
   schema_version: aiat.opencode-candidate-certification.v1
   status: blocked
   remediation_input: true
@@ -21,12 +21,15 @@ reviews:
   status: open
   gate_status: blocked
   finding_disposition: unreviewed
-  next_action: Review all 335 exact-source Semgrep findings and retain an explicit disposition for every
-    rule/location. Activation remains blocked while findings or coverage gaps are unresolved.
-  engine_warning_action: 'Review the 54 normalized scanner errors: four internal rule failures and 50
-    explained parsing limitations; resolve by alternate security coverage or a new exact pinned scan.'
+  next_action: Review all 328 current exact-source Semgrep findings, with priority on the two runtime
+    process-launch candidates. Keep coverage incomplete until the six exact parser gaps receive equivalent
+    security analysis. Seven excluded-rule findings are tracked separately and remain open.
+  engine_warning_action: 'Semgrep has zero execution failures and six explained TypeScript parser coverage gaps;
+    the pinned Bun parser/transpiler check succeeds on all six exact paths but does not replace security analysis.
+    The two workflow rule exclusions have compensating Actionlint/Zizmor scans; seven findings from the excluded
+    pipe-to-shell rule remain carried forward for review.'
   rule_groups:
-  - id: semgrep-rules
+  - id: semgrep-current-rules
     rules:
     - dockerfile.security.missing-user-entrypoint.missing-user-entrypoint
     - dockerfile.security.missing-user.missing-user
@@ -39,22 +42,41 @@ reviews:
     - javascript.lang.security.detect-child-process.detect-child-process
     - package_managers.bun.bun-missing-minimum-release-age.bun-missing-minimum-release-age
     - problem-based-packs.insecure-transport.js-node.bypass-tls-verification.bypass-tls-verification
-    - yaml.github-actions.security.gha-curl-pipe-shell.gha-curl-pipe-shell
     - yaml.github-actions.security.github-actions-mutable-action-tag.github-actions-mutable-action-tag
     - yaml.github-actions.security.run-shell-injection.run-shell-injection
-    finding_count: 335
-    next_action: Disposition every retained Semgrep rule result; prioritize the two runtime process-launch
-      candidates and keep unresolved findings open.
+    finding_count: 328
+    next_action: Disposition every current rule/location. Keep unresolved findings open; prioritize runtime
+      process-launch candidates.
+- id: opencode-1.18.21-semgrep-excluded-rule-carry-forward-2026-10-02-review
+  scan_ref:
+    mas/docs/provenance/security_scan_evidence.yaml#opencode-1.18.21-semgrep-excluded-rule-carry-forward-2026-10-02
+  owner: personal-operator
+  status: open
+  gate_status: blocked
+  finding_disposition: unreviewed
+  next_action: Review all seven carried-forward findings individually from the sanitized same-source result
+    register; retain a reason for each disposition.
+  engine_warning_action: The prior unfiltered exact-source Semgrep run found seven records for the excluded
+    workflow rule and had 54 parser/execution diagnostics overall. The current exclusion is not a waiver; the
+    raw prior result hash and current filtered invocation are retained.
+  rule_groups:
+  - id: semgrep-excluded-rule-findings
+    rules:
+    - yaml.github-actions.security.gha-curl-pipe-shell.gha-curl-pipe-shell
+    finding_count: 7
+    next_action: Review each exact workflow file/location and keep the result open until individually
+      dispositioned.
 - id: opencode-1.18.21-trufflehog-2026-10-02-review
   scan_ref: mas/docs/provenance/security_scan_evidence.yaml#opencode-1.18.21-trufflehog-2026-10-02
   owner: personal-operator
   status: open
   gate_status: blocked
   finding_disposition: unreviewed
-  next_action: Review all 53 unverified detections from the exact source snapshot. No verified secret
-    was found; no raw values are retained.
-  engine_warning_action: No scanner execution errors were reported; all 53 detections remain unverified
-    and require review.
+  next_action: Review the 53 unique unverified detector/source locations. Two duplicate scanner records are
+    collapsed in normalized triage; no detected value was verified or retained.
+  engine_warning_action: TruffleHog completed with 55 unverified raw records, 53 unique findings after two
+    duplicate URI records, and zero verified credentials. Preserve the findings as open until individually
+    reviewed.
   rule_groups:
   - id: trufflehog-detectors
     rules:
@@ -65,18 +87,19 @@ reviews:
     - Honeycomb
     - Postgres
     - URI
-    finding_count: 53
-    next_action: Review each detector/path/line without exposing values; classify examples, fixtures,
-      false positives, or real credentials, and require rotation for any verified credential.
+    finding_count: 55
+    next_action: Review each unique detector/path/line without exposing values; classify
+      docs/examples/fixtures or investigate any actual credential and require rotation if one is confirmed.
 - id: opencode-1.18.21-skillspector-2026-10-02-review
   scan_ref: mas/docs/provenance/security_scan_evidence.yaml#opencode-1.18.21-skillspector-2026-10-02
   owner: personal-operator
   status: resolved
   gate_status: passed
   finding_disposition: no_findings
-  next_action: Re-run the recursive no-LLM scan whenever the source candidate or bundled skills change.
-  engine_warning_action: Scanner execution completed with zero findings on both discovered bundled skill
-    resources.
+  next_action: Repeat the recursive no-LLM scan whenever the exact source candidate or its bundled skills
+    change.
+  engine_warning_action: Pinned SkillSpector 2.9.6 completed successfully after the output path was resolved
+    from the repository working directory; both bundled skills were scanned with zero findings.
   rule_groups: []
 - id: opencode-1.18.21-actionlint-2026-10-02-review
   scan_ref: mas/docs/provenance/security_scan_evidence.yaml#opencode-1.18.21-actionlint-2026-10-02
@@ -86,8 +109,8 @@ reviews:
   finding_disposition: unreviewed
   next_action: Review all 27 normalized actionlint diagnostics; confirm custom runner labels and workflow
     expression/condition findings before activation.
-  engine_warning_action: Actionlint completed with diagnostics (exit 1); this exit reflects findings,
-    not a scanner execution failure.
+  engine_warning_action: Actionlint completed with diagnostics (exit 1); this exit reflects findings, not a
+    scanner execution failure.
   rule_groups:
   - id: actionlint-diagnostics
     rules:
@@ -95,18 +118,18 @@ reviews:
     - if-cond
     - expression
     finding_count: 27
-    next_action: Review each runner-label, expression, and condition diagnostic against the configured
-      CI provider.
+    next_action: Review each runner-label, expression, and condition diagnostic against the configured CI
+      provider.
 - id: opencode-1.18.21-zizmor-2026-10-02-review
   scan_ref: mas/docs/provenance/security_scan_evidence.yaml#opencode-1.18.21-zizmor-2026-10-02
   owner: personal-operator
   status: open
   gate_status: blocked
   finding_disposition: unreviewed
-  next_action: Review all 92 normalized Zizmor findings. Raw source-bearing output was not retained; deterministic
-    locations and rule/severity records are retained.
-  engine_warning_action: Zizmor completed and returned findings (exit 14); this exit reflects findings,
-    not a scanner execution failure.
+  next_action: Review all 92 normalized Zizmor findings. Raw source-bearing output was not retained;
+    deterministic locations and rule/severity records are retained.
+  engine_warning_action: Zizmor completed and returned findings (exit 14); this exit reflects findings, not a
+    scanner execution failure.
   rule_groups:
   - id: zizmor-rules
     rules:

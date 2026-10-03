@@ -4,12 +4,13 @@
     "command": "uv run --isolated pytest -q apps/tool-service/tests/test_opencode_workspace.py apps/tool-service/tests/test_signed_caller_auth.py::test_identity_tools_require_an_explicit_durable_grant packages/mas-core/tests/test_worker_runtime_bindings.py packages/mas-core/tests/test_sandbox_policy.py packages/mas-core/tests/test_process_adapter_security.py packages/mas-core/tests/test_worker_tool_effects.py scripts/tests/test_check_live_redis_restart_recovery.py",
     "status": "pass"
   },
+  "candidate_triage_generated_by_commit": "95f2139edefb4656a6c5d1f46f31a24212509100",
   "failure_classification": {
-    "harness_configuration_failure": "not_observed",
+    "harness_configuration_failure": "not_observed_in_final_r4_scan; earlier tooling-path attempts are separately retained",
     "infrastructure_environment_failure": "not_observed",
     "provider_functional_failure": "not_applicable_external_source_scan",
     "provider_resource_limit_failure": "not_tested",
-    "security_gate_failure": "findings_review_required_and_semgrep_runtime_security_coverage_incomplete"
+    "security_gate_failure": "six_explained_semgrep_parser_coverage_gaps; open findings and operator review remain"
   },
   "observed_at": "2026-10-02T01:35:00.489979Z",
   "programme_scope": "personal-internal-only",
@@ -18,13 +19,16 @@
     "licence_metadata_is_gate": false,
     "operator_review_required": true,
     "raw_findings_and_source_snapshot_retained_separately": true,
-    "scope": "Exact-source primary security scan with normalized supplemental workflow scanners. OpenCode remains inactive pending operator finding review and complete runtime security coverage.",
+    "scope": "Pinned exact-source candidate scan with narrow rule exclusions, explicit excluded-finding carry-forward, and normalized CI workflow scanners. OpenCode remains inactive while runtime security coverage and finding review remain incomplete.",
     "technical_gate_status": "blocked"
   },
   "scan": {
-    "aggregate_count_semantics": "scanner records after per-scanner normalization; not unique vulnerabilities",
-    "finding_count": 507,
-    "primary_candidate_finding_count": 388,
+    "aggregate_count_semantics": "active scanner finding records plus explicit same-source excluded-rule carry-forward and normalized supplemental records; not unique vulnerabilities",
+    "current_primary_scan_finding_count": 383,
+    "engine_warning_count": 6,
+    "excluded_rule_carry_forward_finding_count": 7,
+    "finding_count": 509,
+    "primary_candidate_finding_count": 390,
     "rule_counts": {
       "actionlint/expression": 1,
       "actionlint/if-cond": 1,
@@ -49,7 +53,7 @@
       "trufflehog/GoogleGeminiAPIKey": 1,
       "trufflehog/Honeycomb": 2,
       "trufflehog/Postgres": 1,
-      "trufflehog/URI": 21,
+      "trufflehog/URI": 23,
       "zizmor/artipacked": 27,
       "zizmor/dangerous-triggers": 2,
       "zizmor/excessive-permissions": 8,
@@ -60,11 +64,11 @@
       "zizmor/unpinned-uses": 1
     },
     "rule_total_matches_findings": true,
-    "scanner_error_count": 54,
-    "scanner_error_status": "54_semgrep_errors_classified; 4_rule_execution; 50_parser_coverage; 0_unexplained",
+    "scanner_error_count": 6,
+    "scanner_error_status": "6 explained TypeScript parser coverage gaps; 0 scanner execution errors; 0 unexplained errors; 7 excluded-rule findings carried forward open",
     "severity_counts": {
       "ERROR": 19,
-      "HIGH": 78,
+      "HIGH": 80,
       "INFO": 22,
       "INFORMATIONAL": 9,
       "LOW": 27,
@@ -77,10 +81,10 @@
     "unexplained_scanner_error_count": 0
   },
   "scanner": {
-    "candidate_evidence_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21/candidate-certification.json",
-    "coverage_review_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21/scanner-coverage-review.json",
+    "candidate_evidence_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/candidate-certification.json",
+    "coverage_review_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/scanner-coverage-review.json",
     "external_network_access_performed": true,
-    "mode": "exact-source pinned primary scan plus normalized CI coverage supplement",
+    "mode": "exact-source pinned primary scan, explicit same-source finding carry-forward, and normalized CI coverage supplement",
     "name": "semgrep+trufflehog+skillspector+actionlint+zizmor",
     "normalized_outputs_retained_separately": true,
     "raw_output_retained": false,
@@ -88,12 +92,14 @@
   },
   "schema_version": "aiat.security-scan-reproduction-local.v1",
   "source": {
+    "aiat_candidate_commit": "6d90398d34b0020075653ea82b9faf8e63085c02",
     "archive_sha256": "77b8cee43c3f74d94ad4651c375ec02bcd55a20aff06f9aac8e7be59c70811a0",
+    "candidate_triage_tool_commit": "95f2139edefb4656a6c5d1f46f31a24212509100",
     "clone_retained": false,
     "commit": "826d9ad46a22bef0294998e08daa3c4904fea28f",
     "release": "v1.18.21",
     "repository": "https://github.com/anomalyco/opencode",
-    "snapshot_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21/source-snapshot.tar.xz",
+    "snapshot_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/source-snapshot.tar.xz",
     "snapshot_retained": true,
     "snapshot_sha256": "e338f0fc18145f7fc0ac848da5593ae77ea63adbd5f1d386ca8d82151a280370"
   },

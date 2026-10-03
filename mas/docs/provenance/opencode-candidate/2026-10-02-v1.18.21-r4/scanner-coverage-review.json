@@ -1,0 +1,316 @@
+{
+  "candidate": {
+    "aiat_scan_harness_commit": "6d90398d34b0020075653ea82b9faf8e63085c02",
+    "candidate_report_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/candidate-certification.json",
+    "candidate_triage_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/candidate-triage.json",
+    "candidate_triage_sha256": "8fd18e2b86110a31520bf9d8d28002fe19ed18485675b05e3c46d8de07c30d28",
+    "source_archive_sha256": "77b8cee43c3f74d94ad4651c375ec02bcd55a20aff06f9aac8e7be59c70811a0",
+    "source_snapshot_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/source-snapshot.tar.xz",
+    "source_snapshot_sha256": "e338f0fc18145f7fc0ac848da5593ae77ea63adbd5f1d386ca8d82151a280370",
+    "triage_tool_commit": "95f2139edefb4656a6c5d1f46f31a24212509100",
+    "upstream_commit": "826d9ad46a22bef0294998e08daa3c4904fea28f",
+    "version": "1.18.21"
+  },
+  "compensating_parser_check": {
+    "checked_at": "2026-10-03T00:11:34.188207+00:00",
+    "emitted_output_file_count": 6,
+    "execution_policy": {
+      "dependency_install_lifecycle_executed": false,
+      "external_module_resolution": false,
+      "source_code_executed": false,
+      "temporary_outputs_cleaned": true
+    },
+    "exit_code": 0,
+    "input_file_count": 6,
+    "input_paths": [
+      "packages/opencode/src/lsp/server.ts",
+      "packages/core/src/effect/keyed-mutex.ts",
+      "packages/core/src/util/effect-flock.ts",
+      "packages/opencode/src/server/routes/instance/httpapi/public.ts",
+      "packages/plugin/src/tui.ts",
+      "packages/tui/src/plugin/slots.tsx"
+    ],
+    "invocation": [
+      "npm",
+      "exec",
+      "--yes",
+      "--package=bun@1.3.14",
+      "--",
+      "bun",
+      "build",
+      "<exact-source>/packages/opencode/src/lsp/server.ts",
+      "<exact-source>/packages/core/src/effect/keyed-mutex.ts",
+      "<exact-source>/packages/core/src/util/effect-flock.ts",
+      "<exact-source>/packages/opencode/src/server/routes/instance/httpapi/public.ts",
+      "<exact-source>/packages/plugin/src/tui.ts",
+      "<exact-source>/packages/tui/src/plugin/slots.tsx",
+      "--outdir",
+      "<temporary-output>",
+      "--external",
+      "*",
+      "--target",
+      "bun"
+    ],
+    "limitation": "This confirms TypeScript/TSX parsing and transpilation only. It is not a security scan and does not substitute for Semgrep rule coverage; three runtime-reachable files remain a security coverage gate.",
+    "payload_free": true,
+    "programme_scope": "personal-internal-only",
+    "result_path": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/typescript-parser-compensation.json",
+    "result_sha256": "096e04a164bd0b65c04b1c074394567db6fdc666ea1d227f20413fefa59fe416",
+    "schema_version": "aiat.opencode-parser-compensation.v1",
+    "secret_values_retained": false,
+    "source": {
+      "commit": "826d9ad46a22bef0294998e08daa3c4904fea28f",
+      "release": "1.18.21",
+      "repository": "https://github.com/anomalyco/opencode.git",
+      "source_archive_sha256": "77b8cee43c3f74d94ad4651c375ec02bcd55a20aff06f9aac8e7be59c70811a0",
+      "source_snapshot_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/source-snapshot.tar.xz",
+      "source_snapshot_sha256": "e338f0fc18145f7fc0ac848da5593ae77ea63adbd5f1d386ca8d82151a280370"
+    },
+    "source_snippets_retained": false,
+    "status": "pass_scoped_parser_check",
+    "stderr_line_count": 0,
+    "tool": {
+      "name": "Bun",
+      "version": "1.3.14",
+      "version_source": "exact candidate package.json packageManager field"
+    }
+  },
+  "disposition_policy": {
+    "confirmed_security_defects": 0,
+    "licence_metadata_is_gate": false,
+    "raw_secret_values_retained": false,
+    "runtime_semgrep_candidates_requiring_operator_review": 2,
+    "source_snippets_retained": false,
+    "technical_findings_resolved": false,
+    "trufflehog_classification_counts": {
+      "DOCUMENTATION_EXAMPLE": 42,
+      "FALSE_POSITIVE": 3,
+      "TEST_FIXTURE": 8
+    },
+    "unresolved_findings_block_activation": true,
+    "unverified_secret_candidates": 53
+  },
+  "excluded_rule_carry_forward": {
+    "finding_count": 7,
+    "finding_records_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/candidate-triage.json",
+    "finding_records_sha256": "8fd18e2b86110a31520bf9d8d28002fe19ed18485675b05e3c46d8de07c30d28",
+    "next_action": "Review every carried-forward finding; keep it open until individually dispositioned.",
+    "owner": "personal-operator",
+    "prior_result_sha256": "bc7f3a8ff0b93943fd4864e8d010648087891190c28dbadddede9b3d6781d5ba",
+    "prior_scan_error_count": 54,
+    "prior_scanner_version": "1.168.0",
+    "prior_unfiltered_report_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21/candidate-certification.json",
+    "prior_unfiltered_result_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21/semgrep.json",
+    "rule_counts": {
+      "yaml.github-actions.security.gha-curl-pipe-shell.gha-curl-pipe-shell": 7
+    },
+    "status": "open_unreviewed"
+  },
+  "generated_at": "2026-10-03T00:11:34.256500+00:00",
+  "licence_metadata_is_gate": false,
+  "normalization": {
+    "actionlint_normalized_records": 27,
+    "active_security_review_records": 509,
+    "current_primary_raw_records": 383,
+    "distinct_source_path_line_locations": 455,
+    "effective_candidate_scanner_records": 390,
+    "excluded_rule_findings_carried_forward": 7,
+    "locations_seen_in_multiple_scanners": 5,
+    "normalized_registered_scanner_records": 424,
+    "raw_scanner_records_including_excluded_rule_carry_forward": 511,
+    "scanner_set_by_location_sha256": "4d1b68ad10b54cd1e329bb6d162e1415da767170aa256f7393400ce3ed988587",
+    "scanner_set_hash_algorithm": "SHA-256 of canonical JSON array sorted by (path,line), each row {path,line,sorted scanner names};",
+    "semgrep_duplicate_records": 83,
+    "semgrep_raw_records": 328,
+    "semgrep_unique_rule_path_range_records": 245,
+    "supplemental_normalized_records": 119,
+    "trufflehog_duplicate_records": 2,
+    "trufflehog_raw_records": 55,
+    "trufflehog_unique_detector_source_records": 53,
+    "zizmor_normalized_records": 92,
+    "zizmor_raw_records": 94
+  },
+  "programme_scope": "personal-internal-only",
+  "raw_secret_values_retained": false,
+  "scan_execution": {
+    "aiat_boundary_regression": {
+      "activation_or_deployment_mutation": false,
+      "return_code": 0,
+      "status": "pass"
+    },
+    "sbom": {
+      "component_count": 2558,
+      "exit_code": 0,
+      "result_sha256": "ec4680263e10d7006cd7b69b8fe5e7daa49f668a0bc94c1b191963a9860b718a",
+      "tool_version": "syft 1.51.0"
+    },
+    "semgrep": {
+      "exit_code": 0,
+      "explained_coverage_gaps": 6,
+      "finding_count": 328,
+      "invocation": [
+        "/tmp/aiat-opencode-scan-tools-r4/install/venv/bin/semgrep",
+        "--config",
+        "auto",
+        "--json",
+        "--no-git-ignore",
+        "--exclude-rule",
+        "yaml.github-actions.security.curl-eval.curl-eval",
+        "--exclude-rule",
+        "yaml.github-actions.security.gha-curl-pipe-shell.gha-curl-pipe-shell",
+        "<source>"
+      ],
+      "result_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/semgrep.json",
+      "result_sha256": "bcc70a2a32f1330179ce5d63f24e8a9582b8f89b98637a69ce1c469c6ac0a235",
+      "rule_exclusions": [
+        {
+          "compensating_scanners": [
+            "actionlint",
+            "zizmor"
+          ],
+          "disposition": "review_required; does not imply equivalent rule coverage",
+          "reason": "Semgrep 1.168.0 internal matching error on valid GitHub workflow syntax",
+          "rule_id": "yaml.github-actions.security.curl-eval.curl-eval",
+          "scope": "GitHub workflow YAML; no runtime source paths excluded"
+        },
+        {
+          "compensating_scanners": [
+            "actionlint",
+            "zizmor"
+          ],
+          "disposition": "review_required; does not imply equivalent rule coverage",
+          "reason": "Semgrep 1.168.0 internal matching error on valid GitHub workflow syntax",
+          "rule_id": "yaml.github-actions.security.gha-curl-pipe-shell.gha-curl-pipe-shell",
+          "scope": "GitHub workflow YAML; no runtime source paths excluded"
+        }
+      ],
+      "scanner_execution_errors": 0,
+      "source_path_exclusions": [],
+      "unexplained_scanner_errors": 0,
+      "version": "1.168.0"
+    },
+    "skillspector": {
+      "exit_code": 0,
+      "finding_count": 0,
+      "result_sha256": "c48b883245390ef54595ad4cc5eefbcc42503f95808cccaace7a5eaa94153740",
+      "scanner_errors": 0,
+      "scope": "recursive .opencode/skills resources only; no LLM",
+      "version": "SkillSpector v2.9.6"
+    },
+    "status": "completed_findings_and_coverage_blocker",
+    "trufflehog": {
+      "duplicate_records": 2,
+      "exit_code": 0,
+      "raw_finding_records": 55,
+      "result_sha256": "0604397980b46a27f7482a83c83fbd8cd8c84f494455cb1196b52ef18e50dfe5",
+      "unique_findings": 53,
+      "unverified_unique_findings": 53,
+      "verified_secrets": 0,
+      "version": "trufflehog 3.97.0"
+    }
+  },
+  "schema_version": "aiat.opencode-scanner-coverage-review.v1",
+  "scope": {
+    "decision": "blocked",
+    "explained_scanner_coverage_gaps": 6,
+    "explanation": "Semgrep scanner execution is clean after two narrowly documented GitHub-workflow rule exclusions. Seven findings from the excluded pipe-to-shell rule are carried forward open from an unfiltered exact-source result. Six TypeScript parser coverage gaps remain identified; Bun 1.3.14 parsed/transpiled all six files, but this is not equivalent security analysis. Three of the six files are runtime-reachable, so release coverage remains incomplete. Two process-launch findings and all unverified TruffleHog candidates remain open.",
+    "runtime_security_coverage_complete": false,
+    "scanner_execution_errors": 0,
+    "semgrep_security_coverage_complete": false,
+    "unexplained_scanner_errors": 0
+  },
+  "semgrep_coverage_gaps": [
+    {
+      "aiat_serve_reachable": false,
+      "area": "shipped/runtime code",
+      "classification": "source syntax genuinely unsupported",
+      "code": "3",
+      "disposition": "coverage_gap_requires_alternate_scan",
+      "error_type": "Syntax error",
+      "index": 1,
+      "line": null,
+      "path": "packages/opencode/src/lsp/server.ts",
+      "runtime_security_relevant": false
+    },
+    {
+      "aiat_serve_reachable": true,
+      "area": "shipped/runtime code",
+      "classification": "source syntax genuinely unsupported",
+      "code": "3",
+      "disposition": "coverage_gap_requires_alternate_scan",
+      "error_type": "PartialParsing",
+      "index": 2,
+      "line": 5,
+      "path": "packages/core/src/effect/keyed-mutex.ts",
+      "runtime_security_relevant": true
+    },
+    {
+      "aiat_serve_reachable": true,
+      "area": "shipped/runtime code",
+      "classification": "source syntax genuinely unsupported",
+      "code": "3",
+      "disposition": "coverage_gap_requires_alternate_scan",
+      "error_type": "PartialParsing",
+      "index": 3,
+      "line": 78,
+      "path": "packages/core/src/util/effect-flock.ts",
+      "runtime_security_relevant": true
+    },
+    {
+      "aiat_serve_reachable": true,
+      "area": "shipped/runtime code",
+      "classification": "source syntax genuinely unsupported",
+      "code": "3",
+      "disposition": "coverage_gap_requires_alternate_scan",
+      "error_type": "PartialParsing",
+      "index": 4,
+      "line": 6,
+      "path": "packages/opencode/src/server/routes/instance/httpapi/public.ts",
+      "runtime_security_relevant": true
+    },
+    {
+      "aiat_serve_reachable": false,
+      "area": "shipped/runtime code",
+      "classification": "source syntax genuinely unsupported",
+      "code": "3",
+      "disposition": "coverage_gap_requires_alternate_scan",
+      "error_type": "PartialParsing",
+      "index": 5,
+      "line": 514,
+      "path": "packages/plugin/src/tui.ts",
+      "runtime_security_relevant": false
+    },
+    {
+      "aiat_serve_reachable": false,
+      "area": "shipped/runtime code",
+      "classification": "source syntax genuinely unsupported",
+      "code": "3",
+      "disposition": "coverage_gap_requires_alternate_scan",
+      "error_type": "PartialParsing",
+      "index": 6,
+      "line": 13,
+      "path": "packages/tui/src/plugin/slots.tsx",
+      "runtime_security_relevant": false
+    }
+  ],
+  "source_snippets_retained": false,
+  "supplemental_scanners": [
+    {
+      "finding_count": 27,
+      "name": "actionlint",
+      "result_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21/actionlint-normalized.json",
+      "result_sha256": "c298db9440cce8a9983968314e91dadf6406cacdf1d32d9fb4fc5d25e638ce1e",
+      "scanner_errors": 0,
+      "version": "1.7.12"
+    },
+    {
+      "deduplicated_finding_count": 92,
+      "name": "zizmor",
+      "raw_finding_records": 94,
+      "result_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21/zizmor-normalized.json",
+      "result_sha256": "05c91f1b72e05e61303b38173ab207b6a6c893f7d1be9f4ce315da126443f23f",
+      "scanner_errors": 0,
+      "version": "1.30.1"
+    }
+  ]
+}

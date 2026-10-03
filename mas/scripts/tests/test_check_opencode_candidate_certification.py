@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[1] / "check_opencode_candidate_certification.py"
-EVIDENCE = SCRIPT.parents[1] / "docs" / "provenance" / "opencode-candidate" / "2026-10-02-v1.18.21" / "candidate-certification.json"
+EVIDENCE = SCRIPT.parents[1] / "docs" / "provenance" / "opencode-candidate" / "2026-10-02-v1.18.21-r4" / "candidate-certification.json"
 
 
 def test_current_candidate_evidence_is_structurally_valid_but_technical_gate_blocked() -> None:
@@ -20,7 +20,9 @@ def test_current_candidate_evidence_is_structurally_valid_but_technical_gate_blo
     assert report["technical_gate_status"] == "blocked"
     assert len(report["candidate_commit"]) == 40
     assert len(report["aiat_candidate_commit"]) == 40
-    assert report["scanner_error_count"] > 0
+    assert report["scanner_error_count"] == 6
+    assert report["finding_count"] == 383
+    assert report["candidate_status"] == "blocked"
     assert report["active_worker_status"] == "inactive_until_certification_passes"
 
 

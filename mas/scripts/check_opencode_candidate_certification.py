@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_PATH = REPO_ROOT / "mas" / "docs" / "provenance" / "opencode-candidate" / "2026-10-02-v1.18.21" / "candidate-certification.json"
+DEFAULT_PATH = REPO_ROOT / "mas" / "docs" / "provenance" / "opencode-candidate" / "2026-10-02-v1.18.21-r4" / "candidate-certification.json"
 SCHEMA = "aiat.opencode-candidate-certification.v1"
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 DIGEST_RE = re.compile(r"@sha256:[0-9a-f]{64}$")
