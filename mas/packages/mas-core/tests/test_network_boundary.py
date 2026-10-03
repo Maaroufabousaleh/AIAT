@@ -47,6 +47,16 @@ def test_current_compose_passes_network_boundary_contract() -> None:
         "network": "workers",
         "port": 8001,
     }
+    assert report["boundary_policy"]["control_plane"] == {
+        "service": "orchestrator-api",
+        "network": "internal",
+        "required_tcp": [
+            {"service": "redis", "port": 6379},
+            {"service": "postgres", "port": 5432},
+            {"service": "pgbouncer", "port": 5432},
+            {"service": "tool-service", "port": 8002},
+        ],
+    }
     assert report["boundary_policy"]["networks"] == {
         "internal": {"internal": True},
         "workers": {"internal": True},
@@ -190,3 +200,88 @@ def test_live_probe_marks_runner_failed_when_its_storage_health_fails(monkeypatc
     assert report["status"] == "fail"
     assert report["containers"][0]["storage_health"] is False
     assert report["containers"][0]["status"] == "fail"
+
+
+def test_live_probe_checks_control_plane_connectivity_without_running_runners(monkeypatch) -> None:
+    boundary = _load_boundary_module()
+    monkeypatch.setattr(boundary.shutil, "which", lambda _name: "/usr/bin/docker")
+    monkeypatch.setattr(boundary, "_docker_engine_available", lambda: True)
+    monkeypatch.setattr(
+        boundary,
+        "_docker_container_for_service",
+        lambda service: "control-container" if service == "orchestrator-api" else None,
+    )
+    monkeypatch.setattr(
+        boundary,
+        "_logical_networks",
+        lambda _container: ({"internal", "workers"}, {"mas_internal", "mas_workers"}),
+    )
+    monkeypatch.setattr(boundary, "_probe_tcp", lambda _container, _host, _port: True)
+
+    report = boundary.inspect_live(
+        {
+            "team_services": [],
+            "identity_services": [],
+            "boundary_policy": {
+                "control_plane": {
+                    "service": "orchestrator-api",
+                    "network": "internal",
+                    "required_tcp": [
+                        {"service": "redis", "port": 6379},
+                        {"service": "tool-service", "port": 8002},
+                    ],
+                },
+                "protected": [],
+                "allowed": [],
+                "external_denied": [],
+            },
+        }
+    )
+
+    assert report["status"] == "pass"
+    assert report["control_plane"]["status"] == "pass"
+    assert report["control_plane"]["required_connections"] == [
+        {"host": "redis", "port": 6379, "reachable": True},
+        {"host": "tool-service", "port": 8002, "reachable": True},
+    ]
+
+
+def test_live_probe_fails_when_control_plane_internal_dependency_times_out(monkeypatch) -> None:
+    boundary = _load_boundary_module()
+    monkeypatch.setattr(boundary.shutil, "which", lambda _name: "/usr/bin/docker")
+    monkeypatch.setattr(boundary, "_docker_engine_available", lambda: True)
+    monkeypatch.setattr(boundary, "_docker_container_for_service", lambda _service: "control-container")
+    monkeypatch.setattr(
+        boundary,
+        "_logical_networks",
+        lambda _container: ({"internal"}, {"mas_internal"}),
+    )
+    monkeypatch.setattr(
+        boundary,
+        "_probe_tcp",
+        lambda _container, host, _port: host == "tool-service",
+    )
+
+    report = boundary.inspect_live(
+        {
+            "team_services": [],
+            "identity_services": [],
+            "boundary_policy": {
+                "control_plane": {
+                    "service": "orchestrator-api",
+                    "network": "internal",
+                    "required_tcp": [
+                        {"service": "redis", "port": 6379},
+                        {"service": "tool-service", "port": 8002},
+                    ],
+                },
+                "protected": [],
+                "allowed": [],
+                "external_denied": [],
+            },
+        }
+    )
+
+    assert report["status"] == "fail"
+    assert report["control_plane"]["status"] == "fail"
+    assert any("required internal service redis:6379 is unreachable" in error for error in report["errors"])

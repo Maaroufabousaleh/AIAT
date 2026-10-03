@@ -66,14 +66,33 @@ def _load_policy(policy_path: Path = DEFAULT_POLICY) -> dict[str, Any]:
     if raw.get("programme_scope") != "personal-internal-only":
         raise ValueError("network policy must declare personal-internal-only scope")
     runner = raw.get("runner")
+    control_plane = raw.get("control_plane")
     protected = raw.get("protected_services")
     allowed = raw.get("allowed_gateways")
     external = raw.get("external_denied_targets")
     networks = raw.get("networks")
-    if not isinstance(runner, dict) or not isinstance(protected, list) or not isinstance(allowed, list) or not isinstance(external, list) or not isinstance(networks, dict):
-        raise ValueError("network policy runner, protected, allowed, and external sections are required")
+    if not isinstance(runner, dict) or not isinstance(control_plane, dict) or not isinstance(protected, list) or not isinstance(allowed, list) or not isinstance(external, list) or not isinstance(networks, dict):
+        raise ValueError("network policy runner, control_plane, protected, allowed, and external sections are required")
     if not protected or not allowed or not external:
         raise ValueError("network policy protected, allowed, and external sections must not be empty")
+    if (
+        not isinstance(control_plane.get("service"), str)
+        or not control_plane["service"]
+        or not isinstance(control_plane.get("network"), str)
+        or not control_plane["network"]
+        or not isinstance(control_plane.get("required_tcp"), list)
+        or not control_plane["required_tcp"]
+    ):
+        raise ValueError("network policy control_plane requires service, network, and required_tcp rows")
+    for row in control_plane["required_tcp"]:
+        if (
+            not isinstance(row, dict)
+            or not isinstance(row.get("service"), str)
+            or not row["service"]
+            or not isinstance(row.get("port"), int)
+            or not 1 <= row["port"] <= 65535
+        ):
+            raise ValueError("network policy control_plane required_tcp rows must contain a service and valid port")
     required_runner = {"service_prefix", "ceo_service", "network", "identity_env", "forbidden_env_names", "forbidden_env_prefixes", "forbidden_mounts"}
     if not required_runner.issubset(runner):
         missing = sorted(required_runner - set(runner))
@@ -120,6 +139,14 @@ def _policy_targets(policy: dict[str, Any]) -> dict[str, Any]:
         "service_prefix": runner["service_prefix"],
         "ceo_service": runner["ceo_service"],
         "identity_env": dict(runner["identity_env"]),
+        "control_plane": {
+            "service": str(policy["control_plane"]["service"]),
+            "network": str(policy["control_plane"]["network"]),
+            "required_tcp": [
+                {"service": str(row["service"]), "port": int(row["port"])}
+                for row in policy["control_plane"]["required_tcp"]
+            ],
+        },
         "forbidden_env_names": list(runner["forbidden_env_names"]),
         "forbidden_env_prefixes": list(runner["forbidden_env_prefixes"]),
         "forbidden_mounts": list(runner["forbidden_mounts"]),
@@ -209,6 +236,25 @@ def inspect_static(
         services = {}
 
     runner_network = str(targets["runner_network"])
+    control_plane = targets["control_plane"]
+    control_plane_service = str(control_plane["service"])
+    control_plane_network = str(control_plane["network"])
+    control_plane_compose = services.get(control_plane_service)
+    if not isinstance(control_plane_compose, dict):
+        errors.append(f"control-plane service {control_plane_service!r} is missing")
+    elif control_plane_network not in _service_networks(control_plane_compose):
+        errors.append(
+            f"control-plane service {control_plane_service!r} is not attached to {control_plane_network}"
+        )
+    for row in control_plane["required_tcp"]:
+        service_name = str(row["service"])
+        service = services.get(service_name)
+        if not isinstance(service, dict):
+            errors.append(f"control-plane dependency {service_name!r} is missing")
+        elif control_plane_network not in _service_networks(service):
+            errors.append(
+                f"control-plane dependency {service_name!r} is not attached to {control_plane_network}"
+            )
     service_prefix = str(targets["service_prefix"])
     ceo_service = str(targets["ceo_service"])
     defaults = compose.get("x-team-defaults") or {}
@@ -520,6 +566,7 @@ def inspect_live(
     errors: list[str] = []
     containers: list[dict[str, Any]] = []
     policy = static_report.get("boundary_policy") or {}
+    control_plane_policy = policy.get("control_plane") or {}
     protected_rows = policy.get("protected") or []
     allowed_rows = policy.get("allowed") or []
     denied_targets = [
@@ -551,6 +598,45 @@ def inspect_live(
     forbidden_env_names = set(policy.get("forbidden_env_names") or FORBIDDEN_ENV_NAMES)
     forbidden_env_prefixes = tuple(policy.get("forbidden_env_prefixes") or ("MINIO_",))
     runner_network = str(policy.get("runner_network") or "workers")
+    control_plane_service = str(control_plane_policy.get("service") or "orchestrator-api")
+    control_plane_network = str(control_plane_policy.get("network") or "internal")
+    control_plane_entry: dict[str, Any] = {
+        "service": control_plane_service,
+        "required_connections": [],
+    }
+    try:
+        control_plane_id = _docker_container_for_service(control_plane_service)
+        if not control_plane_id:
+            errors.append(f"{control_plane_service}: no running container found")
+            control_plane_entry["status"] = "missing"
+        else:
+            control_plane_entry["container_id"] = control_plane_id[:12]
+            networks, actual_networks = _logical_networks(control_plane_id)
+            control_plane_entry["networks"] = sorted(actual_networks)
+            if control_plane_network not in networks:
+                errors.append(
+                    f"{control_plane_service}: live logical networks do not include {control_plane_network}"
+                )
+            for row in control_plane_policy.get("required_tcp") or []:
+                host = str(row["service"])
+                port = int(row["port"])
+                reachable = _probe_tcp(control_plane_id, host, port)
+                control_plane_entry["required_connections"].append(
+                    {"host": host, "port": port, "reachable": reachable}
+                )
+                if not reachable:
+                    errors.append(
+                        f"{control_plane_service}: required internal service {host}:{port} is unreachable"
+                    )
+            control_plane_entry["status"] = (
+                "pass"
+                if control_plane_network in networks
+                and all(row["reachable"] for row in control_plane_entry["required_connections"])
+                else "fail"
+            )
+    except (RuntimeError, OSError) as exc:
+        control_plane_entry["status"] = "error"
+        errors.append(f"{control_plane_service}: live connectivity probe failed: {exc}")
     ceo_service = str(policy.get("ceo_service") or CEO_SERVICE)
     for service_name in static_report.get("team_services", []):
         entry_error_count = len(errors)
@@ -620,6 +706,7 @@ def inspect_live(
         "errors": errors,
         "warnings": [],
         "containers": containers,
+        "control_plane": control_plane_entry,
     }
 
 
