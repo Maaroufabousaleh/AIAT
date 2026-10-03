@@ -2,7 +2,7 @@
 
 **Run date:** 2026-10-02
 **Integration baseline:** reviewed OpenHands work was merged at `2c99b75a`; the reviewed OpenHands tip before integration was `15d2c1a874a2748548338066782b89561353de2e`.
-**Code revision at refresh:** `1c7a5523a2b07397c37ef3062075e5452a5a4f2e` on `agent/fix-review-p1`
+**Code revision at refresh:** `c84cddf09e8997ed9b54762887f59548b2c99e7a` on `agent/fix-review-p1`
 **Working-tree state:** preserved operator changes plus scoped implementation/evidence changes; dirty, with no clean release candidate claimed
 **Decision:** **NO-RELEASE / RELEASE_CERTIFICATION_PENDING**
 
@@ -19,8 +19,9 @@ Source and running Postgres migration heads both pass at
 
 The WSL host remains `DEV_READY`. The local Compose stack is healthy, and
 authenticated `/health`, `/projects`, and `/capabilities/workers` return HTTP
-200 (0 projects, 39 worker manifests). Orchestrator DNS/TCP to Redis, Postgres,
-PgBouncer, and tool-service passes on `mas_internal`. The original east-west
+200 (0 projects, 39 worker manifests). The refreshed network checker confirms
+orchestrator TCP reachability to Redis, Postgres, PgBouncer, and tool-service
+(4/4) on `mas_internal`. The original east-west
 TCP timeouts occurred on `aiat-wsl` despite valid endpoints, DNS, routes, and
 ARP; recreating only the AIAT bridge through the canonical wrapper restored
 connectivity and preserved all nine volumes. Docker Desktop `default` caused

@@ -1,6 +1,6 @@
 {
   "active_check_count": 84,
-  "checked_at": "2026-10-03T03:05:28.255055+00:00",
+  "checked_at": "2026-10-03T03:48:35.870060+00:00",
   "checks": [
     {
       "base_id": "provenance",
@@ -40,15 +40,15 @@
       "status": "pass",
       "summary": {
         "available_tool_count": 6,
-        "configured_environment_input_count": 4,
+        "configured_environment_input_count": 3,
         "errors": [],
         "git": {
           "branch": "agent/fix-review-p1",
-          "changed_path_count": 57,
-          "revision": "0399f5c31c13c722a5954993b1e4b9169ee10a62",
+          "changed_path_count": 25,
+          "revision": "c84cddf09e8997ed9b54762887f59548b2c99e7a",
           "working_tree_clean": false
         },
-        "manifest_digest": "a2ec6da447fae926d2de06dc6d73cbb866e74dc1f5105babbdc014b46b511599",
+        "manifest_digest": "0a3a25f3554526ee225714333ffe737a8488333b6de41d9c1f467fa3fb13e09e",
         "status": "pass",
         "tracked_input_count": 15
       }
@@ -830,15 +830,15 @@
       "status": "pass",
       "summary": {
         "cleanup_verified": true,
-        "cpu_time_ms": 47.52,
+        "cpu_time_ms": 53.736,
         "error_count": 0,
         "measurement_source": "procfs",
         "mode": "fixture",
-        "rss_after_bytes": 95264768,
-        "rss_before_bytes": 95219712,
-        "rss_peak_bytes": 132902912,
+        "rss_after_bytes": 95035392,
+        "rss_before_bytes": 94932992,
+        "rss_peak_bytes": 132780032,
         "status": "pass",
-        "wall_time_ms": 47.31
+        "wall_time_ms": 53.526
       }
     },
     {
@@ -1473,15 +1473,15 @@
       "status": "blocked",
       "summary": {
         "available_tool_count": 6,
-        "configured_environment_input_count": 4,
+        "configured_environment_input_count": 3,
         "errors": [],
         "git": {
           "branch": "agent/fix-review-p1",
-          "changed_path_count": 57,
-          "revision": "0399f5c31c13c722a5954993b1e4b9169ee10a62",
+          "changed_path_count": 25,
+          "revision": "c84cddf09e8997ed9b54762887f59548b2c99e7a",
           "working_tree_clean": false
         },
-        "manifest_digest": "a2ec6da447fae926d2de06dc6d73cbb866e74dc1f5105babbdc014b46b511599",
+        "manifest_digest": "0a3a25f3554526ee225714333ffe737a8488333b6de41d9c1f467fa3fb13e09e",
         "native_release": {
           "blockers": [
             "host is not a native Linux release host",
@@ -1657,7 +1657,7 @@
       "status": "blocked",
       "summary": {
         "mode": "live",
-        "reason": "missing live configuration: tool secret",
+        "reason": "operator project listing contained no usable project",
         "status": "blocked"
       }
     },
@@ -2532,9 +2532,9 @@
   },
   "git": {
     "branch": "agent/fix-review-p1",
-    "changed_path_count": 57,
+    "changed_path_count": 25,
     "clean": false,
-    "revision": "0399f5c31c13c722a5954993b1e4b9169ee10a62"
+    "revision": "c84cddf09e8997ed9b54762887f59548b2c99e7a"
   },
   "pending_evidence_count": 4,
   "policy": {

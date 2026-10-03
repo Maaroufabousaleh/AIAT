@@ -16,8 +16,10 @@ Compose bridge through `mas.sh down` (without `-v`) and normal startup restored
 connectivity; all nine persistent volumes remained. Docker Desktop's separate
 `default` daemon caused host-port collisions with its published-port profile,
 not the original bridge outage. The privileged forwarding rule could not be
-inspected. The post-repair network checker reports all 11 team-runner containers
-missing, so no per-runner probes ran. The initial degraded snapshot recorded
+inspected. The refreshed checker independently confirms orchestrator TCP
+reachability to Redis, Postgres, PgBouncer, and tool-service (4/4). It still
+reports all 11 team-runner containers missing, so no per-runner probes ran.
+The initial degraded snapshot recorded
 protected/external denials but also failed approved-gateway and storage-health
 checks. The retained 2026-10-01 11-runner certificate remains separate.
 Current observations are in

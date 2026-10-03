@@ -29,6 +29,28 @@
       }
     ],
     "ceo_service": "team-exec-ceo",
+    "control_plane": {
+      "network": "internal",
+      "required_tcp": [
+        {
+          "port": 6379,
+          "service": "redis"
+        },
+        {
+          "port": 5432,
+          "service": "postgres"
+        },
+        {
+          "port": 5432,
+          "service": "pgbouncer"
+        },
+        {
+          "port": 8002,
+          "service": "tool-service"
+        }
+      ],
+      "service": "orchestrator-api"
+    },
     "external_denied": [
       {
         "host": "1.1.1.1",
@@ -92,9 +114,9 @@
     "schema_version": "aiat.network-boundary-policy.v1",
     "service_prefix": "team-"
   },
-  "compose": "/mnt/c/projects/aiat/mas/infra/compose/docker-compose.yml",
+  "compose": "infra/compose/docker-compose.yml",
   "errors": [],
-  "generated_at": "2026-10-03T01:58:27.191196+00:00",
+  "generated_at": "2026-10-03T03:50:05.313175+00:00",
   "identity_services": [],
   "live": {
     "containers": [
@@ -143,6 +165,38 @@
         "status": "missing"
       }
     ],
+    "control_plane": {
+      "container_id": "9f15c270f72b",
+      "networks": [
+        "mas_internal",
+        "mas_public",
+        "mas_workers"
+      ],
+      "required_connections": [
+        {
+          "host": "redis",
+          "port": 6379,
+          "reachable": true
+        },
+        {
+          "host": "postgres",
+          "port": 5432,
+          "reachable": true
+        },
+        {
+          "host": "pgbouncer",
+          "port": 5432,
+          "reachable": true
+        },
+        {
+          "host": "tool-service",
+          "port": 8002,
+          "reachable": true
+        }
+      ],
+      "service": "orchestrator-api",
+      "status": "pass"
+    },
     "errors": [
       "team-dept-devops: no running container found",
       "team-dept-production: no running container found",
@@ -163,7 +217,7 @@
   "live_runner_probe_scope": "no team-runner container was running; checker performed no per-runner network probes",
   "mode": "static",
   "per_runner_probes_executed": false,
-  "policy": "/mnt/c/projects/aiat/mas/docs/provenance/network_boundary_policy.yaml",
+  "policy": "docs/provenance/network_boundary_policy.yaml",
   "protected_services": [
     "redis",
     "postgres",
@@ -171,7 +225,7 @@
     "minio",
     "opencode-runtime"
   ],
-  "source_revision": "1c7a5523a2b07397c37ef3062075e5452a5a4f2e",
+  "source_revision": "c84cddf09e8997ed9b54762887f59548b2c99e7a",
   "status": "pass",
   "team_environment": {
     "team-dept-devops": {

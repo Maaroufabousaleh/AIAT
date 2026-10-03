@@ -78,7 +78,7 @@ index so the implementation and remaining-work views cannot drift apart.
 ## Latest local validation snapshot
 
 This snapshot was refreshed on 2026-10-02 against code revision
-`0399f5c31c13c722a5954993b1e4b9169ee10a62` and current local evidence. The
+`c84cddf09e8997ed9b54762887f59548b2c99e7a` and current local evidence. The
 worktree still contains preserved operator files and later evidence/documentation
 updates, so this is not a frozen or clean release candidate. It does not replace
 the release ledger or close native-host, provider, sandbox, disaster-recovery,
@@ -86,21 +86,21 @@ or human/operator gates.
 
 | Check | Result | Scope and limitation |
 | --- | --- | --- |
-| Source revision at refresh | **Code revision `0399f5c31c13c722a5954993b1e4b9169ee10a62`; working tree dirty** | The unrelated untracked `OpenTerminal-integration.md` remains preserved and unstaged; this is not a frozen or clean release candidate. |
+| Source revision at refresh | **Code revision `c84cddf09e8997ed9b54762887f59548b2c99e7a`; working tree dirty** | The code/test candidate is committed; the unrelated `OpenTerminal-integration.md`, superseded r2/r3 snapshots, and a failed unscoped evidence attempt remain preserved and unstaged. This is not a frozen or clean release candidate. |
 | Documentation authority/index check | **PASS (2026-10-02)** | The checker reports 13 feature documents, 3 plans, 23 maintained/link-checked documents, and no link or policy errors. |
 | Migration source-head check | **PASS (2026-10-02)** | Source and live development database have the single head `0045_worker_tool_effects`. |
 | Release-environment identity probe | **DEV TOOLS AVAILABLE / NATIVE RELEASE BLOCKED** | Docker Engine, Compose v2, and `runsc` are available in WSL2. Native preflight blocks on WSL identity, the dirty tree, and ten unset immutable production image refs. |
-| Native-host, gVisor/Kata, compatibility, and live-network probes | **WSL SANDBOX SMOKES PASS / RUNNER MATRIX INCOMPLETE / NATIVE RELEASE PENDING** | Digest-pinned gVisor and Kata guest smokes pass with a distinct guest kernel. The post-repair network checker reports all 11 team-runner containers missing, so no per-runner probes ran; the initial degraded snapshot recorded 55/55 protected and 11/11 external denials but 0/44 approved gateways and 0/11 storage-health probes. Direct Firecracker remains superseded compatibility evidence. |
-| Standard dependency/test runner | **PASS (2026-10-02)** | The maintained `mas/pyproject.toml` suite completed with 3,214 passed, 17 skipped, and 0 failed; two existing `AsyncMock` warnings remain non-failing. Payload-safe summary: [`python_suite_local_current.json`](../../mas/docs/provenance/python_suite_local_current.json). |
-| Broad repository Python suite | **PASS (2026-10-02)** | `PYTEST_ADDOPTS='-p no:cacheprovider' /tmp/aiat-worktree-validation-venv/bin/pytest --basetemp=/tmp/aiat-full-python-final-current` from `mas/` completed the maintained test paths in 304.20 seconds. The tested code was at `0399f5c31c13c722a5954993b1e4b9169ee10a62`; only documentation/evidence paths were dirty. |
+| Native-host, gVisor/Kata, compatibility, and live-network probes | **WSL SANDBOX SMOKES PASS / CONTROL-PLANE CONNECTIVITY PASS / RUNNER MATRIX INCOMPLETE / NATIVE RELEASE PENDING** | Digest-pinned gVisor and Kata guest smokes pass with a distinct guest kernel. The refreshed live checker independently confirms the orchestrator can reach Redis, Postgres, PgBouncer, and tool-service (4/4); all 11 team-runner containers remain stopped, so no per-runner allow/deny/storage probes ran. The initial degraded snapshot recorded 55/55 protected and 11/11 external denials but 0/44 approved gateways and 0/11 storage-health probes. Direct Firecracker remains superseded compatibility evidence. |
+| Standard dependency/test runner | **PASS (2026-10-03 UTC)** | The maintained `mas/pyproject.toml` suite completed with 3,216 passed, 17 skipped, and 0 failed; two existing `AsyncMock` warnings remain non-failing. Payload-safe summary: [`python_suite_local_current.json`](../../mas/docs/provenance/python_suite_local_current.json). |
+| Broad repository Python suite | **PASS (2026-10-03 UTC)** | `PYTEST_ADDOPTS='-p no:cacheprovider' /tmp/aiat-worktree-validation-venv/bin/pytest --basetemp=/tmp/aiat-full-python-c84cddf0` from `mas/` completed the maintained test paths in 305.42 seconds. The tested code was at `c84cddf09e8997ed9b54762887f59548b2c99e7a`; preserved untracked files and generated temporary evidence kept the worktree dirty. |
 | Focused scanner/reconciliation/release-ledger tests | **PASS (2026-10-02)** | The final focused scanner/reconciliation/release-ledger group passed 18 tests; sandbox smoke-entrypoint coverage separately passed 9 tests. |
 | Script test suite | **PASS for focused changed scripts (2026-10-02)** | OpenCode candidate, security-review, worker-reconciliation, release-ledger, and sandbox smoke regressions passed; optional provider-dispatch tests were not run. |
 | Current focused architecture/documentation suites | **PASS (2026-10-02)** | API contract generation and the release-ledger static/live checks pass their defined contracts; native/provider/outage gates remain separate. |
 | Bounded Python compilation | **PASS** | Checked-in `mas_core`, orchestrator, message-router, team-runner, tool-service, and `mas/scripts` Python roots; generated dashboard dependency trees excluded. |
-| Static release ledger | **PASS: 61 active + 3 not-in-scope = 64 checks (2026-10-02)** | Zero failures/blocked checks and two pending evidence items; [`release_ledger_static_current.json`](../../mas/docs/provenance/release_ledger_static_current.json) records the checked implementation candidate and derives **NO-RELEASE**. |
+| Static release ledger | **PASS: 61 active + 3 not-in-scope = 64 checks (2026-10-03 UTC)** | Zero failures/blocked checks and two pending evidence items; [`release_ledger_static_current.json`](../../mas/docs/provenance/release_ledger_static_current.json) records code revision `c84cddf0` and derives **NO-RELEASE**. |
 | Clean-clone static release certificate | **PASS (historical candidate)** | The retained certificate covers the exact pre-repartition candidate `76272905db777829ccf21b61748eb467cafaf645`, with zero changed paths and 64/64 static checks. It is not a certificate for the current working tree; regenerate and deliberately freeze a new exact candidate before using it as release evidence. The scalar certificate is [`release_ledger_clean_candidate_static.json`](../../mas/docs/provenance/release_ledger_clean_candidate_static.json). |
 | Database migration-head guard | **PASS static and live** | The normal local Alembic path applied migrations through `0045_worker_tool_effects`; the host-side read-only checker reports the same source and live head. |
-| Authenticated local-Compose live release sweep | **80 pass; 1 fail; 3 blocked; 5 not-in-scope** | Refreshed 2026-10-02; four pending evidence items remain. Authenticated `/health`, `/projects`, and `/capabilities/workers` return HTTP 200. The current network-matrix failure is because all 11 team-runner containers are stopped; native host and image provenance remain blocked. [`release_ledger_live_current.json`](../../mas/docs/provenance/release_ledger_live_current.json) derives **NO-RELEASE**. |
+| Authenticated local-Compose live release sweep | **80 pass; 1 fail; 3 blocked; 5 not-in-scope** | Refreshed against code revision `c84cddf0`; four pending evidence items remain. Authenticated `/health`, `/projects`, and `/capabilities/workers` return HTTP 200. The control-plane TCP probe passes 4/4; the runner matrix fails because all 11 team-runner containers are stopped. Native host and image provenance remain blocked. [`release_ledger_live_current.json`](../../mas/docs/provenance/release_ledger_live_current.json) derives **NO-RELEASE**. |
 | Source/deployment migration boundary | **SOURCE 0045; local Compose DB 0045** | The local development database is current at `0045_worker_tool_effects`; no `alembic_version` shortcut or manual state edit was used. |
 | Runtime-adapter inventory/consolidation | **PASS** | Machine-checked reference inventory; LangGraph/CrewAI now share the canonical `runtime_adapters.py` implementation through compatibility shims, while the legacy factory, Letta dotted configuration, and MAF certification references still prevent full-family deletion. |
 | OpenCode/OpenHands benchmark plan | **PASS: ready, not run** | The fixed 40-task corpus and 160-run plan validate with no network, provider, credential, or payload activity; the checker deliberately emits `NOT_RUN` with no winner. Live candidate certification and benchmark execution remain operator/runtime gates. | [`check_coding_runtime_benchmark.py`](../../mas/scripts/check_coding_runtime_benchmark.py) · [`corpus.json`](../../mas/scripts/fixtures/coding-runtime-benchmark/corpus.json) · [benchmark specification](../../mas/docs/AIAT_OSS_ARCHITECTURE_AND_IMPLEMENTATION_PLAN.md#opencode-versus-openhands) |
@@ -128,8 +128,20 @@ Current environment boundary: the retained WSL2 host-bootstrap result reports
 `DEV_READY`; source and live Postgres heads are `0045_worker_tool_effects`.
 On 2026-10-02, the dedicated `aiat-wsl` Compose stack is healthy and
 authenticated `/health`, `/projects`, and `/capabilities/workers` return HTTP
-200 (0 projects, 39 workers). Orchestrator DNS/TCP works for Redis, Postgres,
-PgBouncer, and tool-service on `mas_internal`. The original internal TCP timeouts occurred on the correct `aiat-wsl` daemon: `mas_internal` had valid endpoints, DNS, routes, and ARP, but east-west forwarding was broken. Recreating only the AIAT Compose bridge through `mas.sh down` (without `-v`) and normal startup restored connectivity; all nine persistent volumes remained. Docker Desktop's separate `default` daemon caused host-port collisions when using the wrong published-port profile, not the original bridge outage. The exact privileged firewall/forwarding rule was not inspectable. The current network checker exits failed with all 11 team-runner containers missing; no per-runner gateway, denial, or storage-health probes ran. The initial degraded snapshot had 55/55 protected and 11/11 external denials but 0/44 allowed gateways and 0/11 storage-health probes. The retained 2026-10-01 11-runner certificate remains separate. The native release result remains
+200 (0 projects, 39 workers). The refreshed network checker confirms that the
+orchestrator reaches Redis, Postgres, PgBouncer, and tool-service (4/4) on
+`mas_internal`. The original internal TCP timeouts occurred on the correct
+`aiat-wsl` daemon: `mas_internal` had valid endpoints, DNS, routes, and ARP, but
+east-west forwarding was broken. Recreating only the AIAT Compose bridge
+through `mas.sh down` (without `-v`) and normal startup restored connectivity;
+all nine persistent volumes remained. Docker Desktop's separate `default`
+daemon caused host-port collisions when using the wrong published-port profile,
+not the original bridge outage. The exact privileged firewall/forwarding rule
+was not inspectable. The current checker still exits failed because all 11
+team-runner containers are missing; no per-runner gateway, denial, or
+storage-health probes ran. The initial degraded snapshot had 55/55 protected
+and 11/11 external denials but 0/44 allowed gateways and 0/11 storage-health
+probes. The retained 2026-10-01 11-runner certificate remains separate. The native release result remains
 `RELEASE_CERTIFICATION_PENDING`; WSL observations do not substitute for native
 host, provider, independent-host, deployment, or operator-selected evidence.
 
