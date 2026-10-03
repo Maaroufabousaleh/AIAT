@@ -1,0 +1,261 @@
+{
+  "allowed_gateways": [
+    "message-router",
+    "tool-service",
+    "orchestrator-api",
+    "litellm"
+  ],
+  "boundary_policy": {
+    "allowed": [
+      {
+        "network": "workers",
+        "port": 8001,
+        "service": "message-router"
+      },
+      {
+        "network": "workers",
+        "port": 8002,
+        "service": "tool-service"
+      },
+      {
+        "network": "workers",
+        "port": 8000,
+        "service": "orchestrator-api"
+      },
+      {
+        "network": "workers",
+        "port": 4000,
+        "service": "litellm"
+      }
+    ],
+    "ceo_service": "team-exec-ceo",
+    "external_denied": [
+      {
+        "host": "1.1.1.1",
+        "port": 443
+      }
+    ],
+    "forbidden_env_names": [
+      "MAS_API_KEY",
+      "PGBOUNCER_DSN",
+      "AWS_ACCESS_KEY_ID",
+      "AWS_SECRET_ACCESS_KEY",
+      "AWS_SESSION_TOKEN"
+    ],
+    "forbidden_env_prefixes": [
+      "MINIO_"
+    ],
+    "forbidden_mounts": [
+      "/var/run/docker.sock"
+    ],
+    "identity_env": {
+      "ceo": "AIAT_CEO_API_KEY",
+      "worker": "AIAT_WORKER_API_KEY"
+    },
+    "identity_service_port": 5432,
+    "networks": {
+      "internal": {
+        "internal": true
+      },
+      "workers": {
+        "internal": true
+      }
+    },
+    "protected": [
+      {
+        "network": "internal",
+        "port": 6379,
+        "service": "redis"
+      },
+      {
+        "network": "internal",
+        "port": 5432,
+        "service": "postgres"
+      },
+      {
+        "network": "internal",
+        "port": 5432,
+        "service": "pgbouncer"
+      },
+      {
+        "network": "internal",
+        "port": 9000,
+        "service": "minio"
+      },
+      {
+        "network": "internal",
+        "port": 4096,
+        "service": "opencode-runtime"
+      }
+    ],
+    "runner_network": "workers",
+    "schema_version": "aiat.network-boundary-policy.v1",
+    "service_prefix": "team-"
+  },
+  "compose": "/mnt/c/projects/aiat/mas/infra/compose/docker-compose.yml",
+  "errors": [],
+  "generated_at": "2026-10-03T01:58:27.191196+00:00",
+  "identity_services": [],
+  "live": {
+    "containers": [
+      {
+        "service": "team-dept-devops",
+        "status": "missing"
+      },
+      {
+        "service": "team-dept-production",
+        "status": "missing"
+      },
+      {
+        "service": "team-dept-qa",
+        "status": "missing"
+      },
+      {
+        "service": "team-dept-system",
+        "status": "missing"
+      },
+      {
+        "service": "team-exec-ceo",
+        "status": "missing"
+      },
+      {
+        "service": "team-exec-coo",
+        "status": "missing"
+      },
+      {
+        "service": "team-office-cfo",
+        "status": "missing"
+      },
+      {
+        "service": "team-office-chrm",
+        "status": "missing"
+      },
+      {
+        "service": "team-office-cio",
+        "status": "missing"
+      },
+      {
+        "service": "team-office-cso",
+        "status": "missing"
+      },
+      {
+        "service": "team-office-cto",
+        "status": "missing"
+      }
+    ],
+    "errors": [
+      "team-dept-devops: no running container found",
+      "team-dept-production: no running container found",
+      "team-dept-qa: no running container found",
+      "team-dept-system: no running container found",
+      "team-exec-ceo: no running container found",
+      "team-exec-coo: no running container found",
+      "team-office-cfo: no running container found",
+      "team-office-chrm: no running container found",
+      "team-office-cio: no running container found",
+      "team-office-cso: no running container found",
+      "team-office-cto: no running container found"
+    ],
+    "mode": "live",
+    "status": "fail",
+    "warnings": []
+  },
+  "live_runner_probe_scope": "no team-runner container was running; checker performed no per-runner network probes",
+  "mode": "static",
+  "per_runner_probes_executed": false,
+  "policy": "/mnt/c/projects/aiat/mas/docs/provenance/network_boundary_policy.yaml",
+  "protected_services": [
+    "redis",
+    "postgres",
+    "pgbouncer",
+    "minio",
+    "opencode-runtime"
+  ],
+  "source_revision": "1c7a5523a2b07397c37ef3062075e5452a5a4f2e",
+  "status": "pass",
+  "team_environment": {
+    "team-dept-devops": {
+      "forbidden": [],
+      "identity": [
+        "AIAT_WORKER_API_KEY"
+      ]
+    },
+    "team-dept-production": {
+      "forbidden": [],
+      "identity": [
+        "AIAT_WORKER_API_KEY"
+      ]
+    },
+    "team-dept-qa": {
+      "forbidden": [],
+      "identity": [
+        "AIAT_WORKER_API_KEY"
+      ]
+    },
+    "team-dept-system": {
+      "forbidden": [],
+      "identity": [
+        "AIAT_WORKER_API_KEY"
+      ]
+    },
+    "team-exec-ceo": {
+      "forbidden": [],
+      "identity": [
+        "AIAT_CEO_API_KEY"
+      ]
+    },
+    "team-exec-coo": {
+      "forbidden": [],
+      "identity": [
+        "AIAT_WORKER_API_KEY"
+      ]
+    },
+    "team-office-cfo": {
+      "forbidden": [],
+      "identity": [
+        "AIAT_WORKER_API_KEY"
+      ]
+    },
+    "team-office-chrm": {
+      "forbidden": [],
+      "identity": [
+        "AIAT_WORKER_API_KEY"
+      ]
+    },
+    "team-office-cio": {
+      "forbidden": [],
+      "identity": [
+        "AIAT_WORKER_API_KEY"
+      ]
+    },
+    "team-office-cso": {
+      "forbidden": [],
+      "identity": [
+        "AIAT_WORKER_API_KEY"
+      ]
+    },
+    "team-office-cto": {
+      "forbidden": [],
+      "identity": [
+        "AIAT_WORKER_API_KEY"
+      ]
+    }
+  },
+  "team_services": [
+    "team-dept-devops",
+    "team-dept-production",
+    "team-dept-qa",
+    "team-dept-system",
+    "team-exec-ceo",
+    "team-exec-coo",
+    "team-office-cfo",
+    "team-office-chrm",
+    "team-office-cio",
+    "team-office-cso",
+    "team-office-cto"
+  ],
+  "warnings": [
+    "optional identity database services are not in the base Compose profile: identity-postgres, identity-db"
+  ],
+  "worktree_dirty": true
+}

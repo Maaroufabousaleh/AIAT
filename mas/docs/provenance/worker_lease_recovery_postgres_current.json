@@ -1,0 +1,80 @@
+{
+  "certification_boundary": {
+    "canonical_host_registry": "not_checked",
+    "claim_exclusivity": "checked",
+    "connection_reopen": "checked",
+    "heartbeat_owner_binding": "checked",
+    "lease_expiry_requeue": "checked",
+    "multi_host_scheduler": "not_checked",
+    "placement_constraints": "not_checked",
+    "real_host_loss_or_split_brain": "not_checked",
+    "reclaim_after_simulated_host_loss": "checked",
+    "sandboxed_or_vm_isolated_host_certification": "not_checked",
+    "scoped_fixture_cleanup": "checked",
+    "terminal_claim_denial": "checked",
+    "worker_health_readback": "checked"
+  },
+  "claim_exclusivity": {
+    "owner_a_claimed": true,
+    "owner_b_denied_while_lease_live": true
+  },
+  "cleanup_deleted_counts": {
+    "worker_runs": 1,
+    "workers": 1
+  },
+  "durable_reopen": {
+    "healthy": true,
+    "recovery_transition_count": 1,
+    "run_state": "SUCCEEDED",
+    "transition_count": 8,
+    "worker_health_status": "healthy"
+  },
+  "expected_migration": "0045_worker_tool_effects",
+  "external_network_access_performed": false,
+  "external_provider_mutation_performed": false,
+  "heartbeat_owner_binding": {
+    "claim_owner_renewed": true,
+    "wrong_owner_denied": true
+  },
+  "initial_fixture_counts": {
+    "runs": 0,
+    "transitions": 0,
+    "workers": 0
+  },
+  "lease_recovery": {
+    "attempt_count_after_reclaim": 2,
+    "host_loss_simulated_by_expiry": true,
+    "reclaim_owner_b_succeeded": true,
+    "recovered_count": 1
+  },
+  "licence_metadata_is_gate": false,
+  "local_database_access_performed": true,
+  "migration_version": "0045_worker_tool_effects",
+  "mode": "local-postgres-worker-lease-recovery",
+  "mutation_performed": true,
+  "network_access_performed": true,
+  "observed_at": "2026-10-02T02:59:02.700754Z",
+  "payload_free": true,
+  "remaining_fixture_counts": {
+    "runs": 0,
+    "transitions": 0,
+    "workers": 0
+  },
+  "run_id": "00000000-0000-4000-a000-000000000962",
+  "schema_version": "aiat.worker-lease-recovery-postgres-certification.v1",
+  "scope": "reserved local Postgres worker-run claim, heartbeat, lease expiry/requeue, reclaim, terminal denial, and durable transition read-back",
+  "status": "pass",
+  "terminal_claim_denial": true,
+  "transition_states": [
+    "QUEUED->CLAIMED",
+    "CLAIMED->QUEUED",
+    "QUEUED->CLAIMED",
+    "CLAIMED->VALIDATING",
+    "VALIDATING->READY",
+    "READY->DISPATCHING",
+    "DISPATCHING->RUNNING",
+    "RUNNING->SUCCEEDED"
+  ],
+  "worker_dispatch_performed": false,
+  "worker_name": "aiat-cert-worker-lease-recovery-v1"
+}

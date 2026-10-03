@@ -1,6 +1,6 @@
 {
   "active_check_count": 61,
-  "checked_at": "2026-09-30T19:08:32.968411+00:00",
+  "checked_at": "2026-10-03T03:10:10.694740+00:00",
   "checks": [
     {
       "base_id": "provenance",
@@ -44,11 +44,11 @@
         "errors": [],
         "git": {
           "branch": "agent/fix-review-p1",
-          "changed_path_count": 71,
-          "revision": "571a6a496e83df816b19c1326070671f76074e89",
+          "changed_path_count": 57,
+          "revision": "0399f5c31c13c722a5954993b1e4b9169ee10a62",
           "working_tree_clean": false
         },
-        "manifest_digest": "4edbf67caf19b5dd40ab3c21c6c4147779cfde623a83eae7a8023631056b3527",
+        "manifest_digest": "a64d6a2733ed3e5c9099e7c33dc687e5e18f8bdcde52d51c049b1e354bc27b8e",
         "status": "pass",
         "tracked_input_count": 15
       }
@@ -727,12 +727,12 @@
       "scope_status": "active",
       "status": "pass",
       "summary": {
-        "engine_warning_count": 54,
+        "engine_warning_count": 7,
         "errors": [],
-        "finding_count": 762,
+        "finding_count": 513,
         "mode": "static",
-        "review_required_count": 3,
-        "scan_count": 4,
+        "review_required_count": 6,
+        "scan_count": 11,
         "status": "pass",
         "technical_gate_status": "blocked"
       }
@@ -748,7 +748,7 @@
       "status": "pass",
       "summary": {
         "errors": [],
-        "finding_count": 762,
+        "finding_count": 383,
         "mode": "static",
         "status": "pass",
         "technical_gate_status": "blocked"
@@ -830,15 +830,15 @@
       "status": "pass",
       "summary": {
         "cleanup_verified": true,
-        "cpu_time_ms": 53.104,
+        "cpu_time_ms": 55.971,
         "error_count": 0,
         "measurement_source": "procfs",
         "mode": "fixture",
-        "rss_after_bytes": 94195712,
-        "rss_before_bytes": 94035968,
-        "rss_peak_bytes": 131719168,
+        "rss_after_bytes": 93831168,
+        "rss_before_bytes": 93761536,
+        "rss_peak_bytes": 131608576,
         "status": "pass",
-        "wall_time_ms": 53.339
+        "wall_time_ms": 55.714
       }
     },
     {
@@ -1480,13 +1480,13 @@
   "environment": {
     "docker_cli_available": true,
     "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
-    "python": "3.11.15"
+    "python": "3.13.13"
   },
   "git": {
     "branch": "agent/fix-review-p1",
-    "changed_path_count": 71,
+    "changed_path_count": 57,
     "clean": false,
-    "revision": "571a6a496e83df816b19c1326070671f76074e89"
+    "revision": "0399f5c31c13c722a5954993b1e4b9169ee10a62"
   },
   "pending_evidence_count": 2,
   "policy": {

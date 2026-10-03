@@ -1,0 +1,37 @@
+{
+  "after": {
+    "active_team_runner_count": 0,
+    "container_health": "healthy",
+    "docker_restart_exit": 0,
+    "health_http": 200,
+    "project_count": 0,
+    "projects_http": 200,
+    "worker_count": 39,
+    "workers_http": 200
+  },
+  "before": {
+    "active_team_runner_count": 0,
+    "health_http": 200,
+    "project_count": 0,
+    "projects_http": 200,
+    "worker_count": 39,
+    "workers_http": 200
+  },
+  "compose_project": "mas",
+  "container": "mas-orchestrator-api-1",
+  "docker_context": "aiat-wsl",
+  "external_provider_dispatch_authorized": false,
+  "external_provider_dispatch_performed": false,
+  "mode": "bounded local API restart; no active project or team runner",
+  "observed_at": "2026-10-03T01:34:40.884909+00:00",
+  "payload_or_credentials_retained": false,
+  "project_or_worker_mutation_performed": false,
+  "schema_version": "aiat.orchestrator-api-restart-evidence.v1",
+  "scope_limitations": [
+    "no active project/Worker Run existed, so durable in-flight WorkerRun/steward rehydration was not exercised"
+  ],
+  "source_revision": "95f2139edefb4656a6c5d1f46f31a24212509100",
+  "started_at": "2026-10-03T01:34:25.382045+00:00",
+  "status": "pass",
+  "worker_dispatch_performed": false
+}

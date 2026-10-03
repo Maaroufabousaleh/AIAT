@@ -1,6 +1,6 @@
 # P0 Release-Scope and External-Prerequisite Matrix
 
-**Updated:** 2026-09-30
+**Updated:** 2026-10-02
 **Decision owner:** personal operator
 **Authority:** [AIAT target programme](../../AIAT_TARGET_PROGRAMME.md), [roadmap](../../ROADMAP.md), [P0 status](P0_RELEASE_INTEGRITY_STATUS.md), and [P0 plan](plans/P0_RELEASE_INTEGRITY_PLAN.md)
 
@@ -26,22 +26,32 @@ the default Cloudflare/Resend email identity row below is explicitly closed as
 ## Current integrated status
 
 The repository remains in **Integrated Development & System Testing**; P0 is
-not complete and the release decision is `NO-RELEASE`. On the preserved dirty
-WSL working tree, the static ledger reports 61 pass, 0 fail, 0 blocked, and 3
-not-in-scope, with two pending evidence items. The current local-Compose live
-ledger reports 73 pass, 0 fail, 11 blocked, and 5 not-in-scope across 89
-checks, with four pending items. Its sanitized evidence is
+not complete and the release decision is `NO-RELEASE`. The static ledger
+reports 61 pass, 0 fail, 0 blocked, and 3 not-in-scope, with two pending
+evidence items. The current local-Compose live ledger reports 80 pass, 1 fail,
+3 blocked, and 5 not-in-scope across 89 checks, with four pending items. Its
+sanitized evidence is
 [`release_ledger_live_current.json`](../../mas/docs/provenance/release_ledger_live_current.json).
-The 2026-09-30 native preflight binds this result to the same source revision
-and explicitly blocks on WSL2, dirty worktree state, and ten missing immutable
-deployment image references.
+The 2026-10-02 stack probe confirms healthy service paths and authenticated
+`/health`, `/projects`, and `/capabilities/workers` responses (HTTP 200). The
+one live failure is the runner network matrix: all 11 team-runner containers
+are stopped while external provider dispatch is unauthorized. Native preflight
+still blocks on WSL2 and ten missing immutable deployment image references.
 
 - **OpenCode:** remains the current default but is not certified for a live
   worker run. Exact v1.18.21 source/image pins, source snapshot, sanitized
   scanner results, SBOM, versions, invocations, and result hashes are retained
-  under [`opencode-candidate/2026-09-30-v1.18.21`](../../mas/docs/provenance/opencode-candidate/2026-09-30-v1.18.21/).
-  The current technical gate remains blocked by 762 findings and 54 Semgrep
-  coverage/execution errors. The v1.17.13 worker manifests still require a
+  under [`opencode-candidate/2026-10-02-v1.18.21-r4`](../../mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/).
+  The review register contains 513 active records: 383 current primary scanner
+  findings, 7 same-source Semgrep carry-forward findings, 119 normalized
+  Actionlint/Zizmor records, and 4 Bun-transpiled Semgrep records; this is not
+  a unique-vulnerability count. The primary Semgrep scan has zero execution
+  failures and six explained TypeScript parser gaps. A pinned Bun 1.3.14 plus
+  Semgrep 1.168.0 supplement scanned all three AIAT-serving paths without
+  parser errors and found four path-join candidates at three source locations;
+  these remain open. One parser error remains on non-AIAT-serving LSP source.
+  Six review rows remain open, including two runtime process-launch candidates
+  and the path-join locations. The v1.17.13 worker manifests still require a
   reproducible scan before activation. Its older scalar scan totals have no
   retained raw results or source snapshot and are excluded from current
   finding totals and remediation decisions.
@@ -49,9 +59,10 @@ deployment image references.
   work does not prove terminal worker completion or satisfy activation.
 - **Local runtime:** source and live Postgres migration heads are
   `0045_worker_tool_effects`; the digest-pinned WSL gVisor and optional Kata
-  guest smokes pass. The API health route responds, but project and worker
-  inventory routes return HTTP 503; dashboard/project golden-path evidence is
-  therefore blocked.
+  guest smokes pass. The healthy Compose stack returns HTTP 200 from the three
+  authenticated API probes; the dashboard safe suite passes 104/106, with
+  provider- or project-creation-sensitive tests excluded. No project was
+  created and no provider request was sent.
 - **Native release:** remains operator-required. The current host is WSL2, the
   worktree is dirty, and immutable production image references are unset.
 - **Provider:** no live model completion was dispatched; external dispatch
@@ -103,14 +114,15 @@ and the release ledger; live configuration now fails closed unless
 still operator-owned. The
 historical OpenCode 1.17.13 scan is retained only as
 `FAILED_UNREPRODUCIBLE` and excluded from active finding totals. A fresh local
-v1.18.21 scan now retains the exact source snapshot, image digest, sanitized
+v1.18.21 r4 scan retains the exact source snapshot, image digest, sanitized
 per-scanner results, result hashes, tool versions/invocations, and CycloneDX
 SBOM; its AIAT boundary regression passes. The technical gate remains blocked
-on 762 scanner findings and 54 Semgrep execution/coverage errors. The pinned
-tool provisioning, source retention, sanitization, and evidence-hash checks
-pass locally; individual finding review and clean native-host evidence remain
-open. Its evidence is
-[`candidate-certification.json`](../../mas/docs/provenance/opencode-candidate/2026-09-30-v1.18.21/candidate-certification.json)
+on 513 active review records and open Semgrep findings: zero execution
+failures, six explained primary-scan TypeScript parser gaps, four transpiled
+path-join records at three locations, and one parser error on non-AIAT-serving
+LSP source. Pinned tool provisioning, source retention, sanitization, and
+evidence-hash checks pass locally; findings remain open for review. Its evidence is
+[`candidate-certification.json`](../../mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/candidate-certification.json)
 and its manual workflow is
 [`opencode-candidate-certification.yml`](../../.github/workflows/opencode-candidate-certification.yml).
 
@@ -186,7 +198,7 @@ classification or the global `NO-RELEASE` decision.
 | Provider-managed object-store SSE/KMS and external key custody | The OCI-native adapter and deterministic mocked contract pass; no provider target, bucket customer-managed key, custody, rotation, or live read-back evidence is configured. **External configuration.** | `REQUIRED_FOR_RELEASE` | Supply the real OCI Object Storage + Vault/KMS target and governed auth reference, then run the live adapter for bucket/key identity, PUT/read/checksum, multipart/abort, provider metadata, delete, and zero residue. Do not claim the fixture as live evidence. |
 | External mail relay and delivery | The default Cloudflare Worker/D1-only inbound edge, public identity ingress, direct Resend transport, signed webhook, governed approval/send/idempotency/accounting/audit path, delivery correlation, and certification cleanup are live-certified in [`AIAT_Email_Identity_Live_Certification.md`](../AIAT_Email_Identity_Live_Certification.md). Optional Worker R2 and Stalwart full-mailbox evidence remain separate; broader provider outage/restore evidence is not part of this bounded certificate. | `PASS_FOR_DEFAULT_SCOPE` | No additional operator action is required for the certified default path. Keep `DEFAULT_OUTBOUND_ENABLED=false` and direct MX outbound disabled; certify an optional Stalwart/R2 profile or broader outage/restore behavior separately if selected. |
 | Self-improvement live signal and worker/provider path | The guarded lifecycle, approvals, rollback, and local Postgres certificate pass; no operator-selected signal source/project scope is configured. **External configuration/governance.** | `DEFERRED` for the current release | Keep candidate detection and live self-improvement disabled. If enabled, constrain the signal source/project, retain the human kill switch and approval, and promote the full live path to `REQUIRED_FOR_RELEASE`. |
-| OpenCode Program D candidate | The historical v1.17.13 scan remains `FAILED_UNREPRODUCIBLE` and is excluded from remediation input. Fresh v1.18.21 scanning uses exact commit `826d9ad46a22bef0294998e08daa3c4904fea28f`, digest-pinned image, retained source snapshot, Semgrep 1.168.0, TruffleHog 3.97.0, SkillSpector v2.9.6, and Syft 1.51.0. The sanitized artifacts and AIAT boundary pass are retained under `provenance/opencode-candidate/2026-09-30-v1.18.21/`; the technical gate is still blocked by 762 findings and 54 Semgrep errors. **Security finding review.** | `REQUIRED_FOR_RELEASE` | The personal operator reviews all 762 retained findings, resolves the Semgrep coverage/execution errors, records finding dispositions, and reruns the exact pinned scan. Keep `coding_worker` and `tester` inactive until the technical gate passes. |
+| OpenCode Program D candidate | The historical v1.17.13 scan remains `FAILED_UNREPRODUCIBLE` and is excluded from remediation input. The current r4 v1.18.21 scan uses exact commit `826d9ad46a22bef0294998e08daa3c4904fea28f`, pinned image, exact source snapshot, sanitized Semgrep/TruffleHog/SkillSpector results, Syft SBOM, Actionlint/Zizmor supplements, and a pinned Bun-transpiled Semgrep supplement. It retains 383 current primary findings, 7 same-source Semgrep carry-forward findings, 119 normalized CI supplements, and 4 transpiled Semgrep findings (513 active review records, not unique vulnerabilities). All three AIAT-serving TypeScript paths were scanned without parser errors; four path-join candidates at three source locations remain open. One parser error remains on non-AIAT-serving LSP source. TruffleHog has 55 unverified records and 53 normalized locations, with zero verified secrets. Six review rows remain open; no AIAT-owned confirmed defect is recorded. Evidence is under `provenance/opencode-candidate/2026-10-02-v1.18.21-r4/`. **Security review required.** | `REQUIRED_FOR_RELEASE` | Review and disposition all retained records, including the four mapped path-join findings and the two runtime process-launch candidates; fix confirmed AIAT-owned defects. Keep `coding_worker` and `tester` inactive until the technical gate passes. |
 | OpenHands v1.43.0 candidate | Exact source/image pins, OpenHands gVisor evidence from run `32594885180`, native CI gVisor prerequisite evidence from run `32541110299`, AIAT boundary tests, digest-pinned disposable gateway wiring, exact LiteLLM/OmniRoute source-archive checksums, provider preflight, sanitized evidence-schema validation, run-scoped profile/MCP cleanup assertions, 20-gate matrix, deterministic coding-task fixture, offline lifecycle/security fixtures, fail-closed post-run test/diff/artifact verification, fail-closed disposable network-topology evidence, exact single-network attachment checks, and task-test credential-environment scrubbing pass repository-local checks. Runs `32695739623` and `32696377216` reached the provider/gateway, runsc, tool-service, and cleanup boundaries but failed closed on two stale Agent Server v1.43.0 readback envelopes (`config` LLM profile, then `agent_settings` MCP settings); both are preserved as `FAILED_CERTIFICATION_IMPLEMENTATION` / `BLOCKED_TOOL_BRIDGE`, with no live worker evidence claimed. The current reviewed tip `dbf21a3c2ae0c7fc5377076449192ed21c8f5797` includes strict run-bound MCP grants, lifecycle grant rotation, workspace metadata filtering, evidence/status alignment, exact single-network attachment evidence, and narrow certification-authorization blocker propagation; it passes the complete read-only dispatch preflight, but no replacement provider-backed run is claimed. **Candidate/live-provider gate.** | `REQUIRED_FOR_RELEASE` only if selected; currently inactive/certifying | Keep `GROQ_API_KEY` as the one operator-owned secret, freeze an exact reviewed SHA, run the safe preflight, and dispatch exactly one manual workflow only after it passes. Review sanitized evidence and steward approval independently; do not activate on certification alone. |
 | Security/adversarial findings | Exact-source historical findings are not accepted or used as patch instructions; a fresh reproducible candidate scan is now the technical source of truth. **Operator decision.** | `REQUIRED_FOR_RELEASE` | Review actual fresh findings by severity/applicability. Remediate AIAT wrapper/configuration findings in code; choose newer upstream or an operator-owned fork for genuine upstream findings. The coding agent must not auto-accept risk. |
 | Protected memory files | `mas/packages/mas-core/mas_core/memory/checkpoints.py` and `mas/packages/mas-core/mas_core/memory/storage.py` are pre-existing dirty operator files. **Repository/operator hygiene.** | `REQUIRED_FOR_RELEASE` | Decide deliberately whether to commit them in an operator-owned commit, restore them, or record an approved dirty exception. Do not let a general cleanup or release commit modify, stage, discard, or normalize them. |

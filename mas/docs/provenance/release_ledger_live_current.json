@@ -1,6 +1,6 @@
 {
   "active_check_count": 84,
-  "checked_at": "2026-09-30T19:10:21.477875+00:00",
+  "checked_at": "2026-10-03T03:05:28.255055+00:00",
   "checks": [
     {
       "base_id": "provenance",
@@ -40,15 +40,15 @@
       "status": "pass",
       "summary": {
         "available_tool_count": 6,
-        "configured_environment_input_count": 3,
+        "configured_environment_input_count": 4,
         "errors": [],
         "git": {
           "branch": "agent/fix-review-p1",
-          "changed_path_count": 71,
-          "revision": "571a6a496e83df816b19c1326070671f76074e89",
+          "changed_path_count": 57,
+          "revision": "0399f5c31c13c722a5954993b1e4b9169ee10a62",
           "working_tree_clean": false
         },
-        "manifest_digest": "7f3d97c4c36470be44dfdfdda267e30b9cb41c3100a41e1e682b7d246ee8ee6a",
+        "manifest_digest": "a2ec6da447fae926d2de06dc6d73cbb866e74dc1f5105babbdc014b46b511599",
         "status": "pass",
         "tracked_input_count": 15
       }
@@ -727,12 +727,12 @@
       "scope_status": "active",
       "status": "pass",
       "summary": {
-        "engine_warning_count": 54,
+        "engine_warning_count": 7,
         "errors": [],
-        "finding_count": 762,
+        "finding_count": 513,
         "mode": "static",
-        "review_required_count": 3,
-        "scan_count": 4,
+        "review_required_count": 6,
+        "scan_count": 11,
         "status": "pass",
         "technical_gate_status": "blocked"
       }
@@ -748,7 +748,7 @@
       "status": "pass",
       "summary": {
         "errors": [],
-        "finding_count": 762,
+        "finding_count": 383,
         "mode": "static",
         "status": "pass",
         "technical_gate_status": "blocked"
@@ -830,15 +830,15 @@
       "status": "pass",
       "summary": {
         "cleanup_verified": true,
-        "cpu_time_ms": 54.385,
+        "cpu_time_ms": 47.52,
         "error_count": 0,
         "measurement_source": "procfs",
         "mode": "fixture",
-        "rss_after_bytes": 93708288,
-        "rss_before_bytes": 93601792,
-        "rss_peak_bytes": 131448832,
+        "rss_after_bytes": 95264768,
+        "rss_before_bytes": 95219712,
+        "rss_peak_bytes": 132902912,
         "status": "pass",
-        "wall_time_ms": 54.284
+        "wall_time_ms": 47.31
       }
     },
     {
@@ -1473,15 +1473,15 @@
       "status": "blocked",
       "summary": {
         "available_tool_count": 6,
-        "configured_environment_input_count": 3,
+        "configured_environment_input_count": 4,
         "errors": [],
         "git": {
           "branch": "agent/fix-review-p1",
-          "changed_path_count": 71,
-          "revision": "571a6a496e83df816b19c1326070671f76074e89",
+          "changed_path_count": 57,
+          "revision": "0399f5c31c13c722a5954993b1e4b9169ee10a62",
           "working_tree_clean": false
         },
-        "manifest_digest": "7f3d97c4c36470be44dfdfdda267e30b9cb41c3100a41e1e682b7d246ee8ee6a",
+        "manifest_digest": "a2ec6da447fae926d2de06dc6d73cbb866e74dc1f5105babbdc014b46b511599",
         "native_release": {
           "blockers": [
             "host is not a native Linux release host",
@@ -1577,32 +1577,72 @@
     {
       "base_id": "trace_evidence",
       "category": "contract",
-      "exit_code": 2,
+      "exit_code": 0,
       "id": "trace_evidence:live",
       "mode": "live",
       "pending_evidence_count": 0,
       "scope_status": "active",
-      "status": "blocked",
+      "status": "pass",
       "summary": {
+        "coverage": {
+          "api_requests": "empty",
+          "integration_evidence": "empty",
+          "native_audit_spans": "empty",
+          "native_integration_spans": "empty",
+          "native_mail_spans": "empty",
+          "native_model_spans": "empty",
+          "native_spans": "empty",
+          "native_tool_spans": "empty",
+          "native_transport_spans": "empty",
+          "native_worker_spans": "empty",
+          "pm_inbox_events": "empty",
+          "project_usage_events": "empty",
+          "task_log": "empty",
+          "worker_artifacts": "empty",
+          "worker_run_transitions": "empty",
+          "worker_usage_records": "empty"
+        },
         "mode": "live",
-        "reason": "trace evidence unavailable: HTTPStatusError",
-        "status": "blocked",
+        "notice_codes": [
+          "PARTIAL_TRACE_SOURCES"
+        ],
+        "status": "not_found",
         "url_configured": true
       }
     },
     {
       "base_id": "live_trace_observability",
       "category": "integration",
-      "exit_code": 2,
+      "exit_code": 0,
       "id": "live_trace_observability:live",
       "mode": "live",
       "pending_evidence_count": 0,
       "scope_status": "active",
-      "status": "blocked",
+      "status": "pass",
       "summary": {
+        "coverage": {
+          "api_requests": "observed",
+          "integration_evidence": "empty",
+          "native_audit_spans": "empty",
+          "native_integration_spans": "empty",
+          "native_mail_spans": "empty",
+          "native_model_spans": "empty",
+          "native_spans": "observed",
+          "native_tool_spans": "empty",
+          "native_transport_spans": "observed",
+          "native_worker_spans": "empty",
+          "pm_inbox_events": "empty",
+          "project_usage_events": "empty",
+          "task_log": "empty",
+          "worker_artifacts": "empty",
+          "worker_run_transitions": "empty",
+          "worker_usage_records": "empty"
+        },
         "mode": "live",
-        "reason": "live trace evidence unavailable: HTTPStatusError",
-        "status": "blocked",
+        "notice_codes": [
+          "PARTIAL_TRACE_SOURCES"
+        ],
+        "status": "pass",
         "url_configured": true
       }
     },
@@ -1617,41 +1657,51 @@
       "status": "blocked",
       "summary": {
         "mode": "live",
-        "reason": "project listing returned HTTP 503",
+        "reason": "missing live configuration: tool secret",
         "status": "blocked"
       }
     },
     {
       "base_id": "slo_capacity",
       "category": "contract",
-      "exit_code": 2,
+      "exit_code": 0,
       "id": "slo_capacity:live",
       "mode": "live",
       "pending_evidence_count": 0,
       "scope_status": "active",
-      "status": "blocked",
+      "status": "pass",
       "summary": {
+        "capacity_status": "insufficient_data",
         "mode": "live",
-        "reason": "SLO/capacity endpoint unavailable: HTTPStatusError",
-        "status": "blocked",
+        "slo_status": "no_data",
+        "status": "observed",
         "url_configured": true
       }
     },
     {
       "base_id": "worker_reconciliation",
       "category": "static",
-      "exit_code": 2,
+      "exit_code": 0,
       "id": "worker_reconciliation:live",
       "mode": "live",
       "pending_evidence_count": 2,
       "scope_status": "active",
-      "status": "blocked",
+      "status": "pass",
       "summary": {
         "errors": [],
         "live": {
-          "reason": "worker registry endpoint unavailable: HTTPStatusError",
-          "status": "blocked",
-          "url_configured": true
+          "active_default_worker_count": 0,
+          "default_worker_count": 39,
+          "duplicate_name_count": 0,
+          "errors": [],
+          "matched_count": 39,
+          "mismatch_count": 0,
+          "missing_worker_count": 0,
+          "status": "pass",
+          "untracked_active_worker_count": 0,
+          "url_configured": true,
+          "warnings": [],
+          "worker_count": 39
         },
         "mode": "live",
         "pending_evidence": [
@@ -1680,7 +1730,7 @@
           "external": 10,
           "langgraph": 13
         },
-        "status": "blocked",
+        "status": "pass",
         "transport_counts": {
           "human": 1,
           "opencode": 2,
@@ -1736,16 +1786,37 @@
     {
       "base_id": "network_boundary",
       "category": "static",
-      "exit_code": 2,
+      "exit_code": 1,
       "id": "network_boundary:live",
       "mode": "live",
       "pending_evidence_count": 0,
       "scope_status": "active",
-      "status": "blocked",
+      "status": "fail",
       "summary": {
-        "reason": "checker timed out after 60s",
-        "status": "blocked",
-        "timeout_seconds": 60.0
+        "errors": [],
+        "live": {
+          "container_count": 11,
+          "errors": [
+            "team-dept-devops: no running container found",
+            "team-dept-production: no running container found",
+            "team-dept-qa: no running container found",
+            "team-dept-system: no running container found",
+            "team-exec-ceo: no running container found",
+            "team-exec-coo: no running container found",
+            "team-office-cfo: no running container found",
+            "team-office-chrm: no running container found",
+            "team-office-cio: no running container found",
+            "team-office-cso: no running container found",
+            "team-office-cto: no running container found"
+          ],
+          "status": "fail",
+          "warnings": []
+        },
+        "mode": "static",
+        "status": "pass",
+        "warnings": [
+          "optional identity database services are not in the base Compose profile: identity-postgres, identity-db"
+        ]
       }
     },
     {
@@ -1837,7 +1908,7 @@
           "mas_infra_lead_time": 12,
           "mas_llm_calls": 0,
           "mas_messages": 0,
-          "mas_project_state": 0,
+          "mas_project_state": 18,
           "mas_review_circuit_open": 1,
           "mas_tool_calls": 0,
           "mas_tool_circuit_state": 0
@@ -1851,7 +1922,9 @@
           ],
           "mas_llm_calls": [],
           "mas_messages": [],
-          "mas_project_state": [],
+          "mas_project_state": [
+            "state"
+          ],
           "mas_review_circuit_open": [],
           "mas_tool_calls": [],
           "mas_tool_circuit_state": []
@@ -1936,7 +2009,7 @@
         "mode": "live",
         "project_id_label_present": false,
         "status": "pass",
-        "total": 13,
+        "total": 31,
         "url_configured": true
       }
     },
@@ -2026,31 +2099,42 @@
     {
       "base_id": "model_profile_catalogue",
       "category": "packaging",
-      "exit_code": 2,
+      "exit_code": 0,
       "id": "model_profile_catalogue:live",
       "mode": "live",
       "pending_evidence_count": 0,
       "scope_status": "active",
-      "status": "blocked",
+      "status": "pass",
       "summary": {
+        "covered_profile_version_count": 92,
+        "duplicate_profile_bindings": [],
+        "finding_count": 0,
         "mode": "live",
-        "reason": "orchestrator catalogue unavailable: HTTPStatusError",
-        "status": "blocked"
+        "profile_count": 92,
+        "profile_coverage": "complete",
+        "profile_pending_model_count": 0,
+        "profile_version_count": 92,
+        "registry_model_count": 92,
+        "status": "pass"
       }
     },
     {
       "base_id": "object_store_conformance",
       "category": "contract",
-      "exit_code": 2,
+      "exit_code": 0,
       "id": "object_store_conformance:live",
       "mode": "live",
       "pending_evidence_count": 0,
       "scope_status": "active",
-      "status": "blocked",
+      "status": "pass",
       "summary": {
+        "counts": {
+          "FAIL": 0,
+          "PASS": 8
+        },
         "mode": "local-live",
-        "reason": "private-network MinIO probe returned invalid JSON",
-        "status": "blocked"
+        "passed": true,
+        "status": "pass"
       }
     },
     {
@@ -2236,16 +2320,39 @@
     {
       "base_id": "credentials_manager_live",
       "category": "security",
-      "exit_code": 2,
+      "exit_code": 0,
       "id": "credentials_manager_live:live",
       "mode": "live",
       "pending_evidence_count": 0,
       "scope_status": "active",
-      "status": "blocked",
+      "status": "pass",
       "summary": {
-        "reason": "checker timed out after 60s",
-        "status": "blocked",
-        "timeout_seconds": 60.0
+        "cleanup_counts": {
+          "before": 0,
+          "teardown": 2
+        },
+        "credential_names": 2,
+        "errors": [],
+        "external_network_access_performed": false,
+        "external_provider_mutation_performed": false,
+        "failure_classification": {
+          "harness_configuration_failure": "not_observed",
+          "infrastructure_environment_failure": "not_observed",
+          "provider_functional_failure": "not_applicable_aiat_owned_boundary",
+          "provider_resource_limit_failure": "not_checked"
+        },
+        "key_material_retained": false,
+        "mode": "compose-local-live",
+        "payload_free": true,
+        "provider_managed_kms_checked": false,
+        "provider_managed_kms_status": "not_configured",
+        "remaining_fixture_counts": {
+          "credential_resolve_approvals": 0,
+          "credential_resolve_rates": 0,
+          "credentials": 0,
+          "credentials_audit": 0
+        },
+        "status": "pass"
       }
     },
     {
@@ -2406,14 +2513,14 @@
   ],
   "compose_local": true,
   "counts": {
-    "blocked": 11,
-    "fail": 0,
+    "blocked": 3,
+    "fail": 1,
     "not_in_scope": 5,
-    "pass": 73,
+    "pass": 80,
     "total": 89
   },
   "decision_reasons": [
-    "11 check(s) are externally blocked",
+    "3 check(s) are externally blocked",
     "4 pending evidence item(s) remain",
     "worktree is dirty"
   ],
@@ -2421,13 +2528,13 @@
   "environment": {
     "docker_cli_available": true,
     "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
-    "python": "3.11.15"
+    "python": "3.13.13"
   },
   "git": {
     "branch": "agent/fix-review-p1",
-    "changed_path_count": 71,
+    "changed_path_count": 57,
     "clean": false,
-    "revision": "571a6a496e83df816b19c1326070671f76074e89"
+    "revision": "0399f5c31c13c722a5954993b1e4b9169ee10a62"
   },
   "pending_evidence_count": 4,
   "policy": {
@@ -2440,5 +2547,5 @@
   "release_status": "RELEASE_CERTIFICATION_PENDING",
   "schema_version": "aiat.release-ledger.v1",
   "scope": "bounded release-evidence aggregation; no deployment mutation or credential output",
-  "status": "blocked"
+  "status": "fail"
 }

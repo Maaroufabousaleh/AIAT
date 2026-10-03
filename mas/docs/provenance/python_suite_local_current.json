@@ -1,0 +1,27 @@
+{
+  "command": "PYTEST_ADDOPTS='-p no:cacheprovider' /tmp/aiat-worktree-validation-venv/bin/pytest --basetemp=/tmp/aiat-full-python-final-current",
+  "environment": {
+    "platform": "WSL2",
+    "python": "3.13.13"
+  },
+  "evidence_payloads_retained": false,
+  "observed_at": "2026-10-03T03:02:33.815228+00:00",
+  "results": {
+    "failed": 0,
+    "passed": 3214,
+    "skipped": 17,
+    "warning_kind": "existing AsyncMock RuntimeWarning in orchestrator system tests",
+    "warnings": 2
+  },
+  "schema_version": "aiat.python-suite-local.v1",
+  "scope": "complete configured repository Python test suite; no external provider dispatch was authorized or performed",
+  "secret_values_retained": false,
+  "source": {
+    "branch": "agent/fix-review-p1",
+    "changed_path_count": 36,
+    "commit": "0399f5c31c13c722a5954993b1e4b9169ee10a62",
+    "worktree_clean": false
+  },
+  "status": "pass",
+  "working_directory": "mas/"
+}
