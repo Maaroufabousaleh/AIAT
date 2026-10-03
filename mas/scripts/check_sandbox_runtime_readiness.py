@@ -374,8 +374,8 @@ def _run_smoke(image: str, *, runtime: str) -> tuple[bool, str]:
         "--pids-limit=64",
         "--memory=128m",
         "--cpus=0.25",
+        "--entrypoint=/bin/true",
         image,
-        "/bin/true",
     ]
     try:
         result = _run(command, timeout=60.0)
@@ -464,8 +464,8 @@ def _run_kata_smoke(image: str, *, runtime: str = KATA_RUNTIME_NAME) -> tuple[bo
         "--pids-limit=64",
         "--memory=128m",
         "--cpus=0.25",
+        "--entrypoint=/bin/sh",
         image,
-        "/bin/sh",
         "-c",
         "sleep 10",
     ]

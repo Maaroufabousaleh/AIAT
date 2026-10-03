@@ -160,6 +160,36 @@ def test_kata_smoke_uses_the_discovered_runtime_name(monkeypatch) -> None:
     assert reason == "Kata (kata-qemu) QEMU guest smoke completed"
     assert evidence["guest_kernel"] == "kata-guest-kernel"
     assert "--runtime=kata-qemu" in commands[0]
+    assert "--entrypoint=/bin/sh" in commands[0]
+    assert commands[0][-2:] == ["-c", "sleep 10"]
+
+
+def test_gvisor_smoke_bypasses_the_image_entrypoint(monkeypatch) -> None:
+    import importlib.util
+    import subprocess
+
+    spec = importlib.util.spec_from_file_location("check_sandbox_runtime_readiness", SCRIPT)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], *, timeout: float):
+        del timeout
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(module, "_run", fake_run)
+
+    passed, reason = module._run_smoke(
+        "example/smoke@sha256:" + "a" * 64,
+        runtime="runsc",
+    )
+
+    assert passed is True
+    assert reason == "gVisor (runsc) digest-pinned smoke completed"
+    assert "--entrypoint=/bin/true" in commands[0]
+    assert commands[0][-1] == "example/smoke@sha256:" + "a" * 64
 
 
 def test_optional_kata_unavailable_does_not_block_runsc(monkeypatch) -> None:
