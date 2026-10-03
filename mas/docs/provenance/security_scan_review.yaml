@@ -143,3 +143,24 @@ reviews:
     - unpinned-uses
     finding_count: 92
     next_action: Disposition each normalized workflow/action supply-chain rule result.
+- id: opencode-1.18.21-semgrep-transpiled-typescript-2026-10-03-review
+  scan_ref: mas/docs/provenance/security_scan_evidence.yaml#opencode-1.18.21-semgrep-transpiled-typescript-2026-10-03
+  owner: personal-operator
+  status: open
+  gate_status: blocked
+  finding_disposition: unreviewed
+  next_action: Review the four mapped findings at three exact upstream source locations, inspect all
+    optional lock-directory callers and trust boundaries, and record each disposition before OpenCode
+    activation.
+  engine_warning_action: The pinned Semgrep run completed with exit 0 and four warnings; it also reported one
+    parser error on non-AIAT-serving LSP source. All three AIAT-serving TypeScript paths completed without
+    parser errors. Keep the finding gate blocked and retain the non-runtime coverage limitation.
+  finding_review_ref: mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/transpiled-semgrep-findings-review.json
+  finding_review_sha256: 7297c5617a2bea724701f78af20625006f6965e64c43feaa593c8ab1d7b07fef
+  rule_groups:
+  - id: semgrep-transpiled-path-join-findings
+    rules:
+    - javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
+    finding_count: 4
+    next_action: Review each mapped source location and caller trust boundary; the duplicate pair at line 257
+      remains two scanner records and one source-line location until dispositioned.

@@ -10,24 +10,24 @@
     "infrastructure_environment_failure": "not_observed",
     "provider_functional_failure": "not_applicable_external_source_scan",
     "provider_resource_limit_failure": "not_tested",
-    "security_gate_failure": "six_explained_semgrep_parser_coverage_gaps; open findings and operator review remain"
+    "security_gate_failure": "one explained non-AIAT-serving TypeScript parser diagnostic remains; four transpiled Semgrep path-join findings, other open findings, and operator review keep the gate blocked"
   },
-  "observed_at": "2026-10-02T01:35:00.489979Z",
+  "observed_at": "2026-10-03T02:47:17.267573+00:00",
   "programme_scope": "personal-internal-only",
   "release_boundary": {
     "activation_or_deployment_mutation": false,
     "licence_metadata_is_gate": false,
     "operator_review_required": true,
     "raw_findings_and_source_snapshot_retained_separately": true,
-    "scope": "Pinned exact-source candidate scan with narrow rule exclusions, explicit excluded-finding carry-forward, and normalized CI workflow scanners. OpenCode remains inactive while runtime security coverage and finding review remain incomplete.",
+    "scope": "Pinned exact-source candidate scan with narrow rule exclusions, explicit excluded-finding carry-forward, normalized CI workflow scanners, and a pinned Bun-transpiled Semgrep supplement for six TypeScript paths. All three AIAT-serving paths were scanned without parser errors; four source-mapped path-join findings remain open and one parser error remains on non-AIAT-serving LSP source. OpenCode remains inactive pending finding review and remaining scanner coverage.",
     "technical_gate_status": "blocked"
   },
   "scan": {
-    "aggregate_count_semantics": "active scanner finding records plus explicit same-source excluded-rule carry-forward and normalized supplemental records; not unique vulnerabilities",
+    "aggregate_count_semantics": "active scanner finding records plus explicit same-source excluded-rule carry-forward and normalized primary, CI, and transpiled-TypeScript supplements; not unique vulnerabilities",
     "current_primary_scan_finding_count": 383,
-    "engine_warning_count": 6,
+    "engine_warning_count": 7,
     "excluded_rule_carry_forward_finding_count": 7,
-    "finding_count": 509,
+    "finding_count": 513,
     "primary_candidate_finding_count": 390,
     "rule_counts": {
       "actionlint/expression": 1,
@@ -61,11 +61,12 @@
       "zizmor/github-env": 1,
       "zizmor/self-repository": 27,
       "zizmor/template-injection": 24,
-      "zizmor/unpinned-uses": 1
+      "zizmor/unpinned-uses": 1,
+      "semgrep-transpiled/javascript.lang.security.audit.path-join-resolve-traversal": 4
     },
     "rule_total_matches_findings": true,
-    "scanner_error_count": 6,
-    "scanner_error_status": "6 explained TypeScript parser coverage gaps; 0 scanner execution errors; 0 unexplained errors; 7 excluded-rule findings carried forward open",
+    "scanner_error_count": 7,
+    "scanner_error_status": "7 explained Semgrep parser diagnostics across primary and transpiled scans; 0 scanner execution errors; 0 unexplained errors. All 3 AIAT-serving TypeScript parser-gap paths completed the transpiled scan with 4 path-join findings left open; 1 parser error remains on non-AIAT-serving LSP source.",
     "severity_counts": {
       "ERROR": 19,
       "HIGH": 80,
@@ -74,9 +75,9 @@
       "LOW": 27,
       "MEDIUM": 32,
       "UNSPECIFIED_BY_SCANNER": 27,
-      "WARNING": 293
+      "WARNING": 297
     },
-    "supplemental_finding_count": 119,
+    "supplemental_finding_count": 123,
     "target_file_count": 6520,
     "unexplained_scanner_error_count": 0
   },
@@ -84,11 +85,27 @@
     "candidate_evidence_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/candidate-certification.json",
     "coverage_review_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/scanner-coverage-review.json",
     "external_network_access_performed": true,
-    "mode": "exact-source pinned primary scan, explicit same-source finding carry-forward, and normalized CI coverage supplement",
+    "mode": "exact-source pinned primary scan, explicit same-source finding carry-forward, normalized CI coverage supplement, and pinned Bun-transpiled TypeScript Semgrep supplement",
     "name": "semgrep+trufflehog+skillspector+actionlint+zizmor",
     "normalized_outputs_retained_separately": true,
     "raw_output_retained": false,
-    "version": "Semgrep 1.168.0; TruffleHog 3.97.0; SkillSpector 2.9.6; actionlint 1.7.12; zizmor 1.30.1"
+    "version": "Semgrep 1.168.0; TruffleHog 3.97.0; SkillSpector 2.9.6; actionlint 1.7.12; zizmor 1.30.1",
+    "transpiled_typescript_supplement": {
+      "summary_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/semgrep-transpiled-typescript-summary.json",
+      "summary_sha256": "dfadea8352e5e2f2c833b67bead93cd5cd6f011c5727cd252b6c13c6f0f54053",
+      "result_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/semgrep-transpiled-typescript.json",
+      "result_sha256": "a85aa8ad0c72b25ac01056569a3018692080f4b1d2671e9d884e506df16b94f8",
+      "tool_versions": "Bun 1.3.14; Semgrep 1.168.0",
+      "files_scanned": 6,
+      "finding_count": 4,
+      "deduplicated_source_locations": 3,
+      "parser_errors": 1,
+      "runtime_reachable_parser_errors": 0,
+      "unexplained_scanner_errors": 0,
+      "findings_review_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/transpiled-semgrep-findings-review.json",
+      "review_sha256": "7297c5617a2bea724701f78af20625006f6965e64c43feaa593c8ab1d7b07fef",
+      "harness_commit": "5c5217e0235d4d05d5206b93f92b49bbd0cf9550"
+    }
   },
   "schema_version": "aiat.security-scan-reproduction-local.v1",
   "source": {
@@ -101,7 +118,8 @@
     "repository": "https://github.com/anomalyco/opencode",
     "snapshot_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/source-snapshot.tar.xz",
     "snapshot_retained": true,
-    "snapshot_sha256": "e338f0fc18145f7fc0ac848da5593ae77ea63adbd5f1d386ca8d82151a280370"
+    "snapshot_sha256": "e338f0fc18145f7fc0ac848da5593ae77ea63adbd5f1d386ca8d82151a280370",
+    "transpiled_scan_harness_commit": "5c5217e0235d4d05d5206b93f92b49bbd0cf9550"
   },
   "status": "blocked"
 }

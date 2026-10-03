@@ -9,7 +9,8 @@
     "source_snapshot_sha256": "e338f0fc18145f7fc0ac848da5593ae77ea63adbd5f1d386ca8d82151a280370",
     "triage_tool_commit": "95f2139edefb4656a6c5d1f46f31a24212509100",
     "upstream_commit": "826d9ad46a22bef0294998e08daa3c4904fea28f",
-    "version": "1.18.21"
+    "version": "1.18.21",
+    "transpiled_scan_harness_commit": "5c5217e0235d4d05d5206b93f92b49bbd0cf9550"
   },
   "compensating_parser_check": {
     "checked_at": "2026-10-03T00:11:34.188207+00:00",
@@ -51,7 +52,7 @@
       "--target",
       "bun"
     ],
-    "limitation": "This confirms TypeScript/TSX parsing and transpilation only. It is not a security scan and does not substitute for Semgrep rule coverage; three runtime-reachable files remain a security coverage gate.",
+    "limitation": "This confirms TypeScript/TSX parsing and transpilation only. It is not itself a security scan. A separately retained Semgrep run on the transpiled output scans all six paths, including all three AIAT-serving paths; four findings remain open and one parser error on non-AIAT-serving LSP source remains an explained coverage limitation.",
     "payload_free": true,
     "programme_scope": "personal-internal-only",
     "result_path": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/typescript-parser-compensation.json",
@@ -88,7 +89,8 @@
       "TEST_FIXTURE": 8
     },
     "unresolved_findings_block_activation": true,
-    "unverified_secret_candidates": 53
+    "unverified_secret_candidates": 53,
+    "transpiled_path_join_locations_requiring_operator_review": 3
   },
   "excluded_rule_carry_forward": {
     "finding_count": 7,
@@ -106,29 +108,32 @@
     },
     "status": "open_unreviewed"
   },
-  "generated_at": "2026-10-03T00:11:34.256500+00:00",
+  "generated_at": "2026-10-03T02:47:17.267573+00:00",
   "licence_metadata_is_gate": false,
   "normalization": {
     "actionlint_normalized_records": 27,
-    "active_security_review_records": 509,
+    "active_security_review_records": 513,
     "current_primary_raw_records": 383,
-    "distinct_source_path_line_locations": 455,
+    "distinct_source_path_line_locations": 458,
     "effective_candidate_scanner_records": 390,
     "excluded_rule_findings_carried_forward": 7,
     "locations_seen_in_multiple_scanners": 5,
-    "normalized_registered_scanner_records": 424,
-    "raw_scanner_records_including_excluded_rule_carry_forward": 511,
-    "scanner_set_by_location_sha256": "4d1b68ad10b54cd1e329bb6d162e1415da767170aa256f7393400ce3ed988587",
+    "normalized_registered_scanner_records": 428,
+    "raw_scanner_records_including_excluded_rule_carry_forward": 515,
+    "scanner_set_by_location_sha256": "15e930072a4b92f3e697a9b7767f3078b4d121d16a5dac5dd899639aad94c9fe",
     "scanner_set_hash_algorithm": "SHA-256 of canonical JSON array sorted by (path,line), each row {path,line,sorted scanner names};",
     "semgrep_duplicate_records": 83,
     "semgrep_raw_records": 328,
     "semgrep_unique_rule_path_range_records": 245,
-    "supplemental_normalized_records": 119,
+    "supplemental_normalized_records": 123,
     "trufflehog_duplicate_records": 2,
     "trufflehog_raw_records": 55,
     "trufflehog_unique_detector_source_records": 53,
     "zizmor_normalized_records": 92,
-    "zizmor_raw_records": 94
+    "zizmor_raw_records": 94,
+    "transpiled_semgrep_raw_records": 4,
+    "transpiled_semgrep_deduplicated_source_locations": 3,
+    "transpiled_semgrep_scanner_identity": "semgrep_transpiled"
   },
   "programme_scope": "personal-internal-only",
   "raw_secret_values_retained": false,
@@ -207,17 +212,33 @@
       "unverified_unique_findings": 53,
       "verified_secrets": 0,
       "version": "trufflehog 3.97.0"
+    },
+    "transpiled_semgrep": {
+      "version": "1.168.0",
+      "transpiler": "Bun 1.3.14",
+      "exit_code": 0,
+      "finding_count": 4,
+      "scanner_error_count": 1,
+      "runtime_reachable_parser_errors": 0,
+      "unexplained_scanner_errors": 0,
+      "result_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/semgrep-transpiled-typescript.json",
+      "result_sha256": "a85aa8ad0c72b25ac01056569a3018692080f4b1d2671e9d884e506df16b94f8",
+      "summary_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/semgrep-transpiled-typescript-summary.json",
+      "summary_sha256": "dfadea8352e5e2f2c833b67bead93cd5cd6f011c5727cd252b6c13c6f0f54053",
+      "review_sha256": "7297c5617a2bea724701f78af20625006f6965e64c43feaa593c8ab1d7b07fef",
+      "harness_commit": "5c5217e0235d4d05d5206b93f92b49bbd0cf9550"
     }
   },
   "schema_version": "aiat.opencode-scanner-coverage-review.v1",
   "scope": {
     "decision": "blocked",
     "explained_scanner_coverage_gaps": 6,
-    "explanation": "Semgrep scanner execution is clean after two narrowly documented GitHub-workflow rule exclusions. Seven findings from the excluded pipe-to-shell rule are carried forward open from an unfiltered exact-source result. Six TypeScript parser coverage gaps remain identified; Bun 1.3.14 parsed/transpiled all six files, but this is not equivalent security analysis. Three of the six files are runtime-reachable, so release coverage remains incomplete. Two process-launch findings and all unverified TruffleHog candidates remain open.",
-    "runtime_security_coverage_complete": false,
+    "explanation": "The primary Semgrep 1.168.0 scan has zero scanner execution errors and six TypeScript parser gaps. A pinned Bun 1.3.14 transpilation followed by the same Semgrep version scanned all six exact paths; all three AIAT-serving paths completed without parser errors. It found four path-join warnings at three source locations in effect-flock.ts, all open for operator review. One parser error remains on non-AIAT-serving LSP source. Seven same-source workflow findings remain carried forward open; OpenCode activation remains blocked by findings and remaining coverage limits.",
+    "runtime_security_coverage_complete": true,
     "scanner_execution_errors": 0,
     "semgrep_security_coverage_complete": false,
-    "unexplained_scanner_errors": 0
+    "unexplained_scanner_errors": 0,
+    "current_transpiled_parser_errors": 1
   },
   "semgrep_coverage_gaps": [
     {
@@ -225,72 +246,96 @@
       "area": "shipped/runtime code",
       "classification": "source syntax genuinely unsupported",
       "code": "3",
-      "disposition": "coverage_gap_requires_alternate_scan",
+      "disposition": "explained_non_runtime_parser_error",
       "error_type": "Syntax error",
       "index": 1,
       "line": null,
       "path": "packages/opencode/src/lsp/server.ts",
-      "runtime_security_relevant": false
+      "runtime_security_relevant": false,
+      "primary_scan_parser_gap": true,
+      "transpiled_supplement_scanned": true,
+      "transpiled_supplement_error_count": 1,
+      "transpiled_supplement_finding_count": 0
     },
     {
       "aiat_serve_reachable": true,
       "area": "shipped/runtime code",
       "classification": "source syntax genuinely unsupported",
       "code": "3",
-      "disposition": "coverage_gap_requires_alternate_scan",
+      "disposition": "covered_by_transpiled_semgrep",
       "error_type": "PartialParsing",
       "index": 2,
       "line": 5,
       "path": "packages/core/src/effect/keyed-mutex.ts",
-      "runtime_security_relevant": true
+      "runtime_security_relevant": true,
+      "primary_scan_parser_gap": true,
+      "transpiled_supplement_scanned": true,
+      "transpiled_supplement_error_count": 0,
+      "transpiled_supplement_finding_count": 0
     },
     {
       "aiat_serve_reachable": true,
       "area": "shipped/runtime code",
       "classification": "source syntax genuinely unsupported",
       "code": "3",
-      "disposition": "coverage_gap_requires_alternate_scan",
+      "disposition": "covered_by_transpiled_semgrep_with_findings_open",
       "error_type": "PartialParsing",
       "index": 3,
       "line": 78,
       "path": "packages/core/src/util/effect-flock.ts",
-      "runtime_security_relevant": true
+      "runtime_security_relevant": true,
+      "primary_scan_parser_gap": true,
+      "transpiled_supplement_scanned": true,
+      "transpiled_supplement_error_count": 0,
+      "transpiled_supplement_finding_count": 4
     },
     {
       "aiat_serve_reachable": true,
       "area": "shipped/runtime code",
       "classification": "source syntax genuinely unsupported",
       "code": "3",
-      "disposition": "coverage_gap_requires_alternate_scan",
+      "disposition": "covered_by_transpiled_semgrep",
       "error_type": "PartialParsing",
       "index": 4,
       "line": 6,
       "path": "packages/opencode/src/server/routes/instance/httpapi/public.ts",
-      "runtime_security_relevant": true
+      "runtime_security_relevant": true,
+      "primary_scan_parser_gap": true,
+      "transpiled_supplement_scanned": true,
+      "transpiled_supplement_error_count": 0,
+      "transpiled_supplement_finding_count": 0
     },
     {
       "aiat_serve_reachable": false,
       "area": "shipped/runtime code",
       "classification": "source syntax genuinely unsupported",
       "code": "3",
-      "disposition": "coverage_gap_requires_alternate_scan",
+      "disposition": "covered_by_transpiled_semgrep_non_runtime",
       "error_type": "PartialParsing",
       "index": 5,
       "line": 514,
       "path": "packages/plugin/src/tui.ts",
-      "runtime_security_relevant": false
+      "runtime_security_relevant": false,
+      "primary_scan_parser_gap": true,
+      "transpiled_supplement_scanned": true,
+      "transpiled_supplement_error_count": 0,
+      "transpiled_supplement_finding_count": 0
     },
     {
       "aiat_serve_reachable": false,
       "area": "shipped/runtime code",
       "classification": "source syntax genuinely unsupported",
       "code": "3",
-      "disposition": "coverage_gap_requires_alternate_scan",
+      "disposition": "covered_by_transpiled_semgrep_non_runtime",
       "error_type": "PartialParsing",
       "index": 6,
       "line": 13,
       "path": "packages/tui/src/plugin/slots.tsx",
-      "runtime_security_relevant": false
+      "runtime_security_relevant": false,
+      "primary_scan_parser_gap": true,
+      "transpiled_supplement_scanned": true,
+      "transpiled_supplement_error_count": 0,
+      "transpiled_supplement_finding_count": 0
     }
   ],
   "source_snippets_retained": false,
@@ -312,5 +357,97 @@
       "scanner_errors": 0,
       "version": "1.30.1"
     }
-  ]
+  ],
+  "transpiled_semgrep_scan": {
+    "checked_at": "2026-10-03T02:37:56.592687+00:00",
+    "status": "findings_review_required_with_one_non_runtime_parser_error",
+    "source_revision": "826d9ad46a22bef0294998e08daa3c4904fea28f",
+    "source_snapshot_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/source-snapshot.tar.xz",
+    "source_snapshot_sha256": "e338f0fc18145f7fc0ac848da5593ae77ea63adbd5f1d386ca8d82151a280370",
+    "bun_version": "1.3.14",
+    "semgrep_version": "1.168.0",
+    "input_paths": [
+      "packages/opencode/src/lsp/server.ts",
+      "packages/core/src/effect/keyed-mutex.ts",
+      "packages/core/src/util/effect-flock.ts",
+      "packages/opencode/src/server/routes/instance/httpapi/public.ts",
+      "packages/plugin/src/tui.ts",
+      "packages/tui/src/plugin/slots.tsx"
+    ],
+    "scanned_file_count": 6,
+    "scanner_exit_code": 0,
+    "finding_count": 4,
+    "deduplicated_rule_source_location_count": 3,
+    "rule_counts": {
+      "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal": 4
+    },
+    "severity_counts": {
+      "WARNING": 4
+    },
+    "scanner_error_count": 1,
+    "scanner_error_source_paths": [
+      "packages/opencode/src/lsp/server.ts"
+    ],
+    "runtime_reachable_parser_error_paths": [],
+    "runtime_reachable_security_scan_complete": true,
+    "unexplained_scanner_error_count": 0,
+    "finding_result_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/semgrep-transpiled-typescript.json",
+    "finding_result_sha256": "a85aa8ad0c72b25ac01056569a3018692080f4b1d2671e9d884e506df16b94f8",
+    "summary_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/semgrep-transpiled-typescript-summary.json",
+    "summary_sha256": "dfadea8352e5e2f2c833b67bead93cd5cd6f011c5727cd252b6c13c6f0f54053",
+    "finding_review_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/transpiled-semgrep-findings-review.json",
+    "finding_review_sha256": "7297c5617a2bea724701f78af20625006f6965e64c43feaa593c8ab1d7b07fef",
+    "source_location_crosswalk": [
+      {
+        "generated_column": 34,
+        "generated_file": "effect-flock.js",
+        "generated_line": 100,
+        "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+        "source_column": 38,
+        "source_line": 172,
+        "source_map_applied": true,
+        "source_path": "packages/core/src/util/effect-flock.ts"
+      },
+      {
+        "generated_column": 39,
+        "generated_file": "effect-flock.js",
+        "generated_line": 101,
+        "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+        "source_column": 43,
+        "source_line": 173,
+        "source_map_applied": true,
+        "source_path": "packages/core/src/util/effect-flock.ts"
+      },
+      {
+        "generated_column": 34,
+        "generated_file": "effect-flock.js",
+        "generated_line": 147,
+        "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+        "source_column": 36,
+        "source_line": 257,
+        "source_map_applied": true,
+        "source_path": "packages/core/src/util/effect-flock.ts"
+      },
+      {
+        "generated_column": 43,
+        "generated_file": "effect-flock.js",
+        "generated_line": 147,
+        "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+        "source_column": 45,
+        "source_line": 257,
+        "source_map_applied": true,
+        "source_path": "packages/core/src/util/effect-flock.ts"
+      }
+    ],
+    "execution_policy": {
+      "candidate_code_executed": false,
+      "dependency_install_lifecycle_executed": false,
+      "external_module_resolution": false,
+      "temporary_outputs_cleaned": true,
+      "source_snippets_retained": false,
+      "secret_values_retained": false
+    },
+    "limitation": "Bun transpilation makes the three AIAT-serving TypeScript paths scanable by the pinned JavaScript Semgrep rules, but four path-join findings remain open. One parser error remains on the non-AIAT-serving LSP path; this is retained as a coverage limitation, not waived.",
+    "harness_commit": "5c5217e0235d4d05d5206b93f92b49bbd0cf9550"
+  }
 }

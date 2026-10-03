@@ -601,6 +601,60 @@ scans:
   raw_finding_record_count: 94
   raw_scanner_output_sha256: 34482f7367f9f550832e464ed73a6d1801101c9df93519c559cc533df833afb6
   scanner_exit_status: 14
+- source_repo: https://github.com/anomalyco/opencode.git
+  source_revision: v1.18.21
+  source_commit: 826d9ad46a22bef0294998e08daa3c4904fea28f
+  candidate_ref: mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/candidate-certification.json
+  candidate_image_ref:
+    ghcr.io/anomalyco/opencode:1.18.21@sha256:56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb
+  candidate_image_digest: 56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb
+  target_workers: *id001
+  captured_at: '2026-10-03'
+  source_snapshot_file_count: 6520
+  source_snapshot_retained: true
+  source_snapshot_ref: mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/source-snapshot.tar.xz
+  source_snapshot_sha256: e338f0fc18145f7fc0ac848da5593ae77ea63adbd5f1d386ca8d82151a280370
+  source_archive_sha256: 77b8cee43c3f74d94ad4651c375ec02bcd55a20aff06f9aac8e7be59c70811a0
+  owner: personal-operator
+  id: opencode-1.18.21-semgrep-transpiled-typescript-2026-10-03
+  scanner: semgrep
+  scanner_version: 1.168.0
+  mode: pinned-bun-transpiled-typescript-auto-ruleset-supplement
+  invocation:
+  - semgrep
+  - --config
+  - auto
+  - --json
+  - --no-git-ignore
+  - <transpiled-source>/keyed-mutex.js
+  - <transpiled-source>/effect-flock.js
+  - <transpiled-source>/server.js
+  - <transpiled-source>/public.js
+  - <transpiled-source>/tui.js
+  - <transpiled-source>/slots.js
+  working_directory: <transpiled-source-root>
+  status: blocked
+  scanner_status: completed_with_findings_and_one_non_runtime_parser_error
+  classification: OPEN_TRANSPILED_TYPESCRIPT_FINDINGS_AND_NON_RUNTIME_COVERAGE_LIMITATION
+  scanned_file_count: 6
+  scanned_file_count_status: harness_verified
+  finding_count: 4
+  rule_counts:
+    javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal: 4
+  severity_counts:
+    WARNING: 4
+  scanner_error_count: 1
+  engine_warning_count: 1
+  result_path: mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/semgrep-transpiled-typescript.json
+  result_sha256: a85aa8ad0c72b25ac01056569a3018692080f4b1d2671e9d884e506df16b94f8
+  result_bytes: 10133
+  raw_findings_retained: true
+  raw_output_sanitized: true
+  normalized_result_retained: true
+  finding_disposition: unreviewed
+  next_action: Review all four raw findings at the three source locations using the mapped-source review record;
+    inspect optional lock-directory callers and the trust boundary before any disposition. The one parser
+    error is on non-AIAT-serving LSP source and remains an explained, non-runtime coverage limitation.
 latest_candidate:
   path: mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/candidate-certification.json
   schema_version: aiat.opencode-candidate-certification.v1
@@ -612,10 +666,13 @@ scope_notes:
   scanner_coverage_review_ref:
     mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/scanner-coverage-review.json
   primary_candidate_raw_record_count: 390
-  supplemental_normalized_record_count: 119
+  supplemental_normalized_record_count: 123
   aggregate_counts_are_scanner_records_not_unique_vulnerabilities: true
   unexplained_semgrep_errors: 0
   semgrep_security_coverage_complete: false
+  runtime_transpiled_semgrep_coverage_complete: true
+  runtime_transpiled_semgrep_open_findings: 4
+  residual_non_runtime_parser_errors: 1
   skillspector_scope: recursive bundled .opencode/skills resources only; --no-llm
   licence_metadata_is_gate: false
   current_primary_scan_record_count: 383

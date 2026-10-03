@@ -25,18 +25,18 @@ def test_current_review_register_covers_open_scan_without_waiving_gate() -> None
     report = module.inspect(SCAN, REVIEW)
 
     assert report["status"] == "pass", report["errors"]
-    assert report["scan_count"] == 10
-    assert report["active_scan_count"] == 6
+    assert report["scan_count"] == 11
+    assert report["active_scan_count"] == 7
     assert report["historical_scan_count"] == 4
-    assert report["finding_count"] == 509
+    assert report["finding_count"] == 513
     assert "historical_finding_count" not in report
-    assert report["engine_warning_count"] == 6
-    assert report["review_required_count"] == 5
+    assert report["engine_warning_count"] == 7
+    assert report["review_required_count"] == 6
     assert report["technical_gate_status"] == "blocked"
     assert report["licence_metadata_is_gate"] is False
     assert report["reviews"][0]["status"] == "open"
-    assert report["latest_reproduction"]["finding_count"] == 509
-    assert report["latest_reproduction"]["scanner_error_count"] == 6
+    assert report["latest_reproduction"]["finding_count"] == 513
+    assert report["latest_reproduction"]["scanner_error_count"] == 7
     assert report["latest_reproduction"]["technical_gate_status"] == "blocked"
 
 

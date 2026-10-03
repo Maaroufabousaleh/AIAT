@@ -4,10 +4,28 @@
 **Status:** strong implementation foundation; request-level propagation, durable payload-free API observations, bounded trace evidence, native core spans, descriptive SLO/capacity projections, the typed read-only retention-plan API/live checker (`f8829d6`, `b3fca97`, `9a80c6c`), the hardened team-runner control-plane storage boundary (`22fc21a`), the policy-driven deny/allow matrix (`96fb71f`), sender role/team communication-policy enforcement (`fb39128`), the source-built hierarchy communication-policy overlay (`8b7d9f1`), secret-safe control-plane dependency diagnostics (`2860838`), the API-facing `mas-ctl` operator wrapper (`380daf5`), local API/transport read-back, and dashboard metrics partial/stale/retry recovery (`85596b0`, source-built `metrics-states.spec.ts` 1/1) are verified. The current dashboard image and focused hierarchy E2E now pass locally (`d5f596e`); broader release-image, native-Linux, sandbox, metrics, recovery, model/tool worker, mail-edge, live retention enforcement, and full cross-service span gates remain
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
-**Current WSL2 development result (2026-09-19):** `DEV_READY`. The
-dedicated `aiat-wsl` Docker Engine has Compose v2 and registered `runsc`; the
-digest-pinned gVisor smoke, local Compose health, migration head `0045`, and
-live network-boundary check pass. The secret-safe host record is
+**Current WSL2 development result (2026-10-02):** `DEV_READY`. AIAT uses the
+dedicated `aiat-wsl` Docker Engine, separate from Docker Desktop's `default`
+context. The local Compose stack is healthy; authenticated `/health`,
+`/projects`, and `/capabilities/workers` return HTTP 200, with 0 projects and
+39 worker manifests. From the orchestrator, DNS/TCP checks pass to Redis,
+Postgres, PgBouncer, and tool-service on `mas_internal`. The original TCP
+timeouts occurred on the correct daemon: the bridge had valid endpoints, DNS,
+routes, and ARP, but east-west forwarding was broken. Recreating only the AIAT
+Compose bridge through `mas.sh down` (without `-v`) and normal startup restored
+connectivity; all nine persistent volumes remained. Docker Desktop's separate
+`default` daemon caused host-port collisions with its published-port profile,
+not the original bridge outage. The privileged forwarding rule could not be
+inspected. The post-repair network checker reports all 11 team-runner containers
+missing, so no per-runner probes ran. The initial degraded snapshot recorded
+protected/external denials but also failed approved-gateway and storage-health
+checks. The retained 2026-10-01 11-runner certificate remains separate.
+Current observations are in
+[`local_compose_connectivity_evidence.json`](../../mas/docs/provenance/local_compose_connectivity_evidence.json)
+and the current matrix in
+[`network_boundary_live_current.json`](../../mas/docs/provenance/network_boundary_live_current.json), plus the retained prior matrix at
+[`network_boundary_live.json`](../../mas/docs/provenance/network_boundary_live.json).
+The secret-safe host record is
 [`dev_host_readiness.json`](../../mas/docs/provenance/dev_host_readiness.json).
 This does not change the native-Linux release boundary: the release result is
 `RELEASE_CERTIFICATION_PENDING`, Kata is `AVAILABLE` for the current WSL2
@@ -15,19 +33,35 @@ development host but remains outside native release certification, and direct
 Firecracker is compatibility/superseded evidence rather than an active policy
 tier.
 
-**Current certification refresh (2026-09-30):** the exact OpenCode v1.18.21
-candidate has a retained source snapshot, pinned image digest, per-scanner
-sanitized results, exact tool versions/invocations, result hashes, and
-CycloneDX SBOM under
-[`opencode-candidate/2026-09-30-v1.18.21`](../../mas/docs/provenance/opencode-candidate/2026-09-30-v1.18.21/).
-The technical gate remains blocked by 762 findings and 54 Semgrep
-coverage/execution errors. The older v1.17.13 record has no retained raw
-results or exact source snapshot; its scalar counts are removed from current
-machine-readable evidence and do not contribute to release or remediation
-totals. The current local-Compose ledger has 11 blocked checks, including
-worker reconciliation, network boundary, trace/SLO, object-store, and API
-evidence because project and worker inventory routes return HTTP 503. The
-current WSL host does not establish native-Linux certification.
+**Current certification refresh (2026-10-02):** the exact OpenCode v1.18.21
+candidate retains the source snapshot, pinned image digest, sanitized scanner
+results, exact tool versions/invocations, result hashes, and CycloneDX SBOM
+under
+[`opencode-candidate/2026-10-02-v1.18.21-r4`](../../mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/).
+Primary results contain 383 current records (328 Semgrep, 55 TruffleHog, 0
+`SkillSpector`); seven findings from an unfiltered same-source Semgrep run are
+carried forward because two failing workflow matchers were excluded from the
+current invocation. Normalized Actionlint/Zizmor supplements add 119, and the
+Bun-transpiled Semgrep supplement adds four records, for 513 active review
+records after carry-forward, not 513 unique vulnerabilities. The primary
+Semgrep run has 328 findings and zero execution failures, with six explained
+TypeScript parser gaps. Semgrep 1.168.0 then scanned Bun 1.3.14 output from all
+six exact TypeScript paths: all three AIAT-serving paths completed without a
+parser error, producing four path-join findings at three source locations.
+Those findings remain open for operator review. One parser error remains on
+non-AIAT-serving LSP source, and total unexplained scanner errors remain zero.
+TruffleHog produced 55 unverified
+records, including two duplicate URI records; the normalized set has 53
+locations (42 documentation examples, 8 test fixtures, and 3 false positives),
+with zero verified secrets. Two runtime process-launch findings and three
+path-join source locations still need review; no confirmed AIAT-owned defect is
+recorded. Six review rows remain
+open and the technical gate remains blocked. The older v1.17.13 record has no
+retained raw results or exact source snapshot; its scalar counts remain
+excluded from active findings. The local live ledger records 80 pass, 1 fail,
+3 blocked, and 5 not-in-scope checks; the failure is the runner network matrix,
+which cannot probe stopped team-runner containers. The current WSL host does
+not establish native-Linux certification.
 
 ## Purpose
 
@@ -154,10 +188,16 @@ AIAT must make dangerous automation bounded, attributable, observable, and recov
   explicit Python 3.12 runtime, retains the exact compressed source archive,
   redacts scanner secret fields/source context before storing raw JSON, records
   per-rule counts and sanitized-result hashes, and validates those artifacts
-  against the candidate package. The 2026-09-30 local v1.18.21 package has
-  passing tool provisioning, SBOM generation, and AIAT boundary regression;
-  its security gate remains blocked on 762 findings and 54 Semgrep
-  execution/coverage errors. See the [retained candidate report](../../mas/docs/provenance/opencode-candidate/2026-09-30-v1.18.21/candidate-certification.json)
+  against the candidate package. The 2026-10-02 local v1.18.21 package has
+  passing tool provisioning, SBOM generation, and AIAT boundary regression.
+  The r4 package retains 383 current primary scanner findings, seven same-source
+  Semgrep carry-forward findings, 119 normalized Actionlint/Zizmor records, and
+  four Bun-transpiled Semgrep findings (513 active review records; not a
+  unique-vulnerability count). All three AIAT-serving TypeScript paths were
+  scanned without parser errors; their four path-join findings remain open.
+  One parser error remains on non-AIAT-serving LSP source. The technical gate
+  remains blocked with six open review rows. See the [retained candidate
+  report](../../mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/candidate-certification.json)
   and [review register](../../mas/docs/provenance/security_scan_review.yaml);
   no worker activation is inferred.
 - Worker reconciliation uses a scanner-reported file count when the tool
