@@ -244,8 +244,10 @@ class CreateProjectRequest(TypedDict):
     description: NotRequired[str | Any]
     flow_id: NotRequired[str | Any]
     human_requester: NotRequired[str | Any]
+    idempotency_key: NotRequired[str | Any]
     initial_context: NotRequired[list[ProjectContextSeedRequest]]
     name: Required[str]
+    start_immediately: NotRequired[bool]
     workspace: NotRequired[ProjectWorkspaceRequest | Any]
 
 class CredentialApprovalDecisionRequest(TypedDict):
@@ -3172,6 +3174,15 @@ OPERATIONS: dict[str, ApiOperation] = {
         request_body_type='CanonicalSprintUpdateRequest',
         response_types=('HTTPValidationError',),
     ),
+    'start_project_projects__project_id__start_post': ApiOperation(
+        operation_id='start_project_projects__project_id__start_post',
+        method='POST',
+        path='/projects/{project_id}/start',
+        path_params=('project_id',),
+        query_params=(),
+        request_body_type=None,
+        response_types=('HTTPValidationError',),
+    ),
     'get_state_history_projects__project_id__state_history_get': ApiOperation(
         operation_id='get_state_history_projects__project_id__state_history_get',
         method='GET',
@@ -3535,7 +3546,7 @@ OPERATIONS: dict[str, ApiOperation] = {
 }
 
 MODEL_COUNT = 138
-OPERATION_COUNT = 271
+OPERATION_COUNT = 272
 
 __all__ = [
     "ApiOperation",

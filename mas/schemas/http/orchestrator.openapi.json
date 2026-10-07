@@ -1791,6 +1791,19 @@
             ],
             "title": "Human Requester"
           },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          },
           "initial_context": {
             "items": {
               "$ref": "#/components/schemas/ProjectContextSeedRequest"
@@ -1804,6 +1817,11 @@
             "minLength": 1,
             "title": "Name",
             "type": "string"
+          },
+          "start_immediately": {
+            "default": true,
+            "title": "Start Immediately",
+            "type": "boolean"
           },
           "workspace": {
             "anyOf": [
@@ -16130,7 +16148,7 @@
         "summary": "List Projects"
       },
       "post": {
-        "description": "Human creates a project request. Triggers CEO via SYSTEM_EVENT.",
+        "description": "Create a project and optionally start its CEO feasibility work.",
         "operationId": "create_project_projects_post",
         "requestBody": {
           "content": {
@@ -19350,6 +19368,49 @@
           }
         },
         "summary": "Update Canonical Sprint"
+      }
+    },
+    "/projects/{project_id}/start": {
+      "post": {
+        "description": "Start a prepared project through WorkflowController and queue CEO work.",
+        "operationId": "start_project_projects__project_id__start_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Start Project Projects  Project Id  Start Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Project"
       }
     },
     "/projects/{project_id}/state-history": {

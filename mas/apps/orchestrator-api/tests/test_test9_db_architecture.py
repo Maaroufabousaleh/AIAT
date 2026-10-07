@@ -148,7 +148,11 @@ async def test_create_project_returns_row(client):
     storage.transition_project = AsyncMock(return_value=_fake_project("PENDING", pid))
     _patch(storage)
 
-    r = await client.post("/projects", json={"name": "Arch Test Project"})
+    r = await client.post(
+        "/projects",
+        headers={"X-API-Key": "test-operator-key"},
+        json={"name": "Arch Test Project"},
+    )
     assert r.status_code == 201
     data = r.json()
     assert "id" in data

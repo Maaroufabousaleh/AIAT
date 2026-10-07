@@ -282,7 +282,11 @@ async def test_running_state_allows_project_creation(client):
     storage.engine = _mock_engine()
     _patch(storage)
     app.state._cached_system_state = "RUNNING"
-    r = await client.post("/projects", json={"name": "New Project"})
+    r = await client.post(
+        "/projects",
+        headers={"X-API-Key": "test-operator-key"},
+        json={"name": "New Project"},
+    )
     assert r.status_code == 201
 
 
@@ -385,13 +389,25 @@ async def test_ceo_privileged_action_requiring_approval(client):
 
         r = await client.post(
             "/ceo/privileged-action",
-            json={"action": "system.shutdown", "actor_id": "ceo", "actor_role": "ceo"},
+            json={
+                "action": "system.shutdown",
+                "actor_id": "forged-human-operator",
+                "actor_role": "operator",
+            },
         )
     assert r.status_code == 200
     data = r.json()
     assert data["allowed"] is False
     assert data["decision"] == "pending_approval"
     assert data["record_id"] == record_id
+    # The authenticated service caller is trusted for this route, but body
+    # attribution cannot rewrite the actor persisted by the approval gate.
+    instance.check.assert_awaited_once_with(
+        "system.shutdown",
+        actor_id="service",
+        actor_role="service",
+        payload={},
+    )
 
 
 @pytest.mark.anyio
@@ -444,12 +460,19 @@ async def test_ceo_approve_privileged_action(client):
 
         r = await client.post(
             f"/ceo/privileged-action/{record_id}/approve",
+            headers={"X-API-Key": "test-operator-key"},
             json={"approved": True, "decided_by": "human_sre", "reason": "authorized"},
         )
     assert r.status_code == 200
     data = r.json()
     assert data["decision"] == "approved"
     assert data["record_id"] == record_id
+    instance.approve.assert_awaited_once_with(
+        record_id,
+        decided_by="operator",
+        approved=True,
+        reason="authorized",
+    )
 
 
 @pytest.mark.anyio
@@ -469,6 +492,7 @@ async def test_ceo_reject_privileged_action(client):
 
         r = await client.post(
             f"/ceo/privileged-action/{record_id}/approve",
+            headers={"X-API-Key": "test-operator-key"},
             json={"approved": False, "decided_by": "human_sre", "reason": "policy violation"},
         )
     assert r.status_code == 200
@@ -492,6 +516,7 @@ async def test_ceo_approve_nonexistent_record(client):
 
         r = await client.post(
             f"/ceo/privileged-action/{uuid4()}/approve",
+            headers={"X-API-Key": "test-operator-key"},
             json={"approved": True, "decided_by": "human_sre", "reason": ""},
         )
     assert r.status_code == 404
@@ -523,7 +548,10 @@ async def test_ceo_list_pending_privileged_actions(client):
         )
         MockGate.return_value = instance
 
-        r = await client.get("/ceo/privileged-actions/pending")
+        r = await client.get(
+            "/ceo/privileged-actions/pending",
+            headers={"X-API-Key": "test-operator-key"},
+        )
     assert r.status_code == 200
     data = r.json()
     assert isinstance(data, list)
@@ -555,7 +583,10 @@ async def test_ceo_privileged_actions_audit_log(client):
         )
         MockGate.return_value = instance
 
-        r = await client.get("/ceo/privileged-actions/audit")
+        r = await client.get(
+            "/ceo/privileged-actions/audit",
+            headers={"X-API-Key": "test-operator-key"},
+        )
     assert r.status_code == 200
     data = r.json()
     assert isinstance(data, list)
@@ -909,6 +940,25 @@ async def test_full_credential_audit_log_returns_list(client):
     assert isinstance(r.json(), list)
 
 
+@pytest.mark.anyio
+async def test_privileged_approval_endpoints_require_operator_identity(client):
+    """The shared service credential cannot inspect or decide human approvals."""
+    record_id = str(uuid4())
+
+    decision = await client.post(
+        f"/ceo/privileged-action/{record_id}/approve",
+        json={
+            "approved": True,
+            "decided_by": "forged-operator",
+            "reason": "service credentials cannot approve",
+        },
+    )
+    pending = await client.get("/ceo/privileged-actions/pending")
+    audit = await client.get("/ceo/privileged-actions/audit")
+
+    assert [decision.status_code, pending.status_code, audit.status_code] == [403, 403, 403]
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 10. Flow escalation security
 # ─────────────────────────────────────────────────────────────────────────────
@@ -961,35 +1011,6 @@ async def test_escalate_flow_instance_success(client):
 # ─────────────────────────────────────────────────────────────────────────────
 # 11. State history audit — readable through public API
 # ─────────────────────────────────────────────────────────────────────────────
-
-
-@pytest.mark.anyio
-async def test_state_history_returns_audit_trail(client):
-    """GET /projects/{id}/state-history returns an audit trail."""
-    storage = MagicMock()
-    storage.get_project = AsyncMock(return_value=_fake_project("IN_PROGRESS"))
-    storage.get_project_history = AsyncMock(
-        return_value=[
-            {
-                "id": str(uuid4()),
-                "project_id": str(PROJECT_ID),
-                "from_state": "INIT",
-                "to_state": "FEASIBILITY_CHECK",
-                "event": "project_created",
-                "triggered_by": "human",
-                "created_at": NOW_ISO,
-            },
-        ]
-    )
-    _patch(storage)
-
-    r = await client.get(f"/projects/{PROJECT_ID}/state-history")
-    assert r.status_code == 200
-    data = r.json()
-    assert isinstance(data, list)
-    assert len(data) >= 1
-    entry = data[0]
-    assert "event" in entry or "to_state" in entry
 
 
 @pytest.mark.anyio

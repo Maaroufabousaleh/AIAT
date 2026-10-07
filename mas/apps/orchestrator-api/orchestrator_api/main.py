@@ -1253,6 +1253,8 @@ class CreateProjectRequest(BaseModel):
     human_requester: str | None = None
     config: dict[str, Any] | None = None
     flow_id: UUID | None = None
+    start_immediately: bool = True
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=255)
     workspace: ProjectWorkspaceRequest | None = None
     initial_context: list[ProjectContextSeedRequest] = Field(default_factory=list, max_length=25)
     company_id: UUID = DEFAULT_COMPANY_ID
@@ -1263,6 +1265,16 @@ class CreateProjectRequest(BaseModel):
         normalized = value.strip()
         if not normalized:
             raise ValueError("name must not be blank")
+        return normalized
+
+    @field_validator("idempotency_key")
+    @classmethod
+    def normalize_idempotency_key(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("idempotency_key must not be blank")
         return normalized
 
 
@@ -2287,11 +2299,17 @@ def _build_stage_directive(
     parent_id: str | None = None,
     triggered_by_event: str | None = None,
     directive_override: tuple[str, str] | None = None,
+    transition_id: UUID | str | None = None,
 ) -> dict[str, Any] | None:
     stage_directive = directive_override or PROJECT_STAGE_DIRECTIVES.get(state)
     if stage_directive is None:
         return None
     recipient_team, action = stage_directive
+    message_id = (
+        str(uuid5(NAMESPACE_URL, f"aiat:project-transition:{transition_id}:stage:{action}"))
+        if transition_id is not None
+        else str(uuid4())
+    )
     payload: dict[str, Any] = {
         "action": action,
         "state": state,
@@ -2300,7 +2318,7 @@ def _build_stage_directive(
     if triggered_by_event:
         payload["triggered_by_event"] = triggered_by_event
     directive: dict[str, Any] = {
-        "message_id": str(uuid4()),
+        "message_id": message_id,
         "correlation_id": project_id,
         "msg_type": MessageType.DIRECTIVE.value,
         "sender_id": "orchestrator",
@@ -2418,14 +2436,14 @@ async def publish_system_event(
     """Publish a SYSTEM_EVENT and report router acceptance.
 
     ``transition_id`` is the stable message identity persisted by the narrow
-    project-transition outbox.  The optional stage directive remains a
-    separate, actionable message with its existing retry behavior; outbox
-    replays only retry the system event so a router outage cannot create a
-    second actionable directive on every replay.
+    project-transition outbox. Actionable stage directives derived from that
+    transition use a stable sibling identity, allowing the outbox to replay
+    both without creating duplicate work.
     """
     if include_stage_directive:
         _cancel_project_stage_retries(project_id)
     message_id = str(transition_id) if transition_id is not None else str(uuid4())
+    event_context = dict(context)
     envelope = {
         "message_id": message_id,
         "correlation_id": project_id,
@@ -2440,17 +2458,32 @@ async def publish_system_event(
             "from_state": from_state,
             "to_state": to_state,
             "actor_id": actor_id,
-            "context": context,
+            "context": event_context,
         },
         "created_at": datetime.now(tz=UTC).isoformat(),
     }
+    project_start = (
+        from_state == ProjectState.INIT.value
+        and to_state == ProjectState.FEASIBILITY_CHECK.value
+        and event == WorkflowEvent.PROJECT_CREATED.value
+    )
+    directive_context: dict[str, Any] | str = context
+    directive_override: tuple[str, str] | None = None
+    if project_start:
+        directive_override = ("exec_ceo", "START_FEASIBILITY")
+        directive_context = {
+            "project_name": context.get("name") or context.get("project_name"),
+            "description": context.get("description"),
+        }
     directive = (
         _build_stage_directive(
             project_id=project_id,
             state=to_state,
-            context=context,
+            context=directive_context,
             parent_id=envelope["message_id"],
             triggered_by_event=event,
+            directive_override=directive_override,
+            transition_id=transition_id,
         )
         if include_stage_directive
         else None
@@ -2463,16 +2496,16 @@ async def publish_system_event(
 
     if not include_stage_directive or directive is None:
         return system_delivered
+    directive_delivered = False
     try:
-        delivered = await _publish_router_envelope(directive)
+        directive_delivered = await _publish_router_envelope(directive)
     except Exception:
-        delivered = False
         logger.exception(
             "Failed to publish stage DIRECTIVE: project=%s state=%s",
             project_id,
             to_state,
         )
-    if delivered:
+    if directive_delivered:
         logger.info(
             "Published stage directive: project=%s state=%s action=%s team=%s",
             project_id,
@@ -2480,9 +2513,11 @@ async def publish_system_event(
             directive["payload"]["action"],
             directive["recipient_team"],
         )
-    else:
+    elif not project_start:
+        # Initial project-start directives have a durable transition-outbox
+        # retry path. Avoid racing it with a detached in-process retry.
         _schedule_stage_directive_retry(project_id, to_state, directive)
-    return system_delivered
+    return system_delivered and directive_delivered
 
 
 async def drain_project_transition_outbox(
@@ -2505,15 +2540,23 @@ async def drain_project_transition_outbox(
         if outbox is None:
             continue
         try:
+            event_context = dict(outbox.get("payload") or {})
+            include_start_directive = (
+                str(outbox.get("from_state") or "") == ProjectState.INIT.value
+                and str(outbox.get("to_state") or "")
+                == ProjectState.FEASIBILITY_CHECK.value
+                and str(outbox.get("event") or "")
+                == WorkflowEvent.PROJECT_CREATED.value
+            )
             delivered = await publish_system_event(
                 str(outbox["project_id"]),
                 str(outbox.get("from_state") or ""),
                 str(outbox["to_state"]),
                 str(outbox["event"]),
                 str(outbox.get("triggered_by") or "system"),
-                dict(outbox.get("payload") or {}),
+                event_context,
                 transition_id=outbox["id"],
-                include_stage_directive=False,
+                include_stage_directive=include_start_directive,
             )
         except Exception as exc:
             delivered = False
@@ -3659,21 +3702,47 @@ async def _persist_project_workspace(
     return project
 
 
-@app.post("/projects", status_code=201)
-async def create_project(req: CreateProjectRequest) -> dict[str, Any]:
-    """Human creates a project request. Triggers CEO via SYSTEM_EVENT."""
+async def _create_project_for_principal(
+    req: CreateProjectRequest,
+    *,
+    principal: str,
+) -> dict[str, Any]:
+    """Create a project after its caller has established an authenticated principal."""
     tid = current_trace_id() or new_trace_id()
     bind_trace_id(tid)
 
     storage = _storage()
-    if inspect.iscoroutinefunction(getattr(storage, "get_company", None)):
-        if await storage.get_company(req.company_id) is None:
-            raise HTTPException(404, f"Company {req.company_id} not found")
+    company_reader = getattr(storage, "get_company", None)
+    if (
+        inspect.iscoroutinefunction(company_reader)
+        and await company_reader(req.company_id) is None
+    ):
+        raise HTTPException(404, f"Company {req.company_id} not found")
     flow_for_instance: dict[str, Any] | None = None
     if req.flow_id is not None:
         flow_for_instance = await storage.get_flow(req.flow_id)
         if flow_for_instance is None:
             raise HTTPException(404, f"Flow {req.flow_id} not found")
+
+    idempotency_project_id: UUID | None = None
+    idempotency_digest: str | None = None
+    if req.idempotency_key is not None:
+        idempotency_project_id = uuid5(
+            NAMESPACE_URL,
+            f"aiat:project-create:{req.company_id}:{req.idempotency_key}",
+        )
+        identity_payload = req.model_dump(
+            mode="json",
+            exclude={"idempotency_key", "human_requester"},
+        )
+        idempotency_digest = hashlib.sha256(
+            json.dumps(
+                identity_payload,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
+        ).hexdigest()
 
     project_config = dict(req.config or {})
     # Every canonical project starts with an explicit, provider-neutral PM
@@ -3683,6 +3752,11 @@ async def create_project(req: CreateProjectRequest) -> dict[str, Any]:
     pm_provisioning.setdefault("mapping_profile", DEDICATED_PROJECT_MAPPING_PROFILE)
     pm_provisioning.setdefault("state", "UNPROVISIONED")
     project_config["pm_provisioning"] = pm_provisioning
+    if idempotency_digest is not None:
+        project_config["_aiat_project_create"] = {
+            "request_sha256": idempotency_digest,
+            "version": 1,
+        }
     requested_workspace: dict[str, Any] | None = None
     if req.workspace is not None:
         requested_workspace = {
@@ -3699,26 +3773,64 @@ async def create_project(req: CreateProjectRequest) -> dict[str, Any]:
             # readers; the workspace block is the canonical source metadata.
             project_config.setdefault("repository_url", req.workspace.repository_url)
 
-    # Create project
-    project = await storage.create_project(
-        name=req.name,
-        description=req.description,
-        created_by=req.human_requester or "human",
-        human_requester=req.human_requester,
-        company_id=req.company_id,
-        config=project_config or None,
-        initial_context=[
-            {
-                **seed.model_dump(exclude_none=True),
-                "created_by": req.human_requester or "human",
-            }
-            for seed in req.initial_context
-        ],
-    )
+    project: dict[str, Any] | None = None
+    if idempotency_project_id is not None:
+        project = await storage.get_project(idempotency_project_id)
+        if project is not None:
+            _verify_project_create_replay(project, idempotency_digest)
 
+    created_new = project is None
+    if project is None:
+        create_kwargs: dict[str, Any] = {
+            "name": req.name,
+            "description": req.description,
+            "created_by": principal,
+            "human_requester": principal,
+            "company_id": req.company_id,
+            "config": project_config or None,
+            "initial_context": [
+                {
+                    **seed.model_dump(exclude_none=True),
+                    "created_by": principal,
+                }
+                for seed in req.initial_context
+            ],
+        }
+        if idempotency_project_id is not None:
+            create_kwargs["project_id"] = idempotency_project_id
+        try:
+            project = await storage.create_project(**create_kwargs)
+        except Exception:
+            if idempotency_project_id is None:
+                raise
+            # A concurrent retry may win the deterministic project ID after
+            # this request's initial lookup. Return only a row carrying the
+            # exact same payload digest; unrelated collisions remain errors.
+            try:
+                raced_project = await storage.get_project(idempotency_project_id)
+            except Exception:
+                raise
+            if raced_project is None:
+                raise
+            _verify_project_create_replay(raced_project, idempotency_digest)
+            project = raced_project
+            created_new = False
+
+    assert project is not None
     pid = str(project["id"])
 
-    if requested_workspace is not None and requested_workspace["status"] != "DISABLED":
+    if requested_workspace is not None:
+        existing_workspace = (project.get("config") or {}).get("workspace")
+        if (
+            isinstance(existing_workspace, dict)
+            and existing_workspace.get("status") == "READY"
+        ):
+            requested_workspace = existing_workspace
+
+    if (
+        requested_workspace is not None
+        and requested_workspace["status"] not in {"DISABLED", "READY"}
+    ):
         try:
             repository = await _invoke_project_repository_tool(
                 project_id=UUID(pid),
@@ -3754,69 +3866,153 @@ async def create_project(req: CreateProjectRequest) -> dict[str, Any]:
 
     # Keep the state gauge bounded. Per-project drill-down belongs in the
     # structured workflow/audit records, not an unbounded Prometheus label.
-    observe_project_state(ProjectState.INIT)
-    projects_created_total.inc()
+    if created_new:
+        observe_project_state(ProjectState.INIT)
+        projects_created_total.inc()
 
-    # Trigger workflow: INIT → FEASIBILITY_CHECK
-    try:
-        creation_transition = await _controller().transition(
-            project_id=pid,
-            current_state=ProjectState.INIT,
-            event=WorkflowEvent.PROJECT_CREATED,
-            actor_id=req.human_requester or "human",
-            context={"name": req.name, "description": req.description},
-        )
+    if req.start_immediately and str(project.get("state") or ProjectState.INIT.value) == ProjectState.INIT.value:
+        try:
+            creation_transition = await _controller().transition(
+                project_id=pid,
+                current_state=ProjectState.INIT,
+                event=WorkflowEvent.PROJECT_CREATED,
+                actor_id=principal,
+                context={
+                    "name": req.name,
+                    "description": req.description,
+                },
+            )
+        except InvalidTransitionError:
+            logger.warning("Could not auto-transition new project %s", pid)
+            creation_transition = None
+
         if creation_transition is not None:
             record_project_state_transition(
                 creation_transition.prior_state,
                 creation_transition.next_state,
             )
-    except InvalidTransitionError:
-        logger.warning("Could not auto-transition new project %s", pid)
 
-    # Return the authoritative post-transition row rather than the INSERT
-    # snapshot, so callers never observe a stale INIT state.
-    project_reader = getattr(storage, "get_project", None)
-    if inspect.iscoroutinefunction(project_reader):
-        refreshed_project = await project_reader(UUID(pid))
-        if refreshed_project is not None:
-            project = refreshed_project
+            # Return the authoritative post-transition row rather than the
+            # INSERT snapshot, so callers never observe a stale INIT state.
+            project_reader = getattr(storage, "get_project", None)
+            if inspect.iscoroutinefunction(project_reader):
+                refreshed_project = await project_reader(UUID(pid))
+                if refreshed_project is not None:
+                    project = refreshed_project
 
-    # Publish a DIRECTIVE to CEO to start feasibility. Keep the original
-    # project fields in the payload for the CEO prompt, while using the
-    # shared stage publisher so rejected/unavailable router responses retry.
-    directive = _build_stage_directive(
-        project_id=pid,
-        state="FEASIBILITY_CHECK",
-        context={"project_name": req.name, "description": req.description},
-        triggered_by_event=WorkflowEvent.PROJECT_CREATED.value,
-        directive_override=("exec_ceo", "START_FEASIBILITY"),
-    )
-    assert directive is not None
-    directive["payload"].update(
-        {"project_name": req.name, "description": req.description}
-    )
-    try:
-        delivered = await _publish_router_envelope(directive)
-    except Exception:
-        delivered = False
-        logger.exception("Failed to publish project start directive")
-    if not delivered:
-        _schedule_stage_directive_retry(pid, "FEASIBILITY_CHECK", directive)
 
     if req.flow_id is not None and flow_for_instance is not None:
+        flow_instance_reader = getattr(storage, "get_flow_instance_by_project", None)
+        flow_instance = (
+            await flow_instance_reader(UUID(pid))
+            if idempotency_project_id is not None
+            and inspect.iscoroutinefunction(flow_instance_reader)
+            else None
+        )
         try:
-            await storage.create_flow_instance(
-                flow_id=req.flow_id,
-                flow_version=flow_for_instance["version"],
-                project_id=project["id"],
-            )
+            if flow_instance is None:
+                await storage.create_flow_instance(
+                    flow_id=req.flow_id,
+                    flow_version=flow_for_instance["version"],
+                    project_id=project["id"],
+                )
         except HTTPException:
             raise
         except Exception:
-            logger.exception("Failed to create flow instance for project %s", pid)
+            if idempotency_project_id is None or not inspect.iscoroutinefunction(
+                flow_instance_reader
+            ):
+                logger.exception("Failed to create flow instance for project %s", pid)
+            else:
+                # A concurrent replay can race the uniqueness constraint. It
+                # is safe only when a canonical instance is now readable.
+                flow_instance = await flow_instance_reader(UUID(pid))
+                if flow_instance is None:
+                    logger.exception("Failed to create flow instance for project %s", pid)
 
     return _serialize(project)
+
+
+def _verify_project_create_replay(
+    project: dict[str, Any],
+    expected_digest: str | None,
+) -> None:
+    """Reject key reuse unless the existing project is the exact same request."""
+    config = project.get("config")
+    metadata = config.get("_aiat_project_create") if isinstance(config, dict) else None
+    if (
+        expected_digest is None
+        or not isinstance(metadata, dict)
+        or metadata.get("request_sha256") != expected_digest
+    ):
+        raise HTTPException(409, "Project idempotency key was already used for another request")
+
+
+@app.post("/projects", status_code=201)
+async def create_project(req: CreateProjectRequest, request: Request) -> dict[str, Any]:
+    """Create a project and optionally start its CEO feasibility work."""
+    principal = _authenticated_principal(request)
+    if req.start_immediately:
+        _require_operator_identity(request)
+    elif principal not in {"operator", "service"}:
+        raise HTTPException(
+            403,
+            "project creation requires an operator or governed service credential",
+        )
+    return await _create_project_for_principal(req, principal=principal)
+
+
+@app.post("/projects/{project_id}/start")
+async def start_project(project_id: UUID, request: Request) -> dict[str, Any]:
+    """Start a prepared project through WorkflowController and queue CEO work."""
+    _require_operator_identity(request)
+    storage = _storage()
+    project = await storage.get_project(project_id)
+    if project is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+
+    try:
+        current_state = ProjectState(str(project.get("state") or ""))
+    except ValueError:
+        raise HTTPException(409, "Project has an invalid workflow state") from None
+
+    if current_state == ProjectState.FEASIBILITY_CHECK:
+        return {
+            "project_id": str(project_id),
+            "state": current_state.value,
+            "status": "already_started",
+        }
+    if current_state != ProjectState.INIT:
+        raise HTTPException(409, "Only a prepared project can be started")
+
+    try:
+        result = await _controller().transition(
+            project_id=str(project_id),
+            current_state=ProjectState.INIT,
+            event=WorkflowEvent.PROJECT_CREATED,
+            actor_id=_authenticated_principal(request),
+            context={
+                "name": project.get("name"),
+                "description": project.get("description"),
+            },
+        )
+    except InvalidTransitionError as exc:
+        raise HTTPException(409, "Project is no longer in a startable state") from exc
+    except ValueError as exc:
+        raise HTTPException(409, "Project state changed; refresh and try again") from exc
+
+    if result is None or str(result.next_state) != ProjectState.FEASIBILITY_CHECK.value:
+        raise HTTPException(503, "Workflow controller did not confirm project start")
+    if result.transition_id is None:
+        raise HTTPException(503, "Workflow controller did not record a durable start intent")
+
+    record_project_state_transition(result.prior_state, result.next_state)
+    return {
+        "project_id": str(project_id),
+        "state": ProjectState.FEASIBILITY_CHECK.value,
+        "status": "started",
+        "directive_delivery": "durably_queued",
+    }
 
 
 @app.post("/projects/self-improvement", status_code=201)
@@ -10585,7 +10781,11 @@ async def _attach_governance_model_snapshot(
 
 
 @app.post("/model-profiles", status_code=201)
-async def create_model_profile(req: ModelProfileCreateRequest) -> dict[str, Any]:
+async def create_model_profile(
+    req: ModelProfileCreateRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _require_operator_identity(request)
     storage = _storage()
     from mas_core.llm_gateway import ModelProfile, ModelProfileStatus
 
@@ -10615,7 +10815,20 @@ async def create_model_profile(req: ModelProfileCreateRequest) -> dict[str, Any]
 
 
 @app.post("/model-overrides", status_code=201)
-async def create_model_override(req: ModelOverrideCreateRequest) -> dict[str, Any]:
+async def create_model_override(
+    req: ModelOverrideCreateRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _require_operator_identity(request)
+    principal = _authenticated_principal(request)
+    return await _create_model_override(req, requested_by=principal)
+
+
+async def _create_model_override(
+    req: ModelOverrideCreateRequest,
+    *,
+    requested_by: str,
+) -> dict[str, Any]:
     storage = _storage()
     if await storage.get_project(req.project_id) is None:
         raise HTTPException(404, "Project not found")
@@ -10623,7 +10836,7 @@ async def create_model_override(req: ModelOverrideCreateRequest) -> dict[str, An
         raise HTTPException(404, "Requested Model Profile not found")
     override = await storage.create_model_override_request(
         project_id=req.project_id,
-        requested_by=req.requested_by,
+        requested_by=requested_by,
         requested_profile_id=req.requested_profile_id,
         reason=req.reason,
         scope=req.scope,
@@ -10635,7 +10848,10 @@ async def create_model_override(req: ModelOverrideCreateRequest) -> dict[str, An
 async def decide_model_override(
     override_id: UUID,
     req: ModelOverrideDecisionRequest,
+    request: Request,
 ) -> dict[str, Any]:
+    _require_operator_identity(request)
+    principal = _authenticated_principal(request)
     storage = _storage()
     override = await storage.get_model_override_request(override_id)
     if override is None:
@@ -10646,7 +10862,7 @@ async def decide_model_override(
         scope_type="model_override_request",
         scope_id=override_id,
         decision=req.decision,
-        decided_by=req.decided_by,
+        decided_by=principal,
         reason=req.reason,
         evidence=req.evidence,
         expires_at=req.expires_at,
@@ -10654,7 +10870,7 @@ async def decide_model_override(
     updated = await storage.update_model_override_request(
         override_id,
         status=req.decision,
-        decided_by=req.decided_by,
+        decided_by=principal,
         decision=req.decision,
         expires_at=req.expires_at,
     )
@@ -10664,7 +10880,12 @@ async def decide_model_override(
 
 
 @app.post("/model-profiles/{profile_id}/versions", status_code=201)
-async def add_model_profile_version(profile_id: str, req: ModelProfileVersionRequest) -> dict[str, Any]:
+async def add_model_profile_version(
+    profile_id: str,
+    req: ModelProfileVersionRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _require_operator_identity(request)
     from mas_core.llm_gateway import ModelProfileStatus, ModelProfileVersion, PrivacyClass
 
     storage = _storage()
@@ -10904,14 +11125,15 @@ async def executive_cfo_model_override(
     """Create a durable CFO model-override request for human decision."""
 
     principal = _require_executive_write_principal(request)
-    result = await create_model_override(
+    result = await _create_model_override(
         ModelOverrideCreateRequest(
             project_id=req.project_id,
             requested_by=req.requested_by,
             requested_profile_id=req.requested_profile_id,
             reason=req.reason,
             scope=req.scope,
-        )
+        ),
+        requested_by=principal,
     )
     override_id = result.get("id")
     safe_result = {
@@ -10930,7 +11152,7 @@ async def executive_cfo_model_override(
     return _executive_action_envelope(
         role="cfo",
         action="request_model_override",
-        requested_by=req.requested_by,
+        requested_by=principal,
         authenticated_principal=principal,
         result=safe_result,
         evidence={
@@ -10990,10 +11212,13 @@ async def executive_ceo_privileged_action(
     result = await request_privileged_action(
         PrivilegedActionRequest(
             action=req.action,
-            actor_id=req.requested_by,
-            actor_role="ceo",
+            # Request-body attribution is retained for API compatibility, but
+            # persisted audit identity must come from the authenticated key.
+            actor_id=principal,
+            actor_role=principal,
             payload=req.payload,
-        )
+        ),
+        request=request,
     )
     safe_result = {
         key: result.get(key)
@@ -11003,7 +11228,7 @@ async def executive_ceo_privileged_action(
     return _executive_action_envelope(
         role="ceo",
         action="request_privileged_action",
-        requested_by=req.requested_by,
+        requested_by=principal,
         authenticated_principal=principal,
         result=safe_result,
         evidence={
@@ -13910,14 +14135,21 @@ class PrivilegedApprovalRequest(BaseModel):
 
 
 @app.post("/ceo/privileged-action")
-async def request_privileged_action(req: PrivilegedActionRequest) -> dict[str, Any]:
+async def request_privileged_action(
+    req: PrivilegedActionRequest,
+    request: Request,
+) -> dict[str, Any]:
     """Request a privileged (Layer 2) action — gated through approval policy."""
+    principal = _require_executive_write_principal(request)
     gate = _priv_gate()
     await gate.ensure_tables()
     result = await gate.check(
         req.action,
-        actor_id=req.actor_id,
-        actor_role=req.actor_role,
+        # Keep the body fields for compatibility, but never trust them as
+        # audit identity. Only configured executive-write credentials may
+        # create a privileged-action request.
+        actor_id=principal,
+        actor_role=principal,
         payload=req.payload,
     )
     return result
@@ -13925,14 +14157,19 @@ async def request_privileged_action(req: PrivilegedActionRequest) -> dict[str, A
 
 @app.post("/ceo/privileged-action/{record_id}/approve")
 async def approve_privileged_action(
-    record_id: str, req: PrivilegedApprovalRequest
+    record_id: str,
+    req: PrivilegedApprovalRequest,
+    request: Request,
 ) -> dict[str, Any]:
     """Human approval or rejection of a pending privileged action."""
+    _require_operator_identity(request)
     gate = _priv_gate()
     await gate.ensure_tables()
     ok = await gate.approve(
         record_id,
-        decided_by=req.decided_by,
+        # ``decided_by`` remains accepted for API compatibility, but the
+        # durable audit actor must come from the authenticated principal.
+        decided_by=_authenticated_principal(request),
         approved=req.approved,
         reason=req.reason,
     )
@@ -13942,8 +14179,9 @@ async def approve_privileged_action(
 
 
 @app.get("/ceo/privileged-actions/pending")
-async def list_pending_privileged_actions() -> list[dict[str, Any]]:
+async def list_pending_privileged_actions(request: Request) -> list[dict[str, Any]]:
     """List privileged action requests awaiting human approval."""
+    _require_operator_identity(request)
     gate = _priv_gate()
     await gate.ensure_tables()
     rows = await gate.list_pending()
@@ -13951,8 +14189,12 @@ async def list_pending_privileged_actions() -> list[dict[str, Any]]:
 
 
 @app.get("/ceo/privileged-actions/audit")
-async def privileged_actions_audit(limit: int = 100) -> list[dict[str, Any]]:
+async def privileged_actions_audit(
+    request: Request,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
     """Return full privileged ops audit log."""
+    _require_operator_identity(request)
     gate = _priv_gate()
     await gate.ensure_tables()
     rows = await gate.audit_log(limit=limit)
@@ -14895,7 +15137,11 @@ async def _find_project_for_ceo_text(
     return (matches[0], False) if len(matches) == 1 else (None, len(matches) > 1)
 
 
-async def _handle_ceo_project_intent(instruction: str) -> dict[str, Any] | None:
+async def _handle_ceo_project_intent(
+    instruction: str,
+    *,
+    principal: str | None = None,
+) -> dict[str, Any] | None:
     lowered = instruction.lower()
     if "project" not in lowered:
         return None
@@ -15297,14 +15543,17 @@ async def _handle_ceo_project_intent(instruction: str) -> dict[str, Any] | None:
         )
 
     if any(word in lowered for word in ("create", "new", "start", "initialize", "init")):
+        if principal != "operator":
+            raise HTTPException(403, "CEO project creation requires an operator credential")
         name = _extract_named_text(instruction, "CEO Chat Project")
         description = _extract_description_text(instruction)
-        project = await create_project(
+        project = await _create_project_for_principal(
             CreateProjectRequest(
                 name=name,
                 description=description,
-                human_requester="human_operator",
-            )
+                start_immediately=True,
+            ),
+            principal=principal,
         )
         response = (
             f"I created project `{project.get('name')}` with ID `{project.get('id')}`. "
@@ -16194,6 +16443,8 @@ async def _handle_ceo_operator_intent(
     instruction: str,
     context_worker_id: UUID | None = None,
     context_confirmation_token: UUID | None = None,
+    *,
+    principal: str,
 ) -> dict[str, Any] | None:
     confirmation = await _handle_ceo_confirmation_intent(
         instruction,
@@ -16217,11 +16468,12 @@ async def _handle_ceo_operator_intent(
         (_handle_ceo_worker_intent, True),
     )
     for handler, accepts_worker_context in handlers:
-        action = (
-            await handler(instruction, context_worker_id)
-            if accepts_worker_context
-            else await handler(instruction)
-        )
+        if handler is _handle_ceo_project_intent:
+            action = await _handle_ceo_project_intent(instruction, principal=principal)
+        elif accepts_worker_context:
+            action = await handler(instruction, context_worker_id)
+        else:
+            action = await handler(instruction)
         if action is not None:
             return action
     return None
@@ -16270,12 +16522,14 @@ async def _store_new_ceo_command(
     *,
     message_id: str,
     instruction: str,
+    principal: str,
     context_worker_id: UUID | None,
     context_confirmation_token: UUID | None,
 ) -> tuple[dict[str, Any], bool]:
     record = {
         "request_id": message_id,
         "instruction": instruction,
+        "principal": principal,
         "context_worker_id": str(context_worker_id) if context_worker_id else None,
         "context_confirmation_token": (
             str(context_confirmation_token) if context_confirmation_token else None
@@ -16461,6 +16715,10 @@ async def _recover_ceo_commands(storage: AgentStorage) -> None:
             continue
         status = record.get("status")
         message_id = str(record.get("request_id") or key.removeprefix(_CEO_COMMAND_PREFIX))
+        principal = str(record.get("principal") or "").lower()
+        if principal != "operator":
+            logger.error("Refusing to recover CEO command without operator provenance")
+            continue
         if status == "RUNNING":
             recovered = await _transition_ceo_command(
                 storage,
@@ -16485,6 +16743,7 @@ async def _recover_ceo_commands(storage: AgentStorage) -> None:
                 else None
             ),
             message_id=message_id,
+            principal=principal,
         )
         task_group = app.state.ceo_command_task_group
         if task_group is None:
@@ -16502,6 +16761,7 @@ async def _process_ceo_operator_intent(
     context_worker_id: UUID | None,
     context_confirmation_token: UUID | None,
     message_id: str,
+    principal: str,
 ) -> None:
     """Run an API-owned CEO command after the chat request has been accepted."""
     storage: AgentStorage | None = app.state.storage
@@ -16525,6 +16785,7 @@ async def _process_ceo_operator_intent(
             instruction,
             context_worker_id,
             context_confirmation_token,
+            principal=principal,
         )
         if action is None:
             await _publish_ceo_chat_response(
@@ -16583,6 +16844,7 @@ async def _process_ceo_operator_intent(
 async def operator_send_to_ceo(
     req: OperatorToCeoRequest,
     background_tasks: BackgroundTasks,
+    request: Request,
     x_api_key: str | None = Header(None),
     authorization: str | None = Header(None),
 ) -> dict[str, Any]:
@@ -16603,6 +16865,9 @@ async def operator_send_to_ceo(
         req.context_worker_id,
         req.context_confirmation_token,
     )
+    principal = _authenticated_principal(request)
+    if api_owned:
+        _require_operator_identity(request)
     durable_record: dict[str, Any] | None = None
     if api_owned and req.async_mode:
         storage: AgentStorage | None = app.state.storage
@@ -16612,16 +16877,19 @@ async def operator_send_to_ceo(
             storage,
             message_id=message_id,
             instruction=instruction,
+            principal=principal,
             context_worker_id=req.context_worker_id,
             context_confirmation_token=req.context_confirmation_token,
         )
         expected_identity = (
             instruction,
+            principal,
             str(req.context_worker_id) if req.context_worker_id else None,
             str(req.context_confirmation_token) if req.context_confirmation_token else None,
         )
         stored_identity = (
             durable_record.get("instruction"),
+            durable_record.get("principal"),
             durable_record.get("context_worker_id"),
             durable_record.get("context_confirmation_token"),
         )
@@ -16710,6 +16978,7 @@ async def operator_send_to_ceo(
                 context_worker_id=req.context_worker_id,
                 context_confirmation_token=req.context_confirmation_token,
                 message_id=message_id,
+                principal=principal,
             )
         else:
             background_tasks.add_task(
@@ -16730,6 +16999,7 @@ async def operator_send_to_ceo(
         instruction,
         req.context_worker_id,
         req.context_confirmation_token,
+        principal=principal,
     )
     if action is not None:
         background_tasks.add_task(

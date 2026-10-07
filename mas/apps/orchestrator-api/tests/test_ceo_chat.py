@@ -490,9 +490,22 @@ async def test_operator_send_to_ceo_publishes_human_directive(client, monkeypatc
 
     monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
 
+    denied = await client.post(
+        "/ceo/message",
+        headers={"X-API-Key": "test-mas-key"},
+        json={
+            "message": (
+                "Initialize a new project named 'CEO Command Project' "
+                "with description 'Build through CEO chat'."
+            )
+        },
+    )
+    assert denied.status_code == 403
+    assert published == {}
+
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "Hello CEO, confirm you are online."},
     )
 
@@ -547,7 +560,7 @@ async def test_operator_send_to_ceo_async_mode_uses_caller_request_id(client, mo
 
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={
             "message": "Hello CEO, give me a concise operational summary.",
             "request_id": request_id,
@@ -625,7 +638,7 @@ async def test_operator_send_to_ceo_hiring_request_registers_candidate(client, m
 
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={
             "message": (
                 "Create a software engineering department and hire OpenCode "
@@ -979,7 +992,7 @@ async def test_operator_send_to_ceo_hiring_url_then_role_uses_repo_name(client, 
 
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "hire https://github.com/OpenHands/openhands as a software engineer"},
     )
 
@@ -1046,7 +1059,7 @@ async def test_operator_send_to_ceo_hiring_same_repo_reuses_existing_candidate(
 
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "hire https://github.com/OpenHands/openhands as a software engineer"},
     )
 
@@ -1108,7 +1121,7 @@ async def test_operator_send_to_ceo_hiring_name_conflict_blocks_overwrite(
 
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={
             "message": (
                 "hire a worker named coding specialist from "
@@ -1186,7 +1199,7 @@ async def test_operator_send_to_ceo_explains_production_department_routing(clien
 
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "why production dep?", "context_worker_id": str(worker_id)},
     )
 
@@ -1247,7 +1260,7 @@ async def test_operator_send_to_ceo_does_not_guess_ambiguous_hiring_followup(cli
 
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "why production dep?"},
     )
 
@@ -1302,7 +1315,7 @@ async def test_operator_send_to_ceo_uses_context_for_worker_pronoun(client, monk
 
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "what is its status?", "context_worker_id": str(worker_id)},
     )
 
@@ -1381,17 +1394,17 @@ async def test_operator_send_to_ceo_controls_named_worker_lifecycle(client, monk
 
     status_response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "status of worker openhands"},
     )
     approve_response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "approve worker openhands"},
     )
     activate_response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "activate worker openhands"},
     )
 
@@ -1474,7 +1487,7 @@ async def test_operator_send_to_ceo_blocks_approval_when_latest_evaluation_rejec
 
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "approve worker openhands"},
     )
 
@@ -1538,7 +1551,7 @@ async def test_operator_send_to_ceo_requires_evaluation_before_approving_externa
 
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "approve unevaluated_worker"},
     )
 
@@ -1602,7 +1615,7 @@ async def test_operator_send_to_ceo_rejects_inactive_candidate(client, monkeypat
 
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "reject worker rejected_candidate"},
     )
 
@@ -1666,7 +1679,7 @@ async def test_operator_send_to_ceo_blocks_rejecting_active_worker(client, monke
 
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "deny worker active_worker"},
     )
 
@@ -1738,7 +1751,7 @@ async def test_operator_send_to_ceo_prefers_exact_worker_name_over_substring(cli
 
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "status of worker ceo_chat_smoke_1783282647840"},
     )
 
@@ -1799,7 +1812,7 @@ async def test_operator_send_to_ceo_reclassifies_candidate_department(client, mo
 
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "reclassify openhands to QA"},
     )
 
@@ -1868,7 +1881,7 @@ async def test_operator_send_to_ceo_blocks_reclassifying_active_worker(client, m
 
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "reclassify active_opencode to QA"},
     )
 
@@ -1938,7 +1951,7 @@ async def test_operator_send_to_ceo_hiring_request_uses_existing_team_ids(client
 
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "Hire a security agent from https://github.com/example/security-worker."},
     )
 
@@ -1980,7 +1993,7 @@ async def test_operator_send_to_ceo_hiring_request_without_repo_asks_for_source(
 
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "Hire an agent for QA."},
     )
 
@@ -2057,7 +2070,7 @@ async def test_operator_send_to_ceo_creates_project_and_traces_workflow(client, 
 
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={
             "message": (
                 "Initialize a new project named 'CEO Command Project' "
@@ -2075,13 +2088,14 @@ async def test_operator_send_to_ceo_creates_project_and_traces_workflow(client, 
     storage.create_project.assert_awaited_once()
     assert len(app.state.controller.transitions) == 1
     assert app.state.controller.transitions[0]["event"] == WorkflowEvent.PROJECT_CREATED
-    assert len(published) == 3
+    # The transition publisher owns the durable SYSTEM_EVENT and its stage
+    # directive. This HTTP request publishes the operator's CEO task and the
+    # immediate response; transition delivery is covered by the outbox tests.
+    assert len(published) == 2
     assert published[0]["envelope"]["msg_type"] == "TASK"
     assert published[0]["envelope"]["payload"]["execution_owner"] == "orchestrator-api"
-    assert published[1]["envelope"]["msg_type"] == "DIRECTIVE"
-    assert published[1]["envelope"]["payload"]["action"] == "START_FEASIBILITY"
-    assert published[2]["envelope"]["msg_type"] == "RESPONSE"
-    assert {"kind": "project", "id": str(project_id)} in published[2]["envelope"]["payload"]["evidence"]["refs"]
+    assert published[1]["envelope"]["msg_type"] == "RESPONSE"
+    assert {"kind": "project", "id": str(project_id)} in published[1]["envelope"]["payload"]["evidence"]["refs"]
 
 
 @pytest.mark.anyio
@@ -2145,12 +2159,12 @@ async def test_operator_send_to_ceo_reads_company_and_hiring_board(client, monke
 
     company_response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "Show company overview."},
     )
     board_response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "Show hiring board status."},
     )
 
@@ -2195,7 +2209,7 @@ async def test_operator_send_to_ceo_reads_runtime_readiness(client, monkeypatch)
 
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "Show LangGraph CrewAI AutoGen Letta runtime readiness."},
     )
 
@@ -2269,7 +2283,7 @@ async def test_operator_send_to_ceo_fails_closed_without_configured_credentials(
 async def test_operator_send_to_ceo_rejects_empty_message(client):
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "   "},
     )
 

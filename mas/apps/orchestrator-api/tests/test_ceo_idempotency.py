@@ -130,6 +130,7 @@ async def test_deduplicated_async_ceo_request_is_still_scheduled(
 
     response = await client.post(
         "/ceo/message",
+        headers={"X-API-Key": "test-operator-key"},
         json={
             "message": "create a project named dedupe test",
             "request_id": "b870d9a2-8695-4f6e-870a-6f205202bdde",
@@ -143,6 +144,7 @@ async def test_deduplicated_async_ceo_request_is_still_scheduled(
 
     retry = await client.post(
         "/ceo/message",
+        headers={"X-API-Key": "test-operator-key"},
         json={
             "message": "create a project named dedupe test",
             "request_id": "b870d9a2-8695-4f6e-870a-6f205202bdde",
@@ -159,6 +161,7 @@ async def test_deduplicated_async_ceo_request_is_still_scheduled(
         main.app.state.storage,
         message_id=recovered_id,
         instruction="create a project named recovered command",
+        principal="operator",
         context_worker_id=None,
         context_confirmation_token=None,
     )

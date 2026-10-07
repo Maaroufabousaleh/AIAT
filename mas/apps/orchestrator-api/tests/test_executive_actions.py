@@ -107,7 +107,9 @@ async def test_cto_executive_action_dispatches_through_canonical_worker_route(cl
 async def test_ceo_executive_action_uses_privileged_gate_and_returns_safe_summary(client, monkeypatch) -> None:
     from orchestrator_api import main
 
-    gate = AsyncMock(
+    gate = AsyncMock()
+    gate.ensure_tables = AsyncMock()
+    gate.check = AsyncMock(
         return_value={
             "allowed": False,
             "level": "privileged",
@@ -118,12 +120,12 @@ async def test_ceo_executive_action_uses_privileged_gate_and_returns_safe_summar
             "payload": {"secret": "must-not-return"},
         }
     )
-    monkeypatch.setattr(main, "request_privileged_action", gate)
+    monkeypatch.setattr(main, "_priv_gate", lambda: gate)
 
     response = await client.post(
         "/executive/actions/ceo/privileged-actions",
         json={
-            "requested_by": "exec_ceo",
+            "requested_by": "forged-human-ceo",
             "action": "security.override_cso",
             "payload": {"secret": "input-is-audited-by-the-gate"},
         },
@@ -141,10 +143,14 @@ async def test_ceo_executive_action_uses_privileged_gate_and_returns_safe_summar
         "reason": "pending_human_approval",
     }
     assert "must-not-return" not in response.text
-    gate.assert_awaited_once()
-    called = gate.await_args.args[0]
-    assert called.action == "security.override_cso"
-    assert called.actor_role == "ceo"
+    assert body["requested_by"] == "service"
+    assert body["authenticated_principal"] == "service"
+    gate.check.assert_awaited_once_with(
+        "security.override_cso",
+        actor_id="service",
+        actor_role="service",
+        payload={"secret": "input-is-audited-by-the-gate"},
+    )
 
 
 @pytest.mark.anyio

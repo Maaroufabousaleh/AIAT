@@ -498,8 +498,10 @@ class ProjectCreateTool(BaseTool):
         body = {
             "name": name,
             "description": kwargs.get("description"),
-            "human_requester": kwargs.get("human_requester"),
             "config": kwargs.get("config"),
+            # Service-originated project creation is prepared for operator
+            # review; only the operator API identity may start CEO work.
+            "start_immediately": False,
         }
         context = kwargs.get("_aiat_context")
         raw_idempotency_key = (

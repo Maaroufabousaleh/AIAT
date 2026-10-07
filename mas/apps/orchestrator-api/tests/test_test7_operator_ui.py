@@ -145,7 +145,11 @@ async def test_create_project(client):
     with patch("httpx.AsyncClient") as mock_hx:
         mock_hx.return_value.__aenter__ = AsyncMock(return_value=MagicMock(post=AsyncMock()))
         mock_hx.return_value.__aexit__ = AsyncMock(return_value=False)
-        r = await client.post("/projects", json={"name": "Proj Alpha", "description": "test"})
+        r = await client.post(
+            "/projects",
+            headers={"X-API-Key": "test-operator-key"},
+            json={"name": "Proj Alpha", "description": "test"},
+        )
     assert r.status_code == 201
     assert r.json()["state"] == "INIT"
 
@@ -153,7 +157,11 @@ async def test_create_project(client):
 @pytest.mark.anyio
 async def test_create_project_no_storage(client):
     _patch(None)
-    r = await client.post("/projects", json={"name": "X"})
+    r = await client.post(
+        "/projects",
+        headers={"X-API-Key": "test-operator-key"},
+        json={"name": "X"},
+    )
     assert r.status_code == 503
 
 
@@ -847,7 +855,11 @@ async def test_project_lifecycle_integration(client):
     with patch("httpx.AsyncClient") as mock_hx:
         mock_hx.return_value.__aenter__ = AsyncMock(return_value=MagicMock(post=AsyncMock()))
         mock_hx.return_value.__aexit__ = AsyncMock(return_value=False)
-        create_r = await client.post("/projects", json={"name": "Alpha Project"})
+        create_r = await client.post(
+            "/projects",
+            headers={"X-API-Key": "test-operator-key"},
+            json={"name": "Alpha Project"},
+        )
     assert create_r.status_code == 201
 
     list_r = await client.get("/projects")
