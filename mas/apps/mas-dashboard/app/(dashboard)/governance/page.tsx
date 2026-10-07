@@ -6,6 +6,7 @@ import { ShieldCheck, RefreshCw } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { ExecutiveActionPanel } from "@/components/governance/ExecutiveActionPanel";
+import { WorkerStewardLifecycle } from "@/components/governance/WorkerStewardLifecycle";
 
 type ModelProfile = {
   profile_id: string;
@@ -204,6 +205,9 @@ export default function GovernancePage() {
             {(catalogue.findings ?? []).length > 0 && <div className="mt-3 text-xs text-rose-300">{catalogue.findings?.length} profile binding finding(s) require review.</div>}
           </>}
         </section>
+        <div className="xl:col-span-2">
+          <WorkerStewardLifecycle stewards={stewards} accessDenied={accessDenied} />
+        </div>
       </div>
     </main>
   );
