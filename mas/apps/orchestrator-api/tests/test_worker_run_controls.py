@@ -9,6 +9,7 @@ WORKER_ID = UUID("00000000-0000-4000-a000-000000000601")
 RUN_ID = UUID("00000000-0000-4000-a000-000000000602")
 CHECKPOINT_ID = UUID("00000000-0000-4000-a000-000000000603")
 ADAPTER_ID = UUID("00000000-0000-4000-a000-000000000604")
+OPERATOR_HEADERS = {"X-API-Key": "test-operator-key"}
 
 
 class _RunControlStorage:
@@ -21,6 +22,7 @@ class _RunControlStorage:
         }
         self.worker = {"id": WORKER_ID, "status": "ACTIVE"}
         self.transitions: list[dict[str, object]] = []
+        self.cancel_requests: list[UUID] = []
         self.checkpoints = [
             {
                 "id": CHECKPOINT_ID,
@@ -57,6 +59,9 @@ class _RunControlStorage:
         if run_id != RUN_ID:
             return []
         return self.checkpoints[:limit]
+
+    async def request_worker_run_cancel(self, run_id: UUID):
+        self.cancel_requests.append(run_id)
 
 
 class _ControllableAdapter:
@@ -99,16 +104,18 @@ async def test_worker_run_pause_resume_and_checkpoint_routes(client, monkeypatch
 
     paused = await client.post(
         f"/workers/runs/{RUN_ID}/pause",
-        json={"reason": "operator review", "requested_by": "reviewer"},
+        headers=OPERATOR_HEADERS,
+        json={"reason": "operator review"},
     )
     assert paused.status_code == 200
     assert paused.json()["state"] == "PAUSED"
     assert adapter.pause_calls[0].reason == "operator review"
-    assert storage.transitions[0]["actor"] == "reviewer"
+    assert storage.transitions[0]["actor"] == "operator"
 
     resumed = await client.post(
         f"/workers/runs/{RUN_ID}/resume",
-        json={"requested_by": "reviewer", "checkpoint_id": str(CHECKPOINT_ID)},
+        headers=OPERATOR_HEADERS,
+        json={"checkpoint_id": str(CHECKPOINT_ID)},
     )
     assert resumed.status_code == 200
     assert resumed.json()["state"] == "RUNNING"
@@ -116,6 +123,7 @@ async def test_worker_run_pause_resume_and_checkpoint_routes(client, monkeypatch
     assert storage.transitions[-1]["transition_metadata"] == {
         "checkpoint_id": str(CHECKPOINT_ID)
     }
+    assert storage.transitions[-1]["actor"] == "operator"
 
 
 @pytest.mark.anyio
@@ -133,7 +141,8 @@ async def test_restart_only_worker_cannot_be_resumed_in_place(client, monkeypatc
 
     response = await client.post(
         f"/workers/runs/{RUN_ID}/resume",
-        json={"requested_by": "reviewer", "checkpoint_id": str(CHECKPOINT_ID)},
+        headers=OPERATOR_HEADERS,
+        json={"checkpoint_id": str(CHECKPOINT_ID)},
     )
 
     assert response.status_code == 409
@@ -156,7 +165,8 @@ async def test_restart_only_worker_cannot_be_paused_in_place(client, monkeypatch
 
     response = await client.post(
         f"/workers/runs/{RUN_ID}/pause",
-        json={"requested_by": "reviewer"},
+        headers=OPERATOR_HEADERS,
+        json={},
     )
 
     assert response.status_code == 409
@@ -176,7 +186,8 @@ async def test_run_controls_resolve_the_adapter_pinned_on_the_run(client, monkey
 
     response = await client.post(
         f"/workers/runs/{RUN_ID}/pause",
-        json={"requested_by": "reviewer"},
+        headers=OPERATOR_HEADERS,
+        json={},
     )
 
     assert response.status_code == 200
@@ -184,6 +195,92 @@ async def test_run_controls_resolve_the_adapter_pinned_on_the_run(client, monkey
         "adapter_id": ADAPTER_ID,
         "allow_retired": True,
     }
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("api_key", ["test-mas-key", "test-worker-key"])
+@pytest.mark.parametrize(
+    ("action", "payload"),
+    [
+        ("pause", {"reason": "operator pause"}),
+        ("resume", {}),
+        ("cancel", {"reason": "operator cancel", "force": False}),
+    ],
+)
+async def test_worker_run_control_routes_reject_service_and_worker_principals(
+    client,
+    monkeypatch,
+    api_key: str,
+    action: str,
+    payload: dict[str, object],
+) -> None:
+    from orchestrator_api.main import app
+
+    monkeypatch.setenv("AIAT_WORKER_API_KEY", "test-worker-key")
+    storage = AsyncMock()
+    app.state.storage = storage
+
+    response = await client.post(
+        f"/workers/runs/{RUN_ID}/{action}",
+        headers={"X-API-Key": api_key},
+        json=payload,
+    )
+
+    assert response.status_code == 403
+    storage.get_worker_run.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_operator_can_cancel_unbound_run_with_principal_attribution(client) -> None:
+    storage = _RunControlStorage(state="QUEUED")
+    storage.run.pop("adapter_id")
+    _patch_storage(storage)
+
+    response = await client.post(
+        f"/workers/runs/{RUN_ID}/cancel",
+        headers=OPERATOR_HEADERS,
+        json={"reason": "  operator requested cancellation  ", "force": False},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["state"] == "CANCELLED"
+    assert storage.cancel_requests == [RUN_ID]
+    assert storage.transitions[0]["actor"] == "operator"
+    assert storage.transitions[0]["error"]["message"] == "operator requested cancellation"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("action", "payload"),
+    [
+        ("pause", {"reason": "operator pause", "requested_by": "forged-actor"}),
+        ("resume", {"checkpoint_id": str(CHECKPOINT_ID), "requested_by": "forged-actor"}),
+        ("cancel", {"reason": "operator cancel", "force": False, "requested_by": "forged-actor"}),
+        ("cancel", {"reason": "operator cancel", "force": "false"}),
+        ("cancel", {"reason": "x" * 4_001, "force": False}),
+        ("pause", {"reason": "x" * 4_001}),
+        ("pause", {"reason": "   "}),
+        ("cancel", {"reason": "   ", "force": False}),
+    ],
+)
+async def test_worker_run_control_requests_reject_forged_or_invalid_fields(
+    client,
+    action: str,
+    payload: dict[str, object],
+) -> None:
+    from orchestrator_api.main import app
+
+    storage = AsyncMock()
+    app.state.storage = storage
+
+    response = await client.post(
+        f"/workers/runs/{RUN_ID}/{action}",
+        headers=OPERATOR_HEADERS,
+        json=payload,
+    )
+
+    assert response.status_code == 422
+    storage.get_worker_run.assert_not_awaited()
 
 
 @pytest.mark.anyio

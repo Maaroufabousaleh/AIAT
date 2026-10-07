@@ -621,7 +621,11 @@ export type ModelProfileCreateRequest = {
   profile_id: string;
   purpose: string;
   required_capabilities?: Array<string>;
-  status?: string;
+  status?: "draft";
+};
+
+export type ModelProfileVersionActivationRequest = {
+  reason: string;
 };
 
 export type ModelProfileVersionRequest = {
@@ -646,7 +650,7 @@ export type ModelProfileVersionRequest = {
 };
   reasoning?: boolean;
   regions?: Array<string>;
-  status?: string;
+  status?: "draft";
   streaming?: boolean;
   structured_output?: boolean;
   tool_calling?: boolean;
@@ -1271,6 +1275,11 @@ export type WorkerEvaluateRequest = {
   source_repo?: (string | null);
 };
 
+export type WorkerRunCancelRequest = {
+  force?: boolean;
+  reason?: string;
+};
+
 export type WorkerRunDispatchRequest = {
   adapter_required_model_capabilities?: Array<string>;
   budget?: {
@@ -1326,12 +1335,10 @@ export type WorkerRunDispatchRequest = {
 
 export type WorkerRunPauseRequest = {
   reason?: string;
-  requested_by?: string;
 };
 
 export type WorkerRunResumeRequest = {
   checkpoint_id?: (string | null);
-  requested_by?: string;
 };
 
 export type WorkerStatusTransition = {
@@ -3474,6 +3481,21 @@ export type OrchestratorApiOperations = {
       "422": HTTPValidationError;
     };
   };
+  "activate_model_profile_version_model_profiles__profile_id__versions__version_id__activate_post": {
+    method: "POST";
+    path: "/model-profiles/{profile_id}/versions/{version_id}/activate";
+    parameters: {
+      "path:profile_id": string;
+      "path:version_id": string;
+    };
+    requestBody: ModelProfileVersionActivationRequest;
+    responses: {
+      "200": {
+  [key: string]: unknown;
+};
+      "422": HTTPValidationError;
+    };
+  };
   "get_capacity_forecast_observability_capacity_forecast_get": {
     method: "GET";
     path: "/observability/capacity/forecast";
@@ -4786,9 +4808,7 @@ export type OrchestratorApiOperations = {
     parameters: {
       "path:run_id": string;
     };
-    requestBody: {
-  [key: string]: unknown;
-};
+    requestBody: WorkerRunCancelRequest;
     responses: {
       "200": {
   [key: string]: unknown;

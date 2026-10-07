@@ -486,7 +486,10 @@ class ModelProfileCreateRequest(TypedDict):
     profile_id: Required[str]
     purpose: Required[str]
     required_capabilities: NotRequired[list[str]]
-    status: NotRequired[str]
+    status: NotRequired[Literal['draft']]
+
+class ModelProfileVersionActivationRequest(TypedDict):
+    reason: Required[str]
 
 class ModelProfileVersionRequest(TypedDict):
     capabilities: NotRequired[list[str]]
@@ -508,7 +511,7 @@ class ModelProfileVersionRequest(TypedDict):
     provider_settings: NotRequired[dict[str, Any]]
     reasoning: NotRequired[bool]
     regions: NotRequired[list[str]]
-    status: NotRequired[str]
+    status: NotRequired[Literal['draft']]
     streaming: NotRequired[bool]
     structured_output: NotRequired[bool]
     tool_calling: NotRequired[bool]
@@ -1021,6 +1024,10 @@ class WorkerEvaluateRequest(TypedDict):
     checks: NotRequired[list[str] | Any]
     source_repo: NotRequired[str | Any]
 
+class WorkerRunCancelRequest(TypedDict):
+    force: NotRequired[bool]
+    reason: NotRequired[str]
+
 class WorkerRunDispatchRequest(TypedDict):
     adapter_required_model_capabilities: NotRequired[list[str]]
     budget: NotRequired[dict[str, float]]
@@ -1057,11 +1064,9 @@ class WorkerRunDispatchRequest(TypedDict):
 
 class WorkerRunPauseRequest(TypedDict):
     reason: NotRequired[str]
-    requested_by: NotRequired[str]
 
 class WorkerRunResumeRequest(TypedDict):
     checkpoint_id: NotRequired[str | Any]
-    requested_by: NotRequired[str]
 
 class WorkerStatusTransition(TypedDict):
     action: Required[str]
@@ -2571,6 +2576,15 @@ OPERATIONS: dict[str, ApiOperation] = {
         request_body_type='ModelProfileVersionRequest',
         response_types=('HTTPValidationError',),
     ),
+    'activate_model_profile_version_model_profiles__profile_id__versions__version_id__activate_post': ApiOperation(
+        operation_id='activate_model_profile_version_model_profiles__profile_id__versions__version_id__activate_post',
+        method='POST',
+        path='/model-profiles/{profile_id}/versions/{version_id}/activate',
+        path_params=('profile_id', 'version_id'),
+        query_params=(),
+        request_body_type='ModelProfileVersionActivationRequest',
+        response_types=('HTTPValidationError',),
+    ),
     'get_capacity_forecast_observability_capacity_forecast_get': ApiOperation(
         operation_id='get_capacity_forecast_observability_capacity_forecast_get',
         method='GET',
@@ -3477,7 +3491,7 @@ OPERATIONS: dict[str, ApiOperation] = {
         path='/workers/runs/{run_id}/cancel',
         path_params=('run_id',),
         query_params=(),
-        request_body_type=None,
+        request_body_type='WorkerRunCancelRequest',
         response_types=('HTTPValidationError',),
     ),
     'get_worker_run_checkpoints_workers_runs__run_id__checkpoints_get': ApiOperation(
@@ -3545,8 +3559,8 @@ OPERATIONS: dict[str, ApiOperation] = {
     ),
 }
 
-MODEL_COUNT = 138
-OPERATION_COUNT = 272
+MODEL_COUNT = 140
+OPERATION_COUNT = 273
 
 __all__ = [
     "ApiOperation",
@@ -3621,6 +3635,7 @@ __all__ = [
     'ModelOverrideCreateRequest',
     'ModelOverrideDecisionRequest',
     'ModelProfileCreateRequest',
+    'ModelProfileVersionActivationRequest',
     'ModelProfileVersionRequest',
     'ModelResolutionPreviewRequest',
     'N8nEdgePolicyRequest',
@@ -3685,6 +3700,7 @@ __all__ = [
     'UpdateWorkerRequest',
     'ValidationError',
     'WorkerEvaluateRequest',
+    'WorkerRunCancelRequest',
     'WorkerRunDispatchRequest',
     'WorkerRunPauseRequest',
     'WorkerRunResumeRequest',

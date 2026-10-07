@@ -3416,6 +3416,7 @@
             "type": "array"
           },
           "status": {
+            "const": "draft",
             "default": "draft",
             "title": "Status",
             "type": "string"
@@ -3426,6 +3427,21 @@
           "purpose"
         ],
         "title": "ModelProfileCreateRequest",
+        "type": "object"
+      },
+      "ModelProfileVersionActivationRequest": {
+        "properties": {
+          "reason": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "ModelProfileVersionActivationRequest",
         "type": "object"
       },
       "ModelProfileVersionRequest": {
@@ -3574,6 +3590,7 @@
             "type": "array"
           },
           "status": {
+            "const": "draft",
             "default": "draft",
             "title": "Status",
             "type": "string"
@@ -7458,6 +7475,25 @@
         "title": "WorkerEvaluateRequest",
         "type": "object"
       },
+      "WorkerRunCancelRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "force": {
+            "default": false,
+            "title": "Force",
+            "type": "boolean"
+          },
+          "reason": {
+            "default": "operator cancellation",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "title": "WorkerRunCancelRequest",
+        "type": "object"
+      },
       "WorkerRunDispatchRequest": {
         "properties": {
           "adapter_required_model_capabilities": {
@@ -7733,6 +7769,7 @@
         "type": "object"
       },
       "WorkerRunPauseRequest": {
+        "additionalProperties": false,
         "properties": {
           "reason": {
             "default": "operator pause",
@@ -7740,19 +7777,13 @@
             "minLength": 1,
             "title": "Reason",
             "type": "string"
-          },
-          "requested_by": {
-            "default": "operator",
-            "maxLength": 256,
-            "minLength": 1,
-            "title": "Requested By",
-            "type": "string"
           }
         },
         "title": "WorkerRunPauseRequest",
         "type": "object"
       },
       "WorkerRunResumeRequest": {
+        "additionalProperties": false,
         "properties": {
           "checkpoint_id": {
             "anyOf": [
@@ -7765,13 +7796,6 @@
               }
             ],
             "title": "Checkpoint Id"
-          },
-          "requested_by": {
-            "default": "operator",
-            "maxLength": 256,
-            "minLength": 1,
-            "title": "Requested By",
-            "type": "string"
           }
         },
         "title": "WorkerRunResumeRequest",
@@ -15778,6 +15802,68 @@
         "summary": "Add Model Profile Version"
       }
     },
+    "/model-profiles/{profile_id}/versions/{version_id}/activate": {
+      "post": {
+        "description": "Approve one exact draft version through the operator governance path.",
+        "operationId": "activate_model_profile_version_model_profiles__profile_id__versions__version_id__activate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "profile_id",
+            "required": true,
+            "schema": {
+              "title": "Profile Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelProfileVersionActivationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Activate Model Profile Version Model Profiles  Profile Id  Versions  Version Id  Activate Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Activate Model Profile Version"
+      }
+    },
     "/observability/capacity/forecast": {
       "get": {
         "description": "Forecast cost and token demand from bounded durable usage aggregates.",
@@ -20812,9 +20898,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "additionalProperties": true,
-                "title": "Payload",
-                "type": "object"
+                "$ref": "#/components/schemas/WorkerRunCancelRequest"
               }
             }
           },

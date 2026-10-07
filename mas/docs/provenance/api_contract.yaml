@@ -10,8 +10,8 @@ openapi:
   service: orchestrator-api
   artifact: schemas/http/orchestrator.openapi.json
   openapi_version: "3.1.0"
-  path_count: 239
-  sha256: 9acf4270f03753c315d748bbc088b17802bf098f2740088ab6c033dfabffa299
+  path_count: 240
+  sha256: c70e927fd03dde1f1754c8f269d7d9d33a4ab3738bba84d4d42db864b8f2102d
 
 protocol:
   artifact: mas/packages/mas-core/schemas/protocol/aiat.v1.schema.json
@@ -21,16 +21,16 @@ protocol:
 typescript:
   artifact: apps/mas-dashboard/lib/generated/orchestrator-api.ts
   generator: scripts/generate_typescript_api.py
-  model_count: 138
-  operation_count: 272
-  sha256: fd0bae61fd1eb73bb03860467fef046e5744907743265dfeded2f594b58a3f7d
+  model_count: 140
+  operation_count: 273
+  sha256: d4a058a27928bd1a9178d1eaa4733117703e02f76992986091a33d2caff023ad
 
 python_sdk:
   artifact: packages/mas-api-sdk/mas_api_sdk/generated.py
   generator: scripts/generate_python_api.py
-  model_count: 138
-  operation_count: 272
-  sha256: 20d830ea2fc8ddd20c03d92f6e98a229cbe242d68caf2e553da168343d2edc5e
+  model_count: 140
+  operation_count: 273
+  sha256: cf76c16f6768dddc10b9db17ec6af6ed288992f9333cc3fef86da267567f2d1c
 
 # Licence/notices and stated restrictions remain metadata elsewhere; they are
 # not part of API/protocol compatibility or activation predicates.

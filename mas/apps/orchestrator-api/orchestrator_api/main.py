@@ -43,7 +43,7 @@ import sqlalchemy as sa
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from prometheus_client import Counter
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
 
 from mas_core.company_manifest import (
     DEFAULT_COMPANY_ID,
@@ -1957,7 +1957,7 @@ class ModelProfileCreateRequest(BaseModel):
     approved_provider_ids: list[str] = Field(default_factory=list)
     required_capabilities: list[str] = Field(default_factory=list)
     fallback_profile_ids: list[str] = Field(default_factory=list)
-    status: str = "draft"
+    status: Literal["draft"] = "draft"
 
 
 class ModelProfileVersionRequest(BaseModel):
@@ -1985,7 +1985,19 @@ class ModelProfileVersionRequest(BaseModel):
     provider_settings: dict[str, Any] = Field(default_factory=dict)
     effective_from: datetime | None = None
     effective_until: datetime | None = None
-    status: str = "draft"
+    status: Literal["draft"] = "draft"
+
+
+class ModelProfileVersionActivationRequest(BaseModel):
+    reason: str = Field(..., min_length=1, max_length=4_000)
+
+    @field_validator("reason")
+    @classmethod
+    def normalize_reason(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("reason must not be blank")
+        return normalized
 
 
 class ModelOverrideCreateRequest(BaseModel):
@@ -2112,13 +2124,38 @@ class ExecutiveCEOPrivilegedActionRequest(BaseModel):
 
 
 class WorkerRunPauseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     reason: str = Field(default="operator pause", min_length=1, max_length=4_000)
-    requested_by: str = Field(default="operator", min_length=1, max_length=256)
+
+    @field_validator("reason")
+    @classmethod
+    def normalize_reason(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("reason must not be blank")
+        return normalized
 
 
 class WorkerRunResumeRequest(BaseModel):
-    requested_by: str = Field(default="operator", min_length=1, max_length=256)
+    model_config = ConfigDict(extra="forbid")
+
     checkpoint_id: UUID | None = None
+
+
+class WorkerRunCancelRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(default="operator cancellation", min_length=1, max_length=4_000)
+    force: StrictBool = False
+
+    @field_validator("reason")
+    @classmethod
+    def normalize_reason(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("reason must not be blank")
+        return normalized
 
 
 class EvidencePolicyRequest(BaseModel):
@@ -10558,6 +10595,7 @@ def _model_profile_from_row(row: dict[str, Any]) -> Any:
         except ValueError:
             privacy_class = PrivacyClass.INTERNAL
         versions.append(ModelProfileVersion(
+            **({"id": str(raw["id"])} if raw.get("id") is not None else {}),
             version=str(raw["version"]),
             provider_id=str(raw["provider_id"]),
             exact_model_id=str(raw["exact_model_id"]),
@@ -10929,7 +10967,7 @@ async def add_model_profile_version(
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     try:
-        await storage.create_model_profile_version(
+        stored_version = await storage.create_model_profile_version(
             profile_id=UUID(str(profile_row["id"])),
             version=version.version,
             provider_id=version.provider_id,
@@ -10962,7 +11000,47 @@ async def add_model_profile_version(
         )
     except (ValueError, sa.exc.IntegrityError) as exc:
         raise HTTPException(409, str(exc)) from exc
-    return version.model_dump(mode="json")
+    return {
+        **version.model_dump(mode="json"),
+        "id": str(stored_version["id"]),
+    }
+
+
+@app.post("/model-profiles/{profile_id}/versions/{version_id}/activate")
+async def activate_model_profile_version(
+    profile_id: str,
+    version_id: UUID,
+    req: ModelProfileVersionActivationRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Approve one exact draft version through the operator governance path."""
+
+    _require_operator_identity(request)
+    principal = _authenticated_principal(request)
+    try:
+        activation = await _storage().activate_model_profile_version(
+            logical_profile_id=profile_id,
+            version_id=version_id,
+            decided_by=principal,
+            reason=req.reason,
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if activation is None:
+        raise HTTPException(404, "Draft model profile version not found")
+
+    profile = activation["profile"]
+    version = activation["version"]
+    return {
+        "profile_id": profile["logical_profile_id"],
+        "profile_status": profile["status"],
+        "version_id": str(version["id"]),
+        "version": version["version"],
+        "version_status": version["status"],
+        "decision": "APPROVED",
+        "already_approved": bool(activation.get("already_approved")),
+        "approval_record": _serialize(activation["approval_record"]),
+    }
 
 
 @app.get("/model-profiles")
@@ -11859,8 +11937,14 @@ async def _worker_run_control_adapter(
 
 
 @app.post("/workers/runs/{run_id}/pause")
-async def pause_worker_run(run_id: UUID, req: WorkerRunPauseRequest) -> dict[str, Any]:
+async def pause_worker_run(
+    run_id: UUID,
+    req: WorkerRunPauseRequest,
+    request: Request,
+) -> dict[str, Any]:
     """Pause a running worker only when its certified contract supports checkpoints."""
+    _require_operator_identity(request)
+    principal = _authenticated_principal(request)
     storage = _storage()
     _run, adapter = await _worker_run_control_adapter(storage, run_id)
     from mas_core.worker_contract import CheckpointMode, WorkerRunController, WorkerRunError
@@ -11900,7 +11984,7 @@ async def pause_worker_run(run_id: UUID, req: WorkerRunPauseRequest) -> dict[str
             run_id,
             adapter,
             reason=req.reason,
-            requested_by=req.requested_by,
+            requested_by=principal,
         )
     except WorkerRunError as exc:
         raise HTTPException(409, {"code": exc.code, "message": str(exc), "details": exc.details}) from exc
@@ -11910,8 +11994,14 @@ async def pause_worker_run(run_id: UUID, req: WorkerRunPauseRequest) -> dict[str
 
 
 @app.post("/workers/runs/{run_id}/resume")
-async def resume_worker_run(run_id: UUID, req: WorkerRunResumeRequest) -> dict[str, Any]:
+async def resume_worker_run(
+    run_id: UUID,
+    req: WorkerRunResumeRequest,
+    request: Request,
+) -> dict[str, Any]:
     """Resume a paused worker from an optional durable, resumable checkpoint."""
+    _require_operator_identity(request)
+    principal = _authenticated_principal(request)
     storage = _storage()
     _run, adapter = await _worker_run_control_adapter(storage, run_id)
     from mas_core.worker_contract import CheckpointMode, WorkerRunController, WorkerRunError
@@ -11949,7 +12039,7 @@ async def resume_worker_run(run_id: UUID, req: WorkerRunResumeRequest) -> dict[s
         row = await WorkerRunController(storage=storage).resume(
             run_id,
             adapter,
-            requested_by=req.requested_by,
+            requested_by=principal,
             checkpoint_id=req.checkpoint_id,
         )
     except WorkerRunError as exc:
@@ -11960,7 +12050,13 @@ async def resume_worker_run(run_id: UUID, req: WorkerRunResumeRequest) -> dict[s
 
 
 @app.post("/workers/runs/{run_id}/cancel")
-async def cancel_worker_run(run_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
+async def cancel_worker_run(
+    run_id: UUID,
+    req: WorkerRunCancelRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _require_operator_identity(request)
+    principal = _authenticated_principal(request)
     storage = _storage()
     row = await storage.get_worker_run(run_id)
     if row is None:
@@ -11974,9 +12070,9 @@ async def cancel_worker_run(run_id: UUID, payload: dict[str, Any]) -> dict[str, 
                 expected_state=str(row.get("state")),
                 error={
                     "code": "CANCELLED",
-                    "message": str(payload.get("reason") or "operator cancellation"),
+                    "message": req.reason,
                 },
-                actor=str(payload.get("requested_by") or "operator"),
+                actor=principal,
                 reason="cancelled before runtime activation",
             )
             if cancelled is None:
@@ -12002,7 +12098,13 @@ async def cancel_worker_run(run_id: UUID, payload: dict[str, Any]) -> dict[str, 
     if adapter is None:
         raise HTTPException(409, "No certified adapter is registered for this run")
     from mas_core.worker_contract import WorkerRunController
-    row = await WorkerRunController(storage=storage).cancel(run_id, adapter, reason=str(payload.get("reason") or "operator cancellation"), requested_by=str(payload.get("requested_by") or "operator"), force=bool(payload.get("force", False)))
+    row = await WorkerRunController(storage=storage).cancel(
+        run_id,
+        adapter,
+        reason=req.reason,
+        requested_by=principal,
+        force=req.force,
+    )
     if row is None:
         raise HTTPException(404, "Worker run not found")
     list_reservations = getattr(storage, "list_budget_reservations", None)

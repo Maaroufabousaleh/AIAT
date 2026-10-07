@@ -8424,6 +8424,149 @@ class AgentStorage:
             await conn.execute(t.model_profile_versions.insert().values(**values))
         return values
 
+    async def activate_model_profile_version(
+        self,
+        *,
+        logical_profile_id: str,
+        version_id: UUID,
+        decided_by: str,
+        reason: str,
+    ) -> dict[str, Any] | None:
+        """Atomically approve one immutable draft version and persist its audit."""
+        async with self.engine.begin() as conn:
+            profile_result = await conn.execute(
+                t.model_profiles.select()
+                .where(t.model_profiles.c.logical_profile_id == logical_profile_id)
+                .with_for_update()
+            )
+            profile_row = profile_result.mappings().first()
+            if profile_row is None:
+                return None
+            profile = dict(profile_row)
+
+            version_result = await conn.execute(
+                t.model_profile_versions.select()
+                .where(
+                    t.model_profile_versions.c.id == version_id,
+                    t.model_profile_versions.c.profile_id == profile["id"],
+                )
+                .with_for_update()
+            )
+            version_row = version_result.mappings().first()
+            if version_row is None:
+                return None
+            version = dict(version_row)
+
+            snapshot = {
+                "profile_id": profile["logical_profile_id"],
+                "profile_record_id": str(profile["id"]),
+                "profile_purpose": profile["purpose"],
+                "approved_provider_ids": sorted(profile.get("approved_provider_ids") or []),
+                "required_capabilities": sorted(profile.get("required_capabilities") or []),
+                "fallback_profile_ids": sorted(profile.get("fallback_profile_ids") or []),
+                "version_id": str(version["id"]),
+                "version": version["version"],
+                "provider_id": version["provider_id"],
+                "exact_model_id": version["exact_model_id"],
+                "api_version": version.get("api_version"),
+                "capabilities": sorted(version.get("capabilities") or []),
+                "constraints": version.get("constraints_json") or {},
+                "provider_settings": version.get("provider_settings") or {},
+                "effective_from": version.get("effective_from"),
+                "effective_until": version.get("effective_until"),
+            }
+            snapshot_sha256 = hashlib.sha256(
+                json.dumps(
+                    snapshot,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                    default=str,
+                ).encode("utf-8")
+            ).hexdigest()
+
+            profile_status = str(profile.get("status") or "draft").lower()
+            version_status = str(version.get("status") or "draft").lower()
+            if version_status == "approved":
+                prior_result = await conn.execute(
+                    t.approval_records.select()
+                    .where(
+                        t.approval_records.c.scope_type == "model_profile_version",
+                        t.approval_records.c.scope_id == version_id,
+                        t.approval_records.c.decision == "APPROVED",
+                    )
+                    .order_by(t.approval_records.c.created_at.desc())
+                    .limit(1)
+                )
+                prior_row = prior_result.mappings().first()
+                if prior_row is not None:
+                    approval_record = dict(prior_row)
+                    if (approval_record.get("evidence") or {}).get("version_snapshot_sha256") == snapshot_sha256:
+                        return {
+                            "profile": profile,
+                            "version": version,
+                            "approval_record": approval_record,
+                            "already_approved": True,
+                        }
+                raise ValueError("model profile version is already approved without a matching audit record")
+            if version_status != "draft":
+                raise ValueError("only a draft model profile version can be approved")
+            if profile_status not in {"draft", "approved"}:
+                raise ValueError(f"model profile status {profile_status!r} cannot be activated")
+
+            version_update = await conn.execute(
+                t.model_profile_versions.update()
+                .where(
+                    t.model_profile_versions.c.id == version_id,
+                    t.model_profile_versions.c.status == "draft",
+                )
+                .values(status="approved")
+            )
+            if version_update.rowcount != 1:
+                raise ValueError("model profile version changed before approval could be committed")
+            profile_update = await conn.execute(
+                t.model_profiles.update()
+                .where(t.model_profiles.c.id == profile["id"])
+                .values(status="approved")
+            )
+            if profile_update.rowcount != 1:
+                raise ValueError("model profile changed before approval could be committed")
+
+            approval_values = {
+                "id": uuid4(),
+                "scope_type": "model_profile_version",
+                "scope_id": version_id,
+                "decision": "APPROVED",
+                "decided_by": decided_by,
+                "reason": reason,
+                "evidence": {
+                    "profile_id": profile["logical_profile_id"],
+                    "profile_record_id": str(profile["id"]),
+                    "version_id": str(version["id"]),
+                    "version": version["version"],
+                    "provider_id": version["provider_id"],
+                    "exact_model_id": version["exact_model_id"],
+                    "version_snapshot_sha256": snapshot_sha256,
+                },
+            }
+            approval_result = await conn.execute(
+                t.approval_records.insert()
+                .values(**approval_values)
+                .returning(*t.approval_records.columns)
+            )
+            approval_row = approval_result.mappings().first()
+            if approval_row is None:
+                raise RuntimeError("model profile approval audit record was not persisted")
+
+            profile["status"] = "approved"
+            version["status"] = "approved"
+            return {
+                "profile": profile,
+                "version": version,
+                "approval_record": dict(approval_row),
+                "already_approved": False,
+            }
+
     async def create_model_override_request(
         self,
         *,
