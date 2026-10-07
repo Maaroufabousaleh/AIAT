@@ -289,6 +289,23 @@ interface ProjectWorkerRun {
   created_at?: string;
 }
 
+interface IssueDispatchWorker {
+  id: string;
+  name?: string;
+  worker_id?: string;
+  adapter_type?: string;
+  transport_mode?: string;
+  status: string;
+  active_adapter_id?: string | null;
+}
+
+interface IssueWorkerRunResult {
+  issue_id: string;
+  idempotency_key: string;
+  run_id: string;
+  state: string;
+}
+
 interface ProjectIssue {
   issue_id: string;
   project_id: string;
@@ -441,6 +458,15 @@ export default function ProjectDetailPage() {
   const [projectWorkerRunsError, setProjectWorkerRunsError] = useState<string | null>(null);
   const [projectIssues, setProjectIssues] = useState<ProjectIssue[]>([]);
   const [projectIssuesError, setProjectIssuesError] = useState<string | null>(null);
+  const [issueDispatchWorkers, setIssueDispatchWorkers] = useState<IssueDispatchWorker[]>([]);
+  const [issueDispatchWorkersLoading, setIssueDispatchWorkersLoading] = useState(false);
+  const [issueDispatchWorkersError, setIssueDispatchWorkersError] = useState<string | null>(null);
+  const [issueDispatchWorkerId, setIssueDispatchWorkerId] = useState("");
+  const [issueDispatchConfirmed, setIssueDispatchConfirmed] = useState(false);
+  const [issueDispatchBusy, setIssueDispatchBusy] = useState(false);
+  const [issueDispatchError, setIssueDispatchError] = useState<string | null>(null);
+  const [issueWorkerRunResult, setIssueWorkerRunResult] = useState<IssueWorkerRunResult | null>(null);
+  const issueDispatchLockRef = useRef<string | null>(null);
   const [issueCreateOpen, setIssueCreateOpen] = useState(false);
   const [issueCreateBusy, setIssueCreateBusy] = useState(false);
   const [issueCreateTitle, setIssueCreateTitle] = useState("");
@@ -521,6 +547,7 @@ export default function ProjectDetailPage() {
     setShowContextUpload(false);
     setIssueCreateOpen(false);
     setSelectedIssue(null);
+    setIssueDispatchError(null);
     setBulkContextError("");
     clearContextSelection();
   }, [clearContextSelection]);
@@ -896,13 +923,75 @@ export default function ProjectDetailPage() {
 
   async function issueErrorMessage(response: Response, fallback: string): Promise<string> {
     const payload = await response.json().catch(() => null);
-    const detail = payload && typeof payload === "object"
+    let detail: unknown = payload && typeof payload === "object"
       ? (payload as { detail?: unknown; error?: unknown }).detail ??
         (payload as { detail?: unknown; error?: unknown }).error
       : null;
+    if (typeof detail === "string") {
+      try {
+        const nested = JSON.parse(detail) as unknown;
+        if (nested && typeof nested === "object") {
+          const record = nested as { detail?: unknown; message?: unknown; error?: unknown };
+          detail = record.detail ?? record.message ?? record.error ?? detail;
+        }
+      } catch {
+        // The endpoint can return a plain-text explanation.
+      }
+    }
+    if (Array.isArray(detail)) {
+      const messages = detail
+        .map((entry) => entry && typeof entry === "object" ? (entry as { msg?: unknown }).msg : null)
+        .filter((message): message is string => typeof message === "string" && message.trim().length > 0);
+      if (messages.length > 0) detail = messages.join("; ");
+    }
+    if (detail && typeof detail === "object") {
+      const record = detail as { message?: unknown; msg?: unknown; code?: unknown };
+      const message = record.message ?? record.msg;
+      if (typeof message === "string") {
+        detail = typeof record.code === "string" ? `${message} (${record.code})` : message;
+      }
+    }
     return typeof detail === "string" && detail.trim()
       ? detail.slice(0, 400)
-      : `${fallback} (HTTP ${response.status})`;
+      : `${fallback} (HTTP ${response.status}). Review the worker's readiness and project permissions, then retry.`;
+  }
+
+  async function loadIssueDispatchWorkers() {
+    if (accessDeniedRef.current) return;
+    setIssueDispatchWorkersLoading(true);
+    setIssueDispatchWorkersError(null);
+    try {
+      const response = await fetch("/api/workers?status=ACTIVE", { cache: "no-store" });
+      if (handleDeniedResponse(response)) return;
+      if (!response.ok) {
+        throw new Error(await issueErrorMessage(response, "Selectable workers could not be loaded"));
+      }
+      const payload: unknown = await response.json();
+      if (!Array.isArray(payload)) {
+        throw new Error("Selectable workers response was not a list.");
+      }
+      const dispatchable = payload.filter((value): value is IssueDispatchWorker => {
+        if (!value || typeof value !== "object") return false;
+        const worker = value as Partial<IssueDispatchWorker>;
+        return (
+          typeof worker.id === "string" &&
+          worker.status?.toUpperCase() === "ACTIVE" &&
+          typeof worker.active_adapter_id === "string" &&
+          worker.active_adapter_id.length > 0
+        );
+      });
+      setIssueDispatchWorkers(dispatchable);
+      setIssueDispatchWorkerId((selected) =>
+        dispatchable.some((worker) => worker.id === selected) ? selected : "",
+      );
+    } catch (cause) {
+      setIssueDispatchWorkers([]);
+      setIssueDispatchWorkersError(
+        cause instanceof Error ? cause.message : "Selectable workers could not be loaded.",
+      );
+    } finally {
+      setIssueDispatchWorkersLoading(false);
+    }
   }
 
   async function openIssue(issueId: string) {
@@ -924,6 +1013,9 @@ export default function ProjectDetailPage() {
         links: Array.isArray(payload.links) ? payload.links : [],
       };
       setSelectedIssue(detail);
+      setIssueDispatchError(null);
+      setIssueDispatchWorkerId("");
+      setIssueDispatchConfirmed(false);
       setIssueEditTitle(detail.issue.title);
       setIssueEditDescription(detail.issue.description ?? "");
       setIssueEditStatus(detail.issue.status.toLowerCase());
@@ -931,10 +1023,84 @@ export default function ProjectDetailPage() {
       setIssueEditTeam(detail.issue.assigned_team ?? "");
       setIssueEditAgent(detail.issue.assigned_agent ?? "");
       setIssueNewComment("");
+      void loadIssueDispatchWorkers();
     } catch (cause) {
       setIssueActionError(cause instanceof Error ? cause.message : "Issue details could not be loaded.");
     } finally {
       setIssueDetailLoading(false);
+    }
+  }
+
+  async function handleStartIssueWork() {
+    if (accessDeniedRef.current || !selectedIssue || !issueDispatchWorkerId) return;
+    const issue = selectedIssue.issue;
+    const revision = typeof issue.revision === "number" && Number.isSafeInteger(issue.revision) && issue.revision > 0
+      ? issue.revision
+      : 0;
+    const idempotencyKey = `project-issue:${id}:${issue.issue_id}:r${revision}`;
+    if (issueDispatchLockRef.current === idempotencyKey) return;
+    if (issueWorkerRunResult?.idempotency_key === idempotencyKey) return;
+
+    issueDispatchLockRef.current = idempotencyKey;
+    setIssueDispatchBusy(true);
+    setIssueDispatchError(null);
+    setIssueActionNotice(null);
+    try {
+      const response = await fetch("/api/executive/actions/cto/worker-runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requested_by: "office_cto",
+          dispatch: {
+            worker_id: issueDispatchWorkerId,
+            project_id: id,
+            idempotency_key: idempotencyKey,
+            task_type: "project.issue",
+            task_input: {
+              issue_id: issue.issue_id,
+              title: issue.title,
+              description: issue.description ?? "",
+            },
+          },
+        }),
+      });
+      if (handleDeniedResponse(response)) return;
+      if (!response.ok) {
+        throw new Error(await issueErrorMessage(response, "Worker Run could not be started"));
+      }
+      const payload = await response.json().catch(() => null);
+      const envelope = payload && typeof payload === "object"
+        ? payload as { result?: unknown }
+        : {};
+      const run = envelope.result && typeof envelope.result === "object"
+        ? envelope.result as { run_id?: unknown; id?: unknown; state?: unknown; status?: unknown }
+        : {};
+      const runId = typeof run.run_id === "string"
+        ? run.run_id
+        : typeof run.id === "string"
+          ? run.id
+          : "";
+      if (!runId) {
+        throw new Error("Worker Run was accepted without a run ID. Refresh project activity to inspect the result.");
+      }
+      setIssueWorkerRunResult({
+        issue_id: issue.issue_id,
+        idempotency_key: idempotencyKey,
+        run_id: runId,
+        state: typeof run.state === "string"
+          ? run.state
+          : typeof run.status === "string"
+            ? run.status
+            : "ACCEPTED",
+      });
+      await loadWorkspace();
+    } catch (cause) {
+      setIssueDispatchError(
+        cause instanceof Error ? cause.message : "Worker Run could not be started. Retry the action.",
+      );
+    } finally {
+      issueDispatchLockRef.current = null;
+      setIssueDispatchBusy(false);
     }
   }
 
@@ -1684,6 +1850,23 @@ export default function ProjectDetailPage() {
   const scopedProjectIssues = projectIssues.filter(
     (issue) => issue.project_id.toLowerCase() === id.toLowerCase(),
   );
+  const selectedIssueDispatchRevision = selectedIssue &&
+    typeof selectedIssue.issue.revision === "number" &&
+    Number.isSafeInteger(selectedIssue.issue.revision) &&
+    selectedIssue.issue.revision > 0
+    ? selectedIssue.issue.revision
+    : 0;
+  const selectedIssueDispatchKey = selectedIssue
+    ? `project-issue:${id}:${selectedIssue.issue.issue_id}:r${selectedIssueDispatchRevision}`
+    : null;
+  const selectedIssueRunResult = selectedIssue &&
+    issueWorkerRunResult?.issue_id === selectedIssue.issue.issue_id
+    ? issueWorkerRunResult
+    : null;
+  const selectedIssueRunAlreadyAccepted = Boolean(
+    selectedIssueDispatchKey &&
+      issueWorkerRunResult?.idempotency_key === selectedIssueDispatchKey,
+  );
 
   // Refresh handler respects the active tab so operators get fresh data
   // for whichever surface they're currently inspecting.
@@ -2307,6 +2490,72 @@ export default function ProjectDetailPage() {
                         <button type="button" onClick={() => void openIssue(selectedIssue.issue.issue_id)} disabled={issueDetailLoading || issueUpdateBusy} className="min-h-11 rounded-md border border-slate-700 px-3 py-2 text-xs text-slate-200 hover:bg-slate-800 disabled:opacity-50">Refresh latest</button>
                       </div>
                     </form>
+                    <section className="mt-5 rounded-lg border border-blue-900/60 bg-blue-950/20 p-4" aria-labelledby="issue-start-work-heading">
+                      <h3 id="issue-start-work-heading" className="text-sm font-medium text-white">Start governed work</h3>
+                      <p className="mt-1 text-xs leading-5 text-slate-300">
+                        This starts a canonical Worker Run for this project issue. It may use the project budget and invoke an approved model provider.
+                      </p>
+                      {issueDispatchWorkersError ? (
+                        <div className="mt-3 space-y-2 text-xs text-amber-200">
+                          <p role="alert">{issueDispatchWorkersError}</p>
+                          <button type="button" onClick={() => void loadIssueDispatchWorkers()} disabled={issueDispatchWorkersLoading || issueDispatchBusy} className="min-h-11 rounded-md border border-slate-700 px-3 py-2 text-slate-200 hover:bg-slate-800 disabled:opacity-50">
+                            {issueDispatchWorkersLoading ? "Refreshing workers…" : "Refresh workers"}
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="mt-3 space-y-3">
+                          <label htmlFor="issue-dispatch-worker" className="block text-xs text-slate-300">
+                            Active worker with a selected adapter
+                            <select
+                              id="issue-dispatch-worker"
+                              value={issueDispatchWorkerId}
+                              onChange={(event) => setIssueDispatchWorkerId(event.target.value)}
+                              disabled={issueDispatchWorkersLoading || issueDispatchBusy || issueDispatchWorkers.length === 0 || selectedIssueRunAlreadyAccepted}
+                              className="mt-1 min-h-11 w-full rounded-md border border-slate-700 bg-slate-900 px-3 text-sm text-white disabled:opacity-60"
+                            >
+                              <option value="">{issueDispatchWorkersLoading ? "Loading workers…" : "Select a worker"}</option>
+                              {issueDispatchWorkers.map((worker) => (
+                                <option key={worker.id} value={worker.id}>
+                                  {worker.name || worker.worker_id || worker.id} · {worker.adapter_type || worker.transport_mode || "approved adapter"}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          {issueDispatchWorkers.length === 0 && !issueDispatchWorkersLoading && (
+                            <p role="status" className="text-xs text-slate-400">
+                              No active workers with a selected adapter are available. Review worker activation and steward readiness, then refresh this list.
+                            </p>
+                          )}
+                          <label className="flex items-start gap-2 text-xs leading-5 text-slate-300">
+                            <input
+                              type="checkbox"
+                              checked={issueDispatchConfirmed}
+                              onChange={(event) => setIssueDispatchConfirmed(event.target.checked)}
+                              disabled={issueDispatchBusy || selectedIssueRunAlreadyAccepted}
+                              className="mt-1 h-4 w-4 shrink-0 accent-blue-500"
+                            />
+                            <span>I understand this may spend the project budget and send the issue to an approved model provider.</span>
+                          </label>
+                          {issueDispatchError && <p role="alert" className="rounded-md border border-red-700/50 bg-red-950/30 px-3 py-2 text-xs text-red-200">{issueDispatchError}</p>}
+                          <button
+                            type="button"
+                            onClick={() => void handleStartIssueWork()}
+                            disabled={accessDenied || issueDispatchBusy || issueDispatchWorkersLoading || !issueDispatchWorkerId || !issueDispatchConfirmed || selectedIssueRunAlreadyAccepted}
+                            className="inline-flex min-h-11 items-center gap-2 rounded-md bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {issueDispatchBusy ? "Starting work…" : selectedIssueRunAlreadyAccepted ? "Work already started" : "Start work"}
+                          </button>
+                          {selectedIssueRunResult && (
+                            <div role="status" aria-label="Worker Run result" className="rounded-md border border-emerald-800/70 bg-emerald-950/25 px-3 py-2 text-xs text-emerald-100">
+                              <span>Worker Run {selectedIssueRunResult.state.replace(/_/g, " ")} · </span>
+                              <Link href={`/workers/runs/${encodeURIComponent(selectedIssueRunResult.run_id)}`} className="font-mono text-blue-200 underline underline-offset-2 hover:text-blue-100">
+                                View run and evidence {selectedIssueRunResult.run_id}
+                              </Link>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </section>
                     <section className="mt-5 border-t border-slate-800 pt-4" aria-labelledby="issue-comments-heading">
                       <h3 id="issue-comments-heading" className="text-sm font-medium text-white">Comments</h3>
                       {selectedIssue.comments.length === 0 ? <p className="mt-2 text-xs text-slate-500">No comments yet.</p> : (
