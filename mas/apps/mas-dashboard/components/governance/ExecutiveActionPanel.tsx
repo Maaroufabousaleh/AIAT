@@ -13,24 +13,21 @@ type ActionResult = {
   error?: boolean;
 };
 
-const DEFAULT_DISPATCH = JSON.stringify(
-  {
-    worker_id: "",
-    idempotency_key: "",
-    task_type: "kpi.reconcile",
-    task_input: {},
-    project_id: null,
-  },
-  null,
-  2,
-);
+const DEFAULT_TASK_INPUT = "{}";
+const DEFAULT_PAYLOAD = "{}";
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-const DEFAULT_PAYLOAD = JSON.stringify({}, null, 2);
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
+function parseJsonObject(value: string, label: string): Record<string, unknown> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error(`${label} must be valid JSON.`);
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${label} must be a JSON object.`);
+  }
+  return parsed as Record<string, unknown>;
 }
 
 async function submit(path: string, body: unknown): Promise<unknown> {
@@ -53,7 +50,11 @@ export function ExecutiveActionPanel({ accessDenied = false }: { accessDenied?: 
   const [projectId, setProjectId] = useState("");
   const [profileId, setProfileId] = useState("");
   const [reason, setReason] = useState("");
-  const [dispatchText, setDispatchText] = useState(DEFAULT_DISPATCH);
+  const [workerId, setWorkerId] = useState("");
+  const [idempotencyKey, setIdempotencyKey] = useState("");
+  const [taskType, setTaskType] = useState("kpi.reconcile");
+  const [taskInput, setTaskInput] = useState(DEFAULT_TASK_INPUT);
+  const [dispatchProjectId, setDispatchProjectId] = useState("");
   const [ceoAction, setCeoAction] = useState("");
   const [ceoPayload, setCeoPayload] = useState(DEFAULT_PAYLOAD);
   const [confirmPrivileged, setConfirmPrivileged] = useState(false);
@@ -86,14 +87,35 @@ export function ExecutiveActionPanel({ accessDenied = false }: { accessDenied?: 
   async function dispatchWorker(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     try {
-      const parsed = JSON.parse(dispatchText) as Record<string, unknown>;
+      const normalizedWorkerId = workerId.trim();
+      const normalizedProjectId = dispatchProjectId.trim();
+      const normalizedKey = idempotencyKey.trim();
+      const normalizedTaskType = taskType.trim();
+      if (!UUID_PATTERN.test(normalizedWorkerId)) {
+        throw new Error("Worker ID must be a valid UUID.");
+      }
+      if (normalizedProjectId && !UUID_PATTERN.test(normalizedProjectId)) {
+        throw new Error("Project ID must be a valid UUID when provided.");
+      }
+      if (!normalizedKey || normalizedKey.length > 256) {
+        throw new Error("Idempotency key is required and must be 256 characters or fewer.");
+      }
+      if (!normalizedTaskType || normalizedTaskType.length > 256) {
+        throw new Error("Task type is required and must be 256 characters or fewer.");
+      }
       const body: ExecutiveCTOWorkerRunRequest = {
         requested_by: "office_cto",
-        dispatch: parsed as ExecutiveCTOWorkerRunRequest["dispatch"],
+        dispatch: {
+          worker_id: normalizedWorkerId,
+          idempotency_key: normalizedKey,
+          task_type: normalizedTaskType,
+          task_input: parseJsonObject(taskInput, "Task input"),
+          project_id: normalizedProjectId || null,
+        },
       };
       await runAction("CTO worker dispatch", "/api/executive/actions/cto/worker-runs", body);
     } catch (error) {
-      setResult({ label: "CTO worker dispatch", error: true, body: error instanceof Error ? error.message : "Dispatch JSON must be an object" });
+      setResult({ label: "CTO worker dispatch", error: true, body: error instanceof Error ? error.message : "Check the worker run fields." });
     }
   }
 
@@ -101,14 +123,18 @@ export function ExecutiveActionPanel({ accessDenied = false }: { accessDenied?: 
     event.preventDefault();
     if (!confirmPrivileged) return;
     try {
+      const action = ceoAction.trim();
+      if (!action || action.length > 256) {
+        throw new Error("Action is required and must be 256 characters or fewer.");
+      }
       const body: ExecutiveCEOPrivilegedActionRequest = {
-        action: ceoAction.trim(),
+        action,
         requested_by: "exec_ceo",
-        payload: asRecord(JSON.parse(ceoPayload)),
+        payload: parseJsonObject(ceoPayload, "Payload"),
       };
       await runAction("CEO privileged action", "/api/executive/actions/ceo/privileged-actions", body);
     } catch (error) {
-      setResult({ label: "CEO privileged action", error: true, body: error instanceof Error ? error.message : "Payload JSON must be an object" });
+      setResult({ label: "CEO privileged action", error: true, body: error instanceof Error ? error.message : "Check the privileged action fields." });
     }
   }
 
@@ -142,14 +168,20 @@ export function ExecutiveActionPanel({ accessDenied = false }: { accessDenied?: 
 
         <form className="space-y-3 rounded-lg border border-slate-800 bg-slate-950/60 p-3" aria-labelledby="cto-worker-run-heading" onSubmit={(event) => void dispatchWorker(event)}>
           <h3 id="cto-worker-run-heading" className="text-xs font-semibold uppercase tracking-wide text-slate-300">CTO · worker run</h3>
-          <label className="block text-xs text-slate-400">Dispatch JSON<textarea required value={dispatchText} onChange={(event) => setDispatchText(event.target.value)} rows={10} spellCheck={false} className="mt-1 min-h-11 w-full rounded border border-slate-700 bg-slate-900 px-2 py-1.5 font-mono text-[11px] text-white" /></label>
+          <label className="block text-xs text-slate-400">Worker ID<input required value={workerId} onChange={(event) => setWorkerId(event.target.value)} placeholder="UUID" autoComplete="off" className="mt-1 min-h-11 w-full rounded border border-slate-700 bg-slate-900 px-2 py-1.5 font-mono text-xs text-white" /></label>
+          <label className="block text-xs text-slate-400">Task type<input required maxLength={256} value={taskType} onChange={(event) => setTaskType(event.target.value)} placeholder="code.edit" className="mt-1 min-h-11 w-full rounded border border-slate-700 bg-slate-900 px-2 py-1.5 font-mono text-xs text-white" /></label>
+          <label className="block text-xs text-slate-400">Idempotency key<input required maxLength={256} value={idempotencyKey} onChange={(event) => setIdempotencyKey(event.target.value)} placeholder="unique-request-key" autoComplete="off" className="mt-1 min-h-11 w-full rounded border border-slate-700 bg-slate-900 px-2 py-1.5 font-mono text-xs text-white" /></label>
+          <label className="block text-xs text-slate-400">Project ID (optional)<input value={dispatchProjectId} onChange={(event) => setDispatchProjectId(event.target.value)} placeholder="UUID" autoComplete="off" className="mt-1 min-h-11 w-full rounded border border-slate-700 bg-slate-900 px-2 py-1.5 font-mono text-xs text-white" /></label>
+          <label className="block text-xs text-slate-400">Task input (JSON object)<textarea required value={taskInput} onChange={(event) => setTaskInput(event.target.value)} rows={4} spellCheck={false} aria-describedby="cto-task-input-help" className="mt-1 min-h-11 w-full rounded border border-slate-700 bg-slate-900 px-2 py-1.5 font-mono text-[11px] text-white" /></label>
+          <p id="cto-task-input-help" className="text-[11px] text-slate-500">Use an object such as {`{"issue":"Fix the failing test"}`}. Arrays and scalar JSON values are rejected.</p>
           <button type="submit" disabled={busy !== null} className="min-h-11 rounded border border-amber-700 px-3 py-1.5 text-xs text-amber-200 hover:bg-amber-950 disabled:opacity-50">{busy === "CTO worker dispatch" ? "Dispatching…" : "Dispatch governed run"}</button>
         </form>
 
         <form className="space-y-3 rounded-lg border border-rose-900/60 bg-slate-950/60 p-3" aria-labelledby="ceo-privileged-action-heading" onSubmit={(event) => void requestPrivilegedAction(event)}>
           <h3 id="ceo-privileged-action-heading" className="text-xs font-semibold uppercase tracking-wide text-rose-200">CEO · privileged action</h3>
-          <label className="block text-xs text-slate-400">Action<input required value={ceoAction} onChange={(event) => setCeoAction(event.target.value)} placeholder="security.override_cso" className="mt-1 min-h-11 w-full rounded border border-slate-700 bg-slate-900 px-2 py-1.5 font-mono text-xs text-white" /></label>
-          <label className="block text-xs text-slate-400">Payload JSON<textarea required value={ceoPayload} onChange={(event) => setCeoPayload(event.target.value)} rows={5} spellCheck={false} className="mt-1 min-h-11 w-full rounded border border-slate-700 bg-slate-900 px-2 py-1.5 font-mono text-[11px] text-white" /></label>
+          <label className="block text-xs text-slate-400">Action<input required maxLength={256} value={ceoAction} onChange={(event) => setCeoAction(event.target.value)} placeholder="security.override_cso" className="mt-1 min-h-11 w-full rounded border border-slate-700 bg-slate-900 px-2 py-1.5 font-mono text-xs text-white" /></label>
+          <label className="block text-xs text-slate-400">Payload (JSON object)<textarea required value={ceoPayload} onChange={(event) => setCeoPayload(event.target.value)} rows={5} spellCheck={false} aria-describedby="ceo-payload-help" className="mt-1 min-h-11 w-full rounded border border-slate-700 bg-slate-900 px-2 py-1.5 font-mono text-[11px] text-white" /></label>
+          <p id="ceo-payload-help" className="text-[11px] text-slate-500">Enter a JSON object, for example {`{"ticket":"SEC-12"}`}. Fields depend on the action; this request still goes through the audited privileged-action approval gate.</p>
           <label className="flex items-start gap-2 text-xs text-slate-400"><input type="checkbox" checked={confirmPrivileged} onChange={(event) => setConfirmPrivileged(event.target.checked)} className="mt-0.5 min-h-11 min-w-11" />I understand this enters the audited privileged-action approval gate.</label>
           <button type="submit" disabled={busy !== null || !confirmPrivileged} className="min-h-11 rounded border border-rose-700 px-3 py-1.5 text-xs text-rose-200 hover:bg-rose-950 disabled:opacity-50">{busy === "CEO privileged action" ? "Submitting…" : "Request privileged action"}</button>
         </form>
