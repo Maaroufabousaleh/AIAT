@@ -571,13 +571,21 @@ export default function ProjectDetailPage() {
   const workspaceRef = useRef<WorkspaceSummary | null>(null);
   const [repositoryError, setRepositoryError] = useState<string | null>(null);
   const [flowInstance, setFlowInstance] = useState<FlowInstance | null>(null);
+  const [flowAttachmentKnown, setFlowAttachmentKnown] = useState(false);
+  const flowAttachmentKnownRef = useRef(false);
   const [flowDefinition, setFlowDefinition] = useState<FlowDefinition | null>(
     null,
   );
   const [nodeExecutions, setNodeExecutions] = useState<FlowNodeExecution[]>([]);
   const [flowLoading, setFlowLoading] = useState(false);
+  const [flowStale, setFlowStale] = useState(false);
+  const [flowReadError, setFlowReadError] = useState<string | null>(null);
   const [showFlowSwitch, setShowFlowSwitch] = useState(false);
   const [availableFlows, setAvailableFlows] = useState<Flow[]>([]);
+  const [availableFlowsKnown, setAvailableFlowsKnown] = useState(false);
+  const availableFlowsKnownRef = useRef(false);
+  const [availableFlowsStale, setAvailableFlowsStale] = useState(false);
+  const [availableFlowsError, setAvailableFlowsError] = useState<string | null>(null);
   const [flowError, setFlowError] = useState<string | null>(null);
   // Overflow menu for secondary flow actions (override, switch flow) so the
   // primary action row stays compact and uncluttered.
@@ -747,63 +755,106 @@ export default function ProjectDetailPage() {
   const loadFlowData = useCallback(async () => {
     if (accessDeniedRef.current) return;
     setFlowLoading(true);
+    const rejectUnauthorized = (response: Response) => {
+      if (response.status !== 401 && response.status !== 403) return false;
+      handleAccessDenied();
+      return true;
+    };
     try {
       const instanceRes = await fetch(`/api/projects/${id}/flow-instance`);
+      if (rejectUnauthorized(instanceRes)) return;
       if (instanceRes.ok) {
         const instance = await instanceRes.json();
-        setFlowInstance(instance);
-
         const [flowRes, execsRes] = await Promise.all([
           fetch(`/api/flows/${instance.flow_id}`),
           fetch(`/api/flows/instances/${instance.id}/executions`),
         ]);
-        let executions: FlowNodeExecution[] = [];
-        if (execsRes.ok) {
-          const execs = await execsRes.json();
-          executions = Array.isArray(execs) ? execs : [];
-          setNodeExecutions(executions);
-        } else {
-          setNodeExecutions([]);
+        if (rejectUnauthorized(flowRes) || rejectUnauthorized(execsRes)) return;
+        if (!flowRes.ok) {
+          throw new Error(`Flow definition could not be loaded (HTTP ${flowRes.status}).`);
+        }
+        if (!execsRes.ok) {
+          throw new Error(`Flow execution history could not be loaded (HTTP ${execsRes.status}).`);
         }
 
-        if (flowRes.ok) {
-          const flow = await flowRes.json();
-          setFlowDefinition(flow.definition_json);
-          setOverrideNodeId(
-            instance.active_node_ids?.[0] ||
-              flow.definition_json?.nodes?.[0]?.id ||
-              "",
-          );
+        const [flow, executionData] = await Promise.all([
+          flowRes.json(),
+          execsRes.json(),
+        ]);
+        const definition = flow.definition_json as FlowDefinition;
+        const executions: FlowNodeExecution[] = Array.isArray(executionData)
+          ? executionData
+          : [];
+        const { nodes: flowNodes, edges: flowEdges } = convertToReactFlow(
+          definition?.nodes || [],
+          definition?.edges || [],
+          instance.active_node_ids || [],
+          executions,
+        );
 
-          const { nodes: flowNodes, edges: flowEdges } = convertToReactFlow(
-            flow.definition_json?.nodes || [],
-            flow.definition_json?.edges || [],
-            instance.active_node_ids || [],
-            executions,
-          );
-          setNodes(flowNodes);
-          setEdges(flowEdges);
-        }
-      } else {
+        flowAttachmentKnownRef.current = true;
+        setFlowInstance(instance);
+        setFlowAttachmentKnown(true);
+        setFlowDefinition(definition);
+        setNodeExecutions(executions);
+        setOverrideNodeId(
+          instance.active_node_ids?.[0] || definition?.nodes?.[0]?.id || "",
+        );
+        setNodes(flowNodes);
+        setEdges(flowEdges);
+        setFlowStale(false);
+        setFlowReadError(null);
+        setAvailableFlowsError(null);
+        setAvailableFlowsStale(false);
+      } else if (instanceRes.status === 404) {
+        flowAttachmentKnownRef.current = true;
+        setFlowAttachmentKnown(true);
         setFlowInstance(null);
         setFlowDefinition(null);
         setNodeExecutions([]);
         setNodes([]);
         setEdges([]);
         setOverrideNodeId("");
+        setFlowStale(false);
+        setFlowReadError(null);
 
-        const flowsRes = await fetch("/api/flows?is_active=true");
-        if (flowsRes.ok) {
+        try {
+          const flowsRes = await fetch("/api/flows?is_active=true");
+          if (rejectUnauthorized(flowsRes)) return;
+          if (!flowsRes.ok) {
+            throw new Error(`Active flow definitions could not be loaded (HTTP ${flowsRes.status}).`);
+          }
           const flows = await flowsRes.json();
-          setAvailableFlows(flows || []);
+          const nextFlows = Array.isArray(flows) ? flows : [];
+          availableFlowsKnownRef.current = true;
+          setAvailableFlowsKnown(true);
+          setAvailableFlows(nextFlows);
+          setAvailableFlowsError(null);
+          setAvailableFlowsStale(false);
+        } catch (cause) {
+          if (accessDeniedRef.current) return;
+          setAvailableFlowsStale(availableFlowsKnownRef.current);
+          setAvailableFlowsError(
+            cause instanceof Error
+              ? cause.message
+              : "Active flow definitions could not be loaded. Check your connection and retry.",
+          );
         }
+      } else {
+        throw new Error(`Project flow could not be loaded (HTTP ${instanceRes.status}).`);
       }
-    } catch {
-      setFlowInstance(null);
+    } catch (cause) {
+      if (accessDeniedRef.current) return;
+      setFlowStale(flowAttachmentKnownRef.current);
+      setFlowReadError(
+        cause instanceof Error
+          ? cause.message
+          : "Project flow could not be loaded. Check your connection and retry.",
+      );
     } finally {
       setFlowLoading(false);
     }
-  }, [id, setNodes, setEdges]);
+  }, [handleAccessDenied, id, setNodes, setEdges]);
 
   const loadContextData = useCallback(async () => {
     if (accessDeniedRef.current) return;
@@ -3595,13 +3646,42 @@ export default function ProjectDetailPage() {
       )}
 
       {!accessDenied && activeTab === "flow" && (
-        <div className="space-y-4">
+        <div
+          id="project-panel-flow"
+          role="tabpanel"
+          aria-labelledby="project-tab-flow"
+          aria-busy={flowLoading}
+          className="space-y-4"
+        >
           {flowError && (
             <div className="rounded-xl border border-red-800 bg-red-950/40 px-4 py-3 text-sm text-red-300">
               {flowError}
             </div>
           )}
-          {!flowInstance ? (
+          {flowReadError && flowStale && (
+            <section role="status" aria-label="Project flow refresh status" data-testid="project-flow-stale" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-700/60 bg-amber-950/30 px-4 py-3 text-sm text-amber-100">
+              <div>
+                <h2 className="font-semibold">Showing last known project flow state</h2>
+                <p className="mt-1 text-xs text-amber-100/75">{flowReadError} The last successfully loaded state remains visible until a refresh succeeds.</p>
+              </div>
+              <button type="button" onClick={() => void loadFlowData()} disabled={flowLoading} aria-busy={flowLoading} className="min-h-11 rounded border border-amber-700 px-3 py-2 text-xs font-medium hover:bg-amber-900/40 disabled:cursor-wait disabled:opacity-50">
+                {flowLoading ? "Retrying…" : "Retry flow"}
+              </button>
+            </section>
+          )}
+          {flowReadError && !flowAttachmentKnown && (
+            <section role="region" aria-label="Project flow unavailable" data-testid="project-flow-unavailable" className="rounded-xl border border-red-800 bg-red-950/30 px-5 py-5 text-sm text-red-100">
+              <h2 className="font-semibold">Project flow unavailable</h2>
+              <p className="mt-1 text-red-100/75">{flowReadError}</p>
+              <button type="button" onClick={() => void loadFlowData()} disabled={flowLoading} aria-busy={flowLoading} className="mt-3 min-h-11 rounded border border-red-700 px-3 py-2 text-xs font-medium hover:bg-red-900/40 disabled:cursor-wait disabled:opacity-50">
+                {flowLoading ? "Retrying…" : "Retry flow"}
+              </button>
+            </section>
+          )}
+          {!flowInstance && !flowAttachmentKnown && !flowReadError && flowLoading && (
+            <div role="status" className="rounded-xl border border-slate-800 bg-slate-900 px-5 py-5 text-sm text-slate-400">Loading project flow state…</div>
+          )}
+          {flowAttachmentKnown && !flowInstance ? (
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
               <div className="text-center">
                 <GitBranch size={32} className="mx-auto text-slate-600 mb-3" />
@@ -3612,18 +3692,28 @@ export default function ProjectDetailPage() {
                   Select a flow below to start orchestrating this project.
                 </p>
               </div>
-              {actionLoading === "load-flows" ? (
+              {actionLoading === "load-flows" || (flowLoading && availableFlows.length === 0 && !availableFlowsError) ? (
                 <div className="text-sm text-slate-500 py-4 text-center">
-                  Loading flows...
+                  Loading active flows...
                 </div>
               ) : (
                 <div className="space-y-2 mt-4">
+                  {availableFlowsError && (
+                    <div role="alert" data-testid="project-active-flows-unavailable" className="rounded-lg border border-amber-700/60 bg-amber-950/20 px-3 py-3 text-xs text-amber-100">
+                      <p>{availableFlowsStale
+                        ? `Could not refresh active flow definitions (${availableFlowsError}). Showing the last known choices.`
+                        : availableFlowsError}</p>
+                      <button type="button" onClick={() => void loadFlowData()} disabled={flowLoading} aria-busy={flowLoading} className="mt-2 min-h-11 rounded border border-amber-700 px-3 py-2 font-medium hover:bg-amber-900/40 disabled:cursor-wait disabled:opacity-50">
+                        {flowLoading ? "Retrying…" : "Retry active flows"}
+                      </button>
+                    </div>
+                  )}
                   {availableFlows.length > 0 ? (
                     availableFlows.map((flow) => (
                       <button
                         key={flow.id}
                         onClick={() => handleAssignFlow(flow.id)}
-                        disabled={actionLoading === "assign-flow"}
+                        disabled={actionLoading === "assign-flow" || Boolean(flowReadError || availableFlowsError)}
                         data-testid={`assign-flow-${flow.id}`}
                         className="w-full text-left px-4 py-3 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 transition-colors"
                       >
@@ -3636,18 +3726,18 @@ export default function ProjectDetailPage() {
                         </div>
                       </button>
                     ))
-                  ) : (
+                  ) : !availableFlowsError && availableFlowsKnown ? (
                     <div className="text-sm text-slate-500 py-4 text-center">
                       No active flows available.{" "}
                       <Link href="/flows" className="text-blue-400">
                         Create one first →
                       </Link>
                     </div>
-                  )}
+                  ) : null}
                 </div>
               )}
             </div>
-          ) : (
+          ) : flowInstance ? (
             <>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -4120,7 +4210,7 @@ export default function ProjectDetailPage() {
                 </div>
               )}
             </>
-          )}
+          ) : null}
         </div>
       )}
 
