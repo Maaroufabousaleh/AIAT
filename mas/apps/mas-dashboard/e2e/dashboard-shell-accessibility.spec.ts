@@ -40,6 +40,9 @@ test.describe("Dashboard shell accessibility and mobile navigation", () => {
     await page.route("**/api/ceo/privileged-actions/audit", async (route) => {
       await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
     });
+    await page.route((url) => url.pathname === "/api/approvals/project-decisions", async (route) => {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [], next_cursor: null }) });
+    });
     await authenticate(page, "/approvals");
 
     const navigation = page.getByRole("navigation", { name: "Primary" });

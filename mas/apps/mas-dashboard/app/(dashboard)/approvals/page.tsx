@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, RefreshCw, ShieldCheck, X } from "lucide-react";
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowUpRight, Check, FolderKanban, RefreshCw, ShieldCheck, X } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 
@@ -31,8 +32,29 @@ type ApprovalAuditRow = {
   requested_at?: string | null;
 };
 
+type ProjectDecision = {
+  id: string;
+  project_id: string;
+  project_name: string;
+  project_state: string;
+  company_id: string;
+  gate_type: string;
+  status: string;
+  created_at: string;
+};
+
+type ProjectDecisionPage = {
+  items: ProjectDecision[];
+  next_cursor: string | null;
+};
+
+type InboxRow =
+  | { kind: "ceo"; id: string; created_at?: string | null; item: ApprovalRequest }
+  | { kind: "project"; id: string; created_at: string; item: ProjectDecision };
+
 type HttpError = Error & { status?: number };
 
+const PAGE_SIZE = 50;
 const SENSITIVE_FIELD = /secret|token|password|credential|api[_-]?key|authorization|private[_-]?key/i;
 
 function sanitizePayload(value: unknown, depth = 0): unknown {
@@ -66,37 +88,57 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+function rowTimestamp(row: InboxRow): number {
+  const value = row.created_at ? Date.parse(row.created_at) : 0;
+  return Number.isFinite(value) ? value : 0;
+}
+
 export default function ApprovalsPage() {
   const [pending, setPending] = useState<ApprovalRequest[]>([]);
+  const [projectDecisions, setProjectDecisions] = useState<ProjectDecision[]>([]);
+  const [projectCursor, setProjectCursor] = useState<string | null>(null);
   const [audit, setAudit] = useState<ApprovalAuditRow[]>([]);
   const [selected, setSelected] = useState<ApprovalRequest | null>(null);
   const [reason, setReason] = useState("");
   const [confirmed, setConfirmed] = useState(false);
+  const [staleRequestId, setStaleRequestId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [accessDenied, setAccessDenied] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const submittingRef = useRef(false);
+  const pagingRef = useRef(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError("");
+    setNotice("");
     try {
-      const [pendingRows, auditRows] = await Promise.all([
+      const projectQuery = new URLSearchParams({ limit: String(PAGE_SIZE) });
+      const [pendingRows, auditRows, projectPage] = await Promise.all([
         requestJson<ApprovalRequest[]>("/api/ceo/privileged-actions/pending"),
         requestJson<ApprovalAuditRow[]>("/api/ceo/privileged-actions/audit"),
+        requestJson<ProjectDecisionPage>(`/api/approvals/project-decisions?${projectQuery.toString()}`),
       ]);
-      setPending(Array.isArray(pendingRows) ? pendingRows : []);
+      setPending(Array.isArray(pendingRows) ? pendingRows.slice(0, 100) : []);
       setAudit(Array.isArray(auditRows) ? auditRows : []);
+      setProjectDecisions(Array.isArray(projectPage.items) ? projectPage.items : []);
+      setProjectCursor(typeof projectPage.next_cursor === "string" ? projectPage.next_cursor : null);
+      setSelected(null);
+      setStaleRequestId(null);
       setAccessDenied(false);
     } catch (cause) {
       const status = cause instanceof Error ? (cause as HttpError).status : undefined;
       if (status === 401 || status === 403) {
         setPending([]);
         setAudit([]);
+        setProjectDecisions([]);
+        setProjectCursor(null);
         setSelected(null);
         setAccessDenied(true);
-        setError("This operator identity is not authorized to inspect or decide CEO privileged-action requests.");
+        setError("This operator identity is not authorized to inspect or decide approvals.");
       } else {
         setError(cause instanceof Error ? cause.message : "Approval data is unavailable.");
       }
@@ -107,50 +149,91 @@ export default function ApprovalsPage() {
 
   useEffect(() => { void refresh(); }, [refresh]);
 
+  const loadMoreProjectDecisions = async () => {
+    if (!projectCursor || pagingRef.current) return;
+    pagingRef.current = true;
+    setLoadingMore(true);
+    setError("");
+    try {
+      const query = new URLSearchParams({ limit: String(PAGE_SIZE), cursor: projectCursor });
+      const page = await requestJson<ProjectDecisionPage>(`/api/approvals/project-decisions?${query.toString()}`);
+      const rows = Array.isArray(page.items) ? page.items : [];
+      setProjectDecisions((current) => {
+        const known = new Set(current.map((item) => item.id));
+        return [...current, ...rows.filter((item) => !known.has(item.id))];
+      });
+      setProjectCursor(typeof page.next_cursor === "string" ? page.next_cursor : null);
+    } catch (cause) {
+      const status = cause instanceof Error ? (cause as HttpError).status : undefined;
+      setError(status === 400 || status === 409
+        ? "The project decision page changed. Refresh the inbox to load the current queue."
+        : cause instanceof Error ? cause.message : "More project decisions are unavailable.");
+    } finally {
+      pagingRef.current = false;
+      setLoadingMore(false);
+    }
+  };
+
   const selectedAudit = useMemo(
     () => selected ? audit.find((row) => row.id === selected.id) ?? null : null,
     [audit, selected],
   );
 
+  const inboxRows = useMemo<InboxRow[]>(() => [
+    ...pending.map((item) => ({ kind: "ceo" as const, id: item.id, created_at: item.requested_at, item })),
+    ...projectDecisions.map((item) => ({ kind: "project" as const, id: item.id, created_at: item.created_at, item })),
+  ].sort((a, b) => rowTimestamp(b) - rowTimestamp(a) || a.kind.localeCompare(b.kind) || a.id.localeCompare(b.id)), [pending, projectDecisions]);
+
   const decide = async (approved: boolean) => {
-    if (!selected || !confirmed || !reason.trim()) return;
+    if (!selected || !confirmed || !reason.trim() || submittingRef.current) return;
+    submittingRef.current = true;
     setSubmitting(true);
     setError("");
     setNotice("");
+    setStaleRequestId(null);
     try {
       await requestJson(`/api/ceo/privileged-actions/${encodeURIComponent(selected.id)}/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ approved, reason: reason.trim() }),
       });
-      setNotice(`Decision recorded: ${approved ? "approved" : "rejected"}. The governed action was not dispatched from this page.`);
       setReason("");
       setConfirmed(false);
+      setSelected(null);
       await refresh();
+      setNotice(`Decision recorded: ${approved ? "approved" : "rejected"}. The governed action was not dispatched from this inbox.`);
     } catch (cause) {
       const status = cause instanceof Error ? (cause as HttpError).status : undefined;
       if (status === 401 || status === 403) {
         setAccessDenied(true);
         setPending([]);
         setAudit([]);
+        setProjectDecisions([]);
+        setProjectCursor(null);
         setSelected(null);
         setError("This operator identity is not authorized to decide privileged actions.");
+      } else if (status === 404 || status === 409) {
+        setStaleRequestId(selected.id);
+        setNotice("This CEO request is no longer pending. Refresh the inbox to see its current status.");
       } else {
         setError(cause instanceof Error ? cause.message : "The decision could not be recorded.");
       }
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };
 
-  const selectedIsPending = selected ? pending.some((item) => item.id === selected.id) : false;
+  const selectedIsPending = selected
+    ? pending.some((item) => item.id === selected.id) && staleRequestId !== selected.id
+    : false;
 
   return (
     <main className="dashboard-page min-h-full p-6 lg:p-8" aria-label="Privileged action approvals">
       <PageHeader
         icon="shield-check"
-        title="Privileged action approvals"
-        description="Review CEO requests and record an audited operator decision."
+        title="Approval inbox"
+        description="Review CEO requests here and open project decisions in their canonical project workspace."
         actions={(
           <button type="button" onClick={() => void refresh()} disabled={loading} aria-label="Refresh approvals" className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-200 hover:bg-slate-800 disabled:opacity-50">
             <RefreshCw size={14} className={loading ? "animate-spin" : ""} /> Refresh
@@ -169,31 +252,65 @@ export default function ApprovalsPage() {
           {notice && <p role="status" className="mt-6 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">{notice}</p>}
 
           <div className="mt-6 grid gap-6 xl:grid-cols-2">
-            <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5" aria-labelledby="pending-heading" aria-busy={loading}>
+            <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5 xl:col-span-2" aria-labelledby="pending-heading" aria-busy={loading}>
               <div className="mb-4 flex items-center justify-between gap-3">
                 <h2 id="pending-heading" className="flex items-center gap-2 text-sm font-semibold text-white"><ShieldCheck size={16} className="text-amber-300" /> Pending requests</h2>
-                <span className="text-xs text-slate-400">{pending.length} awaiting decision</span>
+                <span className="text-xs text-slate-400">{inboxRows.length} loaded · CEO and project queues</span>
               </div>
-              {loading && pending.length === 0 ? <p className="text-sm text-slate-400">Loading pending requests…</p> : pending.length === 0 ? <p className="rounded-lg border border-dashed border-slate-700 p-4 text-sm text-slate-400">No privileged-action requests are waiting for review.</p> : (
-                <ul className="space-y-3" aria-label="Pending privileged action requests">
-                  {pending.map((item) => (
-                    <li key={item.id} className={`rounded-lg border p-3 ${selected?.id === item.id ? "border-blue-400/60 bg-blue-500/5" : "border-slate-800 bg-slate-950/50"}`}>
+              {loading && inboxRows.length === 0 ? <p className="text-sm text-slate-400">Loading approvals…</p> : inboxRows.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-slate-700 p-4 text-sm text-slate-400">
+                  <p>No approvals are currently waiting for review.</p>
+                  <p className="mt-1">No privileged-action requests are waiting for review.</p>
+                  <p className="mt-1">No project decisions are waiting for review.</p>
+                </div>
+              ) : (
+                <ul className="space-y-3" aria-label="Unified approval inbox">
+                  {inboxRows.map((row) => row.kind === "ceo" ? (
+                    <li key={`ceo:${row.id}`} className={`rounded-lg border p-3 ${selected?.id === row.id ? "border-blue-400/60 bg-blue-500/5" : "border-slate-800 bg-slate-950/50"}`}>
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <h3 className="break-all text-sm font-medium text-white">{item.action}</h3>
-                          <p className="mt-1 text-xs text-slate-400">Requested by {item.actor_id} ({item.actor_role}) · {item.risk_level} risk</p>
-                          <p className="mt-1 text-xs text-slate-500">{formatDate(item.requested_at)}</p>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="rounded border border-amber-500/40 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-amber-200">CEO privileged</span>
+                            <span className="rounded border border-slate-700 px-2 py-1 text-[10px] text-slate-300">Pending · {row.item.risk_level} risk</span>
+                          </div>
+                          <h3 className="mt-2 break-all text-sm font-medium text-white">{row.item.action}</h3>
+                          <p className="mt-1 text-xs text-slate-400">Requested by {row.item.actor_id} ({row.item.actor_role})</p>
+                          <p className="mt-1 text-xs text-slate-500">{formatDate(row.created_at)}</p>
                         </div>
-                        <button type="button" onClick={() => { setSelected(item); setReason(""); setConfirmed(false); setNotice(""); }} aria-pressed={selected?.id === item.id} className="min-h-11 rounded border border-slate-700 px-3 py-2 text-xs font-medium text-blue-200 hover:bg-slate-800">View details</button>
+                        <button type="button" onClick={() => { setSelected(row.item); setReason(""); setConfirmed(false); setStaleRequestId(null); setNotice(""); }} aria-pressed={selected?.id === row.id} className="min-h-11 rounded border border-slate-700 px-3 py-2 text-xs font-medium text-blue-200 hover:bg-slate-800">View details</button>
+                      </div>
+                    </li>
+                  ) : (
+                    <li key={`project:${row.id}`} className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="rounded border border-blue-500/40 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-blue-200">Project decision</span>
+                            <span className="rounded border border-slate-700 px-2 py-1 text-[10px] text-slate-300">{row.item.status.replace(/_/g, " ")}</span>
+                          </div>
+                          <h3 className="mt-2 text-sm font-medium text-white">{row.item.project_name}</h3>
+                          <p className="mt-1 text-xs text-slate-400">{row.item.gate_type.replace(/_/g, " ")} · project state {row.item.project_state.replace(/_/g, " ")}</p>
+                          <p className="mt-1 break-all text-xs text-slate-500">Company {row.item.company_id} · {formatDate(row.created_at)}</p>
+                        </div>
+                        <Link href={`/projects/${encodeURIComponent(row.item.project_id)}`} aria-label={`Open ${row.item.project_name} project decision context`} className="inline-flex min-h-11 items-center gap-2 rounded border border-slate-700 px-3 py-2 text-xs font-medium text-blue-200 hover:bg-slate-800">
+                          <FolderKanban size={14} /> Open project context <ArrowUpRight size={13} />
+                        </Link>
                       </div>
                     </li>
                   ))}
                 </ul>
               )}
+              {projectCursor && (
+                <div className="mt-4 flex justify-center">
+                  <button type="button" onClick={() => void loadMoreProjectDecisions()} disabled={loadingMore || loading} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-200 hover:bg-slate-800 disabled:opacity-50">
+                    {loadingMore ? "Loading…" : "Load more project decisions"}
+                  </button>
+                </div>
+              )}
             </section>
 
             <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5" aria-labelledby="audit-heading" aria-busy={loading}>
-              <div className="mb-4 flex items-center justify-between gap-3"><h2 id="audit-heading" className="text-sm font-semibold text-white">Recent decision audit</h2><span className="text-xs text-slate-400">latest 100 records</span></div>
+              <div className="mb-4 flex items-center justify-between gap-3"><h2 id="audit-heading" className="text-sm font-semibold text-white">Recent CEO decision audit</h2><span className="text-xs text-slate-400">latest 100 records</span></div>
               {loading && audit.length === 0 ? <p className="text-sm text-slate-400">Loading audit records…</p> : audit.length === 0 ? <p className="rounded-lg border border-dashed border-slate-700 p-4 text-sm text-slate-400">No privileged-action audit records are available.</p> : (
                 <div className="max-h-[34rem] space-y-2 overflow-y-auto" role="list" aria-label="Privileged action audit records">
                   {audit.map((row) => (
@@ -210,12 +327,12 @@ export default function ApprovalsPage() {
             </section>
 
             {selected && (
-              <section className="rounded-xl border border-blue-400/30 bg-slate-900/80 p-5 xl:col-span-2" aria-labelledby="request-details-heading">
+              <section className="rounded-xl border border-blue-400/30 bg-slate-900/80 p-5" aria-labelledby="request-details-heading">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div><h2 id="request-details-heading" className="text-base font-semibold text-white">Request details</h2><p className="mt-1 break-all font-mono text-xs text-slate-500">{selected.id}</p></div>
                   <button type="button" onClick={() => setSelected(null)} className="min-h-11 rounded border border-slate-700 px-3 py-2 text-xs text-slate-300 hover:bg-slate-800">Close details</button>
                 </div>
-                <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
                   <div><dt className="text-xs text-slate-500">Action</dt><dd className="mt-1 break-all text-slate-100">{selected.action}</dd></div>
                   <div><dt className="text-xs text-slate-500">Requested by</dt><dd className="mt-1 text-slate-100">{selected.actor_id} · {selected.actor_role}</dd></div>
                   <div><dt className="text-xs text-slate-500">Privilege / risk</dt><dd className="mt-1 text-slate-100">{selected.privilege_level} · {selected.risk_level}</dd></div>
@@ -225,7 +342,7 @@ export default function ApprovalsPage() {
                 {selectedAudit && <p role="status" className="mt-4 rounded-lg border border-slate-700 bg-slate-950/60 p-3 text-sm text-slate-200">Current audit decision: {selectedAudit.decision} · {selectedAudit.decided_by || "no decider recorded"} · {selectedAudit.reason || "no reason recorded"}</p>}
                 {selectedIsPending ? (
                   <div className="mt-5 border-t border-slate-800 pt-5">
-                    <p className="text-sm text-amber-200">This page records an audited decision only. It does not dispatch the governed action.</p>
+                    <p className="text-sm text-amber-200">This page records an audited CEO decision only. It does not dispatch the governed action.</p>
                     <label htmlFor="approval-reason" className="mt-4 block text-xs font-medium text-slate-300">Decision reason (required)</label>
                     <textarea id="approval-reason" value={reason} onChange={(event) => setReason(event.target.value.slice(0, 1000))} rows={3} maxLength={1000} className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400" placeholder="Record why this request should be approved or rejected." />
                     <label className="mt-3 flex min-h-11 items-center gap-3 text-sm text-slate-300"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} className="size-4 accent-blue-500" />I reviewed this request and intend to record a decision.</label>
@@ -234,7 +351,7 @@ export default function ApprovalsPage() {
                       <button type="button" onClick={() => void decide(false)} disabled={!confirmed || !reason.trim() || submitting} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-rose-500/50 px-4 py-2 text-sm font-medium text-rose-200 hover:bg-rose-500/10 disabled:cursor-not-allowed disabled:opacity-50"><X size={15} /> Reject request</button>
                     </div>
                   </div>
-                ) : <p className="mt-5 border-t border-slate-800 pt-4 text-sm text-slate-400">This request is no longer pending. Its latest recorded state appears in the audit.</p>}
+                ) : <p className="mt-5 border-t border-slate-800 pt-4 text-sm text-slate-400">This request is no longer pending. Refresh the inbox to see its current status.</p>}
               </section>
             )}
           </div>

@@ -1,5 +1,12 @@
 import { expect, test } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { authenticate } from "./auth";
+
+async function mockEmptyProjectInbox(page: Page) {
+  await page.route((url) => url.pathname === "/api/approvals/project-decisions", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [], next_cursor: null }) });
+  });
+}
 
 const pendingRequest = {
   id: "10000000-0000-4000-8000-000000000001",
@@ -34,6 +41,7 @@ test("operator inspects a pending request, approves it, and sees the refreshed a
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ record_id: pendingRequest.id, decision: "approved" }) });
   });
 
+  await mockEmptyProjectInbox(page);
   await authenticate(page, "/approvals");
   const main = page.getByRole("main", { name: "Privileged action approvals" });
   await expect(main.getByRole("heading", { name: "Pending requests" })).toBeVisible();
@@ -70,6 +78,7 @@ test("operator can reject a pending request with an audited reason", async ({ pa
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ record_id: row.id, decision: "rejected" }) });
   });
 
+  await mockEmptyProjectInbox(page);
   await authenticate(page, "/approvals");
   const main = page.getByRole("main", { name: "Privileged action approvals" });
   await main.getByRole("button", { name: "View details" }).click();
@@ -93,6 +102,7 @@ test("approval page presents a retryable error when the audit API is unavailable
   await page.route((url) => url.pathname === "/api/ceo/privileged-actions/audit", async (route) => {
     await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
   });
+  await mockEmptyProjectInbox(page);
   await authenticate(page, "/approvals");
   const main = page.getByRole("main", { name: "Privileged action approvals" });
   await expect(main.getByText("Request failed (HTTP 503)")).toBeVisible();
