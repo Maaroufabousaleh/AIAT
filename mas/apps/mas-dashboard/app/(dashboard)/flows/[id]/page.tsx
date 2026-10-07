@@ -755,6 +755,29 @@ export default function FlowEditorPage() {
         </div>
       </header>
 
+      {!accessDenied && currentFlow && (
+        <section
+          aria-label="Run this flow"
+          data-testid="flow-run-guidance"
+          className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 bg-slate-900/45 px-4 py-3"
+        >
+          <div>
+            <h2 className="text-sm font-medium text-slate-200">Use this flow in a project</h2>
+            <p className="mt-0.5 text-xs text-slate-500">
+              {isActive
+                ? "Open a project’s Flow tab to attach, start, and monitor this flow."
+                : "Save this flow as active to make it available, then attach it from a project’s Flow tab."}
+            </p>
+          </div>
+          <Link
+            href="/projects"
+            className="inline-flex min-h-11 items-center rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm font-medium text-slate-200 transition-colors hover:border-slate-500 hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-400/60"
+          >
+            Open projects
+          </Link>
+        </section>
+      )}
+
       {accessDenied && (
         <section
           role="region"
