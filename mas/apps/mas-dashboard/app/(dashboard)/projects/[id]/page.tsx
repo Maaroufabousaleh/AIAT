@@ -264,6 +264,27 @@ interface WorkspaceSummary {
   flow_instance?: FlowInstance | null;
 }
 
+interface ProjectWorkerRun {
+  id: string;
+  project_id: string;
+  worker_id?: string;
+  task_type?: string;
+  state: string;
+  model_resolution_snapshot_id?: string | null;
+  created_at?: string;
+}
+
+interface ProjectIssue {
+  issue_id: string;
+  project_id: string;
+  title: string;
+  status: string;
+  issue_type?: string;
+  priority?: string;
+  assigned_team?: string | null;
+  updated_at?: string;
+}
+
 const flowNodeTypes: NodeTypes = {};
 
 function FlowNodeComponent({
@@ -379,6 +400,10 @@ export default function ProjectDetailPage() {
     [],
   );
   const [workspace, setWorkspace] = useState<WorkspaceSummary | null>(null);
+  const [projectWorkerRuns, setProjectWorkerRuns] = useState<ProjectWorkerRun[]>([]);
+  const [projectWorkerRunsError, setProjectWorkerRunsError] = useState<string | null>(null);
+  const [projectIssues, setProjectIssues] = useState<ProjectIssue[]>([]);
+  const [projectIssuesError, setProjectIssuesError] = useState<string | null>(null);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
   const [workspaceStale, setWorkspaceStale] = useState(false);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
@@ -650,15 +675,78 @@ export default function ProjectDetailPage() {
     if (accessDeniedRef.current) return;
     setWorkspaceLoading(true);
     try {
-      const [res, repositoryRes] = await Promise.all([
+      const [res, repositoryRes, workerRunsRes, issuesRes] = await Promise.all([
         fetch(`/api/projects/${id}/workspace`),
         fetch(`/api/projects/${id}/repository`),
+        fetch(`/api/governance/runs?project_id=${encodeURIComponent(id)}&limit=50`),
+        fetch(`/api/projects/${id}/issues?limit=100`),
       ]);
-      const workspacePayload = await res.json().catch(() => null);
-      const repositoryPayload = repositoryRes.ok
-        ? await repositoryRes.json().catch(() => null)
-        : null;
+      if (
+        [res, repositoryRes, workerRunsRes, issuesRes].some(
+          (response) => response.status === 401 || response.status === 403,
+        )
+      ) {
+        handleAccessDenied();
+        return;
+      }
+
+      const [workspacePayload, repositoryPayload, workerRunsPayload, issuesPayload] =
+        await Promise.all([
+          res.json().catch(() => null),
+          repositoryRes.ok ? repositoryRes.json().catch(() => null) : null,
+          workerRunsRes.ok ? workerRunsRes.json().catch(() => null) : null,
+          issuesRes.ok ? issuesRes.json().catch(() => null) : null,
+        ]);
       const failures: string[] = [];
+
+      const isProjectWorkerRun = (value: unknown): value is ProjectWorkerRun => {
+        if (!value || typeof value !== "object") return false;
+        const run = value as Partial<ProjectWorkerRun>;
+        return (
+          typeof run.id === "string" &&
+          typeof run.project_id === "string" &&
+          typeof run.state === "string"
+        );
+      };
+      if (!workerRunsRes.ok) {
+        setProjectWorkerRuns([]);
+        setProjectWorkerRunsError(
+          `Worker runs could not be loaded (HTTP ${workerRunsRes.status}).`,
+        );
+      } else if (!Array.isArray(workerRunsPayload)) {
+        setProjectWorkerRuns([]);
+        setProjectWorkerRunsError("Worker runs response was not a list.");
+      } else {
+        const runs = workerRunsPayload.filter(isProjectWorkerRun);
+        setProjectWorkerRuns(
+          runs.filter((run) => run.project_id.toLowerCase() === id.toLowerCase()),
+        );
+        setProjectWorkerRunsError(null);
+      }
+
+      const isProjectIssue = (value: unknown): value is ProjectIssue => {
+        if (!value || typeof value !== "object") return false;
+        const issue = value as Partial<ProjectIssue>;
+        return (
+          typeof issue.issue_id === "string" &&
+          typeof issue.project_id === "string" &&
+          typeof issue.title === "string" &&
+          typeof issue.status === "string"
+        );
+      };
+      if (!issuesRes.ok) {
+        setProjectIssues([]);
+        setProjectIssuesError(`Project issues could not be loaded (HTTP ${issuesRes.status}).`);
+      } else if (!Array.isArray(issuesPayload)) {
+        setProjectIssues([]);
+        setProjectIssuesError("Project issues response was not a list.");
+      } else {
+        const issues = issuesPayload.filter(isProjectIssue);
+        setProjectIssues(
+          issues.filter((issue) => issue.project_id.toLowerCase() === id.toLowerCase()),
+        );
+        setProjectIssuesError(null);
+      }
 
       if (!res.ok) {
         const detail =
@@ -738,7 +826,7 @@ export default function ProjectDetailPage() {
     } finally {
       setWorkspaceLoading(false);
     }
-  }, [id]);
+  }, [handleAccessDenied, id]);
 
   function handleDeniedResponse(response: Response) {
     if (response.status === 401 || response.status === 403) {
@@ -1387,6 +1475,12 @@ export default function ProjectDetailPage() {
 
   const isFailed = project.state === "FAILED";
   const isTerminal = TERMINAL_STATES.includes(project.state);
+  const scopedWorkerRuns = projectWorkerRuns.filter(
+    (run) => run.project_id.toLowerCase() === id.toLowerCase(),
+  );
+  const scopedProjectIssues = projectIssues.filter(
+    (issue) => issue.project_id.toLowerCase() === id.toLowerCase(),
+  );
 
   // Refresh handler respects the active tab so operators get fresh data
   // for whichever surface they're currently inspecting.
@@ -1861,6 +1955,70 @@ export default function ProjectDetailPage() {
                     </div>
                   ))}
                 </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+                <section className="dashboard-surface p-4" aria-labelledby="project-worker-runs-heading">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <h2 id="project-worker-runs-heading" className="text-sm font-medium text-white">Worker Runs</h2>
+                    <span className="text-xs text-slate-500">canonical runtime state</span>
+                  </div>
+                  {projectWorkerRunsError ? (
+                    <div role="status" className="space-y-2 text-xs text-amber-200">
+                      <p>{projectWorkerRunsError}</p>
+                      <button type="button" onClick={() => void loadWorkspace()} disabled={workspaceLoading} className="min-h-11 rounded-md border border-slate-700 px-3 py-2 text-slate-200 hover:bg-slate-800 disabled:opacity-50">Retry project activity</button>
+                    </div>
+                  ) : workspaceLoading && scopedWorkerRuns.length === 0 ? (
+                    <p className="text-xs text-slate-500">Loading worker runs…</p>
+                  ) : scopedWorkerRuns.length === 0 ? (
+                    <p className="text-xs text-slate-500">No worker runs are recorded for this project yet.</p>
+                  ) : (
+                    <ul className="space-y-2" aria-label="Project worker runs">
+                      {scopedWorkerRuns.map((run) => (
+                        <li key={run.id} className="rounded-lg border border-slate-800 bg-slate-950/55 p-3 text-xs">
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <Link href={`/workers/runs/${encodeURIComponent(run.id)}`} aria-label={`Open WorkerRun ${run.id}`} className="font-mono text-blue-300 underline decoration-blue-500/50 underline-offset-2 hover:text-blue-200">{run.id}</Link>
+                            <span className="rounded border border-slate-700 px-2 py-1 text-slate-200">{run.state.replace(/_/g, " ")}</span>
+                          </div>
+                          <div className="mt-2 text-slate-400">{run.task_type || "Worker task"}{run.worker_id ? ` · worker ${run.worker_id}` : ""}</div>
+                          <div className="mt-1 text-slate-500">
+                            {run.created_at ? formatInTz(run.created_at, "MMM d HH:mm") : "Creation time unknown"}
+                            {run.model_resolution_snapshot_id ? " · governed model snapshot pinned" : " · no model snapshot recorded"}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+
+                <section className="dashboard-surface p-4" aria-labelledby="project-issues-heading">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <h2 id="project-issues-heading" className="text-sm font-medium text-white">Project Issues</h2>
+                    <span className="text-xs text-slate-500">project-scoped work items</span>
+                  </div>
+                  {projectIssuesError ? (
+                    <div role="status" className="space-y-2 text-xs text-amber-200">
+                      <p>{projectIssuesError}</p>
+                      <button type="button" onClick={() => void loadWorkspace()} disabled={workspaceLoading} className="min-h-11 rounded-md border border-slate-700 px-3 py-2 text-slate-200 hover:bg-slate-800 disabled:opacity-50">Retry project activity</button>
+                    </div>
+                  ) : workspaceLoading && scopedProjectIssues.length === 0 ? (
+                    <p className="text-xs text-slate-500">Loading project issues…</p>
+                  ) : scopedProjectIssues.length === 0 ? (
+                    <p className="text-xs text-slate-500">No issues are recorded for this project yet.</p>
+                  ) : (
+                    <ul className="space-y-2" aria-label="Project issues">
+                      {scopedProjectIssues.map((issue) => (
+                        <li key={issue.issue_id} className="rounded-lg border border-slate-800 bg-slate-950/55 p-3 text-xs">
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <span className="font-medium text-slate-100">{issue.title}</span>
+                            <span className="rounded border border-slate-700 px-2 py-1 text-slate-200">{issue.status.replace(/_/g, " ")}</span>
+                          </div>
+                          <div className="mt-2 text-slate-400">{issue.issue_type || "Issue"} · {issue.priority || "priority not set"}{issue.assigned_team ? ` · ${issue.assigned_team}` : ""}</div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
               </div>
 
               {(workspace?.pending_approvals ?? []).length > 0 && (
