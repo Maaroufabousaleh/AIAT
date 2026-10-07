@@ -135,11 +135,18 @@ async def test_create_project_can_remain_prepared_without_starting_ceo_work(clie
     storage = _make_storage(project=project)
     ctrl = _make_controller()
     _patch_state(storage, ctrl)
+    provision_workspace = AsyncMock()
 
-    with patch(
-        "orchestrator_api.main._publish_router_envelope",
-        new=AsyncMock(return_value=True),
-    ) as publish:
+    with (
+        patch(
+            "orchestrator_api.main._publish_router_envelope",
+            new=AsyncMock(return_value=True),
+        ) as publish,
+        patch(
+            "orchestrator_api.main._invoke_project_repository_tool",
+            new=provision_workspace,
+        ),
+    ):
         resp = await client.post(
             "/projects",
             json={
@@ -151,9 +158,14 @@ async def test_create_project_can_remain_prepared_without_starting_ceo_work(clie
         )
 
     assert resp.status_code == 201
-    assert resp.json()["state"] == "INIT"
+    assert resp.json()["id"] == str(project["id"])
+    assert resp.json()["state"] == project["state"] == "INIT"
+    storage.create_project.assert_awaited_once()
+    assert storage.create_project.await_args.kwargs["created_by"] == "operator"
+    assert storage.create_project.await_args.kwargs["human_requester"] == "operator"
     ctrl.transition.assert_not_awaited()
     publish.assert_not_awaited()
+    provision_workspace.assert_not_awaited()
 
 
 @pytest.mark.anyio
