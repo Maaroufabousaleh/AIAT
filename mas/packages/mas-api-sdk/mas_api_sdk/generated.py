@@ -686,6 +686,20 @@ class ProjectContextSeedRequest(TypedDict):
     tags: NotRequired[list[str]]
     url: NotRequired[str | Any]
 
+class ProjectDecisionInboxItem(TypedDict):
+    company_id: Required[str]
+    created_at: Required[str]
+    gate_type: Required[str]
+    id: Required[str]
+    project_id: Required[str]
+    project_name: Required[str]
+    project_state: Required[str]
+    status: Required[str]
+
+class ProjectDecisionInboxPage(TypedDict):
+    items: Required[list[ProjectDecisionInboxItem]]
+    next_cursor: NotRequired[str | Any]
+
 class ProjectEvidencePolicyRequest(TypedDict):
     milestone: NotRequired[str | Any]
     policy_id: Required[str]
@@ -1126,6 +1140,15 @@ OPERATIONS: dict[str, ApiOperation] = {
         query_params=(),
         request_body_type='AgentProfileObservationRequest',
         response_types=('HTTPValidationError',),
+    ),
+    'list_project_decision_inbox_approvals_project_decisions_get': ApiOperation(
+        operation_id='list_project_decision_inbox_approvals_project_decisions_get',
+        method='GET',
+        path='/approvals/project-decisions',
+        path_params=(),
+        query_params=('cursor', 'limit'),
+        request_body_type=None,
+        response_types=('ProjectDecisionInboxPage', 'HTTPValidationError'),
     ),
     'get_artifact_evidence_artifacts__artifact_id__get': ApiOperation(
         operation_id='get_artifact_evidence_artifacts__artifact_id__get',
@@ -3559,8 +3582,8 @@ OPERATIONS: dict[str, ApiOperation] = {
     ),
 }
 
-MODEL_COUNT = 140
-OPERATION_COUNT = 273
+MODEL_COUNT = 142
+OPERATION_COUNT = 274
 
 __all__ = [
     "ApiOperation",
@@ -3664,6 +3687,8 @@ __all__ = [
     'PrivilegedActionRequest',
     'PrivilegedApprovalRequest',
     'ProjectContextSeedRequest',
+    'ProjectDecisionInboxItem',
+    'ProjectDecisionInboxPage',
     'ProjectEvidencePolicyRequest',
     'ProjectProvisioningPlan',
     'ProjectRepositoryActionRequest',

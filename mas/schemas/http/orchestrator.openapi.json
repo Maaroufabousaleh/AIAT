@@ -4788,6 +4788,86 @@
         "title": "ProjectContextSeedRequest",
         "type": "object"
       },
+      "ProjectDecisionInboxItem": {
+        "description": "Payload-safe project context for one pending human decision.",
+        "properties": {
+          "company_id": {
+            "format": "uuid",
+            "title": "Company Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "gate_type": {
+            "title": "Gate Type",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "project_name": {
+            "title": "Project Name",
+            "type": "string"
+          },
+          "project_state": {
+            "title": "Project State",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "project_name",
+          "project_state",
+          "company_id",
+          "gate_type",
+          "status",
+          "created_at"
+        ],
+        "title": "ProjectDecisionInboxItem",
+        "type": "object"
+      },
+      "ProjectDecisionInboxPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectDecisionInboxItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "ProjectDecisionInboxPage",
+        "type": "object"
+      },
       "ProjectEvidencePolicyRequest": {
         "description": "A policy selection persisted at project or milestone scope.",
         "properties": {
@@ -8124,6 +8204,67 @@
           }
         },
         "summary": "Observe Agent Profile"
+      }
+    },
+    "/approvals/project-decisions": {
+      "get": {
+        "description": "Return one bounded operator page of pending project decisions.\n\nProject ownership/context is resolved with a single indexed join. The\nendpoint only reads decisions; decisions remain owned by the existing\nproject-scoped write endpoint.",
+        "operationId": "list_project_decision_inbox_approvals_project_decisions_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectDecisionInboxPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Project Decision Inbox"
       }
     },
     "/artifacts/{artifact_id}": {

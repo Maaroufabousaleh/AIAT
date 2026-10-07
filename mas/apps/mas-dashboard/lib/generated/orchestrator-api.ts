@@ -867,6 +867,22 @@ export type ProjectContextSeedRequest = {
   url?: (string | null);
 };
 
+export type ProjectDecisionInboxItem = {
+  company_id: string;
+  created_at: string;
+  gate_type: string;
+  id: string;
+  project_id: string;
+  project_name: string;
+  project_state: string;
+  status: string;
+};
+
+export type ProjectDecisionInboxPage = {
+  items: Array<ProjectDecisionInboxItem>;
+  next_cursor?: (string | null);
+};
+
 export type ProjectEvidencePolicyRequest = {
   milestone?: (string | null);
   policy_id: string;
@@ -1405,6 +1421,18 @@ export type OrchestratorApiOperations = {
       "201": {
   [key: string]: unknown;
 };
+      "422": HTTPValidationError;
+    };
+  };
+  "list_project_decision_inbox_approvals_project_decisions_get": {
+    method: "GET";
+    path: "/approvals/project-decisions";
+    parameters: {
+      "query:limit"?: number;
+      "query:cursor"?: (string | null);
+    };
+    responses: {
+      "200": ProjectDecisionInboxPage;
       "422": HTTPValidationError;
     };
   };
