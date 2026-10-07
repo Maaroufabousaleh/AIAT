@@ -1993,6 +1993,8 @@ async def test_operator_send_to_ceo_hiring_request_without_repo_asks_for_source(
 
 @pytest.mark.anyio
 async def test_operator_send_to_ceo_creates_project_and_traces_workflow(client, monkeypatch):
+    from mas_core.workflow import WorkflowEvent, WorkflowTransitionResult
+    from mas_core.workflow.states import ProjectState
     from orchestrator_api.main import app
 
     published: list[dict[str, Any]] = []
@@ -2026,8 +2028,16 @@ async def test_operator_send_to_ceo_creates_project_and_traces_workflow(client, 
         def __init__(self) -> None:
             self.transitions: list[dict[str, Any]] = []
 
-        async def transition(self, **kwargs: Any) -> None:
+        async def transition(self, **kwargs: Any) -> Any:
             self.transitions.append(kwargs)
+            return WorkflowTransitionResult(
+                project_id=kwargs["project_id"],
+                prior_state=ProjectState.INIT,
+                event=WorkflowEvent.PROJECT_CREATED,
+                next_state=ProjectState.FEASIBILITY_CHECK,
+                actor_id=kwargs["actor_id"],
+                context=kwargs["context"],
+            )
 
     project_id = UUID("00000000-0000-4000-a000-00000000c001")
     storage = MagicMock()
@@ -2063,6 +2073,8 @@ async def test_operator_send_to_ceo_creates_project_and_traces_workflow(client, 
     assert "created_project_record" in body["action"]["trace"]
     assert {"kind": "project", "id": str(project_id)} in body["evidence"]["refs"]
     storage.create_project.assert_awaited_once()
+    assert len(app.state.controller.transitions) == 1
+    assert app.state.controller.transitions[0]["event"] == WorkflowEvent.PROJECT_CREATED
     assert len(published) == 3
     assert published[0]["envelope"]["msg_type"] == "TASK"
     assert published[0]["envelope"]["payload"]["execution_owner"] == "orchestrator-api"
