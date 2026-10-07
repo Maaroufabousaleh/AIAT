@@ -95,6 +95,29 @@ def test_compose_wrapper_preserves_bootstrap_environment_over_dotenv(tmp_path):
     assert result.stdout.splitlines() == ["false", "18036", "from-file"]
 
 
+def test_migrate_no_deps_passes_dsn_without_compose_interpolation():
+    source = WRAPPER.read_text(encoding="utf-8")
+    match = re.search(r"(?ms)^    migrate-no-deps\).*?^        ;;", source)
+
+    assert match is not None
+    block = match.group(0)
+    assert re.search(
+        r'PGBOUNCER_DSN="postgresql://mas_user:\$\{POSTGRES_PASSWORD\}@postgres:5432/mas"\s*\\\s*docker compose',
+        block,
+    )
+    assert "-e PGBOUNCER_DSN" in block
+    assert '"PGBOUNCER_DSN=postgresql://' not in block
+
+
+def test_alembic_normalizes_sync_postgres_urls_to_installed_driver():
+    source = (MAS_ROOT / "migrations" / "env.py").read_text(encoding="utf-8")
+
+    assert '"+asyncpg", "+psycopg2"' in source
+    assert '"postgresql+psycopg://", "postgresql+psycopg2://"' in source
+    assert '"postgresql://", "postgresql+psycopg2://"' in source
+    assert '"postgres://", "postgresql+psycopg2://"' in source
+
+
 def test_omniroute_bootstrap_follows_selected_host_port():
     spec = importlib.util.spec_from_file_location("configure_omniroute", OMNIROUTE_BOOTSTRAP)
     assert spec is not None and spec.loader is not None
