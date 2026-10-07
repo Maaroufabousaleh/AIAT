@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
 
-from mas_core.worker_registry.steward import ExternalProvenance, ExternalWorkerSteward, StewardStatus
+from mas_core.worker_registry.steward import (
+    CandidateIntakeStatus,
+    ExternalProvenance,
+    ExternalWorkerSteward,
+    StewardStatus,
+)
 
 
 class _RehydrationStorage:
@@ -134,3 +141,100 @@ async def test_steward_runtime_fails_closed_on_unknown_active_pointer() -> None:
         assert runtime.active_adapter is None
     finally:
         main._worker_steward_runtimes.pop(str(worker_id), None)
+
+
+@pytest.mark.anyio
+async def test_steward_certification_records_compatibility_matrix_without_provider_dispatch(
+    monkeypatch,
+) -> None:
+    from mas_core.worker_registry import runtime_adapters
+    from mas_core.worker_contract import conformance as conformance_module
+    from orchestrator_api import main
+
+    worker_id = uuid4()
+    steward = ExternalWorkerSteward(
+        worker_id=str(worker_id),
+        steward_id=uuid4(),
+        provenance=ExternalProvenance(
+            canonical_source_repository="https://example.invalid/local-worker",
+            exact_release="1.0.0",
+            transport_type="http",
+            security_scan_status="passed",
+        ),
+        status=StewardStatus.READY,
+    )
+    candidate = steward.generate_candidate(
+        semantic_version="1.0.0",
+        adapter_version="1.0.0",
+        upstream_compatibility_range="==1.0.0",
+    )
+    for status in (
+        CandidateIntakeStatus.SOURCE_REVIEW,
+        CandidateIntakeStatus.SECURITY_REVIEW,
+        CandidateIntakeStatus.INTERFACE_RESEARCH,
+        CandidateIntakeStatus.GENERATED,
+        CandidateIntakeStatus.CERTIFYING,
+    ):
+        steward.advance_candidate(candidate.candidate_id, status)
+
+    matrix_id = uuid4()
+    storage = MagicMock()
+    storage.get_worker = AsyncMock(
+        return_value={
+            "adapter_config": {},
+            "sandbox_profile": "trusted",
+            "version_pin": "1.0.0",
+        }
+    )
+    storage.create_compatibility_matrix = AsyncMock(
+        return_value={
+            "id": matrix_id,
+            "runtime_version": "1.0.0",
+            "adapter_version": "1.0.0",
+            "contract_version": "aiat.adapter.v1",
+            "model_profiles_json": {},
+            "capabilities_json": {},
+            "fixtures": ["local-contract"],
+            "passed": False,
+            "created_at": datetime.now(UTC),
+        }
+    )
+    storage.create_certification_run = AsyncMock()
+    storage.get_skill_bundle_candidate = AsyncMock(return_value=None)
+    monkeypatch.setattr(main, "_storage", lambda: storage)
+    monkeypatch.setattr(main, "_steward_runtime", AsyncMock(return_value=steward))
+
+    class LocalAdapter:
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(
+        runtime_adapters,
+        "adapter_for_transport",
+        lambda *_args, **_kwargs: LocalAdapter(),
+    )
+
+    class LocalConformanceRunner:
+        def __init__(self, *, timeout_seconds):
+            self.timeout_seconds = timeout_seconds
+
+        async def run(self, *_args, **_kwargs):
+            return {"passed": True, "tests": [{"name": "local-contract"}]}
+
+    monkeypatch.setattr(
+        conformance_module,
+        "ConformanceRunner",
+        LocalConformanceRunner,
+    )
+
+    result = await main.certify_steward_candidate(
+        worker_id,
+        candidate.candidate_id,
+        main.CandidateCertificationRequest(),
+    )
+
+    storage.create_compatibility_matrix.assert_awaited_once()
+    assert result["passed"] is False  # Missing documentation/capability evidence still gates.
+    assert len(steward.compatibility_matrices) == 1
+    assert steward.compatibility_matrices[0].matrix_id == matrix_id
+    assert steward.compatibility_matrices[0].fixtures == ("local-contract",)

@@ -132,7 +132,7 @@ from mas_core.worker_registry.runtime_catalog import (
     OPTIONAL_RUNTIME_IDS,
     RUNTIME_REQUIRED_PACKAGES,
 )
-from mas_core.worker_registry.steward import operational_promotion_checks
+from mas_core.worker_registry.steward import CompatibilityMatrix, operational_promotion_checks
 from mas_core.workflow import (
     GateName,
     ImprovementArtifactBundle,
