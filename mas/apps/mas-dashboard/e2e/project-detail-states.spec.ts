@@ -150,6 +150,82 @@ test("project detail exposes first-load unavailability and recovers on retry", a
   ).toBeVisible();
 });
 
+test("prepared project exposes the canonical start action and updates its state", async ({
+  page,
+}) => {
+  let currentState = "INIT";
+  let startCalls = 0;
+  const currentProject = () => ({
+    ...PROJECT_FIXTURE,
+    state: currentState,
+  });
+
+  await page.route(`**/api/projects/${PROJECT_ID}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(currentProject()),
+    });
+  });
+  await page.route(`**/api/projects/${PROJECT_ID}/state-history`, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route(`**/api/projects/${PROJECT_ID}/decisions`, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route(`**/api/projects/${PROJECT_ID}/transition`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(currentState === "INIT" ? ["project_created"] : []),
+    });
+  });
+  await page.route(`**/api/projects/${PROJECT_ID}/start`, async (route) => {
+    startCalls += 1;
+    currentState = "FEASIBILITY_CHECK";
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        project_id: PROJECT_ID,
+        state: currentState,
+        status: "started",
+        directive_delivery: "accepted",
+      }),
+    });
+  });
+  await page.route(`**/api/projects/${PROJECT_ID}/workspace`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(WORKSPACE_FIXTURE),
+    });
+  });
+  await page.route(`**/api/projects/${PROJECT_ID}/repository`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ workspace: null }),
+    });
+  });
+
+  await authenticate(page, `/projects/${PROJECT_ID}`);
+  await expect(
+    page.getByRole("button", { name: "Start CEO work" }),
+  ).toBeVisible();
+  await page.getByRole("tab", { name: "Workflow", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "project created", exact: true }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "Start CEO work" }).click();
+  await expect(
+    page.getByRole("status", { name: "Project state: FEASIBILITY CHECK" }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Start CEO work" })).toHaveCount(0);
+  expect(startCalls).toBe(1);
+});
+
 test("project detail fails closed when the initial project read is denied", async ({
   page,
 }) => {
@@ -170,7 +246,11 @@ test("project detail fails closed when the initial project read is denied", asyn
     await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
   });
   await page.route(`**/api/projects/${PROJECT_ID}/transition`, async (route) => {
-    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([]),
+    });
   });
   await page.route(`**/api/projects/${PROJECT_ID}/workspace`, async (route) => {
     await route.fulfill({
@@ -225,7 +305,11 @@ test("project detail retains the last-known header but hides controls after read
     await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
   });
   await page.route(`**/api/projects/${PROJECT_ID}/transition`, async (route) => {
-    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([]),
+    });
   });
   await page.route(`**/api/projects/${PROJECT_ID}/workspace`, async (route) => {
     await route.fulfill({
