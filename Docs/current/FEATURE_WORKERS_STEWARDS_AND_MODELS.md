@@ -580,6 +580,16 @@ response evidence.
   [`workers-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/workers-states.spec.ts)
   against the dashboard build (`7541b84`); native/live worker certification
   remains a separate gate.
+- The Hiring Board supports bounded edits to a worker's team assignment and
+  adapter entrypoint/module. It uses the canonical worker update API, keeps
+  policy/schema failures visible with safe status-specific messages, and does
+  not expose runtime, credential, model, or sandbox fields through this form.
+  The focused management UI suite passes 3/3 and its BFF route tests pass 4/4;
+  these checks do not certify a provider-backed WorkerRun.
+- Candidate certification now imports and records the persisted compatibility
+  matrix in the current steward evidence cache after the canonical storage
+  write. A focused mocked certification regression passes 6/6 for the
+  rehydration module; it does not execute an external runtime or provider.
 - `scripts/check_default_worker_bindings.py --json` reconciles the 15 documented
   default worker slots with their department, runtime tier, transport,
   isolation mode, runtime-catalogue transport/isolation support, capability

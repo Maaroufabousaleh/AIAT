@@ -12,6 +12,13 @@ The control plane turns AIAT from a collection of agents into one governed compa
 
 - FastAPI control-plane routes for projects, documents, reviews, decisions, context, tasks, DLQ, system state, companies, runtimes, workers, stewards, model profiles, worker runs, flows, credentials, integrations, PM/SCM operations, and CEO actions.
 - Versioned company manifests with validation, stable digest, apply, history, and rollback.
+- The Companies page now provides guided drafts for departments/chiefs,
+  registered-worker assignments, supported company budget keys, and CEO
+  handoff. CEO-only grants move in the draft; changes still require canonical
+  manifest validation and apply. The source-built guided-editor Playwright
+  test passes 1/1, and the existing company create/review/apply/history test
+  passed 1/1 in a separate focused run. Both use mocked API responses and do
+  not establish provider-backed execution.
 - Explicit manifest policy fields for timezone, retention, privacy classes,
   evidence requirements, model constraints, and deployment/sandbox defaults;
   typed validation and legacy compatibility are covered by `e0f0aee`, and

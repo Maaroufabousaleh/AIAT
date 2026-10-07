@@ -24,6 +24,13 @@ Projects are the primary ownership, security, cost, evidence, and lifecycle boun
 - Project state/history and project-transition notification intent commit atomically through `WorkflowController`/`AgentStorage`; the bounded outbox dispatcher publishes stable transition IDs and retains failed notifications for retry (migration `0043_project_transition_outbox`).
 - Default software lifecycle from feasibility through PDR/CDR, human approval, requirements review, sprint execution, retrospective, KPI persistence, completion, and archive.
 - Durable documents with lineage, immutable revisions, statuses, preview/download, and supersession.
+- Project Detail exposes generated document preview and download through an
+  authenticated, project-scoped dashboard route. Inline previews are limited
+  to text-like content and 512 KiB, rendered as text, and protected with
+  no-store/nosniff headers; blob storage keys are not shown in the workspace.
+  The project-detail suite passes 7/7 with mocked APIs, and the BFF suite passes
+  5/5. This verifies the dashboard boundary and UI behavior, not live object
+  storage ownership or a production provider.
 - Document ownership checks accept both UUID and database-string project IDs for
   revision, status, read, preview/download, and document-backed context routes;
   malformed or missing identifiers fail closed. Focused API regressions cover
@@ -42,6 +49,15 @@ Projects are the primary ownership, security, cost, evidence, and lifecycle boun
   fixed operator attribution, and propagation of canonical ownership errors;
   those route tests stub the orchestrator transport and do not claim live
   FastAPI ownership integration or worker/provider execution.
+- Project issue detail can start governed work by selecting a currently
+  dispatchable worker and explicitly confirming possible project-budget and
+  approved-provider use. Dispatch goes through the existing audited CTO
+  WorkerRun action, uses the issue revision for retry idempotency, and links
+  the returned run evidence. The focused source-built Playwright suite passes
+  5/5, including signed-session enforcement, dispatch/replay, gateway-shaped
+  bounded prompt construction, and the no-adapter unavailable state. Its API
+  responses are mocked; no provider call was made, and the complete
+  CEO-to-worker project journey remains partial.
 - A first transition to `DONE`/`COMPLETED`/`CLOSED` on an assigned issue now automatically records its estimated-versus-actual hours in the durable agent profile; repeated terminal updates do not double-count the observation, and the response links the profile update to the source issue.
 - The same first terminal transition for a sprint issue persists a `sprint_retrospective` KPI snapshot with aggregate completion/velocity/estimation values and raw source issue IDs, completed issue IDs, status counts, and assigned-agent profile lineage; the existing project KPI API is the read surface.
 - Project context items/chunks/tags/relations with text, semantic, and hybrid search through pgvector.
@@ -50,6 +66,17 @@ Projects are the primary ownership, security, cost, evidence, and lifecycle boun
   the retrieval API regression suite (`90ac61ff`).
 - Artifact and usage APIs plus a consolidated project workspace/evidence view.
 - Versioned flow definitions, React Flow editor, validation/dry run, instances, execution history, actions, node actions, switch, override, context, escalation, and retry.
+- Flow approval gates now retain a unique binding to their active approval-node
+  execution (migration `0047_flow_approval_execution_binding`). The project
+  decision endpoint resolves that exact execution and applies the gate and
+  flow transition atomically; retry/cancellation keep the gate and execution
+  lifecycle aligned. If a pre-migration unbound gate cannot be safely matched,
+  cancellation returns 409 before mutation and the flow stays active until
+  that approval is resolved. Focused storage/API regressions pass 278 tests
+  with one optional database integration skip, and project-detail UI coverage passes
+  7/7. The prepared-project API E2E was updated to verify one project decision
+  completes the approval and end node, but has not been run against the local
+  database in this change group.
 - The Flows list reads `/api/flows` with `cache: "no-store"`, retains the last successful definitions through a failed refresh, keeps rows visible while retrying, labels the list as showing last-known flows, and exposes header Refresh plus banner Retry controls. Its table now has an accessible name/caption, scoped headers, responsive overflow, and 44px targets for refresh/create/search/filter/selection/link/delete controls. Focused source-built coverage passes 1/1 (`6b0413b`); native/live flow evidence remains open.
 - The Projects list pairs canonical project and active-flow reads with `cache: "no-store"`, retains the last known list through either source failure, and now exposes an accessible table caption/column scopes, explicit description disclosure, responsive overflow, and 44px selection/filter/sort/link/action targets. Source-built `projects-states.spec.ts` covers the stale/retry path and focused table semantics 1/1 (`d3482ab`, `7828b48`).
 - The flow editor reads a route-selected flow through the canonical store, shows an explicit first-load unavailable state with Retry instead of exposing a blank editable canvas, and provides Refresh plus retained last-known flow/Retry recovery after a failed refresh. Its editor now exposes semantic header/main/palette/canvas/config landmarks, 44px toolbar/palette/config targets, and 44px generated schema-form controls. Backend error details remain visible, and source-built `flow-editor-states.spec.ts` covers first-load failure, retained nodes, stale labeling, recovery, and the focused accessibility baseline 1/1 (`b5098e7`, `140af1c`).

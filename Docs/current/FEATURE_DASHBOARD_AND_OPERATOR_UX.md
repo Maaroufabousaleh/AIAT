@@ -301,6 +301,43 @@ The dashboard is the human control and evidence surface for AIAT. It must make c
 - The Approvals page combines CEO privileged requests with a bounded, cursor-paged read of project decisions. Project-decision actions still go through the owning project endpoint, CEO privileged decisions use the audited existing endpoint, and model-version approvals remain a separate action. Its focused source-built suite passes 7/7, including paging, stale conflict, duplicate submission, and existing privileged-approval behavior; no provider call is made.
 - Project Detail now lets an operator create issues, edit revisioned issue fields, refresh after a `409` conflict, and add comments. The BFF fixes comment attribution to the authenticated dashboard operator; the source-built Playwright flow passes 1/1, and focused route-handler validation passes 7/7 through `npm run test:issue-bff`. Those route tests verify forwarding and upstream ownership-error propagation with an orchestrator stub; they do not claim live FastAPI ownership integration.
 - PM project discovery now filters provider-binding rows by both the selected project and connection, exposes provisioning details/blockers, offers the canonical retry action, and links to shared DLQ review without attributing queue items to a connection. Its focused source-built suite passes 3/3 without contacting a provider.
+- The Companies page now has guided controls for department/chief configuration,
+  registered-worker assignment, supported company budget keys, and a staged
+  CEO handoff. Drafts still use the canonical manifest validate/apply APIs.
+  Source-built Playwright coverage passes 1/1 for the guided editor; the
+  existing company create/review/apply/history spec passed 1/1 separately.
+  These tests use mocked API responses.
+- Executive action forms now offer current project, Model Profile, and worker
+  choices instead of requiring copied identifiers, and reject malformed or
+  stale choices before submission. The focused governance UI suite passes 6/6,
+  including choice submission, stale-option rejection, and access boundaries.
+  API responses are mocked; no live executive action or provider call was run.
+- Project issue detail can start an audited CTO WorkerRun for a selected
+  dispatchable worker after explicit budget/provider-use confirmation. The
+  issue revision supplies retry idempotency and the result links to run
+  evidence. The bounded prompt preserves the gateway adapter's required input
+  shape and identifies issue text as untrusted data; the adapter sends it as a
+  user message without an ungoverned fallback. Its focused source-built
+  Playwright suite passes 5/5, including the gateway-shaped task payload, and
+  an isolated current-source dashboard build and typecheck pass. APIs were
+  mocked and no provider call was made. Provider-backed execution remains
+  unauthorized and the complete CEO-to-worker flow remains partial.
+- The Hiring Board provides a bounded edit form for team assignment and adapter
+  entrypoint/module. The focused worker-management Playwright suite passes
+  3/3, and its operator BFF tests pass 4/4; the form deliberately does not
+  expose runtime, credential, model, or sandbox policy fields.
+- Project Detail can preview bounded text documents and download generated
+  documents through a project-scoped authenticated BFF. The preview uses
+  text rendering with a 512 KiB cap; the source-built project-detail suite
+  passes 7/7 and the BFF tests pass 5/5. API responses are mocked, so this is
+  dashboard behavior coverage rather than live object-store certification.
+- Flow approval-node actions now select exactly one pending project gate
+  bound to the running node execution, then use the canonical project decision
+  endpoint. Missing or ambiguous binding disables decisions; failed requests
+  remain retryable. Focused project-detail coverage passes 7/7. The backend
+  binds gates durably and resolves decisions with the flow transition; its
+  focused API/storage suite passes 278 tests with one database integration
+  skip.
 
 ## Code anchors
 
