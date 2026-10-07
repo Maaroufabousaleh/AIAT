@@ -56,6 +56,7 @@ type HttpError = Error & { status?: number };
 
 const PAGE_SIZE = 50;
 const SENSITIVE_FIELD = /secret|token|password|credential|api[_-]?key|authorization|private[_-]?key/i;
+const CEO_REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function sanitizePayload(value: unknown, depth = 0): unknown {
   if (depth >= 5) return "[nested data omitted]";
@@ -110,6 +111,10 @@ export default function ApprovalsPage() {
   const [notice, setNotice] = useState("");
   const submittingRef = useRef(false);
   const pagingRef = useRef(false);
+  const requestDeepLinkHandledRef = useRef(false);
+  const requestDeepLinkedIdRef = useRef<string | null>(null);
+  const requestDeepLinkFocusRef = useRef<string | null>(null);
+  const requestDetailsRef = useRef<HTMLElement | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -126,7 +131,39 @@ export default function ApprovalsPage() {
       setAudit(Array.isArray(auditRows) ? auditRows : []);
       setProjectDecisions(Array.isArray(projectPage.items) ? projectPage.items : []);
       setProjectCursor(typeof projectPage.next_cursor === "string" ? projectPage.next_cursor : null);
-      setSelected(null);
+      if (!requestDeepLinkHandledRef.current) {
+        requestDeepLinkHandledRef.current = true;
+        const linkedRequestId = new URLSearchParams(window.location.search).get("request_id");
+        if (linkedRequestId && CEO_REQUEST_ID_PATTERN.test(linkedRequestId)) {
+          const linkedRequest = pendingRows.find((item) => item.id === linkedRequestId);
+          if (linkedRequest) {
+            requestDeepLinkedIdRef.current = linkedRequest.id;
+            setSelected(linkedRequest);
+            setReason("");
+            setConfirmed(false);
+            requestDeepLinkFocusRef.current = linkedRequest.id;
+          } else {
+            setSelected(null);
+            setNotice("The linked CEO request is not currently pending. Refresh the inbox to inspect the current queue.");
+          }
+        } else {
+          setSelected(null);
+        }
+      } else {
+        const linkedRequestId = requestDeepLinkedIdRef.current;
+        if (linkedRequestId) {
+          const linkedRequest = pendingRows.find((item) => item.id === linkedRequestId);
+          if (linkedRequest) {
+            setSelected(linkedRequest);
+          } else {
+            requestDeepLinkedIdRef.current = null;
+            setSelected(null);
+            setNotice("The linked CEO request is no longer pending. Refresh the inbox to inspect its current status.");
+          }
+        } else {
+          setSelected(null);
+        }
+      }
       setStaleRequestId(null);
       setAccessDenied(false);
     } catch (cause) {
@@ -136,6 +173,7 @@ export default function ApprovalsPage() {
         setAudit([]);
         setProjectDecisions([]);
         setProjectCursor(null);
+        requestDeepLinkedIdRef.current = null;
         setSelected(null);
         setAccessDenied(true);
         setError("This operator identity is not authorized to inspect or decide approvals.");
@@ -148,6 +186,15 @@ export default function ApprovalsPage() {
   }, []);
 
   useEffect(() => { void refresh(); }, [refresh]);
+
+  useEffect(() => {
+    if (!selected || requestDeepLinkFocusRef.current !== selected.id) return;
+    const details = requestDetailsRef.current;
+    if (!details) return;
+    requestDeepLinkFocusRef.current = null;
+    details.scrollIntoView({ block: "start" });
+    details.focus({ preventScroll: true });
+  }, [selected]);
 
   const loadMoreProjectDecisions = async () => {
     if (!projectCursor || pagingRef.current) return;
@@ -199,6 +246,7 @@ export default function ApprovalsPage() {
       });
       setReason("");
       setConfirmed(false);
+      requestDeepLinkedIdRef.current = null;
       setSelected(null);
       await refresh();
       setNotice(`Decision recorded: ${approved ? "approved" : "rejected"}. The governed action was not dispatched from this inbox.`);
@@ -210,6 +258,7 @@ export default function ApprovalsPage() {
         setAudit([]);
         setProjectDecisions([]);
         setProjectCursor(null);
+        requestDeepLinkedIdRef.current = null;
         setSelected(null);
         setError("This operator identity is not authorized to decide privileged actions.");
       } else if (status === 404 || status === 409) {
@@ -277,7 +326,7 @@ export default function ApprovalsPage() {
                           <p className="mt-1 text-xs text-slate-400">Requested by {row.item.actor_id} ({row.item.actor_role})</p>
                           <p className="mt-1 text-xs text-slate-500">{formatDate(row.created_at)}</p>
                         </div>
-                        <button type="button" onClick={() => { setSelected(row.item); setReason(""); setConfirmed(false); setStaleRequestId(null); setNotice(""); }} aria-pressed={selected?.id === row.id} className="min-h-11 rounded border border-slate-700 px-3 py-2 text-xs font-medium text-blue-200 hover:bg-slate-800">View details</button>
+                        <button type="button" onClick={() => { requestDeepLinkedIdRef.current = null; setSelected(row.item); setReason(""); setConfirmed(false); setStaleRequestId(null); setNotice(""); }} aria-pressed={selected?.id === row.id} className="min-h-11 rounded border border-slate-700 px-3 py-2 text-xs font-medium text-blue-200 hover:bg-slate-800">View details</button>
                       </div>
                     </li>
                   ) : (
@@ -327,10 +376,10 @@ export default function ApprovalsPage() {
             </section>
 
             {selected && (
-              <section className="rounded-xl border border-blue-400/30 bg-slate-900/80 p-5" aria-labelledby="request-details-heading">
+              <section ref={requestDetailsRef} tabIndex={-1} className="rounded-xl border border-blue-400/30 bg-slate-900/80 p-5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300" aria-labelledby="request-details-heading">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div><h2 id="request-details-heading" className="text-base font-semibold text-white">Request details</h2><p className="mt-1 break-all font-mono text-xs text-slate-500">{selected.id}</p></div>
-                  <button type="button" onClick={() => setSelected(null)} className="min-h-11 rounded border border-slate-700 px-3 py-2 text-xs text-slate-300 hover:bg-slate-800">Close details</button>
+                  <button type="button" onClick={() => { requestDeepLinkedIdRef.current = null; setSelected(null); }} className="min-h-11 rounded border border-slate-700 px-3 py-2 text-xs text-slate-300 hover:bg-slate-800">Close details</button>
                 </div>
                 <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
                   <div><dt className="text-xs text-slate-500">Action</dt><dd className="mt-1 break-all text-slate-100">{selected.action}</dd></div>

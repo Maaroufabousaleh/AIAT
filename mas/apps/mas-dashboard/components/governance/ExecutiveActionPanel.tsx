@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import type {
   ExecutiveCEOPrivilegedActionRequest,
   ExecutiveCFOModelOverrideRequest,
@@ -34,6 +35,7 @@ type ModelProfileOption = {
 
 const DEFAULT_TASK_INPUT = "{}";
 const DEFAULT_PAYLOAD = "{}";
+const EXECUTIVE_ACTION_SCHEMA = "aiat.executive-action.v1";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const FIELD_CLASS = "mt-1 min-h-11 w-full rounded border border-slate-700 bg-slate-900 px-2 py-2 text-base text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70 disabled:cursor-not-allowed disabled:opacity-60";
 const MONO_FIELD_CLASS = `${FIELD_CLASS} font-mono`;
@@ -42,6 +44,30 @@ function objectRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null;
+}
+
+type PendingPrivilegedActionReceipt = {
+  action: string;
+  risk: string;
+  recordId: string | null;
+};
+
+function pendingPrivilegedActionReceipt(value: unknown): PendingPrivilegedActionReceipt | null {
+  const envelope = objectRecord(value);
+  const result = objectRecord(envelope?.result);
+  const evidence = objectRecord(envelope?.evidence);
+  if (envelope?.schema_version !== EXECUTIVE_ACTION_SCHEMA || result?.decision !== "pending_approval") return null;
+
+  const resultId = typeof result.record_id === "string" ? result.record_id : null;
+  const evidenceId = typeof evidence?.record_id === "string" ? evidence.record_id : null;
+  const candidateId = resultId && evidenceId && resultId !== evidenceId
+    ? null
+    : resultId ?? evidenceId;
+  return {
+    action: typeof evidence?.action === "string" ? evidence.action : "CEO privileged action",
+    risk: typeof result.risk === "string" ? result.risk : "not reported",
+    recordId: candidateId && UUID_PATTERN.test(candidateId) ? candidateId : null,
+  };
 }
 
 function apiErrorMessage(payload: unknown, status: number, fallback: string): string {
@@ -335,6 +361,9 @@ export function ExecutiveActionPanel({ accessDenied = false }: { accessDenied?: 
     ?? (optionsLoading ? "Loading current worker choices…" : workers.length === 0 ? "No workers are available from the control plane." : "Choose a current worker.");
   const profileChoiceMessage = profileOptionsError
     ?? (optionsLoading ? "Loading current Model Profile choices…" : profiles.length === 0 ? "No Model Profiles are available from the control plane." : "Choose a current Model Profile.");
+  const pendingApprovalReceipt = result?.label === "CEO privileged action" && !result.error
+    ? pendingPrivilegedActionReceipt(result.body)
+    : null;
 
   return (
     <section className="rounded-xl border border-amber-900/60 bg-slate-900/70 p-5 xl:col-span-2" aria-labelledby="executive-actions-heading">
@@ -438,7 +467,34 @@ export function ExecutiveActionPanel({ accessDenied = false }: { accessDenied?: 
           <button type="submit" disabled={busy !== null || !confirmPrivileged} className="min-h-11 rounded border border-rose-700 px-3 py-2 text-sm text-rose-200 hover:bg-rose-950 disabled:cursor-not-allowed disabled:opacity-50">{busy === "CEO privileged action" ? "Submitting…" : "Request privileged action"}</button>
         </form>
       </div>
-      {result && <div className={`mt-4 rounded-lg border p-3 text-sm ${result.error ? "border-rose-900 bg-rose-950/30 text-rose-200" : "border-emerald-900 bg-emerald-950/20 text-emerald-200"}`} role="status" aria-live="polite" aria-label="Executive action result"><div className="mb-1 font-semibold">{result.label}</div><pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-xs">{typeof result.body === "string" ? result.body : JSON.stringify(result.body, null, 2)}</pre></div>}
+      {result && <div className={`mt-4 rounded-lg border p-3 text-sm ${result.error ? "border-rose-900 bg-rose-950/30 text-rose-200" : "border-emerald-900 bg-emerald-950/20 text-emerald-200"}`} role="status" aria-live="polite" aria-label="Executive action result">
+        <div className="mb-1 font-semibold">{result.label}</div>
+        {pendingApprovalReceipt ? (
+          <>
+            <section className="rounded-lg border border-amber-800/70 bg-amber-950/20 p-3" aria-label="Privileged action pending approval">
+              <h3 className="font-semibold text-amber-100">Request awaiting human approval</h3>
+              <p className="mt-1 text-xs text-amber-100/80">This request is queued for a separate human decision. Opening it will not approve or dispatch the action.</p>
+              <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+                <div><dt className="text-amber-100/60">Action</dt><dd className="mt-1 break-all font-mono text-amber-50">{pendingApprovalReceipt.action}</dd></div>
+                <div><dt className="text-amber-100/60">Risk</dt><dd className="mt-1 text-amber-50">{pendingApprovalReceipt.risk}</dd></div>
+                <div className="sm:col-span-2"><dt className="text-amber-100/60">Approval record</dt><dd className="mt-1 break-all font-mono text-amber-50">{pendingApprovalReceipt.recordId ?? "Record ID unavailable"}</dd></div>
+              </dl>
+              {pendingApprovalReceipt.recordId ? (
+                <Link
+                  href={`/approvals?request_id=${encodeURIComponent(pendingApprovalReceipt.recordId)}`}
+                  className="mt-3 inline-flex min-h-11 items-center rounded border border-amber-700 px-3 py-2 text-sm font-medium text-amber-100 hover:bg-amber-900/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300"
+                >
+                  Review this request in the Approval inbox
+                </Link>
+              ) : <p className="mt-3 text-xs text-amber-100/70">Open the Approval inbox to locate the current request.</p>}
+            </section>
+            <details className="mt-3 rounded border border-slate-700 px-3 py-2">
+              <summary className="min-h-11 cursor-pointer py-3 text-xs text-slate-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70">Inspect response record</summary>
+              <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-xs">{typeof result.body === "string" ? result.body : JSON.stringify(result.body, null, 2)}</pre>
+            </details>
+          </>
+        ) : <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-xs">{typeof result.body === "string" ? result.body : JSON.stringify(result.body, null, 2)}</pre>}
+      </div>}
     </section>
   );
 }
