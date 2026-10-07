@@ -501,6 +501,19 @@ class ProjectCreateTool(BaseTool):
             "human_requester": kwargs.get("human_requester"),
             "config": kwargs.get("config"),
         }
+        context = kwargs.get("_aiat_context")
+        raw_idempotency_key = (
+            context.get("idempotency_key") if isinstance(context, dict) else None
+        )
+        if raw_idempotency_key is not None:
+            try:
+                # ToolRequest constrains this value to UUID at the boundary.
+                # Canonicalizing again here keeps direct/internal invocations
+                # bounded and prevents arbitrary model strings from reaching
+                # the API idempotency field.
+                body["idempotency_key"] = str(UUID(str(raw_idempotency_key)))
+            except (TypeError, ValueError, AttributeError) as exc:
+                raise ValueError("trusted project idempotency key must be a UUID") from exc
         if kwargs.get("flow_id"):
             body["flow_id"] = kwargs["flow_id"]
         if kwargs.get("workspace"):
