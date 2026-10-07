@@ -28,6 +28,14 @@ const activeWorker = {
   adapter_type: "opencode",
 };
 
+const gatewayWorker = {
+  ...activeWorker,
+  worker_id: "gateway-e2e-worker",
+  name: "Gateway E2E worker",
+  adapter_type: "aiat_gateway",
+  transport_mode: "aiat_gateway",
+};
+
 async function json(route: Route, status: number, payload: unknown): Promise<void> {
   await route.fulfill({
     status,
@@ -193,7 +201,7 @@ test("issue dispatch uses the audited CTO action, keeps retry idempotent, and li
   await expect.poll(() => submissions.length).toBe(2);
 
   const expectedKey = `project-issue:${PROJECT_ID}:${ISSUE_ID}:r7`;
-  expect(submissions[0]).toEqual({
+  expect(submissions[0]).toMatchObject({
     requested_by: "office_cto",
     dispatch: {
       worker_id: WORKER_ID,
@@ -207,6 +215,8 @@ test("issue dispatch uses the audited CTO action, keeps retry idempotent, and li
       },
     },
   });
+  const opencodeDispatch = submissions[0].dispatch as { task_input: Record<string, unknown> };
+  expect(opencodeDispatch.task_input.prompt).toEqual(expect.any(String));
   expect(submissions[1]).toEqual(submissions[0]);
 
   const result = page.getByRole("status", { name: "Worker Run result" });
@@ -215,6 +225,55 @@ test("issue dispatch uses the audited CTO action, keeps retry idempotent, and li
   await expect(runLink).toHaveAttribute("href", `/workers/runs/${RUN_ID}`);
   await expect(page.getByRole("button", { name: "Work already started" })).toBeDisabled();
   expect(submissions).toHaveLength(2);
+});
+
+test("Gateway-backed issue dispatch sends a bounded project-scoped prompt", async ({ page }) => {
+  const submissions: Record<string, unknown>[] = [];
+  await installProjectMocks(page, [gatewayWorker], async (route) => {
+    submissions.push(route.request().postDataJSON() as Record<string, unknown>);
+    await json(route, 202, {
+      schema_version: "aiat.executive-action.v1",
+      role: "cto",
+      action: "dispatch_worker_run",
+      requested_by: "office_cto",
+      authenticated_principal: "operator",
+      result: { run_id: RUN_ID, state: "QUEUED", dispatch_mode: "queued" },
+      evidence: { kind: "worker_run", project_id: PROJECT_ID, worker_id: WORKER_ID, run_id: RUN_ID },
+    });
+  });
+
+  await authenticate(page, `/projects/${PROJECT_ID}`);
+  await page.getByRole("button", { name: "Manage issue" }).click();
+  await page.getByLabel("Active worker with a selected adapter").selectOption(WORKER_ID);
+  await page.getByRole("checkbox", { name: /may spend the project budget and send the issue/i }).check();
+  await page.getByRole("button", { name: "Start work" }).click();
+
+  await expect(page.getByRole("status", { name: "Worker Run result" })).toContainText("QUEUED");
+  expect(submissions).toHaveLength(1);
+  const submitted = submissions[0] as Record<string, unknown>;
+  const dispatch = submitted.dispatch as { task_input: Record<string, unknown> };
+  expect(submitted).toMatchObject({
+    requested_by: "office_cto",
+    dispatch: {
+      worker_id: WORKER_ID,
+      project_id: PROJECT_ID,
+      task_type: "project.issue",
+      task_input: {
+        issue_id: ISSUE_ID,
+        title: issue.title,
+        description: issue.description,
+      },
+    },
+  });
+  expect(dispatch.task_input.prompt).toEqual(expect.any(String));
+  const prompt = dispatch.task_input.prompt as string;
+  expect(prompt.length).toBeLessThanOrEqual(32_000);
+  expect(prompt).toContain(`Project ID: "${PROJECT_ID}"`);
+  expect(prompt).toContain(ISSUE_ID);
+  expect(prompt).toContain(issue.title);
+  expect(prompt).toContain(issue.description);
+  expect(prompt).toContain("untrusted task data");
+  expect(prompt).toContain("Use only tools and permissions already granted by AIAT");
 });
 
 test("issue dispatch stays unavailable when active workers have no selected adapter", async ({ page }) => {
