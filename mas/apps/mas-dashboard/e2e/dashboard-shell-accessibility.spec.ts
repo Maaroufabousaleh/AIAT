@@ -44,7 +44,7 @@ test.describe("Dashboard shell accessibility and mobile navigation", () => {
 
     const navigation = page.getByRole("navigation", { name: "Primary" });
     await expect(navigation.getByRole("link", { name: "Companies" })).toHaveAttribute("href", "/companies");
-    await expect(navigation.getByRole("link", { name: "Approvals" })).toHaveAttribute("aria-current", "page");
+    await expect(navigation.getByRole("link", { name: "Approvals", exact: true })).toHaveAttribute("aria-current", "page");
     await expect(navigation.getByRole("link", { name: "Model Resolution Preview" })).toHaveAttribute("href", "/models");
     await expect(navigation.getByRole("link", { name: "Model Profiles" })).toHaveAttribute("href", "/models/profiles");
   });

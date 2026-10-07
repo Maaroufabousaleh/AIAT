@@ -66,13 +66,16 @@ function blankWorkspace() {
   };
 }
 
-function instanceFixture(status: FlowInstance["status"]): FlowInstance {
+function instanceFixture(
+  status: FlowInstance["status"],
+  activeTaskNodeId: string,
+): FlowInstance {
   return {
     id: INSTANCE_ID,
     flow_id: FLOW_ID,
     flow_version: 1,
     project_id: PROJECT_ID,
-    active_node_ids: status === "RUNNING" ? ["work"] : [],
+    active_node_ids: status === "RUNNING" ? [activeTaskNodeId] : [],
     status,
     context_json: {},
     retry_count: 0,
@@ -84,11 +87,12 @@ function instanceFixture(status: FlowInstance["status"]): FlowInstance {
 
 function executionFixture(
   status: FlowNodeExecution["status"],
+  activeTaskNodeId: string,
 ): FlowNodeExecution {
   return {
     id: `execution-${status.toLowerCase()}`,
     instance_id: INSTANCE_ID,
-    node_id: "work",
+    node_id: activeTaskNodeId,
     node_type: "task",
     node_label: "Build feature",
     status,
@@ -102,6 +106,7 @@ test("operator builds, edits, starts, and retries a project flow", async ({
   page,
 }) => {
   let flow: Flow | null = null;
+  let activeTaskNodeId: string | null = null;
   let instance: FlowInstance | null = null;
   let executions: FlowNodeExecution[] = [];
   let retryAttempts = 0;
@@ -152,6 +157,9 @@ test("operator builds, edits, starts, and retries a project flow", async ({
         created_at: "2026-10-01T12:00:00Z",
         updated_at: "2026-10-01T12:00:00Z",
       };
+      activeTaskNodeId =
+        flow.definition_json.nodes.find((node) => node.type === "task")?.id ??
+        null;
       return fulfill(flow, 201);
     }
     if (pathname === `/api/flows/${FLOW_ID}` && method === "GET") {
@@ -191,7 +199,10 @@ test("operator builds, edits, starts, and retries a project flow", async ({
         return instance ? fulfill(instance) : fulfill({ detail: "No flow attached" }, 404);
       }
       if (method === "POST" && flow) {
-        instance = instanceFixture("NOT_STARTED");
+        if (!activeTaskNodeId) {
+          return fulfill({ error: "Saved flow has no task node" }, 409);
+        }
+        instance = instanceFixture("NOT_STARTED", activeTaskNodeId);
         executions = [];
         return fulfill(instance, 201);
       }
@@ -202,16 +213,28 @@ test("operator builds, edits, starts, and retries a project flow", async ({
     if (pathname === `/api/flows/instances/${INSTANCE_ID}/action` && method === "POST") {
       const body = request.postDataJSON() as { action?: string };
       if (body.action === "start") {
-        instance = { ...instanceFixture("RUNNING"), started_at: "2026-10-01T12:04:00Z" };
-        executions = [executionFixture("RUNNING")];
+        if (!activeTaskNodeId) {
+          return fulfill({ error: "Saved flow has no task node" }, 409);
+        }
+        instance = {
+          ...instanceFixture("RUNNING", activeTaskNodeId),
+          started_at: "2026-10-01T12:04:00Z",
+        };
+        executions = [executionFixture("RUNNING", activeTaskNodeId)];
       }
       return fulfill(instance);
     }
     if (pathname === `/api/flows/instances/${INSTANCE_ID}/node-action` && method === "POST") {
       const body = request.postDataJSON() as { action?: string };
       if (body.action === "fail") {
-        instance = { ...instanceFixture("FAILED"), retry_count: 0 };
-        executions = [executionFixture("FAILED")];
+        if (!activeTaskNodeId) {
+          return fulfill({ error: "Saved flow has no task node" }, 409);
+        }
+        instance = {
+          ...instanceFixture("FAILED", activeTaskNodeId),
+          retry_count: 0,
+        };
+        executions = [executionFixture("FAILED", activeTaskNodeId)];
       }
       return fulfill(instance);
     }
@@ -220,8 +243,14 @@ test("operator builds, edits, starts, and retries a project flow", async ({
       if (retryAttempts === 1) {
         return fulfill({ error: "Temporary flow retry issue." }, 503);
       }
-      instance = { ...instanceFixture("RUNNING"), retry_count: 1 };
-      executions = [executionFixture("FAILED"), executionFixture("RUNNING")];
+      if (!activeTaskNodeId) {
+        return fulfill({ error: "Saved flow has no task node" }, 409);
+      }
+      instance = { ...instanceFixture("RUNNING", activeTaskNodeId), retry_count: 1 };
+      executions = [
+        executionFixture("FAILED", activeTaskNodeId),
+        executionFixture("RUNNING", activeTaskNodeId),
+      ];
       return fulfill(instance);
     }
 

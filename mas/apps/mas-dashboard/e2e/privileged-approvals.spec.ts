@@ -48,7 +48,7 @@ test("operator inspects a pending request, approves it, and sees the refreshed a
 
   await expect(main.getByRole("status").filter({ hasText: "Decision recorded: approved" })).toBeVisible();
   await expect(main.getByText("No privileged-action requests are waiting for review.")).toBeVisible();
-  await expect(main.getByRole("listitem").filter({ hasText: "dashboard-operator" }).getByText("approved")).toBeVisible();
+  await expect(main.getByRole("listitem").filter({ hasText: "dashboard-operator" }).getByText("approved", { exact: true })).toBeVisible();
   expect(decisionRequests[0]?.approved).toBe(true);
 });
 
@@ -78,7 +78,7 @@ test("operator can reject a pending request with an audited reason", async ({ pa
   await details.getByLabel("I reviewed this request and intend to record a decision.").check();
   await details.getByRole("button", { name: "Reject request" }).click();
   await expect(main.getByRole("status").filter({ hasText: "Decision recorded: rejected" })).toBeVisible();
-  await expect(main.getByRole("listitem").filter({ hasText: "dashboard-operator" }).getByText("rejected")).toBeVisible();
+  await expect(main.getByRole("listitem").filter({ hasText: "dashboard-operator" }).getByText("rejected", { exact: true })).toBeVisible();
 });
 
 test("approval page presents a retryable error when the audit API is unavailable", async ({ page }) => {

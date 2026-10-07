@@ -77,10 +77,11 @@ test("operator creates a draft profile and version, then previews resolution wit
   });
 
   await authenticate(page, "/models/profiles");
+  const main = page.getByRole("main");
   await page.getByLabel("Profile ID").fill("alpha-coding");
   await page.getByLabel("Purpose").fill("Governed coding tasks");
   await page.getByRole("button", { name: "Create draft profile and version" }).click();
-  await expect(page.getByRole("status")).toContainText("Draft version 1.0.0 saved");
+  await expect(main.getByRole("status")).toContainText("Draft version 1.0.0 saved");
   expect(profileBody).toMatchObject({ profile_id: "alpha-coding", status: "draft", approved_provider_ids: ["local-provider"] });
   expect(versionBody).toMatchObject({ version: "1.0.0", provider_id: "local-provider", exact_model_id: "local-coder-v1", status: "draft" });
   expect(versionBody).not.toHaveProperty("provider_settings");
@@ -102,7 +103,8 @@ test("model profile setup displays conflict and validation status codes", async 
   await page.getByLabel("Profile ID").fill("duplicate-profile");
   await page.getByLabel("Purpose").fill("Test profile");
   await page.getByRole("button", { name: "Create draft profile and version" }).click();
-  await expect(page.getByRole("alert")).toContainText("409: Model Profile already exists");
+  const main = page.getByRole("main");
+  await expect(main.getByRole("alert")).toContainText("409: Model Profile already exists");
 
   await page.unroute("**/api/model-profiles");
   await page.route("**/api/model-profiles", async (route) => {
@@ -113,6 +115,6 @@ test("model profile setup displays conflict and validation status codes", async 
   });
   await page.getByLabel("Profile ID").fill("invalid-provider");
   await page.getByRole("button", { name: "Create draft profile and version" }).click();
-  await expect(page.getByRole("alert")).toContainText("422: provider is not approved");
-  await expect(page.getByRole("status")).toContainText("Draft profile invalid-provider was saved");
+  await expect(main.getByRole("alert")).toContainText("422: provider is not approved");
+  await expect(main.getByRole("status")).toContainText("Draft profile invalid-provider was saved");
 });

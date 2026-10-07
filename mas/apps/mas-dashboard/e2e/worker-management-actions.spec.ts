@@ -116,7 +116,7 @@ test("worker management keeps evaluation and status actions governed and reports
         return;
       }
 
-      const target = workers.find((worker) => worker.worker_id === workerId);
+      const target = workers.find((worker) => worker.id === workerId);
       if (target && body.new_status) target.status = body.new_status;
       await route.fulfill({
         status: 200,
