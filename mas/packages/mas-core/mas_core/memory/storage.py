@@ -40,6 +40,7 @@ from ..company_manifest import DEFAULT_COMPANY_ID
 from ..observability.native_spans import build_native_trace_span
 from ..observability.tracing import current_span_id, current_trace_id, new_span_id
 from ..sandbox_policy import canonical_sandbox_class
+from ..workflow.states import ProjectState
 from . import models as t
 
 if TYPE_CHECKING:
@@ -1961,6 +1962,61 @@ class AgentStorage:
         async with self.engine.connect() as conn:
             rows = (await conn.execute(q)).mappings().all()
         return [dict(r) for r in rows]
+
+    async def list_pending_project_decisions(
+        self,
+        *,
+        limit: int,
+        cursor: tuple[datetime, UUID] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Read one bounded, globally ordered page of actionable project gates.
+
+        This query deliberately joins each gate to its owning project in SQL;
+        it never fans out through per-project reads. The status/created/id
+        index supports the pending filter and keyset traversal. Payload fields
+        such as ``human_input`` and ``justification`` are excluded from this
+        operator inbox projection.
+        """
+        if not 1 <= limit <= 101:
+            raise ValueError("approval inbox query limit must be between 1 and 101")
+
+        gates = t.approval_gates
+        projects = t.projects
+        query = (
+            sa.select(
+                gates.c.id,
+                gates.c.project_id,
+                gates.c.gate_type,
+                gates.c.status,
+                gates.c.created_at,
+                projects.c.name.label("project_name"),
+                projects.c.state.label("project_state"),
+                projects.c.company_id,
+            )
+            .select_from(gates.join(projects, projects.c.id == gates.c.project_id))
+            .where(gates.c.status == "PENDING")
+            .where(
+                projects.c.state.notin_(
+                    [
+                        ProjectState.COMPLETED.value,
+                        ProjectState.ARCHIVED.value,
+                        ProjectState.FAILED.value,
+                    ]
+                )
+            )
+        )
+        if cursor is not None:
+            cursor_created_at, cursor_id = cursor
+            if cursor_created_at.tzinfo is None or cursor_created_at.utcoffset() is None:
+                raise ValueError("approval inbox cursor timestamp must include a timezone")
+            query = query.where(
+                sa.tuple_(gates.c.created_at, gates.c.id)
+                < sa.tuple_(cursor_created_at, cursor_id)
+            )
+        query = query.order_by(gates.c.created_at.desc(), gates.c.id.desc()).limit(limit)
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
 
     # ═══════════════════════════════════════════════════════════════════════════
     # Sprints

@@ -133,6 +133,101 @@ async def test_pending_decisions_empty(client):
     assert resp.json() == []
 
 
+@pytest.mark.anyio
+async def test_project_decision_inbox_requires_operator_identity(client):
+    """The global decision inbox is not available to the shared service key."""
+    storage = MagicMock()
+    storage.list_pending_project_decisions = AsyncMock(return_value=[])
+    _patch_state(storage)
+
+    response = await client.get("/approvals/project-decisions")
+
+    assert response.status_code == 403
+    storage.list_pending_project_decisions.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_project_decision_inbox_returns_bounded_context_and_cursor(client):
+    from datetime import UTC, datetime
+
+    created_at = datetime(2026, 10, 7, 12, 0, tzinfo=UTC)
+    gate_ids = [uuid.uuid4(), uuid.uuid4(), uuid.uuid4()]
+    rows = [
+        {
+            "id": gate_id,
+            "project_id": PROJECT_ID,
+            "project_name": "Alpha project",
+            "project_state": "HUMAN_APPROVAL",
+            "company_id": uuid.UUID("00000000-0000-4000-a000-000000000099"),
+            "gate_type": "human_approval",
+            "status": "PENDING",
+            "created_at": created_at,
+        }
+        for gate_id in gate_ids
+    ]
+    storage = MagicMock()
+    storage.list_pending_project_decisions = AsyncMock(return_value=rows)
+    _patch_state(storage)
+
+    response = await client.get(
+        "/approvals/project-decisions?limit=2",
+        headers={"X-API-Key": "test-operator-key"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["items"]) == 2
+    assert body["items"][0] == {
+        "id": str(gate_ids[0]),
+        "project_id": str(PROJECT_ID),
+        "project_name": "Alpha project",
+        "project_state": "HUMAN_APPROVAL",
+        "company_id": "00000000-0000-4000-a000-000000000099",
+        "gate_type": "human_approval",
+        "status": "PENDING",
+        "created_at": created_at.isoformat().replace("+00:00", "Z"),
+    }
+    assert body["next_cursor"]
+    storage.list_pending_project_decisions.assert_awaited_once_with(
+        limit=3,
+        cursor=None,
+    )
+    assert "human_input" not in body["items"][0]
+    assert "justification" not in body["items"][0]
+
+    storage.list_pending_project_decisions.reset_mock()
+    storage.list_pending_project_decisions.return_value = [rows[2]]
+    next_response = await client.get(
+        f"/approvals/project-decisions?limit=2&cursor={body['next_cursor']}",
+        headers={"X-API-Key": "test-operator-key"},
+    )
+    assert next_response.status_code == 200
+    assert next_response.json()["next_cursor"] is None
+    storage.list_pending_project_decisions.assert_awaited_once_with(
+        limit=3,
+        cursor=(created_at, gate_ids[1]),
+    )
+
+
+@pytest.mark.anyio
+async def test_project_decision_inbox_validates_cursor_and_page_size(client):
+    storage = MagicMock()
+    storage.list_pending_project_decisions = AsyncMock(return_value=[])
+    _patch_state(storage)
+    headers = {"X-API-Key": "test-operator-key"}
+
+    invalid_cursor = await client.get(
+        "/approvals/project-decisions?cursor=not-a-cursor", headers=headers
+    )
+    oversized_page = await client.get(
+        "/approvals/project-decisions?limit=101", headers=headers
+    )
+
+    assert invalid_cursor.status_code == 400
+    assert oversized_page.status_code == 422
+    storage.list_pending_project_decisions.assert_not_awaited()
+
+
 # ── POST /projects/{id}/decisions — happy paths ───────────────────────────────
 
 

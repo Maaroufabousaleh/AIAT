@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 MAS_ROOT = Path(__file__).resolve().parents[1]
 MIGRATION_DIR = MAS_ROOT / "migrations" / "versions"
-EXPECTED_MIGRATION_HEAD = "0045_worker_tool_effects"
+EXPECTED_MIGRATION_HEAD = "0046_project_approval_inbox_index"
 CHECK_SCHEMA = "aiat.database-migration-head-check.v1"
 
 

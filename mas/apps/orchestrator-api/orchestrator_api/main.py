@@ -5470,6 +5470,78 @@ async def get_state_history(
 # ═════════════════════════════════════════════════════════════════════════════
 
 
+class ProjectDecisionInboxItem(BaseModel):
+    """Payload-safe project context for one pending human decision."""
+
+    id: UUID
+    project_id: UUID
+    project_name: str
+    project_state: str
+    company_id: UUID
+    gate_type: str
+    status: str
+    created_at: datetime
+
+
+class ProjectDecisionInboxPage(BaseModel):
+    items: list[ProjectDecisionInboxItem]
+    next_cursor: str | None = None
+
+
+def _encode_project_decision_cursor(created_at: datetime, gate_id: UUID) -> str:
+    if created_at.tzinfo is None or created_at.utcoffset() is None:
+        raise ValueError("approval inbox cursor timestamp must include a timezone")
+    payload = json.dumps(
+        {"created_at": created_at.astimezone(UTC).isoformat(), "id": str(gate_id)},
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+
+def _decode_project_decision_cursor(value: str) -> tuple[datetime, UUID]:
+    try:
+        if not value or len(value) > 512:
+            raise ValueError("invalid cursor length")
+        encoded = value + "=" * (-len(value) % 4)
+        payload = json.loads(base64.b64decode(encoded, altchars=b"-_", validate=True))
+        if not isinstance(payload, dict) or set(payload) != {"created_at", "id"}:
+            raise ValueError("invalid cursor fields")
+        created_at = datetime.fromisoformat(str(payload["created_at"]).replace("Z", "+00:00"))
+        if created_at.tzinfo is None or created_at.utcoffset() is None:
+            raise ValueError("cursor timestamp must include a timezone")
+        gate_id = UUID(str(payload["id"]))
+    except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+        raise HTTPException(status_code=400, detail="Invalid project decision cursor") from None
+    return created_at.astimezone(UTC), gate_id
+
+
+@app.get("/approvals/project-decisions", response_model=ProjectDecisionInboxPage)
+async def list_project_decision_inbox(
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: str | None = Query(default=None, min_length=1, max_length=512),
+) -> ProjectDecisionInboxPage:
+    """Return one bounded operator page of pending project decisions.
+
+    Project ownership/context is resolved with a single indexed join. The
+    endpoint only reads decisions; decisions remain owned by the existing
+    project-scoped write endpoint.
+    """
+    _require_operator_identity(request)
+    storage = _storage()
+    position = _decode_project_decision_cursor(cursor) if cursor is not None else None
+    rows = await storage.list_pending_project_decisions(limit=limit + 1, cursor=position)
+    has_more = len(rows) > limit
+    page_rows = rows[:limit]
+    next_cursor = (
+        _encode_project_decision_cursor(page_rows[-1]["created_at"], page_rows[-1]["id"])
+        if has_more and page_rows
+        else None
+    )
+    return ProjectDecisionInboxPage(items=page_rows, next_cursor=next_cursor)
+
+
 @app.get("/projects/{project_id}/pending-decisions")
 async def get_pending_decisions(project_id: UUID) -> list[dict[str, Any]]:
     """What decisions need human input for this project."""

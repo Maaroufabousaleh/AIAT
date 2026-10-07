@@ -45,7 +45,7 @@ from mas_core.workflow import (  # noqa: E402
 )
 
 CHECK_SCHEMA = "aiat.self-improvement-postgres-evidence-certification.v1"
-EXPECTED_MIGRATION = "0045_worker_tool_effects"
+EXPECTED_MIGRATION = "0046_project_approval_inbox_index"
 PROJECT_ID = UUID("00000000-0000-4000-a000-000000000951")
 OPPORTUNITY_ID = UUID("00000000-0000-4000-a000-000000000952")
 BUNDLE_ID = UUID("00000000-0000-4000-a000-000000000953")

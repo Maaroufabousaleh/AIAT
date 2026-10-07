@@ -60,7 +60,7 @@ from mas_core.worker_registry.run_host_binding import (  # noqa: E402
 )
 
 CHECK_SCHEMA = "aiat.worker-independent-process-execution-postgres-certification.v1"
-EXPECTED_MIGRATION = "0045_worker_tool_effects"
+EXPECTED_MIGRATION = "0046_project_approval_inbox_index"
 WORKER_NAME = "aiat-cert-independent-process-execution-v1"
 WORKER_PREFIX = f"{WORKER_NAME}%"
 HOST_PREFIX = "aiat-cert-independent-process-worker-v1-"

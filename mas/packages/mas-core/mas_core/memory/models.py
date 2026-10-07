@@ -207,6 +207,13 @@ approval_gates = sa.Table(
     sa.Column("decided_at", sa.TIMESTAMP(timezone=True)),
 )
 
+sa.Index(
+    "ix_approval_gates_status_created_id",
+    approval_gates.c.status,
+    approval_gates.c.created_at,
+    approval_gates.c.id,
+)
+
 # ── 7. sprints ────────────────────────────────────────────────────────────────
 sprints = sa.Table(
     "sprints",
