@@ -30,6 +30,18 @@ Projects are the primary ownership, security, cost, evidence, and lifecycle boun
   the database-shaped row boundary (`66f8f80d`).
 - Review sessions/comments, CSO veto, approval gates, pending decisions, and audit timeline.
 - Sprints, issues, parent/dependencies, comments, links, KPI snapshots, agent performance observations, and estimation adjustment.
+- Project Detail now provides an operator-facing issue lifecycle: create a
+  project-owned issue, update title/description/status/priority/team/worker with
+  `expected_revision`, and add comments. A stale edit receives `409`, reloads
+  the canonical issue, and requires the operator to review the newer revision
+  before retrying. The BFF rejects browser-supplied actor attribution and uses
+  the authenticated dashboard operator identity. The bounded
+  `project-issue-management.spec.ts` source-built Playwright flow covers create,
+  update conflict/review, comment, and project scoping 1/1. The issue BFF route
+  handlers also pass seven focused tests for field/UUID/revision validation,
+  fixed operator attribution, and propagation of canonical ownership errors;
+  those route tests stub the orchestrator transport and do not claim live
+  FastAPI ownership integration or worker/provider execution.
 - A first transition to `DONE`/`COMPLETED`/`CLOSED` on an assigned issue now automatically records its estimated-versus-actual hours in the durable agent profile; repeated terminal updates do not double-count the observation, and the response links the profile update to the source issue.
 - The same first terminal transition for a sprint issue persists a `sprint_retrospective` KPI snapshot with aggregate completion/velocity/estimation values and raw source issue IDs, completed issue IDs, status counts, and assigned-agent profile lineage; the existing project KPI API is the read surface.
 - Project context items/chunks/tags/relations with text, semantic, and hybrid search through pgvector.

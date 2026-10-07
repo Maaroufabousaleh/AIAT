@@ -1,10 +1,25 @@
 # AIAT Current Release Ledger
 
-**Run date:** 2026-10-02
+**Last release-ledger run:** 2026-10-02
 **Integration baseline:** reviewed OpenHands work was merged at `2c99b75a`; the reviewed OpenHands tip before integration was `15d2c1a874a2748548338066782b89561353de2e`.
 **Code revision at refresh:** `c84cddf09e8997ed9b54762887f59548b2c99e7a` on `agent/fix-review-p1`
 **Working-tree state:** preserved operator changes plus scoped implementation/evidence changes; dirty, with no clean release candidate claimed
 **Decision:** **NO-RELEASE / RELEASE_CERTIFICATION_PENDING**
+
+## Product development update — 2026-10-07
+
+The current product branch adds exact-version model approval with an audit
+receipt, authenticated WorkerRun detail/actions, project-scoped worker/issue
+activity and issue editing, safe legacy-flow migration UI, a bounded project-
+decision inbox and a unified operator approval view, plus project-scoped PM
+provider discovery. The issue, inbox, and PM dashboard tests use local mocked
+API responses and are product UI evidence, not live provider certification.
+Source migration head is now `0046_project_approval_inbox_index`;
+the local Compose database was last reported at `0045_worker_tool_effects`
+and this additive index migration was not applied in this run. The 2026-10-02
+release-ledger counts and live database claims below remain historical and have
+not been refreshed for this source revision. External provider dispatch stayed
+disabled. Production certification is still a separate programme gate.
 
 ## Current WSL development refresh — 2026-10-02
 

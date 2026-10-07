@@ -1,6 +1,20 @@
 # P0 Release Integrity Status
 
-**Updated:** 2026-10-02
+**Updated:** 2026-10-07
+
+## Product-development update — 2026-10-07
+
+The development branch added model-version approval, operator WorkerRun
+controls, project activity and issue management views, a unified approval
+inbox, PM project-provider discovery, and legacy-flow migration UI. The bounded
+project-decision inbox endpoint is read-only; decisions still use the owning
+project authority. This created migration
+`0046_project_approval_inbox_index`; the source graph passes at 0046, but the
+local Compose database was last reported at 0045 and the migration was not
+applied in this product run. The release-ledger and live-stack figures below
+remain evidence from their stated dates and are not current certification for
+the 0046 source. Release status remains **NO-RELEASE**; no provider dispatch or
+native-Linux claim was made.
 
 ## Previous local working-tree release snapshot — 2026-09-19
 

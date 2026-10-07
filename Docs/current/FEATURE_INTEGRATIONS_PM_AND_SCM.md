@@ -22,6 +22,12 @@ External project-management and source-control systems are governed collaboratio
   and current outbox/reconciliation state. Its actions remain behind the
   operator API identity and integration policy; the UI does not infer missing
   provider state.
+- Project Detail's provider-discovery surface filters bindings by the selected
+  project and connection, shows provisioning details and blockers, links to
+  the owning project, and retries through the existing canonical action. Shared
+  DLQ review is linked without claiming that queue entries are connection
+  attributed. The focused mocked source-built Playwright coverage passes 3/3;
+  this does not contact or certify a live provider.
 - A reusable `aiat.provider-conformance.v1` fixture runner for disposable
   adapters. It exercises capability/health/configuration, canonical project and
   work-item projection, idempotent replay, cursor-bearing change listing,
