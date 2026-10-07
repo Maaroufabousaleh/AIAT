@@ -40,6 +40,10 @@ async function installProjectMocks(
   page: Page,
   workers: unknown[],
   onDispatch: (route: Route) => Promise<void>,
+  options: {
+    pendingDecisions?: unknown[];
+    onDecision?: (route: Route) => Promise<void>;
+  } = {},
 ): Promise<void> {
   await page.route("**/api/**", async (route) => {
     const request = route.request();
@@ -52,6 +56,18 @@ async function installProjectMocks(
     }
     if (path === "/api/workers" && request.method() === "GET") {
       await json(route, 200, workers);
+      return;
+    }
+    if (path === `/api/projects/${PROJECT_ID}/decisions`) {
+      if (request.method() === "POST") {
+        if (options.onDecision) {
+          await options.onDecision(route);
+        } else {
+          await json(route, 200, { status: "decision_recorded" });
+        }
+      } else {
+        await json(route, 200, options.pendingDecisions ?? []);
+      }
       return;
     }
     if (path === `/api/projects/${PROJECT_ID}`) {
@@ -67,7 +83,6 @@ async function installProjectMocks(
       return;
     }
     if (path === `/api/projects/${PROJECT_ID}/state-history` ||
-        path === `/api/projects/${PROJECT_ID}/decisions` ||
         path === `/api/projects/${PROJECT_ID}/transition` ||
         path === `/api/projects/${PROJECT_ID}/context` ||
         path === `/api/projects/${PROJECT_ID}/evidence` ||
@@ -222,4 +237,32 @@ test("issue dispatch stays unavailable when active workers have no selected adap
   await page.getByRole("checkbox", { name: /may spend the project budget/i }).check();
   await expect(page.getByRole("button", { name: "Start work" })).toBeDisabled();
   expect(submissions).toHaveLength(0);
+});
+
+test("project approval submits the exact selected gate ID", async ({ page }) => {
+  const olderGate = "70000000-0000-4000-8000-000000000007";
+  const newerGate = "70000000-0000-4000-8000-000000000008";
+  const submitted: Array<Record<string, unknown>> = [];
+
+  await installProjectMocks(page, [activeWorker], async (route) => {
+    await json(route, 500, { detail: "Worker dispatch is not part of this approval test." });
+  }, {
+    pendingDecisions: [
+      { id: olderGate, project_id: PROJECT_ID, gate_type: "Earlier approval", status: "PENDING", created_at: "2026-10-07T17:00:00Z" },
+      { id: newerGate, project_id: PROJECT_ID, gate_type: "Later approval", status: "PENDING", created_at: "2026-10-07T17:01:00Z" },
+    ],
+    onDecision: async (route) => {
+      submitted.push(route.request().postDataJSON() as Record<string, unknown>);
+      await json(route, 200, { status: "decision_recorded", gate_id: olderGate });
+    },
+  });
+
+  await authenticate(page, `/projects/${PROJECT_ID}`);
+  await page.getByRole("tab", { name: /^Workflow/ }).click();
+  await expect(page.getByRole("heading", { name: "Pending Decisions (2)" })).toBeVisible();
+  await page.getByTestId(`project-decision-${olderGate}`).getByRole("button", { name: "Approve" }).click();
+
+  await expect.poll(() => submitted.length).toBe(1);
+  expect(submitted[0]).toMatchObject({ gate_id: olderGate, decision: "APPROVED" });
+  expect(submitted[0].gate_id).not.toBe(newerGate);
 });

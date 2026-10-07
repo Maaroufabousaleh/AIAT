@@ -1339,8 +1339,8 @@ export default function ProjectDetailPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          gate_id: decisionId,
           decision,
-          decided_by: "operator",
           comments: `Submitted from project workspace: ${decision.toLowerCase()}`,
         }),
       });
@@ -3185,6 +3185,7 @@ export default function ProjectDetailPage() {
                     {decisions.map((d) => (
                       <div
                         key={d.id}
+                        data-testid={`project-decision-${d.id}`}
                         className="bg-slate-900 rounded-lg p-3 border border-slate-800"
                       >
                         <div className="text-xs font-medium text-slate-200 mb-1">
