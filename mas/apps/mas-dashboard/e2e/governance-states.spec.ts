@@ -7,6 +7,26 @@ test("governance retains the last known state when a refresh fails", async ({
 }) => {
   let catalogueRequestCount = 0;
 
+  await page.route((url) => url.pathname === "/api/projects", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([
+        { id: "10000000-0000-4000-8000-000000000001", name: "E2E Project", state: "ACTIVE" },
+      ]),
+    });
+  });
+
+  await page.route((url) => url.pathname === "/api/workers", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([
+        { id: "20000000-0000-4000-8000-000000000002", worker_id: "governance-e2e-worker", name: "Governance E2E worker", status: "ACTIVE" },
+      ]),
+    });
+  });
+
   await page.route(
     (url) => url.pathname === "/api/governance/model-profiles",
     async (route) => {
@@ -120,21 +140,27 @@ test("governance retains the last known state when a refresh fails", async ({
   }
   for (const control of [
     governance.getByRole("button", { name: "Refresh governance" }),
-    governance.getByLabel("Project ID", { exact: true }),
-    governance.getByLabel("Requested profile ID"),
+    governance.getByRole("combobox", { name: "Project", exact: true }),
+    governance.getByRole("combobox", { name: "Model Profile", exact: true }),
     governance.getByLabel("Reason"),
-    governance.getByLabel("Worker ID"),
+    governance.getByRole("combobox", { name: "Worker", exact: true }),
     governance.getByLabel("Task type"),
     governance.getByLabel("Idempotency key"),
-    governance.getByLabel("Project ID (optional)"),
-    governance.getByLabel("Task input (JSON object)"),
-    governance.getByLabel("Action", { exact: true }),
-    governance.getByLabel("Payload (JSON object)"),
+    governance.getByRole("combobox", { name: "Project (optional)", exact: true }),
     governance.getByRole("checkbox"),
   ]) {
     await expect(control).toHaveCSS("min-height", "44px");
   }
   const executiveActions = governance.getByRole("region", { name: "Executive actions" });
+  await executiveActions.getByText("Advanced task input (JSON object)").click();
+  await executiveActions.getByText("Advanced action and payload").click();
+  for (const control of [
+    executiveActions.getByLabel("Task input (JSON object)"),
+    executiveActions.getByLabel("Action", { exact: true }),
+    executiveActions.getByLabel("Payload (JSON object)"),
+  ]) {
+    await expect(control).toHaveCSS("min-height", "44px");
+  }
   for (const action of [
     executiveActions.getByRole("button", { name: "Request override" }),
     executiveActions.getByRole("button", { name: "Dispatch governed run" }),
@@ -147,20 +173,22 @@ test("governance retains the last known state when a refresh fails", async ({
   for (const header of await workerRunsTable.getByRole("columnheader").all()) {
     await expect(header).toHaveAttribute("scope", "col");
   }
-  await expect(page.getByText("governance-e2e-profile")).toBeVisible();
+  const modelProfiles = governance.getByRole("region", { name: "Model Profiles" });
+  const workerStewards = governance.getByRole("region", { name: "External Worker Stewards" });
+  await expect(modelProfiles.getByText("governance-e2e-profile")).toBeVisible();
   await expect(page.getByText("e2e-governance-v1")).toBeVisible();
-  await expect(page.getByText("governance-e2e-worker").first()).toBeVisible();
+  await expect(workerStewards.getByText("governance-e2e-worker", { exact: true })).toBeVisible();
 
   await governance.getByRole("button", { name: "Refresh governance" }).click();
   await expect(page.getByText("Showing last known governance state")).toBeVisible();
   await expect(page.getByText(/latest refresh failed/i)).toBeVisible();
-  await expect(page.getByText("governance-e2e-profile")).toBeVisible();
+  await expect(modelProfiles.getByText("governance-e2e-profile")).toBeVisible();
   await expect(page.getByText("e2e-governance-v1")).toBeVisible();
   await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
 
   await page.getByRole("button", { name: "Retry" }).click();
   await expect(page.getByText("Showing last known governance state")).toHaveCount(0);
-  await expect(page.getByText("governance-e2e-profile")).toBeVisible();
+  await expect(modelProfiles.getByText("governance-e2e-profile")).toBeVisible();
 });
 
 test("executive action forms validate structured requests before sending", async ({ page }) => {
@@ -183,7 +211,36 @@ test("executive action forms validate structured requests before sending", async
       });
       return;
     }
+    if (path.endsWith("/model-profiles")) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([
+          { profile_id: "governance-action-profile", purpose: "Action test profile", status: "APPROVED" },
+        ]),
+      });
+      return;
+    }
     await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route((url) => url.pathname === "/api/projects", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([
+        { id: "10000000-0000-4000-8000-000000000001", name: "E2E Project", state: "ACTIVE" },
+      ]),
+    });
+  });
+  await page.route((url) => url.pathname === "/api/workers", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([
+        { id: "20000000-0000-4000-8000-000000000002", worker_id: "governance-e2e-worker", name: "Governance E2E worker", status: "ACTIVE" },
+        { id: "not-a-uuid", worker_id: "governance-e2e-invalid-worker", name: "Malformed worker fixture", status: "ACTIVE" },
+      ]),
+    });
   });
   await page.route("**/api/executive/actions/**", async (route) => {
     submitted.push({
@@ -200,22 +257,26 @@ test("executive action forms validate structured requests before sending", async
   await authenticate(page, "/governance");
   const actions = page.getByRole("region", { name: "Executive actions" });
 
-  await actions.getByLabel("Worker ID").fill("20000000-0000-4000-8000-000000000002");
+  await actions.getByRole("combobox", { name: "Worker", exact: true }).selectOption("20000000-0000-4000-8000-000000000002");
   await actions.getByLabel("Task type").fill("code.edit");
-  await actions.getByLabel("Idempotency key").fill("governance-e2e-run-1");
-  await actions.getByLabel("Project ID (optional)").fill("10000000-0000-4000-8000-000000000001");
+  const idempotencyInput = actions.getByLabel("Idempotency key");
+  await expect(idempotencyInput).not.toHaveValue("");
+  const generatedKey = await idempotencyInput.inputValue();
+  expect(generatedKey).toBeTruthy();
+  await actions.getByRole("combobox", { name: "Project (optional)", exact: true }).selectOption("10000000-0000-4000-8000-000000000001");
+  await actions.getByText("Advanced task input (JSON object)").click();
   await actions.getByLabel("Task input (JSON object)").fill("[\"not an object\"]");
   await actions.getByRole("button", { name: "Dispatch governed run" }).click();
   await expect(page.getByRole("status", { name: "Executive action result" })).toContainText("Task input must be a JSON object.");
   await expect.poll(() => submitted.length).toBe(0);
 
-  await actions.getByLabel("Worker ID").fill("not-a-uuid");
+  await actions.getByRole("combobox", { name: "Worker", exact: true }).selectOption("not-a-uuid");
   await actions.getByLabel("Task input (JSON object)").fill("{}");
   await actions.getByRole("button", { name: "Dispatch governed run" }).click();
-  await expect(page.getByRole("status", { name: "Executive action result" })).toContainText("Worker ID must be a valid UUID.");
+  await expect(page.getByRole("status", { name: "Executive action result" })).toContainText("selected worker ID is invalid");
   await expect.poll(() => submitted.length).toBe(0);
 
-  await actions.getByLabel("Worker ID").fill("20000000-0000-4000-8000-000000000002");
+  await actions.getByRole("combobox", { name: "Worker", exact: true }).selectOption("20000000-0000-4000-8000-000000000002");
   await actions.getByLabel("Task input (JSON object)").fill('{"issue":"Fix the failing test"}');
   await actions.getByRole("button", { name: "Dispatch governed run" }).click();
   await expect.poll(() => submitted.length).toBe(1);
@@ -225,7 +286,7 @@ test("executive action forms validate structured requests before sending", async
       requested_by: "office_cto",
       dispatch: {
         worker_id: "20000000-0000-4000-8000-000000000002",
-        idempotency_key: "governance-e2e-run-1",
+        idempotency_key: generatedKey,
         task_type: "code.edit",
         task_input: { issue: "Fix the failing test" },
         project_id: "10000000-0000-4000-8000-000000000001",
@@ -233,6 +294,7 @@ test("executive action forms validate structured requests before sending", async
     },
   });
 
+  await actions.getByText("Advanced action and payload").click();
   await actions.getByLabel("Action", { exact: true }).fill("security.override_cso");
   await actions.getByLabel("Payload (JSON object)").fill("[]");
   const privilegedAction = actions.getByRole("button", { name: "Request privileged action" });
@@ -253,6 +315,184 @@ test("executive action forms validate structured requests before sending", async
       payload: { ticket: "SEC-12" },
     },
   });
+});
+
+test("executive action forms submit canonical choices without copied IDs", async ({ page }) => {
+  const submitted: Array<{ path: string; body: Record<string, unknown> }> = [];
+  await page.route("**/api/governance/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith("/catalogue")) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ schema_version: "e2e", registry_model_count: 0, profile_count: 0, profile_version_count: 0, covered_profile_version_count: 0, profile_pending_model_count: 0, entries: [] }),
+      });
+      return;
+    }
+    if (path.endsWith("/model-profiles")) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([
+          { profile_id: "governance-select-profile", purpose: "Selectable E2E profile", status: "APPROVED" },
+        ]),
+      });
+      return;
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route((url) => url.pathname === "/api/projects", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([
+        { id: "10000000-0000-4000-8000-000000000001", name: "E2E delivery project", state: "ACTIVE" },
+      ]),
+    });
+  });
+  await page.route((url) => url.pathname === "/api/workers", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([
+        { id: "20000000-0000-4000-8000-000000000002", worker_id: "governance-e2e-worker", name: "Governance E2E worker", status: "ACTIVE" },
+      ]),
+    });
+  });
+  await page.route("**/api/executive/actions/**", async (route) => {
+    submitted.push({
+      path: new URL(route.request().url()).pathname,
+      body: route.request().postDataJSON() as Record<string, unknown>,
+    });
+    await route.fulfill({
+      status: route.request().url().includes("worker-runs") ? 202 : 201,
+      contentType: "application/json",
+      body: JSON.stringify({ schema: "aiat.executive-action.v1", result: { decision: "pending_approval" } }),
+    });
+  });
+
+  await authenticate(page, "/governance");
+  const actions = page.getByRole("region", { name: "Executive actions" });
+  const projectSelect = actions.getByRole("combobox", { name: "Project", exact: true });
+  const profileSelect = actions.getByRole("combobox", { name: "Model Profile", exact: true });
+  const workerSelect = actions.getByRole("combobox", { name: "Worker", exact: true });
+  await expect(projectSelect).toHaveJSProperty("tagName", "SELECT");
+  await expect(profileSelect).toHaveJSProperty("tagName", "SELECT");
+  await expect(workerSelect).toHaveJSProperty("tagName", "SELECT");
+  await projectSelect.selectOption("10000000-0000-4000-8000-000000000001");
+  await profileSelect.selectOption("governance-select-profile");
+  await actions.getByLabel("Reason").fill("Use the approved profile for this project.");
+  await actions.getByRole("button", { name: "Request override" }).click();
+  await expect.poll(() => submitted.length).toBe(1);
+  expect(submitted[0]).toMatchObject({
+    path: "/api/executive/actions/cfo/model-overrides",
+    body: {
+      project_id: "10000000-0000-4000-8000-000000000001",
+      requested_profile_id: "governance-select-profile",
+      requested_by: "office_cfo",
+      reason: "Use the approved profile for this project.",
+    },
+  });
+
+  await workerSelect.selectOption("20000000-0000-4000-8000-000000000002");
+  await actions.getByLabel("Task type").fill("code.edit");
+  const requestKey = await actions.getByLabel("Idempotency key").inputValue();
+  expect(requestKey).toBeTruthy();
+  await actions.getByRole("combobox", { name: "Project (optional)", exact: true }).selectOption("10000000-0000-4000-8000-000000000001");
+  await actions.getByText("Advanced task input (JSON object)").click();
+  await actions.getByLabel("Task input (JSON object)").fill('{"issue":"Fix the failing test"}');
+  await actions.getByRole("button", { name: "Dispatch governed run" }).click();
+  await expect.poll(() => submitted.length).toBe(2);
+  expect(submitted[1]).toMatchObject({
+    path: "/api/executive/actions/cto/worker-runs",
+    body: {
+      requested_by: "office_cto",
+      dispatch: {
+        worker_id: "20000000-0000-4000-8000-000000000002",
+        idempotency_key: requestKey,
+        task_type: "code.edit",
+        task_input: { issue: "Fix the failing test" },
+        project_id: "10000000-0000-4000-8000-000000000001",
+      },
+    },
+  });
+});
+
+test("executive action forms reject malformed and stale option IDs before submission", async ({ page }) => {
+  const submitted: string[] = [];
+  let useRefreshedOptions = false;
+  const currentProject = "10000000-0000-4000-8000-000000000001";
+  const refreshedProject = "10000000-0000-4000-8000-000000000003";
+  const currentWorker = "20000000-0000-4000-8000-000000000002";
+  const refreshedWorker = "20000000-0000-4000-8000-000000000004";
+
+  await page.route("**/api/governance/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith("/catalogue")) {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ schema_version: "e2e", registry_model_count: 0, profile_count: 0, profile_version_count: 0, covered_profile_version_count: 0, profile_pending_model_count: 0, entries: [] }) });
+      return;
+    }
+    if (path.endsWith("/model-profiles")) {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([{ profile_id: "governance-stale-test-profile", purpose: "Stale ID test", status: "APPROVED" }]) });
+      return;
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route((url) => url.pathname === "/api/projects", async (route) => {
+    const projects = useRefreshedOptions
+      ? [{ id: refreshedProject, name: "Current project", state: "ACTIVE" }]
+      : [
+        { id: currentProject, name: "Selected project", state: "ACTIVE" },
+        { id: "not-a-uuid", name: "Malformed project", state: "ACTIVE" },
+        { id: refreshedProject, name: "Current project", state: "ACTIVE" },
+      ];
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(projects) });
+  });
+  await page.route((url) => url.pathname === "/api/workers", async (route) => {
+    const workers = useRefreshedOptions
+      ? [{ id: refreshedWorker, worker_id: "current-worker", name: "Current worker", status: "ACTIVE" }]
+      : [
+        { id: currentWorker, worker_id: "selected-worker", name: "Selected worker", status: "ACTIVE" },
+        { id: "not-a-uuid", worker_id: "malformed-worker", name: "Malformed worker", status: "ACTIVE" },
+        { id: refreshedWorker, worker_id: "current-worker", name: "Current worker", status: "ACTIVE" },
+      ];
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(workers) });
+  });
+  await page.route("**/api/executive/actions/**", async (route) => {
+    submitted.push(new URL(route.request().url()).pathname);
+    await route.fulfill({ status: 202, contentType: "application/json", body: "{}" });
+  });
+
+  await authenticate(page, "/governance");
+  const actions = page.getByRole("region", { name: "Executive actions" });
+  const projectSelect = actions.getByRole("combobox", { name: "Project", exact: true });
+  const profileSelect = actions.getByRole("combobox", { name: "Model Profile", exact: true });
+  const workerSelect = actions.getByRole("combobox", { name: "Worker", exact: true });
+  await profileSelect.selectOption("governance-stale-test-profile");
+  await actions.getByLabel("Reason").fill("Verify option IDs before submitting.");
+  await projectSelect.selectOption("not-a-uuid");
+  await actions.getByRole("button", { name: "Request override" }).click();
+  await expect(page.getByRole("status", { name: "Executive action result" })).toContainText("selected project ID is invalid");
+  await expect.poll(() => submitted.length).toBe(0);
+
+  await workerSelect.selectOption("not-a-uuid");
+  await actions.getByRole("button", { name: "Dispatch governed run" }).click();
+  await expect(page.getByRole("status", { name: "Executive action result" })).toContainText("selected worker ID is invalid");
+  await expect.poll(() => submitted.length).toBe(0);
+
+  await projectSelect.selectOption(currentProject);
+  await workerSelect.selectOption(currentWorker);
+  useRefreshedOptions = true;
+  await actions.getByRole("button", { name: "Refresh action choices" }).click();
+  await expect(actions.getByRole("option", { name: /Current project/ })).toHaveCount(2);
+  await expect(actions.getByRole("option", { name: /Current worker/ })).toHaveCount(1);
+  await actions.getByRole("button", { name: "Request override" }).click();
+  await expect(page.getByRole("status", { name: "Executive action result" })).toContainText("selected project is no longer in the current project list");
+  await expect.poll(() => submitted.length).toBe(0);
+
+  await actions.getByRole("button", { name: "Dispatch governed run" }).click();
+  await expect(page.getByRole("status", { name: "Executive action result" })).toContainText("selected worker is no longer in the current worker list");
+  await expect.poll(() => submitted.length).toBe(0);
 });
 
 test("governance exposes a first-load access-denied state without retry or mutations", async ({
@@ -339,13 +579,14 @@ test("governance hides mutations when access is lost after a successful read", a
 
   await authenticate(page, "/governance");
   const governance = page.getByRole("main", { name: "Governance" });
-  await expect(governance.getByText("governance-denial-profile")).toBeVisible();
+  const modelProfiles = governance.getByRole("region", { name: "Model Profiles" });
+  await expect(modelProfiles.getByText("governance-denial-profile", { exact: true })).toBeVisible();
   await governance.getByRole("button", { name: "Refresh governance" }).click();
 
   const access = governance.getByRole("region", { name: "Governance access status" });
   await expect(access).toBeVisible();
   await expect(access.getByText(/last-known read context remains visible/i)).toBeVisible();
-  await expect(governance.getByText("governance-denial-profile")).toBeVisible();
+  await expect(modelProfiles.getByText("governance-denial-profile", { exact: true })).toBeVisible();
   await expect(governance.getByRole("button", { name: "Refresh governance" })).toHaveCount(0);
   await expect(governance.getByRole("button", { name: "Retry" })).toHaveCount(0);
   for (const action of ["Request override", "Dispatch governed run", "Request privileged action"]) {
