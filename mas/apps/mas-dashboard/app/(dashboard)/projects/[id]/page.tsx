@@ -7,6 +7,7 @@ import {
   useMemo,
   useRef,
   type KeyboardEvent as ReactKeyboardEvent,
+  type FormEvent as ReactFormEvent,
 } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
@@ -43,6 +44,9 @@ import {
   Clock,
   ListChecks,
   Wallet,
+  MessageSquare,
+  Save,
+  X,
 } from "lucide-react";
 import {
   ReactFlow,
@@ -58,6 +62,11 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
+import type {
+  CanonicalIssueCommentRequest,
+  CanonicalIssueCreateRequest,
+  CanonicalIssueUpdateRequest,
+} from "@/lib/generated/orchestrator-api";
 import type {
   Flow,
   FlowInstance,
@@ -124,6 +133,12 @@ const SUPPORTED_TEXT_FILE_EXTENSIONS = new Set([
   ".sql",
   ".sh",
 ]);
+
+const PROJECT_ISSUE_STATUS_OPTIONS = [
+  "backlog", "in_progress", "in_review", "done", "blocked", "cancelled",
+];
+const PROJECT_ISSUE_PRIORITY_OPTIONS = ["critical", "high", "medium", "low"];
+const PROJECT_ISSUE_TYPE_OPTIONS = ["feature", "test", "qa", "docs", "infra", "bugfix", "bug", "rework"];
 
 interface Decision {
   id: string;
@@ -283,6 +298,28 @@ interface ProjectIssue {
   priority?: string;
   assigned_team?: string | null;
   updated_at?: string;
+  revision?: number;
+}
+
+interface CanonicalProjectIssue extends ProjectIssue {
+  description?: string | null;
+  assigned_agent?: string | null;
+  estimated_hours?: number | null;
+  actual_hours?: number | null;
+  story_points?: number | null;
+}
+
+interface ProjectIssueComment {
+  comment_id?: string;
+  body: string;
+  actor_id?: string;
+  created_at?: string;
+}
+
+interface ProjectIssueDetail {
+  issue: CanonicalProjectIssue;
+  comments: ProjectIssueComment[];
+  links: Array<Record<string, unknown>>;
 }
 
 const flowNodeTypes: NodeTypes = {};
@@ -404,6 +441,25 @@ export default function ProjectDetailPage() {
   const [projectWorkerRunsError, setProjectWorkerRunsError] = useState<string | null>(null);
   const [projectIssues, setProjectIssues] = useState<ProjectIssue[]>([]);
   const [projectIssuesError, setProjectIssuesError] = useState<string | null>(null);
+  const [issueCreateOpen, setIssueCreateOpen] = useState(false);
+  const [issueCreateBusy, setIssueCreateBusy] = useState(false);
+  const [issueCreateTitle, setIssueCreateTitle] = useState("");
+  const [issueCreateDescription, setIssueCreateDescription] = useState("");
+  const [issueCreateType, setIssueCreateType] = useState("feature");
+  const [issueCreatePriority, setIssueCreatePriority] = useState("medium");
+  const [selectedIssue, setSelectedIssue] = useState<ProjectIssueDetail | null>(null);
+  const [issueDetailLoading, setIssueDetailLoading] = useState(false);
+  const [issueUpdateBusy, setIssueUpdateBusy] = useState(false);
+  const [issueCommentBusy, setIssueCommentBusy] = useState(false);
+  const [issueEditTitle, setIssueEditTitle] = useState("");
+  const [issueEditDescription, setIssueEditDescription] = useState("");
+  const [issueEditStatus, setIssueEditStatus] = useState("");
+  const [issueEditPriority, setIssueEditPriority] = useState("");
+  const [issueEditTeam, setIssueEditTeam] = useState("");
+  const [issueEditAgent, setIssueEditAgent] = useState("");
+  const [issueNewComment, setIssueNewComment] = useState("");
+  const [issueActionError, setIssueActionError] = useState<string | null>(null);
+  const [issueActionNotice, setIssueActionNotice] = useState<string | null>(null);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
   const [workspaceStale, setWorkspaceStale] = useState(false);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
@@ -463,6 +519,8 @@ export default function ProjectDetailPage() {
     setShowFlowSwitch(false);
     setShowFlowActionsMenu(false);
     setShowContextUpload(false);
+    setIssueCreateOpen(false);
+    setSelectedIssue(null);
     setBulkContextError("");
     clearContextSelection();
   }, [clearContextSelection]);
@@ -834,6 +892,151 @@ export default function ProjectDetailPage() {
       return true;
     }
     return false;
+  }
+
+  async function issueErrorMessage(response: Response, fallback: string): Promise<string> {
+    const payload = await response.json().catch(() => null);
+    const detail = payload && typeof payload === "object"
+      ? (payload as { detail?: unknown; error?: unknown }).detail ??
+        (payload as { detail?: unknown; error?: unknown }).error
+      : null;
+    return typeof detail === "string" && detail.trim()
+      ? detail.slice(0, 400)
+      : `${fallback} (HTTP ${response.status})`;
+  }
+
+  async function openIssue(issueId: string) {
+    if (accessDeniedRef.current) return;
+    setIssueDetailLoading(true);
+    setIssueActionError(null);
+    setIssueActionNotice(null);
+    try {
+      const response = await fetch(`/api/projects/${id}/issues/${encodeURIComponent(issueId)}`, { cache: "no-store" });
+      if (handleDeniedResponse(response)) return;
+      if (!response.ok) throw new Error(await issueErrorMessage(response, "Issue details could not be loaded"));
+      const payload = await response.json() as ProjectIssueDetail;
+      if (!payload?.issue || payload.issue.project_id.toLowerCase() !== id.toLowerCase() || payload.issue.issue_id !== issueId) {
+        throw new Error("Issue details did not match this project.");
+      }
+      const detail: ProjectIssueDetail = {
+        issue: payload.issue,
+        comments: Array.isArray(payload.comments) ? payload.comments.filter((comment) => typeof comment?.body === "string") : [],
+        links: Array.isArray(payload.links) ? payload.links : [],
+      };
+      setSelectedIssue(detail);
+      setIssueEditTitle(detail.issue.title);
+      setIssueEditDescription(detail.issue.description ?? "");
+      setIssueEditStatus(detail.issue.status.toLowerCase());
+      setIssueEditPriority((detail.issue.priority ?? "medium").toLowerCase());
+      setIssueEditTeam(detail.issue.assigned_team ?? "");
+      setIssueEditAgent(detail.issue.assigned_agent ?? "");
+      setIssueNewComment("");
+    } catch (cause) {
+      setIssueActionError(cause instanceof Error ? cause.message : "Issue details could not be loaded.");
+    } finally {
+      setIssueDetailLoading(false);
+    }
+  }
+
+  async function handleCreateIssue(event: ReactFormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (accessDeniedRef.current || !issueCreateTitle.trim()) return;
+    setIssueCreateBusy(true);
+    setIssueActionError(null);
+    setIssueActionNotice(null);
+    const body: CanonicalIssueCreateRequest = {
+      title: issueCreateTitle.trim(),
+      description: issueCreateDescription.trim() || null,
+      issue_type: issueCreateType,
+      priority: issueCreatePriority,
+    };
+    try {
+      const response = await fetch(`/api/projects/${id}/issues`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (handleDeniedResponse(response)) return;
+      if (!response.ok) throw new Error(await issueErrorMessage(response, "Issue could not be created"));
+      setIssueCreateOpen(false);
+      setIssueCreateTitle("");
+      setIssueCreateDescription("");
+      setIssueCreateType("feature");
+      setIssueCreatePriority("medium");
+      setIssueActionNotice("Issue created.");
+      await loadWorkspace();
+    } catch (cause) {
+      setIssueActionError(cause instanceof Error ? cause.message : "Issue could not be created.");
+    } finally {
+      setIssueCreateBusy(false);
+    }
+  }
+
+  async function handleUpdateIssue(event: ReactFormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (accessDeniedRef.current || !selectedIssue) return;
+    const revision = selectedIssue.issue.revision;
+    if (!Number.isSafeInteger(revision) || (revision ?? 0) < 1) {
+      setIssueActionError("This issue has no valid revision. Refresh the issue details before editing.");
+      return;
+    }
+    setIssueUpdateBusy(true);
+    setIssueActionError(null);
+    setIssueActionNotice(null);
+    const body: CanonicalIssueUpdateRequest = {
+      title: issueEditTitle.trim(),
+      description: issueEditDescription.trim() || null,
+      status: issueEditStatus,
+      priority: issueEditPriority,
+      assigned_team: issueEditTeam.trim() || null,
+      assigned_agent: issueEditAgent.trim() || null,
+      expected_revision: revision,
+    };
+    try {
+      const response = await fetch(`/api/projects/${id}/issues/${encodeURIComponent(selectedIssue.issue.issue_id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (handleDeniedResponse(response)) return;
+      if (response.status === 409) {
+        await openIssue(selectedIssue.issue.issue_id);
+        setIssueActionNotice("This issue changed since you opened it. The latest revision is loaded; review it before saving again.");
+        return;
+      }
+      if (!response.ok) throw new Error(await issueErrorMessage(response, "Issue could not be updated"));
+      await Promise.all([openIssue(selectedIssue.issue.issue_id), loadWorkspace()]);
+      setIssueActionNotice("Issue updated.");
+    } catch (cause) {
+      setIssueActionError(cause instanceof Error ? cause.message : "Issue could not be updated.");
+    } finally {
+      setIssueUpdateBusy(false);
+    }
+  }
+
+  async function handleAddIssueComment(event: ReactFormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (accessDeniedRef.current || !selectedIssue || !issueNewComment.trim()) return;
+    setIssueCommentBusy(true);
+    setIssueActionError(null);
+    setIssueActionNotice(null);
+    const body: Pick<CanonicalIssueCommentRequest, "body"> = { body: issueNewComment.trim() };
+    try {
+      const response = await fetch(`/api/projects/${id}/issues/${encodeURIComponent(selectedIssue.issue.issue_id)}/comments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (handleDeniedResponse(response)) return;
+      if (!response.ok) throw new Error(await issueErrorMessage(response, "Comment could not be added"));
+      setIssueNewComment("");
+      await openIssue(selectedIssue.issue.issue_id);
+      setIssueActionNotice("Comment added.");
+    } catch (cause) {
+      setIssueActionError(cause instanceof Error ? cause.message : "Comment could not be added.");
+    } finally {
+      setIssueCommentBusy(false);
+    }
   }
 
   async function handleRepositoryAction(operation: "sync" | "status") {
@@ -1994,8 +2197,45 @@ export default function ProjectDetailPage() {
                 <section className="dashboard-surface p-4" aria-labelledby="project-issues-heading">
                   <div className="mb-3 flex items-center justify-between gap-3">
                     <h2 id="project-issues-heading" className="text-sm font-medium text-white">Project Issues</h2>
-                    <span className="text-xs text-slate-500">project-scoped work items</span>
+                    <div className="flex items-center gap-2">
+                      <span className="hidden text-xs text-slate-500 sm:inline">project-scoped work items</span>
+                      <button
+                        type="button"
+                        onClick={() => { setIssueCreateOpen((open) => !open); setIssueActionError(null); setIssueActionNotice(null); }}
+                        disabled={accessDenied}
+                        aria-expanded={issueCreateOpen}
+                        className="inline-flex min-h-11 items-center gap-1.5 rounded-md border border-blue-700/60 bg-blue-950/30 px-3 py-2 text-xs font-medium text-blue-100 hover:bg-blue-900/40 disabled:opacity-50"
+                      >
+                        <Plus size={14} aria-hidden="true" /> New issue
+                      </button>
+                    </div>
                   </div>
+                  {issueActionError && !selectedIssue && <p role="alert" className="mb-3 rounded-md border border-red-700/50 bg-red-950/30 px-3 py-2 text-xs text-red-200">{issueActionError}</p>}
+                  {issueActionNotice && !selectedIssue && <p role="status" className="mb-3 rounded-md border border-emerald-700/50 bg-emerald-950/25 px-3 py-2 text-xs text-emerald-200">{issueActionNotice}</p>}
+                  {issueCreateOpen && (
+                    <form onSubmit={handleCreateIssue} className="mb-4 grid gap-3 rounded-lg border border-slate-700 bg-slate-950/60 p-3 md:grid-cols-2" aria-label="Create project issue">
+                      <label className="text-xs text-slate-300 md:col-span-2">Title
+                        <input required maxLength={500} value={issueCreateTitle} onChange={(event) => setIssueCreateTitle(event.target.value)} className="mt-1 min-h-11 w-full rounded-md border border-slate-700 bg-slate-900 px-3 text-sm text-white" />
+                      </label>
+                      <label className="text-xs text-slate-300 md:col-span-2">Description
+                        <textarea maxLength={100000} rows={3} value={issueCreateDescription} onChange={(event) => setIssueCreateDescription(event.target.value)} className="mt-1 w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white" />
+                      </label>
+                      <label className="text-xs text-slate-300">Type
+                        <select value={issueCreateType} onChange={(event) => setIssueCreateType(event.target.value)} className="mt-1 min-h-11 w-full rounded-md border border-slate-700 bg-slate-900 px-3 text-sm text-white">
+                          {PROJECT_ISSUE_TYPE_OPTIONS.map((value) => <option key={value} value={value}>{value.replace(/_/g, " ")}</option>)}
+                        </select>
+                      </label>
+                      <label className="text-xs text-slate-300">Priority
+                        <select value={issueCreatePriority} onChange={(event) => setIssueCreatePriority(event.target.value)} className="mt-1 min-h-11 w-full rounded-md border border-slate-700 bg-slate-900 px-3 text-sm text-white">
+                          {PROJECT_ISSUE_PRIORITY_OPTIONS.map((value) => <option key={value} value={value}>{value}</option>)}
+                        </select>
+                      </label>
+                      <div className="flex gap-2 md:col-span-2">
+                        <button type="submit" disabled={issueCreateBusy || !issueCreateTitle.trim()} className="inline-flex min-h-11 items-center gap-2 rounded-md bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50">{issueCreateBusy ? "Creating…" : "Create issue"}</button>
+                        <button type="button" onClick={() => setIssueCreateOpen(false)} disabled={issueCreateBusy} className="min-h-11 rounded-md border border-slate-700 px-3 py-2 text-xs text-slate-200 hover:bg-slate-800 disabled:opacity-50">Cancel</button>
+                      </div>
+                    </form>
+                  )}
                   {projectIssuesError ? (
                     <div role="status" className="space-y-2 text-xs text-amber-200">
                       <p>{projectIssuesError}</p>
@@ -2014,12 +2254,78 @@ export default function ProjectDetailPage() {
                             <span className="rounded border border-slate-700 px-2 py-1 text-slate-200">{issue.status.replace(/_/g, " ")}</span>
                           </div>
                           <div className="mt-2 text-slate-400">{issue.issue_type || "Issue"} · {issue.priority || "priority not set"}{issue.assigned_team ? ` · ${issue.assigned_team}` : ""}</div>
+                          <button type="button" onClick={() => void openIssue(issue.issue_id)} disabled={issueDetailLoading} className="mt-2 inline-flex min-h-11 items-center gap-1.5 rounded border border-slate-700 px-3 py-2 text-xs text-blue-200 hover:bg-slate-800 disabled:opacity-50">
+                            <MessageSquare size={13} aria-hidden="true" /> {issueDetailLoading ? "Loading…" : "Manage issue"}
+                          </button>
                         </li>
                       ))}
                     </ul>
                   )}
                 </section>
               </div>
+
+              {selectedIssue && (
+                <div className="fixed inset-0 z-[70] flex items-start justify-center overflow-y-auto bg-black/70 p-4 sm:items-center" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedIssue(null); }}>
+                  <section role="dialog" aria-modal="true" aria-labelledby="project-issue-dialog-title" className="my-4 w-full max-w-2xl rounded-xl border border-slate-700 bg-slate-950 p-5 shadow-2xl">
+                    <div className="mb-4 flex items-start justify-between gap-3">
+                      <div>
+                        <h2 id="project-issue-dialog-title" className="text-base font-semibold text-white">Manage project issue</h2>
+                        <p className="mt-1 break-all font-mono text-xs text-slate-500">{selectedIssue.issue.issue_id} · revision {selectedIssue.issue.revision ?? "unknown"}</p>
+                      </div>
+                      <button type="button" aria-label="Close issue details" onClick={() => setSelectedIssue(null)} className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-md border border-slate-700 text-slate-300 hover:bg-slate-800"><X size={16} aria-hidden="true" /></button>
+                    </div>
+                    {issueActionError && <p role="alert" className="mb-3 rounded-md border border-red-700/50 bg-red-950/30 px-3 py-2 text-xs text-red-200">{issueActionError}</p>}
+                    {issueActionNotice && <p role="status" className="mb-3 rounded-md border border-emerald-700/50 bg-emerald-950/25 px-3 py-2 text-xs text-emerald-200">{issueActionNotice}</p>}
+                    {issueDetailLoading && <p role="status" className="mb-3 text-xs text-slate-400">Refreshing issue details…</p>}
+                    <form onSubmit={handleUpdateIssue} className="grid gap-3 md:grid-cols-2" aria-label="Update project issue">
+                      <label className="text-xs text-slate-300 md:col-span-2">Title
+                        <input required maxLength={500} value={issueEditTitle} onChange={(event) => setIssueEditTitle(event.target.value)} className="mt-1 min-h-11 w-full rounded-md border border-slate-700 bg-slate-900 px-3 text-sm text-white" />
+                      </label>
+                      <label className="text-xs text-slate-300 md:col-span-2">Description
+                        <textarea maxLength={100000} rows={3} value={issueEditDescription} onChange={(event) => setIssueEditDescription(event.target.value)} className="mt-1 w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white" />
+                      </label>
+                      <label className="text-xs text-slate-300">Status
+                        <select value={issueEditStatus} onChange={(event) => setIssueEditStatus(event.target.value)} className="mt-1 min-h-11 w-full rounded-md border border-slate-700 bg-slate-900 px-3 text-sm text-white">
+                          {!PROJECT_ISSUE_STATUS_OPTIONS.includes(issueEditStatus) && <option value={issueEditStatus}>{issueEditStatus.replace(/_/g, " ")} (current)</option>}
+                          {PROJECT_ISSUE_STATUS_OPTIONS.map((value) => <option key={value} value={value}>{value.replace(/_/g, " ")}</option>)}
+                        </select>
+                      </label>
+                      <label className="text-xs text-slate-300">Priority
+                        <select value={issueEditPriority} onChange={(event) => setIssueEditPriority(event.target.value)} className="mt-1 min-h-11 w-full rounded-md border border-slate-700 bg-slate-900 px-3 text-sm text-white">
+                          {!PROJECT_ISSUE_PRIORITY_OPTIONS.includes(issueEditPriority) && <option value={issueEditPriority}>{issueEditPriority} (current)</option>}
+                          {PROJECT_ISSUE_PRIORITY_OPTIONS.map((value) => <option key={value} value={value}>{value}</option>)}
+                        </select>
+                      </label>
+                      <label className="text-xs text-slate-300">Assigned team
+                        <input maxLength={200} value={issueEditTeam} onChange={(event) => setIssueEditTeam(event.target.value)} className="mt-1 min-h-11 w-full rounded-md border border-slate-700 bg-slate-900 px-3 text-sm text-white" />
+                      </label>
+                      <label className="text-xs text-slate-300">Assigned worker
+                        <input maxLength={200} value={issueEditAgent} onChange={(event) => setIssueEditAgent(event.target.value)} className="mt-1 min-h-11 w-full rounded-md border border-slate-700 bg-slate-900 px-3 text-sm text-white" />
+                      </label>
+                      <div className="flex flex-wrap gap-2 md:col-span-2">
+                        <button type="submit" disabled={issueUpdateBusy || issueDetailLoading || !issueEditTitle.trim()} className="inline-flex min-h-11 items-center gap-2 rounded-md bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"><Save size={14} aria-hidden="true" />{issueUpdateBusy ? "Saving…" : "Save issue"}</button>
+                        <button type="button" onClick={() => void openIssue(selectedIssue.issue.issue_id)} disabled={issueDetailLoading || issueUpdateBusy} className="min-h-11 rounded-md border border-slate-700 px-3 py-2 text-xs text-slate-200 hover:bg-slate-800 disabled:opacity-50">Refresh latest</button>
+                      </div>
+                    </form>
+                    <section className="mt-5 border-t border-slate-800 pt-4" aria-labelledby="issue-comments-heading">
+                      <h3 id="issue-comments-heading" className="text-sm font-medium text-white">Comments</h3>
+                      {selectedIssue.comments.length === 0 ? <p className="mt-2 text-xs text-slate-500">No comments yet.</p> : (
+                        <ul className="mt-2 max-h-48 space-y-2 overflow-y-auto" aria-label="Issue comments">
+                          {selectedIssue.comments.map((comment, index) => <li key={comment.comment_id ?? `${comment.created_at ?? "comment"}-${index}`} className="rounded-md border border-slate-800 bg-slate-900/60 p-3 text-xs">
+                            <p className="whitespace-pre-wrap text-slate-200">{comment.body}</p>
+                            <p className="mt-2 text-slate-500">{comment.actor_id ?? "Operator"}{comment.created_at ? ` · ${formatInTz(comment.created_at, "MMM d HH:mm")}` : ""}</p>
+                          </li>)}
+                        </ul>
+                      )}
+                      <form onSubmit={handleAddIssueComment} className="mt-3 space-y-2" aria-label="Add issue comment">
+                        <label htmlFor="project-issue-comment" className="text-xs text-slate-300">Add a comment</label>
+                        <textarea id="project-issue-comment" required maxLength={100000} rows={3} value={issueNewComment} onChange={(event) => setIssueNewComment(event.target.value)} className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white" />
+                        <button type="submit" disabled={issueCommentBusy || !issueNewComment.trim()} className="inline-flex min-h-11 items-center gap-2 rounded-md border border-slate-700 px-3 py-2 text-xs text-slate-100 hover:bg-slate-800 disabled:opacity-50"><MessageSquare size={14} aria-hidden="true" />{issueCommentBusy ? "Adding…" : "Add comment"}</button>
+                      </form>
+                    </section>
+                  </section>
+                </div>
+              )}
 
               {(workspace?.pending_approvals ?? []).length > 0 && (
                 <div className="dashboard-surface border-amber-700/50 bg-amber-950/15 p-4">

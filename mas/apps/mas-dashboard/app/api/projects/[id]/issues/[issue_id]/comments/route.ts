@@ -27,11 +27,11 @@ export async function POST(request: Request, props: Params) {
     return NextResponse.json({ error: "comment body is required and must be at most 100000 characters" }, { status: 400 });
   }
   try {
-    // Do not accept actor_id from the browser. The orchestrator's typed request
-    // default records the operator principal for this dashboard-authenticated call.
+    // Do not accept actor_id from the browser. The dashboard BFF supplies its
+    // fixed operator attribution to the canonical issue audit record.
     const data = await orchestratorFetch(`/projects/${id}/issues/${issueId}/comments`, {
       method: "POST",
-      body: JSON.stringify({ body: body.body.trim() }),
+      body: JSON.stringify({ body: body.body.trim(), actor_id: "dashboard-operator" }),
     });
     return NextResponse.json(data, { status: 201 });
   } catch (error: unknown) {
