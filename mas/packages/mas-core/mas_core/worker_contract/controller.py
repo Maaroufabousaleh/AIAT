@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from .adapters import BaseWorkerAdapter, WorkerAdapter
+from .adapters import BaseWorkerAdapter, WorkerAdapter, WorkerStartCancelled
 from .models import (
     CheckpointMode,
     EventType,
@@ -91,6 +91,9 @@ class WorkerRunController:
         self._memory_runs: dict[UUID, dict[str, Any]] = {}
         self._memory_events: dict[UUID, list[dict[str, Any]]] = {}
         self._memory_tool_effects: dict[tuple[UUID, str], dict[str, Any]] = {}
+        self._dispatch_locks: dict[UUID, asyncio.Lock] = {}
+        self._dispatch_phase: dict[UUID, str] = {}
+        self._cancel_events: dict[UUID, asyncio.Event] = {}
 
     @staticmethod
     def _tool_request_sha256(tool_request: Any) -> str:
@@ -822,8 +825,28 @@ class WorkerRunController:
                 expected="VALIDATING",
                 negotiation=negotiation,
             )
+            dispatch_lock = self._dispatch_locks.setdefault(request.run_id, asyncio.Lock())
+            cancel_event = self._cancel_events.setdefault(request.run_id, asyncio.Event())
+            self._dispatch_phase[request.run_id] = "NOT_STARTED"
             await transition_before_dispatch("DISPATCHING", expected="READY")
-            accepted = await adapter.start(request)
+            async with dispatch_lock:
+                dispatch_row = await self.get_run(request.run_id)
+                if (
+                    str((dispatch_row or {}).get("state") or "") == "CANCELLED"
+                    or cancel_event.is_set()
+                ):
+                    raise WorkerRunError(
+                        "CANCELLED",
+                        "worker run was cancelled before adapter startup",
+                        state="CANCELLED",
+                    )
+                # This marker is set immediately before entering the adapter.
+                # A concurrent cancellation can still mark the adapter's
+                # pending-cancel bit while start awaits readiness, but it may
+                # no longer claim that no runtime startup was attempted.
+                self._dispatch_phase[request.run_id] = "STARTING"
+                accepted = await adapter.start(request)
+                self._dispatch_phase[request.run_id] = "ACCEPTED"
             runtime_run_id = accepted.runtime_run_id if accepted else None
             accepted_metadata = accepted.metadata if accepted else {}
             if runtime_run_id is None and isinstance(accepted_metadata, dict):
@@ -938,6 +961,27 @@ class WorkerRunController:
             await adapter.cancel(WorkerCancellation(run_id=request.run_id, reason="worker run timed out", requested_by="worker-run-controller", force=True))
             await self.transition(request.run_id, "TIMED_OUT", expected="RUNNING", error={"code": "TIMEOUT", "message": "worker run exceeded timeout"})
             return WorkerRunOutcome(run_id=request.run_id, state="TIMED_OUT", accepted=accepted, events=tuple(events), readiness=readiness, negotiation=negotiation)
+        except WorkerStartCancelled as exc:
+            current_row = await self.get_run(request.run_id)
+            current = str((current_row or {}).get("state") or "")
+            if current not in TERMINAL_RUN_STATES:
+                await self.transition(
+                    request.run_id,
+                    "CANCELLED",
+                    expected=current,
+                    error={"code": "CANCELLED", "message": str(exc)},
+                )
+                current_row = await self.get_run(request.run_id)
+                current = str((current_row or {}).get("state") or "")
+            outcome_state = current if current in TERMINAL_RUN_STATES else "CANCELLED"
+            return WorkerRunOutcome(
+                run_id=request.run_id,
+                state=outcome_state,
+                accepted=accepted,
+                events=tuple(events),
+                readiness=readiness,
+                negotiation=negotiation,
+            )
         except WorkerRunError as exc:
             current_row = await self.get_run(request.run_id)
             current = str((current_row or {}).get("state") or "")
@@ -961,6 +1005,10 @@ class WorkerRunController:
                 except Exception:
                     logger.exception("Failed to persist unexpected worker run failure")
             return WorkerRunOutcome(run_id=request.run_id, state="FAILED", accepted=accepted, events=tuple(events), readiness=readiness, negotiation=negotiation)
+        finally:
+            self._dispatch_phase.pop(request.run_id, None)
+            self._cancel_events.pop(request.run_id, None)
+            self._dispatch_locks.pop(request.run_id, None)
 
     async def cancel(self, run_id: UUID, adapter: WorkerAdapter, *, reason: str, requested_by: str, force: bool = False) -> dict[str, Any] | None:
         row = await self.get_run(run_id)
@@ -969,6 +1017,9 @@ class WorkerRunController:
         if row.get("state") in TERMINAL_RUN_STATES:
             return row
         current = str(row.get("state"))
+        cancel_event = self._cancel_events.get(run_id)
+        if cancel_event is not None:
+            cancel_event.set()
         pre_dispatch_states = {"QUEUED", "CLAIMED", "CREATED", "VALIDATING", "READY"}
         while current in pre_dispatch_states:
             cancelled = await self.transition(
@@ -990,6 +1041,35 @@ class WorkerRunController:
                     details={"state": current},
                 )
             current = observed
+        if current == "DISPATCHING" and self._dispatch_phase.get(run_id) == "NOT_STARTED":
+            # The controller knows it has persisted DISPATCHING but has not
+            # entered adapter.start yet. Serialize this CAS against the
+            # controller's transition to STARTING so cancellation can win
+            # without asking an adapter to infer whether a remote process
+            # exists (which would be unsafe after a controller restart).
+            dispatch_lock = self._dispatch_locks.get(run_id)
+            if dispatch_lock is not None:
+                async with dispatch_lock:
+                    row = await self.get_run(run_id)
+                    if row is None or row.get("state") in TERMINAL_RUN_STATES:
+                        return row
+                    current = str(row.get("state"))
+                    if (
+                        current == "DISPATCHING"
+                        and self._dispatch_phase.get(run_id) == "NOT_STARTED"
+                    ):
+                        cancelled = await self.transition(
+                            run_id,
+                            "CANCELLED",
+                            expected="DISPATCHING",
+                            error={"code": "CANCELLED", "message": reason},
+                        )
+                        if cancelled is not None:
+                            return cancelled
+                        row = await self.get_run(run_id)
+                        if row is None or row.get("state") in TERMINAL_RUN_STATES:
+                            return row
+                        current = str(row.get("state"))
         if current not in {
             "DISPATCHING",
             "RUNNING",

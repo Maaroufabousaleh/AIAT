@@ -51,6 +51,7 @@ from mas_core.worker_contract import (
     WorkerResult,
     WorkerRunRequest,
     WorkerRuntimeStatus,
+    WorkerStartCancelled,
     WorkerToolRequest,
     WorkerToolResponse,
     WorkerUsage,
@@ -1887,11 +1888,15 @@ class OpenCodeAdapter(HTTPAdapter):
         )
 
     async def _create_session(self, request: WorkerRunRequest) -> str:
+        if request.run_id in self._cancel_requested:
+            raise WorkerStartCancelled("OpenCode run was cancelled before session creation")
         existing = self._session_by_key.get(request.idempotency_key)
         if existing:
             return existing
         bridge_name = await self._configure_tool_bridge(request)
         client = await self._get_client()
+        if request.run_id in self._cancel_requested:
+            raise WorkerStartCancelled("OpenCode run was cancelled before session creation")
         # A persisted session ID may only come from the control-plane adapter
         # context (for restart reconciliation), never from task JSON or user
         # supplied runtime extensions.
@@ -1921,6 +1926,8 @@ class OpenCodeAdapter(HTTPAdapter):
                         return session_id
         except (httpx.HTTPError, ValueError):
             pass
+        if request.run_id in self._cancel_requested:
+            raise WorkerStartCancelled("OpenCode run was cancelled before session creation")
         payload: dict[str, Any] = {
             "title": title,
             "metadata": {
@@ -2082,6 +2089,8 @@ class OpenCodeAdapter(HTTPAdapter):
         self._mcp_locks.pop(run_id, None)
 
     async def start(self, request: WorkerRunRequest) -> Any:
+        if request.run_id in self._cancel_requested or request.run_id in self._cancelled:
+            raise WorkerStartCancelled("OpenCode run was cancelled before startup")
         existing = self._accepted_by_key.get(request.idempotency_key)
         if existing is not None:
             return existing
@@ -2089,15 +2098,27 @@ class OpenCodeAdapter(HTTPAdapter):
         if not readiness.ready:
             raise RuntimeError("; ".join(readiness.blockers))
         try:
-            await self._create_session(request)
+            session_id = await self._create_session(request)
         except Exception:
             await self._stop_mcp_grant_refresher(request.run_id)
             raise
+        if request.run_id in self._cancel_requested or request.run_id in self._cancelled:
+            try:
+                await self._discard_unaccepted_session(request, session_id)
+            finally:
+                await self._stop_mcp_grant_refresher(request.run_id)
+            raise WorkerStartCancelled("OpenCode run was cancelled while creating its session")
         # BaseWorkerAdapter.start creates the task after emitting ACCEPTED;
         # the session map above lets the base hook include the runtime ID in
         # that first authoritative acceptance event.
         try:
             result = await BaseWorkerAdapter.start(self, request)
+        except WorkerStartCancelled:
+            try:
+                await self._discard_unaccepted_session(request, session_id)
+            finally:
+                await self._stop_mcp_grant_refresher(request.run_id)
+            raise
         except Exception:
             await self._stop_mcp_grant_refresher(request.run_id)
             raise
@@ -2122,9 +2143,11 @@ class OpenCodeAdapter(HTTPAdapter):
 
         return json.dumps(safe(request.task_input), sort_keys=True)
 
-    async def _submit(self, request: WorkerRunRequest, session_id: str) -> None:
+    async def _submit(self, request: WorkerRunRequest, session_id: str) -> bool:
+        if request.run_id in self._cancel_requested or request.run_id in self._cancelled:
+            return False
         if request.run_id in self._submitted:
-            return
+            return True
         model_id = request.resolved_model_profile.exact_model_id if request.resolved_model_profile else ""
         provider, separator, model = self.model_mapper(model_id).partition("/")
         if not separator:
@@ -2140,6 +2163,10 @@ class OpenCodeAdapter(HTTPAdapter):
         if isinstance(agent, str) and agent.strip():
             body["agent"] = agent.strip()
         client = await self._get_client()
+        # Keep the cancellation check after all setup awaits and immediately
+        # before the only operation that can trigger model/provider work.
+        if request.run_id in self._cancel_requested or request.run_id in self._cancelled:
+            return False
         # Path parameters are immutable manifest paths; the only substitution
         # permitted is the server-issued session ID.
         path = self._endpoint("prompt_async").replace("{sessionID}", session_id)
@@ -2147,6 +2174,7 @@ class OpenCodeAdapter(HTTPAdapter):
         if response.status_code not in {200, 204}:
             response.raise_for_status()
         self._submitted.add(request.run_id)
+        return True
 
     @staticmethod
     def _event_key(raw: dict[str, Any]) -> str:
@@ -2419,8 +2447,46 @@ class OpenCodeAdapter(HTTPAdapter):
         if response.status_code not in {200, 404}:
             response.raise_for_status()
 
+    async def _discard_unaccepted_session(
+        self,
+        request: WorkerRunRequest,
+        session_id: str,
+    ) -> None:
+        """Stop and remove a session that never crossed adapter acceptance."""
+        abort_error: Exception | None = None
+        try:
+            await self._abort_cancelled_session(request, session_id)
+        except Exception as exc:
+            abort_error = exc
+        try:
+            client = await self._get_client()
+            path = self._endpoint("session_delete").replace("{sessionID}", session_id)
+            response = await client.delete(path, params=self._query(request))
+            if response.status_code not in {200, 204, 404}:
+                response.raise_for_status()
+        except Exception as exc:
+            if abort_error is not None:
+                raise exc from abort_error
+            raise
+        if self._session_by_run.get(request.run_id) == session_id:
+            self._session_by_run.pop(request.run_id, None)
+        if self._session_by_key.get(request.idempotency_key) == session_id:
+            self._session_by_key.pop(request.idempotency_key, None)
+        self._session_announced.discard(request.run_id)
+        self._permission_by_run.pop(request.run_id, None)
+
     async def _execute(self, request: WorkerRunRequest) -> Any:
-        session_id = self._session_by_run.get(request.run_id) or await self._create_session(request)
+        if request.run_id in self._cancel_requested or request.run_id in self._cancelled:
+            return self._cancelled_result(request)
+        try:
+            session_id = self._session_by_run.get(request.run_id) or await self._create_session(request)
+        except WorkerStartCancelled:
+            return self._cancelled_result(request)
+        if request.run_id in self._cancel_requested or request.run_id in self._cancelled:
+            await self._abort_cancelled_session(request, session_id)
+            await self._stop_mcp_grant_refresher(request.run_id)
+            await self._cleanup_session(request, session_id)
+            return self._cancelled_result(request, session_id)
         # A restart/retry may reuse a known session.  Ensure that path also
         # recreates the refresher if the previous task was interrupted.
         try:
@@ -2428,6 +2494,11 @@ class OpenCodeAdapter(HTTPAdapter):
         except Exception:
             await self._stop_mcp_grant_refresher(request.run_id)
             raise
+        if request.run_id in self._cancel_requested or request.run_id in self._cancelled:
+            await self._abort_cancelled_session(request, session_id)
+            await self._stop_mcp_grant_refresher(request.run_id)
+            await self._cleanup_session(request, session_id)
+            return self._cancelled_result(request, session_id)
         self._ensure_mcp_grant_refresher(request)
         self._idle[request.run_id] = False
         self._terminal_error[request.run_id] = False
@@ -2440,7 +2511,10 @@ class OpenCodeAdapter(HTTPAdapter):
         self._event_tasks[request.run_id] = asyncio.create_task(self._consume_events(request), name=f"opencode-events-{request.run_id}")
         started = time.monotonic()
         try:
-            await self._submit(request, session_id)
+            submitted = await self._submit(request, session_id)
+            if not submitted:
+                await self._abort_cancelled_session(request, session_id)
+                return self._cancelled_result(request, session_id)
             while True:
                 if request.run_id in self._cancelled or request.run_id in self._cancel_requested:
                     return WorkerResult(run_id=request.run_id, worker_id=self.worker_id, success=False, error=WorkerError(code="CANCELLED", message="OpenCode session aborted by AIAT", retryable=False, terminal=True, category="cancellation"), replay_metadata={"opencode_session_id": session_id, "checkpoint_mode": self.verification.checkpoint_mode.value})
@@ -2480,7 +2554,48 @@ class OpenCodeAdapter(HTTPAdapter):
             await self._stop_mcp_grant_refresher(request.run_id)
             await self._cleanup_session(request, session_id)
 
+    def _cancelled_result(
+        self,
+        request: WorkerRunRequest,
+        session_id: str | None = None,
+    ) -> WorkerResult:
+        replay_metadata: dict[str, Any] = {
+            "checkpoint_mode": self.verification.checkpoint_mode.value,
+        }
+        if session_id:
+            replay_metadata["opencode_session_id"] = session_id
+        return WorkerResult(
+            run_id=request.run_id,
+            worker_id=self.worker_id,
+            success=False,
+            error=WorkerError(
+                code="CANCELLED",
+                message="OpenCode session aborted by AIAT",
+                retryable=False,
+                terminal=True,
+                category="cancellation",
+            ),
+            replay_metadata=replay_metadata,
+        )
+
+    async def _abort_cancelled_session(
+        self,
+        request: WorkerRunRequest,
+        session_id: str,
+    ) -> None:
+        client = await self._get_client()
+        path = self._endpoint("abort").replace("{sessionID}", session_id)
+        response = await client.post(path, params=self._query(request))
+        if response.status_code not in {200, 204, 404}:
+            response.raise_for_status()
+
     async def cancel(self, request: WorkerCancellation) -> WorkerCancellationReceipt:
+        if self._terminal_status.get(request.run_id) is not None:
+            return await BaseWorkerAdapter.cancel(self, request)
+        # Publish cancellation intent before any network await so session
+        # creation/bridge setup cannot race ahead into prompt submission.
+        self._cancel_requested.add(request.run_id)
+        self._cancelled.add(request.run_id)
         session_id = self._session_by_run.get(request.run_id)
         if session_id:
             client = await self._get_client()
@@ -2491,9 +2606,8 @@ class OpenCodeAdapter(HTTPAdapter):
             except httpx.HTTPError:
                 if not request.force:
                     raise
-            self._cancelled.add(request.run_id)
             await self._stop_mcp_grant_refresher(request.run_id)
-        return await super().cancel(request)
+        return await BaseWorkerAdapter.cancel(self, request)
 
     async def deliver_tool_response(self, response: Any) -> None:
         await super().deliver_tool_response(response)

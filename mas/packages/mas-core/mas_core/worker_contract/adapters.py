@@ -40,6 +40,10 @@ from .models import (
     WorkerToolResponse,
 )
 
+
+class WorkerStartCancelled(RuntimeError):
+    """Raised when a pending cancellation prevents adapter acceptance."""
+
 logger = logging.getLogger(__name__)
 
 
@@ -159,12 +163,16 @@ class BaseWorkerAdapter:
     async def start(self, request: WorkerRunRequest) -> WorkerRunAccepted:
         if self._closed:
             raise RuntimeError("adapter is closed")
+        if request.run_id in self._cancel_requested or self._terminal_status.get(request.run_id) == "CANCELLED":
+            raise WorkerStartCancelled("worker run was cancelled before adapter acceptance")
         existing = self._accepted_by_key.get(request.idempotency_key)
         if existing is not None:
             return existing
         readiness = await self.readiness(request)
         if not readiness.ready:
             raise RuntimeError("; ".join(readiness.blockers))
+        if request.run_id in self._cancel_requested or self._terminal_status.get(request.run_id) == "CANCELLED":
+            raise WorkerStartCancelled("worker run was cancelled during adapter readiness")
         accepted = WorkerRunAccepted(
             protocol=self._protocol(),
             run_id=request.run_id,
@@ -182,6 +190,11 @@ class BaseWorkerAdapter:
             event_type=EventType.ACCEPTED,
             idempotency_key=request.idempotency_key,
         ))
+        # Cancellation can arrive while the acceptance event is being
+        # persisted. Do not create a runtime task after observing it.
+        if request.run_id in self._cancel_requested:
+            await self._emit_cancelled(request.run_id, "worker run was cancelled before runtime startup")
+            return accepted
         task = asyncio.create_task(self._run_and_emit(request), name=f"worker-run-{request.run_id}")
         self._active_tasks[request.run_id] = task
         return accepted
@@ -198,7 +211,21 @@ class BaseWorkerAdapter:
 
     async def _run_and_emit(self, request: WorkerRunRequest) -> None:
         try:
-            result = await self._execute(request)
+            if request.run_id in self._cancel_requested:
+                result = WorkerResult(
+                    run_id=request.run_id,
+                    worker_id=self.worker_id,
+                    success=False,
+                    error=WorkerError(
+                        code="CANCELLED",
+                        message="worker run was cancelled before runtime startup",
+                        retryable=False,
+                        terminal=True,
+                        category="cancellation",
+                    ),
+                )
+            else:
+                result = await self._execute(request)
             if not isinstance(result, WorkerResult):
                 result = self._coerce_result(request, result)
             if not result.success and result.error is not None and result.error.code == "CANCELLED":
@@ -260,6 +287,24 @@ class BaseWorkerAdapter:
 
     async def _execute(self, request: WorkerRunRequest) -> WorkerResult | Any:
         raise NotImplementedError
+
+    async def _emit_cancelled(self, run_id: UUID, message: str) -> None:
+        """Record a terminal runtime cancellation without starting work."""
+        self._terminal_status[run_id] = "CANCELLED"
+        await self._emit(WorkerEvent(
+            protocol=self._protocol(),
+            run_id=run_id,
+            worker_id=self.worker_id,
+            event_type=EventType.CANCELLED,
+            error=WorkerError(
+                code="CANCELLED",
+                message=message,
+                retryable=False,
+                terminal=True,
+                category="cancellation",
+            ),
+        ))
+        await self._close_queue(run_id)
 
     def _coerce_result(self, request: WorkerRunRequest, result: Any) -> WorkerResult:
         if isinstance(result, dict) and "success" in result:

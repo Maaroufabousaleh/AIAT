@@ -28,6 +28,7 @@ from mas_core.worker_contract import (
     ConformanceRunner,
     EventType,
     NativeWorkerAdapter,
+    WorkerCancellation,
     WorkerEvent,
     WorkerProgress,
     WorkerResult,
@@ -81,6 +82,62 @@ def _profile(*, profile_id: str = "coding", model_id: str = "openai/gpt-test", l
         versions=(version,),
         status=ModelProfileStatus.APPROVED,
     )
+
+
+def _opencode_adapter_for_test(
+    handler,
+    *,
+    worker_id: str = "opencode-cancellation-test",
+) -> tuple[OpenCodeAdapter, httpx.AsyncClient]:
+    endpoints = {
+        "health": "/global/health",
+        "openapi": "/doc",
+        "project_current": "/project/current",
+        "session_list": "/session",
+        "session_create": "/session",
+        "session_get": "/session/{sessionID}",
+        "session_delete": "/session/{sessionID}",
+        "session_status": "/session/status",
+        "messages": "/session/{sessionID}/message",
+        "prompt_async": "/session/{sessionID}/prompt_async",
+        "events": "/global/event",
+        "abort": "/session/{sessionID}/abort",
+        "diff": "/session/{sessionID}/diff",
+        "permission_reply": "/session/{sessionID}/permissions/{permissionID}",
+        "mcp_add": "/mcp",
+        "mcp_status": "/mcp",
+    }
+    schema = {"openapi": "3.1.0", "paths": {"/global/health": {"get": {"operationId": "global.health"}}}}
+    schema_hash = hashlib.sha256(
+        json.dumps(schema, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    verification = OpenCodeInterfaceVerification(
+        release="1.17.13",
+        commit_sha="F8C45BAE73A8F1E2088023FDD34DC2FE0A7F93F505F073E0703E4E1A19AFE8FF",
+        report_version="2",
+        approved=True,
+        openapi_sha256=schema_hash,
+        config_schema_sha256="b" * 64,
+        endpoints=endpoints,
+        evidence={"approval_record_id": "test", "fixture_refs": ["test"]},
+    )
+    client = httpx.AsyncClient(
+        base_url="http://opencode.test",
+        transport=httpx.MockTransport(handler),
+    )
+    adapter = OpenCodeAdapter(
+        verification,
+        base_url="http://opencode.test",
+        worker_id=worker_id,
+        client=client,
+        context=AdapterContext(
+            secrets={
+                "opencode_password": "test-password",
+                "tool_secret": "test-tool-secret",
+            }
+        ),
+    )
+    return adapter, client
 
 
 def test_worker_run_request_carries_bounded_trace_context_outside_task_input() -> None:
@@ -326,6 +383,210 @@ async def test_opencode_session_adapter_maps_live_lifecycle_and_basic_auth() -> 
     assert any(event.event_type == EventType.RESULT and event.result and event.result.output == "done" for event in events)
     assert any(req.headers.get("Authorization", "").startswith("Basic ") for req in seen)
     await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_controller_cancel_wins_between_dispatch_transition_and_opencode_start() -> None:
+    requests: list[tuple[str, str]] = []
+    schema = {"openapi": "3.1.0", "paths": {"/global/health": {"get": {"operationId": "global.health"}}}}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append((request.method, request.url.path))
+        if request.method == "GET" and request.url.path == "/global/health":
+            return httpx.Response(200, json={"healthy": True}, request=request)
+        if request.method == "GET" and request.url.path == "/doc":
+            return httpx.Response(200, json=schema, request=request)
+        raise AssertionError(f"unexpected OpenCode request: {request.method} {request.url.path}")
+
+    adapter, client = _opencode_adapter_for_test(handler)
+    controller = WorkerRunController()
+    request = WorkerRunRequest(
+        idempotency_key="cancel-at-dispatch-boundary",
+        worker_id="opencode-cancellation-test",
+        task_type="coding",
+        task_input={"prompt": "must not be submitted"},
+        resolved_model_profile={"profile_id": "coding", "exact_model_id": "aiat/gpt-test"},
+        timeout_seconds=5,
+    )
+    dispatching = asyncio.Event()
+    release_transition = asyncio.Event()
+    original_transition = controller.transition
+
+    async def gated_transition(run_id, target, **kwargs):
+        result = await original_transition(run_id, target, **kwargs)
+        if target == "DISPATCHING":
+            dispatching.set()
+            await release_transition.wait()
+        return result
+
+    controller.transition = gated_transition  # type: ignore[method-assign]
+    original_start = adapter.start
+    start_calls = 0
+
+    async def counted_start(start_request):
+        nonlocal start_calls
+        start_calls += 1
+        return await original_start(start_request)
+
+    adapter.start = counted_start  # type: ignore[method-assign]
+    execution = asyncio.create_task(controller.execute(request, adapter))
+    try:
+        await asyncio.wait_for(dispatching.wait(), timeout=5)
+        cancelled = await asyncio.wait_for(
+            controller.cancel(
+                request.run_id,
+                adapter,
+                reason="operator cancelled before OpenCode startup",
+                requested_by="operator",
+            ),
+            timeout=5,
+        )
+        assert cancelled is not None and cancelled["state"] == "CANCELLED"
+        release_transition.set()
+        outcome = await asyncio.wait_for(execution, timeout=5)
+        duplicate = await controller.cancel(
+            request.run_id,
+            adapter,
+            reason="duplicate cancellation",
+            requested_by="operator",
+        )
+    finally:
+        release_transition.set()
+        if not execution.done():
+            await asyncio.wait_for(execution, timeout=5)
+        await adapter.close()
+        await client.aclose()
+
+    assert outcome.state == "CANCELLED"
+    assert duplicate is not None and duplicate["state"] == "CANCELLED"
+    assert (await controller.get_run(request.run_id))["state"] == "CANCELLED"
+    assert start_calls == 0
+    assert not adapter._active_tasks
+    assert request.run_id not in adapter._session_by_run
+    assert ("POST", "/session") not in requests
+    assert not any(path.endswith("/prompt_async") for _, path in requests)
+
+
+@pytest.mark.asyncio
+async def test_opencode_cancel_during_session_creation_aborts_without_prompt_submit() -> None:
+    session_create_entered = asyncio.Event()
+    release_session_create = asyncio.Event()
+    mcp_name: str | None = None
+    request_paths: list[tuple[str, str]] = []
+    abort_paths: list[str] = []
+    deleted_paths: list[str] = []
+    prompt_calls = 0
+    schema = {"openapi": "3.1.0", "paths": {"/global/health": {"get": {"operationId": "global.health"}}}}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal mcp_name, prompt_calls
+        request_paths.append((request.method, request.url.path))
+        if request.method == "GET" and request.url.path == "/global/health":
+            return httpx.Response(200, json={"healthy": True}, request=request)
+        if request.method == "GET" and request.url.path == "/doc":
+            return httpx.Response(200, json=schema, request=request)
+        if request.method == "POST" and request.url.path == "/mcp":
+            config = json.loads(request.content)
+            mcp_name = str(config["name"])
+            return httpx.Response(200, json={mcp_name: {"status": "connected"}}, request=request)
+        if request.method == "GET" and request.url.path == "/mcp":
+            return httpx.Response(200, json={str(mcp_name): {"status": "connected"}}, request=request)
+        if request.method == "GET" and request.url.path == "/session":
+            return httpx.Response(200, json=[], request=request)
+        if request.method == "POST" and request.url.path == "/session":
+            session_create_entered.set()
+            await release_session_create.wait()
+            return httpx.Response(200, json={"id": "ses_cancel_boundary"}, request=request)
+        if request.method == "POST" and request.url.path == "/session/ses_cancel_boundary/abort":
+            abort_paths.append(request.url.path)
+            return httpx.Response(200, json=True, request=request)
+        if request.method == "DELETE" and request.url.path == "/session/ses_cancel_boundary":
+            deleted_paths.append(request.url.path)
+            return httpx.Response(204, request=request)
+        if request.method == "POST" and request.url.path == "/session/ses_cancel_boundary/prompt_async":
+            prompt_calls += 1
+            return httpx.Response(204, request=request)
+        raise AssertionError(f"unexpected OpenCode request: {request.method} {request.url.path}")
+
+    adapter, client = _opencode_adapter_for_test(handler)
+    controller = WorkerRunController()
+    request = WorkerRunRequest(
+        idempotency_key="cancel-during-session-create",
+        worker_id="opencode-cancellation-test",
+        task_type="coding",
+        task_input={"prompt": "must not be submitted"},
+        resolved_model_profile={"profile_id": "coding", "exact_model_id": "aiat/gpt-test"},
+        timeout_seconds=5,
+    )
+    execution = asyncio.create_task(controller.execute(request, adapter))
+    try:
+        await asyncio.wait_for(session_create_entered.wait(), timeout=5)
+        cancelled = await asyncio.wait_for(
+            controller.cancel(
+                request.run_id,
+                adapter,
+                reason="operator cancelled before prompt submission",
+                requested_by="operator",
+            ),
+            timeout=5,
+        )
+        assert cancelled is not None
+        assert cancelled["state"] in {"DISPATCHING", "RUNNING"}
+        release_session_create.set()
+        outcome = await asyncio.wait_for(execution, timeout=5)
+        duplicate = await controller.cancel(
+            request.run_id,
+            adapter,
+            reason="duplicate cancellation",
+            requested_by="operator",
+        )
+    finally:
+        release_session_create.set()
+        if not execution.done():
+            await asyncio.wait_for(execution, timeout=5)
+        await adapter.close()
+        await client.aclose()
+
+    assert outcome.state == "CANCELLED"
+    assert duplicate is not None and duplicate["state"] == "CANCELLED"
+    assert (await controller.get_run(request.run_id))["state"] == "CANCELLED"
+    assert abort_paths == ["/session/ses_cancel_boundary/abort"], request_paths[-5:]
+    assert deleted_paths == ["/session/ses_cancel_boundary"], request_paths[-5:]
+    assert prompt_calls == 0
+    assert not adapter._active_tasks
+    assert request.idempotency_key not in adapter._accepted_by_key
+    assert request.run_id not in adapter._session_by_run
+
+
+@pytest.mark.asyncio
+async def test_opencode_cancel_with_known_session_uses_local_abort_route() -> None:
+    requests: list[tuple[str, str]] = []
+    session_id = "ses_known_cancel"
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append((request.method, request.url.path))
+        if request.method == "POST" and request.url.path == f"/session/{session_id}/abort":
+            return httpx.Response(200, json=True, request=request)
+        raise AssertionError(f"unexpected OpenCode request: {request.method} {request.url.path}")
+
+    adapter, client = _opencode_adapter_for_test(handler)
+    run_id = uuid4()
+    adapter._session_by_run[run_id] = session_id
+    try:
+        receipt = await adapter.cancel(
+            WorkerCancellation(
+                run_id=run_id,
+                reason="operator cancelled the active OpenCode session",
+                requested_by="operator",
+            )
+        )
+    finally:
+        await adapter.close()
+        await client.aclose()
+
+    assert receipt.run_id == run_id
+    assert receipt.runtime_status == "UNKNOWN"
+    assert requests == [("POST", f"/session/{session_id}/abort")]
 
 
 @pytest.mark.asyncio
