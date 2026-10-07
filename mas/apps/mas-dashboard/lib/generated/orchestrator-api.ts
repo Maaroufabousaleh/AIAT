@@ -310,8 +310,10 @@ export type CreateProjectRequest = {
   description?: (string | null);
   flow_id?: (string | null);
   human_requester?: (string | null);
+  idempotency_key?: (string | null);
   initial_context?: Array<ProjectContextSeedRequest>;
   name: string;
+  start_immediately?: boolean;
   workspace?: (ProjectWorkspaceRequest | null);
 };
 
@@ -4381,6 +4383,19 @@ export type OrchestratorApiOperations = {
       "path:sprint_id": string;
     };
     requestBody: CanonicalSprintUpdateRequest;
+    responses: {
+      "200": {
+  [key: string]: unknown;
+};
+      "422": HTTPValidationError;
+    };
+  };
+  "start_project_projects__project_id__start_post": {
+    method: "POST";
+    path: "/projects/{project_id}/start";
+    parameters: {
+      "path:project_id": string;
+    };
     responses: {
       "200": {
   [key: string]: unknown;

@@ -101,6 +101,30 @@ const WORKSPACE_SUB_TABS: readonly WorkspaceSubTab[] = [
   "cost",
 ];
 
+const MAX_INLINE_TEXT_FILE_BYTES = 100_000;
+const SUPPORTED_TEXT_FILE_EXTENSIONS = new Set([
+  ".txt",
+  ".md",
+  ".rst",
+  ".csv",
+  ".json",
+  ".yaml",
+  ".yml",
+  ".xml",
+  ".html",
+  ".css",
+  ".js",
+  ".jsx",
+  ".ts",
+  ".tsx",
+  ".py",
+  ".toml",
+  ".ini",
+  ".log",
+  ".sql",
+  ".sh",
+]);
+
 interface Decision {
   id: string;
   decision_type?: string;
@@ -307,6 +331,7 @@ export default function ProjectDetailPage() {
     null,
   );
   const [projectLoadError, setProjectLoadError] = useState<string | null>(null);
+  const [startError, setStartError] = useState<string | null>(null);
   const hasProjectRef = useRef(false);
   const [accessDenied, setAccessDenied] = useState(false);
   const accessDeniedRef = useRef(false);
@@ -387,6 +412,10 @@ export default function ProjectDetailPage() {
   );
   const [newContextUrl, setNewContextUrl] = useState("");
   const [newContextText, setNewContextText] = useState("");
+  const [newContextFile, setNewContextFile] = useState<File | null>(null);
+  const [contextUploadError, setContextUploadError] = useState<string | null>(
+    null,
+  );
   const [newContextTags, setNewContextTags] = useState("");
   const [overrideNodeId, setOverrideNodeId] = useState("");
   const [overrideReason, setOverrideReason] = useState("");
@@ -877,6 +906,36 @@ export default function ProjectDetailPage() {
     }
   }
 
+  async function handleStartProject() {
+    if (accessDeniedRef.current) return;
+    setActionLoading("start");
+    setStartError(null);
+    try {
+      const res = await fetch(`/api/projects/${id}/start`, { method: "POST" });
+      if (handleDeniedResponse(res)) return;
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        const detail =
+          body && typeof body === "object"
+            ? (body as { detail?: unknown; error?: unknown }).detail ??
+              (body as { detail?: unknown; error?: unknown }).error
+            : null;
+        throw new Error(
+          typeof detail === "string" && detail.trim()
+            ? detail
+            : `Project could not be started (HTTP ${res.status})`,
+        );
+      }
+      await load();
+    } catch (cause) {
+      setStartError(
+        cause instanceof Error ? cause.message : "Project could not be started",
+      );
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
   async function handleTransition(event: string) {
     if (accessDeniedRef.current) return;
     setActionLoading(event);
@@ -902,8 +961,18 @@ export default function ProjectDetailPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action }),
       });
-      if (handleDeniedResponse(res)) return;
+      if (!res.ok) {
+        if (handleDeniedResponse(res)) return;
+        const data = await res.json().catch(() => ({}));
+        setFlowError(
+          data.error || data.detail || `Could not ${action} this flow.`,
+        );
+        return;
+      }
+      setFlowError(null);
       await loadFlowData();
+    } catch {
+      setFlowError(`Could not ${action} this flow. Try again.`);
     } finally {
       setActionLoading(null);
     }
@@ -926,12 +995,17 @@ export default function ProjectDetailPage() {
         },
       );
       if (res.ok) {
+        setFlowError(null);
         await Promise.all([loadFlowData(), load()]);
       } else {
         if (handleDeniedResponse(res)) return;
         const data = await res.json().catch(() => ({}));
-        setFlowError(data.error || `Failed to ${action} node`);
+        setFlowError(
+          data.error || data.detail || `Failed to ${action} node`,
+        );
       }
+    } catch {
+      setFlowError(`Could not ${action} this flow node. Try again.`);
     } finally {
       setActionLoading(null);
     }
@@ -950,13 +1024,16 @@ export default function ProjectDetailPage() {
         },
       );
       if (res.ok) {
+        setFlowError(null);
         await loadFlowData();
         setShowFlowSwitch(false);
       } else {
         if (handleDeniedResponse(res)) return;
-        const d = await res.json();
-        setFlowError(d.error || "Failed to switch flow");
+        const data = await res.json().catch(() => ({}));
+        setFlowError(data.error || data.detail || "Failed to switch flow");
       }
+    } catch {
+      setFlowError("Could not switch flows. Try again.");
     } finally {
       setActionLoading(null);
     }
@@ -970,12 +1047,15 @@ export default function ProjectDetailPage() {
         method: "POST",
       });
       if (res.ok) {
+        setFlowError(null);
         await loadFlowData();
       } else {
         if (handleDeniedResponse(res)) return;
-        const d = await res.json();
-        setFlowError(d.error || "Failed to retry flow");
+        const data = await res.json().catch(() => ({}));
+        setFlowError(data.error || data.detail || "Failed to retry flow");
       }
+    } catch {
+      setFlowError("Could not retry this flow. Try again.");
     } finally {
       setActionLoading(null);
     }
@@ -1010,14 +1090,15 @@ export default function ProjectDetailPage() {
         body: JSON.stringify({ flow_id: flowId }),
       });
       if (res.ok) {
+        setFlowError(null);
         await loadFlowData();
       } else {
         if (handleDeniedResponse(res)) return;
-        const d = await res.json();
-        setFlowError(d.error || "Failed to assign flow");
+        const data = await res.json().catch(() => ({}));
+        setFlowError(data.error || data.detail || "Failed to assign flow");
       }
     } catch {
-      setFlowError("Failed to assign flow");
+      setFlowError("Could not assign this flow. Try again.");
     } finally {
       setActionLoading(null);
     }
@@ -1057,6 +1138,7 @@ export default function ProjectDetailPage() {
   async function handleAddContextItem() {
     if (!newContextName.trim() || accessDeniedRef.current) return;
     setActionLoading("add-context");
+    setContextUploadError(null);
     try {
       const body: Record<string, unknown> = {
         item_type: newContextType,
@@ -1070,6 +1152,64 @@ export default function ProjectDetailPage() {
         body.url = newContextUrl;
       } else if (newContextType === "TEXT" && newContextText) {
         body.content_text = newContextText;
+      } else if (newContextType === "FILE") {
+        const file = newContextFile;
+        if (!file) {
+          setContextUploadError("Choose a text file to attach.");
+          return;
+        }
+        if (file.size === 0) {
+          setContextUploadError("The selected file is empty.");
+          return;
+        }
+        if (file.size > MAX_INLINE_TEXT_FILE_BYTES) {
+          setContextUploadError("Text files must be 100 KB or smaller.");
+          return;
+        }
+        const extension = file.name.match(/\.[^.]+$/)?.[0]?.toLowerCase();
+        const hasTextMimeType =
+          file.type.startsWith("text/") ||
+          ["application/json", "application/yaml", "application/x-yaml"].includes(
+            file.type,
+          );
+        if (
+          !hasTextMimeType &&
+          (!extension || !SUPPORTED_TEXT_FILE_EXTENSIONS.has(extension))
+        ) {
+          setContextUploadError(
+            "Choose a UTF-8 text file such as .txt, .md, .json, .yaml, or source code.",
+          );
+          return;
+        }
+
+        try {
+          const contents = await file.arrayBuffer();
+          const contentText = new TextDecoder("utf-8", { fatal: true }).decode(
+            contents,
+          );
+          if (contentText.includes("\u0000")) {
+            throw new Error("The selected file contains binary data.");
+          }
+          const digest = await crypto.subtle.digest("SHA-256", contents);
+          const sha256 = Array.from(new Uint8Array(digest))
+            .map((byte) => byte.toString(16).padStart(2, "0"))
+            .join("");
+          body.mime_type = file.type || "text/plain";
+          body.size_bytes = file.size;
+          body.content_text = contentText;
+          body.metadata = {
+            upload_mode: "inline_text_context",
+            source_name: file.name,
+            sha256,
+          };
+        } catch (cause) {
+          setContextUploadError(
+            cause instanceof Error && cause.message.includes("binary data")
+              ? cause.message
+              : "The selected file must contain valid UTF-8 text.",
+          );
+          return;
+        }
       }
       const res = await fetch(`/api/projects/${id}/context`, {
         method: "POST",
@@ -1081,11 +1221,20 @@ export default function ProjectDetailPage() {
         setNewContextName("");
         setNewContextUrl("");
         setNewContextText("");
+        setNewContextFile(null);
         setNewContextTags("");
         setShowContextUpload(false);
       } else {
         handleDeniedResponse(res);
+        if (!accessDeniedRef.current) {
+          const data = await res.json().catch(() => ({}));
+          setContextUploadError(
+            data.error || data.detail || "Could not add this project context item.",
+          );
+        }
       }
+    } catch {
+      setContextUploadError("Could not add this project context item. Try again.");
     } finally {
       setActionLoading(null);
     }
@@ -1298,6 +1447,18 @@ export default function ProjectDetailPage() {
               <span className="w-1.5 h-1.5 rounded-full bg-white/70" />
               {project.state?.replace(/_/g, " ")}
             </span>
+            {project.state === "INIT" && (
+              <button
+                type="button"
+                onClick={() => void handleStartProject()}
+                disabled={!!actionLoading || projectStale}
+                aria-busy={actionLoading === "start"}
+                className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-blue-600/60 bg-blue-600/20 px-3 py-2 text-xs font-medium text-blue-100 transition-colors hover:bg-blue-600/30 disabled:cursor-wait disabled:opacity-50"
+              >
+                <Play size={14} aria-hidden="true" />
+                {actionLoading === "start" ? "Starting…" : "Start CEO work"}
+              </button>
+            )}
             <button
               type="button"
               onClick={handleRefresh}
@@ -1314,6 +1475,27 @@ export default function ProjectDetailPage() {
           </>
         ) : undefined}
       />
+
+      {startError && !accessDenied && (
+        <div className="mx-4 mt-3">
+          <ErrorBanner
+            tone="error"
+            title="Project could not be started"
+            action={
+              <button
+                type="button"
+                onClick={() => void handleStartProject()}
+                disabled={!!actionLoading || projectStale}
+                className="inline-flex min-h-11 items-center rounded-md border border-red-700/70 bg-red-950/40 px-3 py-2 text-xs font-medium text-red-100 hover:bg-red-900/50 disabled:opacity-50"
+              >
+                Retry start
+              </button>
+            }
+          >
+            {startError}
+          </ErrorBanner>
+        </div>
+      )}
 
       {accessDenied && (
         <section
@@ -2998,11 +3180,13 @@ export default function ProjectDetailPage() {
                   </label>
                   <select
                     value={newContextType}
-                    onChange={(e) =>
+                    onChange={(e) => {
                       setNewContextType(
                         e.target.value as "FILE" | "URL" | "TEXT",
-                      )
-                    }
+                      );
+                      setNewContextFile(null);
+                      setContextUploadError(null);
+                    }}
                     className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-sm text-white"
                   >
                     <option value="FILE">File Attachment</option>
@@ -3053,15 +3237,40 @@ export default function ProjectDetailPage() {
               )}
 
               {newContextType === "FILE" && (
-                <div className="border border-dashed border-slate-700 rounded-lg p-4 text-center">
-                  <Upload size={24} className="mx-auto text-slate-500 mb-2" />
-                  <p className="text-xs text-slate-500">
-                    File upload UI would go here
-                  </p>
-                  <p className="text-xxs text-slate-600 mt-1">
-                    For now, enter file details manually
-                  </p>
+                <div className="space-y-2 rounded-lg border border-dashed border-slate-700 p-4">
+                  <label className="flex cursor-pointer flex-col items-center gap-2 text-center">
+                    <Upload size={24} className="text-slate-500" aria-hidden="true" />
+                    <span className="text-sm font-medium text-slate-200">
+                      Choose a text file
+                    </span>
+                    <span className="text-xs text-slate-500">
+                      UTF-8 text, up to 100 KB. Contents are saved as project context.
+                    </span>
+                    <input
+                      type="file"
+                      aria-label="Choose a project text file"
+                      accept=".txt,.md,.rst,.csv,.json,.yaml,.yml,.xml,.html,.css,.js,.jsx,.ts,.tsx,.py,.toml,.ini,.log,.sql,.sh,text/*,application/json,application/yaml"
+                      className="sr-only"
+                      onChange={(event) => {
+                        const file = event.currentTarget.files?.[0] ?? null;
+                        setNewContextFile(file);
+                        setNewContextName(file?.name ?? "");
+                        setContextUploadError(null);
+                      }}
+                    />
+                  </label>
+                  {newContextFile && (
+                    <p className="text-center text-xs text-slate-300" role="status">
+                      Selected {newContextFile.name} ({newContextFile.size.toLocaleString()} bytes)
+                    </p>
+                  )}
                 </div>
+              )}
+
+              {contextUploadError && (
+                <p className="text-sm text-red-300" role="alert">
+                  {contextUploadError}
+                </p>
               )}
 
               <div>
