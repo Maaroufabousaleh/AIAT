@@ -226,7 +226,9 @@ export default function IntegrationsPage() {
         `/api/integrations/pm/projects/${encodeURIComponent(selectedProjectId)}/bindings`,
       );
       if (sequence !== bindingRequestSequence.current) return;
-      const bindings = Array.isArray(response) ? response.map(record) : [];
+      const bindings = Array.isArray(response)
+        ? response.map(record).filter((binding) => text(binding.project_id, "") === selectedProjectId)
+        : [];
       setProjectBindings(bindings);
       setBindingId((current) =>
         bindings.some((binding) => text(binding.id, "") === current)
@@ -443,7 +445,8 @@ export default function IntegrationsPage() {
   const mutationBlocked = accessDenied || stale || loading || busy;
   const selectedProject = projects.find((project) => project.id === projectId);
   const connectionBindings = projectBindings.filter(
-    (binding) => text(binding.connection_id, "") === connectionId,
+    (binding) => text(binding.project_id, "") === projectId
+      && text(binding.connection_id, "") === connectionId,
   );
 
   return (
@@ -666,7 +669,6 @@ export default function IntegrationsPage() {
                 </label>
               </div>
               {projectsError && <p role="alert" className="text-sm text-amber-200">{projectsError}</p>}
-              {bindingsError && <p role="alert" className="text-sm text-amber-200">{bindingsError}</p>}
               <div className="flex flex-wrap items-center gap-3">
                 <button
                   type="button"
@@ -717,15 +719,39 @@ export default function IntegrationsPage() {
                 );
               })()}
               <div aria-label="Project provider bindings" className="rounded border border-slate-800 bg-slate-950/40 p-3">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Bindings for selected project</h3>
-                {bindingsLoading ? <p role="status" className="mt-2 text-xs text-slate-500">Loading project bindings…</p> : null}
-                {!bindingsLoading && projectBindings.length === 0 && <p className="mt-2 text-xs text-slate-500">No provider bindings are recorded for this project.</p>}
-                {projectBindings.map((binding) => (
-                  <div key={text(binding.id)} className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs">
-                    <span>{text(binding.external_project_key || binding.external_project_id, "Provider project pending")} · {text(binding.mapping_profile)}</span>
-                    <span className="rounded border border-slate-700 px-2 py-1">{text(binding.status)} · {text(binding.provisioning_state, "unprovisioned")}</span>
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div>
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Connection mappings for selected project</h3>
+                    <p className="mt-1 text-xs text-slate-500">Canonical project-to-provider bindings for the selected connection.</p>
                   </div>
-                ))}
+                  {selectedProject && <Link className="text-xs text-cyan-300 underline underline-offset-2 hover:text-cyan-100" href={`/projects/${encodeURIComponent(selectedProject.id)}`}>Open project</Link>}
+                </div>
+                {bindingsLoading ? <p role="status" className="mt-2 text-xs text-slate-500">Loading project bindings…</p> : null}
+                {!bindingsLoading && bindingsError && <p role="alert" className="mt-2 text-xs text-amber-200">{bindingsError} Use Refresh to retry the canonical read.</p>}
+                {!bindingsLoading && bindingsError && <button type="button" className="mt-2 min-h-9 rounded border border-slate-700 px-3 py-1 text-xs text-slate-300 hover:bg-slate-900" onClick={() => void loadProjectBindings(projectId)}>Retry binding read</button>}
+                {!bindingsLoading && !bindingsError && !selectedProject && <p className="mt-2 text-xs text-slate-500">Select an AIAT project to inspect its provider mappings.</p>}
+                {!bindingsLoading && !bindingsError && selectedProject && !connectionId && <p className="mt-2 text-xs text-slate-500">Select a provider connection above to inspect its mapping rows for this project.</p>}
+                {!bindingsLoading && !bindingsError && selectedProject && connectionId && connectionBindings.length === 0 && <p className="mt-2 text-xs text-slate-500">No provider mappings are recorded for this project and connection.</p>}
+                {connectionBindings.map((binding) => {
+                  const blockers = Array.isArray(binding.activation_blockers)
+                    ? binding.activation_blockers.slice(0, 5).map(String)
+                    : [];
+                  return (
+                    <article key={text(binding.id)} aria-label={`Project provider binding ${text(binding.id)}`} className="mt-3 rounded border border-slate-800 bg-slate-950/60 p-3 text-xs text-slate-300">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="font-mono text-slate-100">{text(binding.id, "Unknown binding")}</span>
+                        <span className="rounded border border-slate-700 px-2 py-1">{text(binding.status, "unknown status")} · {text(binding.provisioning_state, "unprovisioned")}</span>
+                      </div>
+                      <dl className="mt-2 grid gap-x-4 gap-y-1 sm:grid-cols-2">
+                        <div><dt className="text-slate-500">Provider project</dt><dd>{text(binding.external_project_key || binding.external_project_id, "Pending")}</dd></div>
+                        <div><dt className="text-slate-500">Repository</dt><dd>{text(binding.external_repository, "—")}</dd></div>
+                        <div><dt className="text-slate-500">Mapping profile</dt><dd>{text(binding.mapping_profile)}</dd></div>
+                        <div><dt className="text-slate-500">Direction</dt><dd>{text(binding.direction)}</dd></div>
+                      </dl>
+                      {blockers.length > 0 && <p className="mt-2 text-amber-200">Activation blockers: {blockers.join("; ")}</p>}
+                    </article>
+                  );
+                })}
               </div>
             </section>
           )}
@@ -846,7 +872,9 @@ export default function IntegrationsPage() {
             <div className="space-y-4 rounded-xl border border-blue-500/20 bg-blue-500/5 p-4" aria-labelledby="integration-reconciliation-heading">
               <div>
                 <h2 id="integration-reconciliation-heading" className="text-sm font-semibold text-blue-100">Outbox and reconciliation</h2>
-                <p className="mt-1 text-xs text-blue-200/70">The current read API lists due PENDING outbox rows. It does not list DEAD_LETTER rows, so this view does not offer an unverified disposition action.</p>
+                <p className="mt-1 text-xs text-blue-200/70">The PM outbox read API lists due PENDING rows only. It has no connection-scoped FAILED or DEAD_LETTER collection/detail route; use the existing shared router queue for general message review.</p>
+                <p className="mt-2 text-xs text-slate-400">The shared queue is not attributed to the selected provider connection. Replay controls are not exposed in this integration view.</p>
+                <Link href="/dlq" className="mt-2 inline-flex min-h-10 items-center rounded border border-blue-700 px-3 py-2 text-xs font-semibold text-blue-200 hover:bg-blue-900/30">Open shared dead-letter review</Link>
               </div>
               <div className="space-y-2" aria-label="Pending integration outbox">
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Due pending outbox</h3>
