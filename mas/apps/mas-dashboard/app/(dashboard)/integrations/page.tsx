@@ -5,6 +5,13 @@ import Link from "next/link";
 import { RefreshCw, Search } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
+import type {
+  PMConnectionCreateRequest,
+  PMLifecyclePlanCreateRequest,
+  PMProjectProvisioningApplyRequest,
+  PMProjectProvisioningRequest,
+  ProjectProvisioningPlan,
+} from "@/lib/generated/orchestrator-api";
 
 type IntegrationData = {
   connections: Array<Record<string, unknown>>;
@@ -17,6 +24,24 @@ type IntegrationData = {
 type CanaryPlanDetails = Record<string, unknown> & {
   plan?: Record<string, unknown>;
 };
+
+type ProjectSummary = {
+  id: string;
+  name: string;
+  state?: string;
+};
+
+type ProjectProvisioningPlanResult = {
+  project_id: string;
+  connection_id: string;
+  plan: ProjectProvisioningPlan;
+  plan_digest: string;
+  blockers?: string[];
+  manual_actions?: string[];
+};
+
+type LifecycleTargetType = "pm_connection" | "pm_binding";
+type LifecycleStatus = "DISABLED" | "SHADOW" | "READ_ONLY" | "ACTIVE" | "DRAINING";
 
 class IntegrationApiError extends Error {
   constructor(readonly status: number) {
@@ -73,6 +98,23 @@ export default function IntegrationsPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [connectionId, setConnectionId] = useState("");
   const [bindingId, setBindingId] = useState("");
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [projectsLoading, setProjectsLoading] = useState(true);
+  const [projectsError, setProjectsError] = useState<string | null>(null);
+  const [projectId, setProjectId] = useState("");
+  const [projectBindings, setProjectBindings] = useState<Array<Record<string, unknown>>>([]);
+  const [bindingsLoading, setBindingsLoading] = useState(false);
+  const [bindingsError, setBindingsError] = useState<string | null>(null);
+  const [providerKind, setProviderKind] = useState("youtrack");
+  const [connectionName, setConnectionName] = useState("");
+  const [connectionBaseUrl, setConnectionBaseUrl] = useState("");
+  const [credentialRef, setCredentialRef] = useState("");
+  const [mappingProfile, setMappingProfile] = useState("dedicated_project");
+  const [externalProjectId, setExternalProjectId] = useState("");
+  const [provisioningPlan, setProvisioningPlan] = useState<ProjectProvisioningPlanResult | null>(null);
+  const [reviewedProvisioningDigest, setReviewedProvisioningDigest] = useState("");
+  const [lifecycleTargetType, setLifecycleTargetType] = useState<LifecycleTargetType>("pm_connection");
+  const [desiredLifecycleStatus, setDesiredLifecycleStatus] = useState<LifecycleStatus>("SHADOW");
   const [connectionFilterId, setConnectionFilterId] = useState("");
   const [resolutionNotes, setResolutionNotes] = useState<Record<string, string>>({});
   const [reviewedDigest, setReviewedDigest] = useState("");
@@ -86,6 +128,7 @@ export default function IntegrationsPage() {
   const [accessDenied, setAccessDenied] = useState(false);
   const [hasReadContext, setHasReadContext] = useState(false);
   const hasData = useRef(false);
+  const bindingRequestSequence = useRef(0);
 
   const refresh = useCallback(async (filterConnectionId = "") => {
     setLoading(true);
@@ -139,11 +182,74 @@ export default function IntegrationsPage() {
       : `${action} failed.`);
   }, []);
 
+  const loadProjects = useCallback(async () => {
+    setProjectsLoading(true);
+    setProjectsError(null);
+    try {
+      const response = await requestJson<unknown>("/api/projects?limit=1000");
+      const payload = Array.isArray(response) ? response : record(response).projects;
+      const loadedProjects = Array.isArray(payload)
+        ? payload.map(record).flatMap((project) => {
+          const id = text(project.id, "");
+          const name = text(project.name, "");
+          return id && name ? [{ id, name, state: text(project.state, "") }] : [];
+        })
+        : [];
+      setProjects(loadedProjects);
+      setProjectId((current) =>
+        loadedProjects.some((project) => project.id === current)
+          ? current
+          : loadedProjects[0]?.id ?? "",
+      );
+    } catch (reason) {
+      setProjectsError(reason instanceof IntegrationApiError
+        ? `Projects could not be loaded (HTTP ${reason.status}).`
+        : "Projects could not be loaded.");
+    } finally {
+      setProjectsLoading(false);
+    }
+  }, []);
+
+  const loadProjectBindings = useCallback(async (selectedProjectId: string) => {
+    const sequence = ++bindingRequestSequence.current;
+    if (!UUID_PATTERN.test(selectedProjectId)) {
+      setProjectBindings([]);
+      setBindingsError(null);
+      setBindingsLoading(false);
+      setBindingId("");
+      return;
+    }
+    setBindingsLoading(true);
+    setBindingsError(null);
+    try {
+      const response = await requestJson<unknown>(
+        `/api/integrations/pm/projects/${encodeURIComponent(selectedProjectId)}/bindings`,
+      );
+      if (sequence !== bindingRequestSequence.current) return;
+      const bindings = Array.isArray(response) ? response.map(record) : [];
+      setProjectBindings(bindings);
+      setBindingId((current) =>
+        bindings.some((binding) => text(binding.id, "") === current)
+          ? current
+          : text(bindings.find((binding) => text(binding.connection_id, "") === connectionId)?.id, ""),
+      );
+    } catch (reason) {
+      if (sequence !== bindingRequestSequence.current) return;
+      setProjectBindings([]);
+      setBindingsError(reason instanceof IntegrationApiError
+        ? `Project bindings could not be loaded (HTTP ${reason.status}).`
+        : "Project bindings could not be loaded.");
+    } finally {
+      if (sequence === bindingRequestSequence.current) setBindingsLoading(false);
+    }
+  }, [connectionId]);
+
   const submitMutation = async (
     path: string,
     payload: Record<string, unknown>,
     action: string,
-    onSuccess?: (result: Record<string, unknown>) => void,
+    onSuccess?: (result: Record<string, unknown>) => void | Promise<void>,
+    successMessage?: string | ((result: Record<string, unknown>) => string),
   ) => {
     setBusy(true);
     setError(null);
@@ -153,14 +259,118 @@ export default function IntegrationsPage() {
         method: "POST",
         body: JSON.stringify(payload),
       });
-      onSuccess?.(result);
+      await onSuccess?.(result);
       await refresh(connectionFilterId);
-      setNotice(`${action} completed.`);
+      setNotice(typeof successMessage === "function"
+        ? successMessage(result)
+        : successMessage ?? `${action} completed.`);
     } catch (reason) {
       reportActionFailure(reason, action);
     } finally {
       setBusy(false);
     }
+  };
+
+  const createConnection = () => {
+    const payload: PMConnectionCreateRequest = {
+      provider_kind: providerKind,
+      display_name: connectionName.trim(),
+      base_url: connectionBaseUrl.trim(),
+      credential_ref: credentialRef.trim(),
+      capability_profile: "pm",
+      config: {},
+    };
+    void submitMutation(
+      "/api/integrations/pm/connections",
+      payload,
+      "Provider connection creation",
+      (result) => {
+        const createdId = text(result.id, "");
+        if (UUID_PATTERN.test(createdId)) {
+          setConnectionId(createdId);
+          setConnectionFilterId("");
+          setBindingId("");
+        }
+        setConnectionName("");
+        setConnectionBaseUrl("");
+        setCredentialRef("");
+      },
+      (result) => `Connection ${text(result.display_name, connectionName.trim())} created in ${text(result.status, "DISABLED")} state.`,
+    );
+  };
+
+  const generateProvisioningPlan = () => {
+    if (!UUID_PATTERN.test(projectId) || !UUID_PATTERN.test(connectionId)) return;
+    const payload: PMProjectProvisioningRequest = {
+      connection_id: connectionId,
+      mapping_profile: mappingProfile,
+      ...(externalProjectId.trim() ? { external_project_id: externalProjectId.trim() } : {}),
+    };
+    setProvisioningPlan(null);
+    setReviewedProvisioningDigest("");
+    void submitMutation(
+      `/api/integrations/pm/projects/${encodeURIComponent(projectId)}/provisioning/plan`,
+      payload,
+      "Project provisioning plan",
+      (result) => {
+        const planResult = result as ProjectProvisioningPlanResult;
+        setProvisioningPlan(planResult);
+        setReviewedProvisioningDigest("");
+      },
+      "Project provisioning plan created. Review its actions and digest before applying.",
+    );
+  };
+
+  const applyProvisioningPlan = () => {
+    if (!provisioningPlan || reviewedProvisioningDigest !== provisioningPlan.plan_digest) return;
+    if ((provisioningPlan.blockers ?? []).length > 0 || mutationBlocked) return;
+    const confirmed = window.confirm(
+      `Apply this exact project provisioning plan? Digest: ${provisioningPlan.plan_digest}`,
+    );
+    if (!confirmed) return;
+    const payload: PMProjectProvisioningApplyRequest = {
+      plan: provisioningPlan.plan,
+      plan_digest: provisioningPlan.plan_digest,
+      confirm: true,
+    };
+    void submitMutation(
+      `/api/integrations/pm/projects/${encodeURIComponent(projectId)}/provisioning/apply`,
+      payload,
+      "Project provisioning",
+      async (result) => {
+        const binding = record(result.binding);
+        const createdBindingId = text(binding.id, "");
+        if (UUID_PATTERN.test(createdBindingId)) setBindingId(createdBindingId);
+        await loadProjectBindings(projectId);
+        setProvisioningPlan(null);
+        setReviewedProvisioningDigest("");
+      },
+      (result) => {
+        const binding = record(result.binding);
+        return `Project provisioned and bound in ${text(binding.status || result.status, "unknown")} state.`;
+      },
+    );
+  };
+
+  const generateLifecyclePlan = () => {
+    if (!UUID_PATTERN.test(connectionId)) return;
+    if (lifecycleTargetType === "pm_binding" && !UUID_PATTERN.test(bindingId)) return;
+    const payload: PMLifecyclePlanCreateRequest = {
+      target_type: lifecycleTargetType,
+      connection_id: connectionId,
+      ttl_seconds: 3600,
+      ...(lifecycleTargetType === "pm_connection"
+        ? { desired_connection_status: desiredLifecycleStatus }
+        : { binding_id: bindingId, desired_binding_status: desiredLifecycleStatus }),
+    };
+    setReviewedDigest("");
+    void submitMutation(
+      "/api/integrations/pm/lifecycle-plans",
+      payload,
+      "Lifecycle plan generation",
+      () => setReviewedDigest(""),
+      `Lifecycle plan to ${desiredLifecycleStatus} created. Review blockers and the exact digest, then approve it before applying.`,
+    );
   };
 
   const resolveConflict = async (conflictId: string, status: "RESOLVED" | "IGNORED") => {
@@ -222,8 +432,19 @@ export default function IntegrationsPage() {
   };
 
   useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => { void loadProjects(); }, [loadProjects]);
+  useEffect(() => {
+    setProjectBindings([]);
+    setBindingId("");
+    void loadProjectBindings(projectId);
+    return () => { bindingRequestSequence.current += 1; };
+  }, [projectId, loadProjectBindings]);
 
   const mutationBlocked = accessDenied || stale || loading || busy;
+  const selectedProject = projects.find((project) => project.id === projectId);
+  const connectionBindings = projectBindings.filter(
+    (binding) => text(binding.connection_id, "") === connectionId,
+  );
 
   return (
     <main className="space-y-6 p-6" aria-label="PM integrations" aria-busy={loading}>
@@ -289,6 +510,226 @@ export default function IntegrationsPage() {
       {!data && !error && <p className="text-sm text-slate-400" role="status" aria-live="polite">Loading integration state…</p>}
       {data && (
         <>
+          {!accessDenied && (
+            <section
+              className="rounded-xl border border-slate-800 bg-slate-900/70 p-4"
+              aria-labelledby="pm-connection-create-heading"
+            >
+              <div>
+                <h2 id="pm-connection-create-heading" className="text-sm font-semibold text-white">Create provider connection</h2>
+                <p className="mt-1 text-xs text-slate-400">Register a supported PM provider using an AIAT credential reference. This form never accepts or displays a credential value.</p>
+              </div>
+              <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+                <label className="grid gap-1 text-xs text-slate-300">
+                  Provider
+                  <select
+                    aria-label="Provider kind"
+                    className="min-h-11 rounded border border-slate-700 bg-slate-950 px-2 text-sm text-slate-100 disabled:opacity-50"
+                    value={providerKind}
+                    disabled={mutationBlocked}
+                    onChange={(event) => setProviderKind(event.target.value)}
+                  >
+                    <option value="youtrack">YouTrack</option>
+                    <option value="github">GitHub</option>
+                    <option value="fake">Fake provider (local testing)</option>
+                  </select>
+                </label>
+                <label className="grid gap-1 text-xs text-slate-300">
+                  Display name
+                  <input
+                    aria-label="Connection display name"
+                    className="min-h-11 rounded border border-slate-700 bg-slate-950 px-3 text-sm text-slate-100 disabled:opacity-50"
+                    value={connectionName}
+                    disabled={mutationBlocked}
+                    maxLength={200}
+                    onChange={(event) => setConnectionName(event.target.value)}
+                  />
+                </label>
+                <label className="grid gap-1 text-xs text-slate-300">
+                  Provider base URL
+                  <input
+                    aria-label="Provider base URL"
+                    type="url"
+                    className="min-h-11 rounded border border-slate-700 bg-slate-950 px-3 text-sm text-slate-100 disabled:opacity-50"
+                    value={connectionBaseUrl}
+                    disabled={mutationBlocked}
+                    maxLength={1000}
+                    onChange={(event) => setConnectionBaseUrl(event.target.value)}
+                  />
+                </label>
+                <label className="grid gap-1 text-xs text-slate-300">
+                  Credential reference
+                  <input
+                    aria-label="Credential reference"
+                    autoComplete="off"
+                    className="min-h-11 rounded border border-slate-700 bg-slate-950 px-3 text-sm text-slate-100 disabled:opacity-50"
+                    value={credentialRef}
+                    disabled={mutationBlocked}
+                    maxLength={200}
+                    placeholder="Existing AIAT credential name"
+                    onChange={(event) => setCredentialRef(event.target.value)}
+                  />
+                  <span className="text-[11px] text-slate-500">Create the secret in Credentials first; enter only its reference here.</span>
+                </label>
+                <div className="flex items-end">
+                  <button
+                    type="button"
+                    className="min-h-11 w-full rounded bg-cyan-700 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={mutationBlocked || !connectionName.trim() || !connectionBaseUrl.trim() || !credentialRef.trim()}
+                    onClick={createConnection}
+                  >Create connection</button>
+                </div>
+              </div>
+            </section>
+          )}
+
+          {!accessDenied && (
+            <section
+              className="space-y-4 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4"
+              aria-labelledby="pm-project-setup-heading"
+            >
+              <div>
+                <h2 id="pm-project-setup-heading" className="text-sm font-semibold text-cyan-100">Provision and bind a project</h2>
+                <p className="mt-1 text-xs text-cyan-200/70">Generate a provider plan first. Applying the exact reviewed plan may create or adopt a provider project and records its AIAT binding.</p>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <label className="grid gap-1 text-xs text-slate-300">
+                  AIAT project
+                  <select
+                    aria-label="Project to provision"
+                    className="min-h-11 rounded border border-slate-700 bg-slate-950 px-2 text-sm text-slate-100 disabled:opacity-50"
+                    value={projectId}
+                    disabled={mutationBlocked || projectsLoading || projects.length === 0}
+                    onChange={(event) => {
+                      setProjectId(event.target.value);
+                      setProvisioningPlan(null);
+                      setReviewedProvisioningDigest("");
+                    }}
+                  >
+                    <option value="">{projectsLoading ? "Loading projects…" : "Select a project"}</option>
+                    {projects.map((project) => (
+                      <option key={project.id} value={project.id}>{project.name} · {project.state || "unknown"}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid gap-1 text-xs text-slate-300">
+                  Provider connection
+                  <select
+                    aria-label="Project provider connection"
+                    className="min-h-11 rounded border border-slate-700 bg-slate-950 px-2 text-sm text-slate-100 disabled:opacity-50"
+                    value={connectionId}
+                    disabled={mutationBlocked || data.connections.length === 0}
+                    onChange={(event) => {
+                      setConnectionId(event.target.value);
+                      setBindingId("");
+                      setProvisioningPlan(null);
+                      setReviewedProvisioningDigest("");
+                    }}
+                  >
+                    <option value="">Select a connection</option>
+                    {data.connections.map((connection) => (
+                      <option key={text(connection.id)} value={text(connection.id, "")}>{text(connection.display_name || connection.id)} · {text(connection.status)}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid gap-1 text-xs text-slate-300">
+                  Mapping profile
+                  <select
+                    aria-label="Project mapping profile"
+                    className="min-h-11 rounded border border-slate-700 bg-slate-950 px-2 text-sm text-slate-100 disabled:opacity-50"
+                    value={mappingProfile}
+                    disabled={mutationBlocked}
+                    onChange={(event) => {
+                      setMappingProfile(event.target.value);
+                      setProvisioningPlan(null);
+                      setReviewedProvisioningDigest("");
+                    }}
+                  >
+                    <option value="dedicated_project">Dedicated provider project</option>
+                    <option value="umbrella_issues">Explicit shared project / issues</option>
+                  </select>
+                </label>
+                <label className="grid gap-1 text-xs text-slate-300">
+                  Existing provider project ID (optional)
+                  <input
+                    aria-label="Existing provider project ID"
+                    className="min-h-11 rounded border border-slate-700 bg-slate-950 px-3 text-sm text-slate-100 disabled:opacity-50"
+                    value={externalProjectId}
+                    disabled={mutationBlocked}
+                    maxLength={240}
+                    onChange={(event) => {
+                      setExternalProjectId(event.target.value);
+                      setProvisioningPlan(null);
+                      setReviewedProvisioningDigest("");
+                    }}
+                  />
+                </label>
+              </div>
+              {projectsError && <p role="alert" className="text-sm text-amber-200">{projectsError}</p>}
+              {bindingsError && <p role="alert" className="text-sm text-amber-200">{bindingsError}</p>}
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  className="min-h-11 rounded border border-cyan-700 px-3 py-2 text-sm font-semibold text-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={mutationBlocked || projectsLoading || !UUID_PATTERN.test(projectId) || !UUID_PATTERN.test(connectionId)}
+                  onClick={generateProvisioningPlan}
+                >Generate project provisioning plan</button>
+                {selectedProject && <span className="text-xs text-slate-400">Selected project: {selectedProject.name}</span>}
+              </div>
+              {provisioningPlan && (() => {
+                const plan = provisioningPlan.plan;
+                const actions = Array.isArray(plan.actions) ? plan.actions : [];
+                const blockers = provisioningPlan.blockers ?? plan.blockers ?? [];
+                const manualActions = provisioningPlan.manual_actions ?? plan.manual_actions ?? [];
+                const destructive = actions.some((action) => action.destructive === true);
+                return (
+                  <article aria-label="Project provisioning plan" className="rounded border border-slate-800 bg-slate-950/70 p-3 text-sm text-slate-200">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h3 className="font-semibold">Plan {text(plan.plan_id)}</h3>
+                      <span className="font-mono text-xs text-cyan-200">Digest: {provisioningPlan.plan_digest}</span>
+                    </div>
+                    <p className="mt-1 text-xs text-slate-400">{text(plan.provider_kind)} · project {text(plan.project_id)} · profile {text(plan.mapping_profile)}</p>
+                    <ul className="mt-3 list-disc space-y-1 pl-5 text-xs">
+                      {actions.map((action, index) => (
+                        <li key={`${action.action}-${action.resource}-${index}`}>{action.action}: {action.resource}{action.manual ? " (manual step)" : ""}{action.destructive ? " (destructive)" : ""}</li>
+                      ))}
+                      {!actions.length && <li>No provider actions are included in this plan.</li>}
+                    </ul>
+                    {blockers.length > 0 && <div role="alert" className="mt-3 rounded border border-rose-700/50 bg-rose-900/20 p-2 text-xs text-rose-200"><strong>Plan blocked:</strong> {blockers.join("; ")}</div>}
+                    {manualActions.length > 0 && <div className="mt-3 rounded border border-amber-700/50 bg-amber-900/20 p-2 text-xs text-amber-100"><strong>Manual steps:</strong> {manualActions.join("; ")}</div>}
+                    {destructive && <p role="alert" className="mt-3 text-xs text-rose-200">This plan includes a destructive action and cannot be applied from this workspace.</p>}
+                    <label className="mt-3 flex min-h-11 items-center gap-2 text-xs text-slate-300">
+                      <input
+                        type="checkbox"
+                        checked={reviewedProvisioningDigest === provisioningPlan.plan_digest}
+                        disabled={mutationBlocked || blockers.length > 0 || destructive}
+                        onChange={(event) => setReviewedProvisioningDigest(event.target.checked ? provisioningPlan.plan_digest : "")}
+                      />
+                      I reviewed this exact project provisioning digest
+                    </label>
+                    <button
+                      type="button"
+                      className="mt-3 min-h-11 rounded bg-cyan-700 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                      disabled={mutationBlocked || blockers.length > 0 || destructive || reviewedProvisioningDigest !== provisioningPlan.plan_digest}
+                      onClick={applyProvisioningPlan}
+                    >Apply reviewed plan and create binding</button>
+                  </article>
+                );
+              })()}
+              <div aria-label="Project provider bindings" className="rounded border border-slate-800 bg-slate-950/40 p-3">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Bindings for selected project</h3>
+                {bindingsLoading ? <p role="status" className="mt-2 text-xs text-slate-500">Loading project bindings…</p> : null}
+                {!bindingsLoading && projectBindings.length === 0 && <p className="mt-2 text-xs text-slate-500">No provider bindings are recorded for this project.</p>}
+                {projectBindings.map((binding) => (
+                  <div key={text(binding.id)} className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <span>{text(binding.external_project_key || binding.external_project_id, "Provider project pending")} · {text(binding.mapping_profile)}</span>
+                    <span className="rounded border border-slate-700 px-2 py-1">{text(binding.status)} · {text(binding.provisioning_state, "unprovisioned")}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
           <section className="grid gap-4 md:grid-cols-4" role="region" aria-label="Integration summary">
             {[
               ["Connections", data.connections.length],
@@ -508,22 +949,77 @@ export default function IntegrationsPage() {
           <section className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4 space-y-4" aria-labelledby="integration-lifecycle-heading">
             <div>
               <h2 id="integration-lifecycle-heading" className="text-sm font-semibold text-cyan-100">Governed lifecycle plans</h2>
-              <p className="mt-1 text-xs text-cyan-200/70">Plans are generated and persisted by the control plane. Mutations require a fresh read, an exact digest review, and operator approval.</p>
+              <p className="mt-1 text-xs text-cyan-200/70">Choose a connection or project binding transition. Plan generation records readiness checks; applying requires a fresh read, review of the exact digest, and operator approval.</p>
             </div>
-            {!accessDenied && <div className="grid gap-2 md:grid-cols-3">
-              <input aria-label="Connection UUID" className="min-h-11 rounded border border-slate-700 bg-slate-950 px-2 py-2 text-xs text-slate-200 disabled:opacity-50" placeholder="Connection UUID" value={connectionId} disabled={mutationBlocked} onChange={(event) => setConnectionId(event.target.value)} />
-              <input aria-label="Binding UUID" className="min-h-11 rounded border border-slate-700 bg-slate-950 px-2 py-2 text-xs text-slate-200 disabled:opacity-50" placeholder="Binding UUID" value={bindingId} disabled={mutationBlocked} onChange={(event) => setBindingId(event.target.value)} />
+            {!accessDenied && <div className="grid gap-3 md:grid-cols-4">
+              <label className="grid gap-1 text-xs text-slate-300">
+                Connection
+                <select
+                  aria-label="Lifecycle connection"
+                  className="min-h-11 rounded border border-slate-700 bg-slate-950 px-2 text-sm text-slate-100 disabled:opacity-50"
+                  value={connectionId}
+                  disabled={mutationBlocked || data.connections.length === 0}
+                  onChange={(event) => {
+                    setConnectionId(event.target.value);
+                    setBindingId("");
+                  }}
+                >
+                  <option value="">Select a connection</option>
+                  {data.connections.map((connection) => (
+                    <option key={text(connection.id)} value={text(connection.id, "")}>{text(connection.display_name || connection.id)} · {text(connection.status)}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="grid gap-1 text-xs text-slate-300">
+                Target
+                <select
+                  aria-label="Lifecycle target"
+                  className="min-h-11 rounded border border-slate-700 bg-slate-950 px-2 text-sm text-slate-100 disabled:opacity-50"
+                  value={lifecycleTargetType}
+                  disabled={mutationBlocked}
+                  onChange={(event) => setLifecycleTargetType(event.target.value as LifecycleTargetType)}
+                >
+                  <option value="pm_connection">Provider connection</option>
+                  <option value="pm_binding">Project binding</option>
+                </select>
+              </label>
+              <label className="grid gap-1 text-xs text-slate-300">
+                Project binding
+                <select
+                  aria-label="Lifecycle project binding"
+                  className="min-h-11 rounded border border-slate-700 bg-slate-950 px-2 text-sm text-slate-100 disabled:opacity-50"
+                  value={bindingId}
+                  disabled={mutationBlocked || lifecycleTargetType !== "pm_binding" || bindingsLoading || connectionBindings.length === 0}
+                  onChange={(event) => setBindingId(event.target.value)}
+                >
+                  <option value="">{bindingsLoading ? "Loading bindings…" : "Select a project binding"}</option>
+                  {connectionBindings.map((binding) => (
+                    <option key={text(binding.id)} value={text(binding.id, "")}>{text(binding.external_project_key || binding.external_project_id, text(binding.id))} · {text(binding.status)}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="grid gap-1 text-xs text-slate-300">
+                Desired state
+                <select
+                  aria-label="Desired lifecycle state"
+                  className="min-h-11 rounded border border-slate-700 bg-slate-950 px-2 text-sm text-slate-100 disabled:opacity-50"
+                  value={desiredLifecycleStatus}
+                  disabled={mutationBlocked}
+                  onChange={(event) => setDesiredLifecycleStatus(event.target.value as LifecycleStatus)}
+                >
+                  <option value="DISABLED">DISABLED</option>
+                  <option value="SHADOW">SHADOW</option>
+                  <option value="READ_ONLY">READ_ONLY</option>
+                  <option value="ACTIVE">ACTIVE</option>
+                  <option value="DRAINING">DRAINING</option>
+                </select>
+              </label>
               <button
                 type="button"
-                className="min-h-11 rounded bg-cyan-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
-                disabled={mutationBlocked || !UUID_PATTERN.test(connectionId) || !UUID_PATTERN.test(bindingId)}
-                onClick={() => void submitMutation(
-                  "/api/integrations/pm/lifecycle-plans",
-                  { target_type: "pm_binding", connection_id: connectionId, binding_id: bindingId, desired_binding_status: "READ_ONLY" },
-                  "Lifecycle plan generation",
-                  (result) => setReviewedDigest(text(result.plan_digest, "")),
-                )}
-              >Generate READ_ONLY plan</button>
+                className="min-h-11 self-end rounded bg-cyan-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                disabled={mutationBlocked || !UUID_PATTERN.test(connectionId) || (lifecycleTargetType === "pm_binding" && !UUID_PATTERN.test(bindingId))}
+                onClick={generateLifecyclePlan}
+              >Generate {desiredLifecycleStatus} plan</button>
             </div>}
             {accessDenied && <p className="text-sm text-amber-200/80" role="status">Lifecycle mutation controls are hidden until authorization is restored.</p>}
             <div className="space-y-3">
@@ -533,6 +1029,7 @@ export default function IntegrationsPage() {
                 const planId = text(plan.plan_id || entry.id, "unknown-plan");
                 const status = text(entry.status || plan.status, "unknown");
                 const actorMappings = trustedActorMappings(entry);
+                const blockers = Array.isArray(plan.blockers) ? plan.blockers.map(String) : [];
                 return (
                   <article key={planId} aria-label={`Lifecycle plan ${planId}`} className="rounded border border-slate-800 bg-slate-950/60 p-3 text-xs text-slate-300">
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -540,7 +1037,8 @@ export default function IntegrationsPage() {
                       <span className="rounded-full border border-slate-700 px-2 py-1">{status}</span>
                     </div>
                     <div className="mt-2 break-all font-mono text-cyan-200">Digest: {digest}</div>
-                    <p className="mt-1 text-slate-400">Target {text(plan.target_type)} · connection {text(plan.connection_id)} · binding {text(plan.binding_id)}</p>
+                    <p className="mt-1 text-slate-400">Target {text(plan.target_type)} · connection {text(plan.connection_id)} · binding {text(plan.binding_id)} · desired connection {text(plan.desired_connection_status)} · desired binding {text(plan.desired_binding_status)}</p>
+                    {blockers.length > 0 && <p role="alert" className="mt-2 text-rose-200">Blocked: {blockers.join("; ")}</p>}
                     <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap text-slate-400">{JSON.stringify({ operations: plan.operations, rollback_operations: plan.rollback_operations, blockers: plan.blockers, expires_at: plan.expires_at }, null, 2)}</pre>
                     {actorMappings.length > 0 && (
                       <div role="region" aria-label="Trusted actor mapping snapshot" className="mt-3 rounded border border-slate-800 p-2">
@@ -563,23 +1061,29 @@ export default function IntegrationsPage() {
                       <button
                         type="button"
                         className="min-h-11 rounded border border-emerald-700 px-3 py-2 text-emerald-300 disabled:opacity-50"
-                        disabled={mutationBlocked || reviewedDigest !== digest || status !== "PLANNED"}
+                        disabled={mutationBlocked || reviewedDigest !== digest || status !== "PLANNED" || blockers.length > 0}
                         onClick={() => void submitMutation(
                           `/api/integrations/pm/lifecycle-plans/${encodeURIComponent(planId)}/approve`,
                           { plan_digest: digest, reason: "Dashboard operator approval" },
                           "Lifecycle plan approval",
+                          undefined,
+                          "Lifecycle plan approved. Apply is still a separate, confirmed action.",
                         )}
                       >Approve</button>
                       <button
                         type="button"
                         className="min-h-11 rounded border border-amber-700 px-3 py-2 text-amber-300 disabled:opacity-50"
-                        disabled={mutationBlocked || reviewedDigest !== digest || status !== "APPROVED"}
+                        disabled={mutationBlocked || reviewedDigest !== digest || status !== "APPROVED" || blockers.length > 0}
                         onClick={() => {
-                          if (!window.confirm("Apply only this exact persisted lifecycle plan?")) return;
+                          if (!window.confirm(`Apply only this exact persisted lifecycle plan? Digest: ${digest}`)) return;
                           void submitMutation(
                             `/api/integrations/pm/lifecycle-plans/${encodeURIComponent(planId)}/apply`,
                             { plan_digest: digest, confirm: true },
                             "Lifecycle plan application",
+                            async () => {
+                              if (projectId) await loadProjectBindings(projectId);
+                            },
+                            (result) => `Lifecycle plan applied${result.application ? `: ${text(record(result.application).status, "complete")}` : " successfully"}.`,
                           );
                         }}
                       >Apply exact plan</button>
