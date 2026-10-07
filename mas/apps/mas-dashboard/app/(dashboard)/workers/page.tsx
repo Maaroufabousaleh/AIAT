@@ -245,6 +245,8 @@ function WorkerRow({
         return;
       }
       onStatusChange();
+    } catch {
+      setActionError("Network error while changing worker status");
     } finally {
       setTransitioning(false);
     }
@@ -265,6 +267,8 @@ function WorkerRow({
         return;
       }
       onStatusChange();
+    } catch {
+      setActionError("Network error while draining worker");
     } finally {
       setTransitioning(false);
     }
@@ -286,6 +290,8 @@ function WorkerRow({
       }
       await loadEvaluations();
       onStatusChange();
+    } catch {
+      setActionError("Network error while evaluating worker");
     } finally {
       setEvaluating(false);
     }
@@ -365,8 +371,17 @@ function WorkerRow({
             )}
             {!accessDenied && <button
               onClick={toggleStatus}
-              disabled={transitioning}
-              title={worker.status === "ACTIVE" ? "Deactivate" : "Activate"}
+              disabled={
+                transitioning ||
+                (worker.status !== "ACTIVE" && activationBlocked)
+              }
+              title={
+                worker.status === "ACTIVE"
+                  ? "Deactivate"
+                  : activationBlocked
+                    ? "Activation requires an approved evaluation"
+                    : "Activate"
+              }
               aria-label={
                 worker.status === "ACTIVE"
                   ? `Deactivate ${worker.worker_id}`
