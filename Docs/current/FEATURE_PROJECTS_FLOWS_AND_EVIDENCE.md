@@ -17,6 +17,7 @@ Projects are the primary ownership, security, cost, evidence, and lifecycle boun
 ## Implemented now
 
 - Canonical projects with state, history, revision, owner/requester, company, configuration, retry, archive, and deletion paths.
+- Project creation preserves the existing immediate CEO-feasibility start for operator requests and also supports a prepared `INIT` project (`start_immediately: false`). A governed service may create only a prepared project; worker credentials cannot create projects or start work. The operator-only `/projects/{id}/start` action begins feasibility through `WorkflowController`; the transition outbox retains a stable directive identity and can replay the start intent after interruption. This is at-least-once delivery; it is not a claim of durable consumer-side deduplication beyond the router's own window. The provider/budget policy still applies when work starts.
 - Project state-history reads verify that the project exists before returning
   audit rows; an unknown project is a 404 rather than an indistinguishable
   empty history (`f49f7501`).

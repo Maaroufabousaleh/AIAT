@@ -2,9 +2,10 @@
 
 **Scope:** personal/internal AIAT instance
 **Implementation/content baseline:** starting source revision
-`571a6a496e83df816b19c1326070671f76074e89` plus the preserved dirty working
-tree; this is not a clean release candidate
-**Index date:** 2026-10-02
+`571a6a496e83df816b19c1326070671f76074e89` plus the current alpha integration
+commits and preserved working-tree evidence; this is not a clean release
+candidate
+**Index date:** 2026-10-07
 **Release status:** `NO-RELEASE / RELEASE_CERTIFICATION_PENDING`
 
 ## Purpose
@@ -41,6 +42,30 @@ The retained secret-safe development-host artifact is dated 2026-09-20:
 This status is deliberately separate from the release ledger's global
 `NO-RELEASE` decision. Development is not blocked merely because native-host,
 provider, operator, or deployment certification remains open.
+
+## Feature-complete alpha scoreboard (2026-10-07)
+
+This is a development view of the personal/internal application. E2E partial
+means the operator surface is covered by local fixtures, but the complete
+project journey has not been exercised with an authorized provider-backed
+worker run. Production certification stays in the separate
+[post-feature backlog](AIAT_POST_FEATURE_CERTIFICATION_BACKLOG.md).
+
+| Subsystem | Implemented | Integrated | Local tested | UI usable | E2E working | Certification deferred |
+| --- | --- | --- | --- | --- | --- | --- |
+| Control plane and organization | YES | YES | YES | YES | PARTIAL | YES |
+| Projects and workflows | YES | YES | YES, focused API/outbox | YES | PARTIAL, prepared-start fixtures pass | YES |
+| Workers and runtimes | YES | YES | YES, cancellation/runtime suites | YES | PARTIAL, provider-backed run not authorized | YES |
+| Governed tools | YES | YES | YES | YES | PARTIAL | YES |
+| Models and cost | YES | YES | YES, resolver fixtures | YES, preview available | PARTIAL, no provider call in this run | YES |
+| CEO and governance | YES | YES | YES | YES, typed action forms | PARTIAL, mocked action tests pass | YES |
+| Identity and default mail | YES | YES | YES | YES | PARTIAL for external identity actions | YES |
+| PM and source control | YES | YES | YES, mocked adapters | YES, operator drill-down | PARTIAL, live provider actions remain | YES |
+| Dashboard | YES | YES | YES, lint/typecheck/build/auth | YES | PARTIAL, selected source-built E2E 19/19 | YES |
+
+This scoreboard does not replace per-feature acceptance criteria. Existing
+full-suite snapshots below are historical; this wave's focused tests are
+reported separately from a full current-candidate regression run.
 
 ## Status vocabulary
 
@@ -221,6 +246,7 @@ before changing code or interpreting a green fixture as a release result.
 
 | Area | Status/evidence document |
 | --- | --- |
+| Post-feature production certification backlog | [AIAT Post-Feature Certification Backlog](AIAT_POST_FEATURE_CERTIFICATION_BACKLOG.md) |
 | Release scope and operator decision | [P0 Release Scope Matrix](P0_RELEASE_SCOPE_MATRIX.md) |
 | P0 implementation status | [P0 Release Integrity Status](P0_RELEASE_INTEGRITY_STATUS.md) |
 | Flow definition portability | [Flow Definition Portability Status](FLOW_DEFINITION_PORTABILITY_STATUS.md) |

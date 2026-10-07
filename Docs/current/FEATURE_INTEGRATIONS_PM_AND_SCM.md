@@ -17,6 +17,11 @@ External project-management and source-control systems are governed collaboratio
 - Canonical issue create/get/update/comment/link APIs and tools.
 - Source-control installation, branch, pull request, review comment, check, commit, run credential, and evidence APIs.
 - Dedicated PM gateway and dashboard integration views.
+- The integration operator view now supports connection-scoped reconciliation,
+  conflict disposition with an operator note, inbound-canary lookup by plan ID,
+  and current outbox/reconciliation state. Its actions remain behind the
+  operator API identity and integration policy; the UI does not infer missing
+  provider state.
 - A reusable `aiat.provider-conformance.v1` fixture runner for disposable
   adapters. It exercises capability/health/configuration, canonical project and
   work-item projection, idempotent replay, cursor-bearing change listing,
@@ -110,7 +115,9 @@ or used to infer current provider state.
   status classifier, built-in declaration/readiness fixture, and deterministic
   YouTrack/GitHub mocked HTTP fixture are implemented, but live provider
   evidence remains.
-- Finish dashboard drill-down for lifecycle plans, evidence, actor maps, canaries, dispositions, and reconciliation diffs.
+- Extend live mapping and dead-letter discovery when the API exposes canonical
+  collection endpoints; current dashboard drill-down accepts a known canary
+  plan ID and shows the mappings available in reconciliation evidence.
 - Keep the older `Docs/PM_Platform_*` material linked as historical design and
   approval provenance; current status and certification truth remain in the
   feature and `mas/docs/PM_ACTIVE_*` records.
