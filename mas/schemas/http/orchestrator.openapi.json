@@ -12488,7 +12488,7 @@
     },
     "/flows/instances/{instance_id}/node-action": {
       "post": {
-        "description": "Perform an action on a node within a flow instance.",
+        "description": "Perform a flow action, enforcing operator identity for approvals.",
         "operationId": "flow_node_action_flows_instances__instance_id__node_action_post",
         "parameters": [
           {

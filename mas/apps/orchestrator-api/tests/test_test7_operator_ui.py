@@ -475,12 +475,15 @@ async def test_flow_instance_action_cancel(client):
     cancelled = _instance_row(status="CANCELLED")
     storage.get_flow_instance = AsyncMock(side_effect=[instance, cancelled])
     storage.get_flow = AsyncMock(return_value=_flow_row())
-    storage.update_flow_instance = AsyncMock(return_value=cancelled)
+    storage.cancel_flow_instance = AsyncMock(
+        return_value={"outcome": "applied", "instance": cancelled}
+    )
+    storage.update_flow_instance = AsyncMock()
     _patch(storage)
     r = await client.post(f"/flows/instances/{INSTANCE_ID}/action", json={"action": "cancel"})
     assert r.status_code == 200
-    assert storage.update_flow_instance.await_args.kwargs["status"] == "CANCELLED"
-    assert storage.update_flow_instance.await_args.kwargs["active_node_ids"] == []
+    storage.cancel_flow_instance.assert_awaited_once()
+    assert storage.update_flow_instance.await_count == 0
 
 
 @pytest.mark.anyio
