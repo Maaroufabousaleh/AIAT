@@ -41,6 +41,30 @@ import {
   type GovernedWorkerOption,
 } from "@/components/flows/NodeSchemaForm";
 
+type LegacyMigrationPreview = {
+  status: "dry_run";
+  source_flow_id: string;
+  source_flow_version: number;
+  valid: boolean;
+  changed: boolean;
+  migrated_node_ids: string[];
+  missing_worker_bindings: string[];
+  unknown_worker_bindings: string[];
+  unknown_model_profile_bindings: string[];
+  errors: Array<string | { code?: string; node_id?: string; message?: string }>;
+};
+
+type LegacyMigrationResult = {
+  status: "migrated";
+  source_flow_id: string;
+  migration: {
+    schema: string;
+    migrated_node_ids: string[];
+    source_flow_version: number;
+  };
+  flow: { id: string; name: string; version: number };
+};
+
 const CUSTOM_NODE_TYPES: NodeTypes = {};
 let pendingConnectionSource: string | null = null;
 
@@ -114,6 +138,12 @@ export default function FlowEditorPage() {
   const [governanceLoading, setGovernanceLoading] = useState(true);
   const [governanceLoadError, setGovernanceLoadError] = useState<string | null>(null);
   const [flowMetadata, setFlowMetadata] = useState<Record<string, unknown>>({});
+  const [legacyWorkerBindings, setLegacyWorkerBindings] = useState<Record<string, string>>({});
+  const [legacyMigrationPreview, setLegacyMigrationPreview] = useState<LegacyMigrationPreview | null>(null);
+  const [legacyMigrationPreviewBindingsKey, setLegacyMigrationPreviewBindingsKey] = useState<string | null>(null);
+  const [legacyMigrationResult, setLegacyMigrationResult] = useState<LegacyMigrationResult | null>(null);
+  const [legacyMigrationBusy, setLegacyMigrationBusy] = useState(false);
+  const [legacyMigrationError, setLegacyMigrationError] = useState<string | null>(null);
   const [flowLoading, setFlowLoading] = useState(false);
   const [flowLoaded, setFlowLoaded] = useState(id === "new");
   const [flowLoadStale, setFlowLoadStale] = useState(false);
@@ -125,6 +155,72 @@ export default function FlowEditorPage() {
   const hasReadContextRef = useRef(false);
 
   const isNew = id === "new";
+
+  const legacyTaskNodes = useMemo(
+    () => (currentFlow?.definition_json?.nodes || []).filter((node) => {
+      if (node.type !== "task") return false;
+      const config = node.config || {};
+      return Boolean(config.team_id || config.action || !config.worker_id);
+    }),
+    [currentFlow],
+  );
+  const legacyUnboundTaskNodes = useMemo(
+    () => legacyTaskNodes.filter((node) => !node.config.worker_id),
+    [legacyTaskNodes],
+  );
+  const legacyWorkerBindingsKey = useMemo(
+    () => JSON.stringify(Object.entries(legacyWorkerBindings).sort(([left], [right]) => left.localeCompare(right))),
+    [legacyWorkerBindings],
+  );
+  const legacyMigrationPreviewIsCurrent =
+    legacyMigrationPreviewBindingsKey === legacyWorkerBindingsKey;
+
+  const runLegacyMigration = async (dryRun: boolean) => {
+    if (!currentFlow || accessDenied || legacyMigrationBusy || saveStatus === "dirty" || saving) return;
+    setLegacyMigrationBusy(true);
+    setLegacyMigrationError(null);
+    try {
+      const workerBindings = Object.fromEntries(
+        Object.entries(legacyWorkerBindings).filter(([, workerId]) => workerId),
+      );
+      const response = await fetch(`/api/flows/${currentFlow.id}/migrate-legacy-tasks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dry_run: dryRun,
+          worker_bindings: workerBindings,
+          // A migration creates an inactive definition only. It never starts
+          // the flow or makes it available for project execution by itself.
+          is_active: false,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const message = typeof payload?.error === "string"
+          ? payload.error
+          : typeof payload?.detail?.message === "string"
+            ? payload.detail.message
+            : `Migration request failed (HTTP ${response.status})`;
+        const error = Object.assign(new Error(message), { status: response.status });
+        throw error;
+      }
+      if (dryRun) {
+        setLegacyMigrationPreview(payload as LegacyMigrationPreview);
+        setLegacyMigrationPreviewBindingsKey(legacyWorkerBindingsKey);
+      } else {
+        setLegacyMigrationResult(payload as LegacyMigrationResult);
+      }
+    } catch (error) {
+      const status = (error as Error & { status?: number }).status;
+      if (status === 401 || status === 403) {
+        handleAccessDenied();
+        return;
+      }
+      setLegacyMigrationError(error instanceof Error ? error.message : "Could not migrate legacy tasks");
+    } finally {
+      setLegacyMigrationBusy(false);
+    }
+  };
 
   const handleAccessDenied = useCallback(() => {
     const current = useFlowStore.getState().currentFlow;
@@ -195,6 +291,11 @@ export default function FlowEditorPage() {
       return;
     }
 
+    setLegacyWorkerBindings({});
+    setLegacyMigrationPreview(null);
+    setLegacyMigrationPreviewBindingsKey(null);
+    setLegacyMigrationResult(null);
+    setLegacyMigrationError(null);
     setName(flow.name);
     setDescription(flow.description || "");
     setIsActive(flow.is_active);
@@ -775,6 +876,137 @@ export default function FlowEditorPage() {
           >
             Open projects
           </Link>
+        </section>
+      )}
+
+      {!accessDenied && !isNew && currentFlow && legacyTaskNodes.length > 0 && (
+        <section
+          aria-label="Migrate legacy flow tasks"
+          data-testid="legacy-flow-migration"
+          className="max-h-72 overflow-y-auto border-b border-amber-700/40 bg-amber-950/15 px-4 py-3"
+        >
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-amber-100">Migrate legacy task bindings</h2>
+              <p className="mt-1 max-w-3xl text-xs leading-relaxed text-slate-300">
+                Preview the saved flow v{currentFlow.version}, assign explicit governed workers for unbound tasks, then create a new inactive immutable version. The source definition stays unchanged; this does not start or dispatch the flow.
+              </p>
+            </div>
+            <span className="rounded border border-slate-700 bg-slate-950/60 px-2 py-1 font-mono text-xs text-slate-400">
+              Source v{currentFlow.version}
+            </span>
+          </div>
+
+          {(saveStatus === "dirty" || saving) && (
+            <p role="status" className="mt-3 rounded border border-amber-700/50 bg-amber-950/30 px-3 py-2 text-xs text-amber-100">
+              Save or discard the current editor changes before migrating. The migration operates on the saved source version shown above.
+            </p>
+          )}
+
+          {legacyUnboundTaskNodes.length > 0 ? (
+            <div className="mt-3 grid gap-2 md:grid-cols-2">
+              {legacyUnboundTaskNodes.map((node) => (
+                <label key={node.id} className="grid gap-1 text-xs text-slate-200">
+                  <span>Worker binding for {node.label || node.id} <span className="font-mono text-slate-500">({node.id})</span></span>
+                  <select
+                    value={legacyWorkerBindings[node.id] || ""}
+                    onChange={(event) => {
+                      setLegacyWorkerBindings((bindings) => ({ ...bindings, [node.id]: event.target.value }));
+                      setLegacyMigrationError(null);
+                    }}
+                    disabled={legacyMigrationBusy || Boolean(legacyMigrationResult) || governanceLoading || saveStatus === "dirty" || saving}
+                    data-testid={`legacy-worker-binding-${node.id}`}
+                    aria-label={`Worker binding for ${node.label || node.id}`}
+                    className="min-h-11 rounded-md border border-slate-700 bg-slate-900 px-2.5 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-400/60 disabled:opacity-50"
+                  >
+                    <option value="">Select a governed worker</option>
+                    {governedWorkers.map((worker) => (
+                      <option key={worker.id} value={worker.id}>
+                        {worker.name || worker.id} · {worker.status || "UNKNOWN"} · {worker.adapter_type || "runtime"}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-3 text-xs text-slate-400">
+              No unbound task worker was found. The dry-run will check whether any legacy task aliases can be migrated without a binding.
+            </p>
+          )}
+
+          {governanceLoadError && legacyUnboundTaskNodes.length > 0 && (
+            <p role="status" className="mt-2 text-xs text-amber-200">{governanceLoadError}. Worker bindings remain unavailable until the governed catalog recovers.</p>
+          )}
+
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void runLegacyMigration(true)}
+              disabled={legacyMigrationBusy || Boolean(legacyMigrationResult) || saveStatus === "dirty" || saving}
+              data-testid="legacy-migration-preview-button"
+              className="inline-flex min-h-11 items-center rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm font-medium text-slate-100 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-blue-400/60"
+            >
+              {legacyMigrationBusy ? "Checking…" : "Run dry-run preview"}
+            </button>
+            {legacyMigrationPreview && !legacyMigrationPreviewIsCurrent && !legacyMigrationResult && (
+              <span role="status" className="text-xs text-amber-200">Bindings changed; run the dry-run again before applying.</span>
+            )}
+            {legacyMigrationPreview && legacyMigrationPreviewIsCurrent && (
+              <button
+                type="button"
+                onClick={() => void runLegacyMigration(false)}
+                disabled={legacyMigrationBusy || Boolean(legacyMigrationResult) || !legacyMigrationPreview.valid || !legacyMigrationPreview.changed || legacyMigrationPreview.missing_worker_bindings.length > 0 || legacyMigrationPreview.unknown_worker_bindings.length > 0 || legacyMigrationPreview.unknown_model_profile_bindings.length > 0 || saveStatus === "dirty" || saving}
+                data-testid="legacy-migration-apply-button"
+                className="inline-flex min-h-11 items-center rounded-lg bg-amber-600 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-amber-300/70"
+              >
+                {legacyMigrationBusy ? "Applying…" : "Create migrated version"}
+              </button>
+            )}
+            {legacyMigrationError && <p role="alert" className="basis-full text-xs text-rose-300">{legacyMigrationError}</p>}
+          </div>
+
+          {legacyMigrationPreview && (
+            <div className="mt-3 rounded-md border border-slate-700/80 bg-slate-950/50 p-3 text-xs" data-testid="legacy-migration-preview">
+              <p className={legacyMigrationPreview.valid ? "font-medium text-emerald-200" : "font-medium text-amber-200"}>
+                Dry-run {legacyMigrationPreview.valid ? "passed" : "needs resolution"} · {legacyMigrationPreview.changed ? "migration changes detected" : "no changes detected"}
+              </p>
+              {legacyMigrationPreview.missing_worker_bindings.length > 0 && (
+                <p className="mt-1 text-amber-100">Missing worker bindings: {legacyMigrationPreview.missing_worker_bindings.join(", ")}</p>
+              )}
+              {legacyMigrationPreview.errors.length > 0 && (
+                <ul className="mt-1 list-disc space-y-0.5 pl-5 text-slate-300">
+                  {legacyMigrationPreview.errors.map((error, index) => (
+                    <li key={`${typeof error === "string" ? error : error.code || "error"}-${index}`}>
+                      {typeof error === "string" ? error : [error.node_id, error.message || error.code].filter(Boolean).join(": ")}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {legacyMigrationPreview.migrated_node_ids.length > 0 && (
+                <p className="mt-1 text-slate-300">Nodes to migrate: <span className="font-mono">{legacyMigrationPreview.migrated_node_ids.join(", ")}</span></p>
+              )}
+              {!legacyMigrationPreviewIsCurrent && (
+                <p className="mt-1 text-amber-200">This preview is for the previous binding selection and cannot be applied.</p>
+              )}
+            </div>
+          )}
+
+          {legacyMigrationResult && (
+            <div className="mt-3 rounded-md border border-emerald-700/60 bg-emerald-950/30 p-3 text-sm" role="status" data-testid="legacy-migration-result">
+              <p className="font-semibold text-emerald-100">Migrated version created</p>
+              <p className="mt-1 text-xs text-slate-200">
+                Source flow v{legacyMigrationResult.migration.source_flow_version} remains unchanged. New inactive version v{legacyMigrationResult.flow.version} contains nodes {legacyMigrationResult.migration.migrated_node_ids.join(", ") || "with migrated task bindings"}.
+              </p>
+              <Link
+                href={`/flows/${legacyMigrationResult.flow.id}`}
+                data-testid="legacy-migration-open-version"
+                className="mt-2 inline-flex min-h-11 items-center rounded-lg border border-emerald-700 bg-emerald-950/60 px-3 py-2 text-xs font-medium text-emerald-100 hover:bg-emerald-900/60 focus:outline-none focus:ring-2 focus:ring-emerald-400/60"
+              >
+                Open v{legacyMigrationResult.flow.version}
+              </Link>
+            </div>
+          )}
         </section>
       )}
 
