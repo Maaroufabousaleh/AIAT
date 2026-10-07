@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
@@ -80,6 +81,41 @@ class _DispatchStorage:
         if self.fail_at == "claim":
             raise RuntimeError("claim failed")
         return None
+
+
+@pytest.mark.anyio
+async def test_cost_reservation_requires_positive_per_run_budget() -> None:
+    import orchestrator_api.main as main
+
+    async def reserve_for(budget_usd):
+        storage = _DispatchStorage()
+        request = SimpleNamespace(
+            budget_usd=budget_usd,
+            budget={},
+            idempotency_key="per-run-budget-boundary",
+            run_id=uuid4(),
+            task_type="test.run",
+        )
+        await main._reserve_worker_run_budgets(
+            storage=storage,
+            request=request,
+            worker_id=WORKER_ID,
+            project_id=None,
+            company_id=COMPANY_ID,
+        )
+        return [(row["budget_key"], row["amount"]) for row in storage.reservations]
+
+    omitted_budget = await reserve_for(None)
+    zero_budget = await reserve_for(Decimal("0"))
+    positive_budget = await reserve_for(Decimal("1.25"))
+
+    assert omitted_budget == zero_budget == [
+        ("max_concurrent_runs", Decimal("1")),
+    ]
+    assert positive_budget == [
+        ("max_cost_usd", Decimal("1.25")),
+        ("max_concurrent_runs", Decimal("1")),
+    ]
 
 
 def _patch_storage(storage) -> None:
