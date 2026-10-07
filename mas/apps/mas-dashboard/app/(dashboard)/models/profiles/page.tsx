@@ -19,11 +19,27 @@ type Catalogue = {
 };
 
 type ModelVersion = {
+  id: string;
   version: string;
   provider_id: string;
   exact_model_id: string;
   status: string;
   capabilities?: string[];
+};
+
+type ActivationResult = {
+  profile_id: string;
+  version_id: string;
+  version: string;
+  version_status: string;
+  already_approved: boolean;
+  approval_record: {
+    id: string;
+    decided_by: string;
+    reason: string;
+    created_at: string;
+    evidence?: { version_snapshot_sha256?: string };
+  };
 };
 
 type ModelProfile = {
@@ -93,6 +109,10 @@ export default function ModelProfilesPage() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [saveNotice, setSaveNotice] = useState("");
+  const [activationReasons, setActivationReasons] = useState<Record<string, string>>({});
+  const [activationErrors, setActivationErrors] = useState<Record<string, string>>({});
+  const [activatingVersionId, setActivatingVersionId] = useState<string | null>(null);
+  const [activationResult, setActivationResult] = useState<ActivationResult | null>(null);
   const [previewProfileId, setPreviewProfileId] = useState("");
   const [taskType, setTaskType] = useState("coding");
   const [preview, setPreview] = useState<PreviewResult | null>(null);
@@ -176,6 +196,40 @@ export default function ModelProfilesPage() {
     setSaveError("");
     setSaveNotice(`Draft version ${version.version} saved for ${profile.profile_id}. It is not approved or active.`);
     return true;
+  }
+
+  async function activateVersion(profile: ModelProfile, version: ModelVersion) {
+    const reason = (activationReasons[version.id] ?? "").trim();
+    if (!reason) {
+      setActivationErrors((current) => ({ ...current, [version.id]: "Enter a reason for approving this exact version." }));
+      return;
+    }
+    setActivatingVersionId(version.id);
+    setActivationErrors((current) => ({ ...current, [version.id]: "" }));
+    setActivationResult(null);
+    try {
+      const response = await fetch(
+        `/api/model-profiles/${encodeURIComponent(profile.profile_id)}/versions/${encodeURIComponent(version.id)}/activate`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reason }),
+        },
+      );
+      if (!response.ok) {
+        const message = await getError(response);
+        setActivationErrors((current) => ({ ...current, [version.id]: message }));
+        return;
+      }
+      const result = await response.json() as ActivationResult;
+      setActivationResult(result);
+      setActivationReasons((current) => ({ ...current, [version.id]: "" }));
+      await refresh();
+    } catch {
+      setActivationErrors((current) => ({ ...current, [version.id]: "Approval could not reach AIAT. Refresh before retrying." }));
+    } finally {
+      setActivatingVersionId(null);
+    }
   }
 
   async function createDraft(event: FormEvent<HTMLFormElement>) {
@@ -286,6 +340,73 @@ export default function ModelProfilesPage() {
             {profileSaved && <span className="text-xs text-slate-400">Draft profile saved: <code>{createdProfile?.profile_id}</code></span>}
           </div>
         </form>
+      </section>
+
+      <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5" aria-labelledby="governed-profiles-title">
+        <h2 id="governed-profiles-title" className="text-sm font-semibold text-white">Governed profiles and versions</h2>
+        <p className="mt-1 text-sm text-slate-400">Draft versions remain unavailable to model resolution. An operator can approve one exact immutable version with a recorded reason; no model request is sent.</p>
+        {profiles.length === 0 ? (
+          <p className="mt-4 rounded-lg border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-400">No model profiles are configured yet. Create a draft profile and version above.</p>
+        ) : (
+          <div className="mt-4 space-y-3" role="list" aria-label="Model profiles and versions">
+            {profiles.map((profile) => (
+              <article key={profile.profile_id} className="rounded-lg border border-slate-800 bg-slate-950/50 p-4" role="listitem" aria-label={`Model profile ${profile.profile_id}`}>
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <h3 className="font-medium text-white">{profile.profile_id}</h3>
+                  <span className="text-xs uppercase tracking-wide text-slate-400">Profile: {profile.status}</span>
+                </div>
+                <p className="mt-1 text-sm text-slate-400">{profile.purpose}</p>
+                {(profile.versions ?? []).length === 0 ? (
+                  <p className="mt-3 text-sm text-slate-500">No versions yet.</p>
+                ) : (
+                  <div className="mt-3 space-y-3">
+                    {(profile.versions ?? []).map((version) => (
+                      <div key={version.id || version.version} className="rounded-lg border border-slate-800 p-3" aria-label={`Profile version ${profile.profile_id} ${version.version}`}>
+                        <div className="flex flex-wrap items-baseline justify-between gap-2">
+                          <p className="font-mono text-sm text-slate-200">{version.version} · {version.provider_id}/{version.exact_model_id}</p>
+                          <span className="text-xs uppercase tracking-wide text-slate-400">Version: {version.status}</span>
+                        </div>
+                        {version.status.toLowerCase() === "draft" && version.id && (
+                          <div className="mt-3 space-y-2">
+                            <label className="block space-y-1 text-sm text-slate-300">
+                              <span>Approval reason for {profile.profile_id} {version.version}</span>
+                              <textarea
+                                required
+                                minLength={1}
+                                maxLength={4_000}
+                                value={activationReasons[version.id] ?? ""}
+                                onChange={(event) => setActivationReasons((current) => ({ ...current, [version.id]: event.target.value }))}
+                                aria-label={`Approval reason for ${profile.profile_id} ${version.version}`}
+                                className="min-h-20 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-white"
+                              />
+                            </label>
+                            {activationErrors[version.id] && <p role="alert" className="text-sm text-rose-200">{activationErrors[version.id]}</p>}
+                            <button
+                              type="button"
+                              onClick={() => void activateVersion(profile, version)}
+                              disabled={!activationReasons[version.id]?.trim() || activatingVersionId !== null}
+                              className="inline-flex min-h-11 items-center rounded-lg border border-emerald-500/40 px-4 py-2 text-sm font-semibold text-emerald-100 hover:bg-emerald-500/10 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {activatingVersionId === version.id ? "Approving…" : "Approve and activate exact version"}
+                            </button>
+                          </div>
+                        )}
+                        {activationResult?.version_id === version.id && (
+                          <div role="status" className="mt-3 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 text-sm text-emerald-100">
+                            <p>{activationResult.already_approved ? "This version was already approved." : "Exact version approved and activated."} Decision {activationResult.approval_record.id} by {activationResult.approval_record.decided_by} at {activationResult.approval_record.created_at}.</p>
+                            <p className="mt-1 text-emerald-200">Reason: {activationResult.approval_record.reason}</p>
+                            {activationResult.approval_record.evidence?.version_snapshot_sha256 && <p className="mt-1 break-all font-mono text-xs text-emerald-300">Version snapshot SHA-256: {activationResult.approval_record.evidence.version_snapshot_sha256}</p>}
+                            <p className="mt-1 text-xs text-emerald-300">No model provider was contacted.</p>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </article>
+            ))}
+          </div>
+        )}
       </section>
 
       <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5" aria-labelledby="dry-run-title">

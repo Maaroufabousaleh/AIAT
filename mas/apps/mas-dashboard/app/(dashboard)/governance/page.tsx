@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ShieldCheck, RefreshCw } from "lucide-react";
+import { ArrowUpRight, ShieldCheck, RefreshCw } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { ExecutiveActionPanel } from "@/components/governance/ExecutiveActionPanel";
@@ -174,7 +174,7 @@ export default function GovernancePage() {
         <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5" aria-labelledby="worker-runs-heading">
           <div className="mb-4 flex items-center justify-between"><h2 id="worker-runs-heading" className="text-sm font-semibold text-white">Recent WorkerRuns</h2><span className="text-xs text-slate-400">authoritative runtime state</span></div>
           {runs.length === 0 ? <p className="text-sm text-slate-500">No worker runs are available.</p> : (
-            <div className="overflow-x-auto"><table className="w-full text-left text-xs"><caption className="sr-only">Recent governed worker runs</caption><thead className="text-slate-400"><tr><th scope="col" className="pb-2">Worker</th><th scope="col" className="pb-2">Task</th><th scope="col" className="pb-2">State</th><th scope="col" className="pb-2">Model snapshot</th></tr></thead><tbody>{runs.map((run) => <tr key={run.id} className="border-t border-slate-800"><td className="py-2 font-mono text-slate-300">{run.worker_id}</td><td className="py-2 text-slate-400">{run.task_type}</td><td className="py-2 text-emerald-300">{run.state}</td><td className="py-2 font-mono text-slate-400">{run.model_resolution_snapshot_id ? "pinned" : "none"}</td></tr>)}</tbody></table></div>
+            <div className="overflow-x-auto"><table className="w-full text-left text-xs"><caption className="sr-only">Recent governed worker runs</caption><thead className="text-slate-400"><tr><th scope="col" className="pb-2">Run</th><th scope="col" className="pb-2">Worker</th><th scope="col" className="pb-2">Task</th><th scope="col" className="pb-2">State</th><th scope="col" className="pb-2">Model snapshot</th></tr></thead><tbody>{runs.map((run) => <tr key={run.id} className="border-t border-slate-800"><td className="py-2 pr-3"><Link href={`/workers/runs/${encodeURIComponent(run.id)}`} className="inline-flex min-h-11 items-center gap-1.5 font-mono text-cyan-200 underline decoration-cyan-500/40 underline-offset-4 hover:text-cyan-100 focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300" aria-label={`Open Worker Run ${run.id}`}><span className="max-w-40 truncate">{run.id}</span><ArrowUpRight size={12} aria-hidden="true" /></Link></td><td className="py-2 font-mono text-slate-300">{run.worker_id}</td><td className="py-2 text-slate-400">{run.task_type}</td><td className="py-2 font-medium text-slate-200">{run.state}</td><td className="py-2 font-mono text-slate-400">{run.model_resolution_snapshot_id ? "pinned" : "none"}</td></tr>)}</tbody></table></div>
           )}
         </section>
         <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5" aria-labelledby="worker-stewards-heading">
