@@ -59,6 +59,25 @@ _PM_RAW_BODY_MAX_BYTES = 1 * 1024 * 1024
 TERMINAL_WORKER_RUN_STATES = ("SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT")
 
 
+def _flow_instance_matches_snapshot(
+    instance: Mapping[str, Any], snapshot: Mapping[str, Any] | None
+) -> bool:
+    """Compare the state fields used by a caller's precomputed transition."""
+    if snapshot is None:
+        return True
+    for key, expected in snapshot.items():
+        actual = instance.get(key)
+        if key == "active_node_ids":
+            actual = list(actual or [])
+            expected = list(expected or [])
+        elif key == "context_json":
+            actual = dict(actual or {})
+            expected = dict(expected or {})
+        if actual != expected:
+            return False
+    return True
+
+
 def document_to_context_item(document: dict[str, Any]) -> dict[str, Any]:
     """Project a canonical document row into the project-context shape.
 
@@ -1898,8 +1917,9 @@ class AgentStorage:
         project_id: UUID,
         gate_type: str,
         gate_id: UUID | None = None,
+        flow_node_execution_id: int | None = None,
     ) -> dict[str, Any]:
-        """Create a pending approval gate."""
+        """Create a pending approval gate, optionally bound to one flow node."""
         gid = gate_id or uuid4()
         now = datetime.now(tz=UTC)
         values = {
@@ -1907,11 +1927,650 @@ class AgentStorage:
             "project_id": project_id,
             "gate_type": gate_type,
             "status": "PENDING",
+            "flow_node_execution_id": flow_node_execution_id,
             "created_at": now,
         }
         async with self.engine.begin() as conn:
             await conn.execute(t.approval_gates.insert().values(**values))
         return values
+
+    async def create_flow_approval_gate(
+        self,
+        *,
+        project_id: UUID,
+        instance_id: UUID,
+        node_id: str,
+        node_label: str,
+        gate_type: str,
+        input_json: dict | None = None,
+        gate_id: UUID | None = None,
+    ) -> dict[str, Any]:
+        """Create one flow approval execution and its bound gate atomically."""
+        now = datetime.now(tz=UTC)
+        gid = gate_id or uuid4()
+        execution_values = {
+            "instance_id": instance_id,
+            "node_id": node_id,
+            "node_type": "approval",
+            "node_label": node_label,
+            "status": "RUNNING",
+            "input_json": input_json,
+            "started_at": now,
+        }
+        async with self.engine.begin() as conn:
+            result = await conn.execute(
+                t.flow_node_executions.insert()
+                .values(**execution_values)
+                .returning(t.flow_node_executions.c.id)
+            )
+            row = result.first()
+            if row is None:
+                raise RuntimeError("flow approval execution insert returned no identity")
+            execution_id = int(row[0])
+            gate_values = {
+                "id": gid,
+                "project_id": project_id,
+                "gate_type": gate_type,
+                "status": "PENDING",
+                "flow_node_execution_id": execution_id,
+                "created_at": now,
+            }
+            await conn.execute(t.approval_gates.insert().values(**gate_values))
+        return {
+            "execution": {**execution_values, "id": execution_id},
+            "gate": gate_values,
+        }
+
+    async def activate_flow_nodes(
+        self,
+        instance_id: UUID,
+        *,
+        expected_statuses: set[str],
+        expected_active_node_ids: list[str] | None = None,
+        expected_instance_snapshot: dict[str, Any] | None = None,
+        instance_updates: dict[str, Any],
+        activations: list[dict[str, Any]],
+        supersede_existing: bool = False,
+        supersede_reason: str = "Superseded by explicit flow retry",
+    ) -> dict[str, Any]:
+        """Atomically activate flow nodes and persist their execution records.
+
+        This is used when an activation includes approval nodes: the flow
+        instance must never advertise an active approval without its durable
+        execution and bound operator gate. All sibling nodes in that same
+        activation are written in the same transaction.
+        """
+        now = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            execution_ids: list[int] = []
+            if supersede_existing:
+                # Retry lock order matches approval resolution:
+                # pending gate -> execution -> flow instance. This makes the
+                # terminal-state check and replacement activation one atomic
+                # winner among overlapping retries.
+                execution_id_rows = await conn.execute(
+                    t.flow_node_executions.select()
+                    .with_only_columns(t.flow_node_executions.c.id)
+                    .where(t.flow_node_executions.c.instance_id == instance_id)
+                    .order_by(t.flow_node_executions.c.id.asc())
+                )
+                execution_ids = [int(row[0]) for row in execution_id_rows.all()]
+                if execution_ids:
+                    await conn.execute(
+                        t.approval_gates.select()
+                        .where(t.approval_gates.c.flow_node_execution_id.in_(execution_ids))
+                        .where(t.approval_gates.c.status == "PENDING")
+                        .order_by(t.approval_gates.c.id.asc())
+                        .with_for_update()
+                    )
+                    await conn.execute(
+                        t.flow_node_executions.select()
+                        .where(t.flow_node_executions.c.id.in_(execution_ids))
+                        .order_by(t.flow_node_executions.c.id.asc())
+                        .with_for_update()
+                    )
+            instance_row = (
+                await conn.execute(
+                    t.flow_instances.select()
+                    .where(t.flow_instances.c.id == instance_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if instance_row is None:
+                return {"outcome": "not_found"}
+            instance = dict(instance_row)
+            if str(instance.get("status", "")).upper() not in {
+                str(status).upper() for status in expected_statuses
+            }:
+                return {"outcome": "conflict", "instance": instance}
+            if not _flow_instance_matches_snapshot(instance, expected_instance_snapshot):
+                return {"outcome": "stale_instance", "instance": instance}
+            if expected_active_node_ids is not None and set(
+                str(value) for value in (instance.get("active_node_ids") or [])
+            ) != set(str(value) for value in expected_active_node_ids):
+                return {"outcome": "conflict", "instance": instance}
+
+            if supersede_existing and execution_ids:
+                await conn.execute(
+                    t.approval_gates.update()
+                    .where(t.approval_gates.c.flow_node_execution_id.in_(execution_ids))
+                    .where(t.approval_gates.c.status == "PENDING")
+                    .values(
+                        status="CANCELLED",
+                        decided_by="system:flow_retry",
+                        justification=supersede_reason,
+                        decided_at=now,
+                    )
+                )
+                await conn.execute(
+                    t.flow_node_executions.update()
+                    .where(t.flow_node_executions.c.id.in_(execution_ids))
+                    .where(t.flow_node_executions.c.status != "SUPERSEDED")
+                    .values(
+                        status="SUPERSEDED",
+                        error=sa.func.coalesce(
+                            t.flow_node_executions.c.error, supersede_reason
+                        ),
+                        completed_at=sa.func.coalesce(
+                            t.flow_node_executions.c.completed_at, now
+                        ),
+                    )
+                )
+
+            updates = {**instance_updates, "updated_at": now}
+            changed = await conn.execute(
+                t.flow_instances.update()
+                .where(t.flow_instances.c.id == instance_id)
+                .values(**updates)
+            )
+            if getattr(changed, "rowcount", 1) != 1:
+                return {"outcome": "conflict", "instance": instance}
+
+            created_executions: list[dict[str, Any]] = []
+            for item in activations:
+                execution_values = {
+                    "instance_id": instance_id,
+                    "node_id": item["node_id"],
+                    "node_type": item["node_type"],
+                    "node_label": item["node_label"],
+                    "status": item.get("status", "RUNNING"),
+                    "input_json": item.get("input_json"),
+                    "output_json": item.get("output_json"),
+                    "error": item.get("error"),
+                    "started_at": now,
+                    "completed_at": now
+                    if item.get("status") in {"COMPLETED", "FAILED"}
+                    else None,
+                }
+                inserted = await conn.execute(
+                    t.flow_node_executions.insert()
+                    .values(**execution_values)
+                    .returning(t.flow_node_executions.c.id)
+                )
+                row = inserted.first()
+                if row is None:
+                    raise RuntimeError("flow node activation insert returned no identity")
+                execution_id = int(row[0])
+                created_execution = {**execution_values, "id": execution_id}
+                created_executions.append(created_execution)
+                if item.get("gate_type") is not None:
+                    await conn.execute(
+                        t.approval_gates.insert().values(
+                            id=item.get("gate_id") or uuid4(),
+                            project_id=instance["project_id"],
+                            gate_type=item["gate_type"],
+                            status="PENDING",
+                            flow_node_execution_id=execution_id,
+                            created_at=now,
+                        )
+                    )
+
+            updated_row = (
+                await conn.execute(
+                    t.flow_instances.select().where(t.flow_instances.c.id == instance_id)
+                )
+            ).mappings().first()
+            return {
+                "outcome": "applied",
+                "instance": dict(updated_row) if updated_row else None,
+                "executions": created_executions,
+            }
+
+    async def bind_legacy_flow_approval_gate(
+        self,
+        gate_id: UUID,
+        *,
+        project_id: UUID,
+    ) -> dict[str, Any]:
+        """Safely recover a pre-binding pending flow approval gate.
+
+        A gate is bound only when its project and exact gate type identify one
+        active approval execution and one unbound pending gate. A selected
+        gate with no matching active flow node is returned as ``generic`` so
+        the existing project approval path remains available. Ambiguous
+        legacy state is left untouched.
+        """
+        from mas_core.workflow import parse_flow_definition
+
+        async with self.engine.begin() as conn:
+            selected_row = (
+                await conn.execute(
+                    t.approval_gates.select()
+                    .where(t.approval_gates.c.id == gate_id)
+                    .where(t.approval_gates.c.project_id == project_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if selected_row is None:
+                return {"outcome": "not_found"}
+            selected = dict(selected_row)
+            if selected.get("flow_node_execution_id") is not None:
+                return {"outcome": "already_bound", "gate": selected}
+            if str(selected.get("status", "")).upper() != "PENDING":
+                return {"outcome": "conflict", "gate": selected}
+
+            gate_type = str(selected.get("gate_type") or "")
+            gate_rows = (
+                await conn.execute(
+                    t.approval_gates.select()
+                    .where(t.approval_gates.c.project_id == project_id)
+                    .where(t.approval_gates.c.status == "PENDING")
+                    .where(t.approval_gates.c.flow_node_execution_id.is_(None))
+                    .where(t.approval_gates.c.gate_type == gate_type)
+                )
+            ).mappings().all()
+
+            instances = (
+                await conn.execute(
+                    t.flow_instances.select()
+                    .where(t.flow_instances.c.project_id == project_id)
+                    .where(t.flow_instances.c.status.in_(["RUNNING", "WAITING_APPROVAL"]))
+                )
+            ).mappings().all()
+            candidate_executions: list[dict[str, Any]] = []
+            for instance_row in instances:
+                instance = dict(instance_row)
+                active_ids = [str(value) for value in (instance.get("active_node_ids") or [])]
+                if not active_ids:
+                    continue
+                execution_rows = (
+                    await conn.execute(
+                        t.flow_node_executions.select()
+                        .where(t.flow_node_executions.c.instance_id == instance["id"])
+                        .where(t.flow_node_executions.c.node_type == "approval")
+                        .where(t.flow_node_executions.c.status == "RUNNING")
+                        .where(t.flow_node_executions.c.node_id.in_(active_ids))
+                    )
+                ).mappings().all()
+                if not execution_rows:
+                    continue
+                flow_row = (
+                    await conn.execute(
+                        t.flows.select()
+                        .where(t.flows.c.id == instance["flow_id"])
+                    )
+                ).mappings().first()
+                if flow_row is None:
+                    continue
+                flow = dict(flow_row)
+                if int(flow.get("version") or 0) != int(instance.get("flow_version") or 0):
+                    # Current code cannot prove the original gate type for an
+                    # instance whose referenced flow definition has changed.
+                    # Preserve it as a possible match so a same-type gate is
+                    # never misclassified as generic.
+                    candidate_executions.extend(
+                        {**dict(row), "_legacy_flow_definition_unknown": True}
+                        for row in execution_rows
+                    )
+                    continue
+                try:
+                    definition = parse_flow_definition(flow["definition_json"])
+                except (KeyError, TypeError, ValueError):
+                    candidate_executions.extend(
+                        {**dict(row), "_legacy_flow_definition_unknown": True}
+                        for row in execution_rows
+                    )
+                    continue
+                for execution_row in execution_rows:
+                    execution = dict(execution_row)
+                    node = definition.get_node(str(execution.get("node_id") or ""))
+                    if node is None:
+                        continue
+                    expected_gate_type = (
+                        node.config.get("approver_role")
+                        or node.config.get("approver_user")
+                        or node.label
+                    )
+                    if str(expected_gate_type) == gate_type:
+                        candidate_executions.append(execution)
+
+            if any(
+                candidate.get("_legacy_flow_definition_unknown")
+                for candidate in candidate_executions
+            ):
+                return {"outcome": "unresolved"}
+            if not candidate_executions:
+                return {"outcome": "generic", "gate": selected}
+            if (
+                len(candidate_executions) != 1
+                or len(gate_rows) != 1
+                or dict(gate_rows[0]).get("id") != gate_id
+            ):
+                return {"outcome": "ambiguous"}
+
+            execution = candidate_executions[0]
+            execution_id = int(execution["id"])
+            # Follow the decision resolver's lock order: selected gate first,
+            # then its candidate execution, then the owning flow instance.
+            # The broad candidate scans above are reads only, so concurrent
+            # same-type gate decisions cannot deadlock by locking each other's
+            # gates or by taking instance -> execution in reverse order.
+            locked_execution_row = (
+                await conn.execute(
+                    t.flow_node_executions.select()
+                    .where(t.flow_node_executions.c.id == execution_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if locked_execution_row is None:
+                return {"outcome": "conflict"}
+            execution = dict(locked_execution_row)
+            instance_row = (
+                await conn.execute(
+                    t.flow_instances.select()
+                    .where(t.flow_instances.c.id == execution["instance_id"])
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if instance_row is None:
+                return {"outcome": "conflict"}
+            instance = dict(instance_row)
+            if (
+                instance.get("project_id") != project_id
+                or str(instance.get("status", "")).upper()
+                not in {"RUNNING", "WAITING_APPROVAL"}
+                or execution.get("node_type") != "approval"
+                or str(execution.get("status", "")).upper() != "RUNNING"
+                or str(execution.get("node_id") or "")
+                not in {str(value) for value in (instance.get("active_node_ids") or [])}
+            ):
+                return {"outcome": "conflict"}
+            flow_row = (
+                await conn.execute(
+                    t.flows.select()
+                    .where(t.flows.c.id == instance["flow_id"])
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if flow_row is None:
+                return {"outcome": "unresolved"}
+            flow = dict(flow_row)
+            if int(flow.get("version") or 0) != int(instance.get("flow_version") or 0):
+                return {"outcome": "unresolved"}
+            try:
+                definition = parse_flow_definition(flow["definition_json"])
+            except (KeyError, TypeError, ValueError):
+                return {"outcome": "unresolved"}
+            node = definition.get_node(str(execution.get("node_id") or ""))
+            expected_gate_type = (
+                node.config.get("approver_role")
+                or node.config.get("approver_user")
+                or node.label
+                if node is not None
+                else None
+            )
+            if node is None or str(expected_gate_type) != gate_type:
+                return {"outcome": "conflict"}
+
+            # Recheck uniqueness after acquiring the candidate locks. A new
+            # gate inserted after the initial read is treated as ambiguity if
+            # it committed before this final binding decision.
+            current_gate_rows = (
+                await conn.execute(
+                    t.approval_gates.select()
+                    .where(t.approval_gates.c.project_id == project_id)
+                    .where(t.approval_gates.c.status == "PENDING")
+                    .where(t.approval_gates.c.flow_node_execution_id.is_(None))
+                    .where(t.approval_gates.c.gate_type == gate_type)
+                )
+            ).mappings().all()
+            if len(current_gate_rows) != 1 or dict(current_gate_rows[0]).get("id") != gate_id:
+                return {"outcome": "ambiguous"}
+
+            existing_binding = (
+                await conn.execute(
+                    t.approval_gates.select().where(
+                        t.approval_gates.c.flow_node_execution_id == execution_id
+                    )
+                )
+            ).mappings().first()
+            if existing_binding is not None:
+                return {"outcome": "conflict"}
+
+            update = await conn.execute(
+                t.approval_gates.update()
+                .where(t.approval_gates.c.id == gate_id)
+                .where(t.approval_gates.c.project_id == project_id)
+                .where(t.approval_gates.c.status == "PENDING")
+                .where(t.approval_gates.c.flow_node_execution_id.is_(None))
+                .values(flow_node_execution_id=execution_id)
+                .returning(t.approval_gates)
+            )
+            bound_row = update.mappings().first()
+            if bound_row is None:
+                return {"outcome": "conflict"}
+            return {
+                "outcome": "bound",
+                "gate": dict(bound_row),
+                "execution": execution,
+            }
+
+    async def resolve_flow_approval_gate(
+        self,
+        gate_id: UUID,
+        *,
+        project_id: UUID,
+        instance_id: UUID,
+        execution_id: int,
+        node_id: str,
+        status: str,
+        decided_by: str,
+        justification: str | None,
+        human_input: dict | None,
+        execution_output: dict,
+        instance_updates: dict[str, Any],
+        activated_executions: list[dict[str, Any]],
+        expected_instance_snapshot: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Atomically decide one bound gate and advance its active flow node.
+
+        Replaying the identical decision returns ``already_applied`` after
+        confirming the execution contains this gate's resolution marker. A
+        different decision, stale execution, or mismatched flow is a conflict.
+        """
+        now = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            gate_row = (
+                await conn.execute(
+                    t.approval_gates.select()
+                    .where(t.approval_gates.c.id == gate_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if gate_row is None:
+                return {"outcome": "not_found"}
+            gate = dict(gate_row)
+            if (
+                gate.get("project_id") != project_id
+                or gate.get("flow_node_execution_id") != execution_id
+            ):
+                return {"outcome": "conflict"}
+
+            execution_row = (
+                await conn.execute(
+                    t.flow_node_executions.select()
+                    .where(t.flow_node_executions.c.id == execution_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if execution_row is None:
+                return {"outcome": "conflict"}
+            execution = dict(execution_row)
+
+            instance_row = (
+                await conn.execute(
+                    t.flow_instances.select()
+                    .where(t.flow_instances.c.id == instance_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if instance_row is None:
+                return {"outcome": "conflict"}
+            instance = dict(instance_row)
+
+            if (
+                execution.get("instance_id") != instance_id
+                or execution.get("node_id") != node_id
+                or execution.get("node_type") != "approval"
+                or instance.get("project_id") != project_id
+            ):
+                return {"outcome": "conflict"}
+
+            if gate.get("status") != "PENDING":
+                replay_matches = (
+                    gate.get("status") == status
+                    and gate.get("decided_by") == decided_by
+                    and gate.get("justification") == justification
+                    and gate.get("human_input") == human_input
+                    and execution.get("status") == "COMPLETED"
+                    and (execution.get("output_json") or {}).get("approval_gate_id")
+                    == str(gate_id)
+                )
+                if replay_matches:
+                    return {
+                        "outcome": "already_applied",
+                        "gate": gate,
+                        "execution": execution,
+                        "instance": instance,
+                        "activated_node_ids": list(
+                            (execution.get("output_json") or {}).get(
+                                "activated_node_ids", []
+                            )
+                        ),
+                    }
+                return {"outcome": "conflict"}
+
+            if not _flow_instance_matches_snapshot(instance, expected_instance_snapshot):
+                return {"outcome": "stale_instance", "instance": instance}
+
+            active_node_ids = list(instance.get("active_node_ids") or [])
+            if (
+                execution.get("status") != "RUNNING"
+                or node_id not in active_node_ids
+                or instance.get("status") not in {"RUNNING", "WAITING_APPROVAL"}
+            ):
+                return {"outcome": "conflict"}
+
+            changed = await conn.execute(
+                t.approval_gates.update()
+                .where(t.approval_gates.c.id == gate_id)
+                .where(t.approval_gates.c.status == "PENDING")
+                .values(
+                    status=status,
+                    decided_by=decided_by,
+                    justification=justification,
+                    human_input=human_input,
+                    decided_at=now,
+                )
+            )
+            if getattr(changed, "rowcount", 1) != 1:
+                return {"outcome": "conflict"}
+
+            resolved_output = {
+                **execution_output,
+                "approval_gate_id": str(gate_id),
+                "activated_node_ids": [
+                    str(item["node_id"]) for item in activated_executions
+                ],
+            }
+            await conn.execute(
+                t.flow_node_executions.update()
+                .where(t.flow_node_executions.c.id == execution_id)
+                .where(t.flow_node_executions.c.status == "RUNNING")
+                .values(
+                    status="COMPLETED",
+                    output_json=resolved_output,
+                    completed_at=now,
+                )
+            )
+
+            update_values = {**instance_updates, "updated_at": now}
+            await conn.execute(
+                t.flow_instances.update()
+                .where(t.flow_instances.c.id == instance_id)
+                .values(**update_values)
+            )
+
+            created_execution_ids: list[int] = []
+            for item in activated_executions:
+                execution_values = {
+                    "instance_id": instance_id,
+                    "node_id": item["node_id"],
+                    "node_type": item["node_type"],
+                    "node_label": item["node_label"],
+                    "status": item.get("status", "RUNNING"),
+                    "input_json": item.get("input_json"),
+                    "output_json": item.get("output_json"),
+                    "error": item.get("error"),
+                    "started_at": now,
+                    "completed_at": item.get("completed_at", now)
+                    if item.get("status") in {"COMPLETED", "FAILED"}
+                    else None,
+                }
+                result = await conn.execute(
+                    t.flow_node_executions.insert()
+                    .values(**execution_values)
+                    .returning(t.flow_node_executions.c.id)
+                )
+                row = result.first()
+                if row is None:
+                    raise RuntimeError("flow node execution insert returned no identity")
+                created_id = int(row[0])
+                created_execution_ids.append(created_id)
+                if item.get("gate_type") is not None:
+                    await conn.execute(
+                        t.approval_gates.insert().values(
+                            id=item.get("gate_id") or uuid4(),
+                            project_id=project_id,
+                            gate_type=item["gate_type"],
+                            status="PENDING",
+                            flow_node_execution_id=created_id,
+                            created_at=now,
+                        )
+                    )
+
+            updated_instance_row = (
+                await conn.execute(
+                    t.flow_instances.select().where(t.flow_instances.c.id == instance_id)
+                )
+            ).mappings().first()
+            updated_execution_row = (
+                await conn.execute(
+                    t.flow_node_executions.select().where(
+                        t.flow_node_executions.c.id == execution_id
+                    )
+                )
+            ).mappings().first()
+            return {
+                "outcome": "applied",
+                "gate": {**gate, "status": status, "decided_by": decided_by, "decided_at": now},
+                "execution": dict(updated_execution_row) if updated_execution_row else None,
+                "instance": dict(updated_instance_row) if updated_instance_row else None,
+                "activated_node_ids": [
+                    str(item["node_id"]) for item in activated_executions
+                ],
+                "created_execution_ids": created_execution_ids,
+            }
 
     async def decide_approval_gate(
         self,
@@ -1962,6 +2621,21 @@ class AgentStorage:
         async with self.engine.connect() as conn:
             rows = (await conn.execute(q)).mappings().all()
         return [dict(r) for r in rows]
+
+    async def get_approval_gate_for_flow_execution(
+        self,
+        execution_id: int,
+    ) -> dict[str, Any] | None:
+        """Resolve the unique approval gate durably bound to a flow execution."""
+        async with self.engine.connect() as conn:
+            row = (
+                await conn.execute(
+                    t.approval_gates.select().where(
+                        t.approval_gates.c.flow_node_execution_id == execution_id
+                    )
+                )
+            ).mappings().first()
+        return dict(row) if row else None
 
     async def list_pending_project_decisions(
         self,
@@ -7537,6 +8211,211 @@ class AgentStorage:
 
         return await self.get_flow_instance(instance_id)
 
+    async def cancel_flow_instance(
+        self,
+        instance_id: UUID,
+        *,
+        expected_instance_snapshot: dict[str, Any] | None = None,
+        decided_by: str = "system:flow_instance_cancel",
+        reason: str = "Flow instance cancelled",
+    ) -> dict[str, Any]:
+        """Cancel an instance and its bound approval gates atomically.
+
+        Locks are acquired in gate -> execution -> instance order so an
+        operator decision racing cancellation cannot deadlock or leave an
+        actionable approval attached to a cancelled flow.
+        """
+        from mas_core.workflow import parse_flow_definition
+
+        now = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            snapshot = expected_instance_snapshot
+            if not snapshot or not {
+                "project_id",
+                "flow_id",
+                "flow_version",
+                "active_node_ids",
+            }.issubset(snapshot):
+                current_row = (
+                    await conn.execute(
+                        t.flow_instances.select().where(t.flow_instances.c.id == instance_id)
+                    )
+                ).mappings().first()
+                if current_row is None:
+                    return {"outcome": "not_found"}
+                snapshot = dict(current_row)
+
+            active_node_ids = [str(node_id) for node_id in (snapshot.get("active_node_ids") or [])]
+            project_id = snapshot.get("project_id")
+            flow_id = snapshot.get("flow_id")
+            flow_version = snapshot.get("flow_version")
+            if project_id is not None and flow_id is not None:
+                flow_row = (
+                    await conn.execute(t.flows.select().where(t.flows.c.id == flow_id))
+                ).mappings().first()
+                approval_execution_rows = (
+                    await conn.execute(
+                        t.flow_node_executions.select()
+                        .where(t.flow_node_executions.c.instance_id == instance_id)
+                        .where(t.flow_node_executions.c.node_id.in_(active_node_ids))
+                        .where(t.flow_node_executions.c.node_type == "approval")
+                        .where(t.flow_node_executions.c.status == "RUNNING")
+                    )
+                ).mappings().all()
+                gate_types: set[str] = set()
+                definition_known = (
+                    flow_row is not None
+                    and int(flow_row.get("version") or 0) == int(flow_version or 0)
+                )
+                definition = None
+                if definition_known:
+                    try:
+                        definition = parse_flow_definition(flow_row["definition_json"])
+                    except (KeyError, TypeError, ValueError):
+                        definition_known = False
+                if definition_known and definition is not None:
+                    possible_approval_node_ids = set(active_node_ids) | {
+                        str(row.get("node_id") or "") for row in approval_execution_rows
+                    }
+                    for node_id in possible_approval_node_ids:
+                        node = definition.get_node(node_id)
+                        if node is None:
+                            if node_id in active_node_ids:
+                                definition_known = False
+                                break
+                            continue
+                        if node.type.value != "approval":
+                            continue
+                        gate_type = (
+                            node.config.get("approver_role")
+                            or node.config.get("approver_user")
+                            or node.label
+                        )
+                        gate_types.add(str(gate_type))
+                if gate_types or (
+                    not definition_known and (active_node_ids or approval_execution_rows)
+                ):
+                    legacy_gate_query = (
+                        t.approval_gates.select()
+                        .where(t.approval_gates.c.project_id == project_id)
+                        .where(t.approval_gates.c.status == "PENDING")
+                        .where(t.approval_gates.c.flow_node_execution_id.is_(None))
+                    )
+                    if definition_known and gate_types:
+                        legacy_gate_query = legacy_gate_query.where(
+                            t.approval_gates.c.gate_type.in_(sorted(gate_types))
+                        )
+                    legacy_rows = (
+                        await conn.execute(legacy_gate_query)
+                    ).mappings().all()
+                    if legacy_rows:
+                        # Do not terminalize the flow while a plausible
+                        # pre-binding gate remains unbound. The operator can
+                        # still decide it through the normal exact-gate path,
+                        # whose legacy binder requires a unique match and
+                        # refuses ambiguous ownership before mutation.
+                        return {
+                            "outcome": "legacy_gate_unresolved",
+                            "pending_legacy_gate_count": len(legacy_rows),
+                        }
+
+            execution_id_rows = await conn.execute(
+                t.flow_node_executions.select()
+                .with_only_columns(t.flow_node_executions.c.id)
+                .where(t.flow_node_executions.c.instance_id == instance_id)
+                .order_by(t.flow_node_executions.c.id.asc())
+            )
+            execution_ids = [int(row[0]) for row in execution_id_rows.all()]
+            pending_gates: list[dict[str, Any]] = []
+            if execution_ids:
+                pending_gates = [
+                    dict(row)
+                    for row in (
+                        await conn.execute(
+                            t.approval_gates.select()
+                            .where(t.approval_gates.c.flow_node_execution_id.in_(execution_ids))
+                            .where(t.approval_gates.c.status == "PENDING")
+                            .order_by(t.approval_gates.c.id.asc())
+                            .with_for_update()
+                        )
+                    ).mappings().all()
+                ]
+                await conn.execute(
+                    t.flow_node_executions.select()
+                    .where(t.flow_node_executions.c.id.in_(execution_ids))
+                    .order_by(t.flow_node_executions.c.id.asc())
+                    .with_for_update()
+                )
+
+            instance_row = (
+                await conn.execute(
+                    t.flow_instances.select()
+                    .where(t.flow_instances.c.id == instance_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if instance_row is None:
+                return {"outcome": "not_found"}
+            instance = dict(instance_row)
+            if str(instance.get("status", "")).upper() in {
+                "COMPLETED",
+                "FAILED",
+                "CANCELLED",
+            }:
+                return {"outcome": "conflict", "instance": instance}
+            if not _flow_instance_matches_snapshot(instance, expected_instance_snapshot):
+                return {"outcome": "stale_instance", "instance": instance}
+
+            gate_ids = [gate["id"] for gate in pending_gates]
+            gate_execution_ids = sorted(
+                {int(gate["flow_node_execution_id"]) for gate in pending_gates}
+            )
+            if gate_ids:
+                await conn.execute(
+                    t.approval_gates.update()
+                    .where(t.approval_gates.c.id.in_(gate_ids))
+                    .where(t.approval_gates.c.status == "PENDING")
+                    .values(
+                        status="CANCELLED",
+                        decided_by=decided_by,
+                        justification=reason,
+                        decided_at=now,
+                    )
+                )
+            if gate_execution_ids:
+                await conn.execute(
+                    t.flow_node_executions.update()
+                    .where(t.flow_node_executions.c.id.in_(gate_execution_ids))
+                    .where(t.flow_node_executions.c.status == "RUNNING")
+                    .values(
+                        status="CANCELLED",
+                        error=sa.func.coalesce(t.flow_node_executions.c.error, reason),
+                        completed_at=sa.func.coalesce(
+                            t.flow_node_executions.c.completed_at, now
+                        ),
+                    )
+                )
+            await conn.execute(
+                t.flow_instances.update()
+                .where(t.flow_instances.c.id == instance_id)
+                .values(
+                    status="CANCELLED",
+                    active_node_ids=[],
+                    completed_at=now,
+                    updated_at=now,
+                )
+            )
+            updated = (
+                await conn.execute(
+                    t.flow_instances.select().where(t.flow_instances.c.id == instance_id)
+                )
+            ).mappings().first()
+            return {
+                "outcome": "applied",
+                "instance": dict(updated) if updated else None,
+                "cancelled_gate_ids": gate_ids,
+            }
+
     async def list_flow_instances(
         self,
         *,
@@ -7809,6 +8688,9 @@ class AgentStorage:
     async def retry_flow_instance(
         self,
         instance_id: UUID,
+        *,
+        expected_instance_snapshot: dict[str, Any] | None = None,
+        reason: str = "Superseded by explicit flow retry",
     ) -> dict[str, Any] | None:
         """Retry a failed flow instance without deleting execution evidence.
 
@@ -7817,24 +8699,95 @@ class AgentStorage:
         the same evidence boundary: historical node rows remain queryable and
         are removed from traversal authority by the ``SUPERSEDED`` status.
         """
-        instance = await self.get_flow_instance(instance_id)
-        if instance is None:
-            return None
+        now = datetime.now(tz=UTC)
+        async with self.engine.begin() as conn:
+            execution_id_rows = await conn.execute(
+                t.flow_node_executions.select()
+                .with_only_columns(t.flow_node_executions.c.id)
+                .where(t.flow_node_executions.c.instance_id == instance_id)
+                .order_by(t.flow_node_executions.c.id.asc())
+            )
+            execution_ids = [int(row[0]) for row in execution_id_rows.all()]
+            pending_gates: list[dict[str, Any]] = []
+            if execution_ids:
+                pending_gates = [
+                    dict(row)
+                    for row in (
+                        await conn.execute(
+                            t.approval_gates.select()
+                            .where(t.approval_gates.c.flow_node_execution_id.in_(execution_ids))
+                            .where(t.approval_gates.c.status == "PENDING")
+                            .order_by(t.approval_gates.c.id.asc())
+                            .with_for_update()
+                        )
+                    ).mappings().all()
+                ]
+                await conn.execute(
+                    t.flow_node_executions.select()
+                    .where(t.flow_node_executions.c.id.in_(execution_ids))
+                    .order_by(t.flow_node_executions.c.id.asc())
+                    .with_for_update()
+                )
 
-        if instance["status"] not in ("FAILED", "CANCELLED"):
-            return None
+            instance_row = (
+                await conn.execute(
+                    t.flow_instances.select()
+                    .where(t.flow_instances.c.id == instance_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if instance_row is None:
+                return None
+            instance = dict(instance_row)
+            if str(instance.get("status", "")).upper() not in {"FAILED", "CANCELLED"}:
+                return None
+            if not _flow_instance_matches_snapshot(instance, expected_instance_snapshot):
+                return None
 
-        await self.update_flow_instance(
-            instance_id,
-            status="NOT_STARTED",
-            active_node_ids=[],
-            retry_count=instance.get("retry_count", 0) + 1,
-            started_at=None,
-            completed_at=None,
-        )
-        await self.supersede_flow_node_executions(instance_id)
-
-        return await self.get_flow_instance(instance_id)
+            gate_ids = [gate["id"] for gate in pending_gates]
+            if gate_ids:
+                await conn.execute(
+                    t.approval_gates.update()
+                    .where(t.approval_gates.c.id.in_(gate_ids))
+                    .where(t.approval_gates.c.status == "PENDING")
+                    .values(
+                        status="CANCELLED",
+                        decided_by="system:flow_retry",
+                        justification=reason,
+                        decided_at=now,
+                    )
+                )
+            if execution_ids:
+                await conn.execute(
+                    t.flow_node_executions.update()
+                    .where(t.flow_node_executions.c.id.in_(execution_ids))
+                    .where(t.flow_node_executions.c.status != "SUPERSEDED")
+                    .values(
+                        status="SUPERSEDED",
+                        error=sa.func.coalesce(t.flow_node_executions.c.error, reason),
+                        completed_at=sa.func.coalesce(
+                            t.flow_node_executions.c.completed_at, now
+                        ),
+                    )
+                )
+            await conn.execute(
+                t.flow_instances.update()
+                .where(t.flow_instances.c.id == instance_id)
+                .values(
+                    status="NOT_STARTED",
+                    active_node_ids=[],
+                    retry_count=int(instance.get("retry_count") or 0) + 1,
+                    started_at=None,
+                    completed_at=None,
+                    updated_at=now,
+                )
+            )
+            updated = (
+                await conn.execute(
+                    t.flow_instances.select().where(t.flow_instances.c.id == instance_id)
+                )
+            ).mappings().first()
+            return dict(updated) if updated else None
 
     async def override_flow_instance(
         self,

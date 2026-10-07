@@ -137,10 +137,11 @@ async def test_ceo_project_approval_is_persisted_and_reports_authoritative_state
             "next_state": "PDR_CREATION",
         }
     )
-    monkeypatch.setattr("orchestrator_api.main.submit_decision", submit)
+    monkeypatch.setattr("orchestrator_api.main._submit_project_decision", submit)
 
     result = await _handle_ceo_project_intent(
-        f"approve feasibility for project {project_id}"
+        f"approve feasibility for project {project_id}",
+        principal="operator",
     )
 
     assert result is not None
@@ -153,11 +154,12 @@ async def test_ceo_project_approval_is_persisted_and_reports_authoritative_state
     request = submit.await_args.args[1]
     assert request.decision == "APPROVED"
     assert request.decided_by == "human_operator"
+    assert submit.await_args.kwargs["actor_id"] == "operator"
 
 
 @pytest.mark.anyio
 async def test_ceo_project_decision_reports_the_newest_mutated_gate(monkeypatch):
-    """Chat must identify the same newest gate that submit_decision updates."""
+    """Chat must identify the same newest gate that the internal decision path updates."""
     from orchestrator_api.main import app
 
     project_id = UUID("00000000-0000-4000-a000-0000000000d1")
@@ -179,7 +181,7 @@ async def test_ceo_project_decision_reports_the_newest_mutated_gate(monkeypatch)
     submit = AsyncMock(
         return_value={"status": "transitioned", "gate_id": str(newest["id"])}
     )
-    monkeypatch.setattr("orchestrator_api.main.submit_decision", submit)
+    monkeypatch.setattr("orchestrator_api.main._submit_project_decision", submit)
 
     result = await _handle_ceo_project_intent(f"approve project {project_id}")
 
@@ -203,7 +205,7 @@ async def test_ceo_project_rejection_requires_a_reason(monkeypatch):
     )
     app.state.storage = storage
     submit = AsyncMock()
-    monkeypatch.setattr("orchestrator_api.main.submit_decision", submit)
+    monkeypatch.setattr("orchestrator_api.main._submit_project_decision", submit)
 
     result = await _handle_ceo_project_intent(f"reject project {project_id}")
 

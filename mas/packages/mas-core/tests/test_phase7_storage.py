@@ -365,6 +365,7 @@ class TestModelsMetadata:
         assert "gate_type" in cols
         assert "status" in cols
         assert "decided_by" in cols
+        assert "flow_node_execution_id" in cols
 
     def test_sprints_columns(self):
         cols = {c.name for c in sprints.columns}
@@ -892,6 +893,178 @@ class TestAgentStorageCRUD:
         )
         assert gate["gate_type"] == "HUMAN_APPROVAL"
         assert gate["status"] == "PENDING"
+
+    @pytest.mark.asyncio
+    async def test_create_flow_approval_gate_binds_execution_in_one_transaction(self):
+        storage, engine = self._make_storage()
+        conn = engine._mock_conn
+        returning = MagicMock()
+        returning.first.return_value = (73,)
+        conn.execute = AsyncMock(side_effect=[returning, MagicMock()])
+        project_id = uuid4()
+        instance_id = uuid4()
+
+        result = await storage.create_flow_approval_gate(
+            project_id=project_id,
+            instance_id=instance_id,
+            node_id="operator_approval",
+            node_label="Operator approval",
+            gate_type="human_operator",
+            input_json={"fixture": "worker-free"},
+        )
+
+        assert result["execution"]["id"] == 73
+        assert result["gate"]["flow_node_execution_id"] == 73
+        assert result["gate"]["project_id"] == project_id
+        assert conn.execute.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_resolve_flow_approval_gate_atomically_records_decision_and_advance(self):
+        storage, engine = self._make_storage()
+        conn = engine._mock_conn
+        gate_id = uuid4()
+        project_id = uuid4()
+        instance_id = uuid4()
+        execution_id = 73
+        gate = {
+            "id": gate_id,
+            "project_id": project_id,
+            "flow_node_execution_id": execution_id,
+            "status": "PENDING",
+            "decided_by": None,
+            "justification": None,
+            "human_input": None,
+        }
+        execution = {
+            "id": execution_id,
+            "instance_id": instance_id,
+            "node_id": "operator_approval",
+            "node_type": "approval",
+            "status": "RUNNING",
+            "output_json": None,
+        }
+        instance = {
+            "id": instance_id,
+            "project_id": project_id,
+            "status": "WAITING_APPROVAL",
+            "active_node_ids": ["operator_approval"],
+        }
+        updated_instance = {
+            **instance,
+            "status": "COMPLETED",
+            "active_node_ids": [],
+        }
+        updated_execution = {
+            **execution,
+            "status": "COMPLETED",
+            "output_json": {
+                "approval_gate_id": str(gate_id),
+                "activated_node_ids": ["done"],
+            },
+        }
+        read_result = lambda value: MagicMock(
+            mappings=MagicMock(return_value=_mock_mappings([value]))
+        )
+        insert_result = MagicMock()
+        insert_result.first.return_value = (101,)
+        conn.execute = AsyncMock(
+            side_effect=[
+                read_result(gate),
+                read_result(execution),
+                read_result(instance),
+                MagicMock(rowcount=1),
+                MagicMock(),
+                MagicMock(),
+                insert_result,
+                read_result(updated_instance),
+                read_result(updated_execution),
+            ]
+        )
+
+        result = await storage.resolve_flow_approval_gate(
+            gate_id,
+            project_id=project_id,
+            instance_id=instance_id,
+            execution_id=execution_id,
+            node_id="operator_approval",
+            status="APPROVED",
+            decided_by="operator",
+            justification="Approved",
+            human_input=None,
+            execution_output={"approval": "approved"},
+            instance_updates={
+                "status": "COMPLETED",
+                "active_node_ids": [],
+                "context_json": {"approval": "approved"},
+                "completed_at": None,
+            },
+            activated_executions=[
+                {
+                    "node_id": "done",
+                    "node_type": "end",
+                    "node_label": "Done",
+                    "status": "COMPLETED",
+                    "input_json": {"approval": "approved"},
+                    "output_json": {"approval": "approved"},
+                }
+            ],
+        )
+
+        assert result["outcome"] == "applied"
+        assert result["instance"]["status"] == "COMPLETED"
+        assert result["activated_node_ids"] == ["done"]
+        assert conn.execute.await_count == 9
+
+    @pytest.mark.asyncio
+    async def test_resolve_flow_approval_gate_replays_identical_decision_without_writes(self):
+        storage, engine = self._make_storage()
+        conn = engine._mock_conn
+        gate_id = uuid4()
+        project_id = uuid4()
+        instance_id = uuid4()
+        gate = {
+            "id": gate_id,
+            "project_id": project_id,
+            "flow_node_execution_id": 73,
+            "status": "APPROVED",
+            "decided_by": "operator",
+            "justification": "Approved",
+            "human_input": None,
+        }
+        execution = {
+            "id": 73,
+            "instance_id": instance_id,
+            "node_id": "operator_approval",
+            "node_type": "approval",
+            "status": "COMPLETED",
+            "output_json": {"approval_gate_id": str(gate_id), "activated_node_ids": ["done"]},
+        }
+        instance = {"id": instance_id, "project_id": project_id, "status": "COMPLETED"}
+        read_result = lambda value: MagicMock(
+            mappings=MagicMock(return_value=_mock_mappings([value]))
+        )
+        conn.execute = AsyncMock(
+            side_effect=[read_result(gate), read_result(execution), read_result(instance)]
+        )
+
+        result = await storage.resolve_flow_approval_gate(
+            gate_id,
+            project_id=project_id,
+            instance_id=instance_id,
+            execution_id=73,
+            node_id="operator_approval",
+            status="APPROVED",
+            decided_by="operator",
+            justification="Approved",
+            human_input=None,
+            execution_output={},
+            instance_updates={},
+            activated_executions=[],
+        )
+
+        assert result["outcome"] == "already_applied"
+        assert result["activated_node_ids"] == ["done"]
+        assert conn.execute.await_count == 3
 
     @pytest.mark.asyncio
     async def test_decide_approval_gate(self):

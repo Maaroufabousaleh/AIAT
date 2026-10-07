@@ -370,6 +370,191 @@ async def test_submit_decision_changes_only_the_requested_gate(client):
     assert newer_gate["status"] == "PENDING"
     storage.decide_approval_gate.assert_awaited_once()
     assert storage.decide_approval_gate.await_args.args[0] == requested_gate["id"]
+
+
+@pytest.mark.anyio
+async def test_submit_exact_legacy_flow_gate_binds_then_resolves_flow_once(client):
+    """A uniquely recoverable legacy gate enters the canonical flow resolver."""
+    gate = {
+        **_fake_gate(),
+        "gate_type": "human",
+        "flow_node_execution_id": None,
+    }
+    project = _fake_project("INIT")
+    storage = _make_storage(project=project, decision_gates=[gate])
+    execution_id = 41
+    instance_id = uuid.uuid4()
+    flow_id = uuid.uuid4()
+    bound_gate = {**gate, "flow_node_execution_id": execution_id}
+    resolved_instance = {
+        "id": instance_id,
+        "flow_id": flow_id,
+        "project_id": PROJECT_ID,
+        "status": "COMPLETED",
+        "active_node_ids": [],
+        "context_json": {"approval": "approved"},
+    }
+    storage.bind_legacy_flow_approval_gate = AsyncMock(
+        return_value={"outcome": "bound", "gate": bound_gate}
+    )
+    storage.get_flow_node_execution = AsyncMock(
+        return_value={
+            "id": execution_id,
+            "instance_id": instance_id,
+            "node_id": "approval",
+            "node_type": "approval",
+            "status": "RUNNING",
+        }
+    )
+    storage.get_flow_instance = AsyncMock(return_value={
+        **resolved_instance,
+        "status": "RUNNING",
+        "active_node_ids": ["approval"],
+        "flow_id": flow_id,
+    })
+    storage.get_flow = AsyncMock(
+        return_value={
+            "id": flow_id,
+            "version": 1,
+            "definition_json": {
+                "nodes": [
+                    {"id": "start", "type": "start", "label": "Start", "config": {}},
+                    {
+                        "id": "approval",
+                        "type": "approval",
+                        "label": "Approval",
+                        "config": {"approver_user": "human"},
+                    },
+                    {"id": "done", "type": "end", "label": "Done", "config": {}},
+                ],
+                "edges": [
+                    {"id": "e1", "source": "start", "target": "approval"},
+                    {"id": "e2", "source": "approval", "target": "done"},
+                ],
+            },
+        }
+    )
+    storage.list_flow_node_executions = AsyncMock(
+        return_value=[
+            {
+                "id": execution_id,
+                "node_id": "approval",
+                "node_type": "approval",
+                "status": "RUNNING",
+            }
+        ]
+    )
+    storage.resolve_flow_approval_gate = AsyncMock(
+        return_value={
+            "outcome": "applied",
+            "instance": resolved_instance,
+            "activated_node_ids": [],
+        }
+    )
+    controller = _make_controller()
+    _patch_state(storage, controller)
+
+    response = await client.post(
+        f"/projects/{PROJECT_ID}/decisions",
+        json={"gate_id": str(gate["id"]), "decision": "APPROVED"},
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["flow_instance_id"] == str(instance_id)
+    storage.bind_legacy_flow_approval_gate.assert_awaited_once_with(
+        gate["id"], project_id=PROJECT_ID
+    )
+    storage.resolve_flow_approval_gate.assert_awaited_once()
+    storage.decide_approval_gate.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_ambiguous_legacy_flow_gate_is_not_decided(client):
+    gate = {
+        **_fake_gate(),
+        "gate_type": "human",
+        "flow_node_execution_id": None,
+    }
+    storage = _make_storage(
+        project=_fake_project("INIT"),
+        decision_gates=[gate],
+    )
+    storage.bind_legacy_flow_approval_gate = AsyncMock(
+        return_value={"outcome": "ambiguous"}
+    )
+    controller = _make_controller()
+    _patch_state(storage, controller)
+
+    response = await client.post(
+        f"/projects/{PROJECT_ID}/decisions",
+        json={"gate_id": str(gate["id"]), "decision": "APPROVED"},
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "AMBIGUOUS_LEGACY_FLOW_APPROVAL_BINDING"
+    storage.bind_legacy_flow_approval_gate.assert_awaited_once()
+    storage.decide_approval_gate.assert_not_awaited()
+    controller.transition.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_unbound_legacy_gate_without_id_cannot_fall_through_generic_decision(client):
+    """A gate left pending by fail-closed cancellation still requires flow binding."""
+    gate = {
+        **_fake_gate(),
+        "gate_type": "human",
+        "flow_node_execution_id": None,
+    }
+    storage = _make_storage(project=_fake_project("INIT"), decision_gates=[gate])
+    storage.bind_legacy_flow_approval_gate = AsyncMock(
+        return_value={"outcome": "ambiguous"}
+    )
+    controller = _make_controller()
+    _patch_state(storage, controller)
+
+    response = await client.post(
+        f"/projects/{PROJECT_ID}/decisions",
+        json={"decision": "APPROVED"},
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "AMBIGUOUS_LEGACY_FLOW_APPROVAL_BINDING"
+    storage.bind_legacy_flow_approval_gate.assert_awaited_once_with(
+        gate["id"], project_id=PROJECT_ID
+    )
+    storage.decide_approval_gate.assert_not_awaited()
+    controller.transition.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_unmatched_legacy_project_gate_remains_generic(client):
+    gate = {
+        **_fake_gate(),
+        "gate_type": "feasibility",
+        "flow_node_execution_id": None,
+    }
+    storage = _make_storage(
+        project=_fake_project("HUMAN_APPROVAL"),
+        decision_gates=[gate],
+    )
+    storage.bind_legacy_flow_approval_gate = AsyncMock(
+        return_value={"outcome": "generic", "gate": gate}
+    )
+    controller = _make_controller()
+    _patch_state(storage, controller)
+
+    response = await client.post(
+        f"/projects/{PROJECT_ID}/decisions",
+        json={"gate_id": str(gate["id"]), "decision": "APPROVED"},
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert response.status_code == 200
+    storage.bind_legacy_flow_approval_gate.assert_awaited_once()
+    storage.decide_approval_gate.assert_awaited_once()
     controller.transition.assert_awaited_once()
 
 
@@ -466,6 +651,9 @@ async def test_submit_decision_without_gate_id_keeps_newest_pending_compatibilit
         project=project,
         decision_gates=[newest_gate, older_gate],
     )
+    storage.bind_legacy_flow_approval_gate = AsyncMock(
+        return_value={"outcome": "generic", "gate": newest_gate}
+    )
     _patch_state(storage, _make_controller())
 
     response = await client.post(
@@ -476,6 +664,9 @@ async def test_submit_decision_without_gate_id_keeps_newest_pending_compatibilit
 
     assert response.status_code == 200
     assert response.json()["gate_id"] == str(newest_gate["id"])
+    storage.bind_legacy_flow_approval_gate.assert_awaited_once_with(
+        newest_gate["id"], project_id=PROJECT_ID
+    )
     storage.decide_approval_gate.assert_awaited_once()
     assert storage.decide_approval_gate.await_args.args[0] == newest_gate["id"]
 

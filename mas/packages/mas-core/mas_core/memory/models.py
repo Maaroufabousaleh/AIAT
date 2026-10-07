@@ -198,6 +198,14 @@ approval_gates = sa.Table(
     ),
     sa.Column("gate_type", sa.Text(), nullable=False),
     sa.Column("status", sa.Text(), nullable=False, server_default="PENDING"),
+    # Set only for an approval node created by the flow runtime. Project and
+    # other approval gates remain unbound and continue to use their existing
+    # decision lifecycle.
+    sa.Column(
+        "flow_node_execution_id",
+        sa.BigInteger(),
+        sa.ForeignKey("flow_node_executions.id", ondelete="SET NULL"),
+    ),
     sa.Column("decided_by", sa.Text()),
     sa.Column("justification", sa.Text()),
     sa.Column("human_input", JSONB()),
@@ -212,6 +220,11 @@ sa.Index(
     approval_gates.c.status,
     approval_gates.c.created_at,
     approval_gates.c.id,
+)
+sa.Index(
+    "uq_approval_gates_flow_node_execution_id",
+    approval_gates.c.flow_node_execution_id,
+    unique=True,
 )
 
 # ── 7. sprints ────────────────────────────────────────────────────────────────

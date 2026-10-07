@@ -5638,21 +5638,79 @@ async def _submit_project_decision(
             raise HTTPException(404, "Approval gate not found for this project")
         raise HTTPException(404, "No pending decisions for this project")
 
-    if req.gate_id is not None and str(gate.get("status", "")).upper() != "PENDING":
+    is_flow_gate = gate.get("flow_node_execution_id") is not None
+    if not is_flow_gate and str(gate.get("status", "")).upper() == "PENDING":
+        legacy_binder = getattr(storage, "bind_legacy_flow_approval_gate", None)
+        if inspect.iscoroutinefunction(legacy_binder):
+            # The legacy newest-pending contract still selects one exact gate
+            # above. Recover its flow binding by that resolved identity just
+            # as we do when the operator supplies gate_id explicitly.
+            legacy_binding = await legacy_binder(gate["id"], project_id=project_id)
+            binding_outcome = legacy_binding.get("outcome")
+            if binding_outcome == "ambiguous":
+                raise HTTPException(
+                    409,
+                    detail={
+                        "code": "AMBIGUOUS_LEGACY_FLOW_APPROVAL_BINDING",
+                        "message": "The selected pending gate matches multiple active flow approval nodes; no decision was recorded.",
+                    },
+                )
+            if binding_outcome == "unresolved":
+                raise HTTPException(
+                    409,
+                    detail={
+                        "code": "UNRESOLVED_LEGACY_FLOW_APPROVAL_BINDING",
+                        "message": "The active flow definition cannot safely identify this legacy approval gate; no decision was recorded.",
+                    },
+                )
+            if binding_outcome == "conflict":
+                raise HTTPException(
+                    409,
+                    detail={
+                        "code": "STALE_LEGACY_FLOW_APPROVAL_BINDING",
+                        "message": "The selected pending gate or flow approval changed; reload the decision inbox.",
+                    },
+                )
+            if binding_outcome == "not_found":
+                raise HTTPException(404, "Approval gate not found for this project")
+            if binding_outcome in {"bound", "already_bound"}:
+                gate = legacy_binding["gate"]
+                is_flow_gate = gate.get("flow_node_execution_id") is not None
+
+    if (
+        req.gate_id is not None
+        and str(gate.get("status", "")).upper() != "PENDING"
+        and not is_flow_gate
+    ):
         raise HTTPException(409, "Approval gate is no longer pending")
 
     gate_id = gate["id"]
 
-    # Record decision
-    gate_updated = await storage.decide_approval_gate(
-        gate_id,
-        status=decision,
-        decided_by=actor_id,
-        justification=req.comments,
-        human_input=req.edits,
-    )
-    if gate_updated is False:
-        raise HTTPException(409, "Approval gate is no longer pending")
+    resolved_flow_instance: dict[str, Any] | None = None
+    if is_flow_gate:
+        if actor_id != "operator":
+            raise HTTPException(403, "Flow approval decisions require an operator identity")
+        flow_status, flow_decision = _flow_approval_status_and_value(decision)
+        resolved_flow_instance = await _resolve_bound_flow_approval(
+            dict(gate),
+            project_id=project_id,
+            actor_id=actor_id,
+            gate_status=flow_status,
+            flow_decision=flow_decision,
+            justification=req.comments,
+            human_input=req.edits,
+        )
+    else:
+        # Generic project gates retain their existing approval lifecycle.
+        gate_updated = await storage.decide_approval_gate(
+            gate_id,
+            status=decision,
+            decided_by=actor_id,
+            justification=req.comments,
+            human_input=req.edits,
+        )
+        if gate_updated is False:
+            raise HTTPException(409, "Approval gate is no longer pending")
 
     # Map decision to workflow event
     decision_to_event = {
@@ -5684,11 +5742,21 @@ async def _submit_project_decision(
             "status": "transitioned",
             "gate_id": str(gate_id),
             "next_state": str(result.next_state),
+            **(
+                {"flow_instance_id": str(resolved_flow_instance["id"])}
+                if resolved_flow_instance is not None
+                else {}
+            ),
         }
     except InvalidTransitionError:
         return {
             "status": "decision_recorded",
             "gate_id": str(gate_id),
+            **(
+                {"flow_instance_id": str(resolved_flow_instance["id"])}
+                if resolved_flow_instance is not None
+                else {}
+            ),
             "note": "Decision saved but no state transition applicable",
         }
     except ValueError:
@@ -5701,7 +5769,7 @@ async def _submit_project_decision(
                     project_id=str(project_id),
                     current_state=retried_state,
                     event=event,
-                    actor_id=req.decided_by,
+                    actor_id=actor_id,
                     context={
                         "decision": req.decision,
                         "comments": req.comments,
@@ -5716,12 +5784,22 @@ async def _submit_project_decision(
                     "status": "transitioned",
                     "gate_id": str(gate_id),
                     "next_state": str(retried_result.next_state),
+                    **(
+                        {"flow_instance_id": str(resolved_flow_instance["id"])}
+                        if resolved_flow_instance is not None
+                        else {}
+                    ),
                 }
         except (InvalidTransitionError, ValueError, KeyError):
             pass
         return {
             "status": "decision_recorded",
             "gate_id": str(gate_id),
+            **(
+                {"flow_instance_id": str(resolved_flow_instance["id"])}
+                if resolved_flow_instance is not None
+                else {}
+            ),
             "note": "State changed concurrently — decision saved but transition skipped",
         }
 
@@ -12942,24 +13020,24 @@ async def flow_instance_action(instance_id: UUID, req: FlowInstanceActionRequest
     active_node_ids = list(instance.get("active_node_ids") or [])
     context = dict(instance.get("context_json") or {})
 
-    async def _activate_node(node_id: str) -> None:
+    def _node_activation(node_id: str) -> dict[str, Any] | None:
         active_node = definition.get_node(node_id)
         if active_node is None:
-            return
-        await storage.create_flow_node_execution(
-            instance_id=instance_id,
-            node_id=active_node.id,
-            node_type=active_node.type.value,
-            node_label=active_node.label,
-            input_json=context,
-        )
+            return None
+        activation = {
+            "node_id": active_node.id,
+            "node_type": active_node.type.value,
+            "node_label": active_node.label,
+            "status": "RUNNING",
+            "input_json": context,
+        }
         if active_node.type == FlowNodeType.APPROVAL:
-            await storage.create_approval_gate(
-                project_id=instance["project_id"],
-                gate_type=active_node.config.get("approver_role")
+            activation["gate_type"] = (
+                active_node.config.get("approver_role")
                 or active_node.config.get("approver_user")
-                or active_node.label,
+                or active_node.label
             )
+        return activation
 
     if req.action == "start":
         if current_status != "NOT_STARTED":
@@ -12973,14 +13051,37 @@ async def flow_instance_action(instance_id: UUID, req: FlowInstanceActionRequest
             raise HTTPException(400, "Flow has no start node")
 
         now = datetime.now(tz=UTC)
-        await storage.update_flow_instance(
-            instance_id,
-            status="RUNNING",
-            active_node_ids=[start_nodes[0].id],
-            started_at=now,
-        )
-
-        await _activate_node(start_nodes[0].id)
+        start_node = start_nodes[0]
+        activation = _node_activation(start_node.id)
+        if activation is not None and activation.get("gate_type") is not None:
+            activation_result = await storage.activate_flow_nodes(
+                instance_id,
+                expected_statuses={"NOT_STARTED"},
+                expected_active_node_ids=active_node_ids,
+                instance_updates={
+                    "status": "RUNNING",
+                    "active_node_ids": [start_node.id],
+                    "started_at": now,
+                },
+                activations=[activation],
+            )
+            if activation_result.get("outcome") != "applied":
+                raise HTTPException(409, "Flow instance changed before approval activation")
+        else:
+            await storage.update_flow_instance(
+                instance_id,
+                status="RUNNING",
+                active_node_ids=[start_node.id],
+                started_at=now,
+            )
+            if activation is not None:
+                await storage.create_flow_node_execution(
+                    instance_id=instance_id,
+                    node_id=activation["node_id"],
+                    node_type=activation["node_type"],
+                    node_label=activation["node_label"],
+                    input_json=activation["input_json"],
+                )
         started_instance = await storage.get_flow_instance(instance_id)
         if started_instance is None:
             raise HTTPException(404, f"Flow instance {instance_id} not found")
@@ -13016,23 +13117,315 @@ async def flow_instance_action(instance_id: UUID, req: FlowInstanceActionRequest
         # active node can be resumed or mistaken for work still in flight.
         # Node-execution history remains available for the explicit retry
         # boundary, which supersedes prior attempts instead of deleting them.
-        await storage.update_flow_instance(
+        cancel = getattr(storage, "cancel_flow_instance", None)
+        if not inspect.iscoroutinefunction(cancel):
+            raise HTTPException(503, "Flow cancellation requires durable approval cleanup")
+        cancellation = await cancel(
             instance_id,
-            status="CANCELLED",
-            active_node_ids=[],
-            completed_at=datetime.now(tz=UTC),
+            expected_instance_snapshot=_flow_instance_snapshot(instance),
+            decided_by="system:flow_instance_cancel",
         )
-        cancelled_instance = await storage.get_flow_instance(instance_id)
-        if cancelled_instance is None:
+        if cancellation.get("outcome") == "not_found":
             raise HTTPException(404, f"Flow instance {instance_id} not found")
-        return _serialize(cancelled_instance)
+        if cancellation.get("outcome") == "legacy_gate_unresolved":
+            raise HTTPException(
+                409,
+                detail={
+                    "code": "LEGACY_FLOW_APPROVAL_GATE_UNRESOLVED",
+                    "message": "A pending legacy approval gate cannot be safely bound to this flow; resolve the exact project decision before cancelling.",
+                },
+            )
+        if cancellation.get("outcome") != "applied":
+            raise HTTPException(
+                409,
+                detail={
+                    "code": "FLOW_INSTANCE_CHANGED",
+                    "message": "The flow changed before cancellation; reload and retry.",
+                },
+            )
+        return _serialize(cancellation["instance"])
 
     else:
         raise HTTPException(400, f"Unknown action: {req.action}")
 
 
+def _flow_approval_status_and_value(decision: str) -> tuple[str, str]:
+    """Normalize the supported approval decision into gate and flow values."""
+    normalized = decision.strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "approve": ("APPROVED", "approved"),
+        "approved": ("APPROVED", "approved"),
+        "reject": ("REJECTED", "rejected"),
+        "rejected": ("REJECTED", "rejected"),
+        "edit": ("EDITS", "edit_requested"),
+        "edits": ("EDITS", "edit_requested"),
+        "edit_requested": ("EDITS", "edit_requested"),
+        "cancel": ("CANCELLED", "cancelled"),
+        "cancelled": ("CANCELLED", "cancelled"),
+        "canceled": ("CANCELLED", "cancelled"),
+    }
+    result = aliases.get(normalized)
+    if result is None:
+        raise HTTPException(422, "Approval decision must be approved, rejected, edit_requested, or cancelled")
+    return result
+
+
+def _flow_instance_snapshot(instance: dict[str, Any]) -> dict[str, Any]:
+    """Return the durable fields used to guard a precomputed flow transition."""
+    fields = (
+        "id",
+        "project_id",
+        "flow_id",
+        "flow_version",
+        "status",
+        "active_node_ids",
+        "context_json",
+        "updated_at",
+        "retry_count",
+    )
+    return {key: instance[key] for key in fields if key in instance}
+
+
+async def _resolve_bound_flow_approval(
+    gate: dict[str, Any],
+    *,
+    project_id: UUID,
+    actor_id: str,
+    gate_status: str,
+    flow_decision: str,
+    justification: str | None = None,
+    human_input: dict[str, Any] | None = None,
+    output: dict[str, Any] | None = None,
+    expected_instance_id: UUID | None = None,
+) -> dict[str, Any]:
+    """Close one exact flow gate and durably advance its bound node execution."""
+    from datetime import UTC, datetime
+
+    from mas_core.workflow import FlowNodeType, get_next_nodes, parse_flow_definition
+
+    storage = _storage()
+    gate_id = gate.get("id")
+    if gate_id is None or gate.get("project_id") != project_id:
+        raise HTTPException(404, "Approval gate not found for this project")
+    execution_id = gate.get("flow_node_execution_id")
+    if execution_id is None:
+        raise HTTPException(409, "Approval gate is not bound to a flow node execution")
+
+    execution = await storage.get_flow_node_execution(int(execution_id))
+    if execution is None:
+        raise HTTPException(409, "Approval gate flow execution is no longer available")
+    instance_id = execution.get("instance_id")
+    if expected_instance_id is not None and instance_id != expected_instance_id:
+        raise HTTPException(409, "Approval gate is bound to a different flow instance")
+    instance = await storage.get_flow_instance(instance_id)
+    if instance is None or instance.get("project_id") != project_id:
+        raise HTTPException(409, "Approval gate flow instance does not belong to this project")
+    flow = await storage.get_flow(instance["flow_id"])
+    if flow is None:
+        raise HTTPException(404, f"Flow {instance['flow_id']} not found")
+
+    definition = parse_flow_definition(flow["definition_json"])
+    node_id = str(execution.get("node_id") or "")
+    node = definition.get_node(node_id)
+    if (
+        node is None
+        or node.type != FlowNodeType.APPROVAL
+        or execution.get("node_type") != FlowNodeType.APPROVAL.value
+    ):
+        raise HTTPException(409, "Approval gate is not bound to an approval node")
+
+    now = datetime.now(tz=UTC)
+    current_context = dict(instance.get("context_json") or {})
+    updated_context = dict(current_context)
+    if output:
+        updated_context.update(output)
+    updated_context["approval"] = flow_decision
+    updated_context["last_approval_decision"] = flow_decision
+    updated_context["last_safe_node_id"] = node_id
+
+    all_executions = await storage.list_flow_node_executions(
+        instance_id=instance_id,
+        limit=1000,
+    )
+    historically_completed = {
+        str(item["node_id"])
+        for item in all_executions
+        if str(item.get("status", "")).upper() == "COMPLETED"
+    }
+    historically_completed.add(node_id)
+    active_node_ids = list(instance.get("active_node_ids") or [])
+    already_active = set(active_node_ids) - {node_id}
+    traversal = get_next_nodes(
+        definition,
+        historically_completed,
+        set(),
+        context=updated_context,
+    )
+    new_nodes = [
+        candidate
+        for candidate in traversal.node_ids
+        if candidate not in historically_completed and candidate not in already_active
+    ]
+    if (
+        flow_decision != "cancelled"
+        and not new_nodes
+        and traversal.is_blocked
+        and not already_active
+    ):
+        raise HTTPException(
+            409,
+            "Approval decision has no matching next flow node; the gate remains pending",
+        )
+
+    next_status = "RUNNING"
+    next_active = list(already_active)
+    completed_at: datetime | None = None
+    activated_executions: list[dict[str, Any]] = []
+    if flow_decision == "cancelled":
+        next_status = "CANCELLED"
+        next_active = []
+        completed_at = now
+    elif not new_nodes and not traversal.is_blocked:
+        end_nodes = definition.get_end_nodes()
+        all_ends_done = all(end.id in historically_completed for end in end_nodes)
+        if not already_active and all_ends_done:
+            next_status = "COMPLETED"
+            next_active = []
+            completed_at = now
+    else:
+        next_nodes = [definition.get_node(candidate) for candidate in new_nodes]
+        if next_nodes and all(
+            candidate is not None and candidate.type == FlowNodeType.END
+            for candidate in next_nodes
+        ):
+            next_status = (
+                "FAILED"
+                if any(
+                    candidate is not None
+                    and ("fail" in candidate.label.lower() or "fail" in candidate.id.lower())
+                    for candidate in next_nodes
+                )
+                else "COMPLETED"
+            )
+            next_active = []
+            completed_at = now
+            for candidate in next_nodes:
+                if candidate is None:
+                    continue
+                activated_executions.append(
+                    {
+                        "node_id": candidate.id,
+                        "node_type": candidate.type.value,
+                        "node_label": candidate.label,
+                        "status": "COMPLETED" if next_status == "COMPLETED" else "FAILED",
+                        "input_json": updated_context,
+                        "output_json": updated_context,
+                        "error": "Reached failed terminal node"
+                        if next_status == "FAILED"
+                        else None,
+                    }
+                )
+        else:
+            next_active = list(already_active | set(new_nodes))
+            for candidate in next_nodes:
+                if candidate is None:
+                    continue
+                entry = {
+                    "node_id": candidate.id,
+                    "node_type": candidate.type.value,
+                    "node_label": candidate.label,
+                    "status": "RUNNING",
+                    "input_json": updated_context,
+                }
+                if candidate.type == FlowNodeType.APPROVAL:
+                    entry["gate_type"] = (
+                        candidate.config.get("approver_role")
+                        or candidate.config.get("approver_user")
+                        or candidate.label
+                    )
+                activated_executions.append(entry)
+
+    execution_output = dict(output or updated_context)
+    execution_output.update(
+        {
+            "approval": flow_decision,
+            "last_approval_decision": flow_decision,
+        }
+    )
+    result = await storage.resolve_flow_approval_gate(
+        gate_id,
+        project_id=project_id,
+        instance_id=instance_id,
+        execution_id=int(execution_id),
+        node_id=node_id,
+        status=gate_status,
+        decided_by=actor_id,
+        justification=justification,
+        human_input=human_input,
+        execution_output=execution_output,
+        instance_updates={
+            "status": next_status,
+            "active_node_ids": next_active,
+            "context_json": updated_context,
+            "completed_at": completed_at,
+        },
+        activated_executions=activated_executions,
+        expected_instance_snapshot=_flow_instance_snapshot(instance),
+    )
+    if result.get("outcome") == "not_found":
+        raise HTTPException(404, "Approval gate not found for this project")
+    if result.get("outcome") == "stale_instance":
+        raise HTTPException(
+            409,
+            detail={
+                "code": "FLOW_INSTANCE_CHANGED",
+                "message": "The flow changed while this approval was being resolved; reload and retry.",
+            },
+        )
+    if result.get("outcome") not in {"applied", "already_applied"}:
+        raise HTTPException(409, "Approval gate or bound flow execution is no longer active")
+
+    resolved_instance = result.get("instance")
+    if resolved_instance is None:
+        raise HTTPException(503, "Resolved flow instance could not be reloaded")
+
+    # A process may stop after the atomic transition and before dispatching a
+    # newly activated worker. Replaying this exact gate decision re-enters the
+    # existing idempotent WorkerRun dispatch path for still-active task nodes.
+    resolved_active = set(resolved_instance.get("active_node_ids") or [])
+    for activated_id in result.get("activated_node_ids") or []:
+        if activated_id not in resolved_active:
+            continue
+        activated_node = definition.get_node(activated_id)
+        if (
+            activated_node is not None
+            and activated_node.type == FlowNodeType.TASK
+            and activated_node.config.get("worker_id")
+        ):
+            await _apply_flow_node_action(
+                instance_id,
+                FlowNodeActionRequest(node_id=activated_id, action="advance"),
+            )
+            resolved_instance = await storage.get_flow_instance(instance_id) or resolved_instance
+    return _serialize(resolved_instance)
+
+
 @app.post("/flows/instances/{instance_id}/node-action")
-async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dict[str, Any]:
+async def flow_node_action(
+    instance_id: UUID,
+    req: FlowNodeActionRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Perform a flow action, enforcing operator identity for approvals."""
+    return await _apply_flow_node_action(instance_id, req, request=request)
+
+
+async def _apply_flow_node_action(
+    instance_id: UUID,
+    req: FlowNodeActionRequest,
+    *,
+    request: Request | None = None,
+) -> dict[str, Any]:
     """Perform an action on a node within a flow instance."""
     from datetime import UTC, datetime
 
@@ -13042,11 +13435,6 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
     instance = await storage.get_flow_instance(instance_id)
     if instance is None:
         raise HTTPException(404, f"Flow instance {instance_id} not found")
-
-    if instance["status"] not in ("RUNNING", "WAITING_APPROVAL"):
-        raise HTTPException(
-            409, f"Instance is not RUNNING or WAITING_APPROVAL (current: {instance['status']})"
-        )
 
     flow = await storage.get_flow(instance["flow_id"])
     if flow is None:
@@ -13059,6 +13447,76 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
 
     active_node_ids = list(instance.get("active_node_ids") or [])
     current_context = dict(instance.get("context_json") or {})
+
+    if node.type == FlowNodeType.APPROVAL:
+        if request is not None:
+            _require_operator_identity(request)
+            if req.action != "complete":
+                raise HTTPException(
+                    400,
+                    "Approval nodes can only be completed by an operator decision",
+                )
+        elif req.decision is not None or req.approved is not None:
+            raise HTTPException(
+                409,
+                "Internal flow actions cannot submit an approval decision",
+            )
+
+        if req.decision is not None or req.approved is not None:
+            raw_decision = req.decision
+            if raw_decision is None:
+                raw_decision = "approved" if req.approved else "rejected"
+            gate_status, flow_decision = _flow_approval_status_and_value(raw_decision)
+            executions = await storage.list_flow_node_executions(
+                instance_id=instance_id,
+                node_id=req.node_id,
+                limit=1000,
+            )
+            active_execution = next(
+                (
+                    execution
+                    for execution in reversed(executions)
+                    if execution.get("node_type") == FlowNodeType.APPROVAL.value
+                    and str(execution.get("status", "")).upper() == "RUNNING"
+                ),
+                None,
+            )
+            if active_execution is None:
+                active_execution = next(
+                    (
+                        execution
+                        for execution in reversed(executions)
+                        if execution.get("node_type") == FlowNodeType.APPROVAL.value
+                    ),
+                    None,
+                )
+            if active_execution is None:
+                raise HTTPException(409, "Approval node has no durable execution to decide")
+            gate = await storage.get_approval_gate_for_flow_execution(
+                int(active_execution["id"])
+            )
+            if gate is None:
+                raise HTTPException(409, "Approval execution has no bound approval gate")
+            return await _resolve_bound_flow_approval(
+                gate,
+                project_id=instance["project_id"],
+                actor_id=(
+                    _authenticated_principal(request)
+                    if request is not None
+                    else "system"
+                ),
+                gate_status=gate_status,
+                flow_decision=flow_decision,
+                justification=(req.output or {}).get("comments"),
+                human_input=(req.output or {}).get("edits"),
+                output=req.output,
+                expected_instance_id=instance_id,
+            )
+
+    if instance["status"] not in ("RUNNING", "WAITING_APPROVAL"):
+        raise HTTPException(
+            409, f"Instance is not RUNNING or WAITING_APPROVAL (current: {instance['status']})"
+        )
     if req.node_id not in active_node_ids:
         raise HTTPException(409, f"Node {req.node_id} is not currently active")
 
@@ -13070,24 +13528,27 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
             raise HTTPException(404, f"Flow instance {instance_id} not found")
         return refreshed_instance
 
-    async def _activate_node(node_id: str, context_json: dict[str, Any]) -> None:
+    def _node_activation(
+        node_id: str, context_json: dict[str, Any]
+    ) -> dict[str, Any] | None:
         next_node = definition.get_node(node_id)
         if next_node is None:
-            return
-        await storage.create_flow_node_execution(
-            instance_id=instance_id,
-            node_id=node_id,
-            node_type=next_node.type.value,
-            node_label=next_node.label,
-            input_json=context_json,
-        )
+            return None
+        activation: dict[str, Any] = {
+            "node_id": node_id,
+            "node_type": next_node.type.value,
+            "node_label": next_node.label,
+            "status": "RUNNING",
+            "input_json": context_json,
+        }
         if next_node.type == FlowNodeType.APPROVAL:
-            await storage.create_approval_gate(
-                project_id=instance["project_id"],
-                gate_type=next_node.config.get("approver_role")
+            activation["gate_type"] = (
+                next_node.config.get("approver_role")
                 or next_node.config.get("approver_user")
-                or next_node.label,
             )
+            if activation["gate_type"] is None:
+                activation["gate_type"] = next_node.label
+        return activation
 
     # Task nodes are completed only by a terminal Worker Run.  ``advance`` is
     # the sole operator/API action for a task: it creates the run from the
@@ -13162,7 +13623,7 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
                 output = result.get("output")
                 normalized_output = output if isinstance(output, dict) else {"worker_output": output}
                 normalized_output["worker_run_id"] = dispatch["run_id"]
-                return await flow_node_action(
+                return await _apply_flow_node_action(
                     instance_id,
                     FlowNodeActionRequest(
                         node_id=req.node_id,
@@ -13198,7 +13659,7 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
                     f"Worker Run returned unknown non-terminal state {dispatch_state or '<missing>'}; flow task remains unresolved",
                 )
             error = (result.get("error") or {}).get("message") or f"Worker Run ended {dispatch_state}"
-            return await flow_node_action(
+            return await _apply_flow_node_action(
                 instance_id,
                 FlowNodeActionRequest(
                     node_id=req.node_id,
@@ -13275,11 +13736,6 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
                 output_json=req.output or updated_context,
                 completed_at=now,
             )
-
-        # Remove completed node from active set; track it separately for traversal
-        remaining_active = set(active_node_ids)
-        remaining_active.discard(req.node_id)
-        new_active = list(remaining_active)
 
         # Build the full historically-completed set (needed for join nodes)
         all_executions = await storage.list_flow_node_executions(
@@ -13389,15 +13845,47 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
                     completed_at=now,
                 )
             else:
-                for nid in new_nodes:
-                    await _activate_node(nid, updated_context)
                 merged_active = list(already_active | set(new_nodes))
-                await storage.update_flow_instance(
-                    instance_id,
-                    active_node_ids=merged_active,
-                    context_json=updated_context,
-                    status="RUNNING",
+                activations = [
+                    activation
+                    for nid in new_nodes
+                    if (activation := _node_activation(nid, updated_context)) is not None
+                ]
+                includes_approval = any(
+                    activation.get("gate_type") is not None for activation in activations
                 )
+                if includes_approval:
+                    activation_result = await storage.activate_flow_nodes(
+                        instance_id,
+                        expected_statuses={"RUNNING", "WAITING_APPROVAL"},
+                        expected_active_node_ids=active_node_ids,
+                        instance_updates={
+                            "active_node_ids": merged_active,
+                            "context_json": updated_context,
+                            "status": "RUNNING",
+                        },
+                        activations=activations,
+                    )
+                    if activation_result.get("outcome") != "applied":
+                        raise HTTPException(
+                            409,
+                            "Flow instance changed before approval activation",
+                        )
+                else:
+                    for activation in activations:
+                        await storage.create_flow_node_execution(
+                            instance_id=instance_id,
+                            node_id=activation["node_id"],
+                            node_type=activation["node_type"],
+                            node_label=activation["node_label"],
+                            input_json=activation["input_json"],
+                        )
+                    await storage.update_flow_instance(
+                        instance_id,
+                        active_node_ids=merged_active,
+                        context_json=updated_context,
+                        status="RUNNING",
+                    )
                 # A task is executable only through its Worker Run.  Control
                 # nodes remain event/approval driven, while each newly active
                 # task immediately enters the governed dispatch lifecycle.
@@ -13408,7 +13896,7 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
                         and next_node.type == FlowNodeType.TASK
                         and next_node.config.get("worker_id")
                     ):
-                        await flow_node_action(
+                        await _apply_flow_node_action(
                             instance_id,
                             FlowNodeActionRequest(node_id=nid, action="advance"),
                         )
@@ -13850,42 +14338,49 @@ async def retry_flow_instance(instance_id: UUID) -> dict[str, Any]:
     if isinstance(last_safe_node_id, str) and definition.get_node(last_safe_node_id) is not None:
         retry_count = int(instance.get("retry_count") or 0) + 1
         restored_node = definition.get_node(last_safe_node_id)
-        supersede = getattr(storage, "supersede_flow_node_executions", None)
-        if not inspect.iscoroutinefunction(supersede):
-            raise HTTPException(
-                503,
-                "Flow retry requires evidence-preserving node-execution storage",
-            )
-        await supersede(instance_id)
-        await storage.update_flow_instance(
-            instance_id,
-            status="RUNNING",
-            active_node_ids=[last_safe_node_id],
-            retry_count=retry_count,
-            started_at=None,
-            completed_at=None,
-        )
         if restored_node is not None:
-            await storage.create_flow_node_execution(
-                instance_id=instance_id,
-                node_id=restored_node.id,
-                node_type=restored_node.type.value,
-                node_label=restored_node.label,
-                input_json=context_json,
-            )
+            activation = {
+                "node_id": restored_node.id,
+                "node_type": restored_node.type.value,
+                "node_label": restored_node.label,
+                "status": "RUNNING",
+                "input_json": context_json,
+            }
             if restored_node.type.value == "approval":
-                await storage.create_approval_gate(
-                    project_id=instance["project_id"],
-                    gate_type=restored_node.config.get("approver_role")
+                activation["gate_type"] = (
+                    restored_node.config.get("approver_role")
                     or restored_node.config.get("approver_user")
-                    or restored_node.label,
+                    or restored_node.label
+                )
+            activation_result = await storage.activate_flow_nodes(
+                instance_id,
+                expected_statuses={"FAILED", "CANCELLED"},
+                expected_active_node_ids=list(instance.get("active_node_ids") or []),
+                expected_instance_snapshot=_flow_instance_snapshot(instance),
+                instance_updates={
+                    "status": "RUNNING",
+                    "active_node_ids": [last_safe_node_id],
+                    "retry_count": retry_count,
+                    "started_at": None,
+                    "completed_at": None,
+                },
+                activations=[activation],
+                supersede_existing=True,
+            )
+            if activation_result.get("outcome") != "applied":
+                raise HTTPException(
+                    409,
+                    detail={
+                        "code": "FLOW_INSTANCE_CHANGED",
+                        "message": "The flow changed before retry activation; reload and retry.",
+                    },
                 )
             if restored_node.type.value == "task" and restored_node.config.get("worker_id"):
                 # Safe retry of a governed task must re-enter the same
                 # authoritative Worker Run path as normal traversal.  Legacy
                 # team/action-only tasks intentionally keep their manual
                 # compatibility behavior until an operator migrates them.
-                return await flow_node_action(
+                return await _apply_flow_node_action(
                     instance_id,
                     FlowNodeActionRequest(node_id=restored_node.id, action="advance"),
                 )
@@ -13894,9 +14389,18 @@ async def retry_flow_instance(instance_id: UUID) -> dict[str, Any]:
             raise HTTPException(404, "Failed to retry instance")
         return _serialize(restored_instance)
 
-    updated = await storage.retry_flow_instance(instance_id)
+    updated = await storage.retry_flow_instance(
+        instance_id,
+        expected_instance_snapshot=_flow_instance_snapshot(instance),
+    )
     if updated is None:
-        raise HTTPException(404, "Failed to retry instance")
+        raise HTTPException(
+            409,
+            detail={
+                "code": "FLOW_INSTANCE_CHANGED",
+                "message": "The flow changed before retry; reload and retry.",
+            },
+        )
 
     return _serialize(updated)
 
