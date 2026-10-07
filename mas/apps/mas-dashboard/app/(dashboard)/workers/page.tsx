@@ -53,6 +53,7 @@ interface Worker {
   team_id?: string;
   transport_mode?: string;
   adapter_entrypoint?: string;
+  adapter_module?: string;
   source_repo?: string;
   source_revision?: string;
   version_pin?: string;
@@ -163,6 +164,135 @@ function apiErrorMessage(payload: unknown, fallback: string): string {
   return blockers.length > 0 ? `${message}: ${blockers.join("; ")}` : message;
 }
 
+function WorkerEditForm({
+  worker,
+  onCancel,
+  onSaved,
+}: {
+  worker: Worker;
+  onCancel: () => void;
+  onSaved: () => void | Promise<void>;
+}) {
+  const [form, setForm] = useState(() => ({
+    team_id: worker.team_id ?? "",
+    adapter_entrypoint: worker.adapter_entrypoint ?? "",
+    adapter_module: worker.adapter_module ?? "",
+  }));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit() {
+    if (!form.adapter_entrypoint.trim()) {
+      setError("Adapter entrypoint is required");
+      return;
+    }
+
+    setSaving(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/workers/${encodeURIComponent(worker.id)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          team_id: form.team_id.trim(),
+          adapter_entrypoint: form.adapter_entrypoint.trim(),
+          adapter_module: form.adapter_module.trim(),
+        }),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        setError(apiErrorMessage(payload, "Worker configuration was not saved"));
+        return;
+      }
+
+      onCancel();
+      await onSaved();
+    } catch {
+      setError("Network error while saving worker configuration");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section
+      className="mb-5 rounded-lg border border-blue-800/70 bg-slate-900/70 p-4"
+      aria-label={`Edit ${worker.worker_id} configuration`}
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+    >
+      <div className="mb-3">
+        <h4 className="text-sm font-semibold text-white">Edit worker configuration</h4>
+        <p className="mt-1 text-xs text-slate-400">
+          Worker identity, provenance, tool grants, isolation policy, and version pins remain governed by their existing workflows.
+        </p>
+      </div>
+      {error && (
+        <div className="mb-3 rounded border border-rose-700 bg-rose-400/10 px-3 py-2 text-sm text-rose-300" role="alert">
+          {error}
+        </div>
+      )}
+      <div className="grid gap-3 md:grid-cols-3">
+        <div>
+          <label htmlFor={`edit-worker-team-${worker.id}`} className="mb-1 block text-xs text-slate-400">
+            Team ID
+          </label>
+          <input
+            id={`edit-worker-team-${worker.id}`}
+            className="min-h-11 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+            value={form.team_id}
+            onChange={(event) => setForm({ ...form, team_id: event.target.value })}
+            autoComplete="off"
+          />
+        </div>
+        <div>
+          <label htmlFor={`edit-worker-entrypoint-${worker.id}`} className="mb-1 block text-xs text-slate-400">
+            Adapter entrypoint
+          </label>
+          <input
+            id={`edit-worker-entrypoint-${worker.id}`}
+            className="min-h-11 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+            value={form.adapter_entrypoint}
+            onChange={(event) => setForm({ ...form, adapter_entrypoint: event.target.value })}
+            autoComplete="off"
+            required
+          />
+        </div>
+        <div>
+          <label htmlFor={`edit-worker-module-${worker.id}`} className="mb-1 block text-xs text-slate-400">
+            Adapter module
+          </label>
+          <input
+            id={`edit-worker-module-${worker.id}`}
+            className="min-h-11 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+            value={form.adapter_module}
+            onChange={(event) => setForm({ ...form, adapter_module: event.target.value })}
+            autoComplete="off"
+          />
+        </div>
+      </div>
+      <div className="mt-4 flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={saving}
+          className="min-h-11 rounded border border-slate-700 px-3 text-sm text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+        >
+          Cancel edit
+        </button>
+        <button
+          type="button"
+          onClick={() => void submit()}
+          disabled={saving}
+          className="min-h-11 rounded bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+        >
+          {saving ? "Saving…" : "Save configuration"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function StatusBadge({ status }: { status: string }) {
   const cfg = STATUS_CONFIG[status] ?? STATUS_CONFIG.INACTIVE;
   const Icon = cfg.icon;
@@ -197,6 +327,7 @@ function WorkerRow({
   const [evaluating, setEvaluating] = useState(false);
   const [evaluations, setEvaluations] = useState<EvaluationReport[]>([]);
   const [actionError, setActionError] = useState("");
+  const [editing, setEditing] = useState(false);
   // Track which evaluation check details are expanded (per check name).
   // Default: all collapsed to keep the row dense.
   const [expandedChecks, setExpandedChecks] = useState<Record<string, boolean>>(
@@ -226,6 +357,12 @@ function WorkerRow({
     if (next && worker.source_repo) {
       await loadEvaluations();
     }
+  }
+
+  function openEditor() {
+    setExpanded(true);
+    setEditing(true);
+    setActionError("");
   }
 
   async function toggleStatus() {
@@ -358,6 +495,17 @@ function WorkerRow({
         </td>
         <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center gap-1">
+            {!accessDenied && (
+              <button
+                type="button"
+                onClick={openEditor}
+                title="Edit worker configuration"
+                aria-label={`Edit ${worker.worker_id}`}
+                className="inline-flex min-h-11 min-w-11 items-center justify-center rounded text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+              >
+                <Settings size={14} />
+              </button>
+            )}
             {!accessDenied && worker.source_repo && (
               <button
                 onClick={evaluateWorker}
@@ -412,6 +560,13 @@ function WorkerRow({
       {expanded && (
         <tr className="bg-slate-950/50 border-b border-slate-800">
           <td colSpan={9} className="px-6 py-4">
+            {editing && !accessDenied && (
+              <WorkerEditForm
+                worker={worker}
+                onCancel={() => setEditing(false)}
+                onSaved={onStatusChange}
+              />
+            )}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-sm">
               <div className="space-y-2">
                 <h4 className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-3">
@@ -429,6 +584,14 @@ function WorkerRow({
                     {worker.adapter_entrypoint ?? "—"}
                   </span>
                 </div>
+                {worker.adapter_module && (
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Adapter Module</span>
+                    <span className="text-white font-mono">
+                      {worker.adapter_module}
+                    </span>
+                  </div>
+                )}
                 <div className="flex justify-between">
                   <span className="text-slate-500">Sandbox</span>
                   <span className="text-white font-mono">
