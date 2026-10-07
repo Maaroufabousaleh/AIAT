@@ -38,7 +38,7 @@ is the compact feature-by-feature entry point to implementation status, evidence
 remaining gates, and the next document to open. It complements this roadmap;
 it does not replace the detailed feature specifications or release ledger.
 
-The current core migration head is `0045_worker_tool_effects`. The
+The current core migration head is `0047_flow_approval_execution_binding`. The
 project-transition notification intent is persisted with project state and
 history and drained by a bounded stable-ID dispatcher; specialist worker
 runtime references are now persisted per dispatch attempt for restart lookup;
@@ -83,7 +83,7 @@ native-Linux release boundary.
 
 | Area | Current result |
 | --- | --- |
-| Development status | **`DEV_READY`** — the dedicated AIAT Compose stack and authenticated `/health`, `/projects`, and `/capabilities/workers` routes are healthy; source/live migration head remains `0045_worker_tool_effects`. The independent orchestrator network probe passes 4/4 required Redis/Postgres/PgBouncer/tool-service TCP checks. The live runner matrix is incomplete because all 11 team-runner containers are stopped while provider dispatch is unauthorized. Secret-safe details are retained in [`mas/docs/provenance/dev_host_readiness.json`](mas/docs/provenance/dev_host_readiness.json), [`mas/docs/provenance/local_compose_connectivity_evidence.json`](mas/docs/provenance/local_compose_connectivity_evidence.json), and [`mas/docs/provenance/network_boundary_live_current.json`](mas/docs/provenance/network_boundary_live_current.json). |
+| Development status | **`DEV_READY`** — the dedicated AIAT Compose stack and authenticated `/health`, `/projects`, and `/capabilities/workers` routes are healthy; source/live migration head remains `0047_flow_approval_execution_binding`. The independent orchestrator network probe passes 4/4 required Redis/Postgres/PgBouncer/tool-service TCP checks. The live runner matrix is incomplete because all 11 team-runner containers are stopped while provider dispatch is unauthorized. Secret-safe details are retained in [`mas/docs/provenance/dev_host_readiness.json`](mas/docs/provenance/dev_host_readiness.json), [`mas/docs/provenance/local_compose_connectivity_evidence.json`](mas/docs/provenance/local_compose_connectivity_evidence.json), and [`mas/docs/provenance/network_boundary_live_current.json`](mas/docs/provenance/network_boundary_live_current.json). |
 | Docker/gVisor | Dedicated `aiat-wsl` Docker context; separate daemon/data root from Docker Desktop `default`. `runsc` is registered and digest-pinned gVisor smoke passes. The original service TCP timeouts were broken east-west forwarding on `mas_internal`, cleared by recreating only the AIAT bridge without deleting volumes; Docker Desktop `default` caused separate host-port collisions. The exact privileged forwarding rule was not inspectable. |
 | Sandbox policy | `trusted → runc`, `sandboxed → runsc`, `vm_isolated → Kata`; old `standard`/`restricted`/`gvisor`/`firecracker` values remain read-compatible aliases. Required classes fail closed; no runc downgrade is allowed. |
 | Kata | **`AVAILABLE` for local development** — pinned Kata runtime-rs 4.2.0 with QEMU is registered in the dedicated WSL Docker daemon and the bounded guest smoke proves a distinct guest kernel. Native-Linux release certification remains pending. |
@@ -98,7 +98,7 @@ is unschedulable when neither is available. Worker manifests request only
 `vm_isolated`, never a Kata VMM name. This is implemented by the centralized
 `mas_core.execution_policy` resolver and additive host metadata, without a new
 execution backend abstraction.
-| Database | Source and live local Compose database are at `0045_worker_tool_effects`; the migration was applied through the normal Alembic path. |
+| Database | Source and live local Compose database are at `0047_flow_approval_execution_binding`; the migration was applied through the normal Alembic path. |
 | Release status | **`RELEASE_CERTIFICATION_PENDING`** — WSL2 development evidence is not native-Linux release evidence. Native host, provider, deployment, operator, and other selected release gates remain separate. |
 
 The repeatable operator entry point is
@@ -123,7 +123,7 @@ does not expose the Docker socket to AIAT workers.
 | Phase | State | Evidence-backed status |
 | --- | --- | --- |
 | R0 — documentation authority | complete | Canonical target, thirteen feature documents, three plans, root navigation, the tracked `mas/uv.lock`, and the personal/internal metadata-only policy are present. Both the current workspace and a clean Git archive pass `check_docs_index.py`; regression coverage asserts the thirteen-feature/three-plan authority set (`0dbfdb7`), and concrete licence identifiers are kept in metadata surfaces by the scope guard (`dee1a7e`). |
-| R1 — P0 release integrity | in progress | Static ledger remains 61 active pass + 3 not-in-scope across 64 checks, with 2 pending evidence items. The 2026-10-02 authenticated local Compose ledger reports 80 pass, 1 fail, 3 blocked, and 5 not-in-scope across 89 checks; the failure is the live network matrix because all 11 runners are stopped and no per-runner probes ran. API health/project/worker inventory routes return 200; source/live migration heads are both `0045_worker_tool_effects`. Native-Linux, production image provenance, unresolved OpenCode findings/coverage, provider/operator evidence, independent-host recovery, and worker canary/rollback remain open. |
+| R1 — P0 release integrity | in progress | Static ledger remains 61 active pass + 3 not-in-scope across 64 checks, with 2 pending evidence items. The 2026-10-02 authenticated local Compose ledger reports 80 pass, 1 fail, 3 blocked, and 5 not-in-scope across 89 checks; the failure is the live network matrix because all 11 runners are stopped and no per-runner probes ran. API health/project/worker inventory routes return 200; source/live migration heads are both `0047_flow_approval_execution_binding`. Native-Linux, production image provenance, unresolved OpenCode findings/coverage, provider/operator evidence, independent-host recovery, and worker canary/rollback remain open. |
 | R2–R5 — P1 default programme completion | preparatory implementation | Core control-plane, worker, flow, evidence, identity, provider, executive, SDK, and dashboard contracts remain implemented and statically tested. The safe local dashboard suite passes 105/107 (2 skipped), including a light/dark token sweep across 20 operator routes and one disposable project workspace create/detail path with cleanup; CEO chat/hiring/flow mutation paths remain excluded because of provider-dispatch risk. Dashboard lint, typecheck, build, and auth tests pass. Native-Linux visual parity and full project/model-backed worker paths remain open. |
 
 The current `check_release_ledger.py --json` static invocation reports 61
@@ -133,8 +133,8 @@ worktree keep the global decision at `NO-RELEASE`.
 
 The latest authenticated local Compose live sweep at
 `2026-09-19T22:39:32Z` reports 74 pass, 0 fail, 10 blocked, and 5 not-in-scope
-checks across 89 total, with four pending evidence items. The source and live
-local database are both at `0045_worker_tool_effects`. Active blockers remain
+checks across 89 total, with four pending evidence items. At that time, the source
+and live local database were both at `0045_worker_tool_effects`. Active blockers remain
 native-host/environment, trace/observability credentials or endpoint
 availability, deployment-image provenance, SLO/worker-reconciliation/runtime-
 catalog reachability, and pending operator evidence. Firecracker is superseded,
