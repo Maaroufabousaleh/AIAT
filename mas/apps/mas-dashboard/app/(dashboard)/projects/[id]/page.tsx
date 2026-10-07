@@ -144,6 +144,9 @@ interface Decision {
   id: string;
   decision_type?: string;
   gate_type?: string;
+  project_id?: string;
+  status?: string;
+  flow_node_execution_id?: string | number | null;
   prompt?: string;
   context?: unknown;
   created_at: string;
@@ -173,6 +176,43 @@ interface ContextItem {
   version?: number;
   status?: string;
   lineage_id?: string;
+}
+
+interface ProjectDocumentPreview {
+  item: ContextItem;
+  loading: boolean;
+  content?: string;
+  message?: string;
+}
+
+const MAX_PROJECT_DOCUMENT_PREVIEW_BYTES = 512 * 1024;
+
+async function readBoundedTextResponse(response: Response): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) return "";
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > MAX_PROJECT_DOCUMENT_PREVIEW_BYTES) {
+        await reader.cancel();
+        throw new Error("This document is too large for inline preview. Download it to view the full file.");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
 }
 
 interface Project {
@@ -547,6 +587,14 @@ export default function ProjectDetailPage() {
   const [edges, setEdges, onEdgesChange] = useEdgesState([] as Edge[]);
   const [contextItems, setContextItems] = useState<ContextItem[]>([]);
   const [contextLoading, setContextLoading] = useState(false);
+  const [documentPreview, setDocumentPreview] =
+    useState<ProjectDocumentPreview | null>(null);
+  const [documentDownloadId, setDocumentDownloadId] = useState<string | null>(null);
+  const [documentActionError, setDocumentActionError] = useState<{
+    itemId: string;
+    message: string;
+  } | null>(null);
+  const documentPreviewRequestId = useRef(0);
   const [evidence, setEvidence] = useState<ProjectEvidence | null>(null);
   const [evidencePackage, setEvidencePackage] =
     useState<ProjectEvidencePackage | null>(null);
@@ -774,6 +822,124 @@ export default function ProjectDetailPage() {
       setContextLoading(false);
     }
   }, [id]);
+
+  async function handlePreviewProjectDocument(item: ContextItem) {
+    const documentId = item.document_id ?? item.id;
+    const requestId = ++documentPreviewRequestId.current;
+    setDocumentActionError(null);
+    setDocumentPreview({ item, loading: true });
+    try {
+      const response = await fetch(
+        `/api/projects/${encodeURIComponent(id)}/documents/${encodeURIComponent(documentId)}/preview`,
+        { cache: "no-store" },
+      );
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        const message =
+          payload && typeof payload.error === "string"
+            ? payload.error
+            : `Could not preview this document (HTTP ${response.status}).`;
+        throw new Error(message);
+      }
+      const contentType = (response.headers.get("content-type") ?? "")
+        .split(";", 1)[0]
+        .trim()
+        .toLowerCase();
+      if (
+        !contentType.startsWith("text/") &&
+        !["application/json", "application/xml", "application/yaml", "text/yaml"].includes(contentType)
+      ) {
+        if (requestId === documentPreviewRequestId.current) {
+          setDocumentPreview({
+            item,
+            loading: false,
+            message: `Inline preview is unavailable for ${contentType || "this file type"}. Download the document to view it.`,
+          });
+        }
+        return;
+      }
+      const content = await readBoundedTextResponse(response);
+      if (requestId === documentPreviewRequestId.current) {
+        setDocumentPreview({ item, loading: false, content });
+      }
+    } catch (error) {
+      if (requestId === documentPreviewRequestId.current) {
+        setDocumentPreview({
+          item,
+          loading: false,
+          message:
+            error instanceof Error
+              ? error.message
+              : "Could not preview this document. Try again or download it.",
+        });
+      }
+    }
+  }
+
+  function closeProjectDocumentPreview() {
+    documentPreviewRequestId.current += 1;
+    setDocumentPreview(null);
+  }
+
+  async function handleDownloadProjectDocument(item: ContextItem) {
+    const documentId = item.document_id ?? item.id;
+    setDocumentActionError(null);
+    setDocumentDownloadId(item.id);
+    try {
+      const response = await fetch(
+        `/api/projects/${encodeURIComponent(id)}/documents/${encodeURIComponent(documentId)}/download`,
+        { cache: "no-store" },
+      );
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(
+          payload && typeof payload.error === "string"
+            ? payload.error
+            : `Could not download this document (HTTP ${response.status}).`,
+        );
+      }
+      const blob = await response.blob();
+      const contentType = (response.headers.get("content-type") ?? "")
+        .split(";", 1)[0]
+        .trim()
+        .toLowerCase();
+      const extension =
+        contentType === "application/pdf"
+          ? "pdf"
+          : contentType === "application/json"
+            ? "json"
+            : contentType === "text/markdown"
+              ? "md"
+              : contentType.startsWith("text/")
+                ? "txt"
+                : "bin";
+      const documentType = (item.doc_type || "document")
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, "-")
+        .replace(/^-+|-+$/g, "") || "document";
+      const version = Number.isInteger(Number(item.version)) && Number(item.version) > 0
+        ? Number(item.version)
+        : 1;
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = `${documentType}-v${version}.${extension}`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    } catch (error) {
+      setDocumentActionError({
+        itemId: item.id,
+        message:
+          error instanceof Error
+            ? error.message
+            : "Could not download this document. Try again.",
+      });
+    } finally {
+      setDocumentDownloadId(null);
+    }
+  }
 
   const loadEvidence = useCallback(async () => {
     if (accessDeniedRef.current) return;
@@ -1384,6 +1550,82 @@ export default function ProjectDetailPage() {
     } finally {
       setActionLoading(null);
     }
+  }
+
+  function getActiveFlowApprovalGate(nodeId: string): Decision | null {
+    if (!flowInstance) return null;
+    const executions = nodeExecutions.filter(
+      (execution) =>
+        execution.instance_id === flowInstance.id &&
+        execution.node_id === nodeId &&
+        execution.node_type === "approval" &&
+        execution.status === "RUNNING",
+    );
+    if (executions.length !== 1) return null;
+    const executionId = String(executions[0].id ?? "").trim();
+    if (!executionId) return null;
+    const gates = decisions.filter(
+      (decision) =>
+        decision.status?.toUpperCase() === "PENDING" &&
+        decision.flow_node_execution_id != null &&
+        String(decision.flow_node_execution_id) === executionId &&
+        (!decision.project_id || decision.project_id === id),
+    );
+    return gates.length === 1 ? gates[0] : null;
+  }
+
+  async function handleFlowApprovalDecision(
+    nodeId: string,
+    decision: "APPROVED" | "REJECTED" | "EDITS",
+  ) {
+    if (accessDeniedRef.current) return;
+    const gate = getActiveFlowApprovalGate(nodeId);
+    if (!gate) {
+      setFlowError(
+        "This approval is not linked to exactly one pending gate for the active flow node. Refresh the project and flow state before deciding.",
+      );
+      return;
+    }
+
+    setActionLoading(`flow-approval-${nodeId}`);
+    try {
+      const response = await fetch(`/api/projects/${encodeURIComponent(id)}/decisions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          gate_id: gate.id,
+          decision,
+          comments: `Submitted from flow approval node ${nodeId}: ${decision.toLowerCase()}`,
+        }),
+      });
+      if (handleDeniedResponse(response)) return;
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        const detail = payload?.detail;
+        const message =
+          typeof detail === "string"
+            ? detail
+            : detail && typeof detail.message === "string"
+              ? detail.message
+              : typeof payload?.error === "string"
+                ? payload.error
+                : `Could not record this approval (HTTP ${response.status}).`;
+        setFlowError(message);
+        return;
+      }
+      setFlowError(null);
+      await Promise.all([load(), loadFlowData(), loadWorkspace()]);
+    } catch {
+      setFlowError("Could not record this approval. Refresh the flow state and retry.");
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  async function refreshFlowApprovalState() {
+    if (accessDeniedRef.current) return;
+    setFlowError(null);
+    await Promise.all([load(), loadFlowData()]);
   }
 
   async function handleAction(action: "retry" | "archive") {
@@ -3654,6 +3896,10 @@ export default function ProjectDetailPage() {
                         const governedTask =
                           activeNode?.type === "task" &&
                           typeof activeNode.config?.worker_id === "string";
+                        const pendingApprovalGate =
+                          activeNode?.type === "approval"
+                            ? getActiveFlowApprovalGate(nodeId)
+                            : null;
                         return (
                           <div
                             key={nodeId}
@@ -3674,46 +3920,56 @@ export default function ProjectDetailPage() {
                             </div>
                             <div className="flex gap-2">
                               {activeNode?.type === "approval" ? (
-                                <>
-                                  <button
-                                    onClick={() =>
-                                      handleNodeAction(nodeId, "complete", {
-                                        decision: "approved",
-                                        approved: true,
-                                      })
-                                    }
-                                    disabled={!!actionLoading}
-                                    data-testid="approval-approve-button"
-                                    className="px-2 py-1 text-xs bg-green-600/20 text-green-400 border border-green-800 rounded hover:bg-green-600/40"
-                                  >
-                                    Approve
-                                  </button>
-                                  <button
-                                    onClick={() =>
-                                      handleNodeAction(nodeId, "complete", {
-                                        decision: "edit_requested",
-                                      })
-                                    }
-                                    disabled={!!actionLoading}
-                                    data-testid="approval-edit-requested-button"
-                                    className="px-2 py-1 text-xs bg-blue-600/20 text-blue-400 border border-blue-800 rounded hover:bg-blue-600/40"
-                                  >
-                                    Request Edit
-                                  </button>
-                                  <button
-                                    onClick={() =>
-                                      handleNodeAction(nodeId, "complete", {
-                                        decision: "rejected",
-                                        approved: false,
-                                      })
-                                    }
-                                    disabled={!!actionLoading}
-                                    data-testid="approval-reject-button"
-                                    className="px-2 py-1 text-xs bg-red-600/20 text-red-400 border border-red-800 rounded hover:bg-red-600/40"
-                                  >
-                                    Reject
-                                  </button>
-                                </>
+                                <div className="flex flex-col items-end gap-2">
+                                  {pendingApprovalGate ? (
+                                    <div className="flex gap-2">
+                                      <button
+                                        onClick={() =>
+                                          handleFlowApprovalDecision(nodeId, "APPROVED")
+                                        }
+                                        disabled={!!actionLoading}
+                                        data-testid="approval-approve-button"
+                                        className="px-2 py-1 text-xs bg-green-600/20 text-green-400 border border-green-800 rounded hover:bg-green-600/40 disabled:opacity-50"
+                                      >
+                                        Approve
+                                      </button>
+                                      <button
+                                        onClick={() =>
+                                          handleFlowApprovalDecision(nodeId, "EDITS")
+                                        }
+                                        disabled={!!actionLoading}
+                                        data-testid="approval-edit-requested-button"
+                                        className="px-2 py-1 text-xs bg-blue-600/20 text-blue-400 border border-blue-800 rounded hover:bg-blue-600/40 disabled:opacity-50"
+                                      >
+                                        Request Edit
+                                      </button>
+                                      <button
+                                        onClick={() =>
+                                          handleFlowApprovalDecision(nodeId, "REJECTED")
+                                        }
+                                        disabled={!!actionLoading}
+                                        data-testid="approval-reject-button"
+                                        className="px-2 py-1 text-xs bg-red-600/20 text-red-400 border border-red-800 rounded hover:bg-red-600/40 disabled:opacity-50"
+                                      >
+                                        Reject
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <div className="text-right text-xs text-amber-200">
+                                      <p role="status">
+                                        No exact pending gate is bound to this active approval.
+                                      </p>
+                                      <button
+                                        type="button"
+                                        onClick={refreshFlowApprovalState}
+                                        disabled={!!actionLoading}
+                                        className="mt-1 min-h-10 rounded border border-amber-800 px-2 py-1 text-amber-100 hover:bg-amber-950/50 disabled:opacity-50"
+                                      >
+                                        Refresh approval state
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
                               ) : governedTask ? (
                                 <>
                                   <button
@@ -4155,12 +4411,30 @@ export default function ProjectDetailPage() {
                             ))}
                           </div>
                         )}
-                        {isGeneratedDocument && item.blob_key && (
-                          <div
-                            className="mt-2 truncate text-xxs text-indigo-300/70"
-                            title={item.blob_key}
-                          >
-                            {item.blob_key}
+                        {isGeneratedDocument && (item.document_id || item.id) && (
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handlePreviewProjectDocument(item)}
+                              className="min-h-10 rounded-lg border border-indigo-700/70 bg-indigo-950/50 px-3 py-2 text-xs font-medium text-indigo-200 hover:bg-indigo-900/60"
+                              aria-label={`Preview ${item.name}`}
+                            >
+                              Preview
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDownloadProjectDocument(item)}
+                              disabled={documentDownloadId === item.id}
+                              className="min-h-10 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-medium text-slate-200 hover:bg-slate-700 disabled:opacity-50"
+                              aria-label={`Download ${item.name}`}
+                            >
+                              {documentDownloadId === item.id ? "Preparing…" : "Download"}
+                            </button>
+                            {documentActionError?.itemId === item.id && (
+                              <p className="basis-full text-xs text-red-300" role="alert">
+                                {documentActionError.message}
+                              </p>
+                            )}
                           </div>
                         )}
                       </div>
@@ -4230,6 +4504,49 @@ export default function ProjectDetailPage() {
               Cancel
             </button>
           </div>
+        </div>
+      )}
+
+      {documentPreview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="project-document-preview-title"
+            className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-slate-700 bg-slate-900 shadow-2xl"
+          >
+            <header className="flex items-start justify-between gap-4 border-b border-slate-800 p-5">
+              <div className="min-w-0">
+                <h2 id="project-document-preview-title" className="truncate text-lg font-semibold text-white">
+                  {documentPreview.item.name}
+                </h2>
+                <p className="mt-1 text-xs text-slate-400">
+                  Read-only project document preview
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeProjectDocumentPreview}
+                className="min-h-10 rounded-lg border border-slate-700 px-3 text-sm text-slate-300 hover:bg-slate-800"
+                aria-label="Close document preview"
+              >
+                Close
+              </button>
+            </header>
+            <div className="min-h-0 overflow-auto p-5">
+              {documentPreview.loading ? (
+                <p role="status" className="text-sm text-slate-400">Loading document preview…</p>
+              ) : documentPreview.message ? (
+                <p role="alert" className="rounded-lg border border-amber-800/70 bg-amber-950/30 p-3 text-sm text-amber-200">
+                  {documentPreview.message}
+                </p>
+              ) : (
+                <pre className="whitespace-pre-wrap break-words rounded-lg bg-slate-950 p-4 text-sm leading-6 text-slate-200">
+                  {documentPreview.content}
+                </pre>
+              )}
+            </div>
+          </section>
         </div>
       )}
     </main>

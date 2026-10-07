@@ -140,31 +140,42 @@ test("prepared project runs a worker-free approval flow and exposes canonical ev
 
     const decisionResponse = await api.post(`/api/projects/${projectId}/decisions`, {
       data: {
+        gate_id: gateId,
         decision: "APPROVED",
         comments: "Approved by the disposable local integration operator.",
-        decided_by: "human",
       },
     });
     const decision = asRecord(await readJson(decisionResponse));
     expect(decisionResponse.status(), JSON.stringify(decision)).toBe(200);
     expect(decision.status).toBe("decision_recorded");
     expect(decision.gate_id).toBe(gateId);
+    expect(decision.flow_instance_id).toBe(instanceId);
 
     const noPendingResponse = await api.get(`/api/projects/${projectId}/decisions`);
     expect(noPendingResponse.status()).toBe(200);
     expect(await readJson(noPendingResponse)).toEqual([]);
 
-    const completeApproval = await api.post(`/api/flows/instances/${instanceId}/node-action`, {
-      data: {
+    const resolvedInstanceResponse = await api.get(`/api/flows/instances/${instanceId}`);
+    const resolvedInstance = asRecord(await readJson(resolvedInstanceResponse));
+    expect(resolvedInstanceResponse.status(), JSON.stringify(resolvedInstance)).toBe(200);
+    expect(resolvedInstance.status).toBe("COMPLETED");
+    expect(resolvedInstance.active_node_ids).toEqual([]);
+
+    const executionsResponse = await api.get(`/api/flows/instances/${instanceId}/executions`);
+    const executionsPayload = await readJson(executionsResponse);
+    expect(executionsResponse.status(), JSON.stringify(executionsPayload)).toBe(200);
+    expect(Array.isArray(executionsPayload)).toBe(true);
+    const executions = (executionsPayload as unknown[]).map(asRecord);
+    expect(executions).toContainEqual(
+      expect.objectContaining({
         node_id: "operator-approval",
-        action: "complete",
-        decision: "approved",
-        output: { approval_gate_id: gateId },
-      },
-    });
-    const completed = asRecord(await readJson(completeApproval));
-    expect(completeApproval.status(), JSON.stringify(completed)).toBe(200);
-    expect(completed.status).toBe("COMPLETED");
+        status: "COMPLETED",
+        output_json: expect.objectContaining({ approval_gate_id: gateId }),
+      }),
+    );
+    expect(executions).toContainEqual(
+      expect.objectContaining({ node_id: "end", status: "COMPLETED" }),
+    );
 
     const persistedProjectResponse = await api.get(`/api/projects/${projectId}`);
     const persistedProject = asRecord(await readJson(persistedProjectResponse));
