@@ -767,8 +767,36 @@ class WorkerRunController:
         readiness: WorkerReadiness | None = None
         result: WorkerResult | None = None
         try:
+            async def transition_before_dispatch(
+                target: str,
+                *,
+                expected: str,
+                **kwargs: Any,
+            ) -> dict[str, Any]:
+                persisted = await self.transition(
+                    request.run_id,
+                    target,
+                    expected=expected,
+                    **kwargs,
+                )
+                if persisted is not None:
+                    return persisted
+                current = await self.get_run(request.run_id)
+                current_state = str((current or {}).get("state") or "UNKNOWN")
+                if current_state == "CANCELLED":
+                    raise WorkerRunError(
+                        "CANCELLED",
+                        "worker run was cancelled before runtime dispatch",
+                        state="CANCELLED",
+                    )
+                raise WorkerRunError(
+                    "RUN_STATE_CONFLICT",
+                    "worker run state changed before runtime dispatch",
+                    details={"expected_state": expected, "current_state": current_state},
+                )
+
             current_state = str((await self.get_run(request.run_id) or {}).get("state") or "CREATED")
-            await self.transition(request.run_id, "VALIDATING", expected=current_state)
+            await transition_before_dispatch("VALIDATING", expected=current_state)
             if (
                 bool((request.checkpoint_policy or {}).get("required"))
                 and adapter.capabilities.checkpoint_mode == CheckpointMode.UNSUPPORTED
@@ -789,8 +817,12 @@ class WorkerRunController:
                 negotiation = protocol.as_dict()
             except ProtocolNegotiationError as exc:
                 raise WorkerRunError("PROTOCOL_NEGOTIATION_FAILED", str(exc)) from exc
-            await self.transition(request.run_id, "READY", expected="VALIDATING", negotiation=negotiation)
-            await self.transition(request.run_id, "DISPATCHING", expected="READY")
+            await transition_before_dispatch(
+                "READY",
+                expected="VALIDATING",
+                negotiation=negotiation,
+            )
+            await transition_before_dispatch("DISPATCHING", expected="READY")
             accepted = await adapter.start(request)
             runtime_run_id = accepted.runtime_run_id if accepted else None
             accepted_metadata = accepted.metadata if accepted else {}
@@ -907,14 +939,19 @@ class WorkerRunController:
             await self.transition(request.run_id, "TIMED_OUT", expected="RUNNING", error={"code": "TIMEOUT", "message": "worker run exceeded timeout"})
             return WorkerRunOutcome(run_id=request.run_id, state="TIMED_OUT", accepted=accepted, events=tuple(events), readiness=readiness, negotiation=negotiation)
         except WorkerRunError as exc:
-            current = (await self.get_run(request.run_id) or {}).get("state")
+            current_row = await self.get_run(request.run_id)
+            current = str((current_row or {}).get("state") or "")
             if current not in TERMINAL_RUN_STATES:
                 target = "CANCELLED" if exc.state == "CANCELLED" else "FAILED"
                 try:
                     await self.transition(request.run_id, target, expected=str(current), error={"code": exc.code, "message": str(exc), "details": exc.details})
                 except Exception:
                     logger.exception("Failed to persist worker run failure")
-            return WorkerRunOutcome(run_id=request.run_id, state="CANCELLED" if exc.state == "CANCELLED" else "FAILED", accepted=accepted, events=tuple(events), readiness=readiness, negotiation=negotiation)
+                current_row = await self.get_run(request.run_id)
+                current = str((current_row or {}).get("state") or "")
+            fallback_state = "CANCELLED" if exc.state == "CANCELLED" else "FAILED"
+            outcome_state = current if current in TERMINAL_RUN_STATES else fallback_state
+            return WorkerRunOutcome(run_id=request.run_id, state=outcome_state, accepted=accepted, events=tuple(events), readiness=readiness, negotiation=negotiation)
         except Exception as exc:
             logger.exception("Unexpected worker run controller failure")
             current = (await self.get_run(request.run_id) or {}).get("state")
@@ -932,9 +969,35 @@ class WorkerRunController:
         if row.get("state") in TERMINAL_RUN_STATES:
             return row
         current = str(row.get("state"))
-        if current in {"QUEUED", "CLAIMED", "CREATED"}:
-            await self.transition(run_id, "CANCELLED", expected=current, error={"code": "CANCELLED", "message": reason})
-            return await self.get_run(run_id)
+        pre_dispatch_states = {"QUEUED", "CLAIMED", "CREATED", "VALIDATING", "READY"}
+        while current in pre_dispatch_states:
+            cancelled = await self.transition(
+                run_id,
+                "CANCELLED",
+                expected=current,
+                error={"code": "CANCELLED", "message": reason},
+            )
+            if cancelled is not None:
+                return cancelled
+            row = await self.get_run(run_id)
+            if row is None or row.get("state") in TERMINAL_RUN_STATES:
+                return row
+            observed = str(row.get("state"))
+            if observed == current:
+                raise WorkerRunError(
+                    "RUN_STATE_CONFLICT",
+                    "worker run cancellation could not claim its current state",
+                    details={"state": current},
+                )
+            current = observed
+        if current not in {
+            "DISPATCHING",
+            "RUNNING",
+            "PAUSING",
+            "PAUSED",
+            "RESUMING",
+        }:
+            return row
         raw_receipt = await adapter.cancel(
             WorkerCancellation(run_id=run_id, reason=reason, requested_by=requested_by, force=force)
         )
@@ -966,15 +1029,7 @@ class WorkerRunController:
                 # request. Reconciliation/normal result settlement owns the
                 # terminal state in that case.
                 return await self.get_run(run_id)
-        if current in {
-            "RUNNING",
-            "DISPATCHING",
-            "READY",
-            "VALIDATING",
-            "PAUSING",
-            "PAUSED",
-            "RESUMING",
-        }:
+        if current in {"DISPATCHING", "RUNNING", "PAUSING", "PAUSED", "RESUMING"}:
             await self.transition(run_id, "CANCELLED", expected=current, error={"code": "CANCELLED", "message": reason})
         return await self.get_run(run_id)
 
