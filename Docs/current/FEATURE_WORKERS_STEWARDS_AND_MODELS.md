@@ -128,6 +128,36 @@ cleanup at every iteration; it is a consistency soak for the local Compose
 boundary, not independent-host, provider-outage, sandbox, deployment-load,
 chaos, or disaster-recovery evidence.
 
+## Current operator dashboard surfaces (2026-10-07)
+
+- The Model Profiles page can save a catalogue-backed draft version and
+  approve/activate one exact version after the operator enters a reason. The
+  API binds the decision to the requested `version_id` and returns the durable
+  approval record; the page displays that receipt. Focused model-activation
+  API, storage, and contract coverage passes (15 tests). This does not provide
+  provider-backed model execution.
+- Governance's recent Worker Runs link each exact run ID to a detail page. The
+  page reads durable run identity, events, transitions, artifacts, usage, and
+  checkpoints through the authenticated dashboard proxy. It offers cancel,
+  pause, and resume requests with clear API errors; cancellation remains
+  accepted-but-unconfirmed until a refreshed run state proves termination.
+  Pause/resume support depends on the pinned adapter and checkpoint capability,
+  with unsupported capability reasons surfaced to the operator.
+- The pause/resume/cancel API routes independently require an operator
+  credential, reject extra request fields, and attribute the action to the
+  authenticated principal rather than caller-supplied actor metadata. The
+  dashboard BFF requires JSON, caps each action body at 8 KiB, validates
+  action-specific fields (including bounded reasons, a boolean `force`, and an
+  optional UUID checkpoint), and bounds read pagination. If a read or action
+  returns 401/403, the page clears cached run evidence and hides the controls.
+- A current-source isolated Webpack build generated 81 routes and passed
+  TypeScript; the mocked model-profile activation, WorkerRun operations, and PM
+  setup Playwright specs passed 8/8 with no live orchestrator/provider calls.
+  This targeted run does not replace the maintained 105-pass local dashboard
+  suite or certify provider-backed execution. The focused WorkerRun backend
+  route suite passes 40 tests. The payload-safe run summary is retained at
+  [`dashboard_feature_smoke_2026-10-07.json`](../../mas/docs/provenance/dashboard_feature_smoke_2026-10-07.json).
+
 ## Purpose
 
 AIAT keeps stable organisational workers while allowing their execution engines to evolve. A specialist is an AIAT shell backed by a certified adapter and pinned OSS runtime. One dedicated steward governs each external worker's documentation, compatibility, candidates, certification, rollout, and rollback.
@@ -792,6 +822,8 @@ response evidence.
 - Metadata-only provenance/evaluator group (`cbdcfa6`, enforcement hardening `9b84af3`): [`mas/scripts/check_provenance.py`](../../mas/scripts/check_provenance.py), [`worker_registry/evaluator.py`](../../mas/packages/mas-core/mas_core/worker_registry/evaluator.py), [`operational_promotion_checks`](../../mas/packages/mas-core/mas_core/worker_registry/steward.py), and the default-manifest regression tests. Source/version provenance and technical security remain operational gates; detected, missing, unclassified, or restricted licence values are retained as operator notices only and cannot block certification, rollout, activation, or normal internal use. The same group records the current coding/tester security findings state and keeps both manifests pending until technical triage passes.
 - Executive reconciliation verifier: [`mas/scripts/check_executive_reconciliation.py`](../../mas/scripts/check_executive_reconciliation.py)
 - Model profiles/resolver: [`mas/packages/mas-core/mas_core/llm_gateway/`](../../mas/packages/mas-core/mas_core/llm_gateway/)
+- Exact model-version approval UI/API: [`models/profiles/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/models/profiles/page.tsx>), [`activate/route.ts`](<../../mas/apps/mas-dashboard/app/api/model-profiles/[profile_id]/versions/[version_id]/activate/route.ts>), [`orchestrator_api/main.py`](../../mas/apps/orchestrator-api/orchestrator_api/main.py), and [`test_model_profile_activation.py`](../../mas/apps/orchestrator-api/tests/test_model_profile_activation.py). A reasoned decision applies to one exact version and returns its durable audit receipt.
+- WorkerRun operator detail/actions: [`governance/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/governance/page.tsx>), [`workers/runs/[run_id]/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/workers/runs/[run_id]/page.tsx>), [`governance/runs/[run_id]/route.ts`](<../../mas/apps/mas-dashboard/app/api/governance/runs/[run_id]/route.ts>), [`governance/runs/[run_id]/[resource]/route.ts`](<../../mas/apps/mas-dashboard/app/api/governance/runs/[run_id]/[resource]/route.ts>), and [`worker-run-operations.spec.ts`](../../mas/apps/mas-dashboard/e2e/worker-run-operations.spec.ts). The current-source mocked operator/detail scenarios pass in the targeted Playwright run; provider-backed WorkerRun execution remains separate.
 - Model health/cooldown state: [`mas/packages/mas-core/mas_core/llm_gateway/rate_limits.py`](../../mas/packages/mas-core/mas_core/llm_gateway/rate_limits.py)
 - Model catalogue/export/live check: [`mas/packages/mas-core/mas_core/llm_gateway/model_profiles.py`](../../mas/packages/mas-core/mas_core/llm_gateway/model_profiles.py), [`mas/scripts/check_model_profile_catalogue.py`](../../mas/scripts/check_model_profile_catalogue.py), [`/model-profiles/catalogue`](../../mas/apps/orchestrator-api/orchestrator_api/main.py), and the operator dashboard proxy [`catalogue/route.ts`](<../../mas/apps/mas-dashboard/app/api/governance/model-profiles/catalogue/route.ts>) (`ab0a0fe`)
 - Default profile bootstrap: [`mas/packages/mas-core/mas_core/llm_gateway/default_profiles.py`](../../mas/packages/mas-core/mas_core/llm_gateway/default_profiles.py), invoked idempotently by orchestrator startup and [`/system/seed-default-company`](../../mas/apps/orchestrator-api/orchestrator_api/main.py) (`09bdd19`)
