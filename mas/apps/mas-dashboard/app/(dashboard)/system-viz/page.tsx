@@ -901,6 +901,19 @@ export default function SystemVisualizationPage() {
                             </ul>
                           </DetailSection>
                         )}
+                        <div className="space-y-1">
+                          <Link
+                            href="/workers"
+                            aria-label={`Open worker registry for ${team.displayName}`}
+                            className="inline-flex min-h-11 items-center gap-2 rounded-md border border-blue-500/40 bg-blue-500/10 px-3 py-2 text-sm font-medium text-blue-100 transition-colors hover:bg-blue-500/20 focus-visible:ring-2 focus-visible:ring-blue-400/70"
+                          >
+                            <Users size={14} aria-hidden="true" />
+                            Open worker registry
+                          </Link>
+                          <p className="text-xs text-slate-500">
+                            Search the roster by team ID: <span className="font-mono text-slate-400">{team.teamId}</span>
+                          </p>
+                        </div>
                         <DetailSection
                           label={`Allowed Tools (${team.admin.tools.length})`}
                           empty="No tools registered"
