@@ -124,6 +124,34 @@ def _inspect_opencode_runtime(compose_path: Path) -> dict[str, Any]:
 
     if _service_networks(service) != {OPENCODE_NETWORK}:
         errors.append(f"{OPENCODE_SERVICE}: networks must be exactly [{OPENCODE_NETWORK!r}]")
+    if str(service.get("runtime") or "").strip() != "runsc":
+        errors.append(f"{OPENCODE_SERVICE}: runtime must be explicitly set to runsc")
+    if service.get("env_file"):
+        errors.append(f"{OPENCODE_SERVICE}: broad env_file injection is forbidden")
+    environment = service.get("environment")
+    allowed_environment = {
+        "OPENCODE_SERVER_USERNAME",
+        "OPENCODE_SERVER_PASSWORD",
+        "AIAT_GATEWAY_URL",
+        "AIAT_GATEWAY_API_KEY",
+    }
+    if not isinstance(environment, dict):
+        errors.append(f"{OPENCODE_SERVICE}: environment must be an explicit allowlist mapping")
+        environment_names: set[str] = set()
+    else:
+        environment_names = {str(name) for name in environment}
+        unexpected_environment = sorted(environment_names - allowed_environment)
+        missing_environment = sorted(allowed_environment - environment_names)
+        if unexpected_environment:
+            errors.append(
+                f"{OPENCODE_SERVICE}: environment contains non-allowlisted names: "
+                + ", ".join(unexpected_environment)
+            )
+        if missing_environment:
+            errors.append(
+                f"{OPENCODE_SERVICE}: environment is missing required names: "
+                + ", ".join(missing_environment)
+            )
     if service.get("ports"):
         errors.append(f"{OPENCODE_SERVICE}: host ports must not be published")
     if service.get("read_only") is not True:
@@ -171,7 +199,9 @@ def _inspect_opencode_runtime(compose_path: Path) -> dict[str, Any]:
         "status": "fail" if errors else "pass",
         "errors": errors,
         "service": OPENCODE_SERVICE,
+        "runtime": str(service.get("runtime") or ""),
         "network": sorted(_service_networks(service)),
+        "environment_names": sorted(environment_names),
         "user": user,
         "read_only": service.get("read_only") is True,
         "cap_drop_all": "ALL" in cap_drop,

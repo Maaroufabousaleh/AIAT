@@ -28,7 +28,14 @@ def test_static_sandbox_declarations_pass() -> None:
     assert report["worker_count"] == 39
     assert report["hardened_worker_count"] > 0
     assert report["opencode_runtime"]["status"] == "pass"
+    assert report["opencode_runtime"]["runtime"] == "runsc"
     assert report["opencode_runtime"]["network"] == ["internal"]
+    assert report["opencode_runtime"]["environment_names"] == [
+        "AIAT_GATEWAY_API_KEY",
+        "AIAT_GATEWAY_URL",
+        "OPENCODE_SERVER_PASSWORD",
+        "OPENCODE_SERVER_USERNAME",
+    ]
     assert report["opencode_runtime"]["read_only"] is True
     assert report["opencode_runtime"]["cap_drop_all"] is True
     assert report["opencode_runtime"]["no_new_privileges"] is True
@@ -38,9 +45,12 @@ def test_static_sandbox_declarations_pass() -> None:
 def test_static_sandbox_contract_rejects_unsafe_opencode_runtime(tmp_path: Path) -> None:
     compose = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
     service = compose["services"]["opencode-runtime"]
+    service["runtime"] = "runc"
     service["read_only"] = False
     service["networks"] = ["internal", "workers"]
     service["cap_drop"] = []
+    service["env_file"] = ["../../../.env"]
+    service["environment"]["POSTGRES_PASSWORD"] = "${POSTGRES_PASSWORD}"
     path = tmp_path / "compose.yml"
     path.write_text(yaml.safe_dump(compose, sort_keys=False), encoding="utf-8")
 
@@ -57,6 +67,9 @@ def test_static_sandbox_contract_rejects_unsafe_opencode_runtime(tmp_path: Path)
     assert "networks must be exactly" in errors
     assert "read_only must be true" in errors
     assert "cap_drop must include ALL" in errors
+    assert "runtime must be explicitly set to runsc" in errors
+    assert "broad env_file injection is forbidden" in errors
+    assert "POSTGRES_PASSWORD" in errors
 
 
 def test_live_sandbox_readiness_is_blocked_without_docker_engine(monkeypatch) -> None:

@@ -509,12 +509,12 @@ services:
         OPENCODE_VERSION: "1.17.13"
         OPENCODE_TARBALL_SHA512: "qUb9m6X6f9/imuDxc2tUcN+E1vx1XWjmQWJo2Pk/t+cNxqt5KGkaMF89CvJK6QQP7gx1E82gKpV7n1QiI5spxQ=="
     restart: unless-stopped
+    # OpenCode executes untrusted coding tasks. Keep the whole runtime service
+    # inside the canonical gVisor tier; never let Docker silently select runc.
+    runtime: runsc
     user: "10001:10001"
     networks:
       - internal
-    env_file:
-      - path: ../../../.env
-        format: raw
     depends_on:
       opencode-workspace-init:
         condition: service_completed_successfully
