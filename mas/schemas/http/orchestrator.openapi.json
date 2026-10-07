@@ -1931,11 +1931,18 @@
           },
           "decided_by": {
             "default": "human",
+            "description": "Legacy compatibility field; persisted attribution uses the authenticated principal.",
             "title": "Decided By",
             "type": "string"
           },
           "decision": {
-            "description": "APPROVED | REJECTED | EDITS | CANCELLED",
+            "description": "APPROVED | REJECTED | EDITS | CANCELLED (case-insensitive)",
+            "enum": [
+              "APPROVED",
+              "REJECTED",
+              "EDITS",
+              "CANCELLED"
+            ],
             "title": "Decision",
             "type": "string"
           },
@@ -1950,6 +1957,19 @@
               }
             ],
             "title": "Edits"
+          },
+          "gate_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Exact project approval gate to decide; omitted for legacy newest-pending behavior.",
+            "title": "Gate Id"
           }
         },
         "required": [
@@ -17255,7 +17275,7 @@
     },
     "/projects/{project_id}/decisions": {
       "post": {
-        "description": "Human submits a decision (approve/reject/edit).",
+        "description": "An authenticated operator submits a project approval decision.",
         "operationId": "submit_decision_projects__project_id__decisions_post",
         "parameters": [
           {

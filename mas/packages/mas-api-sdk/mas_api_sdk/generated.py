@@ -267,8 +267,9 @@ class DashboardSectionACLRequest(TypedDict):
 class DecisionRequest(TypedDict):
     comments: NotRequired[str | Any]
     decided_by: NotRequired[str]
-    decision: Required[str]
+    decision: Required[Literal['APPROVED', 'REJECTED', 'EDITS', 'CANCELLED']]
     edits: NotRequired[dict[str, Any] | Any]
+    gate_id: NotRequired[str | Any]
 
 class DoclingCertificationRequest(TypedDict):
     artifact_path: NotRequired[str | Any]

@@ -1710,10 +1710,27 @@ class TransitionRequest(BaseModel):
 
 
 class DecisionRequest(BaseModel):
-    decision: str = Field(..., description="APPROVED | REJECTED | EDITS | CANCELLED")
+    decision: Literal["APPROVED", "REJECTED", "EDITS", "CANCELLED"] = Field(
+        ...,
+        description="APPROVED | REJECTED | EDITS | CANCELLED (case-insensitive)",
+    )
+    gate_id: UUID | None = Field(
+        default=None,
+        description="Exact project approval gate to decide; omitted for legacy newest-pending behavior.",
+    )
     comments: str | None = None
     edits: dict[str, Any] | None = None
-    decided_by: str = "human"
+    decided_by: str = Field(
+        default="human",
+        description="Legacy compatibility field; persisted attribution uses the authenticated principal.",
+    )
+
+    @field_validator("decision", mode="before")
+    @classmethod
+    def normalize_decision(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return value.strip().upper()
+        return value
 
 
 class CreateDocumentRequest(BaseModel):
@@ -5570,34 +5587,59 @@ async def get_pending_decisions(project_id: UUID) -> list[dict[str, Any]]:
 
 
 @app.post("/projects/{project_id}/decisions")
-async def submit_decision(project_id: UUID, req: DecisionRequest) -> dict[str, Any]:
-    """Human submits a decision (approve/reject/edit)."""
+async def submit_decision(
+    project_id: UUID,
+    req: DecisionRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """An authenticated operator submits a project approval decision."""
+    _require_operator_identity(request)
+    return await _submit_project_decision(
+        project_id,
+        req,
+        actor_id=_authenticated_principal(request),
+    )
+
+
+async def _submit_project_decision(
+    project_id: UUID,
+    req: DecisionRequest,
+    *,
+    actor_id: str,
+) -> dict[str, Any]:
+    """Persist and apply a decision for already-authorized API/internal callers."""
     storage = _storage()
     decision = req.decision.upper()
     project = await storage.get_project(project_id)
     if project is None:
         raise HTTPException(404, f"Project {project_id} not found")
 
-    # Find the latest pending gate
+    # Preserve the legacy newest-pending behavior for callers that do not
+    # identify a gate. When a gate ID is supplied, scope the lookup by both
+    # project and ID and never fall back to a different pending gate.
     async with storage.engine.connect() as conn:
         from mas_core.memory import models as t
 
-        gate = (
-            (
-                await conn.execute(
-                    t.approval_gates.select()
-                    .where(t.approval_gates.c.project_id == project_id)
-                    .where(t.approval_gates.c.status == "PENDING")
-                    .order_by(t.approval_gates.c.created_at.desc())
-                    .limit(1)
-                )
-            )
-            .mappings()
-            .first()
+        gate_query = t.approval_gates.select().where(
+            t.approval_gates.c.project_id == project_id
         )
+        if req.gate_id is not None:
+            gate_query = gate_query.where(t.approval_gates.c.id == req.gate_id)
+        else:
+            gate_query = (
+                gate_query.where(t.approval_gates.c.status == "PENDING")
+                .order_by(t.approval_gates.c.created_at.desc())
+                .limit(1)
+            )
+        gate = (await conn.execute(gate_query)).mappings().first()
 
     if gate is None:
+        if req.gate_id is not None:
+            raise HTTPException(404, "Approval gate not found for this project")
         raise HTTPException(404, "No pending decisions for this project")
+
+    if req.gate_id is not None and str(gate.get("status", "")).upper() != "PENDING":
+        raise HTTPException(409, "Approval gate is no longer pending")
 
     gate_id = gate["id"]
 
@@ -5605,7 +5647,7 @@ async def submit_decision(project_id: UUID, req: DecisionRequest) -> dict[str, A
     gate_updated = await storage.decide_approval_gate(
         gate_id,
         status=decision,
-        decided_by=req.decided_by,
+        decided_by=actor_id,
         justification=req.comments,
         human_input=req.edits,
     )
@@ -5630,7 +5672,7 @@ async def submit_decision(project_id: UUID, req: DecisionRequest) -> dict[str, A
             project_id=str(project_id),
             current_state=current_state,
             event=event,
-            actor_id=req.decided_by,
+            actor_id=actor_id,
             context={
                 "decision": req.decision,
                 "comments": req.comments,
@@ -15602,7 +15644,7 @@ async def _handle_ceo_project_intent(
                 "trace": ["parsed_project_decision_intent", "required_decision_justification"],
             }
 
-        result = await submit_decision(
+        result = await _submit_project_decision(
             project_id,
             DecisionRequest(
                 decision=decision,
@@ -15610,6 +15652,7 @@ async def _handle_ceo_project_intent(
                 edits={"request": comments} if decision == "EDITS" and comments else None,
                 decided_by="human_operator",
             ),
+            actor_id=principal or "human_operator",
         )
         updated_project = await storage.get_project(project_id)
         selected_gate = pending[0]

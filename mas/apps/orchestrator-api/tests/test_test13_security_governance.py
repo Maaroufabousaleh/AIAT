@@ -662,6 +662,7 @@ async def test_submit_decision_project_not_found(client):
     r = await client.post(
         f"/projects/{uuid4()}/decisions",
         json={"decision": "APPROVED", "decided_by": "human", "comments": ""},
+        headers={"X-API-Key": "test-operator-key"},
     )
     assert r.status_code == 404
 
@@ -678,6 +679,7 @@ async def test_submit_decision_no_pending_gate(client):
     r = await client.post(
         f"/projects/{PROJECT_ID}/decisions",
         json={"decision": "APPROVED", "decided_by": "human", "comments": ""},
+        headers={"X-API-Key": "test-operator-key"},
     )
     assert r.status_code == 404
 

@@ -337,10 +337,11 @@ export type DashboardSectionACLRequest = {
 export type DecisionRequest = {
   comments?: (string | null);
   decided_by?: string;
-  decision: string;
+  decision: ("APPROVED" | "REJECTED" | "EDITS" | "CANCELLED");
   edits?: ({
   [key: string]: unknown;
 } | null);
+  gate_id?: (string | null);
 };
 
 export type DoclingCertificationRequest = {
