@@ -20,6 +20,7 @@ import {
   Users,
   Send,
   ShieldCheck,
+  BrainCircuit,
   type LucideIcon,
 } from "lucide-react";
 import ThemeToggle from "@/components/ThemeToggle";
@@ -79,6 +80,7 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
       { href: "/system", label: "System", icon: Settings },
       { href: "/tools",  label: "Tools",  icon: Wrench },
       { href: "/governance", label: "Governance", icon: ShieldCheck },
+      { href: "/models", label: "Model Profiles", icon: BrainCircuit },
       { href: "/integrations", label: "PM Integrations", icon: Network },
     ],
   },
