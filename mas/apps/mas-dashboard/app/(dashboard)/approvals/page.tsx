@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUpRight, Check, FolderKanban, RefreshCw, ShieldCheck, X } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
@@ -95,6 +96,21 @@ function rowTimestamp(row: InboxRow): number {
 }
 
 export default function ApprovalsPage() {
+  return (
+    <Suspense fallback={<main className="dashboard-page min-h-full p-6 lg:p-8" aria-label="Privileged action approvals"><p role="status">Loading approvals…</p></main>}>
+      <ApprovalsContent />
+    </Suspense>
+  );
+}
+
+function ApprovalsContent() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const queryString = searchParams.toString();
+  const requestedId = new URLSearchParams(queryString).get("request_id");
+  const invalidRequestedId = requestedId !== null && !CEO_REQUEST_ID_PATTERN.test(requestedId);
+  const requestedRequestId = requestedId && !invalidRequestedId ? requestedId : null;
   const [pending, setPending] = useState<ApprovalRequest[]>([]);
   const [projectDecisions, setProjectDecisions] = useState<ProjectDecision[]>([]);
   const [projectCursor, setProjectCursor] = useState<string | null>(null);
@@ -111,15 +127,27 @@ export default function ApprovalsPage() {
   const [notice, setNotice] = useState("");
   const submittingRef = useRef(false);
   const pagingRef = useRef(false);
-  const requestDeepLinkHandledRef = useRef(false);
   const requestDeepLinkedIdRef = useRef<string | null>(null);
   const requestDeepLinkFocusRef = useRef<string | null>(null);
   const requestDetailsRef = useRef<HTMLElement | null>(null);
+  const refreshGenerationRef = useRef(0);
+  const refreshFailedRef = useRef(false);
+  const preserveNoticeOnRefreshRef = useRef(false);
+
+  const updateRequestQuery = useCallback((requestId: string | null) => {
+    const nextParams = new URLSearchParams(queryString);
+    if (requestId) nextParams.set("request_id", requestId);
+    else nextParams.delete("request_id");
+    const query = nextParams.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  }, [pathname, queryString, router]);
 
   const refresh = useCallback(async () => {
+    const linkedRequestId = requestedRequestId;
+    const refreshGeneration = ++refreshGenerationRef.current;
     setLoading(true);
     setError("");
-    setNotice("");
+    if (!preserveNoticeOnRefreshRef.current) setNotice("");
     try {
       const projectQuery = new URLSearchParams({ limit: String(PAGE_SIZE) });
       const [pendingRows, auditRows, projectPage] = await Promise.all([
@@ -127,46 +155,45 @@ export default function ApprovalsPage() {
         requestJson<ApprovalAuditRow[]>("/api/ceo/privileged-actions/audit"),
         requestJson<ProjectDecisionPage>(`/api/approvals/project-decisions?${projectQuery.toString()}`),
       ]);
-      setPending(Array.isArray(pendingRows) ? pendingRows.slice(0, 100) : []);
+      if (refreshGeneration !== refreshGenerationRef.current) return;
+      if (refreshFailedRef.current) {
+        setReason("");
+        setConfirmed(false);
+        refreshFailedRef.current = false;
+      }
+      const pendingList = Array.isArray(pendingRows) ? pendingRows.slice(0, 100) : [];
+      setPending(pendingList);
       setAudit(Array.isArray(auditRows) ? auditRows : []);
       setProjectDecisions(Array.isArray(projectPage.items) ? projectPage.items : []);
       setProjectCursor(typeof projectPage.next_cursor === "string" ? projectPage.next_cursor : null);
-      if (!requestDeepLinkHandledRef.current) {
-        requestDeepLinkHandledRef.current = true;
-        const linkedRequestId = new URLSearchParams(window.location.search).get("request_id");
-        if (linkedRequestId && CEO_REQUEST_ID_PATTERN.test(linkedRequestId)) {
-          const linkedRequest = pendingRows.find((item) => item.id === linkedRequestId);
-          if (linkedRequest) {
-            requestDeepLinkedIdRef.current = linkedRequest.id;
-            setSelected(linkedRequest);
+      if (invalidRequestedId) {
+        requestDeepLinkedIdRef.current = null;
+        setSelected(null);
+        setNotice("The linked CEO request identifier is invalid. Refresh the inbox to inspect the current queue.");
+      } else if (linkedRequestId) {
+        const linkedRequest = pendingList.find((item) => item.id === linkedRequestId);
+        if (linkedRequest) {
+          if (requestDeepLinkedIdRef.current !== linkedRequestId) {
             setReason("");
             setConfirmed(false);
-            requestDeepLinkFocusRef.current = linkedRequest.id;
-          } else {
-            setSelected(null);
-            setNotice("The linked CEO request is not currently pending. Refresh the inbox to inspect the current queue.");
+            requestDeepLinkFocusRef.current = linkedRequestId;
           }
+          requestDeepLinkedIdRef.current = linkedRequestId;
+          setSelected(linkedRequest);
         } else {
+          requestDeepLinkedIdRef.current = linkedRequestId;
           setSelected(null);
+          setNotice("The linked CEO request is not currently pending. Refresh the inbox to inspect the current queue.");
         }
       } else {
-        const linkedRequestId = requestDeepLinkedIdRef.current;
-        if (linkedRequestId) {
-          const linkedRequest = pendingRows.find((item) => item.id === linkedRequestId);
-          if (linkedRequest) {
-            setSelected(linkedRequest);
-          } else {
-            requestDeepLinkedIdRef.current = null;
-            setSelected(null);
-            setNotice("The linked CEO request is no longer pending. Refresh the inbox to inspect its current status.");
-          }
-        } else {
-          setSelected(null);
-        }
+        requestDeepLinkedIdRef.current = null;
+        setSelected(null);
       }
       setStaleRequestId(null);
       setAccessDenied(false);
     } catch (cause) {
+      if (refreshGeneration !== refreshGenerationRef.current) return;
+      refreshFailedRef.current = true;
       const status = cause instanceof Error ? (cause as HttpError).status : undefined;
       if (status === 401 || status === 403) {
         setPending([]);
@@ -181,9 +208,12 @@ export default function ApprovalsPage() {
         setError(cause instanceof Error ? cause.message : "Approval data is unavailable.");
       }
     } finally {
-      setLoading(false);
+      if (refreshGeneration === refreshGenerationRef.current) {
+        setLoading(false);
+        preserveNoticeOnRefreshRef.current = false;
+      }
     }
-  }, []);
+  }, [invalidRequestedId, requestedRequestId]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
@@ -248,8 +278,11 @@ export default function ApprovalsPage() {
       setConfirmed(false);
       requestDeepLinkedIdRef.current = null;
       setSelected(null);
-      await refresh();
-      setNotice(`Decision recorded: ${approved ? "approved" : "rejected"}. The governed action was not dispatched from this inbox.`);
+      setPending((current) => current.filter((item) => item.id !== selected.id));
+      const decisionNotice = `Decision recorded: ${approved ? "approved" : "rejected"}. The governed action was not dispatched from this inbox.`;
+      preserveNoticeOnRefreshRef.current = true;
+      setNotice(decisionNotice);
+      updateRequestQuery(null);
     } catch (cause) {
       const status = cause instanceof Error ? (cause as HttpError).status : undefined;
       if (status === 401 || status === 403) {
@@ -274,7 +307,7 @@ export default function ApprovalsPage() {
   };
 
   const selectedIsPending = selected
-    ? pending.some((item) => item.id === selected.id) && staleRequestId !== selected.id
+    ? !loading && !error && requestedRequestId === selected.id && pending.some((item) => item.id === selected.id) && staleRequestId !== selected.id
     : false;
 
   return (
@@ -326,7 +359,7 @@ export default function ApprovalsPage() {
                           <p className="mt-1 text-xs text-slate-400">Requested by {row.item.actor_id} ({row.item.actor_role})</p>
                           <p className="mt-1 text-xs text-slate-500">{formatDate(row.created_at)}</p>
                         </div>
-                        <button type="button" onClick={() => { requestDeepLinkedIdRef.current = null; setSelected(row.item); setReason(""); setConfirmed(false); setStaleRequestId(null); setNotice(""); }} aria-pressed={selected?.id === row.id} className="min-h-11 rounded border border-slate-700 px-3 py-2 text-xs font-medium text-blue-200 hover:bg-slate-800">View details</button>
+                        <button type="button" onClick={() => { setSelected(row.item); setReason(""); setConfirmed(false); setStaleRequestId(null); setNotice(""); updateRequestQuery(row.id); }} aria-pressed={selected?.id === row.id} className="min-h-11 rounded border border-slate-700 px-3 py-2 text-xs font-medium text-blue-200 hover:bg-slate-800">View details</button>
                       </div>
                     </li>
                   ) : (
@@ -379,7 +412,7 @@ export default function ApprovalsPage() {
               <section ref={requestDetailsRef} tabIndex={-1} className="rounded-xl border border-blue-400/30 bg-slate-900/80 p-5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300" aria-labelledby="request-details-heading">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div><h2 id="request-details-heading" className="text-base font-semibold text-white">Request details</h2><p className="mt-1 break-all font-mono text-xs text-slate-500">{selected.id}</p></div>
-                  <button type="button" onClick={() => { requestDeepLinkedIdRef.current = null; setSelected(null); }} className="min-h-11 rounded border border-slate-700 px-3 py-2 text-xs text-slate-300 hover:bg-slate-800">Close details</button>
+                  <button type="button" onClick={() => { requestDeepLinkedIdRef.current = null; setSelected(null); updateRequestQuery(null); }} className="min-h-11 rounded border border-slate-700 px-3 py-2 text-xs text-slate-300 hover:bg-slate-800">Close details</button>
                 </div>
                 <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
                   <div><dt className="text-xs text-slate-500">Action</dt><dd className="mt-1 break-all text-slate-100">{selected.action}</dd></div>
@@ -400,7 +433,7 @@ export default function ApprovalsPage() {
                       <button type="button" onClick={() => void decide(false)} disabled={!confirmed || !reason.trim() || submitting} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-rose-500/50 px-4 py-2 text-sm font-medium text-rose-200 hover:bg-rose-500/10 disabled:cursor-not-allowed disabled:opacity-50"><X size={15} /> Reject request</button>
                     </div>
                   </div>
-                ) : <p className="mt-5 border-t border-slate-800 pt-4 text-sm text-slate-400">This request is no longer pending. Refresh the inbox to see its current status.</p>}
+                ) : <p role="status" className="mt-5 border-t border-slate-800 pt-4 text-sm text-slate-400">{loading || error || invalidRequestedId || requestedRequestId !== selected.id ? "Current pending status could not be verified. Refresh the inbox before recording a decision." : "This request is no longer pending. Refresh the inbox to see its current status."}</p>}
               </section>
             )}
           </div>

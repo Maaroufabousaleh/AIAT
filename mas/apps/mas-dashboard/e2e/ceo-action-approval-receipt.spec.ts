@@ -3,6 +3,7 @@ import { expect, test } from "@playwright/test";
 import { authenticate } from "./auth";
 
 const REQUEST_ID = "70000000-0000-4000-8000-000000000001";
+const SECOND_REQUEST_ID = "70000000-0000-4000-8000-000000000002";
 const ACTION = "system.shutdown";
 
 const pendingRequest = {
@@ -15,6 +16,12 @@ const pendingRequest = {
   payload_json: { reason: "planned maintenance" },
   requested_at: "2026-10-07T12:00:00Z",
   decision: "pending_approval",
+};
+
+const secondPendingRequest = {
+  ...pendingRequest,
+  id: SECOND_REQUEST_ID,
+  action: "team.restart",
 };
 
 test("CEO privileged-action receipt opens the matching approval without deciding it", async ({ page }) => {
@@ -86,7 +93,7 @@ test("CEO privileged-action receipt opens the matching approval without deciding
       return;
     }
     if (path === "/api/ceo/privileged-actions/pending" && request.method() === "GET") {
-      await route.fulfill({ json: [pendingRequest] });
+      await route.fulfill({ json: [pendingRequest, secondPendingRequest] });
       return;
     }
     if (path === "/api/ceo/privileged-actions/audit" && request.method() === "GET") {
@@ -135,6 +142,16 @@ test("CEO privileged-action receipt opens the matching approval without deciding
   await expect(details).toBeFocused();
   await expect(details.getByRole("button", { name: "Approve request" })).toBeDisabled();
   await expect(details.getByRole("button", { name: "Reject request" })).toBeDisabled();
+
+  await page.evaluate((id) => {
+    window.history.pushState({}, "", `/approvals?request_id=${id}`);
+  }, SECOND_REQUEST_ID);
+  await expect(page).toHaveURL(new RegExp(`/approvals\\?request_id=${SECOND_REQUEST_ID}`));
+  await expect(details.getByText(SECOND_REQUEST_ID)).toBeVisible();
+  await expect(details.getByText("team.restart", { exact: true })).toBeVisible();
+  await approvals.getByRole("button", { name: "Refresh approvals" }).click();
+  await expect(details.getByText(SECOND_REQUEST_ID)).toBeVisible();
+  await expect(details.getByText("team.restart", { exact: true })).toBeVisible();
 
   expect(actionPosts).toBe(1);
   expect(approvalPosts).toBe(0);

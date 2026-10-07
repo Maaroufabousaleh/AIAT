@@ -110,3 +110,42 @@ test("approval page presents a retryable error when the audit API is unavailable
   await main.getByRole("button", { name: "Retry" }).click();
   await expect(main.getByText("No privileged-action requests are waiting for review.")).toBeVisible();
 });
+
+test("approval decisions stay disabled until a failed refresh recovers", async ({ page }) => {
+  let fail = false;
+  await page.route((url) => url.pathname === "/api/ceo/privileged-actions/pending", async (route) => {
+    if (fail) {
+      await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "temporarily unavailable" }) });
+      return;
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([pendingRequest]) });
+  });
+  await page.route((url) => url.pathname === "/api/ceo/privileged-actions/audit", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await mockEmptyProjectInbox(page);
+  await authenticate(page, `/approvals?request_id=${pendingRequest.id}`);
+
+  const main = page.getByRole("main", { name: "Privileged action approvals" });
+  const details = main.getByRole("region", { name: "Request details" });
+  await expect(details.getByLabel("Decision reason (required)")).toBeVisible();
+  await details.getByLabel("Decision reason (required)").fill("Reviewed the request details");
+  await details.getByLabel("I reviewed this request and intend to record a decision.").check();
+
+  fail = true;
+  await main.getByRole("button", { name: "Refresh approvals" }).click();
+  await expect(main.getByText("Request failed (HTTP 503)")).toBeVisible();
+  await expect(details.getByText("Current pending status could not be verified. Refresh the inbox before recording a decision.")).toBeVisible();
+  await expect(details.getByRole("button", { name: "Approve request" })).toHaveCount(0);
+  await expect(details.getByRole("button", { name: "Reject request" })).toHaveCount(0);
+
+  fail = false;
+  await main.getByRole("button", { name: "Retry" }).click();
+  await expect(details.getByRole("button", { name: "Approve request" })).toBeDisabled();
+  await expect(details.getByRole("button", { name: "Reject request" })).toBeDisabled();
+  await expect(details.getByLabel("Decision reason (required)")).toHaveValue("");
+  await details.getByLabel("Decision reason (required)").fill("Re-reviewed after the inbox recovered");
+  await details.getByLabel("I reviewed this request and intend to record a decision.").check();
+  await expect(details.getByRole("button", { name: "Approve request" })).toBeEnabled();
+  await expect(details.getByRole("button", { name: "Reject request" })).toBeEnabled();
+});
