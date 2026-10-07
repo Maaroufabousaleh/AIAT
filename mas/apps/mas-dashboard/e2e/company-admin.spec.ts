@@ -117,6 +117,7 @@ test("company registry creates a company and applies a reviewed manifest through
   await expect(main.getByRole("heading", { name: "AIAT Research" })).toBeVisible();
   await expect(main.getByLabel("Manifest JSON")).toHaveValue(/aiat-research/);
 
+  await main.getByText("Advanced manifest JSON").click();
   const editor = main.getByLabel("Manifest JSON");
   const starter = JSON.parse(await editor.inputValue()) as Record<string, unknown>;
   await editor.fill(JSON.stringify({ ...starter, description: "invalid for this fixture" }, null, 2));
