@@ -127,6 +127,63 @@ test("project decision paging sends the cursor and appends bounded rows", async 
   expect(queries[1].get("cursor")).toBe("page-two-cursor");
 });
 
+test("refresh discards a project decision page started from the previous inbox snapshot", async ({ page }) => {
+  const staleDecision = {
+    ...projectDecision,
+    id: "20000000-0000-4000-8000-000000000099",
+    project_id: "30000000-0000-4000-8000-000000000099",
+    project_name: "Stale project from prior queue",
+  };
+  const refreshedDecision = {
+    ...projectDecision,
+    id: "20000000-0000-4000-8000-000000000098",
+    project_id: "30000000-0000-4000-8000-000000000098",
+    project_name: "Current project after refresh",
+  };
+  let projectRead = 0;
+  let releaseStalePage!: () => void;
+  const stalePageGate = new Promise<void>((resolve) => { releaseStalePage = resolve; });
+  await mockCeoReads(page);
+  await page.route((url) => url.pathname === "/api/approvals/project-decisions", async (route) => {
+    const query = new URL(route.request().url()).searchParams;
+    const cursor = query.get("cursor");
+    if (cursor === "old-queue-cursor") {
+      await stalePageGate;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ items: [staleDecision], next_cursor: null }),
+      });
+      return;
+    }
+    projectRead += 1;
+    const body = projectRead === 1
+      ? { items: [projectDecision], next_cursor: "old-queue-cursor" }
+      : { items: [refreshedDecision], next_cursor: null };
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+  });
+
+  await authenticate(page, "/approvals");
+  const main = page.getByRole("main", { name: "Privileged action approvals" });
+  const inbox = main.getByRole("list", { name: "Unified approval inbox" });
+  await expect(inbox.getByText("Alpha research project")).toBeVisible();
+  await main.getByRole("button", { name: "Load more project decisions" }).click();
+  await expect(main.getByRole("button", { name: "Loading…" })).toBeVisible();
+
+  await main.getByRole("button", { name: "Refresh approvals" }).click();
+  await expect(inbox.getByText("Current project after refresh")).toBeVisible();
+  await expect(inbox.getByRole("listitem")).toHaveCount(1);
+
+  const stalePageResponse = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return url.pathname === "/api/approvals/project-decisions" && url.searchParams.get("cursor") === "old-queue-cursor";
+  });
+  releaseStalePage();
+  await stalePageResponse;
+  await expect(inbox.getByText("Stale project from prior queue")).toHaveCount(0);
+  await expect(inbox.getByRole("listitem")).toHaveCount(1);
+});
+
 test("stale CEO decisions show a conflict state and cannot be submitted again", async ({ page }) => {
   let calls = 0;
   await mockCeoReads(page, () => [ceoRequest]);
@@ -146,7 +203,7 @@ test("stale CEO decisions show a conflict state and cannot be submitted again", 
   await details.getByLabel("I reviewed this request and intend to record a decision.").check();
   await details.getByRole("button", { name: "Approve request" }).click();
 
-  await expect(main.getByRole("status").filter({ hasText: "no longer pending" })).toBeVisible();
+  await expect(main.getByText("This CEO request is no longer pending. Refresh the inbox to see its current status.")).toBeVisible();
   await expect(details.getByText("Refresh the inbox to see its current status.")).toBeVisible();
   await expect(details.getByRole("button", { name: "Approve request" })).toHaveCount(0);
   expect(calls).toBe(1);

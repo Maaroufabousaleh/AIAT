@@ -131,6 +131,7 @@ function ApprovalsContent() {
   const requestDeepLinkFocusRef = useRef<string | null>(null);
   const requestDetailsRef = useRef<HTMLElement | null>(null);
   const refreshGenerationRef = useRef(0);
+  const projectPageGenerationRef = useRef(0);
   const refreshFailedRef = useRef(false);
   const preserveNoticeOnRefreshRef = useRef(false);
 
@@ -145,6 +146,9 @@ function ApprovalsContent() {
   const refresh = useCallback(async () => {
     const linkedRequestId = requestedRequestId;
     const refreshGeneration = ++refreshGenerationRef.current;
+    projectPageGenerationRef.current += 1;
+    pagingRef.current = false;
+    setLoadingMore(false);
     setLoading(true);
     setError("");
     if (!preserveNoticeOnRefreshRef.current) setNotice("");
@@ -228,12 +232,14 @@ function ApprovalsContent() {
 
   const loadMoreProjectDecisions = async () => {
     if (!projectCursor || pagingRef.current) return;
+    const pageGeneration = projectPageGenerationRef.current;
     pagingRef.current = true;
     setLoadingMore(true);
     setError("");
     try {
       const query = new URLSearchParams({ limit: String(PAGE_SIZE), cursor: projectCursor });
       const page = await requestJson<ProjectDecisionPage>(`/api/approvals/project-decisions?${query.toString()}`);
+      if (pageGeneration !== projectPageGenerationRef.current) return;
       const rows = Array.isArray(page.items) ? page.items : [];
       setProjectDecisions((current) => {
         const known = new Set(current.map((item) => item.id));
@@ -241,13 +247,16 @@ function ApprovalsContent() {
       });
       setProjectCursor(typeof page.next_cursor === "string" ? page.next_cursor : null);
     } catch (cause) {
+      if (pageGeneration !== projectPageGenerationRef.current) return;
       const status = cause instanceof Error ? (cause as HttpError).status : undefined;
       setError(status === 400 || status === 409
         ? "The project decision page changed. Refresh the inbox to load the current queue."
         : cause instanceof Error ? cause.message : "More project decisions are unavailable.");
     } finally {
-      pagingRef.current = false;
-      setLoadingMore(false);
+      if (pageGeneration === projectPageGenerationRef.current) {
+        pagingRef.current = false;
+        setLoadingMore(false);
+      }
     }
   };
 
