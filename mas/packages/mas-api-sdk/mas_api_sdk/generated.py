@@ -2339,6 +2339,15 @@ OPERATIONS: dict[str, ApiOperation] = {
         request_body_type='GitHubMetadataRequest',
         response_types=('HTTPValidationError',),
     ),
+    'list_inbound_canary_plans_integrations_inbound_canaries_get': ApiOperation(
+        operation_id='list_inbound_canary_plans_integrations_inbound_canaries_get',
+        method='GET',
+        path='/integrations/inbound-canaries',
+        path_params=(),
+        query_params=('connection_id', 'limit'),
+        request_body_type=None,
+        response_types=('HTTPValidationError',),
+    ),
     'get_inbound_canary_plan_integrations_inbound_canaries__plan_id__get': ApiOperation(
         operation_id='get_inbound_canary_plan_integrations_inbound_canaries__plan_id__get',
         method='GET',
@@ -3602,7 +3611,7 @@ OPERATIONS: dict[str, ApiOperation] = {
 }
 
 MODEL_COUNT = 144
-OPERATION_COUNT = 275
+OPERATION_COUNT = 276
 
 __all__ = [
     "ApiOperation",

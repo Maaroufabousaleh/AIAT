@@ -32,7 +32,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from enum import Enum
 from functools import partial
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -19878,6 +19878,42 @@ async def create_inbound_priority_canary_plan(
         "status": stored["status"], "created_at": stored["created_at"], "expires_at": stored["expires_at"],
         "permitted_action": f"On {req.external_issue_id}, the mapped human may change provider priority from {provider_priority} to {target_priority} once after explicit approval and arming; canonical priority is expected to move from {canonical_priority} to {target_priority}.",
         "rollback_operations": plan.rollback_operations,
+    }
+
+
+@app.get("/integrations/inbound-canaries")
+async def list_inbound_canary_plans(
+    request: Request,
+    connection_id: Annotated[UUID | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 100,
+) -> dict[str, Any]:
+    """List a bounded set of persisted canary summaries for operator inspection."""
+    _integration_operator(request)
+    rows = await _storage().list_pm_inbound_canary_plans(
+        connection_id=connection_id,
+        limit=limit + 1,
+    )
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    fields = (
+        "id",
+        "connection_id",
+        "binding_id",
+        "project_id",
+        "external_issue_id",
+        "status",
+        "current_priority",
+        "target_priority",
+        "created_at",
+        "expires_at",
+    )
+    return {
+        "plans": [
+            _serialize({"plan_id": row["id"], **{field: row.get(field) for field in fields[1:]}})
+            for row in rows
+        ],
+        "limit": limit,
+        "has_more": has_more,
     }
 
 

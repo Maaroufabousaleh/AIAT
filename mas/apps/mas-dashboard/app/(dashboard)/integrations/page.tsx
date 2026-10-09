@@ -19,6 +19,8 @@ type IntegrationData = {
   outbox: Array<Record<string, unknown>>;
   runs: Array<Record<string, unknown>>;
   lifecyclePlans: Array<Record<string, unknown>>;
+  canaryPlans: Array<Record<string, unknown>>;
+  canaryPlansHasMore?: boolean;
 };
 
 type CanaryPlanDetails = Record<string, unknown> & {
@@ -443,6 +445,8 @@ export default function IntegrationsPage() {
   }, [projectId, loadProjectBindings]);
 
   const mutationBlocked = accessDenied || stale || loading || busy;
+  const canaryPlans = Array.isArray(data?.canaryPlans) ? data.canaryPlans : [];
+  const canaryPlansHasMore = data?.canaryPlansHasMore === true;
   const selectedProject = projects.find((project) => project.id === projectId);
   const connectionBindings = projectBindings.filter(
     (binding) => text(binding.project_id, "") === projectId
@@ -934,30 +938,63 @@ export default function IntegrationsPage() {
           <section className="rounded-xl border border-violet-500/20 bg-violet-500/5 p-4 space-y-4" aria-labelledby="integration-canary-heading">
             <div>
               <h2 id="integration-canary-heading" className="text-sm font-semibold text-violet-100">Inbound canary inspection</h2>
-              <p className="mt-1 text-xs text-violet-200/70">Read an existing canary plan by ID. This view is read-only and does not contact a provider.</p>
+              <p className="mt-1 text-xs text-violet-200/70">Inspect persisted plans without contacting a provider. The list shows the newest 100 plans for the current connection filter.</p>
             </div>
             {!accessDenied && (
-              <div className="flex flex-wrap gap-2">
-                <label className="sr-only" htmlFor="canary-plan-id">Canary plan UUID</label>
-                <input
-                  id="canary-plan-id"
-                  aria-label="Canary plan UUID"
-                  className="min-h-11 min-w-72 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-2 text-xs text-slate-200"
-                  placeholder="Canary plan UUID"
-                  value={canaryPlanId}
-                  onChange={(event) => setCanaryPlanId(event.target.value)}
-                />
-                <button
-                  type="button"
-                  className="inline-flex min-h-11 items-center gap-2 rounded border border-violet-700 px-3 py-2 text-xs font-semibold text-violet-200 disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={!UUID_PATTERN.test(canaryPlanId.trim()) || canaryLoading}
-                  aria-busy={canaryLoading}
-                  onClick={() => void lookupCanary()}
-                >
-                  <Search size={14} aria-hidden="true" />
-                  {canaryLoading ? "Loading…" : "Inspect canary"}
-                </button>
+              <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
+                <label className="grid gap-1 text-xs text-slate-300">
+                  Recent canary plans
+                  <select
+                    aria-label="Recent canary plans"
+                    className="min-h-11 rounded border border-slate-700 bg-slate-950 px-2 text-sm text-slate-100 disabled:opacity-50"
+                    value={canaryPlans.some((plan) => text(plan.plan_id, "") === canaryPlanId) ? canaryPlanId : ""}
+                    disabled={!data || loading || canaryPlans.length === 0}
+                    onChange={(event) => {
+                      setCanaryPlanId(event.target.value);
+                      setCanaryPlan(null);
+                      setCanaryError(null);
+                    }}
+                  >
+                    <option value="">Select a recent plan</option>
+                    {canaryPlans.map((plan) => {
+                      const planId = text(plan.plan_id, "");
+                      return (
+                        <option key={planId} value={planId}>
+                          {text(plan.status)} · {text(plan.current_priority)} → {text(plan.target_priority)} · {text(plan.external_issue_id)} · {dateTime(plan.created_at)}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </label>
+                <div className="flex items-end gap-2">
+                  <label className="sr-only" htmlFor="canary-plan-id">Canary plan UUID</label>
+                  <input
+                    id="canary-plan-id"
+                    aria-label="Canary plan UUID"
+                    className="min-h-11 min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-2 text-xs text-slate-200 md:min-w-72"
+                    placeholder="Enter a plan UUID"
+                    value={canaryPlanId}
+                    onChange={(event) => setCanaryPlanId(event.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="inline-flex min-h-11 items-center gap-2 rounded border border-violet-700 px-3 py-2 text-xs font-semibold text-violet-200 disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={!UUID_PATTERN.test(canaryPlanId.trim()) || canaryLoading}
+                    aria-busy={canaryLoading}
+                    onClick={() => void lookupCanary()}
+                  >
+                    <Search size={14} aria-hidden="true" />
+                    {canaryLoading ? "Loading…" : "Inspect canary"}
+                  </button>
+                </div>
+                <p className="text-xs text-slate-400 md:col-span-2">Select a recent plan or enter a UUID to inspect a plan that is not listed. Inspection is read-only.</p>
               </div>
+            )}
+            {!accessDenied && data && canaryPlans.length === 0 && (
+              <p role="status" className="text-sm text-slate-400">No inbound canary plans are recorded for the current connection filter.</p>
+            )}
+            {!accessDenied && canaryPlansHasMore && (
+              <p role="note" className="text-xs text-slate-400">More than 100 plans are recorded. The selector shows the newest 100; enter a plan UUID to inspect an older plan.</p>
             )}
             {canaryError && <p role="status" className="text-sm text-amber-200">{canaryError}</p>}
             {canaryPlan && (() => {
@@ -982,7 +1019,6 @@ export default function IntegrationsPage() {
                 </article>
               );
             })()}
-            {!accessDenied && <p className="text-xs text-slate-500">The current API has no canary-plan collection endpoint; enter a known plan ID to inspect it.</p>}
           </section>
 
           <section className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4 space-y-4" aria-labelledby="integration-lifecycle-heading">

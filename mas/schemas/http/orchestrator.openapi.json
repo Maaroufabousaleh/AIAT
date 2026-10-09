@@ -14593,6 +14593,68 @@
         "summary": "Github Repository Metadata"
       }
     },
+    "/integrations/inbound-canaries": {
+      "get": {
+        "description": "List a bounded set of persisted canary summaries for operator inspection.",
+        "operationId": "list_inbound_canary_plans_integrations_inbound_canaries_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "connection_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Connection Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Inbound Canary Plans Integrations Inbound Canaries Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Inbound Canary Plans"
+      }
+    },
     "/integrations/inbound-canaries/{plan_id}": {
       "get": {
         "operationId": "get_inbound_canary_plan_integrations_inbound_canaries__plan_id__get",

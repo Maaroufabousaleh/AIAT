@@ -15,6 +15,9 @@ test("PM integrations expose mapping, canary, reconciliation, and conflict dispo
   let conflictResolved = false;
   let resolutionRequest: Record<string, unknown> | null = null;
 
+  await page.route("**/api/projects?limit=1000", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) });
+  });
   await page.route("**/api/integrations/pm**", async (route) => {
     const url = new URL(route.request().url());
     const pathname = url.pathname;
@@ -130,6 +133,18 @@ test("PM integrations expose mapping, canary, reconciliation, and conflict dispo
               expires_at: "2026-10-08T10:00:00Z",
             },
           }],
+          canaryPlans: [{
+            plan_id: CANARY_PLAN_ID,
+            connection_id: CONNECTION_ID,
+            binding_id: BINDING_ID,
+            project_id: "project-001",
+            external_issue_id: "YT-17",
+            status: "PLANNED",
+            current_priority: "medium",
+            target_priority: "high",
+            created_at: "2026-10-07T10:00:00Z",
+            expires_at: "2026-10-08T10:00:00Z",
+          }],
         }),
       });
       return;
@@ -163,10 +178,56 @@ test("PM integrations expose mapping, canary, reconciliation, and conflict dispo
   });
   await expect(integrations.getByText("No open conflicts for this connection filter.")).toBeVisible();
 
-  await integrations.getByRole("textbox", { name: "Canary plan UUID" }).fill(CANARY_PLAN_ID);
+  await integrations.getByRole("combobox", { name: "Recent canary plans" }).selectOption(CANARY_PLAN_ID);
   await integrations.getByRole("button", { name: "Inspect canary" }).click();
   const canary = integrations.getByRole("article", { name: "Canary plan details" });
   await expect(canary).toBeVisible();
   await expect(canary).toContainText("Digest valid: yes");
   await expect(canary).toContainText("medium → high");
+});
+
+test("PM inbound canaries show an empty state and retain UUID inspection", async ({ page }) => {
+  await page.route("**/api/projects?limit=1000", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) });
+  });
+  await page.route((url) => new URL(url).pathname === "/api/integrations/pm", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        connections: [], conflicts: [], outbox: [], runs: [], lifecyclePlans: [], canaryPlans: [],
+      }),
+    });
+  });
+  await page.route((url) => new URL(url).pathname === `/api/integrations/pm/inbound-canaries/${CANARY_PLAN_ID}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        status: "PLANNED",
+        digest_valid: true,
+        accepted_command_count: 0,
+        plan: {
+          plan_id: CANARY_PLAN_ID,
+          connection_id: CONNECTION_ID,
+          binding_id: BINDING_ID,
+          current_priority: "medium",
+          target_priority: "high",
+          expires_at: "2026-10-08T10:00:00Z",
+          gate_results: { doctor_ready: true },
+          operations: [],
+          rollback_operations: [],
+        },
+      }),
+    });
+  });
+
+  await authenticate(page, "/integrations");
+
+  const integrations = page.getByRole("main", { name: "PM integrations" });
+  await expect(integrations.getByText("No inbound canary plans are recorded for the current connection filter.")).toBeVisible();
+  await expect(integrations.getByRole("combobox", { name: "Recent canary plans" })).toBeDisabled();
+  await integrations.getByRole("textbox", { name: "Canary plan UUID" }).fill(CANARY_PLAN_ID);
+  await integrations.getByRole("button", { name: "Inspect canary" }).click();
+  await expect(integrations.getByRole("article", { name: "Canary plan details" })).toContainText("Digest valid: yes");
 });

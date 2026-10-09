@@ -3143,6 +3143,20 @@ export type OrchestratorApiOperations = {
       "422": HTTPValidationError;
     };
   };
+  "list_inbound_canary_plans_integrations_inbound_canaries_get": {
+    method: "GET";
+    path: "/integrations/inbound-canaries";
+    parameters: {
+      "query:connection_id"?: (string | null);
+      "query:limit"?: number;
+    };
+    responses: {
+      "200": {
+  [key: string]: unknown;
+};
+      "422": HTTPValidationError;
+    };
+  };
   "get_inbound_canary_plan_integrations_inbound_canaries__plan_id__get": {
     method: "GET";
     path: "/integrations/inbound-canaries/{plan_id}";
