@@ -559,6 +559,143 @@ async def test_opencode_cancel_during_session_creation_aborts_without_prompt_sub
 
 
 @pytest.mark.asyncio
+async def test_project_scoped_opencode_run_cancels_at_provider_boundary_without_dispatch() -> None:
+    """Exercise the real adapter/controller up to, but not through, model dispatch.
+
+    The HTTP transport is a local OpenCode protocol fixture. The OpenCodeAdapter
+    and WorkerRunController are the production implementations. Holding the
+    adapter at its final submit boundary lets canonical cancellation win before
+    the only operation that can ask OpenCode to call its configured model.
+    """
+    project_id = uuid4()
+    snapshot_id = uuid4()
+    mcp_name: str | None = None
+    prompt_calls = 0
+    session_created = asyncio.Event()
+    abort_paths: list[str] = []
+    deleted_paths: list[str] = []
+    schema = {"openapi": "3.1.0", "paths": {"/global/health": {"get": {"operationId": "global.health"}}}}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal mcp_name, prompt_calls
+        path = request.url.path
+        if request.method == "GET" and path == "/global/health":
+            return httpx.Response(200, json={"healthy": True}, request=request)
+        if request.method == "GET" and path == "/doc":
+            return httpx.Response(200, json=schema, request=request)
+        if request.method == "POST" and path == "/mcp":
+            mcp_name = str(json.loads(request.content)["name"])
+            return httpx.Response(200, json={mcp_name: {"status": "connected"}}, request=request)
+        if request.method == "GET" and path == "/mcp":
+            return httpx.Response(200, json={str(mcp_name): {"status": "connected"}}, request=request)
+        if request.method == "GET" and path == "/session":
+            return httpx.Response(200, json=[], request=request)
+        if request.method == "POST" and path == "/session":
+            session_created.set()
+            return httpx.Response(200, json={"id": "ses_pre_provider_boundary"}, request=request)
+        if request.method == "GET" and path == "/global/event":
+            return httpx.Response(200, text="", headers={"content-type": "text/event-stream"}, request=request)
+        if request.method == "POST" and path == "/session/ses_pre_provider_boundary/abort":
+            abort_paths.append(path)
+            return httpx.Response(200, json=True, request=request)
+        if request.method == "DELETE" and path == "/session/ses_pre_provider_boundary":
+            deleted_paths.append(path)
+            return httpx.Response(204, request=request)
+        if request.method == "POST" and path == "/session/ses_pre_provider_boundary/prompt_async":
+            prompt_calls += 1
+            return httpx.Response(204, request=request)
+        raise AssertionError(f"unexpected OpenCode request: {request.method} {path}")
+
+    adapter, client = _opencode_adapter_for_test(handler)
+    adapter.context.metadata["opencode_cleanup_sessions"] = True
+    controller = WorkerRunController()
+    request = WorkerRunRequest(
+        idempotency_key=f"project-opencode-pre-provider:{project_id}",
+        worker_id=adapter.worker_id,
+        project_id=project_id,
+        task_type="coding",
+        task_input={"prompt": "Do not submit this task to a model."},
+        tool_grants=["opencode.workspace_read"],
+        resolved_model_profile={
+            "profile_id": "coding",
+            "version": "1",
+            "exact_model_id": "aiat/gpt-test",
+            "resolution_snapshot_id": snapshot_id,
+        },
+        timeout_seconds=5,
+    )
+
+    submit_boundary = asyncio.Event()
+    release_submit = asyncio.Event()
+    original_submit = adapter._submit
+
+    async def pause_before_provider_submit(submit_request, session_id: str) -> bool:
+        submit_boundary.set()
+        await release_submit.wait()
+        # The real adapter's cancellation guard must return before issuing the
+        # prompt_async request after canonical cancellation has been recorded.
+        return await original_submit(submit_request, session_id)
+
+    adapter._submit = pause_before_provider_submit  # type: ignore[method-assign]
+    execution = asyncio.create_task(
+        controller.execute(request, adapter, model_resolution_snapshot_id=snapshot_id)
+    )
+    try:
+        await asyncio.wait_for(session_created.wait(), timeout=5)
+        await asyncio.wait_for(submit_boundary.wait(), timeout=5)
+        for _ in range(100):
+            row = await controller.get_run(request.run_id)
+            if row is not None and row["state"] == "RUNNING":
+                break
+            await asyncio.sleep(0.01)
+        assert row is not None
+        assert row["state"] == "RUNNING"
+        assert row["project_id"] == project_id
+        assert row["runtime_binding"]["runtime_type"] == "opencode"
+        assert row["runtime_binding"]["runtime_run_id"] == "ses_pre_provider_boundary"
+
+        cancellation = await asyncio.wait_for(
+            controller.cancel(
+                request.run_id,
+                adapter,
+                reason="operator stopped at the pre-provider boundary",
+                requested_by="operator",
+            ),
+            timeout=5,
+        )
+        assert cancellation is not None
+        release_submit.set()
+        outcome = await asyncio.wait_for(execution, timeout=5)
+        duplicate = await controller.cancel(
+            request.run_id,
+            adapter,
+            reason="idempotent duplicate cancellation",
+            requested_by="operator",
+        )
+    finally:
+        release_submit.set()
+        if not execution.done():
+            await asyncio.wait_for(execution, timeout=5)
+        await adapter.close()
+        await client.aclose()
+
+    final_row = await controller.get_run(request.run_id)
+    assert outcome.state == "CANCELLED"
+    assert final_row is not None and final_row["state"] == "CANCELLED"
+    assert duplicate is not None and duplicate["state"] == "CANCELLED"
+    assert len(abort_paths) >= 1
+    assert deleted_paths == ["/session/ses_pre_provider_boundary"]
+    assert prompt_calls == 0
+    assert request.project_id == project_id
+    assert request.resolved_model_profile.resolution_snapshot_id == snapshot_id
+    assert controller._memory_tool_effects == {}
+    assert not adapter._active_tasks
+    # The adapter retains the last runtime reference for reconciliation even
+    # after the server-side session has been deleted.
+    assert adapter._session_by_run[request.run_id] == "ses_pre_provider_boundary"
+
+
+@pytest.mark.asyncio
 async def test_opencode_cancel_with_known_session_uses_local_abort_route() -> None:
     requests: list[tuple[str, str]] = []
     session_id = "ses_known_cancel"
