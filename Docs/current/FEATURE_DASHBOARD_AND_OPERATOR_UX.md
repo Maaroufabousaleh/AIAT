@@ -313,6 +313,13 @@ The dashboard is the human control and evidence surface for AIAT. It must make c
   6/6, project artifact navigation passes 4/4, and PM project-list retry passes
   1/1. These are separate fixture-backed runs, not a full-suite aggregate, and
   none dispatched to an external provider.
+- The Companies page can retry only its worker-catalogue read after a registry
+  failure (focused group 4/4). The Approvals inbox fences a paged project
+  decision response from an older refresh snapshot (5/5), and the Flows list
+  now reports interrupted deletion and verifies status through refresh (5/5).
+  E2E cleanup recognizes namespaced fixture records; ordinary names such as
+  `tmp`, `proj-123`, `C-123 Workstream`, and `Test Project 123` no longer match
+  cleanup candidates (policy spec 1/1).
 - Changed dashboard TS/TSX files pass targeted ESLint, and the isolated scoped
   TypeScript check passes. The checked-in generated `.next/dev/types` artifacts
   are not used by this isolated typecheck. The source-copied dashboard package

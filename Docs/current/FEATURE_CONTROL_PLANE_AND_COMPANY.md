@@ -20,6 +20,10 @@ The control plane turns AIAT from a collection of agents into one governed compa
   response proving that switching companies cannot restore the old manifest
   over the new selection. These use mocked API responses and do not establish
   provider-backed execution.
+- The company editor's registered-worker choices now have an in-place retry
+  after a transient registry read failure. It refreshes only the worker list,
+  ignores late responses, and leaves manifest validation/apply as the only path
+  for saving assignments. The focused mocked company group passes 4/4.
 - Manifest validation returns the active version, and apply requires that
   expected version. The storage writer checks it while holding the company
   row lock and returns a stable conflict when another edit landed after
