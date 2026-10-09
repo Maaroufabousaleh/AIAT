@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Building2, Check, ChevronRight, Plus, RefreshCw, RotateCcw, ShieldCheck } from "lucide-react";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
@@ -170,6 +170,7 @@ function Metric({ label, value }: { label: string; value: number }) {
 export default function CompaniesPage() {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [selectedId, setSelectedId] = useState("");
+  const selectedIdRef = useRef("");
   const [detail, setDetail] = useState<CompanyReadModel | null>(null);
   const [history, setHistory] = useState<ManifestVersion[]>([]);
   const [loading, setLoading] = useState(true);
@@ -184,6 +185,10 @@ export default function CompaniesPage() {
   const [manifestText, setManifestText] = useState("");
   const [validatedText, setValidatedText] = useState("");
   const [validationDigest, setValidationDigest] = useState("");
+  const [validatedManifestVersion, setValidatedManifestVersion] = useState<number | null>(null);
+  const validationGeneration = useRef(0);
+  const detailLoadGeneration = useRef(0);
+  const [manifestConflict, setManifestConflict] = useState(false);
   const [manifestBusy, setManifestBusy] = useState(false);
   const [rollbackVersion, setRollbackVersion] = useState<number | null>(null);
   const [rollbackReason, setRollbackReason] = useState("");
@@ -217,6 +222,13 @@ export default function CompaniesPage() {
     () => Object.keys(manifestBudgets).filter((key) => !enforcedCompanyBudgetKeys.includes(key as typeof enforcedCompanyBudgetKeys[number])),
     [manifestBudgets],
   );
+
+  const clearValidatedManifest = useCallback(() => {
+    validationGeneration.current += 1;
+    setValidatedText("");
+    setValidationDigest("");
+    setValidatedManifestVersion(null);
+  }, []);
 
   const workerOptions = useMemo(() => {
     const byId = new Map<string, RegisteredWorker>();
@@ -274,22 +286,36 @@ export default function CompaniesPage() {
         : selectedId && next.some((company) => company.id === selectedId)
           ? selectedId
           : next[0]?.id ?? "";
+      if (nextId !== selectedId) {
+        detailLoadGeneration.current += 1;
+        clearValidatedManifest();
+        setManifestConflict(false);
+        setDetail(null);
+        setHistory([]);
+        setManifestText("");
+      }
+      selectedIdRef.current = nextId;
       setSelectedId(nextId);
       if (!nextId) {
         setDetail(null);
         setHistory([]);
+        setManifestText("");
       }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Companies could not be loaded.");
     } finally {
       setLoading(false);
     }
-  }, [selectedId]);
+  }, [clearValidatedManifest, selectedId]);
 
   useEffect(() => { void loadCompanies(); }, [loadCompanies]);
 
-  const loadSelected = useCallback(async (id: string) => {
-    if (!id) return;
+  const loadSelected = useCallback(async (id: string, options?: { preserveDraft?: boolean }): Promise<CompanyReadModel | null> => {
+    if (!id || id !== selectedIdRef.current) return null;
+    const requestGeneration = ++detailLoadGeneration.current;
+    const preserveDraft = options?.preserveDraft ?? false;
+    clearValidatedManifest();
+    if (!preserveDraft) setManifestConflict(false);
     setDetailLoading(true);
     setError("");
     try {
@@ -297,32 +323,35 @@ export default function CompaniesPage() {
         requestJson<CompanyReadModel>(`/api/companies/${encodeURIComponent(id)}`),
         requestJson<ManifestVersion[]>(`/api/companies/${encodeURIComponent(id)}/manifest/history`),
       ]);
+      if (requestGeneration !== detailLoadGeneration.current || id !== selectedIdRef.current) return null;
       setDetail(nextDetail);
       setHistory(Array.isArray(nextHistory) ? nextHistory : []);
-      const manifest = manifestFromReadModel(nextDetail);
-      const company = nextDetail.company;
-      setManifestText(manifest
-        ? JSON.stringify(manifest, null, 2)
-        : company ? starterManifest(company) : "{}");
-      setValidatedText("");
-      setValidationDigest("");
+      if (!preserveDraft) {
+        const manifest = manifestFromReadModel(nextDetail);
+        const company = nextDetail.company;
+        setManifestText(manifest
+          ? JSON.stringify(manifest, null, 2)
+          : company ? starterManifest(company) : "{}");
+      }
       setRollbackVersion(null);
       setRollbackReason("");
+      return nextDetail;
     } catch (reason) {
+      if (requestGeneration !== detailLoadGeneration.current || id !== selectedIdRef.current) return null;
       setError(reason instanceof Error ? reason.message : "Company details could not be loaded.");
       setDetail(null);
       setHistory([]);
+      return null;
     } finally {
-      setDetailLoading(false);
+      if (requestGeneration === detailLoadGeneration.current && id === selectedIdRef.current) setDetailLoading(false);
     }
-  }, []);
+  }, [clearValidatedManifest]);
 
   useEffect(() => { void loadSelected(selectedId); }, [loadSelected, selectedId]);
 
   function writeManifest(next: Row) {
     setManifestText(JSON.stringify(next, null, 2));
-    setValidatedText("");
-    setValidationDigest("");
+    clearValidatedManifest();
     setNotice("");
     setError("");
   }
@@ -465,8 +494,7 @@ export default function CompaniesPage() {
 
   function updateBudgetDraft(key: string, raw: string) {
     setBudgetDraftValues((current) => ({ ...current, [key]: raw }));
-    setValidatedText("");
-    setValidationDigest("");
+    clearValidatedManifest();
     setNotice("");
     setError("");
   }
@@ -559,8 +587,7 @@ export default function CompaniesPage() {
   async function validateManifest() {
     if (!selectedCompany || !parsedManifest) {
       setError("Manifest must be valid JSON before it can be validated.");
-      setValidatedText("");
-      setValidationDigest("");
+      clearValidatedManifest();
       return;
     }
     const invalidBudget = Object.entries(manifestBudgets).find(([key, value]) =>
@@ -568,25 +595,33 @@ export default function CompaniesPage() {
     );
     if (invalidBudget) {
       setError(budgetValidationError(invalidBudget[0], budgetDraftValues[invalidBudget[0]] ?? String(invalidBudget[1])) ?? "A budget limit is invalid.");
-      setValidatedText("");
-      setValidationDigest("");
+      clearValidatedManifest();
       return;
     }
     setManifestBusy(true);
     setError("");
     setNotice("");
-    setValidatedText("");
-    setValidationDigest("");
+    clearValidatedManifest();
+    const validationAttempt = validationGeneration.current;
+    const validatedCompanyId = selectedCompany.id;
+    const validatedManifestText = manifestText;
     try {
-      const result = await requestJson<{ valid: boolean; digest?: string }>(
+      const result = await requestJson<{ valid: boolean; digest?: string; current_manifest_version?: number }>(
         `/api/companies/${encodeURIComponent(selectedCompany.id)}/manifest/validate`,
         { method: "POST", body: JSON.stringify({ manifest: parsedManifest, source: "dashboard_operator" }) },
       );
-      if (!result.valid || !result.digest) throw new Error("The API did not return a valid manifest digest.");
-      setValidatedText(manifestText);
+      if (validationAttempt !== validationGeneration.current) return;
+      const currentManifestVersion = result.current_manifest_version;
+      if (!result.valid || !result.digest || typeof currentManifestVersion !== "number" || !Number.isInteger(currentManifestVersion) || currentManifestVersion < 0) {
+        throw new Error("The API did not return a valid manifest digest and current version.");
+      }
+      if (selectedId !== validatedCompanyId || manifestText !== validatedManifestText) return;
+      setValidatedText(validatedManifestText);
       setValidationDigest(result.digest);
+      setValidatedManifestVersion(currentManifestVersion);
       setNotice(`Manifest is valid. Digest ${result.digest.slice(0, 12)}…`);
     } catch (reason) {
+      if (validationAttempt !== validationGeneration.current) return;
       const status = (reason as HttpError).status;
       setError(status === 422
         ? `Manifest validation failed (HTTP 422): ${reason instanceof Error ? reason.message : "Invalid manifest."}`
@@ -597,29 +632,46 @@ export default function CompaniesPage() {
   }
 
   async function applyManifest() {
-    if (!selectedCompany || !parsedManifest || !validationDigest || validatedText !== manifestText) return;
+    if (!selectedCompany || !parsedManifest || !validationDigest || validatedManifestVersion === null || validatedText !== manifestText) return;
+    const expectedManifestVersion = validatedManifestVersion;
+    const applyingCompanyId = selectedCompany.id;
+    const applyingCompanyName = selectedCompany.name;
     setManifestBusy(true);
     setError("");
     setNotice("");
     try {
       await requestJson<CompanyReadModel>(
-        `/api/companies/${encodeURIComponent(selectedCompany.id)}/manifest/apply`,
-        { method: "POST", body: JSON.stringify({ manifest: parsedManifest, source: "dashboard_operator" }) },
+        `/api/companies/${encodeURIComponent(applyingCompanyId)}/manifest/apply`,
+        { method: "POST", body: JSON.stringify({ manifest: parsedManifest, source: "dashboard_operator", expected_manifest_version: expectedManifestVersion }) },
       );
-      setNotice("Company manifest applied through the company control-plane API.");
-      await loadSelected(selectedCompany.id);
-      await loadCompanies(selectedCompany.id);
+      if (selectedIdRef.current === applyingCompanyId) {
+        setNotice("Company manifest applied through the company control-plane API.");
+        await loadSelected(applyingCompanyId);
+        await loadCompanies(applyingCompanyId);
+      } else {
+        setNotice(`Manifest applied to ${applyingCompanyName}. Select it to review the updated state.`);
+      }
     } catch (reason) {
       const failure = reason as HttpError;
       if (failure.status === 409 || failure.status === 422) {
-        setValidatedText("");
-        setValidationDigest("");
+        clearValidatedManifest();
       }
-      setError(failure.status === 409
-        ? `Manifest apply conflict (HTTP 409): ${reason instanceof Error ? reason.message : "Company state changed."} No changes were applied. Review the current state and validate the manifest again.`
-        : failure.status === 422
-          ? `Manifest validation failed (HTTP 422): ${reason instanceof Error ? reason.message : "Invalid manifest."}`
-          : reason instanceof Error ? reason.message : "Manifest could not be applied.");
+      if (failure.status === 409) {
+        if (selectedIdRef.current !== applyingCompanyId) {
+          setError(`Manifest apply conflict for ${applyingCompanyName} (HTTP 409): ${reason instanceof Error ? reason.message : "Company state changed."} No changes were applied. Select that company to review its current state.`);
+          return;
+        }
+        setManifestConflict(true);
+        const refreshed = await loadSelected(applyingCompanyId, { preserveDraft: true });
+        const refreshNote = refreshed
+          ? ` The current server manifest is version ${Number(refreshed.manifest?.manifest_version ?? 0)}; review it below before validating the preserved draft again.`
+          : " Current details could not be refreshed. Use Refresh before validating again.";
+        setError(`Manifest apply conflict (HTTP 409): ${reason instanceof Error ? reason.message : "Company state changed."} No changes were applied.${refreshNote}`);
+        return;
+      }
+      setError(failure.status === 422
+        ? `Manifest validation failed (HTTP 422): ${reason instanceof Error ? reason.message : "Invalid manifest."}`
+        : reason instanceof Error ? reason.message : "Manifest could not be applied.");
     } finally {
       setManifestBusy(false);
     }
@@ -648,11 +700,12 @@ export default function CompaniesPage() {
   }
 
   const company = detail?.company ?? selectedCompany;
+  const currentManifest = detail ? manifestFromReadModel(detail) : null;
   const departments = detail?.departments ?? [];
   const assignments = detail?.assignments ?? [];
   const budgets = detail?.budgets ?? [];
   const activeManifestVersion = Number(detail?.manifest?.manifest_version ?? 0);
-  const canApply = Boolean(parsedManifest && validationDigest && validatedText === manifestText && !manifestBusy);
+  const canApply = Boolean(parsedManifest && validationDigest && validatedManifestVersion !== null && validatedText === manifestText && !manifestBusy);
 
   return (
     <main className="space-y-5" aria-label="Companies">
@@ -662,7 +715,7 @@ export default function CompaniesPage() {
         description="Inspect company structure and manage versioned company manifests through the control plane."
         actions={
           <>
-            <button type="button" className={buttonClass} onClick={() => void loadCompanies(selectedId)} disabled={loading}>
+            <button type="button" className={buttonClass} onClick={() => { void loadCompanies(selectedId); if (selectedId) void loadSelected(selectedId, { preserveDraft: true }); }} disabled={loading || detailLoading}>
               <RefreshCw size={15} className={loading ? "animate-spin" : ""} /> Refresh
             </button>
             <button type="button" className={primaryButtonClass} onClick={() => setShowCreate((current) => !current)}>
@@ -714,7 +767,7 @@ export default function CompaniesPage() {
                     type="button"
                     className={`flex min-h-14 w-full items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left transition ${selectedId === item.id ? "border-blue-500/50 bg-blue-500/10 text-white" : "border-transparent text-slate-300 hover:border-slate-800 hover:bg-slate-900"}`}
                     aria-current={selectedId === item.id ? "true" : undefined}
-                    onClick={() => { setNotice(""); setSelectedId(item.id); }}
+                    onClick={() => { if (item.id !== selectedId) { detailLoadGeneration.current += 1; clearValidatedManifest(); setManifestConflict(false); setDetail(null); setHistory([]); setManifestText(""); selectedIdRef.current = item.id; } setNotice(""); setSelectedId(item.id); }}
                   >
                     <span className="min-w-0"><span className="block truncate text-sm font-medium">{item.name}</span><span className="mt-0.5 block truncate text-xs text-slate-500">{item.slug}</span></span>
                     <ChevronRight size={15} className="shrink-0 text-slate-500" />
@@ -892,14 +945,19 @@ export default function CompaniesPage() {
                   <div><h2 className="text-base font-semibold text-white">Review and apply</h2><p className="mt-1 text-sm text-slate-400">Validate your guided changes with the company API, then apply the exact validated manifest. The API remains authoritative for policy checks and revision conflicts.</p></div>
                   <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-700 px-2.5 py-1 text-xs text-slate-400"><ShieldCheck size={13} /> Operator API</span>
                 </div>
+                {manifestConflict && currentManifest && detail?.company?.id === selectedId && <section role="region" aria-label="Current server manifest after conflict" className="mt-4 rounded-xl border border-amber-800/70 bg-amber-950/20 p-4">
+                  <h3 className="text-sm font-semibold text-amber-100">Current applied manifest · version {activeManifestVersion}</h3>
+                  <p className="mt-1 text-xs text-amber-200">This read-only copy reflects the server state after the conflict. Your draft remains in the editor below; applying it replaces the full manifest.</p>
+                  <pre className="mt-3 max-h-80 overflow-auto rounded-lg border border-amber-900/50 bg-slate-950/70 p-3 font-mono text-xs leading-5 text-slate-200">{JSON.stringify(currentManifest, null, 2)}</pre>
+                </section>}
                 <details className="mt-4 rounded-xl border border-slate-800 bg-slate-900/35 p-4">
                   <summary className="cursor-pointer text-sm font-medium text-slate-300 focus-visible:rounded">Advanced manifest JSON</summary>
                   <p className="mt-2 text-xs text-slate-500">Use this for schema-supported fields that do not yet have guided controls. Invalid JSON pauses the guided editor and prevents validation.</p>
                   <label htmlFor="company-manifest-json" className="mt-3 block text-xs font-medium text-slate-400">Manifest JSON</label>
-                  <textarea id="company-manifest-json" className={`${fieldClass} mt-1 min-h-[20rem] font-mono text-xs leading-5`} spellCheck={false} value={manifestText} onChange={(event) => { setManifestText(event.target.value); setValidatedText(""); setValidationDigest(""); setNotice(""); setError(""); }} />
+                  <textarea id="company-manifest-json" className={`${fieldClass} mt-1 min-h-[20rem] font-mono text-xs leading-5`} spellCheck={false} value={manifestText} disabled={detailLoading} onChange={(event) => { setManifestText(event.target.value); clearValidatedManifest(); setNotice(""); setError(""); }} />
                   {!parsedManifest && <p className="mt-2 text-xs text-amber-300">The editor currently contains invalid JSON. Correct the syntax before requesting server validation.</p>}
                 </details>
-                {validationDigest && validatedText === manifestText && <p className="mt-2 flex items-center gap-1.5 text-xs text-emerald-300"><Check size={13} /> Validated digest: {validationDigest}</p>}
+                {validationDigest && validatedManifestVersion !== null && validatedText === manifestText && <p className="mt-2 flex items-center gap-1.5 text-xs text-emerald-300"><Check size={13} /> Validated digest: {validationDigest} · based on manifest version {validatedManifestVersion}</p>}
                 <div className="mt-3 flex flex-wrap gap-2">
                   <button type="button" className={buttonClass} onClick={() => void validateManifest()} disabled={!parsedManifest || manifestBusy || detailLoading}>{manifestBusy ? "Working…" : "Validate manifest"}</button>
                   <button type="button" className={primaryButtonClass} onClick={() => void applyManifest()} disabled={!canApply}><Check size={14} /> Apply validated manifest</button>

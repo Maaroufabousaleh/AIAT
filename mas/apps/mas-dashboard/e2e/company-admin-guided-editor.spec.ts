@@ -38,8 +38,11 @@ function baseManifest() {
 
 test("company guided editor validates and applies department, worker, chief, and budget changes", async ({ page }) => {
   let currentManifest = baseManifest();
+  let currentManifestVersion = 1;
   let validationAttempts = 0;
   let applyAttempts = 0;
+  const validatedVersions: number[] = [];
+  const expectedApplyVersions: number[] = [];
   const history: Array<Record<string, unknown>> = [];
   const validatedManifests: Array<Record<string, unknown>> = [];
 
@@ -67,7 +70,7 @@ test("company guided editor validates and applies department, worker, chief, and
         contentType: "application/json",
         body: JSON.stringify({
           company,
-          manifest: { manifest_version: history.length ? 2 : 1, digest: "digest-current", status: "APPLIED", manifest_json: currentManifest },
+          manifest: { manifest_version: currentManifestVersion, digest: "digest-current", status: "APPLIED", manifest_json: currentManifest },
           departments: currentManifest.departments.map((department) => ({ ...department, status: "ACTIVE" })),
           assignments: currentManifest.worker_assignments,
           budgets: Object.entries(currentManifest.budgets).map(([budget_key, amount]) => ({ budget_key, amount })),
@@ -90,30 +93,48 @@ test("company guided editor validates and applies department, worker, chief, and
         await route.fulfill({ status: 422, contentType: "application/json", body: JSON.stringify({ detail: "department IDs must be unique" }) });
         return;
       }
+      validatedVersions.push(currentManifestVersion);
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ valid: true, company_id: COMPANY_ID, digest: `digest-${validationAttempts}`, manifest, source: "dashboard_operator" }),
+        body: JSON.stringify({ valid: true, company_id: COMPANY_ID, digest: `digest-${validationAttempts}`, manifest, source: "dashboard_operator", current_manifest_version: currentManifestVersion }),
       });
       return;
     }
     if (path.endsWith("/manifest/apply") && request.method() === "POST") {
       applyAttempts += 1;
+      expectedApplyVersions.push((request.postDataJSON() as { expected_manifest_version: number }).expected_manifest_version);
       if (applyAttempts === 1) {
+        currentManifestVersion = 2;
+        currentManifest = {
+          ...currentManifest,
+          description: "External operator update",
+          budgets: { ...currentManifest.budgets, max_cost_usd: 175 },
+        };
+        history.splice(0, history.length, {
+          id: "manifest-version-2",
+          manifest_version: currentManifestVersion,
+          digest: "digest-external-update",
+          status: "APPLIED",
+          source: "dashboard_operator",
+          compiled_by: "another-operator",
+          created_at: "2026-10-07T12:05:00Z",
+        });
         await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ detail: "company manifest revision changed" }) });
         return;
       }
       currentManifest = (request.postDataJSON() as { manifest: typeof currentManifest }).manifest;
+      currentManifestVersion += 1;
       history.splice(0, history.length, {
         id: "manifest-version-2",
-        manifest_version: 2,
+        manifest_version: currentManifestVersion,
         digest: "digest-applied",
         status: "APPLIED",
         source: "dashboard_operator",
         compiled_by: "e2e-operator",
         created_at: "2026-10-07T12:10:00Z",
       });
-      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ company_id: COMPANY_ID, manifest_version: 2 }) });
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ company_id: COMPANY_ID, manifest_version: currentManifestVersion }) });
       return;
     }
     await route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ detail: `Unexpected company API: ${request.method()} ${path}` }) });
@@ -180,6 +201,7 @@ test("company guided editor validates and applies department, worker, chief, and
 
   await main.getByRole("button", { name: "Validate manifest" }).click();
   await expect(main.getByText("Validated digest: digest-2")).toBeVisible();
+  await expect(main.getByText(/based on manifest version 1/)).toBeVisible();
   const validated = validatedManifests.at(-1)!;
   expect(validated.departments).toEqual([
     { id: "executive", name: "Executive", chief_worker_id: "ceo", worker_ids: ["ceo"] },
@@ -198,13 +220,22 @@ test("company guided editor validates and applies department, worker, chief, and
 
   await main.getByRole("button", { name: "Apply validated manifest" }).click();
   await expect(main.getByRole("alert")).toContainText("Manifest apply conflict (HTTP 409)");
+  await expect(main.getByRole("alert")).toContainText("current server manifest is version 2");
   await expect(main.getByRole("button", { name: "Apply validated manifest" })).toBeDisabled();
+  await expect(main.getByText(/Validated digest:/)).toHaveCount(0);
+  await expect(main.getByRole("region", { name: "Current server manifest after conflict" })).toContainText("External operator update");
+  await expect(main.getByRole("region", { name: "Manifest history" }).getByText("Version 2")).toBeVisible();
+  await expect(advancedEditor).toHaveValue(/Company editor fixture/);
 
   await main.getByRole("button", { name: "Validate manifest" }).click();
+  await expect(main.getByText("Validated digest: digest-3 · based on manifest version 2")).toBeVisible();
   await main.getByRole("button", { name: "Apply validated manifest" }).click();
-  await expect(main.getByRole("region", { name: "Manifest history" }).getByText("Version 2")).toBeVisible();
+  await expect(main.getByRole("region", { name: "Manifest history" }).getByText("Version 3")).toBeVisible();
   await expect(main.getByRole("region", { name: "Company operating structure" }).getByText("Engineering", { exact: true })).toBeVisible();
   await expect(main.getByRole("region", { name: "Company operating structure" }).getByText("250")).toBeVisible();
   expect(applyAttempts).toBe(2);
   expect(validationAttempts).toBe(3);
+  // Invalid manifests fail before the API returns a manifest revision.
+  expect(validatedVersions).toEqual([1, 2]);
+  expect(expectedApplyVersions).toEqual([1, 2]);
 });
