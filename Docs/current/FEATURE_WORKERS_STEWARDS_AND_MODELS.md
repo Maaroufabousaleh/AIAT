@@ -157,6 +157,10 @@ chaos, or disaster-recovery evidence.
   suite or certify provider-backed execution. The focused WorkerRun backend
   route suite passes 40 tests. The payload-safe run summary is retained at
   [`dashboard_feature_smoke_2026-10-07.json`](../../mas/docs/provenance/dashboard_feature_smoke_2026-10-07.json).
+- Model and Model Profiles resolution previews now clear prior results/errors
+  when any resolution input changes and ignore late responses from older
+  preview requests. Their focused mocked E2E specs pass 6/6 (`2a0b0933`);
+  previews remain dry runs and do not dispatch a provider request.
 
 ## Purpose
 

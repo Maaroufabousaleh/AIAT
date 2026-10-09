@@ -28,6 +28,10 @@ External project-management and source-control systems are governed collaboratio
   DLQ review is linked without claiming that queue entries are connection
   attributed. The focused mocked source-built Playwright coverage passes 3/3;
   this does not contact or certify a live provider.
+- The PM setup form can retry its project-list read independently after a
+  transient failure. The retry repeats only the bounded projects GET; a focused
+  mocked E2E proves 503-to-success recovery, no integration refresh, and no
+  mutations (1/1, `182fb110`).
 - A reusable `aiat.provider-conformance.v1` fixture runner for disposable
   adapters. It exercises capability/health/configuration, canonical project and
   work-item projection, idempotent replay, cursor-bearing change listing,

@@ -305,6 +305,14 @@ The dashboard is the human control and evidence surface for AIAT. It must make c
   failures; flow-bound runs are directed to their owning flow controls. The
   affected company/project/worker dashboard suites pass 22/22 with mocked API
   responses and no provider dispatch; focused BFF tests pass 11/11.
+- Additional current-source operator regressions now cover CEO pending
+  confirmation restoration (1/1), worker evaluation-history retry/error states
+  (5/5), URL-encoded credential deletion names (4/4), flow-editor route and
+  response-race recovery (6/6), tool-catalogue stale-refresh protection (4/4),
+  and visible WorkerRun artifact names (8/8). Model preview freshness passes
+  6/6, project artifact navigation passes 4/4, and PM project-list retry passes
+  1/1. These are separate fixture-backed runs, not a full-suite aggregate, and
+  none dispatched to an external provider.
 - Changed dashboard TS/TSX files pass targeted ESLint, and the isolated scoped
   TypeScript check passes. The checked-in generated `.next/dev/types` artifacts
   are not used by this isolated typecheck. The source-copied dashboard package
