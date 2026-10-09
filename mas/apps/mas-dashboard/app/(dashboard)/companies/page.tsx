@@ -195,6 +195,8 @@ export default function CompaniesPage() {
   const [rollbackBusy, setRollbackBusy] = useState(false);
   const [registeredWorkers, setRegisteredWorkers] = useState<RegisteredWorker[]>([]);
   const [workerLoadError, setWorkerLoadError] = useState("");
+  const [workerLoading, setWorkerLoading] = useState(false);
+  const workerLoadGeneration = useRef(0);
   const [newAssignmentWorker, setNewAssignmentWorker] = useState("");
   const [newAssignmentDepartment, setNewAssignmentDepartment] = useState("");
   const [budgetDraftValues, setBudgetDraftValues] = useState<Record<string, string>>({});
@@ -251,20 +253,26 @@ export default function CompaniesPage() {
     return registeredWorkers.filter((worker) => workerId(worker) && !assignedIds.has(workerId(worker)));
   }, [manifestAssignments, registeredWorkers]);
 
-  useEffect(() => {
-    let active = true;
-    void requestJson<RegisteredWorker[]>("/api/workers")
-      .then((workers) => {
-        if (active) {
-          setRegisteredWorkers(Array.isArray(workers) ? workers : []);
-          setWorkerLoadError("");
-        }
-      })
-      .catch((reason) => {
-        if (active) setWorkerLoadError(reason instanceof Error ? reason.message : "Registered workers could not be loaded.");
-      });
-    return () => { active = false; };
+  const loadRegisteredWorkers = useCallback(async () => {
+    const requestGeneration = ++workerLoadGeneration.current;
+    setWorkerLoading(true);
+    setWorkerLoadError("");
+    try {
+      const workers = await requestJson<RegisteredWorker[]>("/api/workers");
+      if (requestGeneration !== workerLoadGeneration.current) return;
+      setRegisteredWorkers(Array.isArray(workers) ? workers : []);
+    } catch (reason) {
+      if (requestGeneration !== workerLoadGeneration.current) return;
+      setWorkerLoadError(reason instanceof Error ? reason.message : "Registered workers could not be loaded.");
+    } finally {
+      if (requestGeneration === workerLoadGeneration.current) setWorkerLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    void loadRegisteredWorkers();
+    return () => { workerLoadGeneration.current += 1; };
+  }, [loadRegisteredWorkers]);
 
   useEffect(() => {
     const next: Record<string, string> = {};
@@ -829,9 +837,14 @@ export default function CompaniesPage() {
                         </select>
                         <span className="block font-normal text-slate-500">Only assigned department chiefs are eligible. Changing CEO transfers CEO-only grants in this draft; validate and apply to save.</span>
                       </label>
-                      <div className="rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-3 text-xs leading-5 text-slate-400">
-                        {workerLoadError ? <span className="text-amber-200">Registered worker choices could not be refreshed: {workerLoadError}</span> : <span>{registeredWorkers.length} registered workers available for assignment.</span>}
-                        {registeredWorkers.length === 0 && !workerLoadError ? <span> Refresh the page after workers are registered.</span> : null}
+                      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-3 text-xs leading-5 text-slate-400">
+                        <div>
+                          {workerLoadError ? <span className="text-amber-200">Registered worker choices could not be refreshed: {workerLoadError}</span> : <span>{registeredWorkers.length} registered workers available for assignment.</span>}
+                          {registeredWorkers.length === 0 && !workerLoadError && !workerLoading ? <span> Use Refresh workers after workers are registered.</span> : null}
+                        </div>
+                        <button type="button" className={buttonClass} onClick={() => void loadRegisteredWorkers()} disabled={workerLoading}>
+                          <RefreshCw size={13} className={workerLoading ? "animate-spin" : ""} /> {workerLoading ? "Refreshing…" : "Refresh workers"}
+                        </button>
                       </div>
                     </div>
 
