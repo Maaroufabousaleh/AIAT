@@ -430,7 +430,10 @@ export default function CeoChatPage() {
       );
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "Network error";
-      setError(message);
+      setInput(text);
+      setError(
+        `${message} Delivery could not be confirmed. The message is back in the composer. Check the conversation before sending again.`,
+      );
       setFailedRequestIds((current) => new Set(current).add(requestId));
       setActiveRequest(null);
     } finally {
@@ -716,7 +719,11 @@ export default function CeoChatPage() {
                                 <span>{user ? "You" : "CEO"}</span>
                                 <span>•</span>
                                 <span>{formatInTz(entry.ts, "HH:mm")}</span>
-                                {failed && <span className="font-medium text-rose-400">Not delivered</span>}
+                                {failed && (
+                                  <span className={clsx("font-medium", accessDenied ? "text-rose-400" : "text-amber-300")}>
+                                    {accessDenied ? "Not delivered" : "Delivery unconfirmed"}
+                                  </span>
+                                )}
                               </div>
                             </div>
                           </article>

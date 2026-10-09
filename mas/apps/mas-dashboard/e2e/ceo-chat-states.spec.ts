@@ -225,7 +225,7 @@ test("CEO chat restores a pending confirmation from history and clears it after 
     });
   });
 
-  await page.route("**/api/ceo/messages", async (route) => {
+  await page.route((url) => url.pathname === "/api/ceo/messages", async (route) => {
     submission.current = route.request().postDataJSON() as Record<string, unknown>;
     await route.fulfill({
       status: 200,
@@ -267,6 +267,74 @@ test("CEO chat restores a pending confirmation from history and clears it after 
   await expect(chat.getByText("The project was archived.", { exact: true })).toBeVisible();
   await expect(confirm).toHaveCount(0);
   await expect(chat.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0);
+});
+
+test("CEO chat keeps a draft when delivery cannot be confirmed", async ({ page }) => {
+  let submissionCount = 0;
+  await page.addInitScript(() => {
+    class StableEventSource extends EventTarget {
+      static readonly CONNECTING = 0;
+      static readonly OPEN = 1;
+      static readonly CLOSED = 2;
+      readonly url: string;
+      readyState = StableEventSource.OPEN;
+      onerror: ((event: Event) => void) | null = null;
+      onmessage: ((event: MessageEvent<string>) => void) | null = null;
+
+      constructor(url: string) {
+        super();
+        this.url = url;
+        window.setTimeout(() => {
+          const event = new MessageEvent("connected", {
+            data: JSON.stringify({ team: "exec_ceo" }),
+          });
+          this.dispatchEvent(event);
+        }, 0);
+      }
+
+      close() {
+        this.readyState = StableEventSource.CLOSED;
+      }
+    }
+
+    Object.defineProperty(window, "EventSource", {
+      configurable: true,
+      writable: true,
+      value: StableEventSource,
+    });
+  });
+  await page.route("**/api/streams/exec_ceo**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("history") === "1") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ entries: [] }),
+      });
+      return;
+    }
+    await route.fulfill({ status: 200, contentType: "text/event-stream", body: "" });
+  });
+  await page.route((url) => url.pathname === "/api/ceo/messages", async (route) => {
+    submissionCount += 1;
+    await route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "The response was lost after publication." }),
+    });
+  });
+
+  await authenticate(page, "/ceo/chat");
+  const chat = page.getByRole("main", { name: "CEO Command Center chat" });
+  const input = chat.getByRole("textbox", { name: "Message to CEO" });
+  const draft = "Summarize the local project state";
+  await input.fill(draft);
+  await input.press("Enter");
+
+  await expect(chat.getByText("Delivery unconfirmed", { exact: true })).toBeVisible();
+  await expect(input).toHaveValue(draft);
+  await expect(chat.getByRole("alert")).toContainText("Check the conversation before sending again");
+  await expect.poll(() => submissionCount, { timeout: 5_000 }).toBe(1);
 });
 
 test("CEO chat renders a read-only state when conversation history access is denied", async ({

@@ -118,19 +118,19 @@ export function useCeoStream(
         const filtered = filterRef.current
           ? parsed.filter(filterRef.current)
           : parsed;
-        setEntries((prev) => {
-          const merged = [...filtered];
-          // History and SSE start concurrently. Preserve every live or optimistic
-          // entry that arrived before the history request completed.
-          for (const existing of prev) {
-            if (!merged.some((m) => entriesEqual(m, existing))) {
-              merged.push(existing);
-            }
+        const merged = [...filtered];
+        // History and SSE start concurrently. Preserve every live or optimistic
+        // entry that arrived before the history request completed.
+        for (const existing of entriesRef.current) {
+          if (!merged.some((item) => entriesEqual(item, existing))) {
+            merged.push(existing);
           }
-          const next = merged.sort((a, b) => a.ts - b.ts).slice(-300);
-          entriesRef.current = next;
-          return next;
-        });
+        }
+        const next = merged.sort((a, b) => a.ts - b.ts).slice(-300);
+        // Update the ref before recomputing stale state below. State updater
+        // callbacks may run after this async handler continues.
+        entriesRef.current = next;
+        setEntries(next);
         historyError = null;
         refreshFailureState();
       })
@@ -174,14 +174,11 @@ export function useCeoStream(
       if (!isCurrent() || accessDeniedForConnection) return;
       const entry = entryFromRaw(e.data);
       if (!filterRef.current || filterRef.current(entry)) {
-        setEntries((prev) => {
-          if (prev.some((existing) => entriesEqual(existing, entry))) {
-            return prev;
-          }
-          const next = [...prev.slice(-300), entry];
-          entriesRef.current = next;
-          return next;
-        });
+        const current = entriesRef.current;
+        if (current.some((existing) => entriesEqual(existing, entry))) return;
+        const next = [...current.slice(-300), entry];
+        entriesRef.current = next;
+        setEntries(next);
       }
     };
 
@@ -202,14 +199,11 @@ export function useCeoStream(
   }, []);
 
   const append = useCallback((entry: FeedEntry) => {
-    setEntries((prev) => {
-      if (prev.some((existing) => entriesEqual(existing, entry))) {
-        return prev;
-      }
-      const next = [...prev.slice(-299), entry];
-      entriesRef.current = next;
-      return next;
-    });
+    const current = entriesRef.current;
+    if (current.some((existing) => entriesEqual(existing, entry))) return;
+    const next = [...current.slice(-299), entry];
+    entriesRef.current = next;
+    setEntries(next);
   }, []);
 
   return { entries, connected, stale, error, accessDenied, retry, clear, append };
