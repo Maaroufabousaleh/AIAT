@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { BrainCircuit, RefreshCw } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
@@ -104,6 +104,7 @@ export default function ModelResolutionPreview() {
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [previewError, setPreviewError] = useState("");
   const [previewing, setPreviewing] = useState(false);
+  const previewRequestId = useRef(0);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -137,7 +138,15 @@ export default function ModelResolutionPreview() {
 
   useEffect(() => { void refresh(); }, [refresh]);
 
+  function invalidatePreview() {
+    previewRequestId.current += 1;
+    setPreview(null);
+    setPreviewError("");
+    setPreviewing(false);
+  }
+
   function toggleCapability(capability: string) {
+    invalidatePreview();
     setCapabilities((current) => current.includes(capability)
       ? current.filter((item) => item !== capability)
       : [...current, capability]);
@@ -145,6 +154,8 @@ export default function ModelResolutionPreview() {
 
   async function submitPreview(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const requestId = previewRequestId.current + 1;
+    previewRequestId.current = requestId;
     setPreview(null);
     setPreviewError("");
     setPreviewing(true);
@@ -164,14 +175,23 @@ export default function ModelResolutionPreview() {
         body: JSON.stringify(body),
       });
       if (response.status === 401 || response.status === 403) {
-        setAccessDenied(true);
-        setPreviewError("This operator identity is not authorized to preview model resolution.");
-      } else if (!response.ok) setPreviewError(await responseError(response));
-      else setPreview(await response.json() as PreviewResult);
+        if (requestId === previewRequestId.current) {
+          setAccessDenied(true);
+          setPreviewError("This operator identity is not authorized to preview model resolution.");
+        }
+      } else if (!response.ok) {
+        const message = await responseError(response);
+        if (requestId === previewRequestId.current) setPreviewError(message);
+      } else {
+        const result = await response.json() as PreviewResult;
+        if (requestId === previewRequestId.current) setPreview(result);
+      }
     } catch {
-      setPreviewError("Model resolution preview could not reach the control plane. Retry when it is available.");
+      if (requestId === previewRequestId.current) {
+        setPreviewError("Model resolution preview could not reach the control plane. Retry when it is available.");
+      }
     } finally {
-      setPreviewing(false);
+      if (requestId === previewRequestId.current) setPreviewing(false);
     }
   }
 
@@ -254,22 +274,22 @@ export default function ModelResolutionPreview() {
         <p className="mb-4 text-sm text-slate-400">Preview estimate, not dispatch authorization. It checks the persisted profile versions against the inputs below. Dispatch separately loads organization, project, worker, steward, and task policy and reserves the authoritative budget.</p>
         <form className="grid gap-4 md:grid-cols-2" onSubmit={submitPreview}>
           <label className="block text-sm text-slate-300">Task type
-            <input value={taskType} onChange={(event) => setTaskType(event.target.value)} required maxLength={120} className="mt-1 min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm text-white" />
+            <input value={taskType} onChange={(event) => { setTaskType(event.target.value); invalidatePreview(); }} required maxLength={120} className="mt-1 min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm text-white" />
           </label>
           <label className="block text-sm text-slate-300">Requested profile
-            <select value={profileId} onChange={(event) => setProfileId(event.target.value)} className="mt-1 min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm text-white">
+            <select value={profileId} onChange={(event) => { setProfileId(event.target.value); invalidatePreview(); }} className="mt-1 min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm text-white">
               <option value="">Any eligible approved profile</option>
               {profiles.map((profile) => <option key={profile.profile_id} value={profile.profile_id}>{profile.profile_id} · {profile.status}</option>)}
             </select>
           </label>
           <label className="block text-sm text-slate-300">Estimated prompt tokens
-            <input type="number" min={0} step={1} value={promptTokens} onChange={(event) => setPromptTokens(Number(event.target.value))} className="mt-1 min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm text-white" />
+            <input type="number" min={0} step={1} value={promptTokens} onChange={(event) => { setPromptTokens(Number(event.target.value)); invalidatePreview(); }} className="mt-1 min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm text-white" />
           </label>
           <label className="block text-sm text-slate-300">Estimated output tokens
-            <input type="number" min={0} step={1} value={outputTokens} onChange={(event) => setOutputTokens(Number(event.target.value))} className="mt-1 min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm text-white" />
+            <input type="number" min={0} step={1} value={outputTokens} onChange={(event) => { setOutputTokens(Number(event.target.value)); invalidatePreview(); }} className="mt-1 min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm text-white" />
           </label>
           <label className="block text-sm text-slate-300 md:col-span-2">Preview budget cap (USD, optional)
-            <input type="number" min={0} step="any" value={budgetUsd} onChange={(event) => setBudgetUsd(event.target.value)} placeholder="Leave blank to omit a request-level cap" className="mt-1 min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm text-white placeholder:text-slate-600" />
+            <input type="number" min={0} step="any" value={budgetUsd} onChange={(event) => { setBudgetUsd(event.target.value); invalidatePreview(); }} placeholder="Leave blank to omit a request-level cap" className="mt-1 min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm text-white placeholder:text-slate-600" />
             <span className="mt-1 block text-xs text-slate-500">This cap is an estimate input. It does not replace company or project budget checks.</span>
           </label>
           <fieldset className="md:col-span-2">

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { BrainCircuit, RefreshCw, Save } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
@@ -118,6 +118,7 @@ export default function ModelProfilesPage() {
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [previewError, setPreviewError] = useState("");
   const [previewing, setPreviewing] = useState(false);
+  const previewRequestId = useRef(0);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -278,8 +279,17 @@ export default function ModelProfilesPage() {
     }
   }
 
+  function invalidatePreview() {
+    previewRequestId.current += 1;
+    setPreview(null);
+    setPreviewError("");
+    setPreviewing(false);
+  }
+
   async function runPreview(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const requestId = previewRequestId.current + 1;
+    previewRequestId.current = requestId;
     setPreview(null);
     setPreviewError("");
     setPreviewing(true);
@@ -289,12 +299,19 @@ export default function ModelProfilesPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ task_type: taskType.trim(), requested_profile_id: previewProfileId || null, prompt_tokens: 1000, expected_output_tokens: 500 }),
       });
-      if (!response.ok) setPreviewError(await getError(response));
-      else setPreview(await response.json() as PreviewResult);
+      if (!response.ok) {
+        const message = await getError(response);
+        if (requestId === previewRequestId.current) setPreviewError(message);
+      } else {
+        const result = await response.json() as PreviewResult;
+        if (requestId === previewRequestId.current) setPreview(result);
+      }
     } catch {
-      setPreviewError("Resolution preview could not reach AIAT. Retry when the control plane is available.");
+      if (requestId === previewRequestId.current) {
+        setPreviewError("Resolution preview could not reach AIAT. Retry when the control plane is available.");
+      }
     } finally {
-      setPreviewing(false);
+      if (requestId === previewRequestId.current) setPreviewing(false);
     }
   }
 
@@ -414,13 +431,13 @@ export default function ModelProfilesPage() {
         <p className="mt-1 text-sm text-slate-400">This uses AIAT’s resolver dry-run. It does not contact a model provider or count as dispatch authorization.</p>
         <form onSubmit={runPreview} className="mt-4 grid gap-4 md:grid-cols-[1fr_1fr_auto] md:items-end" aria-label="Preview model resolution">
           <label className="space-y-1 text-sm text-slate-300">Requested profile
-            <select value={previewProfileId} onChange={(event) => setPreviewProfileId(event.target.value)} className="min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-white">
+            <select value={previewProfileId} onChange={(event) => { setPreviewProfileId(event.target.value); invalidatePreview(); }} className="min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-white">
               <option value="">Use policy selection</option>
               {previewProfiles.map((profile) => <option key={profile.profile_id} value={profile.profile_id}>{profile.profile_id} · {profile.status}</option>)}
             </select>
           </label>
           <label className="space-y-1 text-sm text-slate-300">Task type
-            <input required maxLength={100} value={taskType} onChange={(event) => setTaskType(event.target.value)} className="min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-white" />
+            <input required maxLength={100} value={taskType} onChange={(event) => { setTaskType(event.target.value); invalidatePreview(); }} className="min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-white" />
           </label>
           <button type="submit" disabled={previewing || !taskType.trim()} className="min-h-11 rounded-lg border border-cyan-500/50 px-4 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-500/10 disabled:opacity-50">{previewing ? "Previewing…" : "Preview resolution"}</button>
         </form>

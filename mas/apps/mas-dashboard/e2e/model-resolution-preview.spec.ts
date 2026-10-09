@@ -71,6 +71,9 @@ test("model page previews a governed profile and estimated cost without dispatch
   await expect(page.getByText("$0.004")).toBeVisible();
   expect(previewBody).toMatchObject({ task_type: "coding", task_required_capabilities: ["tool_calling"] });
   expect(previewBody).not.toHaveProperty("layers");
+
+  await page.getByLabel("Task type").fill("research");
+  await expect(page.getByRole("region", { name: "Resolution estimate result" })).toHaveCount(0);
 });
 
 test("model page shows backend rejection reasons as actionable preview blockers", async ({ page }) => {
@@ -96,4 +99,40 @@ test("model page shows backend rejection reasons as actionable preview blockers"
   await expect(blockers.getByText(/NO_COMPLIANT_MODEL/)).toBeVisible();
   await expect(blockers.getByText("estimated cost exceeds budget")).toBeVisible();
   await expect(blockers.getByText("missing capability: tool_calling")).toBeVisible();
+});
+
+test("model page discards a preview response after its inputs change", async ({ page }) => {
+  await mockModelReadApis(page);
+  let releasePreview!: () => void;
+  let markPreviewStarted!: () => void;
+  const previewStarted = new Promise<void>((resolve) => { markPreviewStarted = resolve; });
+  const holdPreview = new Promise<void>((resolve) => { releasePreview = resolve; });
+  await page.route("**/api/governance/model-profiles/resolve-preview", async (route) => {
+    markPreviewStarted();
+    await holdPreview;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        authorized: true,
+        snapshot: {
+          resolved_profile_id: "local-coding",
+          resolved_profile_version: "v1",
+          provider_id: "local-provider",
+          exact_model_id: "local-code-model",
+          cost_estimate_usd: 0.004,
+          required_capabilities: ["tool_calling"],
+          fallback_chain: ["local-coding:v1"],
+        },
+      }),
+    });
+  });
+
+  await authenticate(page, "/models");
+  await page.getByRole("button", { name: "Preview resolution" }).click();
+  await previewStarted;
+  await page.getByLabel("Task type").fill("research");
+  releasePreview();
+
+  await expect(page.getByRole("region", { name: "Resolution estimate result" })).toHaveCount(0);
 });

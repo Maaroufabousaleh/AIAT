@@ -29,7 +29,7 @@ const APPROVED_PROFILE = {
   purpose: "Existing approved coding route",
   status: "approved",
   approved_provider_ids: ["local-provider"],
-  versions: [{ version: "2.1", provider_id: "local-provider", exact_model_id: "local-coder-v1", status: "approved" }],
+  versions: [{ id: "10000000-0000-4000-8000-000000000002", version: "2.1", provider_id: "local-provider", exact_model_id: "local-coder-v1", status: "approved" }],
 };
 
 async function mockReads(page: import("@playwright/test").Page) {
@@ -62,7 +62,7 @@ test("operator creates a draft profile and version, then previews resolution wit
     await route.fulfill({
       status: 201,
       contentType: "application/json",
-      body: JSON.stringify({ version: "1.0.0", provider_id: "local-provider", exact_model_id: "local-coder-v1", status: "draft", capabilities: ["tool_calling", "structured_output", "streaming"] }),
+      body: JSON.stringify({ id: "10000000-0000-4000-8000-000000000003", version: "1.0.0", provider_id: "local-provider", exact_model_id: "local-coder-v1", status: "draft", capabilities: ["tool_calling", "structured_output", "streaming"] }),
     });
   });
 
@@ -91,6 +91,8 @@ test("operator creates a draft profile and version, then previews resolution wit
   await expect(page.getByRole("region", { name: "Resolution preview result" })).toContainText("Dry-run resolved");
   await expect(page.getByRole("region", { name: "Resolution preview result" })).toContainText("$0.001000");
   expect(previewBody).toMatchObject({ task_type: "coding", requested_profile_id: "approved-coding" });
+  await page.getByLabel("Requested profile").selectOption("alpha-coding");
+  await expect(page.getByRole("region", { name: "Resolution preview result" })).toHaveCount(0);
   expect(externalRequests).toEqual([]);
 });
 
@@ -117,4 +119,38 @@ test("model profile setup displays conflict and validation status codes", async 
   await page.getByRole("button", { name: "Create draft profile and version" }).click();
   await expect(main.getByRole("alert")).toContainText("422: provider is not approved");
   await expect(main.getByRole("status")).toContainText("Draft profile invalid-provider was saved");
+});
+
+test("profile setup discards an in-flight preview when its task input changes", async ({ page }) => {
+  await mockReads(page);
+  let releasePreview!: () => void;
+  let markPreviewStarted!: () => void;
+  const previewStarted = new Promise<void>((resolve) => { markPreviewStarted = resolve; });
+  const holdPreview = new Promise<void>((resolve) => { releasePreview = resolve; });
+  await page.route("**/api/model-profiles/resolve-preview", async (route) => {
+    markPreviewStarted();
+    await holdPreview;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        authorized: true,
+        snapshot: {
+          resolved_profile_id: "approved-coding",
+          resolved_profile_version: "2.1",
+          provider_id: "local-provider",
+          exact_model_id: "local-coder-v1",
+          cost_estimate_usd: 0.001,
+        },
+      }),
+    });
+  });
+
+  await authenticate(page, "/models/profiles");
+  await page.getByRole("button", { name: "Preview resolution" }).click();
+  await previewStarted;
+  await page.getByLabel("Task type").fill("research");
+  releasePreview();
+
+  await expect(page.getByRole("region", { name: "Resolution preview result" })).toHaveCount(0);
 });
