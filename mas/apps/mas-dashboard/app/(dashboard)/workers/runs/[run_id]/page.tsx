@@ -127,7 +127,11 @@ function recordSummary(kind: EvidenceKey, row: JsonRecord, index: number): strin
     return display(row.from_state, "—") + " → " + display(row.to_state, "—") + " · " + display(row.actor, "control plane");
   }
   if (kind === "artifacts") {
-    return display(row.name ?? row.artifact_type ?? row.path, "Artifact " + (index + 1));
+    const metadata = asRecord(row.metadata);
+    return display(
+      row.name ?? metadata.artifact_name ?? row.artifact_type ?? row.path,
+      "Artifact " + (index + 1),
+    );
   }
   if (kind === "usage") {
     const model = display(row.exact_model_id ?? row.provider ?? row.model, "Usage record");

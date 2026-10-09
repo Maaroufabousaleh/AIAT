@@ -116,7 +116,21 @@ async function mockWorkerRunApi(page: Page, cancelMode: CancelMode = "terminal",
       return;
     }
     if (path === "/api/governance/runs/" + RUN_ID + "/artifacts" && request.method() === "GET") {
-      await route.fulfill({ json: [{ id: "artifact-1", name: "review-summary.json", size_bytes: 256 }] });
+      await route.fulfill({ json: [{
+        id: "artifact-1",
+        run_id: RUN_ID,
+        artifact_id: 42,
+        kind: "file",
+        uri: "workspace/artifacts/review-summary.json",
+        sha256: "a".repeat(64),
+        size_bytes: 256,
+        metadata: {
+          artifact_name: "review-summary.json",
+          artifact_kind: "file",
+          mime_type: "application/json",
+          worker_run_id: RUN_ID,
+        },
+      }] });
       return;
     }
     if (path === "/api/governance/runs/" + RUN_ID + "/usage" && request.method() === "GET") {
@@ -199,6 +213,9 @@ test("operator opens a Worker Run, inspects durable evidence, and sees governed 
   await expect(runPage.getByTestId("run-events")).toContainText("progress");
   await expect(runPage.getByTestId("run-transitions")).toContainText("QUEUED");
   await expect(runPage.getByTestId("run-artifacts")).toContainText("review-summary.json");
+  await expect(
+    runPage.getByTestId("run-artifacts").getByRole("listitem").first().getByText("review-summary.json", { exact: true }),
+  ).toBeVisible();
   await expect(runPage.getByTestId("run-usage")).toContainText("fixture/review-model");
   await expect(runPage.getByTestId("run-checkpoints")).toContainText("resumable");
 
