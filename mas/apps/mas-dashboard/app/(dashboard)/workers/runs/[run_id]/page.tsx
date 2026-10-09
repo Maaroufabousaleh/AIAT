@@ -289,11 +289,11 @@ function WorkerRunDetail({ runId }: { runId: string }) {
     .some((value) => typeof value === "string" && value.trim().length > 0);
   const retryable = retryableState && !flowBound;
   const adapterPinned = Boolean(run.adapter_id);
-  const cancellable = Boolean(data) && !terminal;
+  const cancellable = Boolean(data) && !stale && !terminal;
   const runTitle = run.task_type ? display(run.task_type) + " · Worker Run" : "Worker Run";
 
   async function performAction(action: RunAction) {
-    if (!data || accessDenied || busyAction) return;
+    if (!data || accessDenied || stale || busyAction) return;
     if (action === "cancel") {
       const reason = cancelReason.trim();
       if (!reason) {
@@ -501,6 +501,11 @@ function WorkerRunDetail({ runId }: { runId: string }) {
               <h2 id="run-actions-heading" className="text-sm font-semibold text-white">Operator actions</h2>
               <span className="text-xs text-slate-500">AIAT validates run state and adapter capability before changing execution.</span>
             </div>
+            {stale && (
+              <p role="status" className="mt-3 rounded-lg border border-amber-700/50 bg-amber-950/20 px-3 py-2 text-sm text-amber-100">
+                Operator actions are disabled until this Worker Run refreshes successfully.
+              </p>
+            )}
             {accessDenied ? (
               <p className="mt-3 text-sm text-amber-200">Actions are hidden while Worker Run access is denied.</p>
             ) : terminal && !retryableState ? (
@@ -515,8 +520,8 @@ function WorkerRunDetail({ runId }: { runId: string }) {
                   <>
                     <p className="text-sm text-slate-300">Retry creates a new Worker Run. AIAT rechecks current worker authority, model policy, and budget; this run and its evidence remain unchanged.</p>
                     <label htmlFor="retry-reason" className="block text-xs font-medium text-slate-300">Retry reason</label>
-                    <textarea id="retry-reason" rows={2} maxLength={4000} value={retryReason} disabled={loading || busyAction !== null} onChange={(event) => setRetryReason(event.target.value)} className="min-h-20 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:opacity-50" />
-                    <button type="button" onClick={() => void performAction("retry")} disabled={loading || busyAction !== null || accessDenied || !retryReason.trim()} aria-busy={busyAction === "retry"} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-cyan-700/70 px-3 py-2 text-sm font-medium text-cyan-100 hover:bg-cyan-950/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:cursor-not-allowed disabled:opacity-50">
+                    <textarea id="retry-reason" rows={2} maxLength={4000} value={retryReason} disabled={loading || stale || busyAction !== null} onChange={(event) => setRetryReason(event.target.value)} className="min-h-20 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:opacity-50" />
+                    <button type="button" onClick={() => void performAction("retry")} disabled={loading || stale || busyAction !== null || accessDenied || !retryReason.trim()} aria-busy={busyAction === "retry"} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-cyan-700/70 px-3 py-2 text-sm font-medium text-cyan-100 hover:bg-cyan-950/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:cursor-not-allowed disabled:opacity-50">
                       {busyAction === "retry" ? <RefreshCw size={14} className="animate-spin" aria-hidden="true" /> : <Play size={14} aria-hidden="true" />}
                       {busyAction === "retry" ? "Creating retry…" : "Retry Worker Run"}
                     </button>
@@ -537,8 +542,8 @@ function WorkerRunDetail({ runId }: { runId: string }) {
                   {state === "RUNNING" && adapterPinned && (
                     <div className="space-y-2">
                       <label htmlFor="pause-reason" className="block text-xs font-medium text-slate-300">Pause reason</label>
-                      <textarea id="pause-reason" rows={2} maxLength={4000} value={pauseReason} disabled={loading || busyAction !== null} onChange={(event) => setPauseReason(event.target.value)} className="min-h-20 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:opacity-50" />
-                      <button type="button" onClick={() => void performAction("pause")} disabled={loading || busyAction !== null || !pauseReason.trim()} aria-busy={busyAction === "pause"} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-amber-700/70 px-3 py-2 text-sm font-medium text-amber-100 hover:bg-amber-950/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300 disabled:cursor-not-allowed disabled:opacity-50">
+                      <textarea id="pause-reason" rows={2} maxLength={4000} value={pauseReason} disabled={loading || stale || busyAction !== null} onChange={(event) => setPauseReason(event.target.value)} className="min-h-20 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:opacity-50" />
+                      <button type="button" onClick={() => void performAction("pause")} disabled={loading || stale || busyAction !== null || !pauseReason.trim()} aria-busy={busyAction === "pause"} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-amber-700/70 px-3 py-2 text-sm font-medium text-amber-100 hover:bg-amber-950/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300 disabled:cursor-not-allowed disabled:opacity-50">
                         {busyAction === "pause" ? <RefreshCw size={14} className="animate-spin" aria-hidden="true" /> : <Pause size={14} aria-hidden="true" />}
                         {busyAction === "pause" ? "Pausing…" : "Pause Worker Run"}
                       </button>
@@ -547,13 +552,13 @@ function WorkerRunDetail({ runId }: { runId: string }) {
                   {state === "PAUSED" && adapterPinned && (
                     <div className="space-y-2">
                       <label htmlFor="resume-checkpoint" className="block text-xs font-medium text-slate-300">Resume checkpoint (optional)</label>
-                      <select id="resume-checkpoint" value={resumeCheckpointId} disabled={loading || busyAction !== null} onChange={(event) => setResumeCheckpointId(event.target.value)} className="min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:opacity-50">
+                      <select id="resume-checkpoint" value={resumeCheckpointId} disabled={loading || stale || busyAction !== null} onChange={(event) => setResumeCheckpointId(event.target.value)} className="min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:opacity-50">
                         <option value="">Resume without selecting a checkpoint</option>
                         {data.checkpoints.filter((checkpoint) => checkpoint.resumable === true).map((checkpoint) => (
                           <option key={display(checkpoint.id)} value={display(checkpoint.id)}>{display(checkpoint.sequence, "Checkpoint")} · {display(checkpoint.id)}</option>
                         ))}
                       </select>
-                      <button type="button" onClick={() => void performAction("resume")} disabled={loading || busyAction !== null} aria-busy={busyAction === "resume"} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-cyan-700/70 px-3 py-2 text-sm font-medium text-cyan-100 hover:bg-cyan-950/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:cursor-not-allowed disabled:opacity-50">
+                      <button type="button" onClick={() => void performAction("resume")} disabled={loading || stale || busyAction !== null} aria-busy={busyAction === "resume"} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-cyan-700/70 px-3 py-2 text-sm font-medium text-cyan-100 hover:bg-cyan-950/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:cursor-not-allowed disabled:opacity-50">
                         {busyAction === "resume" ? <RefreshCw size={14} className="animate-spin" aria-hidden="true" /> : <Play size={14} aria-hidden="true" />}
                         {busyAction === "resume" ? "Resuming…" : "Resume Worker Run"}
                       </button>
