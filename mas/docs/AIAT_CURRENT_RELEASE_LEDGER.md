@@ -112,6 +112,15 @@ credential activity, external effect, or Stagehand activation, and
 the current default and no fallback decision is claimed.
 The global release decision remains `NO-RELEASE`.
 
+The default Cloudflare/Resend v1 email identity path is separately
+live-certified. The secret-safe evidence in
+[`../../Docs/AIAT_Email_Identity_Live_Certification.md`](../../Docs/AIAT_Email_Identity_Live_Certification.md)
+records inbound production delivery, public webhook ingress, governed
+outbound approval/send/idempotency/accounting/audit, delivery correlation, and
+normal certification cleanup. This closes only the scoped email identity gate;
+the global `NO-RELEASE` decision remains because unrelated native, image,
+sandbox, KMS, recovery, security, and worker/provider gates remain open.
+
 ## Current integrated summary
 
 The repository is in the **Integrated Development & System Testing** phase.

@@ -8,13 +8,13 @@ The development branch added model-version approval, operator WorkerRun
 controls, project activity and issue management views, a unified approval
 inbox, PM project-provider discovery, and legacy-flow migration UI. The bounded
 project-decision inbox endpoint is read-only; decisions still use the owning
-project authority. This created migration
-`0046_project_approval_inbox_index`; the source graph passes at 0046, but the
-local Compose database was last reported at 0045 and the migration was not
-applied in this product run. The release-ledger and live-stack figures below
+project authority. The core migration graph now has the single source head
+`0048_worker_run_retry_lineage`; the latest retained local Compose database
+report is at `0045_worker_tool_effects`, so no live migration application is
+claimed in this product run. The release-ledger and live-stack figures below
 remain evidence from their stated dates and are not current certification for
-the 0046 source. Release status remains **NO-RELEASE**; no provider dispatch or
-native-Linux claim was made.
+the current source head. Release status remains **NO-RELEASE**; no provider
+dispatch or native-Linux claim was made.
 
 ## Previous local working-tree release snapshot — 2026-09-19
 
@@ -456,9 +456,9 @@ Provider-managed KMS/SSE is release-required but still operator-target
 - The older OpenCode v1.17.13/Semgrep record is `FAILED_UNREPRODUCIBLE`: its raw
   findings and exact source snapshot were not retained. Its scalar count fields
   have been removed from current machine-readable evidence and are not used as
-  remediation input. The fresh v1.18.21 scan is retained separately; its
-  current technical gate remains blocked until the operator reviews its
-  retained findings and Semgrep coverage errors.
+  remediation input. The v1.18.21 candidate is retained separately. The latest
+  scanner execution has no unexplained errors; the security gate remains blocked
+  on unresolved finding-review dispositions.
 - The remaining live-gate probes were rerun after correcting the test harness
   before the later email certification: outbound mail was blocked only for
   operator-owned relay credentials and a safe recipient, while self-improvement
