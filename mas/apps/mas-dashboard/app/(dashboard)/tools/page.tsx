@@ -113,6 +113,7 @@ export default function ToolsPage() {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasReadContextRef = useRef(false);
+  const requestSequenceRef = useRef(0);
 
   const handleAccessDenied = useCallback(() => {
     if (intervalRef.current) {
@@ -139,6 +140,7 @@ export default function ToolsPage() {
 
   const fetchTools = useCallback(async () => {
     if (accessDenied) return;
+    const requestSequence = ++requestSequenceRef.current;
     try {
       const res = await fetch('/api/tools', { cache: 'no-store' });
       if (!res.ok) {
@@ -147,6 +149,7 @@ export default function ToolsPage() {
         throw error;
       }
       const json: ToolsResponse = await res.json();
+      if (requestSequence !== requestSequenceRef.current) return;
       dataRef.current = json;
       hasReadContextRef.current = true;
       setData(json);
@@ -160,6 +163,7 @@ export default function ToolsPage() {
         return prev;
       });
     } catch (e) {
+      if (requestSequence !== requestSequenceRef.current) return;
       const status = e instanceof Error ? (e as HttpError).status : undefined;
       if (status === 401 || status === 403) {
         handleAccessDenied();
@@ -168,7 +172,7 @@ export default function ToolsPage() {
       setError(e instanceof Error ? e.message : 'Failed to fetch tools');
       setStale(dataRef.current !== null);
     } finally {
-      setLoading(false);
+      if (requestSequence === requestSequenceRef.current) setLoading(false);
     }
   }, [accessDenied, handleAccessDenied]);
 

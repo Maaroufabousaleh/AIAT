@@ -113,6 +113,81 @@ test("tools catalogue retains the last known state when a refresh fails", async 
   await expect(page.getByText("tools-e2e-read", { exact: true })).toBeVisible();
 });
 
+test("tools catalogue ignores an older refresh response after a newer refresh", async ({
+  page,
+}) => {
+  let refreshRequestCount = 0;
+  let readyForRefresh = false;
+  let releaseFirstResponse: (() => void) | undefined;
+  let firstResponseFulfilled: (() => void) | undefined;
+  const firstResponse = new Promise<void>((resolve) => {
+    releaseFirstResponse = resolve;
+  });
+  const firstFulfilled = new Promise<void>((resolve) => {
+    firstResponseFulfilled = resolve;
+  });
+
+  await page.route("**/api/tools", async (route) => {
+    if (!readyForRefresh) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(TOOLS_FIXTURE),
+      });
+      return;
+    }
+    refreshRequestCount += 1;
+    if (refreshRequestCount === 1) {
+      await firstResponse;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ...TOOLS_FIXTURE,
+          tools: [{ ...TOOLS_FIXTURE.tools[0], name: "tools-stale-refresh" }],
+        }),
+      });
+      firstResponseFulfilled?.();
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ...TOOLS_FIXTURE,
+        tools: [{ ...TOOLS_FIXTURE.tools[0], name: "tools-fresh-manual" }],
+      }),
+    });
+  });
+
+  await authenticate(page, "/tools");
+  await expect(page.getByText("tools-e2e-read", { exact: true })).toBeVisible();
+
+  readyForRefresh = true;
+  await page.getByRole("button", { name: "Refresh tools" }).click();
+  await expect.poll(() => refreshRequestCount).toBe(1);
+  await page.getByRole("button", { name: "Refresh tools" }).click();
+  await expect.poll(() => refreshRequestCount).toBe(2);
+  await expect(
+    page.getByText("tools-fresh-manual", { exact: true }),
+  ).toBeVisible();
+
+  releaseFirstResponse?.();
+  await firstFulfilled;
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+  await expect(
+    page.getByText("tools-stale-refresh", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByText("tools-fresh-manual", { exact: true }),
+  ).toBeVisible();
+});
+
 test("tools catalogue access denial on first load hides catalogue controls", async ({
   page,
 }) => {
