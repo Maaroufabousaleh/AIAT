@@ -4,18 +4,21 @@ import { authenticate } from "./auth";
 
 const RUN_ID = "50000000-0000-4000-8000-000000000001";
 const CHECKPOINT_ID = "50000000-0000-4000-8000-000000000002";
+const RETRY_RUN_ID = "50000000-0000-4000-8000-000000000007";
 const MISSING_RUN_ID = "60000000-0000-4000-8000-000000000001";
 
 type CancelMode = "terminal" | "accepted";
 
-function runRecord(state: string, cancelRequestedAt: string | null) {
+function runRecord(state: string, cancelRequestedAt: string | null, retryRunId: string | null = null, flowBound = false) {
   return {
     id: RUN_ID,
     worker_id: "review-worker",
     task_type: "code.review",
     state,
     project_id: "50000000-0000-4000-8000-000000000003",
-    flow_instance_id: "50000000-0000-4000-8000-000000000004",
+    flow_id: flowBound ? "50000000-0000-4000-8000-000000000008" : null,
+    flow_instance_id: flowBound ? "50000000-0000-4000-8000-000000000004" : null,
+    flow_node_execution_id: flowBound ? "50000000-0000-4000-8000-000000000009" : null,
     adapter_id: "50000000-0000-4000-8000-000000000005",
     attempt_count: 1,
     model_resolution_snapshot_id: "50000000-0000-4000-8000-000000000006",
@@ -26,14 +29,21 @@ function runRecord(state: string, cancelRequestedAt: string | null) {
     request_json: { task_type: "code.review", task_input: { change: "review fixture" } },
     result_json: null,
     error_json: null,
+    retry_of_run_id: null,
+    retry_run_id: retryRunId,
+    retry_run_state: retryRunId ? "QUEUED" : null,
   };
 }
 
-async function mockWorkerRunApi(page: Page, cancelMode: CancelMode = "terminal") {
+async function mockWorkerRunApi(page: Page, cancelMode: CancelMode = "terminal", initialState = "RUNNING", flowBound = false) {
   const observed = {
-    state: "RUNNING",
+    state: initialState,
+    flowBound,
     cancelRequestedAt: null as string | null,
     cancelPayload: null as Record<string, unknown> | null,
+    retryPayload: null as Record<string, unknown> | null,
+    retryRunId: null as string | null,
+    retryConflict: false,
     denyRunReads: false,
     denyActions: false,
     unexpected: [] as string[],
@@ -44,6 +54,10 @@ async function mockWorkerRunApi(page: Page, cancelMode: CancelMode = "terminal")
     const path = new URL(request.url()).pathname;
 
     if (path === "/api/governance/model-profiles" && request.method() === "GET") {
+      await route.fulfill({ json: [] });
+      return;
+    }
+    if ((path === "/api/projects" || path === "/api/workers") && request.method() === "GET") {
       await route.fulfill({ json: [] });
       return;
     }
@@ -90,7 +104,7 @@ async function mockWorkerRunApi(page: Page, cancelMode: CancelMode = "terminal")
       return;
     }
     if (path === "/api/governance/runs/" + RUN_ID && request.method() === "GET") {
-      await route.fulfill({ json: runRecord(observed.state, observed.cancelRequestedAt) });
+      await route.fulfill({ json: runRecord(observed.state, observed.cancelRequestedAt, observed.retryRunId, observed.flowBound) });
       return;
     }
     if (path === "/api/governance/runs/" + RUN_ID + "/events" && request.method() === "GET") {
@@ -139,6 +153,27 @@ async function mockWorkerRunApi(page: Page, cancelMode: CancelMode = "terminal")
         observed.cancelRequestedAt = "2026-10-07T12:02:00Z";
       }
       await route.fulfill({ json: runRecord(observed.state, observed.cancelRequestedAt) });
+      return;
+    }
+    if (path === "/api/governance/runs/" + RUN_ID + "/retry" && request.method() === "POST") {
+      observed.retryPayload = request.postDataJSON() as Record<string, unknown>;
+      if (observed.denyActions) {
+        await route.fulfill({ status: 403, json: { detail: "Worker Run action access was revoked." } });
+        return;
+      }
+      if (observed.retryConflict) {
+        observed.retryRunId = RETRY_RUN_ID;
+        await route.fulfill({
+          status: 409,
+          json: { detail: { code: "RUN_RETRY_ALREADY_CREATED", message: "This Worker Run already has a canonical retry. Open that run to continue recovery." } },
+        });
+        return;
+      }
+      observed.retryRunId = RETRY_RUN_ID;
+      await route.fulfill({
+        status: 202,
+        json: { run_id: RETRY_RUN_ID, state: "QUEUED", retry_of_run_id: RUN_ID, dispatch_mode: "queued" },
+      });
       return;
     }
 
@@ -264,4 +299,63 @@ test("action access revocation clears previously loaded Worker Run evidence", as
   await expect(runPage).not.toContainText(RUN_ID);
   await expect(runPage).not.toContainText("review-summary.json");
   await expect(runPage.getByRole("button", { name: "Cancel Worker Run" })).toHaveCount(0);
+});
+
+test("operator retries a failed run through a new linked Worker Run", async ({ page }) => {
+  const observed = await mockWorkerRunApi(page, "terminal", "FAILED");
+  await authenticate(page, "/governance");
+  await page.getByRole("link", { name: "Open Worker Run " + RUN_ID }).click();
+
+  const runPage = page.getByRole("main", { name: "Worker Run detail" });
+  await expect(runPage.getByTestId("run-identity")).toContainText("FAILED");
+  await expect(runPage.getByRole("button", { name: "Retry Worker Run" })).toBeVisible();
+  await expect(runPage.getByRole("button", { name: "Cancel Worker Run" })).toHaveCount(0);
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await runPage.getByRole("button", { name: "Retry Worker Run" }).click();
+
+  await expect(runPage.getByRole("status")).toContainText("Retry created as QUEUED");
+  const retryLink = runPage.getByRole("link", { name: RETRY_RUN_ID });
+  await expect(retryLink).toBeVisible();
+  await expect(retryLink).toHaveAttribute("href", "/workers/runs/" + RETRY_RUN_ID);
+  await expect(runPage.getByTestId("run-identity")).toContainText("FAILED");
+  await expect(runPage.getByRole("button", { name: "Retry Worker Run" })).toHaveCount(0);
+  expect(observed.retryPayload).toMatchObject({ reason: "Operator requested retry" });
+  expect(observed.retryPayload?.idempotency_key).toMatch(/^[0-9a-f-]{36}$/i);
+  expect(observed.unexpected).toEqual([]);
+});
+
+test("flow-bound failed runs direct operators to flow controls instead of manual retry", async ({ page }) => {
+  const observed = await mockWorkerRunApi(page, "terminal", "FAILED", true);
+  await authenticate(page, "/governance");
+  await page.getByRole("link", { name: "Open Worker Run " + RUN_ID }).click();
+
+  const runPage = page.getByRole("main", { name: "Worker Run detail" });
+  await expect(runPage.getByTestId("run-identity")).toContainText("FAILED");
+  await expect(runPage.getByTestId("run-actions")).toContainText("Retry it from the flow controls");
+  await expect(runPage.getByRole("button", { name: "Retry Worker Run" })).toHaveCount(0);
+  await expect(runPage.getByLabel("Retry reason")).toHaveCount(0);
+  expect(observed.unexpected).toEqual([]);
+});
+
+test("retry errors are visible and successful or cancelled runs cannot be retried", async ({ page }) => {
+  const observed = await mockWorkerRunApi(page, "terminal", "TIMED_OUT");
+  observed.retryConflict = true;
+  await authenticate(page, "/governance");
+  await page.getByRole("link", { name: "Open Worker Run " + RUN_ID }).click();
+
+  const runPage = page.getByRole("main", { name: "Worker Run detail" });
+  page.once("dialog", (dialog) => dialog.accept());
+  await runPage.getByRole("button", { name: "Retry Worker Run" }).click();
+  await expect(runPage.getByRole("alert")).toContainText("already has a canonical retry");
+  await expect(runPage.getByRole("link", { name: RETRY_RUN_ID })).toHaveAttribute("href", "/workers/runs/" + RETRY_RUN_ID);
+  await expect(runPage.getByRole("button", { name: "Retry Worker Run" })).toHaveCount(0);
+
+  for (const state of ["SUCCEEDED", "CANCELLED"]) {
+    observed.state = state;
+    await runPage.getByRole("button", { name: "Refresh" }).click();
+    await expect(runPage.getByTestId("run-identity")).toContainText(state);
+    await expect(runPage.getByRole("button", { name: "Retry Worker Run" })).toHaveCount(0);
+    await expect(runPage.getByRole("button", { name: "Cancel Worker Run" })).toHaveCount(0);
+  }
 });

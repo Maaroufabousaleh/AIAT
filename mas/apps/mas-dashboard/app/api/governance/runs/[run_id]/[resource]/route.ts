@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { orchestratorFetch, OrchestratorError } from "@/lib/orchestrator";
 
 const READ_RESOURCES = new Set(["events", "transitions", "artifacts", "usage", "checkpoints"]);
-const ACTION_RESOURCES = new Set(["cancel", "pause", "resume"]);
+const ACTION_RESOURCES = new Set(["cancel", "pause", "resume", "retry"]);
 const MAX_ACTION_BODY_BYTES = 8_192;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -59,6 +59,20 @@ function validateActionBody(
   body: Record<string, unknown>,
   resource: string,
 ): ActionBodyResult {
+  if (resource === "retry") {
+    if (Object.keys(body).some((key) => !["reason", "idempotency_key"].includes(key))) {
+      return { ok: false, status: 400, detail: "Worker Run retry body contains an unsupported field." };
+    }
+    const reason = body.reason;
+    const idempotencyKey = body.idempotency_key;
+    if (typeof reason !== "string" || reason.trim().length === 0 || reason.trim().length > 4_000) {
+      return { ok: false, status: 400, detail: "A non-empty retry reason of at most 4000 characters is required." };
+    }
+    if (typeof idempotencyKey !== "string" || idempotencyKey.trim().length === 0 || idempotencyKey.trim().length > 128) {
+      return { ok: false, status: 400, detail: "A retry idempotency key of at most 128 characters is required." };
+    }
+    return { ok: true, payload: { reason: reason.trim(), idempotency_key: idempotencyKey.trim() } };
+  }
   const allowedFields = resource === "cancel"
     ? new Set(["reason", "force"])
     : resource === "pause"

@@ -17,7 +17,8 @@ type RunEvidence = {
   checkpoints: JsonRecord[];
 };
 type EvidenceKey = "events" | "transitions" | "artifacts" | "usage" | "checkpoints";
-type RunAction = "cancel" | "pause" | "resume";
+type RunAction = "cancel" | "pause" | "resume" | "retry";
+type RetryTarget = { id: string; state: string };
 
 class RunApiError extends Error {
   constructor(readonly status: number, readonly payload: unknown) {
@@ -86,6 +87,12 @@ function apiMessage(payload: unknown, status: number): string {
   }
   if (code === "RUN_NOT_PAUSABLE" || code === "RUN_NOT_RESUMABLE" || code === "RUN_STATE_CONFLICT") {
     return message || "The run state changed. Refresh the run before trying again.";
+  }
+  if (code === "RUN_NOT_RETRYABLE" || code === "RETRY_IDEMPOTENCY_CONFLICT" || code === "RUN_RETRY_ALREADY_CREATED") {
+    return message || "This Worker Run cannot be retried with the current request.";
+  }
+  if (code === "RUN_RETRY_REQUIRES_FLOW_CONTROLLER" || code === "RUN_RETRY_EFFECTS_REVIEW_REQUIRED") {
+    return message || "Review the flow or mediated-tool effects before retrying this Worker Run.";
   }
   if (message && message !== "[object Object]") return code ? message + " (" + code + ")." : message;
   return "The request failed (HTTP " + status + "). Refresh the run and try again.";
@@ -197,6 +204,9 @@ function WorkerRunDetail({ runId }: { runId: string }) {
   const [actionNotice, setActionNotice] = useState("");
   const [cancelReason, setCancelReason] = useState("Operator requested cancellation");
   const [pauseReason, setPauseReason] = useState("Operator requested pause");
+  const [retryReason, setRetryReason] = useState("Operator requested retry");
+  const [retryRequestKey, setRetryRequestKey] = useState("");
+  const [retryTarget, setRetryTarget] = useState<RetryTarget | null>(null);
   const [resumeCheckpointId, setResumeCheckpointId] = useState("");
 
   const loadRun = useCallback(async (quiet = false): Promise<RunEvidence | null> => {
@@ -235,6 +245,9 @@ function WorkerRunDetail({ runId }: { runId: string }) {
         const first = next.checkpoints.find((checkpoint) => checkpoint.resumable === true);
         return first ? display(first.id, "") : "";
       });
+      setRetryTarget(typeof next.run.retry_run_id === "string"
+        ? { id: next.run.retry_run_id, state: display(next.run.retry_run_state, "UNKNOWN") }
+        : null);
       return next;
     } catch (cause) {
       if (cause instanceof RunApiError && [401, 403].includes(cause.status)) {
@@ -244,6 +257,7 @@ function WorkerRunDetail({ runId }: { runId: string }) {
         setData(null);
         setStale(false);
         setResumeCheckpointId("");
+        setRetryTarget(null);
         setActionNotice("");
         setActionError("");
       } else {
@@ -266,6 +280,10 @@ function WorkerRunDetail({ runId }: { runId: string }) {
   const run = data?.run ?? {};
   const state = stateLabel(run);
   const terminal = TERMINAL_STATES.has(state);
+  const retryableState = state === "FAILED" || state === "TIMED_OUT";
+  const flowBound = [run.flow_id, run.flow_instance_id, run.flow_node_execution_id]
+    .some((value) => typeof value === "string" && value.trim().length > 0);
+  const retryable = retryableState && !flowBound;
   const adapterPinned = Boolean(run.adapter_id);
   const cancellable = Boolean(data) && !terminal;
   const runTitle = run.task_type ? display(run.task_type) + " · Worker Run" : "Worker Run";
@@ -280,15 +298,28 @@ function WorkerRunDetail({ runId }: { runId: string }) {
       }
       if (!window.confirm("Request cancellation for this Worker Run?")) return;
     }
+    if (action === "retry") {
+      if (!retryReason.trim()) {
+        setActionError("Enter a reason before requesting a retry.");
+        return;
+      }
+      if (!window.confirm("Create a new Worker Run using current authority, model, and budget policy?")) return;
+    }
     if (action === "pause" && !pauseReason.trim()) {
       setActionError("Enter a reason before requesting pause.");
       return;
     }
 
-    const reason = action === "cancel" ? cancelReason.trim() : pauseReason.trim();
+    const reason = action === "cancel" ? cancelReason.trim() : action === "retry" ? retryReason.trim() : pauseReason.trim();
+    const idempotencyKey = action === "retry"
+      ? retryRequestKey || window.crypto.randomUUID()
+      : "";
+    if (action === "retry" && !retryRequestKey) setRetryRequestKey(idempotencyKey);
     const payload: JsonRecord = action === "resume"
       ? (resumeCheckpointId ? { checkpoint_id: resumeCheckpointId } : {})
-      : { reason, ...(action === "cancel" ? { force: false } : {}) };
+      : action === "retry"
+        ? { reason, idempotency_key: idempotencyKey }
+        : { reason, ...(action === "cancel" ? { force: false } : {}) };
     setBusyAction(action);
     setActionError("");
     setActionNotice("");
@@ -302,6 +333,15 @@ function WorkerRunDetail({ runId }: { runId: string }) {
       const result = await response.json().catch(() => null) as unknown;
       if (!response.ok) throw new RunApiError(response.status, result);
       const actionRun = asRecord(result);
+      if (action === "retry") {
+        const newRunId = display(actionRun.run_id, "");
+        const newRunState = display(actionRun.state, "UNKNOWN");
+        if (!UUID_PATTERN.test(newRunId)) throw new Error("Retry response did not contain a valid Worker Run ID.");
+        setRetryTarget({ id: newRunId, state: newRunState });
+        setActionNotice("Retry created as " + newRunState + ". The original run and its evidence remain unchanged.");
+        await loadRun(true);
+        return;
+      }
       const refreshed = await loadRun(true);
       const latestRun = refreshed?.run ?? { ...run, ...actionRun };
       const latestState = stateLabel(latestRun);
@@ -326,11 +366,14 @@ function WorkerRunDetail({ runId }: { runId: string }) {
         setData(null);
         setStale(false);
         setResumeCheckpointId("");
+        setRetryTarget(null);
         setActionNotice("");
       } else {
         setActionError(cause instanceof RunApiError
           ? apiMessage(cause.payload, cause.status)
-          : "The action could not be sent. Check the connection and retry.");
+          : cause instanceof Error && cause.message.startsWith("Retry response")
+            ? cause.message
+            : "The action could not be sent. Check the connection and retry.");
         if (cause instanceof RunApiError && cause.status === 409) void loadRun(true);
       }
     } finally {
@@ -422,6 +465,16 @@ function WorkerRunDetail({ runId }: { runId: string }) {
                 </div>
               ))}
             </dl>
+            {(typeof run.retry_of_run_id === "string" || retryTarget) && (
+              <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-xs" aria-label="Retry lineage">
+                {typeof run.retry_of_run_id === "string" && (
+                  <p className="text-slate-400">Retry of <Link className="text-cyan-200 underline underline-offset-4" href={"/workers/runs/" + encodeURIComponent(run.retry_of_run_id)}>{run.retry_of_run_id}</Link></p>
+                )}
+                {retryTarget && (
+                  <p className="text-slate-400">Retry run · {retryTarget.state} · <Link className="text-cyan-200 underline underline-offset-4" href={"/workers/runs/" + encodeURIComponent(retryTarget.id)}>{retryTarget.id}</Link></p>
+                )}
+              </div>
+            )}
             <div className="mt-4 grid gap-2 sm:grid-cols-2">
               {[
                 ["Submitted request", run.request_json],
@@ -446,8 +499,26 @@ function WorkerRunDetail({ runId }: { runId: string }) {
             </div>
             {accessDenied ? (
               <p className="mt-3 text-sm text-amber-200">Actions are hidden while Worker Run access is denied.</p>
-            ) : terminal ? (
-              <p className="mt-3 text-sm text-slate-400">This run is terminal. No cancellation, pause, or resume action is available.</p>
+            ) : terminal && !retryableState ? (
+              <p className="mt-3 text-sm text-slate-400">This run is terminal. No retry or execution control action is available.</p>
+            ) : retryableState && flowBound ? (
+              <p className="mt-3 text-sm text-slate-300">This run belongs to a flow. Retry it from the flow controls so the workflow state and this run stay aligned.</p>
+            ) : retryable ? (
+              <div className="mt-4 max-w-2xl space-y-3">
+                {retryTarget ? (
+                  <p className="text-sm text-slate-300">A retry is already linked to this run. Open it to inspect or retry that run if it later fails.</p>
+                ) : (
+                  <>
+                    <p className="text-sm text-slate-300">Retry creates a new Worker Run. AIAT rechecks current worker authority, model policy, and budget; this run and its evidence remain unchanged.</p>
+                    <label htmlFor="retry-reason" className="block text-xs font-medium text-slate-300">Retry reason</label>
+                    <textarea id="retry-reason" rows={2} maxLength={4000} value={retryReason} disabled={loading || busyAction !== null} onChange={(event) => setRetryReason(event.target.value)} className="min-h-20 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:opacity-50" />
+                    <button type="button" onClick={() => void performAction("retry")} disabled={loading || busyAction !== null || accessDenied || !retryReason.trim()} aria-busy={busyAction === "retry"} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-cyan-700/70 px-3 py-2 text-sm font-medium text-cyan-100 hover:bg-cyan-950/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:cursor-not-allowed disabled:opacity-50">
+                      {busyAction === "retry" ? <RefreshCw size={14} className="animate-spin" aria-hidden="true" /> : <Play size={14} aria-hidden="true" />}
+                      {busyAction === "retry" ? "Creating retry…" : "Retry Worker Run"}
+                    </button>
+                  </>
+                )}
+              </div>
             ) : (
               <div className="mt-4 grid gap-4 lg:grid-cols-2">
                 <div className="space-y-2">
