@@ -198,6 +198,8 @@ export function ExecutiveActionPanel({ accessDenied = false }: { accessDenied?: 
   const [idempotencyKey, setIdempotencyKey] = useState("");
   const [taskType, setTaskType] = useState("kpi.reconcile");
   const [taskInput, setTaskInput] = useState(DEFAULT_TASK_INPUT);
+  const [runBudgetUsd, setRunBudgetUsd] = useState("");
+  const [runTimeoutSeconds, setRunTimeoutSeconds] = useState("");
   const [dispatchProjectId, setDispatchProjectId] = useState("");
   const [scopeInput, setScopeInput] = useState("");
   const [ceoAction, setCeoAction] = useState("");
@@ -327,6 +329,14 @@ export function ExecutiveActionPanel({ accessDenied = false }: { accessDenied?: 
       if (!normalizedTaskType || normalizedTaskType.length > 256) {
         throw new Error("Task type is required and must be 256 characters or fewer.");
       }
+      const budgetUsd = runBudgetUsd.trim() ? Number(runBudgetUsd) : undefined;
+      if (budgetUsd !== undefined && (!Number.isFinite(budgetUsd) || budgetUsd <= 0)) {
+        throw new Error("Maximum run cost must be a positive amount in USD. Leave it blank to use the existing budget policy.");
+      }
+      const timeoutSeconds = runTimeoutSeconds.trim() ? Number(runTimeoutSeconds) : undefined;
+      if (timeoutSeconds !== undefined && (!Number.isSafeInteger(timeoutSeconds) || timeoutSeconds < 1)) {
+        throw new Error("Execution timeout must be a positive whole number of seconds.");
+      }
       const body: ExecutiveCTOWorkerRunRequest = {
         requested_by: "office_cto",
         dispatch: {
@@ -335,6 +345,8 @@ export function ExecutiveActionPanel({ accessDenied = false }: { accessDenied?: 
           task_type: normalizedTaskType,
           task_input: parseJsonObject(taskInput, "Task input"),
           project_id: normalizedProjectId || null,
+          ...(budgetUsd !== undefined ? { budget_usd: budgetUsd } : {}),
+          ...(timeoutSeconds !== undefined ? { timeout_seconds: timeoutSeconds } : {}),
         },
       };
       await runAction("CTO worker dispatch", "/api/executive/actions/cto/worker-runs", body);
@@ -472,6 +484,14 @@ export function ExecutiveActionPanel({ accessDenied = false }: { accessDenied?: 
             </select>
           </label>
           <p id="cto-project-help" className={`-mt-2 text-xs ${projectOptionsError ? "text-amber-200" : "text-slate-500"}`} aria-live="polite">{projectOptionsError || (optionsLoading ? "Loading project choices…" : "Choose No project or a current project.")}</p>
+          <label className="block text-sm text-slate-300" htmlFor="cto-run-budget">Maximum run cost (USD, optional)
+            <input id="cto-run-budget" type="number" min="0.01" step="0.01" value={runBudgetUsd} onChange={(event) => setRunBudgetUsd(event.target.value)} inputMode="decimal" placeholder="Use existing budget policy" aria-describedby="cto-run-budget-help" className={FIELD_CLASS} />
+          </label>
+          <p id="cto-run-budget-help" className="-mt-2 text-xs text-slate-500">A positive value requests a per-run cost reservation. Leave blank to use existing company and project budget policy; zero is not an unset value.</p>
+          <label className="block text-sm text-slate-300" htmlFor="cto-run-timeout">Execution timeout (seconds, optional)
+            <input id="cto-run-timeout" type="number" min="1" step="1" value={runTimeoutSeconds} onChange={(event) => setRunTimeoutSeconds(event.target.value)} inputMode="numeric" placeholder="Use worker/runtime policy" aria-describedby="cto-run-timeout-help" className={FIELD_CLASS} />
+          </label>
+          <p id="cto-run-timeout-help" className="-mt-2 text-xs text-slate-500">Set a positive whole number to bound this run; leave blank to use worker/runtime policy.</p>
           <details className="rounded border border-slate-800 px-3 py-2">
             <summary className="min-h-11 cursor-pointer py-3 text-sm text-slate-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70">Advanced task input (JSON object)</summary>
             <label className="block text-sm text-slate-300" htmlFor="cto-task-input">Task input (JSON object)

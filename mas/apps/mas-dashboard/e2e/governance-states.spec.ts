@@ -197,6 +197,8 @@ test("governance retains the last known state when a refresh fails", async ({
     governance.getByLabel("Task type"),
     governance.getByLabel("Idempotency key"),
     governance.getByRole("combobox", { name: "Project (optional)", exact: true }),
+    governance.getByLabel("Maximum run cost (USD, optional)"),
+    governance.getByLabel("Execution timeout (seconds, optional)"),
     governance.getByRole("checkbox"),
   ]) {
     await expect(control).toHaveCSS("min-height", "44px");
@@ -314,6 +316,18 @@ test("executive action forms validate structured requests before sending", async
   const generatedKey = await idempotencyInput.inputValue();
   expect(generatedKey).toBeTruthy();
   await actions.getByRole("combobox", { name: "Project (optional)", exact: true }).selectOption("10000000-0000-4000-8000-000000000001");
+  const runBudget = actions.getByLabel("Maximum run cost (USD, optional)");
+  await runBudget.fill("0");
+  expect(await runBudget.evaluate((element) => (element as HTMLInputElement).checkValidity())).toBe(false);
+  await actions.getByRole("button", { name: "Dispatch governed run" }).click();
+  await expect.poll(() => submitted.length).toBe(0);
+  await runBudget.fill("");
+  const runTimeout = actions.getByLabel("Execution timeout (seconds, optional)");
+  await runTimeout.fill("1.5");
+  expect(await runTimeout.evaluate((element) => (element as HTMLInputElement).checkValidity())).toBe(false);
+  await actions.getByRole("button", { name: "Dispatch governed run" }).click();
+  await expect.poll(() => submitted.length).toBe(0);
+  await runTimeout.fill("");
   await actions.getByText("Advanced task input (JSON object)").click();
   await actions.getByLabel("Task input (JSON object)").fill("[\"not an object\"]");
   await actions.getByRole("button", { name: "Dispatch governed run" }).click();
@@ -446,6 +460,8 @@ test("executive action forms submit canonical choices without copied IDs", async
 
   await workerSelect.selectOption("20000000-0000-4000-8000-000000000002");
   await actions.getByLabel("Task type").fill("code.edit");
+  await actions.getByLabel("Maximum run cost (USD, optional)").fill("2.5");
+  await actions.getByLabel("Execution timeout (seconds, optional)").fill("90");
   const requestKey = await actions.getByLabel("Idempotency key").inputValue();
   expect(requestKey).toBeTruthy();
   await actions.getByRole("combobox", { name: "Project (optional)", exact: true }).selectOption("10000000-0000-4000-8000-000000000001");
@@ -463,6 +479,8 @@ test("executive action forms submit canonical choices without copied IDs", async
         task_type: "code.edit",
         task_input: { issue: "Fix the failing test" },
         project_id: "10000000-0000-4000-8000-000000000001",
+        budget_usd: 2.5,
+        timeout_seconds: 90,
       },
     },
   });
