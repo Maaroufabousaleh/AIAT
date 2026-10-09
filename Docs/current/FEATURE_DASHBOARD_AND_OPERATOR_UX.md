@@ -320,6 +320,20 @@ The dashboard is the human control and evidence surface for AIAT. It must make c
   E2E cleanup recognizes namespaced fixture records; ordinary names such as
   `tmp`, `proj-123`, `C-123 Workstream`, and `Test Project 123` no longer match
   cleanup candidates (policy spec 1/1).
+- CEO chat now labels uncertain and denied delivery per request, reconciles a
+  delayed receipt, and restores or clears only the draft associated with that
+  request while preserving newer operator input. Its current-source suite
+  passes 10/10. Project retry/archive failures refresh canonical state and offer
+  recovery (1/1); stale WorkerRun actions remain disabled pending a successful
+  refresh (3/3); tool-group expansion choices survive refresh (5/5); and
+  external-account rotation/closure results explain pending approval and link
+  to its inbox (2/2).
+- Governance now offers a guided selector for four existing approval-required
+  operations; raw action/payload JSON remains under Advanced and every request
+  still requires separate human approval (8/8). PM integrations lists bounded
+  recent inbound-canary summaries for operator inspection while retaining the
+  existing plan-ID detail route (2/2). The current-source mocked CEO,
+  governance, and PM suites passed 20/20 together; no provider call was made.
 - Changed dashboard TS/TSX files pass targeted ESLint, and the isolated scoped
   TypeScript check passes. The checked-in generated `.next/dev/types` artifacts
   are not used by this isolated typecheck. The source-copied dashboard package
@@ -335,7 +349,7 @@ The dashboard is the human control and evidence surface for AIAT. It must make c
 - CEO privileged requests now default to a bounded selector for four existing approval-required operational actions, with a required justification/target context and explicit confirmation. The panel creates only the existing audited approval request; a separate human decision remains required. Free-form action and payload JSON are still available only under “Advanced action and payload.” The source-built governance suite passes 8/8, and the pending-receipt-to-inbox flow passes 1/1 with mocked APIs and no provider call.
 - The Models page exposes a read-only governance-resolution preview with selected profile/version, reason codes, and a cost estimate. Preview results do not authorize or dispatch provider calls (`89aa1a7d`).
 - Governance includes a worker steward surface for immutable-candidate review, rollout/canary actions, and rollback through existing steward APIs. It preserves section access denial and does not claim live worker certification (`e873e46b`).
-- The PM integrations page exposes connection-scoped reconciliation, conflict disposition, known-canary lookup, and outbox/reconciliation detail. Missing provider-side collection endpoints remain visible as limitations (`57d31337`).
+- The PM integrations page exposes connection-scoped reconciliation, conflict disposition, bounded recent canary-plan listing, selected-plan inspection, and outbox/reconciliation detail. Mapping and dead-letter collection discovery remain limited by the canonical API surface (`57d31337`, `1f9b7a1a`).
 - Project creation supports a prepared INIT record and the project page exposes an operator-only start action with retry feedback. The six-feature source-built dashboard E2E subset passed 19/19 on 2026-10-07 with API calls mocked; this does not claim provider-backed project execution (`1aea2f80`).
 - The Approvals page combines CEO privileged requests with a bounded, cursor-paged read of project decisions. Project-decision actions still go through the owning project endpoint, CEO privileged decisions use the audited existing endpoint, and model-version approvals remain a separate action. Its focused source-built suite passes 7/7, including paging, stale conflict, duplicate submission, and existing privileged-approval behavior; no provider call is made.
 - CEO privileged-action receipts now show the pending approval record, risk, and a deep link to its exact inbox request. Query changes update the selected request, stale refresh responses cannot overwrite newer selections, and decision controls stay hidden until the selected pending state is freshly verified. After a refresh failure, the operator must re-enter the reason and confirmation. Recording an inbox decision does not dispatch the privileged action. The focused source-built receipt/inbox E2E passes 5/5 (`ceo-action-approval-receipt.spec.ts`, `privileged-approvals.spec.ts`).

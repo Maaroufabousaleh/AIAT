@@ -39,6 +39,7 @@ the mail-edge feature, and [`AIAT_Email_Identity_Live_Certification.md`](../AIAT
   cancellation, and provider webhook boundary.
 - External-account signup/status/login/rotation/suspend/close lifecycle.
 - Versioned external-account action policy (`aiat.external-account-action-policy.v1`) exposes category-sensitive signup, always-approved credential rotation, human-approved closure, immediate safety suspension, and governed local browser-session rules. Close requests now pause at a durable approval before state change and session revocation.
+- The dashboard explains when external-account rotation or closure is awaiting human approval and links directly to identity approvals. [`external-account-actions.spec.ts`](../../mas/apps/mas-dashboard/e2e/external-account-actions.spec.ts) passes 2/2 with mocked APIs; no account or provider action was performed.
 - The deterministic `aiat.external-account-action-policy-check.v1` fixture reconciles the real five-action catalogue, development/organization/provider category dispositions, and fail-closed unknown action/category behavior without creating identity, account, session, credential, or provider state. Licence/restriction metadata is explicitly outside this policy.
 - The deterministic `aiat.external-account-lifecycle.v1` fixture drives the
   real `IdentityService` over `InMemoryIdentityStore`: category-sensitive
