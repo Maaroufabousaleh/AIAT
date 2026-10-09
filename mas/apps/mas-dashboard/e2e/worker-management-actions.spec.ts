@@ -345,3 +345,180 @@ test("worker configuration validation failures stay visible and leave the row un
     },
   ]);
 });
+
+test("external worker evaluation history exposes a retry and an empty state", async ({
+  page,
+}) => {
+  const worker = {
+    id: CANDIDATE_RECORD_ID,
+    worker_id: "external-candidate",
+    name: "External candidate",
+    status: "INACTIVE",
+    evaluation_status: "pending",
+    source_repo: "https://example.invalid/workers/candidate",
+    version_pin: "a".repeat(40),
+    team_id: "dept_qa",
+    adapter_entrypoint: "ExternalWorkerAgent",
+    adapter_module: "workers.external_candidate",
+    sandbox_profile: "sandboxed",
+  };
+  let evaluationReads = 0;
+  const unexpectedApiRequests: string[] = [];
+
+  await page.route("**/api/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    const method = request.method();
+
+    if (path === "/api/workers" && method === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([worker]),
+      });
+      return;
+    }
+    if (path === "/api/runtimes" && method === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ runtimes: [] }),
+      });
+      return;
+    }
+    if (
+      path === `/api/workers/${CANDIDATE_RECORD_ID}/evaluations` &&
+      method === "GET"
+    ) {
+      evaluationReads += 1;
+      if (evaluationReads === 1) {
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: "Evaluation history is temporarily unavailable" }),
+        });
+      } else {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([]),
+        });
+      }
+      return;
+    }
+
+    unexpectedApiRequests.push(`${method} ${path}`);
+    await route.fulfill({
+      status: 501,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "Unexpected API request in evaluation history fixture" }),
+    });
+  });
+
+  await authenticate(page, "/workers");
+  const hiringBoard = page.getByRole("main", { name: "Hiring Board" });
+  const candidate = hiringBoard.getByRole("row", {
+    name: "external-candidate worker row",
+  });
+  await candidate.click();
+
+  const historyError = page.getByRole("alert").filter({
+    hasText: "Evaluation history is temporarily unavailable",
+  });
+  await expect(historyError).toBeVisible();
+  await historyError.getByRole("button", { name: "Retry evaluation history" }).click();
+
+  await expect(
+    page.getByText("No evaluation report is available yet. Run Evaluate to create one."),
+  ).toBeVisible();
+  await expect(historyError).toHaveCount(0);
+  expect(evaluationReads).toBe(2);
+  expect(unexpectedApiRequests).toEqual([]);
+});
+
+test("retained worker rows do not fetch evaluation history after access is denied", async ({
+  page,
+}) => {
+  const worker = {
+    id: CANDIDATE_RECORD_ID,
+    worker_id: "external-candidate",
+    name: "External candidate",
+    status: "INACTIVE",
+    evaluation_status: "pending",
+    source_repo: "https://example.invalid/workers/candidate",
+    version_pin: "a".repeat(40),
+    team_id: "dept_qa",
+    adapter_entrypoint: "ExternalWorkerAgent",
+    adapter_module: "workers.external_candidate",
+    sandbox_profile: "sandboxed",
+  };
+  let workerReads = 0;
+  let evaluationReads = 0;
+  const unexpectedApiRequests: string[] = [];
+
+  await page.route("**/api/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    const method = request.method();
+
+    if (path === "/api/workers" && method === "GET") {
+      workerReads += 1;
+      await route.fulfill(
+        workerReads === 1
+          ? {
+              status: 200,
+              contentType: "application/json",
+              body: JSON.stringify([worker]),
+            }
+          : { status: 403, contentType: "application/json", body: "{}" },
+      );
+      return;
+    }
+    if (path === "/api/runtimes" && method === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ runtimes: [] }),
+      });
+      return;
+    }
+    if (
+      path === `/api/workers/${CANDIDATE_RECORD_ID}/evaluations` &&
+      method === "GET"
+    ) {
+      evaluationReads += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([]),
+      });
+      return;
+    }
+
+    unexpectedApiRequests.push(`${method} ${path}`);
+    await route.fulfill({
+      status: 501,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "Unexpected API request in retained worker fixture" }),
+    });
+  });
+
+  await authenticate(page, "/workers");
+  const hiringBoard = page.getByRole("main", { name: "Hiring Board" });
+  const candidate = hiringBoard.getByRole("row", {
+    name: "external-candidate worker row",
+  });
+  await expect(candidate).toBeVisible();
+  await page.getByRole("button", { name: "Refresh workers" }).click();
+  const accessStatus = page.getByRole("region", {
+    name: "Hiring Board access status",
+  });
+  await expect(accessStatus).toContainText("Last-known worker rows remain visible");
+
+  await candidate.click();
+  await expect(
+    page.getByText("Evaluation history is unavailable while worker access is denied."),
+  ).toBeVisible();
+  expect(evaluationReads).toBe(0);
+  expect(unexpectedApiRequests).toEqual([]);
+});

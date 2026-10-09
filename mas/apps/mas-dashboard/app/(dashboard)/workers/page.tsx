@@ -326,6 +326,8 @@ function WorkerRow({
   const [transitioning, setTransitioning] = useState(false);
   const [evaluating, setEvaluating] = useState(false);
   const [evaluations, setEvaluations] = useState<EvaluationReport[]>([]);
+  const [evaluationLoading, setEvaluationLoading] = useState(false);
+  const [evaluationError, setEvaluationError] = useState("");
   const [actionError, setActionError] = useState("");
   const [editing, setEditing] = useState(false);
   // Track which evaluation check details are expanded (per check name).
@@ -344,17 +346,34 @@ function WorkerRow({
   }
 
   async function loadEvaluations() {
-    const res = await fetch(`/api/workers/${worker.id}/evaluations`);
-    if (res.ok) {
-      const data = await res.json();
-      setEvaluations(Array.isArray(data) ? data : []);
+    setEvaluationLoading(true);
+    setEvaluationError("");
+    try {
+      const res = await fetch(`/api/workers/${encodeURIComponent(worker.id)}/evaluations`);
+      if (!res.ok) {
+        const payload = await res.json().catch(() => null);
+        setEvaluationError(
+          apiErrorMessage(payload, `Evaluation history could not be loaded (HTTP ${res.status}).`),
+        );
+        return;
+      }
+      const data: unknown = await res.json();
+      if (!Array.isArray(data)) {
+        setEvaluationError("Evaluation history returned an invalid response. Retry to load it again.");
+        return;
+      }
+      setEvaluations(data);
+    } catch {
+      setEvaluationError("Network error while loading evaluation history. Retry to try again.");
+    } finally {
+      setEvaluationLoading(false);
     }
   }
 
   async function toggleExpanded() {
     const next = !expanded;
     setExpanded(next);
-    if (next && worker.source_repo) {
+    if (next && worker.source_repo && !accessDenied) {
       await loadEvaluations();
     }
   }
@@ -651,7 +670,7 @@ function WorkerRow({
                 )}
               </div>
             </div>
-            {(activationBlocked || actionError || latestEvaluation) && (
+            {(activationBlocked || actionError || latestEvaluation || worker.source_repo) && (
               <div className="mt-4 border-t border-slate-800 pt-4 text-sm">
                 {activationBlocked && (
                   <div
@@ -670,6 +689,41 @@ function WorkerRow({
                     {actionError}
                   </div>
                 )}
+                {worker.source_repo && accessDenied && (
+                  <p role="status" className="mb-3 text-xs text-amber-200/80">
+                    Evaluation history is unavailable while worker access is denied.
+                  </p>
+                )}
+                {worker.source_repo && !accessDenied && evaluationLoading && (
+                  <p role="status" className="mb-3 text-xs text-slate-400">
+                    Loading evaluation history…
+                  </p>
+                )}
+                {worker.source_repo && !accessDenied && evaluationError && (
+                  <div
+                    className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded border border-amber-700/70 bg-amber-950/30 px-3 py-2 text-xs text-amber-100"
+                    role="alert"
+                  >
+                    <span>{evaluationError}</span>
+                    <button
+                      type="button"
+                      onClick={() => void loadEvaluations()}
+                      disabled={evaluationLoading}
+                      className="min-h-11 rounded border border-amber-700 px-3 py-2 font-medium text-amber-100 hover:bg-amber-900/40 disabled:cursor-wait disabled:opacity-50"
+                    >
+                      {evaluationLoading ? "Retrying…" : "Retry evaluation history"}
+                    </button>
+                  </div>
+                )}
+                {worker.source_repo &&
+                  !accessDenied &&
+                  !evaluationLoading &&
+                  !evaluationError &&
+                  !latestEvaluation && (
+                    <p role="status" className="mb-3 text-xs text-slate-400">
+                      No evaluation report is available yet. Run Evaluate to create one.
+                    </p>
+                  )}
                 {latestEvaluation && (
                   <div>
                     <div className="flex items-center justify-between mb-3">
