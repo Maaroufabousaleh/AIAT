@@ -668,7 +668,18 @@ export default function IntegrationsPage() {
                   />
                 </label>
               </div>
-              {projectsError && <p role="alert" className="text-sm text-amber-200">{projectsError}</p>}
+              {projectsError && (
+                <div className="flex flex-wrap items-center gap-3">
+                  <p role="alert" className="text-sm text-amber-200">{projectsError}</p>
+                  <button
+                    type="button"
+                    className="min-h-9 rounded border border-slate-700 px-3 py-1 text-xs font-medium text-slate-200 hover:bg-slate-900 disabled:cursor-wait disabled:opacity-60"
+                    disabled={projectsLoading}
+                    aria-busy={projectsLoading}
+                    onClick={() => void loadProjects()}
+                  >{projectsLoading ? "Retrying project list…" : "Retry project list"}</button>
+                </div>
+              )}
               <div className="flex flex-wrap items-center gap-3">
                 <button
                   type="button"
