@@ -221,7 +221,7 @@ const testSuites = [
             await page.waitForTimeout(1000);
             const nameInput = page.getByPlaceholder(/my-project/i);
             if (await nameInput.isVisible()) {
-              await nameInput.fill('Test Project ' + Date.now());
+              await nameInput.fill('aiat_e2e_project_comprehensive_' + Date.now());
               const createBtn = page.getByRole('button', { name: /create/i });
               if (await createBtn.isVisible()) {
                 await createBtn.click();

@@ -30,7 +30,7 @@ test("CEO chat publishes a directive and receives the live orchestrator response
 });
 
 test("CEO chat keeps worker context through a hiring follow-up", async ({ page }) => {
-  const workerName = `e2e_candidate_${Date.now()}`;
+  const workerName = `aiat_e2e_candidate_${Date.now()}`;
 
   await authenticate(page, "/ceo/chat");
   await expect(page.getByText("Live", { exact: true })).toBeVisible();

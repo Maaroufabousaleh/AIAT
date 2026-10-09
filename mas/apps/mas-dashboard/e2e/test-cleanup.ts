@@ -15,35 +15,25 @@ const API_KEY = runtimeEnv("AIAT_OPERATOR_API_KEY") || runtimeEnv("MAS_API_KEY")
 
 const PROJECT_PATTERNS = [
   /^aiat_smoke_[a-z0-9_]+$/i,
-  /^gamma-workspace-\d+$/,
-  /^flow-ui-project-\d+$/,
-  /^test2-[a-z0-9-]+-\d+$/i,
-  /^Test Project \d+$/,
-  /^proj-\d+$/,
+  /^aiat_e2e_project_[a-z0-9_]+$/i,
   /^live_probe_\d+_[a-f0-9]+$/,
   /^rebuilt_probe_\d+_[a-f0-9]+$/,
-  /^Live infra-ready audit \d+$/,
   /^AIAT live tool audit [a-f0-9]+$/,
-  /^[CDF]-\d{3}(?:[ -/]|$)/,
-  /^G(?:-chief-scenarios-|\d{3} live trace$)/,
-  /^live-(?:i003-|context-|chunk-ledger$)/,
+  /^G-chief-scenarios-[a-f0-9-]+$/i,
   /^ceo_live_project_\d+$/,
 ];
 
 const WORKER_PATTERNS = [
   /^aiat_smoke_[a-z0-9_]+$/i,
-  /^e2e_worker_\d+$/,
-  /^e2e_candidate_\d+$/,
-  /^test-worker-\d+$/,
+  /^aiat_e2e_worker_[a-z0-9_]+$/i,
+  /^aiat_e2e_candidate_\d+$/i,
   /^live_probe_\d+_[a-f0-9]+_worker$/,
   /^live-audit-worker-[a-f0-9]+$/,
   /^rebuilt_probe_\d+_[a-f0-9]+_worker$/,
 ];
 
 const FLOW_PATTERNS = [
-  /^Simple Product Build Flow \d+$/,
-  /^Test2-[A-Za-z0-9-]+-\d+$/,
-  /^Test Flow \d+$/,
+  /^aiat_e2e_flow_[a-z0-9_]+$/i,
 ];
 
 const CREDENTIAL_PATTERNS = [/^E2E_SECRET_\d+$/, /^TEST_SECRET_\d+$/];
@@ -54,6 +44,14 @@ function matchesAny(value: unknown, patterns: RegExp[]): boolean {
 
 export function isKnownE2EProjectName(value: unknown): boolean {
   return matchesAny(value, PROJECT_PATTERNS);
+}
+
+export function isKnownE2EFlowName(value: unknown): boolean {
+  return matchesAny(value, FLOW_PATTERNS);
+}
+
+export function isKnownE2EWorkerName(value: unknown): boolean {
+  return matchesAny(value, WORKER_PATTERNS);
 }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T | null> {
@@ -118,14 +116,14 @@ export async function cleanupE2EArtifacts(): Promise<void> {
 
   await run("workers", async () => {
     const workers = (await api<ApiRecord[]>("/capabilities/workers")) ?? [];
-    await deleteMatching("test workers", workers, (value) => matchesAny(value, WORKER_PATTERNS), (worker) =>
+    await deleteMatching("test workers", workers, isKnownE2EWorkerName, (worker) =>
       worker.id ? `/capabilities/workers/${worker.id}?permanent=true` : null,
     );
   });
 
   await run("flows", async () => {
     const flows = (await api<ApiRecord[]>("/flows?limit=1000")) ?? [];
-    await deleteMatching("test flows", flows, (value) => matchesAny(value, FLOW_PATTERNS), (flow) =>
+    await deleteMatching("test flows", flows, isKnownE2EFlowName, (flow) =>
       flow.id ? `/flows/${flow.id}` : null,
     );
   });

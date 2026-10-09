@@ -50,7 +50,7 @@ test.describe("Operational UI smoke flows", () => {
     page,
   }) => {
     const stamp = Date.now();
-    const workerId = `e2e_worker_${stamp}`;
+    const workerId = `aiat_e2e_worker_organization_${stamp}`;
 
     await page.goto("/workers");
     await expect(
@@ -590,7 +590,7 @@ test.describe("Operational UI smoke flows", () => {
   test("project workspace exposes next actions, audit timeline, artifacts, and usage", async ({
     page,
   }) => {
-    const name = `gamma-workspace-${Date.now()}`;
+    const name = `aiat_e2e_project_gamma_workspace_${Date.now()}`;
 
     await page.goto("/projects");
     await page.getByRole("button", { name: /new project/i }).click();

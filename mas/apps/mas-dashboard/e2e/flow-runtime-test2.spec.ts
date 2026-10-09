@@ -222,7 +222,7 @@ test.describe("Test 2 — Flow runtime: branching, approval, retry, escalation",
   test("1. Create flow with all required nodes, reload, verify serialization survives", async ({
     page,
   }) => {
-    const flowName = `Test2-Branching-${stamp}`;
+    const flowName = `aiat_e2e_flow_branching_${stamp}`;
 
     await buildTest2Flow(page, flowName);
 
@@ -244,8 +244,8 @@ test.describe("Test 2 — Flow runtime: branching, approval, retry, escalation",
   test("2. Approval=approved → project transitions to Branch A (read back after refresh)", async ({
     page,
   }) => {
-    const flowName = `Test2-Approved-${stamp}`;
-    const projectName = `test2-approved-project-${stamp}`;
+    const flowName = `aiat_e2e_flow_approved_${stamp}`;
+    const projectName = `aiat_e2e_project_flow_approved_${stamp}`;
 
     await buildTest2Flow(page, flowName);
     await createProjectWithFlow(page, flowName, projectName);
@@ -271,8 +271,8 @@ test.describe("Test 2 — Flow runtime: branching, approval, retry, escalation",
   test("3. Approval=edit_requested → project transitions to Branch B (read back after refresh)", async ({
     page,
   }) => {
-    const flowName = `Test2-EditReq-${stamp}`;
-    const projectName = `test2-editreq-project-${stamp}`;
+    const flowName = `aiat_e2e_flow_edit_requested_${stamp}`;
+    const projectName = `aiat_e2e_project_flow_edit_requested_${stamp}`;
 
     await buildTest2Flow(page, flowName);
     await createProjectWithFlow(page, flowName, projectName);
@@ -292,8 +292,8 @@ test.describe("Test 2 — Flow runtime: branching, approval, retry, escalation",
   test("4. Approval=rejected → project transitions to Failed state", async ({
     page,
   }) => {
-    const flowName = `Test2-Rejected-${stamp}`;
-    const projectName = `test2-rejected-project-${stamp}`;
+    const flowName = `aiat_e2e_flow_rejected_${stamp}`;
+    const projectName = `aiat_e2e_project_flow_rejected_${stamp}`;
 
     await buildTest2Flow(page, flowName);
     await createProjectWithFlow(page, flowName, projectName);
@@ -312,8 +312,8 @@ test.describe("Test 2 — Flow runtime: branching, approval, retry, escalation",
   test("5. Retry from Failed → restores last safe state (visible after refresh)", async ({
     page,
   }) => {
-    const flowName = `Test2-Retry-${stamp}`;
-    const projectName = `test2-retry-project-${stamp}`;
+    const flowName = `aiat_e2e_flow_retry_${stamp}`;
+    const projectName = `aiat_e2e_project_flow_retry_${stamp}`;
 
     await buildTest2Flow(page, flowName);
     await createProjectWithFlow(page, flowName, projectName);
@@ -339,8 +339,8 @@ test.describe("Test 2 — Flow runtime: branching, approval, retry, escalation",
   test("6. Timeout on Analysis → escalation sent to CEO, visible in UI/history", async ({
     page,
   }) => {
-    const flowName = `Test2-Timeout-${stamp}`;
-    const projectName = `test2-timeout-project-${stamp}`;
+    const flowName = `aiat_e2e_flow_timeout_${stamp}`;
+    const projectName = `aiat_e2e_project_flow_timeout_${stamp}`;
 
     await buildTest2Flow(page, flowName);
     await createProjectWithFlow(page, flowName, projectName);
@@ -370,8 +370,8 @@ test.describe("Test 2 — Flow runtime: branching, approval, retry, escalation",
   test("7. Override by non-operator role is denied (negative security case)", async ({
     page,
   }) => {
-    const flowName = `Test2-OverrideSec-${stamp}`;
-    const projectName = `test2-override-sec-${stamp}`;
+    const flowName = `aiat_e2e_flow_override_security_${stamp}`;
+    const projectName = `aiat_e2e_project_flow_override_security_${stamp}`;
 
     await buildTest2Flow(page, flowName);
     await createProjectWithFlow(page, flowName, projectName);
@@ -408,8 +408,8 @@ test.describe("Test 2 — Flow runtime: branching, approval, retry, escalation",
   test("8. Approval without decision → flow stays in WAITING_APPROVAL (not routed)", async ({
     page,
   }) => {
-    const flowName = `Test2-WaitApproval-${stamp}`;
-    const projectName = `test2-wait-approval-${stamp}`;
+    const flowName = `aiat_e2e_flow_wait_approval_${stamp}`;
+    const projectName = `aiat_e2e_project_flow_wait_approval_${stamp}`;
 
     await buildTest2Flow(page, flowName);
     await createProjectWithFlow(page, flowName, projectName);
