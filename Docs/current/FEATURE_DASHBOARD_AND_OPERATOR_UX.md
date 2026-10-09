@@ -332,6 +332,7 @@ The dashboard is the human control and evidence surface for AIAT. It must make c
 ### Product integration updates (2026-10-07)
 
 - Executive actions now use separate worker-run fields and validate UUIDs, bounded required strings, and JSON-object inputs before submission. CEO privileged requests still require the explicit confirmation and go through the audited approval API. The focused governance E2E covers malformed and valid payloads (`2052982a`).
+- CEO privileged requests now default to a bounded selector for four existing approval-required operational actions, with a required justification/target context and explicit confirmation. The panel creates only the existing audited approval request; a separate human decision remains required. Free-form action and payload JSON are still available only under “Advanced action and payload.” The source-built governance suite passes 8/8, and the pending-receipt-to-inbox flow passes 1/1 with mocked APIs and no provider call.
 - The Models page exposes a read-only governance-resolution preview with selected profile/version, reason codes, and a cost estimate. Preview results do not authorize or dispatch provider calls (`89aa1a7d`).
 - Governance includes a worker steward surface for immutable-candidate review, rollout/canary actions, and rollback through existing steward APIs. It preserves section access denial and does not claim live worker certification (`e873e46b`).
 - The PM integrations page exposes connection-scoped reconciliation, conflict disposition, known-canary lookup, and outbox/reconciliation detail. Missing provider-side collection endpoints remain visible as limitations (`57d31337`).
@@ -473,7 +474,7 @@ baseline; native/live Redis/router and full WCAG evidence remain open
   project-detail stale/retry, and
   system-visualization partial/offline retry coverage; it is not native-Linux
   release evidence.
-- Generate typed forms/clients from backend schemas for the remaining governance actions; the CFO/CTO/CEO action panel is implemented, while broader governance action forms remain.
+- Generate typed forms/clients from backend schemas for the remaining governance actions. CEO has a guided subset of approval-required actions, while its full payload catalogue, optional CFO scope, and worker-specific CTO task input remain advanced because the current API publishes no field schemas.
 - Consolidate legacy flow compatibility aliases into an explicit extension editor after migration coverage is complete.
 - Complete page-by-page light/dark/system visual parity and responsive/mobile parity; the persisted preference, no-flash bootstrap, palette migration layer, and reduced-motion baseline are implemented in `5e3cc13`.
 - Complete the WCAG 2.2 AA audit and broader automated checks; the shell landmark/skip-link/focus baseline is covered, while page-level semantics, contrast, reduced motion, and native-Linux evidence remain.

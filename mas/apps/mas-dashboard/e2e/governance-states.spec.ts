@@ -1,6 +1,56 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 import { authenticate } from "./auth";
+
+async function setupGuidedPrivilegedActionPage(
+  page: Page,
+  onSubmit: (body: Record<string, unknown>) => void,
+) {
+  const unexpectedApiRequests: string[] = [];
+  const externalOrigins: string[] = [];
+  const appOrigin = new URL(process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:4000").origin;
+  page.on("request", (request) => {
+    const origin = new URL(request.url()).origin;
+    if (origin !== appOrigin) externalOrigins.push(origin);
+  });
+  await page.route("**/api/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path === "/api/projects" && request.method() === "GET") {
+      await route.fulfill({ json: [] });
+      return;
+    }
+    if (path === "/api/workers" && request.method() === "GET") {
+      await route.fulfill({ json: [] });
+      return;
+    }
+    if (path === "/api/governance/model-profiles/catalogue" && request.method() === "GET") {
+      await route.fulfill({ json: { schema_version: "guided-actions-e2e-v1", entries: [] } });
+      return;
+    }
+    if (path.startsWith("/api/governance/") && request.method() === "GET") {
+      await route.fulfill({ json: [] });
+      return;
+    }
+    if (path === "/api/executive/actions/ceo/privileged-actions" && request.method() === "POST") {
+      onSubmit(request.postDataJSON() as Record<string, unknown>);
+      const body = request.postDataJSON() as { action?: string };
+      const recordId = "70000000-0000-4000-8000-000000000003";
+      await route.fulfill({
+        json: {
+          schema_version: "aiat.executive-action.v1",
+          result: { decision: "pending_approval", record_id: recordId, risk: body.action === "system.restart" ? "critical" : "high" },
+          evidence: { schema_version: "aiat.executive-action.v1", action: body.action, record_id: recordId },
+        },
+      });
+      return;
+    }
+    unexpectedApiRequests.push(`${request.method()} ${path}`);
+    await route.fulfill({ status: 501, json: { error: "Unexpected API request in guided action fixture." } });
+  });
+  await authenticate(page, "/governance");
+  return { unexpectedApiRequests, externalOrigins };
+}
 
 test("governance retains the last known state when a refresh fails", async ({
   page,
@@ -592,4 +642,53 @@ test("governance hides mutations when access is lost after a successful read", a
   for (const action of ["Request override", "Dispatch governed run", "Request privileged action"]) {
     await expect(governance.getByRole("button", { name: action })).toHaveCount(0);
   }
+});
+
+test("guided CEO privileged request submits a bounded approved action and reason", async ({ page }) => {
+  const submitted: Array<Record<string, unknown>> = [];
+  const { unexpectedApiRequests, externalOrigins } = await setupGuidedPrivilegedActionPage(page, (body) => submitted.push(body));
+  const actions = page.getByRole("region", { name: "Executive actions" });
+  const guidedAction = actions.getByLabel("Approval-gated action");
+
+  await expect(guidedAction.locator('option[value="system.restart"]')).toHaveText("Restart the AIAT system · critical risk");
+  await expect(guidedAction.locator('option[value="team.shutdown"]')).toHaveCount(1);
+  await expect(guidedAction.locator('option[value="container.stop"]')).toHaveCount(1);
+  await expect(guidedAction.locator('option[value="worker.force_stop"]')).toHaveCount(1);
+  await expect(guidedAction.locator('option[value="system.wipe"]')).toHaveCount(0);
+  await expect(guidedAction.locator('option[value="credentials.export"]')).toHaveCount(0);
+
+  await guidedAction.selectOption("system.restart");
+  await actions.getByLabel("Justification and target context").fill("Restart after the approved maintenance window.");
+  await actions.getByRole("checkbox").check();
+  await actions.getByRole("button", { name: "Request privileged action" }).click();
+
+  await expect(page.getByRole("region", { name: "Privileged action pending approval" })).toBeVisible();
+  await expect.poll(() => submitted).toEqual([{
+    action: "system.restart",
+    requested_by: "exec_ceo",
+    payload: { reason: "Restart after the approved maintenance window." },
+  }]);
+  expect(unexpectedApiRequests).toEqual([]);
+  expect(externalOrigins).toEqual([]);
+});
+
+test("guided CEO privileged request requires an action and reason before submission", async ({ page }) => {
+  const submitted: Array<Record<string, unknown>> = [];
+  const { unexpectedApiRequests, externalOrigins } = await setupGuidedPrivilegedActionPage(page, (body) => submitted.push(body));
+  const actions = page.getByRole("region", { name: "Executive actions" });
+  const request = actions.getByRole("button", { name: "Request privileged action" });
+  const guidedAction = actions.getByLabel("Approval-gated action");
+  const reason = actions.getByLabel("Justification and target context");
+
+  await reason.fill("Needs a reviewed target and justification.");
+  await actions.getByRole("checkbox").check();
+  await expect(request).toBeDisabled();
+  await guidedAction.selectOption("container.stop");
+  await expect(request).toBeEnabled();
+  await reason.fill("   ");
+  await expect(request).toBeDisabled();
+  await expect.poll(() => submitted).toHaveLength(0);
+
+  expect(unexpectedApiRequests).toEqual([]);
+  expect(externalOrigins).toEqual([]);
 });

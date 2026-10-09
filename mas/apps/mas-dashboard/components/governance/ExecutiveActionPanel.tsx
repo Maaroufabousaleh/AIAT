@@ -33,6 +33,22 @@ type ModelProfileOption = {
   status?: string;
 };
 
+type GuidedPrivilegedAction = {
+  action: string;
+  label: string;
+  risk: "high" | "critical";
+};
+
+// A deliberately small UI subset of approval-required actions in
+// mas_core/policy/privileged_ops.py. This list is for discoverability only;
+// the backend policy gate remains authoritative.
+const GUIDED_PRIVILEGED_ACTIONS: GuidedPrivilegedAction[] = [
+  { action: "system.restart", label: "Restart the AIAT system", risk: "critical" },
+  { action: "team.shutdown", label: "Stop a team", risk: "high" },
+  { action: "container.stop", label: "Stop a container", risk: "high" },
+  { action: "worker.force_stop", label: "Force stop a worker", risk: "high" },
+];
+
 const DEFAULT_TASK_INPUT = "{}";
 const DEFAULT_PAYLOAD = "{}";
 const EXECUTIVE_ACTION_SCHEMA = "aiat.executive-action.v1";
@@ -186,6 +202,9 @@ export function ExecutiveActionPanel({ accessDenied = false }: { accessDenied?: 
   const [scopeInput, setScopeInput] = useState("");
   const [ceoAction, setCeoAction] = useState("");
   const [ceoPayload, setCeoPayload] = useState(DEFAULT_PAYLOAD);
+  const [guidedCeoAction, setGuidedCeoAction] = useState("");
+  const [guidedCeoReason, setGuidedCeoReason] = useState("");
+  const [advancedPrivilegedAction, setAdvancedPrivilegedAction] = useState(false);
   const [confirmPrivileged, setConfirmPrivileged] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [result, setResult] = useState<ActionResult | null>(null);
@@ -328,14 +347,28 @@ export function ExecutiveActionPanel({ accessDenied = false }: { accessDenied?: 
     event.preventDefault();
     if (!confirmPrivileged) return;
     try {
-      const action = ceoAction.trim();
+      const action = advancedPrivilegedAction ? ceoAction.trim() : guidedCeoAction.trim();
       if (!action || action.length > 256) {
-        throw new Error("Action is required and must be 256 characters or fewer.");
+        throw new Error(advancedPrivilegedAction
+          ? "Action is required and must be 256 characters or fewer."
+          : "Choose a supported approval-gated action.");
+      }
+      let payload: Record<string, unknown>;
+      if (advancedPrivilegedAction) {
+        payload = parseJsonObject(ceoPayload, "Payload");
+      } else {
+        if (!GUIDED_PRIVILEGED_ACTIONS.some((item) => item.action === action)) {
+          throw new Error("Choose a supported approval-gated action.");
+        }
+        const normalizedReason = guidedCeoReason.trim();
+        if (!normalizedReason) throw new Error("Enter a reason and target context for the request.");
+        if (normalizedReason.length > 4_000) throw new Error("Reason must be 4,000 characters or fewer.");
+        payload = { reason: normalizedReason };
       }
       const body: ExecutiveCEOPrivilegedActionRequest = {
         action,
         requested_by: "exec_ceo",
-        payload: parseJsonObject(ceoPayload, "Payload"),
+        payload,
       };
       await runAction("CEO privileged action", "/api/executive/actions/ceo/privileged-actions", body);
     } catch (error) {
@@ -451,8 +484,48 @@ export function ExecutiveActionPanel({ accessDenied = false }: { accessDenied?: 
 
         <form className="min-w-0 space-y-3 rounded-lg border border-rose-900/60 bg-slate-950/60 p-3" aria-labelledby="ceo-privileged-action-heading" onSubmit={(event) => void requestPrivilegedAction(event)}>
           <h3 id="ceo-privileged-action-heading" className="text-xs font-semibold uppercase tracking-wide text-rose-200">CEO · privileged action</h3>
-          <p className="text-xs text-slate-400">This request enters the audited privileged-action approval gate. The approval service remains authoritative for the action and its payload.</p>
-          <details className="rounded border border-rose-900/60 px-3 py-2">
+          <p className="text-xs text-slate-400">A request is recorded for a separate human decision. Submitting here does not dispatch or execute the action.</p>
+          {!advancedPrivilegedAction && (
+            <div className="space-y-3">
+              <label className="block text-sm text-slate-300" htmlFor="ceo-guided-action">Approval-gated action
+                <select
+                  id="ceo-guided-action"
+                  required
+                  value={guidedCeoAction}
+                  onChange={(event) => setGuidedCeoAction(event.target.value)}
+                  aria-required="true"
+                  aria-describedby="ceo-guided-action-help"
+                  className={FIELD_CLASS}
+                >
+                  <option value="">Choose an action</option>
+                  {GUIDED_PRIVILEGED_ACTIONS.map((item) => (
+                    <option key={item.action} value={item.action}>{item.label} · {item.risk} risk</option>
+                  ))}
+                </select>
+              </label>
+              <p id="ceo-guided-action-help" className="text-xs text-slate-500">
+                The guided list includes currently supported actions that require human approval. The policy gate still decides whether a request is allowed.
+              </p>
+              <label className="block text-sm text-slate-300" htmlFor="ceo-guided-reason">Justification and target context
+                <textarea
+                  id="ceo-guided-reason"
+                  required
+                  maxLength={4_000}
+                  value={guidedCeoReason}
+                  onChange={(event) => setGuidedCeoReason(event.target.value)}
+                  rows={3}
+                  placeholder="Explain why this is needed and identify the team, container, or worker when relevant."
+                  className={`${FIELD_CLASS} resize-y`}
+                />
+              </label>
+              <p className="-mt-2 text-xs text-slate-500">Do not include credentials or secrets. This reason is recorded with the approval request.</p>
+            </div>
+          )}
+          <details
+            className="rounded border border-rose-900/60 px-3 py-2"
+            open={advancedPrivilegedAction}
+            onToggle={(event) => setAdvancedPrivilegedAction(event.currentTarget.open)}
+          >
             <summary className="min-h-11 cursor-pointer py-3 text-sm text-rose-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300/70">Advanced action and payload</summary>
             <p className="mb-3 text-xs text-slate-500">The executive API publishes no action catalogue or payload field schema. Enter an action recognized by CEO policy and its required object fields.</p>
             <label className="block text-sm text-slate-300" htmlFor="ceo-action">Action
@@ -464,7 +537,7 @@ export function ExecutiveActionPanel({ accessDenied = false }: { accessDenied?: 
             <p id="ceo-payload-help" className="mt-1 text-xs text-slate-500">Enter a JSON object such as {`{"ticket":"SEC-12"}`}.</p>
           </details>
           <label className="flex items-start gap-2 text-sm text-slate-300"><input type="checkbox" checked={confirmPrivileged} onChange={(event) => setConfirmPrivileged(event.target.checked)} className="mt-0.5 min-h-11 min-w-11" />I understand this enters the audited privileged-action approval gate.</label>
-          <button type="submit" disabled={busy !== null || !confirmPrivileged} className="min-h-11 rounded border border-rose-700 px-3 py-2 text-sm text-rose-200 hover:bg-rose-950 disabled:cursor-not-allowed disabled:opacity-50">{busy === "CEO privileged action" ? "Submitting…" : "Request privileged action"}</button>
+          <button type="submit" disabled={busy !== null || !confirmPrivileged || (!advancedPrivilegedAction && (!guidedCeoAction || !guidedCeoReason.trim()))} className="min-h-11 rounded border border-rose-700 px-3 py-2 text-sm text-rose-200 hover:bg-rose-950 disabled:cursor-not-allowed disabled:opacity-50">{busy === "CEO privileged action" ? "Submitting…" : "Request privileged action"}</button>
         </form>
       </div>
       {result && <div className={`mt-4 rounded-lg border p-3 text-sm ${result.error ? "border-rose-900 bg-rose-950/30 text-rose-200" : "border-emerald-900 bg-emerald-950/20 text-emerald-200"}`} role="status" aria-live="polite" aria-label="Executive action result">
