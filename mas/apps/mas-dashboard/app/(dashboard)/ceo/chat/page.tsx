@@ -283,19 +283,27 @@ export default function CeoChatPage() {
   }, [entries]);
 
   useEffect(() => {
-    const latestResponse = entries.findLast((entry) => {
-      const correlation = correlationId(entry);
-      return isCeoResponse(entry)
-        && Boolean(correlation)
-        && ownedRequestIdsRef.current.has(correlation!);
+    const latestConfirmationResponse = entries.findLast((entry) => {
+      if (!isCeoResponse(entry)) return false;
+      const payload = entry.parsed?.payload;
+      const action = payload?.action;
+      const context = payload?.context;
+      return Boolean(
+        action && typeof action === "object" && !Array.isArray(action)
+        && context && typeof context === "object" && !Array.isArray(context)
+        && Object.prototype.hasOwnProperty.call(context, "confirmation_token"),
+      );
     });
-    const context = latestResponse?.parsed?.payload?.context;
-    if (!context || typeof context !== "object") return;
-    const record = context as Record<string, unknown>;
-    if (!Object.prototype.hasOwnProperty.call(record, "confirmation_token")) return;
-    setPendingConfirmationToken(typeof record.confirmation_token === "string"
-      ? record.confirmation_token
-      : null);
+    if (!latestConfirmationResponse) return;
+    const payload = latestConfirmationResponse.parsed?.payload;
+    const action = payload?.action as Record<string, unknown> | undefined;
+    const context = payload?.context as Record<string, unknown> | undefined;
+    const token = context?.confirmation_token;
+    setPendingConfirmationToken(
+      action?.requires_confirmation === true && typeof token === "string"
+        ? token
+        : null,
+    );
   }, [entries]);
 
   useEffect(() => {

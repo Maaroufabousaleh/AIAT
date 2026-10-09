@@ -137,6 +137,138 @@ test("CEO chat retains history through a stream failure and recovers on retry", 
   await expect(page.getByText("recovered CEO response", { exact: true })).toBeVisible();
 });
 
+test("CEO chat restores a pending confirmation from history and clears it after the receipt", async ({
+  page,
+}) => {
+  const confirmationToken = "7c294909-2dd8-41d6-96c4-cab319e58a73";
+  let submitted: Record<string, unknown> | null = null;
+
+  await page.addInitScript(() => {
+    const sources: Array<{ dispatch(type: string, data: string): void }> = [];
+
+    class FakeEventSource extends EventTarget {
+      static readonly CONNECTING = 0;
+      static readonly OPEN = 1;
+      static readonly CLOSED = 2;
+      readonly url: string;
+      readyState = FakeEventSource.OPEN;
+      onerror: ((event: Event) => void) | null = null;
+      onmessage: ((event: MessageEvent<string>) => void) | null = null;
+
+      constructor(url: string) {
+        super();
+        this.url = url;
+        sources.push(this);
+        window.setTimeout(() => {
+          this.dispatch("connected", JSON.stringify({ team: "exec_ceo" }));
+        }, 0);
+      }
+
+      close() {
+        this.readyState = FakeEventSource.CLOSED;
+      }
+
+      dispatch(type: string, data: string) {
+        const event = new MessageEvent(type, { data });
+        this.dispatchEvent(event);
+        const handler = type === "message" ? this.onmessage : this.onerror;
+        if (handler) handler(event);
+      }
+    }
+
+    Object.defineProperty(window, "EventSource", {
+      configurable: true,
+      writable: true,
+      value: FakeEventSource,
+    });
+    (window as typeof window & {
+      __emitCeoEvent?: (type: string, data: string) => void;
+    }).__emitCeoEvent = (type, data) => {
+      sources.forEach((source) => source.dispatch(type, data));
+    };
+  });
+
+  await page.route("**/api/streams/exec_ceo**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("history") === "1") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          entries: [{
+            entry_id: "ceo-pending-confirmation-001",
+            envelope: JSON.stringify({
+              message_id: "ceo-pending-confirmation-001",
+              correlation_id: "ceo-pending-confirmation-001",
+              message_type: "RESPONSE",
+              sender_id: "ceo",
+              timestamp: "2026-10-09T12:00:00Z",
+              payload: {
+                response: "Archive the completed project?",
+                action: {
+                  type: "project_archive",
+                  status: "needs_confirmation",
+                  requires_confirmation: true,
+                },
+                context: { confirmation_token: confirmationToken },
+              },
+            }),
+          }],
+        }),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: "",
+    });
+  });
+
+  await page.route("**/api/ceo/messages", async (route) => {
+    submitted = route.request().postDataJSON() as Record<string, unknown>;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, status: "accepted" }),
+    });
+  });
+
+  await authenticate(page, "/ceo/chat");
+  const chat = page.getByRole("main", { name: "CEO Command Center chat" });
+  const confirm = chat.getByRole("button", { name: "Confirm", exact: true });
+  await expect(confirm).toBeVisible();
+  await confirm.click();
+
+  await expect.poll(() => submitted).toMatchObject({
+    message: "confirm",
+    context_confirmation_token: confirmationToken,
+  });
+  const requestId = submitted?.request_id;
+  expect(requestId).toEqual(expect.any(String));
+
+  await page.evaluate(({ requestId }) => {
+    (window as typeof window & {
+      __emitCeoEvent?: (type: string, data: string) => void;
+    }).__emitCeoEvent?.("message", JSON.stringify({
+      message_id: "ceo-confirmation-receipt-001",
+      correlation_id: requestId,
+      message_type: "RESPONSE",
+      sender_id: "ceo",
+      timestamp: "2026-10-09T12:00:01Z",
+      payload: {
+        response: "The project was archived.",
+        action: { type: "project_archive", status: "completed", requires_confirmation: false },
+        context: { confirmation_token: null },
+      },
+    }));
+  }, { requestId });
+
+  await expect(chat.getByText("The project was archived.", { exact: true })).toBeVisible();
+  await expect(confirm).toHaveCount(0);
+  await expect(chat.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0);
+});
+
 test("CEO chat renders a read-only state when conversation history access is denied", async ({
   page,
 }) => {
