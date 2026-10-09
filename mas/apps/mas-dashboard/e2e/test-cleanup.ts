@@ -27,7 +27,6 @@ const PROJECT_PATTERNS = [
   /^[CDF]-\d{3}(?:[ -/]|$)/,
   /^G(?:-chief-scenarios-|\d{3} live trace$)/,
   /^live-(?:i003-|context-|chunk-ledger$)/,
-  /^tmp$/,
   /^ceo_live_project_\d+$/,
 ];
 
@@ -53,6 +52,10 @@ function matchesAny(value: unknown, patterns: RegExp[]): boolean {
   return typeof value === "string" && patterns.some((pattern) => pattern.test(value));
 }
 
+export function isKnownE2EProjectName(value: unknown): boolean {
+  return matchesAny(value, PROJECT_PATTERNS);
+}
+
 async function api<T>(path: string, init?: RequestInit): Promise<T | null> {
   const response = await fetch(`${ORCHESTRATOR_URL}${path}`, {
     ...init,
@@ -72,13 +75,13 @@ async function api<T>(path: string, init?: RequestInit): Promise<T | null> {
 async function deleteMatching(
   label: string,
   records: ApiRecord[],
-  patterns: RegExp[],
+  isFixture: (value: unknown) => boolean,
   deletePath: (record: ApiRecord) => string | null,
 ): Promise<number> {
   let deleted = 0;
   for (const record of records) {
     const candidate = record.worker_id ?? record.name;
-    if (!matchesAny(candidate, patterns)) continue;
+    if (!isFixture(candidate)) continue;
     const path = deletePath(record);
     if (!path) continue;
     await api(path, { method: "DELETE" });
@@ -104,7 +107,7 @@ export async function cleanupE2EArtifacts(): Promise<void> {
 
   const cleanupProjects = async (): Promise<number> => {
     const projects = (await api<ApiRecord[]>("/projects?limit=1000")) ?? [];
-    return deleteMatching("test projects", projects, PROJECT_PATTERNS, (project) =>
+    return deleteMatching("test projects", projects, isKnownE2EProjectName, (project) =>
       project.id ? `/projects/${project.id}` : null,
     );
   };
@@ -115,21 +118,21 @@ export async function cleanupE2EArtifacts(): Promise<void> {
 
   await run("workers", async () => {
     const workers = (await api<ApiRecord[]>("/capabilities/workers")) ?? [];
-    await deleteMatching("test workers", workers, WORKER_PATTERNS, (worker) =>
+    await deleteMatching("test workers", workers, (value) => matchesAny(value, WORKER_PATTERNS), (worker) =>
       worker.id ? `/capabilities/workers/${worker.id}?permanent=true` : null,
     );
   });
 
   await run("flows", async () => {
     const flows = (await api<ApiRecord[]>("/flows?limit=1000")) ?? [];
-    await deleteMatching("test flows", flows, FLOW_PATTERNS, (flow) =>
+    await deleteMatching("test flows", flows, (value) => matchesAny(value, FLOW_PATTERNS), (flow) =>
       flow.id ? `/flows/${flow.id}` : null,
     );
   });
 
   await run("credentials", async () => {
     const credentials = (await api<ApiRecord[]>("/credentials")) ?? [];
-    await deleteMatching("test credentials", credentials, CREDENTIAL_PATTERNS, (credential) =>
+    await deleteMatching("test credentials", credentials, (value) => matchesAny(value, CREDENTIAL_PATTERNS), (credential) =>
       credential.name ? `/credentials/${encodeURIComponent(credential.name)}` : null,
     );
   });
