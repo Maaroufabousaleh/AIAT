@@ -307,8 +307,12 @@ The dashboard is the human control and evidence surface for AIAT. It must make c
   responses and no provider dispatch; focused BFF tests pass 11/11.
 - Changed dashboard TS/TSX files pass targeted ESLint, and the isolated scoped
   TypeScript check passes. The checked-in generated `.next/dev/types` artifacts
-  are not used by this isolated typecheck. This is focused UI evidence, not a
-  full current-candidate build or the complete CEO-to-provider journey.
+  are not used by this isolated typecheck. The source-copied dashboard package
+  also passes `next build --webpack`, including its full TypeScript build check.
+  The default Turbopack attempt from `/tmp` was blocked by the temp workspace's
+  external `node_modules` symlink, so that was a harness limitation. These are
+  dashboard package checks, not native release evidence or the complete
+  CEO-to-provider journey.
 
 ### Product integration updates (2026-10-07)
 
