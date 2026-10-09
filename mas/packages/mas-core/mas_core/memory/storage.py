@@ -525,6 +525,7 @@ class AgentStorage:
         canonical: dict[str, Any],
         source: str,
         actor: str,
+        expected_manifest_version: int | None = None,
         compiler_version: str = "aiat-company-compiler/1",
     ) -> dict[str, Any]:
         """Compile one validated manifest atomically and idempotently."""
@@ -545,6 +546,26 @@ class AgentStorage:
             ).mappings().first()
             if existing is not None:
                 return await self._company_manifest_read_model(company_id, conn=conn)
+
+            if expected_manifest_version is not None:
+                active_manifest = None
+                active_manifest_id = company.get("active_manifest_version_id")
+                if active_manifest_id is not None:
+                    active_manifest = (
+                        await conn.execute(
+                            t.company_manifest_versions.select().where(
+                                t.company_manifest_versions.c.id == active_manifest_id
+                            )
+                        )
+                    ).mappings().first()
+                current_manifest_version = int(
+                    active_manifest["manifest_version"] if active_manifest is not None else 0
+                )
+                if current_manifest_version != expected_manifest_version:
+                    raise ValueError(
+                        "COMPANY_MANIFEST_VERSION_CONFLICT: "
+                        f"expected {expected_manifest_version}, current {current_manifest_version}"
+                    )
 
             prior = (
                 await conn.execute(
@@ -9897,7 +9918,7 @@ class AgentStorage:
             return None
         return row
 
-    async def create_worker_run(self, *, run_id: UUID, worker_id: UUID, idempotency_key: str, task_type: str, request: dict[str, Any], project_id: UUID | None = None, flow_id: UUID | None = None, flow_instance_id: UUID | None = None, flow_node_execution_id: int | None = None, worker_shell_version_id: UUID | None = None, adapter_id: UUID | None = None, skill_bundle_id: UUID | None = None, steward_id: UUID | None = None, model_resolution_snapshot_id: UUID | None = None, state: str = "CREATED", queue_priority: int = 0, next_attempt_at: datetime | None = None) -> dict[str, Any]:
+    async def create_worker_run(self, *, run_id: UUID, worker_id: UUID, idempotency_key: str, task_type: str, request: dict[str, Any], project_id: UUID | None = None, flow_id: UUID | None = None, flow_instance_id: UUID | None = None, flow_node_execution_id: int | None = None, worker_shell_version_id: UUID | None = None, adapter_id: UUID | None = None, skill_bundle_id: UUID | None = None, steward_id: UUID | None = None, model_resolution_snapshot_id: UUID | None = None, retry_of_run_id: UUID | None = None, retry_context_json: dict[str, Any] | None = None, state: str = "CREATED", queue_priority: int = 0, next_attempt_at: datetime | None = None) -> dict[str, Any]:
         async with self.engine.begin() as conn:
             existing = (await conn.execute(t.worker_runs.select().where(sa.and_(t.worker_runs.c.worker_id == worker_id, t.worker_runs.c.idempotency_key == idempotency_key)).with_for_update())).mappings().first()
             if existing:
@@ -9911,6 +9932,31 @@ class AgentStorage:
             ).mappings().first()
             if worker is None:
                 raise ValueError("worker registry record is required before creating a durable run")
+            if retry_of_run_id is not None:
+                source = (
+                    await conn.execute(
+                        t.worker_runs.select()
+                        .where(t.worker_runs.c.id == retry_of_run_id)
+                        .with_for_update()
+                    )
+                ).mappings().first()
+                if (
+                    source is None
+                    or source["worker_id"] != worker_id
+                    or source["state"] not in {"FAILED", "TIMED_OUT"}
+                ):
+                    raise ValueError("retry source must be a failed or timed-out run for the same worker")
+                existing_retry = (
+                    await conn.execute(
+                        t.worker_runs.select()
+                        .where(t.worker_runs.c.retry_of_run_id == retry_of_run_id)
+                        .with_for_update()
+                    )
+                ).mappings().first()
+                if existing_retry is not None:
+                    if existing_retry["idempotency_key"] == idempotency_key:
+                        return dict(existing_retry)
+                    raise ValueError("retry source already has a canonical retry run")
             effective_skill_bundle_id = skill_bundle_id or worker.get("active_skill_bundle_id")
             if effective_skill_bundle_id is not None:
                 bundle = (
@@ -9928,9 +9974,54 @@ class AgentStorage:
                     raise ValueError("skill bundle pin must belong to the worker registry record")
                 if steward_id is not None and bundle["steward_id"] != steward_id:
                     raise ValueError("skill bundle pin must belong to the selected steward")
-            values = {"id": run_id, "worker_id": worker_id, "idempotency_key": idempotency_key, "task_type": task_type, "request_json": request, "project_id": project_id, "flow_id": flow_id, "flow_instance_id": flow_instance_id, "flow_node_execution_id": flow_node_execution_id, "worker_shell_version_id": worker_shell_version_id, "adapter_id": adapter_id, "skill_bundle_id": effective_skill_bundle_id, "steward_id": steward_id, "model_resolution_snapshot_id": model_resolution_snapshot_id, "state": state, "queue_priority": queue_priority, "next_attempt_at": next_attempt_at}
+            # Recheck after acquiring the per-worker serialization lock: an
+            # identical idempotent request may have committed while this
+            # transaction waited for the worker row.
+            existing = (
+                await conn.execute(
+                    t.worker_runs.select()
+                    .where(
+                        sa.and_(
+                            t.worker_runs.c.worker_id == worker_id,
+                            t.worker_runs.c.idempotency_key == idempotency_key,
+                        )
+                    )
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if existing:
+                return dict(existing)
+            values = {"id": run_id, "worker_id": worker_id, "idempotency_key": idempotency_key, "task_type": task_type, "request_json": request, "project_id": project_id, "flow_id": flow_id, "flow_instance_id": flow_instance_id, "flow_node_execution_id": flow_node_execution_id, "worker_shell_version_id": worker_shell_version_id, "adapter_id": adapter_id, "skill_bundle_id": effective_skill_bundle_id, "steward_id": steward_id, "model_resolution_snapshot_id": model_resolution_snapshot_id, "retry_of_run_id": retry_of_run_id, "retry_context_json": retry_context_json or {}, "state": state, "queue_priority": queue_priority, "next_attempt_at": next_attempt_at}
             await conn.execute(t.worker_runs.insert().values(**values))
         return await self.get_worker_run(run_id)  # type: ignore[return-value]
+
+    async def get_worker_run_by_idempotency_key(
+        self, *, worker_id: UUID, idempotency_key: str
+    ) -> dict[str, Any] | None:
+        async with self.engine.connect() as conn:
+            row = (
+                await conn.execute(
+                    t.worker_runs.select().where(
+                        sa.and_(
+                            t.worker_runs.c.worker_id == worker_id,
+                            t.worker_runs.c.idempotency_key == idempotency_key,
+                        )
+                    )
+                )
+            ).mappings().first()
+        return dict(row) if row is not None else None
+
+    async def get_worker_run_retry(self, source_run_id: UUID) -> dict[str, Any] | None:
+        async with self.engine.connect() as conn:
+            row = (
+                await conn.execute(
+                    t.worker_runs.select()
+                    .where(t.worker_runs.c.retry_of_run_id == source_run_id)
+                    .order_by(t.worker_runs.c.created_at.desc())
+                    .limit(1)
+                )
+            ).mappings().first()
+        return dict(row) if row is not None else None
 
     async def claim_worker_run(
         self,
@@ -10390,6 +10481,20 @@ class AgentStorage:
             # it automatically; the effect is ambiguous until reconciled.
             result["disposition"] = "AMBIGUOUS"
         return result
+
+    async def has_worker_tool_effects(self, run_id: UUID) -> bool:
+        """Return whether a run has any durable mediated-tool effect record."""
+
+        async with self.engine.connect() as conn:
+            row = (
+                await conn.execute(
+                    t.worker_tool_effects.select()
+                    .with_only_columns(t.worker_tool_effects.c.id)
+                    .where(t.worker_tool_effects.c.run_id == run_id)
+                    .limit(1)
+                )
+            ).first()
+        return row is not None
 
     async def complete_worker_tool_effect(
         self,

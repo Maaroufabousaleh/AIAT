@@ -1258,6 +1258,33 @@
         "title": "CompanyCreateRequest",
         "type": "object"
       },
+      "CompanyManifestApplyRequest": {
+        "properties": {
+          "expected_manifest_version": {
+            "minimum": 0.0,
+            "title": "Expected Manifest Version",
+            "type": "integer"
+          },
+          "manifest": {
+            "additionalProperties": true,
+            "title": "Manifest",
+            "type": "object"
+          },
+          "source": {
+            "default": "api",
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "manifest",
+          "expected_manifest_version"
+        ],
+        "title": "CompanyManifestApplyRequest",
+        "type": "object"
+      },
       "CompanyManifestRequest": {
         "properties": {
           "manifest": {
@@ -7901,6 +7928,29 @@
         "title": "WorkerRunResumeRequest",
         "type": "object"
       },
+      "WorkerRunRetryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "idempotency_key",
+          "reason"
+        ],
+        "title": "WorkerRunRetryRequest",
+        "type": "object"
+      },
       "WorkerStatusTransition": {
         "properties": {
           "action": {
@@ -10404,7 +10454,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CompanyManifestRequest"
+                "$ref": "#/components/schemas/CompanyManifestApplyRequest"
               }
             }
           },
@@ -21376,6 +21426,58 @@
           }
         },
         "summary": "Resume Worker Run"
+      }
+    },
+    "/workers/runs/{run_id}/retry": {
+      "post": {
+        "operationId": "retry_worker_run_api_workers_runs__run_id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkerRunRetryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Retry Worker Run Api Workers Runs  Run Id  Retry Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Retry Worker Run Api"
       }
     },
     "/workers/runs/{run_id}/transitions": {

@@ -215,6 +215,14 @@ export type CompanyCreateRequest = {
   slug: string;
 };
 
+export type CompanyManifestApplyRequest = {
+  expected_manifest_version: number;
+  manifest: {
+  [key: string]: unknown;
+};
+  source?: string;
+};
+
 export type CompanyManifestRequest = {
   manifest: {
   [key: string]: unknown;
@@ -1358,6 +1366,11 @@ export type WorkerRunResumeRequest = {
   checkpoint_id?: (string | null);
 };
 
+export type WorkerRunRetryRequest = {
+  idempotency_key: string;
+  reason: string;
+};
+
 export type WorkerStatusTransition = {
   action: string;
   new_role?: (string | null);
@@ -2002,7 +2015,7 @@ export type OrchestratorApiOperations = {
     parameters: {
       "path:company_id": string;
     };
-    requestBody: CompanyManifestRequest;
+    requestBody: CompanyManifestApplyRequest;
     responses: {
       "200": {
   [key: string]: unknown;
@@ -4913,6 +4926,20 @@ export type OrchestratorApiOperations = {
     requestBody: WorkerRunResumeRequest;
     responses: {
       "200": {
+  [key: string]: unknown;
+};
+      "422": HTTPValidationError;
+    };
+  };
+  "retry_worker_run_api_workers_runs__run_id__retry_post": {
+    method: "POST";
+    path: "/workers/runs/{run_id}/retry";
+    parameters: {
+      "path:run_id": string;
+    };
+    requestBody: WorkerRunRetryRequest;
+    responses: {
+      "202": {
   [key: string]: unknown;
 };
       "422": HTTPValidationError;

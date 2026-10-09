@@ -1414,6 +1414,10 @@ class CompanyManifestRequest(BaseModel):
     source: str = Field(default="api", min_length=1, max_length=1000)
 
 
+class CompanyManifestApplyRequest(CompanyManifestRequest):
+    expected_manifest_version: int = Field(ge=0)
+
+
 class CompanyManifestRollbackRequest(BaseModel):
     manifest_version: int = Field(ge=1)
     reason: str = Field(min_length=1, max_length=2000)
@@ -2172,6 +2176,21 @@ class WorkerRunCancelRequest(BaseModel):
         normalized = value.strip()
         if not normalized:
             raise ValueError("reason must not be blank")
+        return normalized
+
+
+class WorkerRunRetryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    idempotency_key: str = Field(..., min_length=1, max_length=128)
+    reason: str = Field(..., min_length=1, max_length=4_000)
+
+    @field_validator("idempotency_key", "reason")
+    @classmethod
+    def normalize_retry_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("retry idempotency key and reason must not be blank")
         return normalized
 
 
@@ -7837,6 +7856,15 @@ async def validate_company_manifest(company_id: UUID, req: CompanyManifestReques
     storage = _storage()
     if await storage.get_company(company_id) is None:
         raise HTTPException(404, "company not found")
+    read_model = getattr(storage, "get_company_read_model", None)
+    if not inspect.iscoroutinefunction(read_model):
+        raise HTTPException(503, "company manifest version lookup is unavailable")
+    company_read_model = await read_model(company_id)
+    current_manifest = company_read_model.get("manifest") if isinstance(company_read_model, dict) else None
+    try:
+        current_manifest_version = int((current_manifest or {}).get("manifest_version") or 0)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(503, "company manifest version is invalid") from exc
     try:
         manifest, digest, canonical = compile_company_manifest(req.manifest)
     except CompanyManifestError as exc:
@@ -7848,6 +7876,7 @@ async def validate_company_manifest(company_id: UUID, req: CompanyManifestReques
         "digest": digest,
         "manifest": canonical,
         "source": req.source,
+        "current_manifest_version": current_manifest_version,
     }
 
 
@@ -7863,7 +7892,7 @@ async def company_manifest_history(
 
 
 @app.post("/companies/{company_id}/manifest/apply")
-async def apply_company_manifest(company_id: UUID, request: Request, req: CompanyManifestRequest) -> dict[str, Any]:
+async def apply_company_manifest(company_id: UUID, request: Request, req: CompanyManifestApplyRequest) -> dict[str, Any]:
     _require_operator_identity(request)
     storage = _storage()
     try:
@@ -7875,10 +7904,19 @@ async def apply_company_manifest(company_id: UUID, request: Request, req: Compan
             canonical=canonical,
             source=req.source,
             actor=_authenticated_principal(request),
+            expected_manifest_version=req.expected_manifest_version,
         )
     except CompanyManifestError as exc:
         raise HTTPException(422, str(exc)) from exc
     except ValueError as exc:
+        if str(exc).startswith("COMPANY_MANIFEST_VERSION_CONFLICT"):
+            raise HTTPException(
+                409,
+                {
+                    "code": "COMPANY_MANIFEST_VERSION_CONFLICT",
+                    "message": "Company manifest changed since validation. Reload the current version and validate again.",
+                },
+            ) from exc
         raise HTTPException(409, str(exc)) from exc
     return _serialize(result)
 
@@ -11774,6 +11812,45 @@ async def _execute_queued_worker_run(
 
 @app.post("/workers/runs", status_code=202)
 async def dispatch_worker_run(req: WorkerRunDispatchRequest) -> dict[str, Any]:
+    return await _dispatch_worker_run(req)
+
+
+def _worker_run_retry_context(req: WorkerRunDispatchRequest) -> dict[str, Any]:
+    """Retain policy inputs needed to re-resolve a later operator retry."""
+    values = req.model_dump(mode="json")
+    retained_fields = (
+        "requested_model_profile",
+        "capability_requirements",
+        "tool_grants",
+        "permission_requirements",
+        "workspace_mode",
+        "timeout_seconds",
+        "budget",
+        "checkpoint_policy",
+        "retry_policy",
+        "runtime_extensions",
+        "model_policy_layers",
+        "worker_required_model_capabilities",
+        "steward_required_model_capabilities",
+        "task_required_model_capabilities",
+        "adapter_required_model_capabilities",
+        "prompt_tokens",
+        "expected_output_tokens",
+        "budget_usd",
+        "model_override_request_id",
+        "model_override_approval_id",
+        "queue_priority",
+        "lease_seconds",
+    )
+    return {field: values.get(field) for field in retained_fields}
+
+
+async def _dispatch_worker_run(
+    req: WorkerRunDispatchRequest,
+    *,
+    retry_of_run_id: UUID | None = None,
+    retry_metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     storage = _storage()
     worker = await storage.get_worker(req.worker_id)
     if worker is None:
@@ -11950,6 +12027,9 @@ async def dispatch_worker_run(req: WorkerRunDispatchRequest) -> dict[str, Any]:
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+    retry_context_json = _worker_run_retry_context(req)
+    if retry_metadata:
+        retry_context_json["operator_retry"] = retry_metadata
     controller = WorkerRunController(storage=storage)
     try:
         budget_reservations = await _reserve_worker_run_budgets(
@@ -11978,10 +12058,26 @@ async def dispatch_worker_run(req: WorkerRunDispatchRequest) -> dict[str, Any]:
                 adapter_id=worker.get("active_adapter_id"),
                 steward_id=UUID(str((worker.get("adapter_config") or {}).get("steward_id"))) if (worker.get("adapter_config") or {}).get("steward_id") else None,
                 model_resolution_snapshot_id=model_resolution_snapshot_id,
+                retry_of_run_id=retry_of_run_id,
+                retry_context_json=retry_context_json,
                 state="QUEUED",
                 queue_priority=req.queue_priority,
             )
             canonical_run_id = UUID(str(queued["id"]))
+            if canonical_run_id != request.run_id:
+                # Another concurrent request with this idempotency key won
+                # the durable insert.  Budget reservation keys are also
+                # idempotent, so these rows may belong to the canonical
+                # request. Leave them for that execution to settle.
+                state = str(queued.get("state") or "QUEUED")
+                return {
+                    "run_id": str(canonical_run_id),
+                    "state": state,
+                    "dispatch_mode": "replay",
+                    "accepted": {"run_id": str(canonical_run_id), "idempotency_key": req.idempotency_key, "initial_state": state},
+                    "status_url": f"/workers/runs/{canonical_run_id}",
+                    "events_url": f"/workers/runs/{canonical_run_id}/events",
+                }
             claim = await storage.claim_worker_run(
                 owner=f"orchestrator-background:{canonical_run_id}",
                 lease_seconds=req.lease_seconds,
@@ -12018,19 +12114,25 @@ async def dispatch_worker_run(req: WorkerRunDispatchRequest) -> dict[str, Any]:
             adapter_id=worker.get("active_adapter_id"),
             steward_id=UUID(str((worker.get("adapter_config") or {}).get("steward_id"))) if (worker.get("adapter_config") or {}).get("steward_id") else None,
             model_resolution_snapshot_id=model_resolution_snapshot_id,
+            retry_of_run_id=retry_of_run_id,
+            retry_context_json=retry_context_json,
         )
     except BaseException:
         await _settle_worker_run_budgets(storage, budget_reservations, state="FAILED")
         raise
-    await _settle_worker_run_budgets(
-        storage,
-        budget_reservations,
-        state=outcome.state,
-        actual_cost_usd=(outcome.result.usage.cost_usd if outcome.result is not None else None),
-    )
+    # A concurrent idempotent replay returns the already-canonical run ID.
+    # It must not settle reservations owned by the first execution attempt.
+    if outcome.run_id == request.run_id:
+        await _settle_worker_run_budgets(
+            storage,
+            budget_reservations,
+            state=outcome.state,
+            actual_cost_usd=(outcome.result.usage.cost_usd if outcome.result is not None else None),
+        )
     return {
         "run_id": str(outcome.run_id),
         "state": outcome.state,
+        "retry_of_run_id": str(retry_of_run_id) if retry_of_run_id is not None else None,
         "dispatch_mode": "inline",
         "accepted": outcome.accepted.model_dump(mode="json") if outcome.accepted else None,
         "result": outcome.result.model_dump(mode="json") if outcome.result else None,
@@ -12077,7 +12179,201 @@ async def get_worker_run_api(run_id: UUID) -> dict[str, Any]:
     row = await storage.get_worker_run(run_id)
     if row is None:
         raise HTTPException(404, "Worker run not found")
-    return _serialize(row)
+    response = _serialize(row)
+    get_retry = getattr(storage, "get_worker_run_retry", None)
+    if inspect.iscoroutinefunction(get_retry):
+        retry = await get_retry(run_id)
+        if retry is not None:
+            response["retry_run_id"] = str(retry["id"])
+            response["retry_run_state"] = str(retry.get("state") or "UNKNOWN")
+    return response
+
+
+@app.post("/workers/runs/{run_id}/retry", status_code=202)
+async def retry_worker_run_api(
+    run_id: UUID,
+    payload: WorkerRunRetryRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _require_operator_identity(request)
+    storage = _storage()
+    if not inspect.iscoroutinefunction(getattr(storage, "get_worker_run", None)):
+        raise HTTPException(503, "worker-run persistence is unavailable")
+    source = await storage.get_worker_run(run_id)
+    if source is None:
+        raise HTTPException(404, "Worker run not found")
+    if str(source.get("state") or "").upper() not in {"FAILED", "TIMED_OUT"}:
+        raise HTTPException(
+            409,
+            {
+                "code": "RUN_NOT_RETRYABLE",
+                "message": "Only FAILED or TIMED_OUT Worker Runs can be retried.",
+            },
+        )
+    worker_id = UUID(str(source["worker_id"]))
+    retry_idempotency_key = f"operator-retry:{run_id}:{payload.idempotency_key}"
+    find_by_key = getattr(storage, "get_worker_run_by_idempotency_key", None)
+    if not inspect.iscoroutinefunction(find_by_key):
+        raise HTTPException(503, "idempotent Worker Run retry persistence is unavailable")
+    existing = await find_by_key(
+        worker_id=worker_id,
+        idempotency_key=retry_idempotency_key,
+    )
+    if existing is not None:
+        if str(existing.get("retry_of_run_id") or "") != str(run_id):
+            raise HTTPException(
+                409,
+                {
+                    "code": "RETRY_IDEMPOTENCY_CONFLICT",
+                    "message": "The retry idempotency key is already used by another Worker Run.",
+                },
+            )
+        return {
+            "run_id": str(existing["id"]),
+            "state": str(existing.get("state") or "UNKNOWN"),
+            "retry_of_run_id": str(run_id),
+            "dispatch_mode": "replay",
+            "status_url": f"/workers/runs/{existing['id']}",
+        }
+    get_retry = getattr(storage, "get_worker_run_retry", None)
+    if inspect.iscoroutinefunction(get_retry):
+        existing_retry = await get_retry(run_id)
+        if existing_retry is not None:
+            raise HTTPException(
+                409,
+                {
+                    "code": "RUN_RETRY_ALREADY_CREATED",
+                    "message": "This Worker Run already has a canonical retry. Open that run to continue recovery.",
+                    "retry_run_id": str(existing_retry["id"]),
+                    "retry_run_state": str(existing_retry.get("state") or "UNKNOWN"),
+                },
+            )
+
+    if any(source.get(field) is not None for field in ("flow_id", "flow_instance_id", "flow_node_execution_id")):
+        raise HTTPException(
+            409,
+            {
+                "code": "RUN_RETRY_REQUIRES_FLOW_CONTROLLER",
+                "message": "Retry this flow task through the project Flow controls so FlowController can update its authoritative Worker Run binding.",
+            },
+        )
+    has_tool_effects = getattr(storage, "has_worker_tool_effects", None)
+    if not inspect.iscoroutinefunction(has_tool_effects):
+        raise HTTPException(503, "durable Worker Run effect inspection is unavailable")
+    if await has_tool_effects(run_id):
+        raise HTTPException(
+            409,
+            {
+                "code": "RUN_RETRY_EFFECTS_REVIEW_REQUIRED",
+                "message": "This run has durable mediated-tool effects. Review and reconcile those effects before creating a new run, to avoid repeating a consequential action.",
+            },
+        )
+
+    source_request = source.get("request_json")
+    if not isinstance(source_request, dict):
+        raise HTTPException(409, "Worker Run request data is unavailable for retry")
+    context = source.get("retry_context_json")
+    if not isinstance(context, dict):
+        context = {}
+    retained_fields = (
+        "requested_model_profile",
+        "capability_requirements",
+        "tool_grants",
+        "permission_requirements",
+        "workspace_mode",
+        "timeout_seconds",
+        "budget",
+        "checkpoint_policy",
+        "retry_policy",
+        "runtime_extensions",
+        "model_policy_layers",
+        "worker_required_model_capabilities",
+        "steward_required_model_capabilities",
+        "task_required_model_capabilities",
+        "adapter_required_model_capabilities",
+        "prompt_tokens",
+        "expected_output_tokens",
+        "budget_usd",
+        "model_override_request_id",
+        "model_override_approval_id",
+        "queue_priority",
+        "lease_seconds",
+    )
+    legacy_budget = source_request.get("budget")
+    legacy_budget = legacy_budget if isinstance(legacy_budget, dict) else {}
+    legacy_values: dict[str, Any] = {
+        "requested_model_profile": source_request.get("requested_model_profile"),
+        "capability_requirements": source_request.get("capability_requirements") or [],
+        "tool_grants": source_request.get("tool_grants") or [],
+        "permission_requirements": source_request.get("permission_requirements") or [],
+        "workspace_mode": source_request.get("workspace_mode") or "isolated",
+        "timeout_seconds": source_request.get("timeout_seconds"),
+        "budget": legacy_budget,
+        "checkpoint_policy": source_request.get("checkpoint_policy") or {},
+        "retry_policy": source_request.get("retry_policy") or {},
+        "runtime_extensions": source_request.get("extensions") or {},
+        "model_policy_layers": [],
+        "worker_required_model_capabilities": [],
+        "steward_required_model_capabilities": [],
+        "task_required_model_capabilities": [],
+        "adapter_required_model_capabilities": [],
+        "prompt_tokens": 0,
+        "expected_output_tokens": 0,
+        "budget_usd": legacy_budget.get("max_cost_usd"),
+        "model_override_request_id": None,
+        "model_override_approval_id": None,
+        "queue_priority": source.get("queue_priority", 0),
+        "lease_seconds": 300,
+    }
+    dispatch_values = {
+        field: context[field] if field in context else legacy_values[field]
+        for field in retained_fields
+    }
+    dispatch_values.update(
+        {
+            "worker_id": str(worker_id),
+            "idempotency_key": retry_idempotency_key,
+            "task_type": str(source.get("task_type") or source_request.get("task_type") or ""),
+            "task_input": source_request.get("task_input") or {},
+            "project_id": str(source["project_id"]) if source.get("project_id") else None,
+            "flow_id": str(source["flow_id"]) if source.get("flow_id") else None,
+            "flow_instance_id": str(source["flow_instance_id"]) if source.get("flow_instance_id") else None,
+            "flow_node_execution_id": source.get("flow_node_execution_id"),
+            "resolved_model_profile": None,
+            # Use the deployment's current dispatch mode; a past runtime mode
+            # is not a policy input and must not override current operations.
+            "dispatch_mode": None,
+        }
+    )
+    try:
+        retry_request = WorkerRunDispatchRequest.model_validate(dispatch_values)
+    except ValueError as exc:
+        raise HTTPException(
+            409,
+            {
+                "code": "RUN_RETRY_CONTEXT_INVALID",
+                "message": "Stored Worker Run inputs are no longer valid for retry.",
+            },
+        ) from exc
+    try:
+        return await _dispatch_worker_run(
+            retry_request,
+            retry_of_run_id=run_id,
+            retry_metadata={
+                "requested_by": "operator",
+                "reason": payload.reason,
+                "source_run_id": str(run_id),
+                "retry_request_key": payload.idempotency_key,
+            },
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            409,
+            {
+                "code": "RUN_RETRY_CONFLICT",
+                "message": "The Worker Run could not be retried because its state changed or persistence rejected the retry.",
+            },
+        ) from exc
 
 
 @app.get("/workers/runs/{run_id}/events")

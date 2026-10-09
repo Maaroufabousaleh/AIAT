@@ -180,6 +180,8 @@ class WorkerRunController:
         skill_bundle_id: UUID | None = None,
         steward_id: UUID | None = None,
         model_resolution_snapshot_id: UUID | None = None,
+        retry_of_run_id: UUID | None = None,
+        retry_context_json: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if self.storage is not None and worker_registry_id is not None:
             return await self.storage.create_worker_run(
@@ -197,6 +199,8 @@ class WorkerRunController:
                 skill_bundle_id=skill_bundle_id,
                 steward_id=steward_id,
                 model_resolution_snapshot_id=model_resolution_snapshot_id,
+                retry_of_run_id=retry_of_run_id,
+                retry_context_json=retry_context_json,
             )
         existing = next((row for row in self._memory_runs.values() if row["idempotency_key"] == request.idempotency_key and row["worker_id"] == request.worker_id), None)
         if existing:
@@ -210,6 +214,8 @@ class WorkerRunController:
             "request_json": request.model_dump(mode="json"),
             "project_id": request.project_id,
             "skill_bundle_id": skill_bundle_id,
+            "retry_of_run_id": retry_of_run_id,
+            "retry_context_json": retry_context_json or {},
             "created_at": datetime.now(UTC),
         }
         self._memory_runs[request.run_id] = row
@@ -729,6 +735,8 @@ class WorkerRunController:
         skill_bundle_id: UUID | None = None,
         steward_id: UUID | None = None,
         model_resolution_snapshot_id: UUID | None = None,
+        retry_of_run_id: UUID | None = None,
+        retry_context_json: dict[str, Any] | None = None,
     ) -> WorkerRunOutcome:
         created_row = await self.create_run(
             request,
@@ -738,6 +746,8 @@ class WorkerRunController:
             skill_bundle_id=skill_bundle_id,
             steward_id=steward_id,
             model_resolution_snapshot_id=model_resolution_snapshot_id,
+            retry_of_run_id=retry_of_run_id,
+            retry_context_json=retry_context_json,
         )
         canonical_run_id = UUID(str(created_row["id"]))
         if canonical_run_id != request.run_id:

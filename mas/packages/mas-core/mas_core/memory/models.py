@@ -1609,6 +1609,8 @@ worker_runs = sa.Table(
     sa.Column("skill_bundle_id", sa.UUID(), sa.ForeignKey("skill_bundles.id", ondelete="RESTRICT")),
     sa.Column("steward_id", sa.UUID(), sa.ForeignKey("steward_agents.id", ondelete="SET NULL")),
     sa.Column("model_resolution_snapshot_id", sa.UUID(), sa.ForeignKey("model_resolution_snapshots.id", ondelete="SET NULL")),
+    sa.Column("retry_of_run_id", sa.UUID(), sa.ForeignKey("worker_runs.id", ondelete="RESTRICT")),
+    sa.Column("retry_context_json", JSONB(), nullable=False, server_default="{}"),
     sa.Column("task_type", sa.Text(), nullable=False),
     sa.Column("state", sa.Text(), nullable=False, server_default="CREATED"),
     sa.Column("queue_priority", sa.Integer(), nullable=False, server_default="0"),

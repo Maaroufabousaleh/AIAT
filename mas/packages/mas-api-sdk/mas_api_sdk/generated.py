@@ -170,6 +170,11 @@ class CompanyCreateRequest(TypedDict):
     name: Required[str]
     slug: Required[str]
 
+class CompanyManifestApplyRequest(TypedDict):
+    expected_manifest_version: Required[int]
+    manifest: Required[dict[str, Any]]
+    source: NotRequired[str]
+
 class CompanyManifestRequest(TypedDict):
     manifest: Required[dict[str, Any]]
     source: NotRequired[str]
@@ -1083,6 +1088,10 @@ class WorkerRunPauseRequest(TypedDict):
 class WorkerRunResumeRequest(TypedDict):
     checkpoint_id: NotRequired[str | Any]
 
+class WorkerRunRetryRequest(TypedDict):
+    idempotency_key: Required[str]
+    reason: Required[str]
+
 class WorkerStatusTransition(TypedDict):
     action: Required[str]
     new_role: NotRequired[str | Any]
@@ -1535,7 +1544,7 @@ OPERATIONS: dict[str, ApiOperation] = {
         path='/companies/{company_id}/manifest/apply',
         path_params=('company_id',),
         query_params=(),
-        request_body_type='CompanyManifestRequest',
+        request_body_type='CompanyManifestApplyRequest',
         response_types=('HTTPValidationError',),
     ),
     'company_manifest_history_companies__company_id__manifest_history_get': ApiOperation(
@@ -3563,6 +3572,15 @@ OPERATIONS: dict[str, ApiOperation] = {
         request_body_type='WorkerRunResumeRequest',
         response_types=('HTTPValidationError',),
     ),
+    'retry_worker_run_api_workers_runs__run_id__retry_post': ApiOperation(
+        operation_id='retry_worker_run_api_workers_runs__run_id__retry_post',
+        method='POST',
+        path='/workers/runs/{run_id}/retry',
+        path_params=('run_id',),
+        query_params=(),
+        request_body_type='WorkerRunRetryRequest',
+        response_types=('HTTPValidationError',),
+    ),
     'get_worker_run_transitions_workers_runs__run_id__transitions_get': ApiOperation(
         operation_id='get_worker_run_transitions_workers_runs__run_id__transitions_get',
         method='GET',
@@ -3583,8 +3601,8 @@ OPERATIONS: dict[str, ApiOperation] = {
     ),
 }
 
-MODEL_COUNT = 142
-OPERATION_COUNT = 274
+MODEL_COUNT = 144
+OPERATION_COUNT = 275
 
 __all__ = [
     "ApiOperation",
@@ -3612,6 +3630,7 @@ __all__ = [
     'ChatMessage',
     'ChunkingStrategy',
     'CompanyCreateRequest',
+    'CompanyManifestApplyRequest',
     'CompanyManifestRequest',
     'CompanyManifestRollbackRequest',
     'CreateArtifactRequest',
@@ -3730,6 +3749,7 @@ __all__ = [
     'WorkerRunDispatchRequest',
     'WorkerRunPauseRequest',
     'WorkerRunResumeRequest',
+    'WorkerRunRetryRequest',
     'WorkerStatusTransition',
     'WorkerUpgradeRequest',
     'WorkloadExecutionPolicy',

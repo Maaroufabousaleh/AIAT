@@ -188,6 +188,17 @@ response evidence.
 - Versioned `aiat.worker.v1` and `aiat.adapter.v1` protocol models and negotiation.
 - Normalized requests, capabilities, events, results, errors, artifacts, usage, tool responses, pause/resume/cancel, health, and readiness.
 - `WorkerRunController` with durable lifecycle, compare-and-set transitions, evidence persistence, queue leases, heartbeat recovery, mediated-tool effect replay/ambiguity handling, and run APIs.
+- Operators can retry a `FAILED` or `TIMED_OUT` Worker Run from its detail
+  view. A retry is a new durable run linked to the source (migration
+  `0048_worker_run_retry_lineage`), preserves the original result/evidence,
+  and re-enters the normal dispatch path so current worker/company grants,
+  model approval, budget, and runtime policy are checked again. Replays use
+  an idempotency key. Generic retry fails closed for Flow-bound runs, which
+  must use FlowController, and for runs with durable tool effects, which need
+  explicit reconciliation before consequential work can be repeated. Focused
+  tests cover lineage, policy-input recovery, concurrent replay, shared budget
+  reservations, and the no-effects/no-flow retry boundaries; the dashboard
+  retry E2E uses mocked API responses and does not make provider calls.
 - Cancellation is serialized with the controller's `DISPATCHING` to adapter-start boundary. The OpenCode adapter checks cancellation during session creation and aborts/deletes a session that never reached acceptance before any prompt submission; known sessions use OpenCode's local abort endpoint. Focused barrier tests pass in `test_worker_governance.py` (`f18dd5dd`). This closes the local startup race but does not certify a provider-backed run.
 - Compatible `WorkerRuntimeStatus` reconciliation and `WorkerCancellationReceipt` acknowledgement models now expose the distinction between local runtime knowledge, cancellation-request acceptance, and proven terminal cancellation. Migration `0044_worker_run_runtime_bindings` persists one safe subordinate runtime reference per dispatch attempt, and controller reconciliation reads it before legacy transition metadata. Migration `0045_worker_tool_effects` persists one mediated-tool effect per run/idempotency key before dispatch; completed responses replay with the current request ID, while in-flight/ambiguous effects fail closed instead of being executed again. OpenCode now looks up a durable session reference through its certified session/status endpoints; the inactive OpenHands candidate performs a conservative conversation-status lookup (REST `finished` remains advisory), and the controller records the subordinate observation timestamp/status without changing canonical run state. The base adapter's accepted/task/terminal maps remain process-local; provider-specific effect reconciliation and adapter-specific live termination/result recovery remain open.
 - Governance checkpoint persistence retains the inbound

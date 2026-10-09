@@ -19,6 +19,13 @@ The control plane turns AIAT from a collection of agents into one governed compa
   test passes 1/1, and the existing company create/review/apply/history test
   passed 1/1 in a separate focused run. Both use mocked API responses and do
   not establish provider-backed execution.
+- Manifest validation returns the active version, and apply requires that
+  expected version. The storage writer checks it while holding the company
+  row lock and returns a stable conflict when another edit landed after
+  validation. The Companies editor invalidates stale validation, asks the
+  operator to validate against the new version, and retries only with that
+  refreshed version. Focused API/storage regressions and the guided-editor
+  conflict/revalidation Playwright path cover this behavior.
 - Explicit manifest policy fields for timezone, retention, privacy classes,
   evidence requirements, model constraints, and deployment/sandbox defaults;
   typed validation and legacy compatibility are covered by `e0f0aee`, and
