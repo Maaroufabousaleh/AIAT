@@ -150,7 +150,13 @@ export default function FlowEditorPage() {
   const [flowLoadError, setFlowLoadError] = useState<string | null>(null);
   const [accessDenied, setAccessDenied] = useState(false);
   const [hasReadContext, setHasReadContext] = useState(false);
+  const [loadedFlowIdentity, setLoadedFlowIdentity] = useState<{
+    routeId: string;
+    canonicalId: string;
+  } | null>(null);
   const hasFlowRef = useRef(false);
+  const loadedFlowIdRef = useRef<string | null>(null);
+  const loadedFlowCanonicalIdRef = useRef<string | null>(null);
   const flowLoadGenerationRef = useRef(0);
   const hasReadContextRef = useRef(false);
 
@@ -268,6 +274,35 @@ export default function FlowEditorPage() {
 
   const loadFlow = useCallback(async (flowId: string) => {
     if (accessDenied) return;
+    if (loadedFlowIdRef.current !== flowId) {
+      // A failed read for a newly selected flow must not leave the previous
+      // flow's editable canvas or canonical identity attached to this URL.
+      loadedFlowIdRef.current = null;
+      loadedFlowCanonicalIdRef.current = null;
+      setLoadedFlowIdentity(null);
+      hasFlowRef.current = false;
+      hasReadContextRef.current = false;
+      useFlowStore.getState().setCurrentFlow(null);
+      setHasReadContext(false);
+      setFlowLoaded(false);
+      setFlowLoadStale(false);
+      setFlowLoadError(null);
+      setName("");
+      setDescription("");
+      setIsActive(false);
+      setFlowMetadata({});
+      setNodes([]);
+      setEdges([]);
+      setSelectedNode(null);
+      setShowConfig(false);
+      setNodeConfig({});
+      setRawSwitchCases("");
+      setHistory([]);
+      setRedoStack([]);
+      setHistoryVersion(0);
+      setSaveStatus("idle");
+      setLastSavedAt(null);
+    }
     const generation = flowLoadGenerationRef.current + 1;
     flowLoadGenerationRef.current = generation;
     setFlowLoading(true);
@@ -318,6 +353,9 @@ export default function FlowEditorPage() {
     setSaveStatus("saved");
     setLastSavedAt(new Date(flow.updated_at));
     hasFlowRef.current = true;
+    loadedFlowIdRef.current = flowId;
+    loadedFlowCanonicalIdRef.current = flow.id;
+    setLoadedFlowIdentity({ routeId: flowId, canonicalId: flow.id });
     hasReadContextRef.current = true;
     setHasReadContext(true);
     setFlowLoaded(true);
@@ -663,7 +701,12 @@ export default function FlowEditorPage() {
     }
   };
 
-  if (!isNew && accessDenied && !flowLoaded) {
+  const flowLoadedForRoute =
+    flowLoaded &&
+    loadedFlowIdentity?.routeId === id &&
+    currentFlow?.id === loadedFlowIdentity.canonicalId;
+
+  if (!isNew && accessDenied && !flowLoadedForRoute) {
     return (
       <div className="min-h-screen bg-slate-950 text-slate-100">
         <header className="flex items-center gap-3 border-b border-slate-800 bg-slate-900/80 p-4">
@@ -696,7 +739,7 @@ export default function FlowEditorPage() {
     );
   }
 
-  if (!isNew && !flowLoaded) {
+  if (!isNew && !flowLoadedForRoute) {
     return (
       <div className="min-h-screen bg-slate-950 text-slate-100">
         <header className="flex items-center gap-3 border-b border-slate-800 bg-slate-900/80 p-4">

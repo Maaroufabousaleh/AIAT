@@ -171,6 +171,101 @@ test("flow editor fails closed when the initial flow read is denied", async ({
   await expect(page.getByRole("button", { name: "Add Task node" })).toHaveCount(0);
 });
 
+test("flow editor clears the previous canvas when a new version cannot be loaded", async ({ page }) => {
+  const newVersionId = "flow-editor-recovery-copy";
+  const newVersion = { ...FLOW_FIXTURE, id: newVersionId, version: 2 };
+  await page.route("**/api/workers", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route("**/api/governance/model-profiles", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route("**/api/flows/flow-editor-recovery", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(FLOW_FIXTURE) });
+  });
+  await page.route("**/api/flows", async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.continue();
+      return;
+    }
+    await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify(newVersion) });
+  });
+  await page.route(`**/api/flows/${newVersionId}`, async (route) => {
+    await route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "new flow version is temporarily unavailable" }),
+    });
+  });
+
+  await authenticate(page, "/flows/flow-editor-recovery");
+  await expect(page.getByTestId("flow-name-input")).toHaveValue("Recovery Flow");
+  await page.getByTestId("flow-save-version-button").click();
+  await expect(page).toHaveURL(new RegExp(`/flows/${newVersionId}$`));
+  await expect(page.getByRole("heading", { name: "Flow unavailable" })).toBeVisible();
+  await expect(page.getByText("new flow version is temporarily unavailable")).toBeVisible();
+  await expect(page.getByTestId("flow-name-input")).toHaveCount(0);
+  await expect(page.getByRole("main", { name: "Flow editor" })).toHaveCount(0);
+  await expect(page.getByTestId("flow-save-button")).toHaveCount(0);
+  await expect(page.getByTestId("flow-save-version-button")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Add Task node" })).toHaveCount(0);
+});
+
+test("a late flow read cannot replace the flow selected afterward", async ({ page }) => {
+  const secondFlow = { ...FLOW_FIXTURE, id: "flow-editor-second", name: "Second Flow", version: 3 };
+  let releaseFirstRead!: () => void;
+  let finishFirstRead!: () => void;
+  const firstReadGate = new Promise<void>((resolve) => { releaseFirstRead = resolve; });
+  const firstReadFinished = new Promise<void>((resolve) => { finishFirstRead = resolve; });
+  let firstReadCount = 0;
+
+  await page.route("**/api/workers", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route("**/api/governance/model-profiles", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route("**/api/flows**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === "/api/flows" && route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([FLOW_FIXTURE, secondFlow]),
+      });
+      return;
+    }
+    if (url.pathname === `/api/flows/${FLOW_FIXTURE.id}` && route.request().method() === "GET") {
+      firstReadCount += 1;
+      if (firstReadCount === 1) {
+        await firstReadGate;
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(FLOW_FIXTURE) });
+        finishFirstRead();
+        return;
+      }
+    }
+    if (url.pathname === `/api/flows/${secondFlow.id}` && route.request().method() === "GET") {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(secondFlow) });
+      return;
+    }
+    await route.continue();
+  });
+
+  try {
+    await authenticate(page, `/flows/${FLOW_FIXTURE.id}`);
+    await page.getByRole("link", { name: "Back to flows" }).click();
+    await page.getByRole("link", { name: "Second Flow", exact: true }).click();
+    await expect(page.getByTestId("flow-name-input")).toHaveValue("Second Flow");
+
+    releaseFirstRead();
+    await firstReadFinished;
+    await expect(page.getByTestId("flow-name-input")).toHaveValue("Second Flow");
+    await expect(page.getByRole("heading", { name: "Flow unavailable" })).toHaveCount(0);
+  } finally {
+    releaseFirstRead();
+  }
+});
+
 test("flow editor preserves the last canvas but hides controls after read denial", async ({
   page,
 }) => {
