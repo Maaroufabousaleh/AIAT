@@ -141,7 +141,7 @@ test("CEO chat restores a pending confirmation from history and clears it after 
   page,
 }) => {
   const confirmationToken = "7c294909-2dd8-41d6-96c4-cab319e58a73";
-  let submitted: Record<string, unknown> | null = null;
+  const submission: { current: Record<string, unknown> | null } = { current: null };
 
   await page.addInitScript(() => {
     const sources: Array<{ dispatch(type: string, data: string): void }> = [];
@@ -226,7 +226,7 @@ test("CEO chat restores a pending confirmation from history and clears it after 
   });
 
   await page.route("**/api/ceo/messages", async (route) => {
-    submitted = route.request().postDataJSON() as Record<string, unknown>;
+    submission.current = route.request().postDataJSON() as Record<string, unknown>;
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -240,11 +240,11 @@ test("CEO chat restores a pending confirmation from history and clears it after 
   await expect(confirm).toBeVisible();
   await confirm.click();
 
-  await expect.poll(() => submitted).toMatchObject({
+  await expect.poll(() => submission.current).toMatchObject({
     message: "confirm",
     context_confirmation_token: confirmationToken,
   });
-  const requestId = submitted?.request_id;
+  const requestId = submission.current?.request_id;
   expect(requestId).toEqual(expect.any(String));
 
   await page.evaluate(({ requestId }) => {
