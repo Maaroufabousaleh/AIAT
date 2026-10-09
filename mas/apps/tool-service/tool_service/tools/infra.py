@@ -250,6 +250,7 @@ class InfraReadySignalTool(BaseTool):
         project_id = str(kwargs.get("project_id") or kwargs.get("target") or "").strip()
         if not project_id:
             raise ValueError("project_id is required")
+        context = kwargs.get("_aiat_context")
         transition = await orch_post(
             f"/projects/{project_id}/transition",
             {
@@ -257,6 +258,8 @@ class InfraReadySignalTool(BaseTool):
                 "actor_id": str(kwargs.get("actor_id") or "devops_eng"),
                 "context": {"sprint_id": kwargs.get("sprint_id")},
             },
+            context=context,
+            principal="operator",
         )
         return {
             "project_id": project_id,

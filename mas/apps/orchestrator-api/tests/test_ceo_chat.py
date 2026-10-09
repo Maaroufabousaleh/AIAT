@@ -231,7 +231,8 @@ async def test_ceo_security_blocker_recovery_requests_document_revision(monkeypa
     app.state.storage = storage
     transitions: list[Any] = []
 
-    async def fake_transition(project_uuid: UUID, request: Any) -> dict[str, Any]:
+    async def fake_transition(project_uuid: UUID, request: Any, *, actor_id: str) -> dict[str, Any]:
+        assert actor_id == "operator"
         transitions.append((project_uuid, request))
         return {
             "next_state": "CDR_REVIEW"
@@ -239,7 +240,7 @@ async def test_ceo_security_blocker_recovery_requests_document_revision(monkeypa
             else "CDR_CREATION"
         }
 
-    monkeypatch.setattr("orchestrator_api.main.transition_project", fake_transition)
+    monkeypatch.setattr("orchestrator_api.main._execute_project_transition", fake_transition)
 
     result = await _handle_ceo_project_intent(
         f"resolve the security blocker for project {project_id} because TLS, AES-256, data classification, STRIDE, GDPR/SOC2 mapping, secrets rotation, MCP authentication, and gVisor controls are complete"
@@ -272,11 +273,12 @@ async def test_ceo_document_revision_chat_requests_cdr_revision(monkeypatch):
     app.state.storage = storage
     transitions: list[Any] = []
 
-    async def fake_transition(project_uuid: UUID, request: Any) -> dict[str, Any]:
+    async def fake_transition(project_uuid: UUID, request: Any, *, actor_id: str) -> dict[str, Any]:
+        assert actor_id == "operator"
         transitions.append((project_uuid, request))
         return {"next_state": "CDR_CREATION"}
 
-    monkeypatch.setattr("orchestrator_api.main.transition_project", fake_transition)
+    monkeypatch.setattr("orchestrator_api.main._execute_project_transition", fake_transition)
 
     result = await _handle_ceo_project_intent(
         f"revise the CDR for project {project_id} because CFO requested budget, ROI, and contingency details"

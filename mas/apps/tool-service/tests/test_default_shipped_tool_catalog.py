@@ -855,8 +855,8 @@ async def test_secrets_manage_uses_encrypted_credentials_boundary(make_registry,
 async def test_infra_ready_signal_transitions_real_project(make_registry, monkeypatch):
     captured = {}
 
-    async def fake_post(path, body=None):
-        captured.update(path=path, body=body)
+    async def fake_post(path, body=None, *, context=None, principal="service"):
+        captured.update(path=path, body=body, context=context, principal=principal)
         return {"next_state": "IN_PROGRESS"}
 
     monkeypatch.setattr("tool_service.tools.infra.orch_post", fake_post)
@@ -873,6 +873,8 @@ async def test_infra_ready_signal_transitions_real_project(make_registry, monkey
     assert response.success is True
     assert captured["path"] == "/projects/project-1/transition"
     assert captured["body"]["event"] == "infra_ready"
+    assert captured["principal"] == "operator"
+    assert captured["context"]["caller_id"] == "devops-pm"
 
 
 @pytest.mark.anyio

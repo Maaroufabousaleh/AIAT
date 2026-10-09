@@ -556,12 +556,18 @@ class ProjectTransitionTool(BaseTool):
 
     async def execute(self, **kwargs: Any) -> Any:
         project_id = kwargs.get("project_id", "")
+        context = kwargs.get("_aiat_context")
         body = {
             "event": kwargs.get("event", ""),
             "actor_id": kwargs.get("actor_id", "unknown"),
             "context": kwargs.get("context"),
         }
-        return await orch_post(f"/projects/{project_id}/transition", body)
+        return await orch_post(
+            f"/projects/{project_id}/transition",
+            body,
+            context=context,
+            principal="operator",
+        )
 
 
 class ProjectListTool(BaseTool):
@@ -681,6 +687,7 @@ class DocumentSubmitTool(BaseTool):
     async def execute(self, **kwargs: Any) -> Any:
         project_id = kwargs.get("project_id", "")
         doc_type = kwargs.get("doc_type", "PDR")
+        context = kwargs.get("_aiat_context")
         event_map = {
             "PDR": "pdr_submitted",
             "CDR": "cdr_submitted",
@@ -699,6 +706,8 @@ class DocumentSubmitTool(BaseTool):
                     "doc_type": doc_type,
                 },
             },
+            context=context,
+            principal="operator",
         )
 
 
@@ -989,6 +998,7 @@ class ReviewAggregateTool(BaseTool):
 
     async def execute(self, **kwargs: Any) -> Any:
         project_id = kwargs.get("project_id", "")
+        context = kwargs.get("_aiat_context")
         return await orch_post(
             f"/projects/{project_id}/transition",
             {
@@ -999,6 +1009,8 @@ class ReviewAggregateTool(BaseTool):
                     "aggregate_verdict": kwargs.get("verdict", "APPROVED"),
                 },
             },
+            context=context,
+            principal="operator",
         )
 
 
@@ -1016,6 +1028,7 @@ class ApprovalOverrideCSOTool(BaseTool):
     async def execute(self, **kwargs: Any) -> Any:
         project_id = kwargs.get("project_id", "")
         action = kwargs.get("action", "approve")
+        context = kwargs.get("_aiat_context")
         if action == "block":
             return await orch_post(
                 f"/projects/{project_id}/transition",
@@ -1024,6 +1037,8 @@ class ApprovalOverrideCSOTool(BaseTool):
                     "actor_id": kwargs.get("actor_id", "cso"),
                     "context": {"reason": kwargs.get("reason", "CSO override")},
                 },
+                context=context,
+                principal="operator",
             )
         else:
             return await orch_post(
@@ -1033,6 +1048,8 @@ class ApprovalOverrideCSOTool(BaseTool):
                     "actor_id": kwargs.get("actor_id", "ceo"),
                     "context": {"reason": kwargs.get("reason", "CEO override")},
                 },
+                context=context,
+                principal="operator",
             )
 
 

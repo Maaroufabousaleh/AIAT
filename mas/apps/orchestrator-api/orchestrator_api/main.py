@@ -5346,8 +5346,27 @@ async def manage_project_repository(
 
 
 @app.post("/projects/{project_id}/transition")
-async def transition_project(project_id: UUID, req: TransitionRequest) -> dict[str, Any]:
+async def transition_project(
+    project_id: UUID,
+    req: TransitionRequest,
+    request: Request,
+) -> dict[str, Any]:
     """Execute a state transition. This is the SOLE writer of projects.state."""
+    _require_operator_identity(request)
+    return await _execute_project_transition(
+        project_id,
+        req,
+        actor_id=_authenticated_principal(request),
+    )
+
+
+async def _execute_project_transition(
+    project_id: UUID,
+    req: TransitionRequest,
+    *,
+    actor_id: str,
+) -> dict[str, Any]:
+    """Apply a transition after the caller has established its authority."""
     storage = _storage()
     project = await storage.get_project(project_id)
     if project is None:
@@ -5368,7 +5387,7 @@ async def transition_project(project_id: UUID, req: TransitionRequest) -> dict[s
             project_id=str(project_id),
             current_state=current_state,
             event=event,
-            actor_id=req.actor_id,
+            actor_id=actor_id,
             context=req.context,
         )
         # The controller has committed the state transition at this point;
@@ -15924,13 +15943,14 @@ async def _handle_ceo_project_intent(
             }
 
         project_id = UUID(str(project["id"]))
-        restored = await transition_project(
+        restored = await _execute_project_transition(
             project_id,
             TransitionRequest(
                 event=WorkflowEvent.BLOCKER_RESOLVED.value,
                 actor_id="human_operator",
                 context={"reason": reason, "resolution": "security_remediation_verified"},
             ),
+            actor_id=principal or "operator",
         )
         restored_state = str(restored.get("next_state") or "")
         revision_event = {
@@ -15954,7 +15974,7 @@ async def _handle_ceo_project_intent(
                 ],
             }
 
-        revised = await transition_project(
+        revised = await _execute_project_transition(
             project_id,
             TransitionRequest(
                 event=revision_event,
@@ -15965,6 +15985,7 @@ async def _handle_ceo_project_intent(
                     "revision_requested": True,
                 },
             ),
+            actor_id=principal or "operator",
         )
         updated = await storage.get_project(project_id)
         return {
@@ -16047,13 +16068,14 @@ async def _handle_ceo_project_intent(
                 "trace": ["parsed_document_revision_intent", "checked_authoritative_project_state"],
             }
 
-        revised = await transition_project(
+        revised = await _execute_project_transition(
             UUID(str(project["id"])),
             TransitionRequest(
                 event=revision_event,
                 actor_id="human_operator",
                 context={"reason": reason, "revision_requested": True},
             ),
+            actor_id=principal or "operator",
         )
         updated = await storage.get_project(UUID(str(project["id"])))
         return {

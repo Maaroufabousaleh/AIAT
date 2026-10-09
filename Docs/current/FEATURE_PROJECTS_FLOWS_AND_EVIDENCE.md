@@ -21,6 +21,13 @@ Projects are the primary ownership, security, cost, evidence, and lifecycle boun
 - Project state-history reads verify that the project exists before returning
   audit rows; an unknown project is a 404 rather than an indistinguishable
   empty history (`f49f7501`).
+- The generic `/projects/{id}/transition` API now requires the operator
+  credential and uses the authenticated principal for transition attribution;
+  a caller-supplied `actor_id` cannot authorize or relabel the transition.
+  Role-gated Tool Service transition actions use the configured operator
+  credential after the Tool Registry applies its existing caller-role policy.
+  API regressions cover service/worker rejection, operator attribution, and
+  the internal CEO transition path.
 - Project state/history and project-transition notification intent commit atomically through `WorkflowController`/`AgentStorage`; the bounded outbox dispatcher publishes stable transition IDs and retains failed notifications for retry (migration `0043_project_transition_outbox`).
 - Default software lifecycle from feasibility through PDR/CDR, human approval, requirements review, sprint execution, retrospective, KPI persistence, completion, and archive.
 - Durable documents with lineage, immutable revisions, statuses, preview/download, and supersession.
