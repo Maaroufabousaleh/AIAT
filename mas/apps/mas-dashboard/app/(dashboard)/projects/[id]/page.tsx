@@ -544,6 +544,10 @@ export default function ProjectDetailPage() {
   );
   const [projectLoadError, setProjectLoadError] = useState<string | null>(null);
   const [startError, setStartError] = useState<string | null>(null);
+  const [projectActionError, setProjectActionError] = useState<{
+    action: "retry" | "archive";
+    message: string;
+  } | null>(null);
   const hasProjectRef = useRef(false);
   const [accessDenied, setAccessDenied] = useState(false);
   const accessDeniedRef = useRef(false);
@@ -703,6 +707,7 @@ export default function ProjectDetailPage() {
     setProjectStale(false);
     setProjectRefreshError(null);
     setProjectLoadError(null);
+    setProjectActionError(null);
     setActionLoading(null);
     setShowFlowSwitch(false);
     setShowFlowActionsMenu(false);
@@ -1827,9 +1832,38 @@ export default function ProjectDetailPage() {
   async function handleAction(action: "retry" | "archive") {
     if (accessDeniedRef.current) return;
     setActionLoading(action);
+    setProjectActionError(null);
     try {
       const res = await fetch(`/api/projects/${id}/${action}`, { method: "POST" });
       if (handleDeniedResponse(res)) return;
+      if (!res.ok) {
+        const payload = await res.json().catch(() => null);
+        const detail =
+          payload && typeof payload === "object"
+            ? (payload as { detail?: unknown; error?: unknown }).detail ??
+              (payload as { detail?: unknown; error?: unknown }).error
+            : null;
+        const reason =
+          typeof detail === "string" && detail.trim()
+            ? detail.trim().slice(0, 400)
+            : `request failed (HTTP ${res.status})`;
+        setProjectActionError({
+          action,
+          message: `${reason}. Refresh the project state before trying again.`,
+        });
+        await load();
+        return;
+      }
+      await load();
+    } catch (cause) {
+      const reason =
+        cause instanceof Error && cause.message.trim()
+          ? cause.message.slice(0, 400)
+          : "the request could not be completed";
+      setProjectActionError({
+        action,
+        message: `${reason}. Refresh the project state before trying again.`,
+      });
       await load();
     } finally {
       setActionLoading(null);
@@ -2489,6 +2523,27 @@ export default function ProjectDetailPage() {
             }
           >
             {startError}
+          </ErrorBanner>
+        </div>
+      )}
+
+      {projectActionError && !accessDenied && (
+        <div className="mx-4 mt-3" data-testid="project-action-error">
+          <ErrorBanner
+            tone="error"
+            title={projectActionError.action === "retry" ? "Project retry failed" : "Project archive failed"}
+            action={
+              <button
+                type="button"
+                onClick={() => void handleAction(projectActionError.action)}
+                disabled={!!actionLoading || projectStale}
+                className="inline-flex min-h-11 items-center rounded-md border border-red-700/70 bg-red-950/40 px-3 py-2 text-xs font-medium text-red-100 hover:bg-red-900/50 disabled:cursor-wait disabled:opacity-50"
+              >
+                Retry action
+              </button>
+            }
+          >
+            {projectActionError.message}
           </ErrorBanner>
         </div>
       )}
