@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 import { authenticate } from "./auth";
 
@@ -15,6 +15,99 @@ const HISTORY_FIXTURE = {
     },
   ],
 };
+
+async function submitAmbiguousCeoMessage(page: Page, draft: string) {
+  let requestId: string | undefined;
+  await installCeoReceiptStream(page);
+  await page.route((url) => url.pathname === "/api/ceo/messages", async (route) => {
+    const body = route.request().postDataJSON() as { request_id?: unknown };
+    requestId = typeof body.request_id === "string" ? body.request_id : undefined;
+    await route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "The response was lost after publication." }),
+    });
+  });
+
+  await authenticate(page, "/ceo/chat");
+  const chat = page.getByRole("main", { name: "CEO Command Center chat" });
+  const input = chat.getByRole("textbox", { name: "Message to CEO" });
+  await input.fill(draft);
+  await input.press("Enter");
+  await expect(chat.getByText("Delivery unconfirmed", { exact: true })).toBeVisible();
+  await expect(input).toHaveValue(draft);
+  await expect.poll(() => requestId).toBeTruthy();
+  if (!requestId) throw new Error("CEO message request ID was not captured");
+  return { chat, input, requestId };
+}
+
+async function installCeoReceiptStream(page: Page) {
+  await page.addInitScript(() => {
+    class ReceiptEventSource extends EventTarget {
+      static readonly CONNECTING = 0;
+      static readonly OPEN = 1;
+      static readonly CLOSED = 2;
+      readonly url: string;
+      readyState = ReceiptEventSource.OPEN;
+      onerror: ((event: Event) => void) | null = null;
+      onmessage: ((event: MessageEvent<string>) => void) | null = null;
+      private readonly receiveTestMessage = (event: Event) => {
+        const data = (event as CustomEvent<string>).detail;
+        const message = new MessageEvent("message", { data });
+        this.onmessage?.(message);
+      };
+
+      constructor(url: string) {
+        super();
+        this.url = url;
+        window.addEventListener("ceo-test-message", this.receiveTestMessage);
+        window.setTimeout(() => {
+          this.dispatchEvent(new MessageEvent("connected", {
+            data: JSON.stringify({ team: "exec_ceo" }),
+          }));
+        }, 0);
+      }
+
+      close() {
+        this.readyState = ReceiptEventSource.CLOSED;
+        window.removeEventListener("ceo-test-message", this.receiveTestMessage);
+      }
+    }
+
+    Object.defineProperty(window, "EventSource", {
+      configurable: true,
+      writable: true,
+      value: ReceiptEventSource,
+    });
+  });
+  await page.route("**/api/streams/exec_ceo**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("history") === "1") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ entries: [] }),
+      });
+      return;
+    }
+    await route.fulfill({ status: 200, contentType: "text/event-stream", body: "" });
+  });
+}
+
+async function emitLateCeoReceipt(page: Page, correlationId: string) {
+  await page.evaluate((id) => {
+    window.dispatchEvent(new CustomEvent("ceo-test-message", {
+      detail: JSON.stringify({
+        message_id: "ceo-late-receipt-001",
+        correlation_id: id,
+        message_type: "RESPONSE",
+        sender_id: "ceo",
+        timestamp: "2026-10-09T20:00:00Z",
+        payload: { response: "The CEO accepted the request." },
+      }),
+    }));
+  }, correlationId);
+}
 
 test("CEO chat retains history through a stream failure and recovers on retry", async ({
   page,
@@ -335,6 +428,124 @@ test("CEO chat keeps a draft when delivery cannot be confirmed", async ({ page }
   await expect(input).toHaveValue(draft);
   await expect(chat.getByRole("alert")).toContainText("Check the conversation before sending again");
   await expect.poll(() => submissionCount, { timeout: 5_000 }).toBe(1);
+});
+
+test("CEO chat keeps delivery uncertainty specific to each request", async ({ page }) => {
+  let submissionCount = 0;
+  await page.route("**/api/streams/exec_ceo**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("history") === "1") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ entries: [] }),
+      });
+      return;
+    }
+    await route.fulfill({ status: 200, contentType: "text/event-stream", body: "" });
+  });
+  await page.route((url) => url.pathname === "/api/ceo/messages", async (route) => {
+    submissionCount += 1;
+    await route.fulfill({
+      status: submissionCount === 1 ? 503 : 403,
+      contentType: "application/json",
+      body: JSON.stringify({
+        error: submissionCount === 1 ? "The response was lost after publication." : "CEO message access denied.",
+      }),
+    });
+  });
+
+  await authenticate(page, "/ceo/chat");
+  const chat = page.getByRole("main", { name: "CEO Command Center chat" });
+  const input = chat.getByRole("textbox", { name: "Message to CEO" });
+  await input.fill("Check the project status");
+  await input.press("Enter");
+  await expect(chat.getByText("Delivery unconfirmed", { exact: true })).toBeVisible();
+
+  await input.fill("A second request that is denied");
+  await input.press("Enter");
+  await expect(chat.getByRole("region", { name: "CEO chat access status" })).toBeVisible();
+  await expect(chat.getByText("Delivery unconfirmed", { exact: true })).toHaveCount(1);
+  await expect(chat.getByText("Not delivered", { exact: true })).toHaveCount(1);
+  await expect.poll(() => submissionCount, { timeout: 5_000 }).toBe(2);
+});
+
+test("a late receipt does not clear a later access-denied error", async ({ page }) => {
+  const { chat, input, requestId } = await submitAmbiguousCeoMessage(
+    page,
+    "Check the project status",
+  );
+  await page.route((url) => url.pathname === "/api/ceo/messages", async (route) => {
+    await route.fulfill({
+      status: 403,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "CEO message access denied." }),
+    });
+  });
+
+  await input.fill("A follow-up request with denied access");
+  await input.press("Enter");
+  await expect(chat.getByRole("region", { name: "CEO chat access status" })).toBeVisible();
+  await expect(chat.getByRole("region", { name: "CEO chat access status" })).toContainText("CEO message access denied.");
+
+  await emitLateCeoReceipt(page, requestId);
+
+  await expect(chat.getByText("Delivery unconfirmed", { exact: true })).toHaveCount(0);
+  await expect(chat.getByRole("region", { name: "CEO chat access status" })).toContainText("CEO message access denied.");
+});
+
+test("CEO chat honors a correlated receipt observed before an access-denied response", async ({ page }) => {
+  await installCeoReceiptStream(page);
+  let requestId: string | undefined;
+  await page.route((url) => url.pathname === "/api/ceo/messages", async (route) => {
+    const body = route.request().postDataJSON() as { request_id?: unknown };
+    requestId = typeof body.request_id === "string" ? body.request_id : undefined;
+    if (!requestId) throw new Error("CEO message request ID was not captured");
+    await emitLateCeoReceipt(page, requestId);
+    await page.getByText("The CEO accepted the request.", { exact: true }).waitFor({ state: "visible" });
+    await route.fulfill({
+      status: 403,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "CEO message access denied." }),
+    });
+  });
+
+  await authenticate(page, "/ceo/chat");
+  const chat = page.getByRole("main", { name: "CEO Command Center chat" });
+  const input = chat.getByRole("textbox", { name: "Message to CEO" });
+  await expect(chat.getByText("Real-time control stream connected")).toBeVisible();
+  await input.fill("Check the project status");
+  await input.press("Enter");
+
+  await expect(chat.getByText("The CEO accepted the request.", { exact: true })).toBeVisible();
+  await expect(chat.getByRole("region", { name: "CEO chat access status" })).toContainText("CEO message access denied.");
+  await expect(chat.getByText("Not delivered", { exact: true })).toHaveCount(0);
+});
+
+test("CEO chat clears the restored draft after a late receipt", async ({ page }) => {
+  const draft = "Summarize the local project state";
+  const { chat, input, requestId } = await submitAmbiguousCeoMessage(page, draft);
+  await emitLateCeoReceipt(page, requestId);
+
+  await expect(chat.getByText("The CEO accepted the request.", { exact: true })).toBeVisible();
+  await expect(chat.getByText("Delivery unconfirmed", { exact: true })).toHaveCount(0);
+  await expect(input).toHaveValue("");
+  await expect(chat.getByRole("alert")).toHaveCount(0);
+});
+
+test("CEO chat preserves a newer draft after a late receipt", async ({ page }) => {
+  const { chat, input, requestId } = await submitAmbiguousCeoMessage(
+    page,
+    "Summarize the local project state",
+  );
+  const newerDraft = "Also check whether any approvals are waiting";
+  await input.fill(newerDraft);
+  await emitLateCeoReceipt(page, requestId);
+
+  await expect(chat.getByText("The CEO accepted the request.", { exact: true })).toBeVisible();
+  await expect(chat.getByText("Delivery unconfirmed", { exact: true })).toHaveCount(0);
+  await expect(input).toHaveValue(newerDraft);
+  await expect(chat.getByRole("alert")).toHaveCount(0);
 });
 
 test("CEO chat renders a read-only state when conversation history access is denied", async ({

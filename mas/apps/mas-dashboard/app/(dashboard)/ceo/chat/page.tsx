@@ -36,6 +36,8 @@ type ActiveRequest = {
   detail: string;
 };
 
+type FailedRequestState = "delivery_unconfirmed" | "not_delivered";
+
 function isAccessDeniedStatus(status: number): boolean {
   return status === 401 || status === 403;
 }
@@ -216,7 +218,7 @@ export default function CeoChatPage() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [activeRequest, setActiveRequest] = useState<ActiveRequest | null>(null);
-  const [failedRequestIds, setFailedRequestIds] = useState<Set<string>>(new Set());
+  const [failedRequestStates, setFailedRequestStates] = useState<Map<string, FailedRequestState>>(new Map());
   const [messageAccessDenied, setMessageAccessDenied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -227,8 +229,20 @@ export default function CeoChatPage() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const contextWorkerIdRef = useRef<string | null>(null);
   const ownedRequestIdsRef = useRef<Set<string>>(new Set());
+  const receivedResponseCorrelationsRef = useRef<Set<string>>(new Set());
+  const ambiguousRequestDraftsRef = useRef<Map<string, string>>(new Map());
+  const deliveryUnconfirmedRequestIdRef = useRef<string | null>(null);
+  const restoredDraftRequestIdRef = useRef<string | null>(null);
   const autoScrollRef = useRef(true);
   const initialScrollRef = useRef(false);
+
+  const chatFilter = useCallback((entry: FeedEntry) => {
+    const correlation = isCeoResponse(entry) ? correlationId(entry) : undefined;
+    if (correlation && ownedRequestIdsRef.current.has(correlation)) {
+      receivedResponseCorrelationsRef.current.add(correlation);
+    }
+    return isChatEntry(entry);
+  }, []);
 
   const {
     entries,
@@ -241,7 +255,7 @@ export default function CeoChatPage() {
     append,
   } = useCeoStream(
     "exec_ceo",
-    isChatEntry,
+    chatFilter,
     100,
   );
 
@@ -307,6 +321,40 @@ export default function CeoChatPage() {
   }, [entries]);
 
   useEffect(() => {
+    const resolvedRequests: Array<[string, string]> = [];
+    for (const entry of entries) {
+      if (!isCeoResponse(entry)) continue;
+      const correlation = correlationId(entry);
+      if (!correlation) continue;
+      const draft = ambiguousRequestDraftsRef.current.get(correlation);
+      if (draft === undefined) continue;
+      ambiguousRequestDraftsRef.current.delete(correlation);
+      receivedResponseCorrelationsRef.current.delete(correlation);
+      resolvedRequests.push([correlation, draft]);
+    }
+    if (resolvedRequests.length === 0) return;
+
+    setFailedRequestStates((current) => {
+      const next = new Map(current);
+      for (const [requestId] of resolvedRequests) next.delete(requestId);
+      return next.size === current.size ? current : next;
+    });
+
+    const restoredDraft = resolvedRequests.find(
+      ([requestId]) => restoredDraftRequestIdRef.current === requestId,
+    );
+    if (restoredDraft) {
+      restoredDraftRequestIdRef.current = null;
+      setInput((current) => current === restoredDraft[1] ? "" : current);
+    }
+
+    if (resolvedRequests.some(([requestId]) => deliveryUnconfirmedRequestIdRef.current === requestId)) {
+      deliveryUnconfirmedRequestIdRef.current = null;
+      setError(null);
+    }
+  }, [entries]);
+
+  useEffect(() => {
     if (!activeRequest) return;
     const matching = entries.filter((entry) => correlationId(entry) === activeRequest.id);
     const response = matching.find(isCeoResponse);
@@ -367,6 +415,8 @@ export default function CeoChatPage() {
 
     const requestId = crypto.randomUUID();
     const now = Date.now();
+    restoredDraftRequestIdRef.current = null;
+    deliveryUnconfirmedRequestIdRef.current = null;
     ownedRequestIdsRef.current.add(requestId);
     const displayText = safeOperatorDisplayText(text);
     const optimisticEntry: FeedEntry = {
@@ -412,14 +462,19 @@ export default function CeoChatPage() {
           ? body.error
           : `Request failed with HTTP ${res.status}`;
         if (isAccessDeniedStatus(res.status)) {
+          const responseReceived = receivedResponseCorrelationsRef.current.delete(requestId);
+          deliveryUnconfirmedRequestIdRef.current = null;
           setMessageAccessDenied(true);
           setError(detail);
-          setFailedRequestIds((current) => new Set(current).add(requestId));
+          if (!responseReceived) {
+            setFailedRequestStates((current) => new Map(current).set(requestId, "not_delivered"));
+          }
           setActiveRequest(null);
           return;
         }
         throw new Error(detail);
       }
+      receivedResponseCorrelationsRef.current.delete(requestId);
       setActiveRequest((current) => current?.id === requestId
         ? {
             ...current,
@@ -429,12 +484,21 @@ export default function CeoChatPage() {
         : current,
       );
     } catch (cause) {
+      if (receivedResponseCorrelationsRef.current.has(requestId)) {
+        receivedResponseCorrelationsRef.current.delete(requestId);
+        setActiveRequest(null);
+        setElapsedSeconds(0);
+        return;
+      }
       const message = cause instanceof Error ? cause.message : "Network error";
+      ambiguousRequestDraftsRef.current.set(requestId, text);
+      deliveryUnconfirmedRequestIdRef.current = requestId;
+      restoredDraftRequestIdRef.current = requestId;
       setInput(text);
       setError(
         `${message} Delivery could not be confirmed. The message is back in the composer. Check the conversation before sending again.`,
       );
-      setFailedRequestIds((current) => new Set(current).add(requestId));
+      setFailedRequestStates((current) => new Map(current).set(requestId, "delivery_unconfirmed"));
       setActiveRequest(null);
     } finally {
       setSending(false);
@@ -452,10 +516,14 @@ export default function CeoChatPage() {
   const handleClear = useCallback(() => {
     clear();
     setError(null);
-    setFailedRequestIds(new Set());
+    setFailedRequestStates(new Map());
     setPendingConfirmationToken(null);
     contextWorkerIdRef.current = null;
     ownedRequestIdsRef.current.clear();
+    receivedResponseCorrelationsRef.current.clear();
+    ambiguousRequestDraftsRef.current.clear();
+    deliveryUnconfirmedRequestIdRef.current = null;
+    restoredDraftRequestIdRef.current = null;
     initialScrollRef.current = false;
   }, [clear]);
 
@@ -641,7 +709,9 @@ export default function CeoChatPage() {
                           && typeof entryConfirmationToken === "string"
                           && entryConfirmationToken === pendingConfirmationToken;
                         const evidence = !user ? parseCeoEvidence(entry.parsed?.payload?.evidence) : null;
-                        const failed = Boolean(messageId(entry) && failedRequestIds.has(messageId(entry)!));
+                        const failedRequestState = messageId(entry)
+                          ? failedRequestStates.get(messageId(entry)!)
+                          : undefined;
                         return (
                           <article key={entryKey(entry, index)} className={clsx("flex items-start gap-3", user && "flex-row-reverse")}>
                             <div className={clsx("mt-1 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-xl border text-[10px] font-bold shadow-lg", user ? "border-violet-400/30 bg-violet-500/15 text-violet-200 shadow-violet-950/30" : "border-cyan-400/25 bg-gradient-to-br from-blue-500/25 to-cyan-400/10 text-cyan-100 shadow-cyan-950/30")}>
@@ -719,9 +789,9 @@ export default function CeoChatPage() {
                                 <span>{user ? "You" : "CEO"}</span>
                                 <span>•</span>
                                 <span>{formatInTz(entry.ts, "HH:mm")}</span>
-                                {failed && (
-                                  <span className={clsx("font-medium", accessDenied ? "text-rose-400" : "text-amber-300")}>
-                                    {accessDenied ? "Not delivered" : "Delivery unconfirmed"}
+                                {failedRequestState && (
+                                  <span className={clsx("font-medium", failedRequestState === "not_delivered" ? "text-rose-400" : "text-amber-300")}>
+                                    {failedRequestState === "not_delivered" ? "Not delivered" : "Delivery unconfirmed"}
                                   </span>
                                 )}
                               </div>
@@ -768,7 +838,10 @@ export default function CeoChatPage() {
                 <textarea
                   ref={inputRef}
                   value={input}
-                  onChange={(event) => setInput(event.target.value)}
+                  onChange={(event) => {
+                    restoredDraftRequestIdRef.current = null;
+                    setInput(event.target.value);
+                  }}
                   onKeyDown={handleKeyDown}
                   disabled={isBusy}
                   placeholder={isBusy ? "The CEO is working on your request…" : "Tell the CEO what outcome you want…"}
