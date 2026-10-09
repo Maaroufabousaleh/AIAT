@@ -475,7 +475,7 @@ export default function CredentialsPage() {
     if (!confirm(`Delete credential "${name}"? This cannot be undone.`)) return;
     setDeleting(name);
     try {
-      const res = await fetch(`/api/credentials/${name}`, { method: "DELETE" });
+      const res = await fetch(`/api/credentials/${encodeURIComponent(name)}`, { method: "DELETE" });
       if (!res.ok) {
         if (res.status === 401 || res.status === 403) {
           handleAccessDenied();
