@@ -15,17 +15,21 @@ The control plane turns AIAT from a collection of agents into one governed compa
 - The Companies page now provides guided drafts for departments/chiefs,
   registered-worker assignments, supported company budget keys, and CEO
   handoff. CEO-only grants move in the draft; changes still require canonical
-  manifest validation and apply. The source-built guided-editor Playwright
-  test passes 1/1, and the existing company create/review/apply/history test
-  passed 1/1 in a separate focused run. Both use mocked API responses and do
-  not establish provider-backed execution.
+  manifest validation and apply. Its focused source-backed Playwright checks
+  pass 3/3: guided editing, create/review/apply/history, and a delayed detail
+  response proving that switching companies cannot restore the old manifest
+  over the new selection. These use mocked API responses and do not establish
+  provider-backed execution.
 - Manifest validation returns the active version, and apply requires that
   expected version. The storage writer checks it while holding the company
   row lock and returns a stable conflict when another edit landed after
-  validation. The Companies editor invalidates stale validation, asks the
-  operator to validate against the new version, and retries only with that
-  refreshed version. Focused API/storage regressions and the guided-editor
-  conflict/revalidation Playwright path cover this behavior.
+  validation. The Companies editor invalidates stale validation, refreshes
+  detail/history after a conflict while preserving the operator's draft, and
+  shows the current server manifest read-only for review before revalidation.
+  Late detail responses are ignored when the selected company changes.
+  Focused API/storage regressions and the source-backed conflict/review/
+  revalidation Playwright path cover this behavior; production-provider
+  execution is separate.
 - Explicit manifest policy fields for timezone, retention, privacy classes,
   evidence requirements, model constraints, and deployment/sandbox defaults;
   typed validation and legacy compatibility are covered by `e0f0aee`, and

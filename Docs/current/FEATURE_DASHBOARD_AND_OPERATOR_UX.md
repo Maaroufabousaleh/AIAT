@@ -291,6 +291,25 @@ The dashboard is the human control and evidence surface for AIAT. It must make c
   evidence is retained at
   [`mas/docs/provenance/dashboard_e2e_live.json`](../../mas/docs/provenance/dashboard_e2e_live.json).
 
+### Product integration updates (2026-10-09)
+
+- Company manifest editing now refreshes canonical detail/history after a
+  version conflict without discarding the operator's draft, shows the newer
+  applied manifest read-only for review, and ignores late detail responses
+  after company selection changes. The combined company-focused source-built
+  Playwright checks pass 3/3.
+- Project issue work now retains issue/revision-to-WorkerRun continuity after
+  retries and reloads, loads bounded older run history, filters BFF rows to the
+  requested project, and prevents stale history responses from replacing a
+  refreshed view. Worker Run retry is offered only for eligible unbound
+  failures; flow-bound runs are directed to their owning flow controls. The
+  affected company/project/worker dashboard suites pass 22/22 with mocked API
+  responses and no provider dispatch; focused BFF tests pass 11/11.
+- Changed dashboard TS/TSX files pass targeted ESLint, and the isolated scoped
+  TypeScript check passes. The checked-in generated `.next/dev/types` artifacts
+  are not used by this isolated typecheck. This is focused UI evidence, not a
+  full current-candidate build or the complete CEO-to-provider journey.
+
 ### Product integration updates (2026-10-07)
 
 - Executive actions now use separate worker-run fields and validate UUIDs, bounded required strings, and JSON-object inputs before submission. CEO privileged requests still require the explicit confirmation and go through the audited approval API. The focused governance E2E covers malformed and valid payloads (`2052982a`).

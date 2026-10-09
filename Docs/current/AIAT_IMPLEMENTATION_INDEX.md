@@ -5,7 +5,7 @@
 `571a6a496e83df816b19c1326070671f76074e89` plus the current alpha integration
 commits and preserved working-tree evidence; this is not a clean release
 candidate
-**Index date:** 2026-10-07
+**Index date:** 2026-10-09
 **Release status:** `NO-RELEASE / RELEASE_CERTIFICATION_PENDING`
 
 ## Purpose
@@ -43,7 +43,7 @@ This status is deliberately separate from the release ledger's global
 `NO-RELEASE` decision. Development is not blocked merely because native-host,
 provider, operator, or deployment certification remains open.
 
-## Feature-complete alpha scoreboard (2026-10-07)
+## Feature-complete alpha scoreboard (2026-10-09)
 
 This is a development view of the personal/internal application. E2E partial
 means the operator surface is covered by local fixtures, but the complete
@@ -53,15 +53,15 @@ worker run. Production certification stays in the separate
 
 | Subsystem | Implemented | Integrated | Local tested | UI usable | E2E working | Certification deferred |
 | --- | --- | --- | --- | --- | --- | --- |
-| Control plane and organization | YES | YES | YES, company guided editor 1/1 plus existing manifest UI flow 1/1 | YES | PARTIAL, company editing is covered; full CEO-to-worker completion remains unproven | YES |
-| Projects and workflows | YES | YES | YES, focused approval API/storage 278 passed/1 skipped; project-detail Playwright 7/7; document BFF 5/5 | YES, issues, document preview/download, and exact flow approval decisions | PARTIAL, project/flow paths are locally fixture-tested; full CEO-to-worker completion remains unproven | YES |
-| Workers and runtimes | YES | YES | YES, cancellation/runtime suites; worker-management Playwright 3/3, update BFF 4/4, and steward compatibility-matrix regression 6/6 | YES, Governance run detail/actions and bounded Hiring Board configuration edits | PARTIAL, provider-backed run not authorized; mocked operations remain separate from the full project journey | YES |
+| Control plane and organization | YES | YES | YES, company editor conflict/review, create/apply, and late-response suites 3/3 | YES | PARTIAL, company editing is covered; full CEO-to-worker completion remains unproven | YES |
+| Projects and workflows | YES | YES | YES, focused approval API/storage 278 passed/1 skipped; project-detail Playwright 7/7; issue/run/history Playwright 9/9; project activity 2/2; document BFF 5/5 | YES, issue dispatch/retry continuity, bounded run history, documents, and exact flow approval decisions | PARTIAL, project/flow paths are locally fixture-tested; full CEO-to-worker completion remains unproven | YES |
+| Workers and runtimes | YES | YES | YES, cancellation/runtime suites; Worker Run operations Playwright 8/8; focused BFF 11/11; worker-management Playwright 3/3 and steward compatibility-matrix regression 6/6 | YES, Governance run detail/actions and bounded Hiring Board configuration edits | PARTIAL, provider-backed run not authorized; mocked operations remain separate from the full project journey | YES |
 | Governed tools | YES | YES | YES | YES | PARTIAL | YES |
 | Models and cost | YES | YES | YES, resolver and exact-version activation coverage | YES, preview plus exact-version approval/audit receipt | PARTIAL, no provider call in this run; current-source mocked activation spec passes in the 8-test targeted UI run | YES |
 | CEO and governance | YES | YES | YES, focused governance Playwright 6/6 including canonical choices and stale-choice rejection; CEO receipt/inbox/refresh-safety E2E 5/5 | PARTIAL, CFO/CTO use current project/profile/worker choices; CEO privileged payload remains JSON | PARTIAL, the request receipt links to the exact pending inbox item; stale/unverified decisions are gated; tests use mocked APIs and provider-backed work remains unauthorized | YES |
 | Identity and default mail | YES | YES | YES | YES | PARTIAL for external identity actions | YES |
 | PM and source control | YES | YES | YES, mocked adapters and project-scoped discovery | YES, provider bindings expose details/blockers/retry | PARTIAL, mocked PM discovery E2E passes; live provider actions remain | YES |
-| Dashboard | YES | YES | YES, lint/typecheck/build/auth plus focused company 1/1, governance 6/6, CEO receipt/inbox/refresh safety 5/5, issue-to-CTO 5/5, worker-management 3/3, and project-detail 7/7 UI suites | YES for guided company/executive actions, CEO approval receipts, issue dispatch setup, worker configuration, project documents, and flow approvals | PARTIAL, selected mocked scenarios pass separately; provider-backed execution and full CEO-to-worker journey remain open | YES |
+| Dashboard | YES | YES | YES, this integration wave passed targeted changed-file lint, scoped typecheck, focused BFF 11/11, and company/project/worker Playwright 22/22; prior focused dashboard suites remain separately recorded | YES for guided company editing, CEO approval receipts, issue dispatch/retry links, worker configuration, project documents, and flow approvals | PARTIAL, selected mocked scenarios pass separately; provider-backed execution and full CEO-to-worker journey remain open | YES |
 
 This scoreboard does not replace per-feature acceptance criteria. Existing
 full-suite snapshots below are historical; this wave's focused tests are

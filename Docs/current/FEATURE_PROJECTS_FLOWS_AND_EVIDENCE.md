@@ -60,11 +60,23 @@ Projects are the primary ownership, security, cost, evidence, and lifecycle boun
   dispatchable worker and explicitly confirming possible project-budget and
   approved-provider use. Dispatch goes through the existing audited CTO
   WorkerRun action, uses the issue revision for retry idempotency, and links
-  the returned run evidence. The focused source-built Playwright suite passes
-  5/5, including signed-session enforcement, dispatch/replay, gateway-shaped
-  bounded prompt construction, and the no-adapter unavailable state. Its API
-  responses are mocked; no provider call was made, and the complete
+  the returned run evidence. Its focused scenarios cover signed-session
+  enforcement, dispatch/replay, gateway-shaped bounded prompt construction,
+  and the no-adapter unavailable state. API responses are mocked; no provider
+  call was made, and the complete
   CEO-to-worker project journey remains partial.
+- Project activity now retrieves Worker Runs in bounded 100-row pages, displays
+  50 at a time, and supports loading older history through offset 100,000. The
+  dashboard BFF returns an allowlisted projection and drops rows that do not
+  match the requested project. It exposes issue IDs/revisions from validated
+  durable dispatch keys; retry IDs remain candidates until a same-project
+  parent chain and request issue match are verified. The issue panel prefers
+  the selected revision's run, and retry links recover after reload when the
+  parent lies on an older loaded page. A stale history-page response cannot
+  replace a refreshed history window. The issue/run Playwright suite passes
+  9/9, project activity passes 2/2, and focused BFF checks pass 8/8; these use
+  mocked APIs and make no provider calls. The history bound and provider-backed
+  project execution remain separate limitations.
 - A first transition to `DONE`/`COMPLETED`/`CLOSED` on an assigned issue now automatically records its estimated-versus-actual hours in the durable agent profile; repeated terminal updates do not double-count the observation, and the response links the profile update to the source issue.
 - The same first terminal transition for a sprint issue persists a `sprint_retrospective` KPI snapshot with aggregate completion/velocity/estimation values and raw source issue IDs, completed issue IDs, status counts, and assigned-agent profile lineage; the existing project KPI API is the read surface.
 - Project context items/chunks/tags/relations with text, semantic, and hybrid search through pgvector.
