@@ -188,6 +188,48 @@ test("tools catalogue ignores an older refresh response after a newer refresh", 
   ).toBeVisible();
 });
 
+test("tools catalogue preserves a deliberate collapse-all choice across refresh", async ({
+  page,
+}) => {
+  let reads = 0;
+  let refreshRequested = false;
+  await page.route("**/api/tools", async (route) => {
+    reads += 1;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ...TOOLS_FIXTURE,
+        tools: [
+          ...TOOLS_FIXTURE.tools,
+          {
+            name: "web-e2e-search",
+            description: "Search the approved local fixture index",
+            group: "Web / HTTP",
+          },
+        ],
+        health: { tools_registered: refreshRequested ? 3 : 2 },
+      }),
+    });
+  });
+
+  await authenticate(page, "/tools");
+  const generalGroup = page.locator("#group-header-General");
+  await expect(generalGroup).toHaveAttribute("aria-expanded", "true");
+  const webGroup = page.getByRole("button", { name: /Web \/ HTTP/ });
+
+  await page.getByRole("button", { name: "Collapse all groups" }).click();
+  await expect(generalGroup).toHaveAttribute("aria-expanded", "false");
+  await expect(webGroup).toHaveAttribute("aria-expanded", "false");
+
+  const readsBeforeRefresh = reads;
+  refreshRequested = true;
+  await page.getByRole("button", { name: "Refresh tools" }).click();
+  await expect.poll(() => reads).toBe(readsBeforeRefresh + 1);
+  await expect(page.getByText(/3 registered tools/)).toBeVisible();
+  await expect(generalGroup).toHaveAttribute("aria-expanded", "false");
+});
+
 test("tools catalogue access denial on first load hides catalogue controls", async ({
   page,
 }) => {

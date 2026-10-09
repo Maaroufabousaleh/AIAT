@@ -113,6 +113,7 @@ export default function ToolsPage() {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasReadContextRef = useRef(false);
+  const expandedGroupsInitializedRef = useRef(false);
   const requestSequenceRef = useRef(0);
 
   const handleAccessDenied = useCallback(() => {
@@ -156,12 +157,13 @@ export default function ToolsPage() {
       setHasReadContext(true);
       setError(null);
       setStale(false);
-      // Default: expand all groups on first load
-      const groups = Object.keys(groupTools((json.tools ?? []).filter((t) => !t.deprecated_alias_of)));
-      setExpandedGroups(prev => {
-        if (prev.size === 0) return new Set(groups);
-        return prev;
-      });
+      // Default: expand all groups on first load. Keep the operator's choice
+      // across refreshes, including an intentional collapse-all (empty Set).
+      if (!expandedGroupsInitializedRef.current) {
+        expandedGroupsInitializedRef.current = true;
+        const groups = Object.keys(groupTools((json.tools ?? []).filter((t) => !t.deprecated_alias_of)));
+        setExpandedGroups(new Set(groups));
+      }
     } catch (e) {
       if (requestSequence !== requestSequenceRef.current) return;
       const status = e instanceof Error ? (e as HttpError).status : undefined;
