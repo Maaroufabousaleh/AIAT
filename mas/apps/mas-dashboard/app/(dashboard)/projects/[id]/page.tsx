@@ -327,6 +327,10 @@ interface ProjectWorkerRun {
   state: string;
   model_resolution_snapshot_id?: string | null;
   created_at?: string;
+  issue_id?: string;
+  issue_revision?: number;
+  retry_of_run_id?: string;
+  retry_issue_id_candidate?: string;
 }
 
 interface IssueDispatchWorker {
@@ -341,6 +345,7 @@ interface IssueDispatchWorker {
 
 interface IssueWorkerRunResult {
   issue_id: string;
+  issue_revision: number;
   idempotency_key: string;
   run_id: string;
   state: string;
@@ -370,7 +375,60 @@ const MAX_ISSUE_PROMPT_CHARS = 32_000;
 const MAX_ISSUE_PROMPT_ID_CHARS = 128;
 const MAX_ISSUE_PROMPT_TITLE_CHARS = 500;
 const MAX_ISSUE_PROMPT_DESCRIPTION_CHARS = 3_500;
+const PROJECT_WORKER_RUN_PAGE_SIZE = 100;
+const PROJECT_WORKER_RUN_DISPLAY_LIMIT = 50;
+const PROJECT_WORKER_RUN_MAX_OFFSET = 100_000;
 const ISSUE_PROMPT_TRUNCATION_MARKER = " [truncated]";
+const PROJECT_RUN_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function isProjectWorkerRun(value: unknown): value is ProjectWorkerRun {
+  if (!value || typeof value !== "object") return false;
+  const run = value as Partial<ProjectWorkerRun>;
+  return typeof run.id === "string" && typeof run.project_id === "string" && typeof run.state === "string";
+}
+
+function correlateProjectWorkerRunRetries(runs: ProjectWorkerRun[]): ProjectWorkerRun[] {
+  const byId = new Map(runs.map((run) => [run.id, run]));
+  const cache = new Map<string, { issue_id: string; issue_revision: number } | null>();
+  const resolving = new Set<string>();
+
+  const resolve = (run: ProjectWorkerRun): { issue_id: string; issue_revision: number } | null => {
+    if (
+      run.task_type === "project.issue" &&
+      typeof run.issue_id === "string" && PROJECT_RUN_UUID_PATTERN.test(run.issue_id) &&
+      typeof run.issue_revision === "number" && Number.isSafeInteger(run.issue_revision)
+    ) {
+      return { issue_id: run.issue_id, issue_revision: run.issue_revision };
+    }
+    if (cache.has(run.id)) return cache.get(run.id) ?? null;
+    if (resolving.has(run.id)) return null;
+    if (run.task_type !== "project.issue" || !run.retry_of_run_id) {
+      cache.set(run.id, null);
+      return null;
+    }
+
+    resolving.add(run.id);
+    const parent = byId.get(run.retry_of_run_id);
+    const parentCorrelation = parent &&
+      parent.task_type === "project.issue" &&
+      parent.project_id.toLowerCase() === run.project_id.toLowerCase()
+      ? resolve(parent)
+      : null;
+    const verifiedParentCorrelation = parentCorrelation &&
+      run.retry_issue_id_candidate === parentCorrelation.issue_id
+      ? parentCorrelation
+      : null;
+    resolving.delete(run.id);
+    cache.set(run.id, verifiedParentCorrelation);
+    return verifiedParentCorrelation;
+  };
+
+  return runs.map((run) => {
+    if (run.issue_id || run.issue_revision !== undefined) return run;
+    const correlation = resolve(run);
+    return correlation ? { ...run, ...correlation } : run;
+  });
+}
 
 function boundIssuePromptField(value: string | null | undefined, maxChars: number): string {
   const text = value ?? "";
@@ -535,6 +593,15 @@ export default function ProjectDetailPage() {
   const [workspace, setWorkspace] = useState<WorkspaceSummary | null>(null);
   const [projectWorkerRuns, setProjectWorkerRuns] = useState<ProjectWorkerRun[]>([]);
   const [projectWorkerRunsError, setProjectWorkerRunsError] = useState<string | null>(null);
+  const [projectWorkerRunsHasMore, setProjectWorkerRunsHasMore] = useState(false);
+  const [projectWorkerRunsOffset, setProjectWorkerRunsOffset] = useState(0);
+  const [projectWorkerRunsPage, setProjectWorkerRunsPage] = useState(0);
+  const [projectWorkerRunsOlderLoading, setProjectWorkerRunsOlderLoading] = useState(false);
+  const [projectWorkerRunsOlderError, setProjectWorkerRunsOlderError] = useState<string | null>(null);
+  const projectWorkerRunsLoadGenerationRef = useRef(0);
+  const projectWorkerRunsProjectIdRef = useRef(id);
+  projectWorkerRunsProjectIdRef.current = id;
+  const projectWorkerRunsOlderLockRef = useRef<number | null>(null);
   const [projectIssues, setProjectIssues] = useState<ProjectIssue[]>([]);
   const [projectIssuesError, setProjectIssuesError] = useState<string | null>(null);
   const [issueDispatchWorkers, setIssueDispatchWorkers] = useState<IssueDispatchWorker[]>([]);
@@ -1013,15 +1080,22 @@ export default function ProjectDetailPage() {
   }, [id]);
 
   const loadWorkspace = useCallback(async () => {
+    const workerRunsLoadGeneration = ++projectWorkerRunsLoadGenerationRef.current;
+    const isCurrentProjectLoad = () =>
+      workerRunsLoadGeneration === projectWorkerRunsLoadGenerationRef.current &&
+      projectWorkerRunsProjectIdRef.current === id;
+    projectWorkerRunsOlderLockRef.current = null;
+    setProjectWorkerRunsOlderLoading(false);
     if (accessDeniedRef.current) return;
     setWorkspaceLoading(true);
     try {
       const [res, repositoryRes, workerRunsRes, issuesRes] = await Promise.all([
         fetch(`/api/projects/${id}/workspace`),
         fetch(`/api/projects/${id}/repository`),
-        fetch(`/api/governance/runs?project_id=${encodeURIComponent(id)}&limit=50`),
+        fetch(`/api/governance/runs?project_id=${encodeURIComponent(id)}&limit=${PROJECT_WORKER_RUN_PAGE_SIZE}&offset=0`),
         fetch(`/api/projects/${id}/issues?limit=100`),
       ]);
+      if (!isCurrentProjectLoad()) return;
       if (
         [res, repositoryRes, workerRunsRes, issuesRes].some(
           (response) => response.status === 401 || response.status === 403,
@@ -1038,31 +1112,35 @@ export default function ProjectDetailPage() {
           workerRunsRes.ok ? workerRunsRes.json().catch(() => null) : null,
           issuesRes.ok ? issuesRes.json().catch(() => null) : null,
         ]);
+      if (!isCurrentProjectLoad()) return;
       const failures: string[] = [];
 
-      const isProjectWorkerRun = (value: unknown): value is ProjectWorkerRun => {
-        if (!value || typeof value !== "object") return false;
-        const run = value as Partial<ProjectWorkerRun>;
-        return (
-          typeof run.id === "string" &&
-          typeof run.project_id === "string" &&
-          typeof run.state === "string"
-        );
-      };
       if (!workerRunsRes.ok) {
         setProjectWorkerRuns([]);
         setProjectWorkerRunsError(
           `Worker runs could not be loaded (HTTP ${workerRunsRes.status}).`,
         );
+        setProjectWorkerRunsHasMore(false);
+        setProjectWorkerRunsOffset(0);
+        setProjectWorkerRunsPage(0);
+        setProjectWorkerRunsOlderError(null);
       } else if (!Array.isArray(workerRunsPayload)) {
         setProjectWorkerRuns([]);
         setProjectWorkerRunsError("Worker runs response was not a list.");
+        setProjectWorkerRunsHasMore(false);
+        setProjectWorkerRunsOffset(0);
+        setProjectWorkerRunsPage(0);
+        setProjectWorkerRunsOlderError(null);
       } else {
-        const runs = workerRunsPayload.filter(isProjectWorkerRun);
-        setProjectWorkerRuns(
-          runs.filter((run) => run.project_id.toLowerCase() === id.toLowerCase()),
-        );
+        const runs = workerRunsPayload
+          .filter(isProjectWorkerRun)
+          .filter((run) => run.project_id.toLowerCase() === id.toLowerCase());
+        setProjectWorkerRuns(correlateProjectWorkerRunRetries(runs));
         setProjectWorkerRunsError(null);
+        setProjectWorkerRunsHasMore(workerRunsRes.headers.get("x-aiat-has-more") === "true");
+        setProjectWorkerRunsOffset(PROJECT_WORKER_RUN_PAGE_SIZE);
+        setProjectWorkerRunsPage(0);
+        setProjectWorkerRunsOlderError(null);
       }
 
       const isProjectIssue = (value: unknown): value is ProjectIssue => {
@@ -1151,6 +1229,7 @@ export default function ProjectDetailPage() {
         }
       }
     } catch (err) {
+      if (!isCurrentProjectLoad()) return;
       console.error("Failed to load workspace:", err);
       const failure =
         err instanceof Error
@@ -1165,9 +1244,74 @@ export default function ProjectDetailPage() {
         setWorkspaceError(failure);
       }
     } finally {
-      setWorkspaceLoading(false);
+      if (isCurrentProjectLoad()) setWorkspaceLoading(false);
     }
   }, [handleAccessDenied, id]);
+
+  async function loadOlderProjectWorkerRuns() {
+    const loadGeneration = projectWorkerRunsLoadGenerationRef.current;
+    if (
+      projectWorkerRunsOlderLockRef.current === loadGeneration ||
+      !projectWorkerRunsHasMore ||
+      projectWorkerRunsOffset >= PROJECT_WORKER_RUN_MAX_OFFSET
+    ) return;
+    projectWorkerRunsOlderLockRef.current = loadGeneration;
+    setProjectWorkerRunsOlderLoading(true);
+    setProjectWorkerRunsOlderError(null);
+    const offset = projectWorkerRunsOffset;
+    try {
+      const response = await fetch(
+        `/api/governance/runs?project_id=${encodeURIComponent(id)}&limit=${PROJECT_WORKER_RUN_PAGE_SIZE}&offset=${offset}`,
+        { cache: "no-store" },
+      );
+      if (
+        loadGeneration !== projectWorkerRunsLoadGenerationRef.current ||
+        projectWorkerRunsProjectIdRef.current !== id
+      ) return;
+      if (handleDeniedResponse(response)) return;
+      if (!response.ok) throw new Error(`Older Worker Runs could not be loaded (HTTP ${response.status}).`);
+      const payload: unknown = await response.json().catch(() => null);
+      if (!Array.isArray(payload)) throw new Error("Older Worker Runs response was not a list.");
+      if (
+        loadGeneration !== projectWorkerRunsLoadGenerationRef.current ||
+        projectWorkerRunsProjectIdRef.current !== id
+      ) return;
+      const olderRuns = payload
+        .filter(isProjectWorkerRun)
+        .filter((run) => run.project_id.toLowerCase() === id.toLowerCase());
+      const existingIds = new Set(projectWorkerRuns.map((run) => run.id));
+      const appendedCount = olderRuns.filter((run) => !existingIds.has(run.id)).length;
+      setProjectWorkerRuns((current) => {
+        const merged = new Map(current.map((run) => [run.id, run]));
+        for (const run of olderRuns) {
+          if (!merged.has(run.id)) merged.set(run.id, run);
+        }
+        return correlateProjectWorkerRunRetries(Array.from(merged.values()));
+      });
+      setProjectWorkerRunsOffset(offset + PROJECT_WORKER_RUN_PAGE_SIZE);
+      setProjectWorkerRunsHasMore(response.headers.get("x-aiat-has-more") === "true");
+      if (appendedCount > 0) setProjectWorkerRunsPage((current) => current + 1);
+    } catch (error) {
+      if (
+        loadGeneration === projectWorkerRunsLoadGenerationRef.current &&
+        projectWorkerRunsProjectIdRef.current === id
+      ) {
+        setProjectWorkerRunsOlderError(
+          error instanceof Error ? error.message : "Older Worker Runs could not be loaded. Retry this action.",
+        );
+      }
+    } finally {
+      if (projectWorkerRunsOlderLockRef.current === loadGeneration) {
+        projectWorkerRunsOlderLockRef.current = null;
+      }
+      if (
+        loadGeneration === projectWorkerRunsLoadGenerationRef.current &&
+        projectWorkerRunsProjectIdRef.current === id
+      ) {
+        setProjectWorkerRunsOlderLoading(false);
+      }
+    }
+  }
 
   function handleDeniedResponse(response: Response) {
     if (response.status === 401 || response.status === 403) {
@@ -1337,6 +1481,7 @@ export default function ProjectDetailPage() {
       }
       setIssueWorkerRunResult({
         issue_id: issue.issue_id,
+        issue_revision: revision,
         idempotency_key: idempotencyKey,
         run_id: runId,
         state: typeof run.state === "string"
@@ -2175,6 +2320,15 @@ export default function ProjectDetailPage() {
   const scopedWorkerRuns = projectWorkerRuns.filter(
     (run) => run.project_id.toLowerCase() === id.toLowerCase(),
   );
+  const projectWorkerRunsVisibleStart = projectWorkerRunsPage * PROJECT_WORKER_RUN_DISPLAY_LIMIT;
+  const visibleProjectWorkerRuns = scopedWorkerRuns.slice(
+    projectWorkerRunsVisibleStart,
+    projectWorkerRunsVisibleStart + PROJECT_WORKER_RUN_DISPLAY_LIMIT,
+  );
+  const hasOlderLoadedProjectWorkerRuns =
+    projectWorkerRunsVisibleStart + PROJECT_WORKER_RUN_DISPLAY_LIMIT < scopedWorkerRuns.length;
+  const canLoadOlderProjectWorkerRuns =
+    projectWorkerRunsHasMore && projectWorkerRunsOffset < PROJECT_WORKER_RUN_MAX_OFFSET;
   const scopedProjectIssues = projectIssues.filter(
     (issue) => issue.project_id.toLowerCase() === id.toLowerCase(),
   );
@@ -2187,13 +2341,47 @@ export default function ProjectDetailPage() {
   const selectedIssueDispatchKey = selectedIssue
     ? `project-issue:${id}:${selectedIssue.issue.issue_id}:r${selectedIssueDispatchRevision}`
     : null;
-  const selectedIssueRunResult = selectedIssue &&
+  const selectedIssueProjectRuns = selectedIssue
+    ? scopedWorkerRuns
+        .filter((run) => run.task_type === "project.issue" && run.issue_id === selectedIssue.issue.issue_id)
+        .sort((left, right) => {
+          const leftTimestamp = Date.parse(left.created_at ?? "");
+          const rightTimestamp = Date.parse(right.created_at ?? "");
+          if (Number.isFinite(leftTimestamp) && Number.isFinite(rightTimestamp)) {
+            return rightTimestamp - leftTimestamp;
+          }
+          return 0;
+        })
+    : [];
+  const selectedIssueProjectRun = selectedIssueProjectRuns.find(
+    (run) => run.issue_revision === selectedIssueDispatchRevision,
+  ) ?? selectedIssueProjectRuns[0] ?? null;
+  const currentRevisionLocalResult = selectedIssue &&
+    issueWorkerRunResult?.issue_id === selectedIssue.issue.issue_id &&
+    issueWorkerRunResult.issue_revision === selectedIssueDispatchRevision
+    ? issueWorkerRunResult
+    : null;
+  const anyRevisionLocalResult = selectedIssue &&
     issueWorkerRunResult?.issue_id === selectedIssue.issue.issue_id
     ? issueWorkerRunResult
     : null;
+  const selectedIssueRunResult = currentRevisionLocalResult ?? (selectedIssueProjectRun
+    ? {
+        issue_id: selectedIssueProjectRun.issue_id ?? "",
+        issue_revision: selectedIssueProjectRun.issue_revision ?? 0,
+        idempotency_key: `project-issue:${id}:${selectedIssueProjectRun.issue_id}:r${selectedIssueProjectRun.issue_revision ?? 0}`,
+        run_id: selectedIssueProjectRun.id,
+        state: selectedIssueProjectRun.state,
+      }
+    : anyRevisionLocalResult);
   const selectedIssueRunAlreadyAccepted = Boolean(
-    selectedIssueDispatchKey &&
-      issueWorkerRunResult?.idempotency_key === selectedIssueDispatchKey,
+    selectedIssue && selectedIssueDispatchKey && (
+      scopedWorkerRuns.some((run) =>
+        run.task_type === "project.issue" &&
+        run.issue_id === selectedIssue.issue.issue_id &&
+        run.issue_revision === selectedIssueDispatchRevision,
+      ) || issueWorkerRunResult?.idempotency_key === selectedIssueDispatchKey
+    ),
   );
 
   // Refresh handler respects the active tab so operators get fresh data
@@ -2688,7 +2876,7 @@ export default function ProjectDetailPage() {
                     <p className="text-xs text-slate-500">No worker runs are recorded for this project yet.</p>
                   ) : (
                     <ul className="space-y-2" aria-label="Project worker runs">
-                      {scopedWorkerRuns.map((run) => (
+                      {visibleProjectWorkerRuns.map((run) => (
                         <li key={run.id} className="rounded-lg border border-slate-800 bg-slate-950/55 p-3 text-xs">
                           <div className="flex flex-wrap items-start justify-between gap-2">
                             <Link href={`/workers/runs/${encodeURIComponent(run.id)}`} aria-label={`Open WorkerRun ${run.id}`} className="font-mono text-blue-300 underline decoration-blue-500/50 underline-offset-2 hover:text-blue-200">{run.id}</Link>
@@ -2702,6 +2890,54 @@ export default function ProjectDetailPage() {
                         </li>
                       ))}
                     </ul>
+                  )}
+                  {scopedWorkerRuns.length > 0 && (
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                      <p role="status" className="text-xs text-slate-500">
+                        Showing {projectWorkerRunsVisibleStart + 1}–{projectWorkerRunsVisibleStart + visibleProjectWorkerRuns.length} of {scopedWorkerRuns.length} loaded runs.
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {projectWorkerRunsPage > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setProjectWorkerRunsPage((current) => Math.max(0, current - 1))}
+                            className="min-h-11 rounded-md border border-slate-700 px-3 py-2 text-xs text-slate-200 hover:bg-slate-800"
+                          >
+                            Show newer runs
+                          </button>
+                        )}
+                        {(hasOlderLoadedProjectWorkerRuns || canLoadOlderProjectWorkerRuns) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (projectWorkerRunsOlderLoading) return;
+                              if (hasOlderLoadedProjectWorkerRuns) {
+                                setProjectWorkerRunsPage((current) => current + 1);
+                              } else {
+                                void loadOlderProjectWorkerRuns();
+                              }
+                            }}
+                            disabled={projectWorkerRunsOlderLoading}
+                            aria-busy={projectWorkerRunsOlderLoading}
+                            className="min-h-11 rounded-md border border-slate-700 px-3 py-2 text-xs text-slate-200 hover:bg-slate-800 disabled:cursor-wait disabled:opacity-50"
+                          >
+                            {projectWorkerRunsOlderLoading
+                              ? "Loading older runs…"
+                              : hasOlderLoadedProjectWorkerRuns
+                                ? "Show older runs"
+                                : "Load older runs"}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  {projectWorkerRunsOlderError && (
+                    <p role="alert" className="mt-2 text-xs text-amber-200">{projectWorkerRunsOlderError}</p>
+                  )}
+                  {projectWorkerRunsHasMore && !canLoadOlderProjectWorkerRuns && (
+                    <p role="status" className="mt-2 text-xs text-amber-200">
+                      The bounded run-history retrieval limit of {PROJECT_WORKER_RUN_MAX_OFFSET.toLocaleString()} has been reached.
+                    </p>
                   )}
                 </section>
 
@@ -2776,7 +3012,7 @@ export default function ProjectDetailPage() {
               </div>
 
               {selectedIssue && (
-                <div className="fixed inset-0 z-[70] flex items-start justify-center overflow-y-auto bg-black/70 p-4 sm:items-center" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedIssue(null); }}>
+                <div className="fixed inset-0 z-[70] flex items-start justify-center overflow-y-auto bg-black/70 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedIssue(null); }}>
                   <section role="dialog" aria-modal="true" aria-labelledby="project-issue-dialog-title" className="my-4 w-full max-w-2xl rounded-xl border border-slate-700 bg-slate-950 p-5 shadow-2xl">
                     <div className="mb-4 flex items-start justify-between gap-3">
                       <div>
@@ -2875,7 +3111,13 @@ export default function ProjectDetailPage() {
                           </button>
                           {selectedIssueRunResult && (
                             <div role="status" aria-label="Worker Run result" className="rounded-md border border-emerald-800/70 bg-emerald-950/25 px-3 py-2 text-xs text-emerald-100">
-                              <span>Worker Run {selectedIssueRunResult.state.replace(/_/g, " ")} · </span>
+                              {selectedIssueRunResult.issue_revision === selectedIssueDispatchRevision ? (
+                                <span>Worker Run {selectedIssueRunResult.state.replace(/_/g, " ")} for current issue revision {selectedIssueDispatchRevision} · </span>
+                              ) : typeof selectedIssueRunResult.issue_revision === "number" ? (
+                                <span>Worker Run {selectedIssueRunResult.state.replace(/_/g, " ")} for prior issue revision {selectedIssueRunResult.issue_revision}; current issue revision is {selectedIssueDispatchRevision} · </span>
+                              ) : (
+                                <span>Worker Run {selectedIssueRunResult.state.replace(/_/g, " ")} (issue revision unavailable; current revision is {selectedIssueDispatchRevision}) · </span>
+                              )}
                               <Link href={`/workers/runs/${encodeURIComponent(selectedIssueRunResult.run_id)}`} className="font-mono text-blue-200 underline underline-offset-2 hover:text-blue-100">
                                 View run and evidence {selectedIssueRunResult.run_id}
                               </Link>

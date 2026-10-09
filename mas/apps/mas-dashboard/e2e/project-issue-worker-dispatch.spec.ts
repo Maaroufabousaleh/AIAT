@@ -36,10 +36,11 @@ const gatewayWorker = {
   transport_mode: "aiat_gateway",
 };
 
-async function json(route: Route, status: number, payload: unknown): Promise<void> {
+async function json(route: Route, status: number, payload: unknown, headers: Record<string, string> = {}): Promise<void> {
   await route.fulfill({
     status,
     contentType: "application/json",
+    headers,
     body: JSON.stringify(payload),
   });
 }
@@ -51,6 +52,10 @@ async function installProjectMocks(
   options: {
     pendingDecisions?: unknown[];
     onDecision?: (route: Route) => Promise<void>;
+    runs?: (url: URL) => unknown[] | Promise<unknown[]>;
+    onRunsRequest?: (url: URL) => void;
+    getIssue?: () => typeof issue;
+    onIssueUpdate?: (body: Record<string, unknown>) => void;
   } = {},
 ): Promise<void> {
   await page.route("**/api/**", async (route) => {
@@ -115,15 +120,21 @@ async function installProjectMocks(
       return;
     }
     if (path === `/api/projects/${PROJECT_ID}/issues`) {
-      await json(route, 200, [issue]);
+      await json(route, 200, [options.getIssue?.() ?? issue]);
       return;
     }
-    if (path === `/api/projects/${PROJECT_ID}/issues/${ISSUE_ID}` && request.method() === "GET") {
-      await json(route, 200, { issue, comments: [], links: [] });
+    if (path === `/api/projects/${PROJECT_ID}/issues/${ISSUE_ID}`) {
+      if (request.method() === "PATCH") {
+        options.onIssueUpdate?.(request.postDataJSON() as Record<string, unknown>);
+      }
+      await json(route, 200, { issue: options.getIssue?.() ?? issue, comments: [], links: [] });
       return;
     }
     if (path === "/api/governance/runs") {
-      await json(route, 200, []);
+      options.onRunsRequest?.(url);
+      const runs = await (options.runs?.(url) ?? []);
+      const limit = Number(url.searchParams.get("limit") ?? "50");
+      await json(route, 200, runs, { "X-AIAT-Has-More": String(runs.length === limit) });
       return;
     }
     if (path === "/api/flows") {
@@ -149,6 +160,8 @@ test("the CTO worker action BFF requires a signed dashboard session", async ({ r
 
 test("issue dispatch uses the audited CTO action, keeps retry idempotent, and links the run evidence", async ({ page }) => {
   const submissions: Array<Record<string, unknown>> = [];
+  const durableRuns: Array<Record<string, unknown>> = [];
+  let currentIssue = { ...issue };
   let releaseFirstDispatch!: () => void;
   let markFirstDispatchSeen!: () => void;
   const firstDispatchSeen = new Promise<void>((resolve) => { markFirstDispatchSeen = resolve; });
@@ -165,6 +178,25 @@ test("issue dispatch uses the audited CTO action, keeps retry idempotent, and li
       });
       return;
     }
+    durableRuns.push({
+      id: RUN_ID,
+      project_id: PROJECT_ID,
+      worker_id: WORKER_ID,
+      task_type: "project.issue",
+      state: "QUEUED",
+      issue_id: ISSUE_ID,
+      issue_revision: 7,
+      created_at: "2026-10-08T17:01:00Z",
+    }, {
+      id: "40000000-0000-4000-8000-000000000099",
+      project_id: PROJECT_ID,
+      worker_id: WORKER_ID,
+      task_type: "project.issue",
+      state: "RUNNING",
+      issue_id: "30000000-0000-4000-8000-000000000099",
+      issue_revision: 7,
+      created_at: "2026-10-08T17:02:00Z",
+    });
     await json(route, 202, {
       schema_version: "aiat.executive-action.v1",
       role: "cto",
@@ -174,6 +206,17 @@ test("issue dispatch uses the audited CTO action, keeps retry idempotent, and li
       result: { run_id: RUN_ID, state: "QUEUED", dispatch_mode: "queued" },
       evidence: { kind: "worker_run", project_id: PROJECT_ID, worker_id: WORKER_ID, run_id: RUN_ID },
     });
+  }, {
+    runs: () => durableRuns,
+    getIssue: () => currentIssue,
+    onIssueUpdate: (body) => {
+      currentIssue = {
+        ...currentIssue,
+        title: String(body.title ?? currentIssue.title),
+        description: typeof body.description === "string" ? body.description : currentIssue.description,
+        revision: currentIssue.revision + 1,
+      };
+    },
   });
 
   await authenticate(page, `/projects/${PROJECT_ID}`);
@@ -225,6 +268,261 @@ test("issue dispatch uses the audited CTO action, keeps retry idempotent, and li
   await expect(runLink).toHaveAttribute("href", `/workers/runs/${RUN_ID}`);
   await expect(page.getByRole("button", { name: "Work already started" })).toBeDisabled();
   expect(submissions).toHaveLength(2);
+
+  // The issue/run association comes from the canonical project run read, so
+  // it survives a page reload and does not attach another issue's run.
+  await page.reload();
+  await page.getByRole("button", { name: "Manage issue" }).click();
+  const persistedResult = page.getByRole("status", { name: "Worker Run result" });
+  await expect(persistedResult).toContainText("QUEUED");
+  await expect(persistedResult.getByRole("link", { name: `View run and evidence ${RUN_ID}` }))
+    .toHaveAttribute("href", `/workers/runs/${RUN_ID}`);
+  await expect(persistedResult.getByRole("link", { name: /40000000-0000-4000-8000-000000000099/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Work already started" })).toBeDisabled();
+
+  // An old run remains inspectable after issue edits, but is never presented
+  // as work for the new issue revision or used to suppress the new revision's
+  // dispatch action.
+  await page.getByLabel("Title").fill("Update the project health check safely");
+  await page.getByRole("button", { name: "Save issue" }).click();
+  await expect(page.getByText("revision 8", { exact: false })).toBeVisible();
+  const priorRevisionResult = page.getByRole("status", { name: "Worker Run result" });
+  await expect(priorRevisionResult).toContainText("prior issue revision 7");
+  await expect(priorRevisionResult).toContainText("current issue revision is 8");
+  await expect(priorRevisionResult.getByRole("link", { name: `View run and evidence ${RUN_ID}` })).toBeVisible();
+  const revisedIssueStartButton = page.getByRole("button", { name: "Start work" });
+  await expect(revisedIssueStartButton).toBeDisabled();
+  await page.getByLabel("Active worker with a selected adapter").selectOption(WORKER_ID);
+  await page.getByRole("checkbox", { name: /may spend the project budget and send the issue/i }).check();
+  await expect(revisedIssueStartButton).toBeEnabled();
+});
+
+test("an issue retry remains linked to its issue after reload", async ({ page }) => {
+  const retryRunId = "40000000-0000-4000-8000-000000000405";
+  const durableRuns = [
+    {
+      id: retryRunId,
+      project_id: PROJECT_ID,
+      worker_id: WORKER_ID,
+      task_type: "project.issue",
+      state: "QUEUED",
+      retry_of_run_id: RUN_ID,
+      issue_id: ISSUE_ID,
+      issue_revision: 7,
+      created_at: "2026-10-08T17:03:00Z",
+    },
+    {
+      id: RUN_ID,
+      project_id: PROJECT_ID,
+      worker_id: WORKER_ID,
+      task_type: "project.issue",
+      state: "FAILED",
+      issue_id: ISSUE_ID,
+      issue_revision: 7,
+      created_at: "2026-10-08T17:01:00Z",
+    },
+  ];
+  await installProjectMocks(page, [activeWorker], async () => {
+    throw new Error("This read-only retry association test must not dispatch work.");
+  }, { runs: () => durableRuns });
+
+  await authenticate(page, `/projects/${PROJECT_ID}`);
+  await page.getByRole("button", { name: "Manage issue" }).click();
+  const result = page.getByRole("status", { name: "Worker Run result" });
+  await expect(result).toContainText("QUEUED");
+  await expect(result.getByRole("link", { name: `View run and evidence ${retryRunId}` }))
+    .toHaveAttribute("href", `/workers/runs/${retryRunId}`);
+  await expect(page.getByRole("button", { name: "Work already started" })).toBeDisabled();
+  await page.reload();
+  await page.getByRole("button", { name: "Manage issue" }).click();
+  const persistedResult = page.getByRole("status", { name: "Worker Run result" });
+  await expect(persistedResult.getByRole("link", { name: `View run and evidence ${retryRunId}` })).toBeVisible();
+});
+
+test("project activity loads a bounded run window and displays only recent runs", async ({ page }) => {
+  const runLimitRequests: string[] = [];
+  const runs = Array.from({ length: 55 }, (_, index) => ({
+    id: `40000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+    project_id: PROJECT_ID,
+    worker_id: WORKER_ID,
+    task_type: "code.edit",
+    state: "COMPLETED",
+    created_at: new Date(Date.UTC(2026, 9, 8, 17, index)).toISOString(),
+  }));
+  await installProjectMocks(page, [activeWorker], async () => {
+    throw new Error("The run-window UI test must not dispatch work.");
+  }, {
+    runs: () => runs,
+    onRunsRequest: (url) => runLimitRequests.push(url.searchParams.get("limit") ?? ""),
+  });
+
+  await authenticate(page, `/projects/${PROJECT_ID}`);
+  const runList = page.getByRole("list", { name: "Project worker runs" });
+  await expect(runList.getByRole("listitem")).toHaveCount(50);
+  await expect(page.getByText("Showing 1–50 of 55 loaded runs.", { exact: true })).toBeVisible();
+  expect(runLimitRequests).toContain("100");
+  await page.getByRole("button", { name: "Show older runs" }).click();
+  await expect(runList.getByRole("listitem")).toHaveCount(5);
+  await expect(page.getByText("Showing 51–55 of 55 loaded runs.", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Show newer runs" }).click();
+  await expect(runList.getByRole("listitem")).toHaveCount(50);
+});
+
+test("a delayed older run page cannot overwrite a refreshed project history", async ({ page }) => {
+  let releaseOlderPage!: () => void;
+  let markOlderPageSeen!: () => void;
+  const olderPageReleased = new Promise<void>((resolve) => { releaseOlderPage = resolve; });
+  const olderPageSeen = new Promise<void>((resolve) => { markOlderPageSeen = resolve; });
+  let firstPageRequest = 0;
+  const createRuns = (start: number, count: number) => Array.from({ length: count }, (_, index) => ({
+    id: `40000000-0000-4000-8000-${String(start + index).padStart(12, "0")}`,
+    project_id: PROJECT_ID,
+    worker_id: WORKER_ID,
+    task_type: "code.edit",
+    state: "COMPLETED",
+    created_at: new Date(Date.UTC(2026, 9, 8, 17, index)).toISOString(),
+  }));
+
+  await installProjectMocks(page, [activeWorker], async () => {
+    throw new Error("The history refresh test must not dispatch work.");
+  }, {
+    runs: async (url) => {
+      const offset = Number(url.searchParams.get("offset") ?? "0");
+      if (offset === 100) {
+        markOlderPageSeen();
+        await olderPageReleased;
+        return createRuns(2000, 100);
+      }
+      firstPageRequest += 1;
+      return firstPageRequest === 1 ? createRuns(1000, 100) : createRuns(3000, 20);
+    },
+  });
+
+  await authenticate(page, `/projects/${PROJECT_ID}`);
+  const runList = page.getByRole("list", { name: "Project worker runs" });
+  await expect(runList.getByRole("listitem")).toHaveCount(50);
+  await page.getByRole("button", { name: "Show older runs" }).click();
+  await page.getByRole("button", { name: "Load older runs" }).click();
+  await olderPageSeen;
+
+  await page.getByRole("button", { name: "Refresh project data" }).click();
+  await expect(runList.getByRole("listitem")).toHaveCount(20);
+  await expect(page.getByText("Showing 1–20 of 20 loaded runs.", { exact: true })).toBeVisible();
+
+  releaseOlderPage();
+  await expect(runList.getByRole("listitem")).toHaveCount(20);
+  await expect(page.getByRole("button", { name: "Load older runs" })).toHaveCount(0);
+  await expect(runList).not.toContainText("000000002000");
+});
+
+test("load older run pages past 1000 and recover cross-page issue retry links after page load", async ({ page }) => {
+  const runLimitRequests: string[] = [];
+  const intermediateRetryId = "40000000-0000-4000-8000-000000000450";
+  const latestRetryId = "40000000-0000-4000-8000-000000000451";
+  const originalRunId = "40000000-0000-4000-8000-000000000452";
+  await installProjectMocks(page, [activeWorker], async () => {
+    throw new Error("The run-history test must not dispatch work.");
+  }, {
+    onRunsRequest: (url) => runLimitRequests.push(url.searchParams.get("offset") ?? "0"),
+    runs: (url) => {
+      const offset = Number(url.searchParams.get("offset") ?? "0");
+      if (offset === 0) {
+        return [{
+          id: latestRetryId,
+          project_id: PROJECT_ID,
+          worker_id: WORKER_ID,
+          task_type: "project.issue",
+          state: "QUEUED",
+          retry_of_run_id: intermediateRetryId,
+          retry_issue_id_candidate: ISSUE_ID,
+          created_at: "2026-10-08T17:03:00Z",
+        }, ...Array.from({ length: 99 }, (_, index) => ({
+          id: `40000000-0000-4000-8000-${String(index + 1000).padStart(12, "0")}`,
+          project_id: PROJECT_ID,
+          worker_id: WORKER_ID,
+          task_type: "code.edit",
+          state: "COMPLETED",
+          created_at: new Date(Date.UTC(2026, 9, 8, 17, index)).toISOString(),
+        }))];
+      }
+      if (offset === 100) {
+        return [{
+          id: intermediateRetryId,
+          project_id: PROJECT_ID,
+          worker_id: WORKER_ID,
+          task_type: "project.issue",
+          state: "FAILED",
+          retry_of_run_id: originalRunId,
+          retry_issue_id_candidate: ISSUE_ID,
+          created_at: "2026-10-08T17:02:00Z",
+        }, ...Array.from({ length: 99 }, (_, index) => ({
+          id: `40000000-0000-4000-8000-${String(index + 2000).padStart(12, "0")}`,
+          project_id: PROJECT_ID,
+          worker_id: WORKER_ID,
+          task_type: "code.edit",
+          state: "COMPLETED",
+          created_at: new Date(Date.UTC(2026, 9, 8, 16, index)).toISOString(),
+        }))];
+      }
+      if (offset < 1_000) {
+        return Array.from({ length: 100 }, (_, index) => ({
+          id: `40000000-0000-4000-8000-${String(offset + index + 3000).padStart(12, "0")}`,
+          project_id: PROJECT_ID,
+          worker_id: WORKER_ID,
+          task_type: "code.edit",
+          state: "COMPLETED",
+          created_at: new Date(Date.UTC(2026, 9, 7, 17, index)).toISOString(),
+        }));
+      }
+      if (offset === 1_000) {
+        return [{
+          id: originalRunId,
+          project_id: PROJECT_ID,
+          worker_id: WORKER_ID,
+          task_type: "project.issue",
+          state: "FAILED",
+          issue_id: ISSUE_ID,
+          issue_revision: issue.revision,
+          created_at: "2026-10-07T17:00:00Z",
+        }];
+      }
+      return [];
+    },
+  });
+
+  await authenticate(page, `/projects/${PROJECT_ID}`);
+  await page.getByRole("button", { name: "Manage issue" }).click();
+  await expect(page.getByRole("status", { name: "Worker Run result" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Close issue details" }).click();
+
+  for (let pageIndex = 0; pageIndex < 10; pageIndex += 1) {
+    await page.getByRole("button", { name: "Show older runs" }).click();
+    await page.getByRole("button", { name: "Load older runs" }).click();
+  }
+  expect(runLimitRequests).toContain("1000");
+  const runList = page.getByRole("list", { name: "Project worker runs" });
+  await expect(runList.getByRole("listitem")).toHaveCount(1);
+  await expect(page.getByText("Showing 1001–1001 of 1001 loaded runs.", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Manage issue" }).click();
+  const linkedResult = page.getByRole("status", { name: "Worker Run result" });
+  await expect(linkedResult).toContainText("QUEUED");
+  await expect(linkedResult.getByRole("link", { name: `View run and evidence ${latestRetryId}` }))
+    .toHaveAttribute("href", `/workers/runs/${latestRetryId}`);
+
+  await page.getByRole("button", { name: "Close issue details" }).click();
+  await page.reload();
+  await page.getByRole("button", { name: "Manage issue" }).click();
+  await expect(page.getByRole("status", { name: "Worker Run result" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Close issue details" }).click();
+  for (let pageIndex = 0; pageIndex < 10; pageIndex += 1) {
+    await page.getByRole("button", { name: "Show older runs" }).click();
+    await page.getByRole("button", { name: "Load older runs" }).click();
+  }
+  await page.getByRole("button", { name: "Manage issue" }).click();
+  const reloadedLinkedResult = page.getByRole("status", { name: "Worker Run result" });
+  await expect(reloadedLinkedResult.getByRole("link", { name: `View run and evidence ${latestRetryId}` }))
+    .toHaveAttribute("href", `/workers/runs/${latestRetryId}`);
 });
 
 test("Gateway-backed issue dispatch sends a bounded project-scoped prompt", async ({ page }) => {

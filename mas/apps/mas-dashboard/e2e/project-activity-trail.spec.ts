@@ -106,7 +106,8 @@ async function mockProjectReads(
     if (path === `/api/governance/runs`) {
       expect(url.searchParams.get("project_id")).toBe(PROJECT_ID);
       const limit = Number(url.searchParams.get("limit"));
-      expect(Number.isInteger(limit) && limit >= 1 && limit <= 50).toBe(true);
+      expect(Number.isInteger(limit) && limit >= 1 && limit <= 100).toBe(true);
+      expect(url.searchParams.get("offset")).toBe("0");
       if (options.failWorkerRuns && requests.filter((item) => item.startsWith("GET /api/governance/runs")).length === 1) {
         await route.fulfill({ status: 503, json: { error: "run read unavailable" } });
       } else {
