@@ -254,7 +254,25 @@ export default function ProjectEvidencePage() {
                 <thead className="text-slate-500"><tr><th scope="col" className="pb-2 pr-4 font-medium">ID</th><th scope="col" className="pb-2 pr-4 font-medium">Category</th><th scope="col" className="pb-2 pr-4 font-medium">Kind</th><th scope="col" className="pb-2 pr-4 font-medium">Status</th><th scope="col" className="pb-2 font-medium">Source</th></tr></thead>
                 <tbody className="divide-y divide-slate-800/80">
                   {packageView.items.map((item) => (
-                    <tr key={`${item.category}-${item.id}`} className="text-slate-300"><td className="max-w-[14rem] truncate py-2 pr-4 font-mono">{item.id}</td><td className="py-2 pr-4">{item.category}</td><td className="py-2 pr-4">{item.kind}</td><td className="py-2 pr-4">{item.status || "observed"}</td><td className="py-2">{item.source || "canonical"}</td></tr>
+                    <tr key={`${item.category}-${item.id}`} className="text-slate-300">
+                      <td className="max-w-[14rem] truncate py-2 pr-4 font-mono">
+                        {item.source === "artifacts" ? (
+                          <Link
+                            href={`/evidence/artifact/${encodeURIComponent(item.id)}`}
+                            aria-label={`Open artifact evidence ${item.id}`}
+                            className="text-cyan-200 underline decoration-cyan-500/50 underline-offset-4 hover:text-cyan-100 focus-visible:rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300"
+                          >
+                            {item.id}
+                          </Link>
+                        ) : (
+                          item.id
+                        )}
+                      </td>
+                      <td className="py-2 pr-4">{item.category}</td>
+                      <td className="py-2 pr-4">{item.kind}</td>
+                      <td className="py-2 pr-4">{item.status || "observed"}</td>
+                      <td className="py-2">{item.source || "canonical"}</td>
+                    </tr>
                   ))}
                 </tbody>
               </table>

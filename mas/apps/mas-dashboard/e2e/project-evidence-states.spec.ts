@@ -42,9 +42,70 @@ const PACKAGE_FIXTURE = {
       status: "observed",
       source: "canonical",
     },
+    {
+      id: "42",
+      category: "tests",
+      kind: "test-report",
+      status: "stored",
+      source: "artifacts",
+      checksum: "sha256:fixture-checksum",
+    },
   ],
   notices: [],
 };
+
+test("project evidence opens a canonical artifact record from its item list", async ({
+  page,
+}) => {
+  await page.route(
+    "**/api/projects/project-evidence-open/evidence/package",
+    async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ...PACKAGE_FIXTURE,
+          project_id: "project-evidence-open",
+        }),
+      });
+    },
+  );
+  await page.route("**/api/evidence/artifact/42", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        schema_version: "aiat.evidence-detail.v1",
+        kind: "artifact",
+        id: "42",
+        source: "project-artifacts",
+        record: {
+          kind: "test-report",
+          status: "stored",
+          checksum: "sha256:fixture-checksum",
+        },
+      }),
+    });
+  });
+
+  await authenticate(page, "/projects/project-evidence-open/evidence");
+
+  const artifactLink = page.getByRole("link", {
+    name: "Open artifact evidence 42",
+  });
+  await expect(
+    page.getByRole("link", { name: "Open artifact evidence repo-1" }),
+  ).toHaveCount(0);
+  await expect(artifactLink).toHaveAttribute(
+    "href",
+    "/evidence/artifact/42",
+  );
+  await artifactLink.click();
+  await expect(page).toHaveURL(/\/evidence\/artifact\/42$/);
+  await expect(page.getByTestId("ceo-evidence-detail")).toContainText(
+    "sha256:fixture-checksum",
+  );
+});
 
 test("project evidence retains the last package through a failed refresh", async ({
   page,
