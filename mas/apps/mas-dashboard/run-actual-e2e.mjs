@@ -5,7 +5,8 @@ import { execSync } from 'child_process';
 
 const VIDEO_DIR = '/tmp/artifacts/videos';
 const BASE_URL = process.env.PLAYWRIGHT_BASE_URL || 'http://host.docker.internal:4000';
-const JWT_SECRET = process.env.JWT_SECRET || 'bX0wVUKd4M214L8laNitaXJWdBgoCavZ9o0Xr/MhLnw=';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) throw new Error('JWT_SECRET must be set explicitly to run this helper');
 
 mkdirSync(VIDEO_DIR, { recursive: true });
 
