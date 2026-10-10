@@ -595,6 +595,10 @@ export default function ProjectDetailPage() {
   );
   const [projectLoadError, setProjectLoadError] = useState<string | null>(null);
   const [startError, setStartError] = useState<string | null>(null);
+  const [projectTransitionError, setProjectTransitionError] = useState<{
+    event: string;
+    message: string;
+  } | null>(null);
   const [projectActionError, setProjectActionError] = useState<{
     action: "retry" | "archive";
     message: string;
@@ -2011,6 +2015,7 @@ export default function ProjectDetailPage() {
   async function handleTransition(event: string) {
     if (accessDeniedRef.current) return;
     setActionLoading(event);
+    setProjectTransitionError(null);
     try {
       const res = await fetch(`/api/projects/${id}/transition`, {
         method: "POST",
@@ -2018,7 +2023,37 @@ export default function ProjectDetailPage() {
         body: JSON.stringify({ event }),
       });
       if (handleDeniedResponse(res)) return;
+      if (!res.ok) {
+        const payload = await res.json().catch(() => null);
+        const detail =
+          payload && typeof payload === "object"
+            ? (payload as { detail?: unknown; error?: unknown }).detail ??
+              (payload as { detail?: unknown; error?: unknown }).error
+            : null;
+        const reason =
+          typeof detail === "string" && detail.trim()
+            ? detail.trim().slice(0, 300)
+            : `request failed (HTTP ${res.status})`;
+        await load();
+        if (!accessDeniedRef.current) {
+          setProjectTransitionError({
+            event,
+            message: `${reason}. AIAT attempted to refresh project state; review the current status before retrying.`,
+          });
+        }
+        return;
+      }
+      setProjectTransitionError(null);
       await load();
+    } catch {
+      await load();
+      if (!accessDeniedRef.current) {
+        setProjectTransitionError({
+          event,
+          message:
+            "AIAT could not confirm this transition. The request may have completed; AIAT attempted to refresh project state. Review the current status before retrying.",
+        });
+      }
     } finally {
       setActionLoading(null);
     }
@@ -3893,6 +3928,27 @@ export default function ProjectDetailPage() {
               </>
             )}
           </div>
+
+          {projectTransitionError && (
+            <div className="mt-3" data-testid="project-transition-error">
+              <ErrorBanner
+                tone="error"
+                title="Project transition failed"
+                action={(
+                  <button
+                    type="button"
+                    onClick={() => void handleTransition(projectTransitionError.event)}
+                    disabled={!!actionLoading || projectStale}
+                    className="inline-flex min-h-11 items-center rounded-md border border-red-700/70 bg-red-950/40 px-3 py-2 text-xs font-medium text-red-100 hover:bg-red-900/50 disabled:cursor-wait disabled:opacity-50"
+                  >
+                    Retry transition
+                  </button>
+                )}
+              >
+                {projectTransitionError.message}
+              </ErrorBanner>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">

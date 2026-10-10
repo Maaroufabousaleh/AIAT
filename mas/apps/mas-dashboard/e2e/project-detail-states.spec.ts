@@ -226,6 +226,97 @@ test("prepared project exposes the canonical start action and updates its state"
   expect(startCalls).toBe(1);
 });
 
+test("workflow transition failure refreshes state and retries only after operator action", async ({
+  page,
+}) => {
+  let currentState = "INIT";
+  let transitionCalls = 0;
+  let projectReads = 0;
+  let history: Array<Record<string, unknown>> = [];
+
+  await page.route("**/api/**", async (route) => {
+    const request = route.request();
+    const { pathname } = new URL(request.url());
+    if (pathname === `/api/projects/${PROJECT_ID}` && request.method() === "GET") {
+      projectReads += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ...PROJECT_FIXTURE, state: currentState }),
+      });
+      return;
+    }
+    if (pathname === `/api/projects/${PROJECT_ID}/state-history`) {
+      await route.fulfill({ json: history });
+      return;
+    }
+    if (pathname === `/api/projects/${PROJECT_ID}/decisions`) {
+      await route.fulfill({ json: [] });
+      return;
+    }
+    if (pathname === `/api/projects/${PROJECT_ID}/transition`) {
+      if (request.method() === "GET") {
+        await route.fulfill({ json: currentState === "INIT" ? ["project_created"] : [] });
+        return;
+      }
+      transitionCalls += 1;
+      expect(request.postDataJSON()).toEqual({ event: "project_created" });
+      if (transitionCalls === 1) {
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: "Transition service unavailable" }),
+        });
+        return;
+      }
+      currentState = "FEASIBILITY_CHECK";
+      history = [{
+        to_state: currentState,
+        transitioned_at: "2026-10-10T12:00:00Z",
+        triggered_by: "playwright",
+      }];
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          project_id: PROJECT_ID,
+          prior_state: "INIT",
+          event: "project_created",
+          next_state: currentState,
+        }),
+      });
+      return;
+    }
+    if (pathname === `/api/projects/${PROJECT_ID}/workspace`) {
+      await route.fulfill({ json: WORKSPACE_FIXTURE });
+      return;
+    }
+    if (pathname === `/api/projects/${PROJECT_ID}/repository`) {
+      await route.fulfill({ json: { workspace: null } });
+      return;
+    }
+    await route.fulfill({ status: 404, json: { detail: "No API fixture for this request" } });
+  });
+
+  await authenticate(page, `/projects/${PROJECT_ID}`);
+  await expect(page.getByRole("heading", { name: PROJECT_FIXTURE.name })).toBeVisible();
+  await page.getByRole("tab", { name: "Workflow", exact: true }).click();
+  await page.getByRole("button", { name: "project created", exact: true }).click();
+
+  const transitionError = page.getByTestId("project-transition-error");
+  await expect(transitionError).toContainText("Transition service unavailable");
+  await expect(transitionError).toContainText("AIAT attempted to refresh project state");
+  await expect(page.getByRole("status", { name: "Project state: INIT" })).toBeVisible();
+  expect(transitionCalls).toBe(1);
+  expect(projectReads).toBeGreaterThanOrEqual(2);
+
+  await transitionError.getByRole("button", { name: "Retry transition" }).click();
+  await expect(page.getByRole("status", { name: "Project state: FEASIBILITY CHECK" })).toBeVisible();
+  await expect(page.getByTestId("project-history-list")).toContainText("playwright");
+  await expect(page.getByTestId("project-transition-error")).toHaveCount(0);
+  expect(transitionCalls).toBe(2);
+});
+
 test("generated project documents can be previewed and downloaded through project-scoped routes", async ({
   page,
 }) => {
