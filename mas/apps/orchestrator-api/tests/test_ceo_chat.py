@@ -2165,7 +2165,7 @@ async def test_operator_send_to_ceo_prepares_project_without_starting_workflow(
         def __init__(self, *args: Any, **kwargs: Any) -> None:
             pass
 
-        async def __aenter__(self) -> "FakeAsyncClient":
+        async def __aenter__(self) -> FakeAsyncClient:
             return self
 
         async def __aexit__(self, *args: Any) -> None:
