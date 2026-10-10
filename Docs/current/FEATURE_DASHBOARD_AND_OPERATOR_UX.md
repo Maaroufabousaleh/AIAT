@@ -387,6 +387,13 @@ The dashboard is the human control and evidence surface for AIAT. It must make c
   112/112, the source-built mocked chat E2E passes 1/1, and dashboard typecheck
   passes. No model/provider call is made; the full CEO-to-worker journey remains
   unproven.
+- The live local CEO prepare-only flow now verifies the running API contract
+  before submission, resolves the created project by its unique name instead
+  of relying on asynchronously hydrated chat history, checks the exact saved
+  brief and `INIT` state, confirms zero worker runs, opens the matching evidence
+  link, and deletes only that still-`INIT` disposable project. The focused live
+  Playwright flow passes 1/1. It does not start CEO work or prove provider-backed
+  execution.
 - Executive action forms now offer current project, Model Profile, and worker
   choices instead of requiring copied identifiers, and reject malformed or
   stale choices before submission. The focused governance UI suite passes 6/6,

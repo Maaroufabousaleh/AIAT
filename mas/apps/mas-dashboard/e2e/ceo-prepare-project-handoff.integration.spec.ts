@@ -46,12 +46,6 @@ test("CEO prepare-only handoff opens an INIT project without starting work", asy
   let projectId: string | undefined;
   let accepted = false;
 
-  const existingReceiptHrefs = new Set(
-    await chat.getByRole("link", { name: /^Open project evidence / }).evaluateAll((links) =>
-      links.map((link) => (link as HTMLAnchorElement).getAttribute("href") ?? ""),
-    ),
-  );
-
   try {
     await chat.getByRole("radio", { name: "Prepare project only" }).check();
     const input = chat.getByRole("textbox", { name: "Message to CEO" });
@@ -75,24 +69,26 @@ test("CEO prepare-only handoff opens an INIT project without starting work", asy
     accepted = true;
 
     await expect(chat.getByText(instruction, { exact: true })).toBeVisible();
-    await expect(chat.getByTestId("ceo-project-mode")).toHaveText("Prepare only");
+    const submittedEntry = chat.getByRole("article").filter({ hasText: instruction });
+    await expect(submittedEntry.getByTestId("ceo-project-mode")).toHaveText("Prepare only");
 
     await expect.poll(async () => {
-      const hrefs = await chat.getByRole("link", { name: /^Open project evidence / }).evaluateAll((links) =>
-        links.map((link) => (link as HTMLAnchorElement).getAttribute("href") ?? ""),
-      );
-      return hrefs.find((href) => href.startsWith("/projects/") && !existingReceiptHrefs.has(href));
-    }, { timeout: 45_000 }).toBeTruthy();
+      const listResponse = await api.get("/api/projects?limit=1000");
+      if (!listResponse.ok()) return null;
+      const rows = await readJson(listResponse);
+      if (!Array.isArray(rows)) return null;
+      const matches = rows
+        .map(asRecord)
+        .filter((row) => row.name === projectName && typeof row.id === "string");
+      if (matches.length !== 1) return null;
+      projectId = String(matches[0].id);
+      return projectId;
+    }, { timeout: 45_000 }).toMatch(/^[0-9a-f-]{36}$/i);
 
-    const receiptHrefs = await chat.getByRole("link", { name: /^Open project evidence / }).evaluateAll((links) =>
-      links.map((link) => (link as HTMLAnchorElement).getAttribute("href") ?? ""),
-    );
-    const receiptHref = receiptHrefs.find((href) => href.startsWith("/projects/") && !existingReceiptHrefs.has(href));
-    expect(receiptHref).toBeTruthy();
-    projectId = receiptHref?.split("/").at(-1);
     expect(projectId).toMatch(/^[0-9a-f-]{36}$/i);
 
     const receiptLink = chat.getByRole("link", { name: `Open project evidence ${projectId}` });
+    await expect(receiptLink).toBeVisible();
     await expect(receiptLink).toHaveAttribute("href", `/projects/${projectId}`);
     await receiptLink.click();
     await expect(page).toHaveURL(new RegExp(`/projects/${projectId}$`));
@@ -110,7 +106,14 @@ test("CEO prepare-only handoff opens an INIT project without starting work", asy
     const contextResponse = await api.get(`/api/projects/${projectId}/context`);
     const context = await readJson(contextResponse);
     expect(contextResponse.status(), JSON.stringify(context)).toBe(200);
-    expect(JSON.stringify(context)).toContain(instruction);
+    expect(Array.isArray(context)).toBe(true);
+    expect((context as unknown[]).map(asRecord)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        item_type: "TEXT",
+        name: "CEO project brief",
+        content_text: instruction,
+      }),
+    ]));
 
     const workerRunsResponse = await api.get(`/api/governance/runs?project_id=${projectId}&limit=100`);
     const workerRuns = await readJson(workerRunsResponse);
@@ -139,14 +142,35 @@ test("CEO prepare-only handoff opens an INIT project without starting work", asy
     }
 
     if (projectId) {
-      const deleteResponse = await api.delete(`/api/projects/${projectId}`);
-      expect(deleteResponse.status(), `Cleanup of exact disposable project ${projectId}`).toBe(200);
-      const verifyDeleted = await api.get(`/api/projects/${projectId}`);
-      expect(verifyDeleted.status()).toBe(404);
-      test.info().annotations.push({
-        type: "prepare_only_cleanup",
-        description: `deleted exact project ${projectId}; follow-up GET=404`,
-      });
+      const projectResponse = await api.get(`/api/projects/${projectId}`);
+      if (projectResponse.status() === 404) {
+        test.info().annotations.push({
+          type: "prepare_only_cleanup",
+          description: `exact disposable project ${projectId} was already absent; GET=404`,
+        });
+      } else {
+        const project = asRecord(await readJson(projectResponse));
+        if (!projectResponse.ok() || project.name !== projectName || project.state !== "INIT") {
+          throw new Error(`Refusing cleanup: project ${projectId} did not match the disposable INIT project`);
+        }
+        const workerRunsResponse = await api.get(`/api/governance/runs?project_id=${projectId}&limit=100`);
+        const workerRuns = await readJson(workerRunsResponse);
+        if (!workerRunsResponse.ok() || !Array.isArray(workerRuns) || workerRuns.length !== 0) {
+          throw new Error(`Refusing cleanup: project ${projectId} has worker runs or run state is unavailable`);
+        }
+        const deleteResponse = await api.delete(`/api/projects/${projectId}`);
+        if (deleteResponse.status() !== 200) {
+          throw new Error(`Cleanup of exact disposable project returned HTTP ${deleteResponse.status()}`);
+        }
+        const verifyDeleted = await api.get(`/api/projects/${projectId}`);
+        if (verifyDeleted.status() !== 404) {
+          throw new Error(`Cleanup verification for exact disposable project returned HTTP ${verifyDeleted.status()}`);
+        }
+        test.info().annotations.push({
+          type: "prepare_only_cleanup",
+          description: `deleted exact project ${projectId}; state=INIT; worker runs=0; follow-up GET=404`,
+        });
+      }
     } else if (accepted) {
       throw new Error(`CEO accepted ${projectName}, but exact project cleanup could not recover its ID`);
     }
