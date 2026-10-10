@@ -162,6 +162,32 @@ export default function FlowEditorPage() {
 
   const isNew = id === "new";
 
+  const isResearchTemplate = flowMetadata.template_id === "research";
+  const researchActivationError = useMemo((): string | null => {
+    if (!isResearchTemplate) return null;
+    const tasks = nodes.filter((node) => node.data.type === "task");
+    if (tasks.length === 0) {
+      return "Research Brief needs at least one task node before activation";
+    }
+    const missingWorkers = tasks.filter((node) => {
+      const config = (node.data.config as Record<string, unknown> | undefined) || {};
+      return !String(config.worker_id ?? "").trim();
+    });
+    if (missingWorkers.length > 0) {
+      const labels = missingWorkers.map((node) => String(node.data.label || "Task")).join(", ");
+      return `Bind a governed worker to each Research Brief task before activation: ${labels}`;
+    }
+    const missingProfiles = tasks.filter((node) => {
+      const config = (node.data.config as Record<string, unknown> | undefined) || {};
+      return String(config.model_mode ?? "aiat_gateway") !== "none" && !String(config.model_profile_id ?? "").trim();
+    });
+    if (missingProfiles.length > 0) {
+      const labels = missingProfiles.map((node) => String(node.data.label || "Task")).join(", ");
+      return `Select an approved Model Profile for each model-enabled Research Brief task before activation: ${labels}`;
+    }
+    return null;
+  }, [isResearchTemplate, nodes]);
+
   const legacyTaskNodes = useMemo(
     () => (currentFlow?.definition_json?.nodes || []).filter((node) => {
       if (node.type !== "task") return false;
@@ -601,6 +627,10 @@ export default function FlowEditorPage() {
       setValidationError(validation);
       return;
     }
+    if (isActive && researchActivationError) {
+      setValidationError(researchActivationError);
+      return;
+    }
     setValidationError(null);
     setSaving(true);
     setSaveStatus("saving");
@@ -663,6 +693,10 @@ export default function FlowEditorPage() {
     const validation = validateFlow();
     if (validation || !currentFlow) {
       setValidationError(validation);
+      return;
+    }
+    if (isActive && researchActivationError) {
+      setValidationError(researchActivationError);
       return;
     }
     setValidationError(null);
@@ -919,6 +953,23 @@ export default function FlowEditorPage() {
           >
             Open projects
           </Link>
+        </section>
+      )}
+
+      {!accessDenied && currentFlow && isResearchTemplate && (
+        <section
+          aria-label="Research Brief activation requirements"
+          data-testid="research-template-activation-checklist"
+          className="border-b border-amber-700/40 bg-amber-950/15 px-4 py-3"
+          role="status"
+        >
+          <h2 className="text-sm font-medium text-amber-100">Research Brief activation requirements</h2>
+          <p className="mt-1 text-xs leading-relaxed text-amber-200/75">
+            Bind every task to a governed worker and select its approved Model Profile when required. Use the task configuration panel or the legacy binding migration below; an incomplete Research Brief cannot be activated or saved as an active version.
+          </p>
+          <p className={`mt-2 text-xs ${researchActivationError ? "text-amber-100" : "text-emerald-200"}`}>
+            {researchActivationError || "All task workers and required Model Profiles are bound."}
+          </p>
         </section>
       )}
 

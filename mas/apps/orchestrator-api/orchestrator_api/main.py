@@ -13030,6 +13030,65 @@ async def list_flow_templates() -> dict[str, Any]:
     return flow_template_catalog()
 
 
+def _is_research_template_definition(definition_json: dict[str, Any] | None) -> bool:
+    metadata = definition_json.get("metadata") if isinstance(definition_json, dict) else None
+    return isinstance(metadata, dict) and metadata.get("template_id") == "research"
+
+
+async def _require_research_template_readiness(definition_json: dict[str, Any]) -> None:
+    """Keep Research Brief activation behind concrete governed task bindings."""
+
+    if not _is_research_template_definition(definition_json):
+        return
+
+    task_nodes = [
+        node
+        for node in definition_json.get("nodes", [])
+        if isinstance(node, dict) and node.get("type") == "task"
+    ]
+    if not task_nodes:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "RESEARCH_TEMPLATE_TASK_REQUIRED",
+                "message": "Research Brief needs at least one task node before activation",
+            },
+        )
+
+    missing: list[dict[str, str]] = []
+    for node in task_nodes:
+        config = node.get("config") if isinstance(node.get("config"), dict) else {}
+        node_id = str(node.get("id") or "")
+        if not str(config.get("worker_id") or "").strip():
+            missing.append({"node_id": node_id, "field": "worker_id"})
+            continue
+        model_mode = str(config.get("model_mode") or "aiat_gateway")
+        if model_mode != "none" and not str(config.get("model_profile_id") or "").strip():
+            missing.append({"node_id": node_id, "field": "model_profile_id"})
+
+    if missing:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "RESEARCH_TEMPLATE_BINDING_REQUIRED",
+                "message": "Bind a governed worker and any required Model Profile to every Research Brief task before activation",
+                "missing_bindings": missing,
+            },
+        )
+
+    readiness = await dry_run_flow(FlowDryRunRequest(definition_json=definition_json))
+    if not readiness.get("valid"):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "RESEARCH_TEMPLATE_NOT_READY",
+                "message": "Research Brief task bindings must pass governed worker and Model Profile readiness checks before activation",
+                "errors": readiness.get("errors", []),
+                "warnings": readiness.get("warnings", []),
+            },
+        )
+
+
 @app.post("/flows", status_code=201)
 async def create_flow(req: CreateFlowRequest) -> dict[str, Any]:
     """Create a new flow definition."""
@@ -13039,6 +13098,9 @@ async def create_flow(req: CreateFlowRequest) -> dict[str, Any]:
         definition = parse_flow_definition(req.definition_json)
     except FlowValidationError as e:
         raise HTTPException(400, f"Invalid flow definition: {e}")
+
+    if req.is_active:
+        await _require_research_template_readiness(req.definition_json)
 
     errors = validate_flow(definition)
     if errors:
@@ -13613,6 +13675,7 @@ async def publish_flow(flow_id: UUID) -> dict[str, Any]:
     flow = await storage.get_flow(flow_id)
     if flow is None:
         raise HTTPException(404, f"Flow {flow_id} not found")
+    await _require_research_template_readiness(dict(flow.get("definition_json") or {}))
     published = await storage.update_flow(flow_id, is_active=True)
     if published is None:
         raise HTTPException(404, f"Flow {flow_id} not found")
@@ -13652,6 +13715,23 @@ async def update_flow(flow_id: UUID, req: UpdateFlowRequest) -> dict[str, Any]:
         definition_payload.setdefault("schema_version", definition.schema_version)
 
     storage = _storage()
+    existing_flow = None
+    if req.is_active is True or _is_research_template_definition(definition_payload):
+        existing_flow = await storage.get_flow(flow_id)
+        if existing_flow is None:
+            raise HTTPException(404, f"Flow {flow_id} not found")
+
+    effective_definition = definition_payload
+    if effective_definition is None and existing_flow is not None:
+        effective_definition = dict(existing_flow.get("definition_json") or {})
+    effective_active = (
+        req.is_active
+        if req.is_active is not None
+        else bool(existing_flow and existing_flow.get("is_active"))
+    )
+    if effective_active and _is_research_template_definition(effective_definition):
+        await _require_research_template_readiness(dict(effective_definition or {}))
+
     if req.definition_json is not None and inspect.iscoroutinefunction(getattr(storage, "list_flow_instances", None)):
         instances = await storage.list_flow_instances(flow_id=flow_id, limit=1000, offset=0)
         if any(instance.get("status") in {"COMPLETED", "FAILED", "CANCELLED"} for instance in instances):

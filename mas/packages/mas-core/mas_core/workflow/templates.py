@@ -31,7 +31,7 @@ _TEMPLATES: dict[str, dict[str, Any]] = {
     },
     "research": {
         "name": "Research brief",
-        "description": "Bounded research, review, and evidence-backed report.",
+        "description": "Bounded research, review, and evidence-backed report. Bind a governed worker and any required approved Model Profile to each task before activation.",
         "definition_json": {
             "schema_version": "1.0",
             "metadata": {"template_id": "research", "evidence_policy": "research"},

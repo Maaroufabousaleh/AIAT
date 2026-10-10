@@ -426,6 +426,60 @@ export default function NewFlowPage() {
   ), [nodeConfig.switch_cases]);
   const switchCaseEntries = useMemo(() => Object.entries(switchCases), [switchCases]);
 
+  const researchBindingTasks = useMemo(() => {
+    if (appliedTemplateId !== "research") return [];
+    return nodes
+      .filter((node) => node.data.type === "task")
+      .map((node) => {
+        const config = (node.data.config as Record<string, unknown> | undefined) || {};
+        const workerId = String(config.worker_id ?? "").trim();
+        const modelMode = String(config.model_mode ?? "aiat_gateway");
+        return {
+          node,
+          missingWorker: !workerId,
+          missingModelProfile: Boolean(
+            workerId && modelMode !== "none" && !String(config.model_profile_id ?? "").trim(),
+          ),
+        };
+      })
+      .filter((item) => item.missingWorker || item.missingModelProfile);
+  }, [appliedTemplateId, nodes]);
+
+  const researchBindingError = useCallback((): string | null => {
+    if (appliedTemplateId !== "research") return null;
+    const tasks = nodes.filter((node) => node.data.type === "task");
+    if (tasks.length === 0) {
+      return "Research Brief needs at least one task node before it can be validated or activated";
+    }
+
+    const missingWorkers = tasks.filter((node) => {
+      const config = (node.data.config as Record<string, unknown> | undefined) || {};
+      return !String(config.worker_id ?? "").trim();
+    });
+    if (missingWorkers.length > 0) {
+      const labels = missingWorkers.map((node) => String(node.data.label || "Task")).join(", ");
+      return `Bind a governed worker to each Research Brief task before readiness validation or activation: ${labels}`;
+    }
+
+    const missingProfiles = tasks.filter((node) => {
+      const config = (node.data.config as Record<string, unknown> | undefined) || {};
+      return String(config.model_mode ?? "aiat_gateway") !== "none" && !String(config.model_profile_id ?? "").trim();
+    });
+    if (missingProfiles.length > 0) {
+      const labels = missingProfiles.map((node) => String(node.data.label || "Task")).join(", ");
+      return `Select an approved Model Profile for each model-enabled Research Brief task before readiness validation or activation: ${labels}`;
+    }
+    return null;
+  }, [appliedTemplateId, nodes]);
+
+  const openNodeConfiguration = useCallback((node: Node) => {
+    const config = (node.data.config as Record<string, unknown> | undefined) || {};
+    setSelectedNode(node);
+    setShowConfig(true);
+    setNodeConfig(config);
+    setRawSwitchCases(JSON.stringify(config.switch_cases || {}, null, 2));
+  }, []);
+
   const setSwitchCases = useCallback((cases: Record<string, string>) => {
     setRawSwitchCases(JSON.stringify(cases, null, 2));
     setJsonError(null);
@@ -473,6 +527,10 @@ export default function NewFlowPage() {
   const handleSave = async () => {
     const validation = validateFlow();
     if (validation) { setValidationError(validation); return; }
+    if (isActive) {
+      const bindingError = researchBindingError();
+      if (bindingError) { setValidationError(bindingError); return; }
+    }
     setValidationError(null);
     setSaving(true);
     const definition = convertReactFlowToFlow(nodes, edges, flowMetadata);
@@ -500,6 +558,12 @@ export default function NewFlowPage() {
   };
 
   const handleDryRun = async () => {
+    const bindingError = researchBindingError();
+    if (bindingError) {
+      setDryRunResult(null);
+      setValidationError(bindingError);
+      return;
+    }
     if (nodes.length === 0) {
       setValidationError("Add at least one node before validating the flow");
       return;
@@ -796,6 +860,48 @@ export default function NewFlowPage() {
             <Sparkles size={12} className="text-blue-400" aria-hidden="true" />
             Show templates
           </button>
+        )}
+
+        {!accessDenied && appliedTemplateId === "research" && (
+          <section
+            className="mt-3 rounded-xl border border-amber-800/70 bg-amber-950/15 px-4 py-3"
+            aria-label="Research task worker bindings"
+            data-testid="research-template-binding-checklist"
+            role="status"
+          >
+            <h2 className="text-sm font-medium text-amber-100">Prepare Research Brief task assignments</h2>
+            <p className="mt-1 text-xs leading-relaxed text-amber-200/75">
+              Select each task on the canvas and assign a governed worker and any required approved Model Profile. Readiness validation and activation stay blocked until every task is bound. You can save an inactive draft while configuring it.
+            </p>
+            {nodes.filter((node) => node.data.type === "task").length === 0 ? (
+              <p className="mt-2 text-xs text-amber-100">Add at least one task node to keep this Research Brief usable.</p>
+            ) : researchBindingTasks.length === 0 ? (
+              <p className="mt-2 text-xs text-emerald-200" data-testid="research-template-bindings-complete">
+                Every task has a governed worker and required Model Profile.
+              </p>
+            ) : (
+              <ul className="mt-2 space-y-1.5" aria-label="Tasks needing assignment">
+                {researchBindingTasks.map(({ node, missingWorker, missingModelProfile }) => (
+                  <li key={node.id} className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <span className="text-amber-100">
+                      {String(node.data.label || "Task")}: {[
+                        missingWorker ? "governed worker required" : null,
+                        missingModelProfile ? "approved Model Profile required" : null,
+                      ].filter(Boolean).join("; ")}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => openNodeConfiguration(node)}
+                      aria-label={`Configure ${String(node.data.label || "Task")} assignment`}
+                      className="rounded border border-amber-700/70 px-2 py-1 text-amber-100 hover:bg-amber-900/40 focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+                    >
+                      Configure task
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
         )}
       </div>
 

@@ -349,3 +349,63 @@ test("flow editor enters the same denied state when saving loses authorization",
   await expect(page.getByRole("button", { name: "Save As New Version" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Add Task node" })).toHaveCount(0);
 });
+
+test("saved Research Brief drafts cannot be activated or versioned before worker binding", async ({
+  page,
+}) => {
+  const researchFlow = {
+    ...FLOW_FIXTURE,
+    id: "research-flow-draft",
+    name: "Research Brief draft",
+    is_active: false,
+    definition_json: {
+      schema_version: "aiat.flow-node-schemas.v1.0",
+      metadata: { template_id: "research", evidence_policy: "research" },
+      nodes: [
+        { id: "start", type: "start", label: "Start", config: {}, position: { x: 80, y: 80 } },
+        { id: "research", type: "task", label: "Research", config: { team_id: "legacy-team", action: "research.collect" }, position: { x: 280, y: 80 } },
+        { id: "end", type: "end", label: "Complete", config: {}, position: { x: 480, y: 80 } },
+      ],
+      edges: [
+        { id: "start-research", source: "start", target: "research" },
+        { id: "research-end", source: "research", target: "end" },
+      ],
+    },
+  };
+  let updateRequests = 0;
+  let versionCreateRequests = 0;
+
+  await page.route("**/api/workers", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route("**/api/governance/model-profiles", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route("**/api/flows/research-flow-draft", async (route) => {
+    if (route.request().method() === "PUT") updateRequests += 1;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(researchFlow),
+    });
+  });
+  await page.route("**/api/flows", async (route) => {
+    if (route.request().method() === "POST") versionCreateRequests += 1;
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+
+  await authenticate(page, "/flows/research-flow-draft");
+  const checklist = page.getByTestId("research-template-activation-checklist");
+  await expect(checklist).toContainText("Bind a governed worker");
+  await expect(checklist).toContainText("Research");
+  await page.getByLabel("Mark flow as active").check();
+
+  await page.getByTestId("flow-save-button").click();
+  const saveError = page.getByRole("alert").filter({ hasText: "Cannot save flow" });
+  await expect(saveError).toContainText("Bind a governed worker to each Research Brief task before activation");
+  await page.getByTestId("flow-save-version-button").click();
+  await expect(saveError).toContainText("Bind a governed worker to each Research Brief task before activation");
+
+  expect(updateRequests).toBe(0);
+  expect(versionCreateRequests).toBe(0);
+});
