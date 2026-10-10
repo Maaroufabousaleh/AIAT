@@ -1,0 +1,133 @@
+name: aiat-level-a-opencode
+
+services:
+  provider-fixture:
+    image: ${AIAT_LEVEL_A_OPENCODE_IMAGE:?set a locally available OpenCode 1.17.13 image}
+    pull_policy: never
+    entrypoint: ["node"]
+    command: ["/fixture/fixture.mjs"]
+    restart: "no"
+    read_only: true
+    networks: [isolated]
+    volumes:
+      - type: bind
+        source: ./fixture.mjs
+        target: /fixture/fixture.mjs
+        read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m,uid=10001,gid=10001
+    environment:
+      AIAT_FIXTURE_HOST: 0.0.0.0
+      AIAT_FIXTURE_PORT: "8000"
+      AIAT_FIXTURE_PROVIDER_KEY: aiat-level-a-provider-dummy
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
+    cpus: "0.25"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 1s
+
+  litellm:
+    image: ${AIAT_LEVEL_A_LITELLM_IMAGE:?set a locally available LiteLLM image}
+    pull_policy: never
+    command: ["--config", "/fixture/litellm_config.yaml", "--host", "0.0.0.0", "--port", "4000"]
+    restart: "no"
+    read_only: true
+    networks: [isolated]
+    depends_on:
+      provider-fixture:
+        condition: service_healthy
+    volumes:
+      - type: bind
+        source: ./litellm_config.yaml
+        target: /fixture/litellm_config.yaml
+        read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+      - /root/.cache:rw,noexec,nosuid,size=64m
+    environment:
+      LITELLM_MASTER_KEY: sk-aiat-level-a-gateway-dummy
+      LITELLM_TELEMETRY: "false"
+      DISABLE_TELEMETRY: "true"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+    cpus: "0.75"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness', timeout=2).read()"
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  opencode-runtime:
+    image: ${AIAT_LEVEL_A_OPENCODE_IMAGE:?set a locally available OpenCode 1.17.13 image}
+    pull_policy: never
+    runtime: runsc
+    restart: "no"
+    user: "10001:10001"
+    read_only: true
+    networks: [isolated]
+    depends_on:
+      litellm:
+        condition: service_healthy
+    environment:
+      OPENCODE_SERVER_USERNAME: aiat-level-a
+      OPENCODE_SERVER_PASSWORD: aiat-level-a-runtime-dummy
+      AIAT_GATEWAY_URL: http://litellm:4000
+      AIAT_GATEWAY_API_KEY: sk-aiat-level-a-gateway-dummy
+      OPENCODE_SERVER_HOSTNAME: 0.0.0.0
+      OPENCODE_SERVER_PORT: "4096"
+    volumes:
+      - type: bind
+        source: ./egress_probe.mjs
+        target: /fixture/egress_probe.mjs
+        read_only: true
+      - type: bind
+        source: ./open_code_probe.mjs
+        target: /fixture/open_code_probe.mjs
+        read_only: true
+      - type: bind
+        source: ./probe_helpers.mjs
+        target: /fixture/probe_helpers.mjs
+        read_only: true
+    tmpfs:
+      - /workspace:rw,exec,nosuid,size=128m,uid=10001,gid=10001
+      - /tmp:rw,noexec,nosuid,size=128m,uid=10001,gid=10001
+      - /runtime:rw,noexec,nosuid,size=16m,uid=10001,gid=10001
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    mem_limit: 1024m
+    cpus: "1.0"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:4096/global/health',{headers:{authorization:'Basic '+Buffer.from('aiat-level-a:aiat-level-a-runtime-dummy').toString('base64')}}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 8s
+
+networks:
+  isolated:
+    driver: bridge
+    internal: true
+    ipam:
+      driver: default
+      config:
+        - subnet: ${AIAT_LEVEL_A_SUBNET:?runner must select a non-overlapping private /29}
