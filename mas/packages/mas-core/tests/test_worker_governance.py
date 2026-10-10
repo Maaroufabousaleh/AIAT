@@ -559,6 +559,51 @@ async def test_opencode_cancel_during_session_creation_aborts_without_prompt_sub
 
 
 @pytest.mark.asyncio
+async def test_opencode_run_workspace_maps_runtime_directory_and_artifacts(tmp_path, monkeypatch) -> None:
+    project_id = uuid4()
+    request = WorkerRunRequest(
+        idempotency_key=f"opencode-workspace-map:{project_id}",
+        worker_id="opencode-workspace-map-test",
+        project_id=project_id,
+        task_type="coding",
+        task_input={"prompt": "Create the deterministic fixture artifact."},
+        resolved_model_profile={
+            "profile_id": "coding",
+            "version": "1",
+            "exact_model_id": "aiat/local-fixture",
+            "resolution_snapshot_id": uuid4(),
+        },
+    )
+    workspace_root = tmp_path / "opencode-workspace"
+    monkeypatch.setenv("OPENCODE_WORKSPACE_ROOT", str(workspace_root))
+    run_root = workspace_root / str(request.run_id)
+    run_root.mkdir(parents=True)
+    content = "def total(values):\n    return sum(values)\n"
+    (run_root / "solution.py").write_text(content, encoding="utf-8")
+    (workspace_root / "outside.py").write_text("must not be an artifact\n", encoding="utf-8")
+    (run_root / "outside-link.py").symlink_to(workspace_root / "outside.py")
+
+    adapter, client = _opencode_adapter_for_test(
+        lambda http_request: httpx.Response(500, request=http_request),
+        worker_id=request.worker_id,
+    )
+    try:
+        assert adapter.context.workspace_path == str(workspace_root)
+        assert adapter._query(request) == {"directory": "/workspace"}
+        artifacts = await adapter._artifacts(request, "ses_workspace_map")
+    finally:
+        await adapter.close()
+        await client.aclose()
+
+    assert len(artifacts) == 1
+    assert artifacts[0].name == "solution.py"
+    assert artifacts[0].uri == "solution.py"
+    assert artifacts[0].sha256 == hashlib.sha256(content.encode()).hexdigest()
+    assert artifacts[0].size_bytes == len(content.encode())
+    assert artifacts[0].metadata["worker_run_id"] == str(request.run_id)
+
+
+@pytest.mark.asyncio
 async def test_project_scoped_opencode_run_cancels_at_provider_boundary_without_dispatch() -> None:
     """Exercise the real adapter/controller up to, but not through, model dispatch.
 

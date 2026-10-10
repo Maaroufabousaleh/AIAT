@@ -1717,6 +1717,9 @@ class OpenCodeAdapter(HTTPAdapter):
     _MCP_GRANT_TTL_SECONDS = 300
     _MCP_GRANT_REFRESH_LEEWAY_SECONDS = 30
     _MCP_GRANT_REFRESH_RETRY_SECONDS = 5
+    _MAX_ARTIFACT_COUNT = 1_000
+    _MAX_ARTIFACT_BYTES = 10 * 1024 * 1024
+    _MAX_TOTAL_ARTIFACT_BYTES = 100 * 1024 * 1024
 
     def __init__(
         self,
@@ -1740,6 +1743,13 @@ class OpenCodeAdapter(HTTPAdapter):
             capability_names=["opencode.session", "opencode.events", "opencode.artifacts"],
         )
         context = kwargs.pop("context", None) or AdapterContext()
+        if not context.workspace_path:
+            # The orchestrator and tool service expose the shared OpenCode
+            # workspace through this host/container path.  The OpenCode
+            # runtime mounts the same volume at /workspace; _query maps the
+            # API-side root to that runtime view.
+            context.workspace_path = os.getenv("OPENCODE_WORKSPACE_ROOT") or None
+        context.metadata.setdefault("opencode_runtime_workspace_root", "/workspace")
         # A literal password in adapter configuration is never accepted.  A
         # deployment injects this value through the secret boundary into the
         # AdapterContext; tests may use the same explicit secret mapping.
@@ -1801,11 +1811,17 @@ class OpenCodeAdapter(HTTPAdapter):
         return await super()._get_client()
 
     def _query(self, request: WorkerRunRequest) -> dict[str, str]:
-        # Workspace scope is injected by the governed adapter context.  A task
-        # payload must never be able to redirect an OpenCode session to an
-        # arbitrary host path.
-        directory = self.context.workspace_path
-        return {"directory": str(directory)} if directory else {}
+        # The governed workspace path is the API/tool-service view of the
+        # shared volume (normally /opencode-workspace).  OpenCode sees that
+        # same volume under /workspace.  OpenCode sessions use the existing
+        # runtime root; the signed tool grant confines file effects to the run
+        # UUID directory.  A task payload can never redirect the runtime.
+        if not self.context.workspace_path:
+            return {}
+        runtime_root = str(
+            self.context.metadata.get("opencode_runtime_workspace_root") or "/workspace"
+        ).rstrip("/")
+        return {"directory": runtime_root}
 
     def _endpoint(self, key: str) -> str:
         try:
@@ -2409,33 +2425,70 @@ class OpenCodeAdapter(HTTPAdapter):
             )
 
     async def _artifacts(self, request: WorkerRunRequest, session_id: str) -> list[Any]:
-        client = await self._get_client()
-        path = self._endpoint("diff").replace("{sessionID}", session_id)
-        response = await client.get(path, params=self._query(request))
-        if response.status_code >= 400:
-            return []
-        diffs = response.json() if response.content else []
         artifacts = []
-        workspace = self.context.workspace_path
-        if not workspace or not isinstance(diffs, list):
+        workspace_root = self.context.workspace_path
+        if not workspace_root:
             return artifacts
-        root = Path(str(workspace)).resolve()
+        root = Path(str(workspace_root)).resolve()
+        run_root = (root / str(request.run_id)).resolve()
+        try:
+            run_root.relative_to(root)
+        except ValueError:
+            return artifacts
         from mas_core.worker_contract import ArtifactKind, WorkerArtifact
-        for item in diffs:
-            rel = str(item.get("file") or item.get("path") or "") if isinstance(item, dict) else ""
-            if not rel:
-                continue
-            candidate = (root / rel).resolve()
-            try:
-                candidate.relative_to(root)
-            except ValueError:
-                continue
-            if candidate.is_file():
-                digest = hashlib.sha256(candidate.read_bytes()).hexdigest()
-                artifact = WorkerArtifact(kind=ArtifactKind.FILE, name=rel, uri=rel, sha256=digest, size_bytes=candidate.stat().st_size, metadata={"opencode_session_id": session_id})
-                artifacts.append(artifact)
-                if self.context.artifact_registrar is not None:
-                    await self.context.artifact_registrar(artifact)
+        if not run_root.is_dir():
+            return artifacts
+
+        # The run-scoped MCP tool writes through tool-service, outside
+        # OpenCode's own process.  Its VCS diff can therefore omit those
+        # files (and may report paths relative to /workspace), so enumerate
+        # only this run's shared-volume directory.  Keep collection bounded
+        # and reject symlinks/escapes before reading file contents.
+        candidates: list[Path] = []
+        for directory, child_directories, files in os.walk(run_root, followlinks=False):
+            current = Path(directory)
+            child_directories[:] = sorted(
+                name for name in child_directories if not (current / name).is_symlink()
+            )
+            for name in sorted(files):
+                candidate = current / name
+                if candidate.is_symlink():
+                    continue
+                try:
+                    resolved = candidate.resolve()
+                    resolved.relative_to(run_root)
+                except (OSError, ValueError):
+                    continue
+                if resolved.is_file():
+                    candidates.append(resolved)
+                    if len(candidates) > self._MAX_ARTIFACT_COUNT:
+                        raise RuntimeError("OpenCode run exceeded the artifact count limit")
+
+        total_bytes = 0
+        for candidate in candidates:
+            size_bytes = candidate.stat().st_size
+            if size_bytes > self._MAX_ARTIFACT_BYTES:
+                raise RuntimeError("OpenCode run produced an artifact over the size limit")
+            total_bytes += size_bytes
+            if total_bytes > self._MAX_TOTAL_ARTIFACT_BYTES:
+                raise RuntimeError("OpenCode run exceeded the total artifact size limit")
+            relative_path = candidate.relative_to(run_root)
+            content = candidate.read_bytes()
+            normalized_rel = relative_path.as_posix()
+            artifact = WorkerArtifact(
+                kind=ArtifactKind.FILE,
+                name=normalized_rel,
+                uri=normalized_rel,
+                sha256=hashlib.sha256(content).hexdigest(),
+                size_bytes=size_bytes,
+                metadata={
+                    "opencode_session_id": session_id,
+                    "worker_run_id": str(request.run_id),
+                },
+            )
+            artifacts.append(artifact)
+            if self.context.artifact_registrar is not None:
+                await self.context.artifact_registrar(artifact)
         return artifacts
 
     async def _cleanup_session(self, request: WorkerRunRequest, session_id: str) -> None:
