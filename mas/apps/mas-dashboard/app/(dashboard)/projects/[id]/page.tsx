@@ -3791,14 +3791,24 @@ export default function ProjectDetailPage() {
                         views over canonical project records
                       </p>
                     </div>
-                    <span className="text-xs text-slate-400">
-                      {
-                        evidencePackage.categories.filter(
-                          (category) => category.status === "present",
-                        ).length
-                      }
-                      /{evidencePackage.categories.length} categories present
-                    </span>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <span className="text-xs text-slate-400">
+                        {
+                          evidencePackage.categories.filter(
+                            (category) => category.status === "present",
+                          ).length
+                        }
+                        /{evidencePackage.categories.length} categories present
+                      </span>
+                      <Link
+                        href={`/projects/${encodeURIComponent(id)}/evidence`}
+                        aria-label="Open project evidence details"
+                        className="inline-flex min-h-11 items-center gap-2 rounded-md border border-cyan-700/60 px-3 py-2 text-xs font-medium text-cyan-200 underline decoration-cyan-700/50 underline-offset-4 hover:bg-cyan-950/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
+                      >
+                        Inspect evidence items
+                        <ArrowRightCircle size={14} aria-hidden="true" />
+                      </Link>
+                    </div>
                   </div>
                   <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                     {evidencePackage.categories.map((category) => (

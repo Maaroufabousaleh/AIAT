@@ -735,3 +735,89 @@ test("project detail enters the same denied state when a workflow mutation loses
   await expect(page.getByRole("tablist", { name: "Project views" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Refresh project data" })).toHaveCount(0);
 });
+
+test("project detail links its evidence summary to the inspectable evidence items", async ({
+  page,
+}) => {
+  const evidencePackage = {
+    schema_version: "aiat.project-evidence-package.v1",
+    project_id: PROJECT_ID,
+    policy_id: "software-delivery",
+    policy_version: "1.0",
+    status: "incomplete",
+    completeness_score: 0.5,
+    checks: [],
+    categories: [
+      {
+        category: "worker",
+        status: "present",
+        required: true,
+        item_count: 1,
+        evidence_refs: ["worker-run-1"],
+      },
+    ],
+    items: [
+      {
+        id: "worker-run-1",
+        category: "worker",
+        kind: "worker-run",
+        status: "completed",
+        source: "canonical",
+      },
+    ],
+    notices: [],
+  };
+
+  await page.route(`**/api/projects/${PROJECT_ID}`, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(PROJECT_FIXTURE) });
+  });
+  for (const suffix of ["state-history", "decisions", "transition"]) {
+    await page.route(`**/api/projects/${PROJECT_ID}/${suffix}`, async (route) => {
+      await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+    });
+  }
+  await page.route(`**/api/projects/${PROJECT_ID}/workspace`, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(WORKSPACE_FIXTURE) });
+  });
+  await page.route(`**/api/projects/${PROJECT_ID}/repository`, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ workspace: null }) });
+  });
+  await page.route(`**/api/governance/runs?**`, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route(`**/api/projects/${PROJECT_ID}/issues?**`, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route(`**/api/projects/${PROJECT_ID}/evidence`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        policy_id: "software-delivery",
+        policy_version: "1.0",
+        status: "incomplete",
+        completeness_score: 0.5,
+        checks: [],
+        evidence_refs: {},
+      }),
+    });
+  });
+  await page.route(`**/api/projects/${PROJECT_ID}/evidence/package`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(evidencePackage),
+    });
+  });
+
+  await authenticate(page, `/projects/${PROJECT_ID}`);
+  await page.getByRole("tab", { name: "Evidence", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Evidence package coverage" })).toBeVisible();
+
+  const detailsLink = page.getByRole("link", { name: "Open project evidence details" });
+  await expect(detailsLink).toHaveAttribute("href", `/projects/${PROJECT_ID}/evidence`);
+  await detailsLink.click();
+
+  await expect(page).toHaveURL(new RegExp(`/projects/${PROJECT_ID}/evidence$`));
+  await expect(page.getByRole("table", { name: "Evidence items" })).toContainText("worker-run-1");
+});
