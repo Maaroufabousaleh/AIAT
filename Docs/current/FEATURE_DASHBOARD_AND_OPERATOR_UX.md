@@ -363,6 +363,17 @@ The dashboard is the human control and evidence surface for AIAT. It must make c
   Source-built Playwright coverage passes 1/1 for the guided editor; the
   existing company create/review/apply/history spec passed 1/1 separately.
   These tests use mocked API responses.
+
+### Product integration updates (2026-10-10)
+
+- CEO Chat now honors an explicit `prepare_only` choice for both project
+  creation and preparation requests. It creates one `INIT` project, records the
+  request as project context, and leaves feasibility dispatch to the operator's
+  later Project Detail start action. The CEO message ID is the stable project
+  creation idempotency key across command recovery. Focused CEO API tests pass
+  112/112, the source-built mocked chat E2E passes 1/1, and dashboard typecheck
+  passes. No model/provider call is made; the full CEO-to-worker journey remains
+  unproven.
 - Executive action forms now offer current project, Model Profile, and worker
   choices instead of requiring copied identifiers, and reject malformed or
   stale choices before submission. The focused governance UI suite passes 6/6,
