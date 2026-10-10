@@ -4913,6 +4913,102 @@ async def list_project_artifacts(
     return [_serialize(a) for a in await _project_artifact_rows(storage, project_id, limit)]
 
 
+@app.get("/projects/{project_id}/artifacts/{artifact_id}/download")
+async def download_project_artifact(
+    project_id: UUID,
+    artifact_id: int,
+    request: Request,
+) -> Response:
+    """Download bounded worker artifact bytes for an authorized project owner.
+
+    The artifact row is joined to its durable WorkerRun and worker-artifact
+    association before the object store is consulted. Project IDs in request
+    metadata are never treated as authority by themselves.
+    """
+    _require_operator_identity(request)
+    storage = _storage()
+    if await storage.get_project(project_id) is None:
+        raise HTTPException(404, "Project not found")
+    artifact = await storage.get_artifact(artifact_id)
+    if artifact is None:
+        raise HTTPException(404, "Artifact not found")
+    metadata = artifact.get("metadata") or {}
+    try:
+        run_id = UUID(str(metadata.get("worker_run_id") or ""))
+    except (TypeError, ValueError, AttributeError):
+        raise HTTPException(404, "Artifact not found") from None
+    run = await storage.get_worker_run(run_id)
+    if (
+        run is None
+        or str(run.get("project_id") or "") != str(project_id)
+        or str(run.get("worker_id") or "") != str(artifact.get("agent_id") or "")
+        or str(metadata.get("project_id") or "") != str(project_id)
+    ):
+        raise HTTPException(404, "Artifact not found")
+    linked_artifacts = await storage.list_worker_artifacts(run_id, limit=1_000)
+    association = next(
+        (row for row in linked_artifacts if row.get("artifact_id") == artifact_id),
+        None,
+    )
+    if association is None:
+        raise HTTPException(404, "Artifact not found")
+    if (
+        str(association.get("uri") or "") != str(artifact.get("path") or "")
+        or str(association.get("sha256") or "").lower()
+        != str(artifact.get("sha256") or "").lower()
+        or association.get("size_bytes") != artifact.get("size_bytes")
+    ):
+        raise HTTPException(404, "Artifact not found")
+
+    from orchestrator_api.artifact_content import (
+        ArtifactContentError,
+        ArtifactIntegrityError,
+        ArtifactStorageUnavailable,
+        artifact_download_filename,
+        artifact_download_reference,
+        download_artifact_bytes,
+        new_artifact_blob_client,
+    )
+
+    try:
+        ref = artifact_download_reference(
+            project_id=project_id,
+            artifact=artifact,
+            run_id=run_id,
+        )
+        blob = new_artifact_blob_client()
+        await blob.connect()
+        try:
+            content = await download_artifact_bytes(blob, ref)
+        finally:
+            await blob.close()
+    except ArtifactStorageUnavailable as exc:
+        raise HTTPException(503, "Artifact storage is not available") from exc
+    except ArtifactContentError:
+        raise HTTPException(404, "Artifact content is not available") from None
+    except ArtifactIntegrityError as exc:
+        raise HTTPException(502, "Artifact integrity verification failed") from exc
+    except Exception as exc:
+        logger.warning(
+            "worker_artifact_download_failed",
+            extra={"artifact_id": artifact_id, "error_type": type(exc).__name__},
+        )
+        raise HTTPException(502, "Artifact download failed") from exc
+
+    filename = artifact_download_filename(str(artifact.get("path") or ""), artifact_id)
+    return Response(
+        content=content,
+        media_type=ref.content_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-AIAT-Artifact-SHA256": ref.sha256,
+            "X-AIAT-Artifact-Size": str(ref.size_bytes),
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "private, no-store",
+        },
+    )
+
+
 @app.get("/artifacts/{artifact_id}")
 async def get_artifact_evidence(artifact_id: int, request: Request) -> dict[str, Any]:
     """Return operator-safe scalar metadata for one artifact citation."""
@@ -10078,12 +10174,22 @@ async def _certified_worker_adapter(
         capabilities = WorkerCapabilities.model_validate(raw_capabilities)
     except ValueError as exc:
         raise HTTPException(409, f"active adapter capabilities are invalid: {exc}") from exc
+    transport = str(adapter_row.get("transport_type") or worker.get("adapter_type") or "").lower()
+    artifact_registrar = None
+    if transport == "opencode":
+        from orchestrator_api.artifact_content import make_opencode_artifact_registrar
+
+        artifact_registrar = make_opencode_artifact_registrar(
+            storage,
+            worker_id=worker_id,
+            workspace_root=config.get("workspace_path") or "/workspace",
+        )
     context = AdapterContext(
         workspace_path=config.get("workspace_path"),
         tool_dispatcher=_worker_tool_dispatcher(storage, worker),
+        artifact_registrar=artifact_registrar,
         metadata={"worker_id": str(worker_id)},
     )
-    transport = str(adapter_row.get("transport_type") or worker.get("adapter_type") or "").lower()
     try:
         if transport == "opencode":
             raw_verification = config.get("interface_verification") or {}
