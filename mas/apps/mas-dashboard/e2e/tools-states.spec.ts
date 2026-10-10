@@ -230,6 +230,54 @@ test("tools catalogue preserves a deliberate collapse-all choice across refresh"
   await expect(generalGroup).toHaveAttribute("aria-expanded", "false");
 });
 
+test("tools catalogue recognizes newly added groups when showing expand or collapse all", async ({
+  page,
+}) => {
+  let showReplacementGroups = false;
+  const initialGroups = {
+    tools: [
+      { name: "general-read", description: "Read general metadata", group: "General" },
+      { name: "file-read", description: "Read a file", group: "File System" },
+    ],
+    health: { tools_registered: 2 },
+  };
+  const replacementGroups = {
+    tools: [
+      { name: "general-read", description: "Read general metadata", group: "General" },
+      { name: "code-check", description: "Run a local check", group: "Code Execution" },
+    ],
+    health: { tools_registered: 2 },
+  };
+
+  await page.route("**/api/tools", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(showReplacementGroups ? replacementGroups : initialGroups),
+    });
+  });
+
+  await authenticate(page, "/tools");
+  await expect(page.locator("#group-header-General")).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+  await expect(page.locator("#group-header-File-System")).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+
+  showReplacementGroups = true;
+  await page.getByRole("button", { name: "Refresh tools" }).click();
+  const expandAll = page.getByRole("button", { name: "Expand all groups" });
+  await expect(expandAll).toBeVisible();
+  await expandAll.click();
+  await expect(page.locator("#group-header-Code-Execution")).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+});
+
 test("tools catalogue access denial on first load hides catalogue controls", async ({
   page,
 }) => {

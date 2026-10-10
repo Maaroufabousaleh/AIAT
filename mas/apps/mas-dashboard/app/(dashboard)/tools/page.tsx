@@ -219,11 +219,11 @@ export default function ToolsPage() {
     setExpandedGroups(open ? new Set(allGroups) : new Set());
   };
 
+  const currentGroupNames = data
+    ? Object.keys(groupTools((data.tools ?? []).filter((t) => !t.deprecated_alias_of)))
+    : [];
   const allExpanded =
-    !!data &&
-    expandedGroups.size ===
-      Object.keys(groupTools((data.tools ?? []).filter((t) => !t.deprecated_alias_of))).length &&
-      expandedGroups.size > 0;
+    currentGroupNames.length > 0 && currentGroupNames.every((group) => expandedGroups.has(group));
 
   const requestRefresh = () => {
     if (accessDenied) return;
