@@ -20,7 +20,24 @@ const workspace = {
   pending_approvals: [],
   recent_activity: [],
   worker_activity: [],
-  artifacts: [{ id: 41, path: "reports/summary.md", agent_id: "worker-alpha", size_bytes: 512, created_at: "2026-10-02T12:00:00Z" }],
+  artifacts: [
+    {
+      id: 41,
+      path: "reports/summary.md",
+      agent_id: "worker-alpha",
+      size_bytes: 512,
+      created_at: "2026-10-02T12:00:00Z",
+      metadata: { worker_run_id: RUN_ID },
+    },
+    {
+      id: 42,
+      path: "reports/unattributed.md",
+      agent_id: "worker-alpha",
+      size_bytes: 256,
+      created_at: "2026-10-02T12:01:00Z",
+      metadata: { worker_run_id: { malformed: true } },
+    },
+  ],
   logs: [],
   cost_usage: {
     available: true,
@@ -150,6 +167,11 @@ test("project workspace follows scoped worker runs, issues, artifacts, and cost"
     name: "Inspect evidence for artifact reports/summary.md",
   });
   await expect(artifactEvidenceLink).toHaveAttribute("href", "/evidence/artifact/41");
+  const artifactRunLink = detail.getByRole("link", {
+    name: `Open producing WorkerRun ${RUN_ID}`,
+  });
+  await expect(artifactRunLink).toHaveAttribute("href", `/workers/runs/${RUN_ID}`);
+  await expect(detail.getByRole("link", { name: /Open producing WorkerRun/ })).toHaveCount(1);
   await detail.getByRole("tab", { name: "Cost" }).click();
   await expect(detail.getByText("$0.25")).toBeVisible();
   await expect(detail.getByText("950", { exact: true })).toBeVisible();
