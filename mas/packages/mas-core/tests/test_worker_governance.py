@@ -575,7 +575,6 @@ async def test_opencode_run_workspace_maps_runtime_directory_and_artifacts(tmp_p
         },
     )
     workspace_root = tmp_path / "opencode-workspace"
-    monkeypatch.setenv("OPENCODE_WORKSPACE_ROOT", str(workspace_root))
     run_root = workspace_root / str(request.run_id)
     run_root.mkdir(parents=True)
     content = "def total(values):\n    return sum(values)\n"
@@ -587,6 +586,7 @@ async def test_opencode_run_workspace_maps_runtime_directory_and_artifacts(tmp_p
         lambda http_request: httpx.Response(500, request=http_request),
         worker_id=request.worker_id,
     )
+    adapter.context.workspace_path = str(workspace_root)
     try:
         assert adapter.context.workspace_path == str(workspace_root)
         assert adapter._query(request) == {"directory": "/workspace"}
@@ -601,6 +601,35 @@ async def test_opencode_run_workspace_maps_runtime_directory_and_artifacts(tmp_p
     assert artifacts[0].sha256 == hashlib.sha256(content.encode()).hexdigest()
     assert artifacts[0].size_bytes == len(content.encode())
     assert artifacts[0].metadata["worker_run_id"] == str(request.run_id)
+
+
+@pytest.mark.asyncio
+async def test_opencode_adapter_defaults_to_orchestrator_workspace_mount(monkeypatch) -> None:
+    monkeypatch.delenv("OPENCODE_WORKSPACE_ROOT", raising=False)
+    project_id = uuid4()
+    request = WorkerRunRequest(
+        idempotency_key=f"opencode-default-workspace:{project_id}",
+        worker_id="opencode-default-workspace-test",
+        project_id=project_id,
+        task_type="coding",
+        task_input={"prompt": "Use the configured workspace."},
+        resolved_model_profile={
+            "profile_id": "coding",
+            "version": "1",
+            "exact_model_id": "aiat/local-fixture",
+            "resolution_snapshot_id": uuid4(),
+        },
+    )
+    adapter, client = _opencode_adapter_for_test(
+        lambda http_request: httpx.Response(500, request=http_request),
+        worker_id=request.worker_id,
+    )
+    try:
+        assert adapter.context.workspace_path == "/workspace"
+        assert adapter._query(request) == {"directory": "/workspace"}
+    finally:
+        await adapter.close()
+        await client.aclose()
 
 
 @pytest.mark.asyncio

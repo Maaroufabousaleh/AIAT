@@ -1744,11 +1744,11 @@ class OpenCodeAdapter(HTTPAdapter):
         )
         context = kwargs.pop("context", None) or AdapterContext()
         if not context.workspace_path:
-            # The orchestrator and tool service expose the shared OpenCode
-            # workspace through this host/container path.  The OpenCode
-            # runtime mounts the same volume at /workspace; _query maps the
-            # API-side root to that runtime view.
-            context.workspace_path = os.getenv("OPENCODE_WORKSPACE_ROOT") or None
+            # Compose mounts the shared volume at /workspace in both the
+            # orchestrator and OpenCode runtime. Tool Service exposes that
+            # volume as /opencode-workspace, but its MCP grant maps run UUIDs
+            # there independently.
+            context.workspace_path = "/workspace"
         context.metadata.setdefault("opencode_runtime_workspace_root", "/workspace")
         # A literal password in adapter configuration is never accepted.  A
         # deployment injects this value through the secret boundary into the
@@ -1811,11 +1811,11 @@ class OpenCodeAdapter(HTTPAdapter):
         return await super()._get_client()
 
     def _query(self, request: WorkerRunRequest) -> dict[str, str]:
-        # The governed workspace path is the API/tool-service view of the
-        # shared volume (normally /opencode-workspace).  OpenCode sees that
-        # same volume under /workspace.  OpenCode sessions use the existing
-        # runtime root; the signed tool grant confines file effects to the run
-        # UUID directory.  A task payload can never redirect the runtime.
+        # The orchestrator and OpenCode runtime see the shared volume under
+        # /workspace; Tool Service uses /opencode-workspace for the same
+        # volume. OpenCode sessions use the existing runtime root, while the
+        # signed tool grant confines file effects to the run UUID directory.
+        # A task payload can never redirect the runtime.
         if not self.context.workspace_path:
             return {}
         runtime_root = str(
