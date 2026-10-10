@@ -42,6 +42,8 @@ networks:
     internal: true
   workers:
     internal: true
+  sandbox_gateway:
+    internal: true
 
 protected_services:
   - service: redis
@@ -57,7 +59,7 @@ protected_services:
     network: internal
     port: 9000
   - service: opencode-runtime
-    network: internal
+    network: sandbox_gateway
     port: 4096
 
 allowed_gateways:

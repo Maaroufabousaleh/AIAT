@@ -84,6 +84,15 @@ networks:
   workers:
     driver: bridge
     internal: true
+  # gVisor cannot use Docker's embedded 127.0.0.11 resolver. This dedicated
+  # bridge gives the runsc OpenCode service stable, host-file-resolved gateway
+  # addresses while keeping its reachable service set internal and narrow.
+  sandbox_gateway:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: "${AIAT_SANDBOX_GATEWAY_SUBNET:-172.31.250.0/29}"
 
 # ── Volumes ───────────────────────────────────────────────────────────────────
 volumes:
@@ -326,9 +335,11 @@ services:
       - path: ../../../.env
         format: raw
     networks:
-      - internal
-      - workers
-      - public
+      internal: {}
+      workers: {}
+      public: {}
+      sandbox_gateway:
+        ipv4_address: "${AIAT_SANDBOX_TOOL_SERVICE_IP:-172.31.250.3}"
     # No host port in production — team-runners reach this gateway on workers;
     # the service itself owns the private data-plane bridges.
     # Use docker-compose.dev.yml to expose for local debugging.
@@ -467,9 +478,11 @@ services:
     image: "${LITELLM_IMAGE_REF:?LITELLM_IMAGE_REF must be an immutable OCI image reference}"
     restart: unless-stopped
     networks:
-      - internal
-      - workers
-      - public
+      internal: {}
+      workers: {}
+      public: {}
+      sandbox_gateway:
+        ipv4_address: "${AIAT_SANDBOX_LITELLM_IP:-172.31.250.4}"
     dns:
       - 1.1.1.1
       - 8.8.8.8
@@ -514,7 +527,13 @@ services:
     runtime: runsc
     user: "10001:10001"
     networks:
-      - internal
+      sandbox_gateway:
+        ipv4_address: "${AIAT_SANDBOX_OPENCODE_IP:-172.31.250.2}"
+    # Docker's embedded DNS listens outside runsc's isolated network stack.
+    # Compose writes these fixed internal addresses into /etc/hosts instead.
+    extra_hosts:
+      - "tool-service=${AIAT_SANDBOX_TOOL_SERVICE_IP:-172.31.250.3}"
+      - "litellm=${AIAT_SANDBOX_LITELLM_IP:-172.31.250.4}"
     depends_on:
       opencode-workspace-init:
         condition: service_completed_successfully
@@ -555,9 +574,11 @@ services:
       - path: ../../../.env
         format: raw
     networks:
-      - internal
-      - workers
-      - public
+      internal: {}
+      workers: {}
+      public: {}
+      sandbox_gateway:
+        ipv4_address: "${AIAT_SANDBOX_ORCHESTRATOR_IP:-172.31.250.5}"
     ports:
       - "127.0.0.1:${AIAT_DEV_ORCHESTRATOR_PORT:-8000}:8000"
     depends_on:
