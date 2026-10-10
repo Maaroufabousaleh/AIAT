@@ -110,6 +110,9 @@ export default function ModelResolutionPreview() {
     setLoading(true);
     setProfilesError("");
     setBudgetError("");
+    // Do not present stale spend or budget values as the current reconciliation
+    // while a refresh is in flight or after the refresh fails.
+    setReconciliation(null);
     const [profileResult, reconciliationResult] = await Promise.allSettled([
       fetch("/api/governance/model-profiles", { cache: "no-store" }),
       fetch("/api/executive/reconciliation", { cache: "no-store" }),
@@ -197,6 +200,11 @@ export default function ModelResolutionPreview() {
 
   const budgets = reconciliation?.budgets;
   const usage = reconciliation?.projects?.usage;
+  const budgetFindingCount = budgets
+    && Array.isArray(budgets.overages)
+    && typeof budgets.reservation_reconciliation?.anomaly_count === "number"
+    ? budgets.overages.length + budgets.reservation_reconciliation.anomaly_count
+    : null;
 
   return (
     <main className="dashboard-page min-h-full space-y-6 p-6 lg:p-8" aria-label="Model governance">
@@ -219,21 +227,21 @@ export default function ModelResolutionPreview() {
       )}
       {profilesError && !accessDenied && <ErrorBanner tone="error" title="Model Profiles unavailable" action={<button type="button" onClick={() => void refresh()} className="min-h-11 rounded border border-current px-3 text-xs">Retry</button>}>{profilesError}</ErrorBanner>}
 
-      <section className="grid gap-3 sm:grid-cols-3" aria-label="Recorded model usage and budgets">
+      <section className="grid gap-3 sm:grid-cols-3" aria-label="Recorded model usage and budgets" aria-busy={loading}>
         <article className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
           <h2 className="text-xs font-medium uppercase tracking-wide text-slate-400">Recorded project usage</h2>
           <p className="mt-2 text-2xl font-semibold text-white">{formatUsd(usage?.total_cost_usd)}</p>
-          <p className="mt-1 text-xs text-slate-500">{usage?.llm_calls ?? 0} recorded model calls across projects</p>
+          <p className="mt-1 text-xs text-slate-500">{typeof usage?.llm_calls === "number" ? usage.llm_calls : "Unavailable"} recorded model calls across projects</p>
         </article>
         <article className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
           <h2 className="text-xs font-medium uppercase tracking-wide text-slate-400">Aggregate budget available</h2>
           <p className="mt-2 text-2xl font-semibold text-white">{formatUsd(budgets?.available_usd)}</p>
-          <p className="mt-1 text-xs text-slate-500">{budgets?.configured_count ?? 0} configured company budget(s); {formatUsd(budgets?.used_usd)} used</p>
+          <p className="mt-1 text-xs text-slate-500">{typeof budgets?.configured_count === "number" ? budgets.configured_count : "Unavailable"} configured company budget(s); {formatUsd(budgets?.used_usd)} used</p>
         </article>
         <article className="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
           <h2 className="text-xs font-medium uppercase tracking-wide text-slate-400">Budget attention</h2>
-          <p className={`mt-2 text-2xl font-semibold ${(budgets?.overages?.length ?? 0) + (budgets?.reservation_reconciliation?.anomaly_count ?? 0) > 0 ? "text-amber-300" : "text-emerald-300"}`}>
-            {(budgets?.overages?.length ?? 0) + (budgets?.reservation_reconciliation?.anomaly_count ?? 0)} finding(s)
+          <p className={`mt-2 text-2xl font-semibold ${budgetFindingCount === null ? "text-slate-300" : budgetFindingCount > 0 ? "text-amber-300" : "text-emerald-300"}`}>
+            {budgetFindingCount ?? "Unavailable"} finding(s)
           </p>
           <p className="mt-1 text-xs text-slate-500">Budget overages and reservation reconciliation anomalies</p>
         </article>

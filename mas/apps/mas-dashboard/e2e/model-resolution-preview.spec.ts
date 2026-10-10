@@ -76,6 +76,42 @@ test("model page previews a governed profile and estimated cost without dispatch
   await expect(page.getByRole("region", { name: "Resolution estimate result" })).toHaveCount(0);
 });
 
+test("model usage cards clear stale values and do not turn missing data into zero after a failed refresh", async ({ page }) => {
+  let failReconciliation = false;
+  await page.route("**/api/governance/model-profiles", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([PROFILE]) });
+  });
+  await page.route("**/api/executive/reconciliation", async (route) => {
+    if (failReconciliation) {
+      await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ detail: "reconciliation unavailable" }) });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        projects: { usage: { total_cost_usd: 1.25, llm_calls: 9 } },
+        budgets: { configured_count: 1, available_usd: 12.5, used_usd: 7.5, overages: [], reservation_reconciliation: { anomaly_count: 0 } },
+      }),
+    });
+  });
+
+  await authenticate(page, "/models");
+  const summary = page.getByRole("region", { name: "Recorded model usage and budgets" });
+  await expect(summary.getByText("$1.25", { exact: true })).toBeVisible();
+  await expect(summary.getByText("9 recorded model calls across projects")).toBeVisible();
+
+  failReconciliation = true;
+  await page.getByRole("button", { name: "Refresh model governance" }).click();
+  await expect(page.getByText("reconciliation unavailable")).toBeVisible();
+  await expect(summary.getByText("Unavailable", { exact: true })).toHaveCount(2);
+  await expect(summary.getByText("Unavailable recorded model calls across projects")).toBeVisible();
+  await expect(summary.getByText("Unavailable configured company budget(s); Unavailable used")).toBeVisible();
+  await expect(summary.getByText("Unavailable finding(s)")).toBeVisible();
+  await expect(summary.getByText("$1.25", { exact: true })).toHaveCount(0);
+  await expect(summary.getByText("9 recorded model calls across projects")).toHaveCount(0);
+});
+
 test("model page shows backend rejection reasons as actionable preview blockers", async ({ page }) => {
   await mockModelReadApis(page);
   await page.route("**/api/governance/model-profiles/resolve-preview", async (route) => {
