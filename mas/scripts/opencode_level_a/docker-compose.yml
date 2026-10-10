@@ -8,7 +8,9 @@ services:
     command: ["/fixture/fixture.mjs"]
     restart: "no"
     read_only: true
-    networks: [isolated]
+    networks:
+      isolated:
+        ipv4_address: ${AIAT_LEVEL_A_FIXTURE_IP:?runner must assign a fixed fixture IP}
     volumes:
       - type: bind
         source: ./fixture.mjs
@@ -41,7 +43,11 @@ services:
     command: ["--config", "/fixture/litellm_config.yaml", "--host", "0.0.0.0", "--port", "4000"]
     restart: "no"
     read_only: true
-    networks: [isolated]
+    networks:
+      isolated:
+        ipv4_address: ${AIAT_LEVEL_A_LITELLM_IP:?runner must assign a fixed gateway IP}
+    extra_hosts:
+      - "provider-fixture:${AIAT_LEVEL_A_FIXTURE_IP:?runner must assign a fixed fixture IP}"
     depends_on:
       provider-fixture:
         condition: service_healthy
@@ -79,7 +85,13 @@ services:
     restart: "no"
     user: "10001:10001"
     read_only: true
-    networks: [isolated]
+    networks:
+      isolated:
+        ipv4_address: ${AIAT_LEVEL_A_OPENCODE_IP:?runner must assign a fixed OpenCode IP}
+    # The runsc network stack cannot reach Docker's embedded DNS listener.
+    # Match production Compose by pinning the internal gateway in /etc/hosts.
+    extra_hosts:
+      - "litellm:${AIAT_LEVEL_A_LITELLM_IP:?runner must assign a fixed gateway IP}"
     depends_on:
       litellm:
         condition: service_healthy

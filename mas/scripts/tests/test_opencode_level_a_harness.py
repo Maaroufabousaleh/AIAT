@@ -30,8 +30,25 @@ def _module():
 
 def test_disposable_compose_is_internal_ephemeral_and_gvisor_only() -> None:
     compose = yaml.safe_load((HARNESS / "docker-compose.yml").read_text())
-    compose["networks"]["isolated"]["ipam"]["config"][0]["subnet"] = "172.31.255.0/29"
     level_a = _module()
+    subnet = "172.31.255.0/29"
+    compose["networks"]["isolated"]["ipam"]["config"][0]["subnet"] = subnet
+    addresses = level_a._service_addresses(subnet)
+    compose["services"]["provider-fixture"]["networks"] = {
+        "isolated": {"ipv4_address": addresses["AIAT_LEVEL_A_FIXTURE_IP"]}
+    }
+    compose["services"]["litellm"]["networks"] = {
+        "isolated": {"ipv4_address": addresses["AIAT_LEVEL_A_LITELLM_IP"]}
+    }
+    compose["services"]["litellm"]["extra_hosts"] = [
+        f"provider-fixture:{addresses['AIAT_LEVEL_A_FIXTURE_IP']}"
+    ]
+    compose["services"]["opencode-runtime"]["networks"] = {
+        "isolated": {"ipv4_address": addresses["AIAT_LEVEL_A_OPENCODE_IP"]}
+    }
+    compose["services"]["opencode-runtime"]["extra_hosts"] = [
+        f"litellm:{addresses['AIAT_LEVEL_A_LITELLM_IP']}"
+    ]
     level_a._assert_compose_config(compose)
 
     assert compose["networks"]["isolated"]["internal"] is True
@@ -42,6 +59,8 @@ def test_disposable_compose_is_internal_ephemeral_and_gvisor_only() -> None:
         "opencode-runtime": "never",
     }
     assert compose["services"]["opencode-runtime"]["runtime"] == "runsc"
+    assert compose["services"]["opencode-runtime"]["extra_hosts"] == ["litellm:172.31.255.3"]
+    assert compose["services"]["litellm"]["extra_hosts"] == ["provider-fixture:172.31.255.2"]
     assert any(
         isinstance(volume, dict) and volume.get("source") == "./probe_helpers.mjs"
         for volume in compose["services"]["opencode-runtime"]["volumes"]
@@ -55,6 +74,50 @@ def test_subnet_selection_skips_existing_docker_or_host_ranges() -> None:
     level_a = _module()
     assert level_a._select_subnet(["172.28.240.0/20"]) == "172.29.240.0/29"
     assert level_a._select_subnet(["172.28.240.0/20", "172.29.240.0/20"]) == "172.30.240.0/29"
+
+
+def test_fixed_service_addresses_use_unique_non_gateway_hosts() -> None:
+    level_a = _module()
+    assert level_a._service_addresses("172.31.255.0/29") == {
+        "AIAT_LEVEL_A_FIXTURE_IP": "172.31.255.2",
+        "AIAT_LEVEL_A_LITELLM_IP": "172.31.255.3",
+        "AIAT_LEVEL_A_OPENCODE_IP": "172.31.255.4",
+    }
+    with pytest.raises(level_a.HarnessError, match="private IPv4 /29"):
+        level_a._service_addresses("192.168.1.0/24")
+
+
+def test_runsc_gateway_preflight_requires_http_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    level_a = _module()
+    calls: list[tuple[str, ...]] = []
+
+    def compose(_project: str, _env: dict[str, str], *args: str, **_kwargs: object) -> SimpleNamespace:
+        calls.append(args)
+        return SimpleNamespace(returncode=0, stdout='{"status":200}\n', stderr="")
+
+    monkeypatch.setattr(level_a, "_compose", compose)
+    level_a._assert_gateway_reachable("fixture-project", {})
+    assert calls[0][:4] == ("exec", "-T", "opencode-runtime", "node")
+
+
+def test_runsc_gateway_preflight_fails_closed_on_dns_or_http_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    level_a = _module()
+    monkeypatch.setattr(
+        level_a,
+        "_compose",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=1,
+            stdout='{"error":"EAI_AGAIN"}\n',
+            stderr="private runtime diagnostics",
+        ),
+    )
+    with pytest.raises(level_a.HarnessError) as raised:
+        level_a._assert_gateway_reachable("fixture-project", {})
+    assert raised.value.code == "GATEWAY_UNREACHABLE"
+    assert "EAI_AGAIN" not in str(raised.value)
+    assert "private runtime diagnostics" not in str(raised.value)
 
 
 def test_litellm_has_one_local_fixture_upstream() -> None:
@@ -209,6 +272,7 @@ def test_failed_opencode_probe_keeps_safe_stage_and_fixture_summary_before_clean
     monkeypatch.setattr(level_a, "_validate_compose_config", lambda *_args: {})
     monkeypatch.setattr(level_a, "_wait_healthy", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(level_a, "_assert_opencode_version", lambda *_args: None)
+    monkeypatch.setattr(level_a, "_assert_gateway_reachable", lambda *_args: None)
 
     def container_network(_project: str, service: str, _env: dict[str, str]) -> tuple[str, str]:
         addresses = {

@@ -85,6 +85,31 @@ def _select_subnet(occupied: list[str]) -> str:
     raise HarnessError("no non-overlapping private /29 is available for the isolated Compose network")
 
 
+def _service_addresses(subnet: str) -> dict[str, str]:
+    """Choose stable service IPs inside the selected isolated /29.
+
+    OpenCode runs under runsc, where Docker's embedded DNS resolver is not
+    reachable.  The production Compose stack uses explicit ``extra_hosts`` for
+    the same reason.  Reserve the first three usable addresses after Docker's
+    gateway for the fixture, gateway, and OpenCode runtime respectively.
+    """
+
+    try:
+        network = ipaddress.ip_network(subnet, strict=True)
+    except ValueError as exc:
+        raise HarnessError("isolated service subnet is invalid") from exc
+    if not isinstance(network, ipaddress.IPv4Network) or network.prefixlen != 29 or not network.is_private:
+        raise HarnessError("isolated service addresses require a private IPv4 /29")
+    hosts = list(network.hosts())
+    if len(hosts) != 6:
+        raise HarnessError("isolated service subnet does not have the expected host capacity")
+    return {
+        "AIAT_LEVEL_A_FIXTURE_IP": str(hosts[1]),
+        "AIAT_LEVEL_A_LITELLM_IP": str(hosts[2]),
+        "AIAT_LEVEL_A_OPENCODE_IP": str(hosts[3]),
+    }
+
+
 def _available_subnet(env: dict[str, str]) -> str:
     networks = _run(["docker", "network", "ls", "-q"], env=env, timeout=15)
     identifiers = networks.stdout.split()
@@ -214,6 +239,7 @@ def _assert_compose_config(config: dict[str, Any]) -> None:
         raise HarnessError("isolated Compose subnet is invalid") from exc
     if not isinstance(subnet, ipaddress.IPv4Network) or subnet.prefixlen != 29 or not subnet.is_private:
         raise HarnessError("isolated Compose subnet must be a private IPv4 /29")
+    service_addresses: dict[str, ipaddress.IPv4Address] = {}
     if config.get("volumes"):
         raise HarnessError("isolated Compose must not declare persistent volumes")
     if config.get("secrets"):
@@ -228,6 +254,45 @@ def _assert_compose_config(config: dict[str, Any]) -> None:
         attached = service.get("networks", [])
         if set(attached) != {"isolated"}:
             raise HarnessError(f"isolated service {name!r} has an unexpected network")
+        network_config = attached.get("isolated") if isinstance(attached, dict) else None
+        raw_address = network_config.get("ipv4_address") if isinstance(network_config, dict) else None
+        try:
+            address = ipaddress.ip_address(str(raw_address))
+        except ValueError as exc:
+            raise HarnessError(f"isolated service {name!r} has no fixed IPv4 address") from exc
+        if not isinstance(address, ipaddress.IPv4Address) or address not in subnet or address in {
+            subnet.network_address,
+            subnet.broadcast_address,
+            next(subnet.hosts()),
+        }:
+            raise HarnessError(f"isolated service {name!r} has an invalid fixed IPv4 address")
+        service_addresses[name] = address
+    if len(set(service_addresses.values())) != len(services):
+        raise HarnessError("isolated services must have unique fixed IPv4 addresses")
+
+    def host_mappings(service: dict[str, Any]) -> dict[str, str]:
+        mappings: dict[str, str] = {}
+        for entry in service.get("extra_hosts", []) or []:
+            if isinstance(entry, str):
+                for separator in (":", "="):
+                    if separator in entry:
+                        host, address = entry.split(separator, maxsplit=1)
+                        mappings[host] = address
+                        break
+            elif isinstance(entry, dict):
+                host = entry.get("host")
+                address = entry.get("ip")
+                if isinstance(host, str) and isinstance(address, str):
+                    mappings[host] = address
+        return mappings
+
+    expected_mappings = {
+        "litellm": str(service_addresses["litellm"]),
+    }
+    if host_mappings(services["opencode-runtime"]) != expected_mappings:
+        raise HarnessError("runsc OpenCode runtime must resolve only the fixed internal LiteLLM gateway address")
+    if host_mappings(services["litellm"]) != {"provider-fixture": str(service_addresses["provider-fixture"])}:
+        raise HarnessError("local LiteLLM must resolve only the fixed provider-fixture address")
     runtime = services["opencode-runtime"]
     if runtime.get("runtime") != "runsc":
         raise HarnessError("OpenCode runtime must use runsc; refusing any isolation downgrade")
@@ -290,6 +355,34 @@ def _container_network(project: str, service: str, env: dict[str, str]) -> tuple
     if not address:
         raise HarnessError(f"service {service!r} has no isolated-network address")
     return container_id, address
+
+
+def _assert_gateway_reachable(project: str, env: dict[str, str]) -> None:
+    """Prove runsc can reach LiteLLM before attempting an OpenCode prompt."""
+
+    probe = (
+        "fetch('http://litellm:4000/health/liveliness',{signal:AbortSignal.timeout(3000)})"
+        ".then(r=>process.stdout.write(JSON.stringify({status:r.status})))"
+        ".catch(e=>{process.stdout.write(JSON.stringify({error:e.cause?.code||e.name}));process.exitCode=1})"
+    )
+    result = _compose(
+        project,
+        env,
+        "exec",
+        "-T",
+        "opencode-runtime",
+        "node",
+        "-e",
+        probe,
+        timeout=8,
+        check=False,
+    )
+    try:
+        outcome = json.loads(result.stdout.splitlines()[-1])
+    except (json.JSONDecodeError, IndexError) as exc:
+        raise HarnessError("runsc gateway probe returned invalid output", code="GATEWAY_PROBE_INVALID") from exc
+    if result.returncode != 0 or outcome.get("status") != 200:
+        raise HarnessError("runsc OpenCode runtime cannot reach the approved local model gateway", code="GATEWAY_UNREACHABLE")
 
 
 def _fixture_report(project: str, env: dict[str, str]) -> dict[str, Any]:
@@ -424,6 +517,7 @@ def _run_live(opencode_image: str, litellm_image: str) -> dict[str, Any]:
     try:
         stage = "preflight.subnet"
         env["AIAT_LEVEL_A_SUBNET"] = _available_subnet(env)
+        env.update(_service_addresses(env["AIAT_LEVEL_A_SUBNET"]))
         stage = "preflight.runsc"
         _assert_runsc(env)
         stage = "preflight.images"
@@ -453,6 +547,10 @@ def _run_live(opencode_image: str, litellm_image: str) -> dict[str, Any]:
         ).stdout.strip().lower()
         if network != "true":
             raise HarnessError("isolated Docker network is not marked internal", code="NETWORK_NOT_INTERNAL")
+
+        stage = "network.gateway"
+        _assert_gateway_reachable(project, env)
+        report["gateway_connectivity"] = "PASS"
 
         stage = "network.egress"
         probe = _compose(project, env, "exec", "-T", "opencode-runtime", "node", "/fixture/egress_probe.mjs", timeout=10)
