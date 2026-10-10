@@ -292,6 +292,19 @@ The dashboard is the human control and evidence surface for AIAT. It must make c
   evidence is retained at
   [`mas/docs/provenance/dashboard_e2e_live.json`](../../mas/docs/provenance/dashboard_e2e_live.json).
 
+### Product integration updates (2026-10-10)
+
+- The Companies page now displays company-scoped recorded project usage,
+  aggregate reservation reconciliation, and each configured budget pool's
+  limit, used amount, available amount, and period. Each read is bound to the
+  selected company, stale responses are ignored after a company switch, and
+  the two sources expose independent loading, retry, and unconfigured states.
+  Focused current-source Playwright coverage passes 2/2 and the authenticated
+  BFF route tests pass 3/3 with mocked API responses and no provider dispatch.
+  A scoped TypeScript check passed while excluding malformed generated
+  `.next/dev/types` files; the workspace-wide check remains blocked by syntax
+  errors in those generated files.
+
 ### Product integration updates (2026-10-09)
 
 - Company manifest editing now refreshes canonical detail/history after a

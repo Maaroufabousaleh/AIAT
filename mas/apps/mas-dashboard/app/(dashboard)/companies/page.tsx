@@ -25,6 +25,40 @@ type CompanyReadModel = {
   budgets?: Row[];
 };
 
+type CompanyReconciliation = {
+  projects?: {
+    usage?: {
+      total_cost_usd?: number;
+      llm_calls?: number;
+      tool_calls?: number;
+      total_tokens?: number;
+      failed_calls?: number;
+    };
+  };
+  budgets?: {
+    configured_count?: number;
+    limit_usd?: number;
+    used_usd?: number;
+    available_usd?: number;
+    reservation_states?: Record<string, number>;
+    reservation_reconciliation?: {
+      active_amount_usd?: number;
+      anomaly_count?: number;
+    };
+    overages?: unknown[];
+  };
+};
+
+type CompanyBudgetBalance = {
+  budget_key?: string;
+  configured?: boolean;
+  limit?: number | string;
+  used?: number | string;
+  available?: number | string;
+  currency?: string;
+  period?: string;
+};
+
 type ManifestVersion = {
   id?: string;
   manifest_version: number;
@@ -67,6 +101,21 @@ function dateTime(value: unknown): string {
   if (typeof value !== "string") return "—";
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+function money(value: unknown, currency = "USD"): string {
+  const amount = typeof value === "number"
+    ? value
+    : typeof value === "string" && value.trim()
+      ? Number(value)
+      : Number.NaN;
+  if (!Number.isFinite(amount)) return "Unavailable";
+  const safeCurrency = /^[A-Z]{3}$/.test(currency) ? currency : "USD";
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: safeCurrency,
+    maximumFractionDigits: 2,
+  }).format(amount);
 }
 
 function rowName(row: Row, candidates: string[]): string {
@@ -172,6 +221,18 @@ export default function CompaniesPage() {
   const [selectedId, setSelectedId] = useState("");
   const selectedIdRef = useRef("");
   const [detail, setDetail] = useState<CompanyReadModel | null>(null);
+  const [companyReconciliation, setCompanyReconciliation] = useState<{
+    companyId: string;
+    report: CompanyReconciliation;
+  } | null>(null);
+  const [companyBudgetBalances, setCompanyBudgetBalances] = useState<{
+    companyId: string;
+    rows: CompanyBudgetBalance[];
+  } | null>(null);
+  const [reconciliationLoading, setReconciliationLoading] = useState(false);
+  const [reconciliationError, setReconciliationError] = useState("");
+  const [budgetBalancesLoading, setBudgetBalancesLoading] = useState(false);
+  const [budgetBalancesError, setBudgetBalancesError] = useState("");
   const [history, setHistory] = useState<ManifestVersion[]>([]);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -188,6 +249,8 @@ export default function CompaniesPage() {
   const [validatedManifestVersion, setValidatedManifestVersion] = useState<number | null>(null);
   const validationGeneration = useRef(0);
   const detailLoadGeneration = useRef(0);
+  const reconciliationGeneration = useRef(0);
+  const budgetBalancesGeneration = useRef(0);
   const [manifestConflict, setManifestConflict] = useState(false);
   const [manifestBusy, setManifestBusy] = useState(false);
   const [rollbackVersion, setRollbackVersion] = useState<number | null>(null);
@@ -269,6 +332,66 @@ export default function CompaniesPage() {
     }
   }, []);
 
+  const loadCompanyReconciliation = useCallback(async (id: string) => {
+    const requestGeneration = ++reconciliationGeneration.current;
+    if (!id) {
+      setCompanyReconciliation(null);
+      setReconciliationError("");
+      setReconciliationLoading(false);
+      return;
+    }
+    setCompanyReconciliation(null);
+    setReconciliationError("");
+    setReconciliationLoading(true);
+    try {
+      const report = await requestJson<CompanyReconciliation>(
+        `/api/executive/reconciliation?company_id=${encodeURIComponent(id)}`,
+      );
+      if (requestGeneration !== reconciliationGeneration.current || id !== selectedIdRef.current) return;
+      setCompanyReconciliation({ companyId: id, report });
+    } catch (reason) {
+      if (requestGeneration !== reconciliationGeneration.current || id !== selectedIdRef.current) return;
+      setReconciliationError(
+        reason instanceof Error
+          ? reason.message
+          : "Company usage and budget reconciliation could not be loaded.",
+      );
+    } finally {
+      if (requestGeneration === reconciliationGeneration.current && id === selectedIdRef.current) {
+        setReconciliationLoading(false);
+      }
+    }
+  }, []);
+
+  const loadCompanyBudgetBalances = useCallback(async (id: string) => {
+    const requestGeneration = ++budgetBalancesGeneration.current;
+    if (!id) {
+      setCompanyBudgetBalances(null);
+      setBudgetBalancesError("");
+      setBudgetBalancesLoading(false);
+      return;
+    }
+    setCompanyBudgetBalances(null);
+    setBudgetBalancesError("");
+    setBudgetBalancesLoading(true);
+    try {
+      const rows = await requestJson<CompanyBudgetBalance[]>(
+        `/api/companies/${encodeURIComponent(id)}/budgets`,
+      );
+      if (requestGeneration !== budgetBalancesGeneration.current || id !== selectedIdRef.current) return;
+      setCompanyBudgetBalances({ companyId: id, rows: Array.isArray(rows) ? rows : [] });
+    } catch (reason) {
+      if (requestGeneration !== budgetBalancesGeneration.current || id !== selectedIdRef.current) return;
+      setBudgetBalancesError(
+        reason instanceof Error ? reason.message : "Company budget balances could not be loaded.",
+      );
+    } finally {
+      if (requestGeneration === budgetBalancesGeneration.current && id === selectedIdRef.current) {
+        setBudgetBalancesLoading(false);
+      }
+    }
+  }, []);
+
   useEffect(() => {
     void loadRegisteredWorkers();
     return () => { workerLoadGeneration.current += 1; };
@@ -320,6 +443,8 @@ export default function CompaniesPage() {
 
   const loadSelected = useCallback(async (id: string, options?: { preserveDraft?: boolean }): Promise<CompanyReadModel | null> => {
     if (!id || id !== selectedIdRef.current) return null;
+    void loadCompanyReconciliation(id);
+    void loadCompanyBudgetBalances(id);
     const requestGeneration = ++detailLoadGeneration.current;
     const preserveDraft = options?.preserveDraft ?? false;
     clearValidatedManifest();
@@ -353,7 +478,7 @@ export default function CompaniesPage() {
     } finally {
       if (requestGeneration === detailLoadGeneration.current && id === selectedIdRef.current) setDetailLoading(false);
     }
-  }, [clearValidatedManifest]);
+  }, [clearValidatedManifest, loadCompanyBudgetBalances, loadCompanyReconciliation]);
 
   useEffect(() => { void loadSelected(selectedId); }, [loadSelected, selectedId]);
 
@@ -712,6 +837,14 @@ export default function CompaniesPage() {
   const departments = detail?.departments ?? [];
   const assignments = detail?.assignments ?? [];
   const budgets = detail?.budgets ?? [];
+  const selectedReconciliation = companyReconciliation?.companyId === selectedId
+    ? companyReconciliation.report
+    : null;
+  const selectedBudgetBalances = companyBudgetBalances?.companyId === selectedId
+    ? companyBudgetBalances.rows
+    : null;
+  const selectedUsage = selectedReconciliation?.projects?.usage;
+  const selectedBudgetState = selectedReconciliation?.budgets;
   const activeManifestVersion = Number(detail?.manifest?.manifest_version ?? 0);
   const canApply = Boolean(parsedManifest && validationDigest && validatedManifestVersion !== null && validatedText === manifestText && !manifestBusy);
 
@@ -803,6 +936,162 @@ export default function CompaniesPage() {
                   <Metric label="Worker assignments" value={assignments.length} />
                   <Metric label="Budgets" value={budgets.length} />
                   <Metric label="Manifest version" value={activeManifestVersion} />
+                </div>
+              </section>
+
+              <section
+                className="rounded-2xl border border-slate-800 bg-slate-950/45 p-5"
+                aria-label="Company usage and budgets"
+                aria-busy={reconciliationLoading || budgetBalancesLoading}
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-base font-semibold text-white">Usage and budget balance</h2>
+                    <p className="mt-1 text-sm text-slate-400">Durable project usage and budget reservations for {company.name}.</p>
+                  </div>
+                  <button
+                    type="button"
+                    className={buttonClass}
+                    onClick={() => {
+                      void loadCompanyReconciliation(selectedId);
+                      void loadCompanyBudgetBalances(selectedId);
+                    }}
+                    disabled={reconciliationLoading || budgetBalancesLoading || !selectedId}
+                    aria-label="Refresh company usage and budgets"
+                  >
+                    <RefreshCw size={14} className={reconciliationLoading || budgetBalancesLoading ? "animate-spin" : ""} />
+                    {reconciliationLoading || budgetBalancesLoading ? "Refreshing…" : "Refresh usage"}
+                  </button>
+                </div>
+
+                {reconciliationError && (
+                  <div className="mt-4" role="alert">
+                    <ErrorBanner
+                      title="Company usage and budgets unavailable"
+                      action={(
+                        <button
+                          type="button"
+                          className={buttonClass}
+                          onClick={() => void loadCompanyReconciliation(selectedId)}
+                          disabled={reconciliationLoading}
+                        >
+                          Retry
+                        </button>
+                      )}
+                    >
+                      {reconciliationError}
+                    </ErrorBanner>
+                  </div>
+                )}
+
+                {reconciliationLoading && !selectedReconciliation && (
+                  <p className="mt-4 text-sm text-slate-400" role="status">Loading company usage and budget balance…</p>
+                )}
+
+                {!reconciliationLoading && !reconciliationError && !selectedReconciliation && (
+                  <p className="mt-4 text-sm text-slate-500" role="status">Company usage and budget reconciliation is not available yet.</p>
+                )}
+
+                {selectedReconciliation && (
+                  <>
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="Company usage summary">
+                      <article className="rounded-xl border border-slate-800 bg-slate-950/50 p-4">
+                        <h3 className="text-xs font-medium uppercase tracking-wide text-slate-500">Recorded project spend</h3>
+                        <p className="mt-1 text-xl font-semibold text-white">{money(selectedUsage?.total_cost_usd)}</p>
+                        <p className="mt-1 text-xs text-slate-500">{selectedUsage?.llm_calls ?? 0} model · {selectedUsage?.tool_calls ?? 0} tool calls</p>
+                      </article>
+                      <article className="rounded-xl border border-slate-800 bg-slate-950/50 p-4">
+                        <h3 className="text-xs font-medium uppercase tracking-wide text-slate-500">Budget limit</h3>
+                        <p className="mt-1 text-xl font-semibold text-white">{money(selectedBudgetState?.limit_usd)}</p>
+                        <p className="mt-1 text-xs text-slate-500">{selectedBudgetState?.configured_count ?? 0} configured budget(s)</p>
+                      </article>
+                      <article className="rounded-xl border border-slate-800 bg-slate-950/50 p-4">
+                        <h3 className="text-xs font-medium uppercase tracking-wide text-slate-500">Budget used · available</h3>
+                        <p className="mt-1 text-xl font-semibold text-white">
+                          {money(selectedBudgetState?.used_usd)} · {money(selectedBudgetState?.available_usd)}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500">Across this company’s configured budget pools</p>
+                      </article>
+                      <article className="rounded-xl border border-slate-800 bg-slate-950/50 p-4">
+                        <h3 className="text-xs font-medium uppercase tracking-wide text-slate-500">Active reservations</h3>
+                        <p className="mt-1 text-xl font-semibold text-white">{money(selectedBudgetState?.reservation_reconciliation?.active_amount_usd)}</p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {selectedBudgetState?.reservation_states?.RESERVED ?? 0} reserved · {selectedBudgetState?.reservation_states?.COMMITTED ?? 0} committed
+                        </p>
+                      </article>
+                    </div>
+                    {selectedBudgetState?.configured_count === 0 && (
+                      <p className="mt-3 text-sm text-amber-200" role="status">No company budget pools are configured. This does not mean spending is unlimited.</p>
+                    )}
+                    {(selectedBudgetState?.overages?.length ?? 0) > 0 && (
+                      <p className="mt-3 text-sm text-amber-200" role="status">{selectedBudgetState?.overages?.length} company budget overage(s) need review.</p>
+                    )}
+                    {(selectedBudgetState?.reservation_reconciliation?.anomaly_count ?? 0) > 0 && (
+                      <p className="mt-3 text-sm text-amber-200" role="status">{selectedBudgetState?.reservation_reconciliation?.anomaly_count} reservation reconciliation finding(s) need review.</p>
+                    )}
+                  </>
+                )}
+
+                <div className="mt-5 border-t border-slate-800 pt-4" aria-label="Company budget pools">
+                  <div>
+                    <h3 className="text-sm font-semibold text-white">Budget pool balances</h3>
+                    <p className="mt-1 text-xs text-slate-500">Each pool is shown separately so one pool’s remaining balance cannot hide another pool’s overage.</p>
+                  </div>
+                  {budgetBalancesError && (
+                    <div className="mt-3" role="alert">
+                      <ErrorBanner
+                        title="Company budget pools unavailable"
+                        action={(
+                          <button
+                            type="button"
+                            className={buttonClass}
+                            onClick={() => void loadCompanyBudgetBalances(selectedId)}
+                            disabled={budgetBalancesLoading}
+                          >
+                            Retry budget pools
+                          </button>
+                        )}
+                      >
+                        {budgetBalancesError}
+                      </ErrorBanner>
+                    </div>
+                  )}
+                  {budgetBalancesLoading && !selectedBudgetBalances && (
+                    <p className="mt-3 text-sm text-slate-400" role="status">Loading company budget pools…</p>
+                  )}
+                  {!budgetBalancesLoading && !budgetBalancesError && selectedBudgetBalances?.length === 0 && (
+                    <p className="mt-3 text-sm text-slate-500" role="status">No configured company budget pools were returned.</p>
+                  )}
+                  {selectedBudgetBalances && selectedBudgetBalances.length > 0 && (
+                    <div className="mt-3 overflow-x-auto rounded-xl border border-slate-800">
+                      <table className="w-full min-w-[42rem] text-left text-sm" aria-label="Company budget balances">
+                        <thead className="bg-slate-900/80 text-xs uppercase tracking-wide text-slate-500">
+                          <tr>
+                            <th scope="col" className="px-3 py-2">Budget pool</th>
+                            <th scope="col" className="px-3 py-2">Limit</th>
+                            <th scope="col" className="px-3 py-2">Used</th>
+                            <th scope="col" className="px-3 py-2">Available</th>
+                            <th scope="col" className="px-3 py-2">Period</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800 text-slate-300">
+                          {selectedBudgetBalances.map((budget, index) => {
+                            const key = budget.budget_key || `budget-${index + 1}`;
+                            const currency = budget.currency || "USD";
+                            return (
+                              <tr key={key} aria-label={`${key} budget balance`}>
+                                <th scope="row" className="px-3 py-2 font-medium text-white">{key}</th>
+                                <td className="px-3 py-2">{money(budget.limit, currency)}</td>
+                                <td className="px-3 py-2">{money(budget.used, currency)}</td>
+                                <td className="px-3 py-2">{money(budget.available, currency)}</td>
+                                <td className="px-3 py-2">{budget.period || "lifetime"}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
               </section>
 
