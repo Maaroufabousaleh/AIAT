@@ -3412,6 +3412,17 @@ export default function ProjectDetailPage() {
                             ? ` · ${(artifact.size_bytes / 1024).toFixed(1)} KB`
                             : ""}
                         </div>
+                        {typeof artifact.id === "number" &&
+                          Number.isSafeInteger(artifact.id) &&
+                          artifact.id > 0 && (
+                            <Link
+                              href={`/evidence/artifact/${encodeURIComponent(String(artifact.id))}`}
+                              aria-label={`Inspect evidence for artifact ${artifact.path}`}
+                              className="mt-2 inline-flex min-h-11 items-center rounded-md border border-cyan-700/60 px-3 py-2 text-xs font-medium text-cyan-200 underline decoration-cyan-700/50 underline-offset-4 hover:bg-cyan-950/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
+                            >
+                              Inspect artifact evidence
+                            </Link>
+                          )}
                       </div>
                     ))
                   )}

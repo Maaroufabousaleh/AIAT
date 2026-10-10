@@ -146,6 +146,10 @@ test("project workspace follows scoped worker runs, issues, artifacts, and cost"
   await expect(runLink).toHaveAttribute("href", `/workers/runs/${RUN_ID}`);
   await detail.getByRole("tab", { name: "Resources" }).click();
   await expect(detail.getByText("reports/summary.md")).toBeVisible();
+  const artifactEvidenceLink = detail.getByRole("link", {
+    name: "Inspect evidence for artifact reports/summary.md",
+  });
+  await expect(artifactEvidenceLink).toHaveAttribute("href", "/evidence/artifact/41");
   await detail.getByRole("tab", { name: "Cost" }).click();
   await expect(detail.getByText("$0.25")).toBeVisible();
   await expect(detail.getByText("950", { exact: true })).toBeVisible();
