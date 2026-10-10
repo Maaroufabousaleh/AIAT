@@ -47,7 +47,7 @@ CANONICAL_PROFILES = CANONICAL_SANDBOX_CLASSES
 ALLOWED_NETWORK_MODES = frozenset({"unrestricted", "egress-allowlist", "egress-deny-all"})
 HARDENED_PROFILES = HARDENED_SANDBOX_CLASSES
 OPENCODE_SERVICE = "opencode-runtime"
-OPENCODE_NETWORK = "internal"
+OPENCODE_NETWORK = "sandbox_gateway"
 OPENCODE_MAX_MEMORY_BYTES = 1024 * 1024 * 1024
 OPENCODE_MAX_CPUS = 1.0
 OPENCODE_MAX_PIDS = 256
@@ -124,6 +124,13 @@ def _inspect_opencode_runtime(compose_path: Path) -> dict[str, Any]:
 
     if _service_networks(service) != {OPENCODE_NETWORK}:
         errors.append(f"{OPENCODE_SERVICE}: networks must be exactly [{OPENCODE_NETWORK!r}]")
+    networks = compose.get("networks") or {}
+    opencode_network = networks.get(OPENCODE_NETWORK) if isinstance(networks, dict) else None
+    network_internal = (
+        isinstance(opencode_network, dict) and opencode_network.get("internal") is True
+    )
+    if not network_internal:
+        errors.append(f"network {OPENCODE_NETWORK!r} must be declared internal")
     if str(service.get("runtime") or "").strip() != "runsc":
         errors.append(f"{OPENCODE_SERVICE}: runtime must be explicitly set to runsc")
     if service.get("env_file"):
@@ -201,6 +208,7 @@ def _inspect_opencode_runtime(compose_path: Path) -> dict[str, Any]:
         "service": OPENCODE_SERVICE,
         "runtime": str(service.get("runtime") or ""),
         "network": sorted(_service_networks(service)),
+        "network_internal": network_internal,
         "environment_names": sorted(environment_names),
         "user": user,
         "read_only": service.get("read_only") is True,

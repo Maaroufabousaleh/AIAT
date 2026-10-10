@@ -29,7 +29,8 @@ def test_static_sandbox_declarations_pass() -> None:
     assert report["hardened_worker_count"] > 0
     assert report["opencode_runtime"]["status"] == "pass"
     assert report["opencode_runtime"]["runtime"] == "runsc"
-    assert report["opencode_runtime"]["network"] == ["internal"]
+    assert report["opencode_runtime"]["network"] == ["sandbox_gateway"]
+    assert report["opencode_runtime"]["network_internal"] is True
     assert report["opencode_runtime"]["environment_names"] == [
         "AIAT_GATEWAY_API_KEY",
         "AIAT_GATEWAY_URL",
@@ -70,6 +71,26 @@ def test_static_sandbox_contract_rejects_unsafe_opencode_runtime(tmp_path: Path)
     assert "runtime must be explicitly set to runsc" in errors
     assert "broad env_file injection is forbidden" in errors
     assert "POSTGRES_PASSWORD" in errors
+
+
+def test_static_sandbox_contract_requires_internal_sandbox_gateway(tmp_path: Path) -> None:
+    compose = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
+    compose["networks"]["sandbox_gateway"]["internal"] = False
+    path = tmp_path / "compose.yml"
+    path.write_text(yaml.safe_dump(compose, sort_keys=False), encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--compose", str(path), "--json"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1
+    report = json.loads(result.stdout)
+    assert report["status"] == "fail"
+    assert "network 'sandbox_gateway' must be declared internal" in " ".join(
+        report["errors"]
+    )
 
 
 def test_live_sandbox_readiness_is_blocked_without_docker_engine(monkeypatch) -> None:
