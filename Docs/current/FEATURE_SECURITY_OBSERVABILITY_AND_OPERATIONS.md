@@ -4,7 +4,7 @@
 **Status:** strong implementation foundation; request-level propagation, durable payload-free API observations, bounded trace evidence, native core spans, descriptive SLO/capacity projections, the typed read-only retention-plan API/live checker (`f8829d6`, `b3fca97`, `9a80c6c`), the hardened team-runner control-plane storage boundary (`22fc21a`), the policy-driven deny/allow matrix (`96fb71f`), sender role/team communication-policy enforcement (`fb39128`), the source-built hierarchy communication-policy overlay (`8b7d9f1`), secret-safe control-plane dependency diagnostics (`2860838`), the API-facing `mas-ctl` operator wrapper (`380daf5`), local API/transport read-back, and dashboard metrics partial/stale/retry recovery (`85596b0`, source-built `metrics-states.spec.ts` 1/1) are verified. The current dashboard image and focused hierarchy E2E now pass locally (`d5f596e`); broader release-image, native-Linux, sandbox, metrics, recovery, model/tool worker, mail-edge, live retention enforcement, and full cross-service span gates remain
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
-**Current WSL2 development result (2026-10-02):** `DEV_READY`. AIAT uses the
+**Historical WSL2 development result (2026-10-02; network result superseded):** `DEV_READY`. AIAT uses the
 dedicated `aiat-wsl` Docker Engine, separate from Docker Desktop's `default`
 context. The local Compose stack is healthy; authenticated `/health`,
 `/projects`, and `/capabilities/workers` return HTTP 200, with 0 projects and
@@ -35,7 +35,7 @@ development host but remains outside native release certification, and direct
 Firecracker is compatibility/superseded evidence rather than an active policy
 tier.
 
-**Current certification refresh (2026-10-02):** the exact OpenCode v1.18.21
+**Retained candidate scan refresh (2026-10-02):** the exact OpenCode v1.18.21
 candidate retains the source snapshot, pinned image digest, sanitized scanner
 results, exact tool versions/invocations, result hashes, and CycloneDX SBOM
 under
@@ -62,8 +62,27 @@ open and the technical gate remains blocked. The older v1.17.13 record has no
 retained raw results or exact source snapshot; its scalar counts remain
 excluded from active findings. The local live ledger records 80 pass, 1 fail,
 3 blocked, and 5 not-in-scope checks; the failure is the runner network matrix,
-which cannot probe stopped team-runner containers. The current WSL host does
-not establish native-Linux certification.
+which could not probe stopped team-runner containers. That network result is
+superseded by the separate refresh below; the retained ledger file itself has
+not yet aggregated it.
+
+**Current local network refresh (2026-10-10):** the live network-boundary
+checker now reports PASS from the `aiat-wsl` daemon. The retained
+[`network_boundary_live_current.json`](../../mas/docs/provenance/network_boundary_live_current.json)
+is scoped to source revision `8146ea10e136047c0069c68f3af014cf6fb653b0` and
+records 4/4 orchestrator connections, 2/2 runsc gateway probes, 4/4 runsc
+protected-service denials, 11/11 TeamRunner containers, 44/44 TeamRunner
+gateway probes, 66/66 TeamRunner protected/external denials, 11/11 storage
+health probes, no Docker socket or forbidden environment names in the TeamRunner
+containers, and no checker errors. Authenticated `/health`, `/projects`, and
+`/capabilities/workers` returned HTTP 200; the worker catalogue returned 39
+manifests. The source and live development database both report migration head
+`0048_worker_run_retry_lineage`. No OpenCode project task or external model
+request is represented by this evidence. The WSL2 matrix does not establish
+native-Linux release certification, clear the retained OpenCode human review
+items, or change the canonical `NO-RELEASE / RELEASE_CERTIFICATION_PENDING`
+decision. The 2026-10-02 release-ledger artifact still contains the earlier
+runner-matrix failure and must be rerun to aggregate this newer network result.
 
 ## Purpose
 
@@ -82,10 +101,13 @@ AIAT must make dangerous automation bounded, attributable, observable, and recov
   longer a separate AIAT policy tier.
 - `check_sandbox_runtime_readiness.py` validates the 39 worker sandbox
   declarations, the 10 hardened external workers, and the AIAT-owned
-  `opencode-runtime` Compose boundary: internal-only networking, no host
+  `opencode-runtime` Compose boundary: exclusive attachment to the dedicated
+  `sandbox_gateway` network, with the network itself required to be declared
+  internal; no host
   publication, non-root/read-only execution, dropped capabilities,
   `no-new-privileges`, bounded CPU/memory/PIDs, and noexec/nosuid tmpfs
-  paths (`2c098f5`). It also provides a fail-closed Docker `runsc`
+  paths (`2c098f5`, checker regression `8f8bebfe`; focused checker suite
+  passes 10/10). It also provides a fail-closed Docker `runsc`
   registration probe; optional digest-pinned smoke, network-denial, canary,
   and Kata `vm_isolated` checks remain explicit evidence stages. Direct
   Firecracker checks are compatibility/benchmark evidence only.

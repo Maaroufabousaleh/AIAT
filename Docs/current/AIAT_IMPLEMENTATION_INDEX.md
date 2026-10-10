@@ -5,7 +5,7 @@
 `571a6a496e83df816b19c1326070671f76074e89` plus the current alpha integration
 commits and preserved working-tree evidence; this is not a clean release
 candidate
-**Index date:** 2026-10-09
+**Index date:** 2026-10-10
 **Release status:** `NO-RELEASE / RELEASE_CERTIFICATION_PENDING`
 
 ## Purpose
@@ -34,7 +34,7 @@ The retained secret-safe development-host artifact is dated 2026-09-20:
 
 | Status | Result |
 | --- | --- |
-| Development | **`DEV_READY` on the current WSL2 host.** The dedicated `aiat-wsl` daemon is separate from Docker Desktop's `default` context; the Compose services and authenticated APIs are healthy. Current boundary re-probe is incomplete because team-runner containers remain stopped with provider dispatch unauthorized. |
+| Development | **`DEV_READY` on the current WSL2 host.** The dedicated `aiat-wsl` daemon is separate from Docker Desktop's `default` context; authenticated APIs and the 2026-10-10 live network matrix pass. The retained matrix reports 4/4 control-plane connections, 2/2 runsc gateway probes, 4/4 runsc protected-service denials, 11/11 TeamRunners, 44/44 TeamRunner gateway probes, 66/66 protected/external denials, and 11/11 storage-health probes. This WSL result is not native-Linux certification. |
 | Release | **`RELEASE_CERTIFICATION_PENDING`** — WSL2 is not native-Linux release evidence. |
 | Sandbox policy | `trusted → runc`, explicit WASM artifacts → optional Wasmtime, `sandboxed → runsc`, `vm_isolated → Kata`; old profile names remain read-compatible aliases and required classes fail closed. |
 | Kata | **`AVAILABLE` for local development** — pinned Kata runtime-rs 4.2.0/QEMU is registered; the 2026-10-02 Kata guest-kernel smoke passes with a kernel distinct from the WSL host. Native-Linux release certification remains pending. |
@@ -43,7 +43,7 @@ This status is deliberately separate from the release ledger's global
 `NO-RELEASE` decision. Development is not blocked merely because native-host,
 provider, operator, or deployment certification remains open.
 
-## Feature-complete alpha scoreboard (2026-10-09)
+## Feature-complete alpha scoreboard (2026-10-10)
 
 This is a development view of the personal/internal application. E2E partial
 means the operator surface is covered by local fixtures, but the complete
@@ -54,14 +54,14 @@ worker run. Production certification stays in the separate
 | Subsystem | Implemented | Integrated | Local tested | UI usable | E2E working | Certification deferred |
 | --- | --- | --- | --- | --- | --- | --- |
 | Control plane and organization | YES | YES | YES, company editor conflict/review, create/apply, and late-response suites 3/3; worker-choice retry group 4/4 | YES | PARTIAL, company editing is covered; full CEO-to-worker completion remains unproven | YES |
-| Projects and workflows | YES | YES | YES, focused approval API/storage 278 passed/1 skipped; project-detail Playwright 7/7; issue/run/history Playwright 9/9; project activity 2/2; document BFF 5/5; evidence-artifact navigation 4/4; flow-list recovery 5/5; failed retry/archive action recovery 1/1 | YES, issue dispatch/retry continuity, bounded run history, documents, artifact detail links, and exact flow approval decisions | PARTIAL, project/flow paths are locally fixture-tested; full CEO-to-worker completion remains unproven | YES |
-| Workers and runtimes | YES | YES | YES, cancellation/runtime suites; Worker Run operations Playwright 8/8; focused BFF 11/11; worker-management Playwright 5/5; artifact display 8/8; stale-data action gating 3/3; steward compatibility-matrix regression 6/6 | YES, Governance run detail/actions, stale actions disabled pending refresh, visible artifact names, and bounded Hiring Board configuration edits | PARTIAL, provider-backed run not authorized; mocked operations remain separate from the full project journey | YES |
+| Projects and workflows | YES | YES | YES, focused approval API/storage 278 passed/1 skipped; project-detail Playwright 7/7; issue/run/history Playwright 9/9; project activity 2/2; document BFF 5/5; evidence-artifact navigation 4/4; flow-list recovery 5/5; failed retry/archive action recovery 1/1; artifact-content API tests 19/19 including OpenAPI binary response regression; artifact-download BFF 4/4; project-workspace download/recovery Playwright 1/1; focused typecheck pass | YES, issue dispatch/retry continuity, bounded run history, documents, artifact detail links, validated worker-artifact download, and exact flow approval decisions | PARTIAL, project/flow paths are locally fixture-tested; full CEO-to-worker completion remains unproven | YES |
+| Workers and runtimes | YES | YES | YES, cancellation/runtime suites; Worker Run operations Playwright 8/8; focused BFF 11/11; worker-management Playwright 5/5; artifact display 8/8; stale-data action gating 3/3; steward compatibility-matrix regression 6/6; artifact-content API tests 19/19 | YES, Governance run detail/actions, stale actions disabled pending refresh, visible artifact names, validated Project Detail artifact downloads, and bounded Hiring Board configuration edits | PARTIAL, no real OpenCode project execution is claimed; provider-backed run remains unauthorized and inactive worker governance remains enforced | YES |
 | Governed tools | YES | YES | YES, tool refresh and expansion-state persistence 5/5 | YES, operator group expansion choices survive catalogue refresh | PARTIAL | YES |
 | Models and cost | YES | YES | YES, resolver and exact-version activation coverage; model preview freshness 6/6 | YES, input-aware preview plus exact-version approval/audit receipt | PARTIAL, no provider call in this run; mocked preview and activation checks remain separate from provider-backed execution | YES |
-| CEO and governance | YES | YES | YES, current-source governance Playwright 8/8; CEO chat recovery 10/10; CEO receipt/inbox/refresh-safety E2E 5/5; approval inbox refresh/paging race 5/5 | YES for a guided selector covering four existing approval-required operational actions; raw action/payload JSON remains under Advanced and a separate human approval is required | PARTIAL, the request receipt links to the exact pending inbox item; stale/unverified decisions are gated; tests use mocked APIs and provider-backed work remains unauthorized | YES |
+| CEO and governance | YES | YES | YES, current-source governance Playwright 8/8; CEO chat recovery 10/10; CEO receipt/inbox/refresh-safety E2E 5/5; approval inbox refresh/paging race 5/5; executive action catalogue/API 25/25 and targeted dashboard E2E 9/9 | YES for a catalogue-backed guided selector covering four existing approval-required operational actions; raw action/payload JSON remains under Advanced and a separate human approval is required | PARTIAL, the request receipt links to the exact pending inbox item; actions create audited approval requests only; provider-backed work remains unauthorized | YES |
 | Identity and default mail | YES | YES | YES, external-account rotation/closure approval-result messaging 2/2 | YES, approval-pending result links to identity approvals | PARTIAL for external identity actions | YES |
 | PM and source control | YES | YES | YES, mocked adapters and project-scoped discovery; project-list retry 1/1; recent inbound-canary listing/selection 2/2 | YES, provider bindings expose details/blockers/retry and bounded recent canary summaries link to existing plan detail | PARTIAL, mocked PM discovery E2E passes; live provider actions remain | YES |
-| Dashboard | YES | YES | YES, separate mocked suites cover CEO chat recovery 10/10, governance 8/8, PM canary listing 2/2, external-account actions 2/2, project retry/archive recovery 1/1, stale WorkerRun action gating 3/3, and tools expansion-state persistence 5/5, alongside earlier focused component suites. The current combined CEO/governance/PM run passed 20/20; no external provider dispatch | YES for guided company editing, CEO approval receipts, project retry, stale-run handling, PM canary inspection, artifact inspection, worker configuration, project documents, and flow approvals | PARTIAL, selected mocked scenarios pass separately; provider-backed execution and full CEO-to-worker journey remain open | YES |
+| Dashboard | YES | YES | YES, separate mocked suites cover CEO chat recovery 10/10, governance 8/8, PM canary listing 2/2, external-account actions 2/2, project retry/archive recovery 1/1, stale WorkerRun action gating 3/3, and tools expansion-state persistence 5/5; executive action form E2E 9/9; artifact-download BFF 4/4; project-workspace artifact download/recovery 1/1; focused typecheck pass. No provider request was made | YES for guided company editing and executive actions, CEO approval receipts, project retry, stale-run handling, PM canary inspection, artifact inspection/download when metadata is valid, worker configuration, project documents, and flow approvals | PARTIAL, selected mocked scenarios pass separately; provider-backed execution and full CEO-to-worker journey remain open | YES |
 
 This scoreboard does not replace per-feature acceptance criteria. Existing
 full-suite snapshots below are historical; this wave's focused tests are
@@ -100,7 +100,33 @@ out the latter two as remaining gates. When work advances, update the closest
 feature document and its evidence record in the same change; then refresh this
 index so the implementation and remaining-work views cannot drift apart.
 
-## Latest local validation snapshot
+## Current local integration refresh (2026-10-10)
+
+The runsc networking fix is recorded in the live matrix at source revision
+`8146ea10e136047c0069c68f3af014cf6fb653b0` (generated 2026-10-10); the artifact
+is retained at
+[`network_boundary_live_current.json`](../../mas/docs/provenance/network_boundary_live_current.json).
+It reports PASS with 4/4 orchestrator connections, 2/2 runsc-approved gateways,
+4/4 runsc protected-service denials, 11/11 TeamRunner containers, 44/44
+TeamRunner gateway probes, 66/66 protected/external denials, 11/11 storage
+health probes, and no checker errors. The current branch subsequently adds
+executive action forms and artifact-byte API paths; this network report is not
+an exact-HEAD release certificate.
+
+The authenticated local API smoke returned HTTP 200 for `/health`, `/projects`,
+and `/capabilities/workers` (39 manifests); the source and live database
+migration head is `0048_worker_run_retry_lineage`. The new executive action
+catalogue/forms have focused API coverage 25/25 and targeted dashboard E2E
+coverage 9/9. The artifact registration/download API has 19 focused tests,
+including the OpenAPI binary response regression; its authenticated dashboard
+BFF passes 4/4 and Project Detail download/recovery E2E passes 1/1 with a
+focused typecheck pass. Downloads appear only when project/run/blob/hash/size
+metadata validates. These tests use mocked or local boundaries and did not
+execute an OpenCode project task or dispatch an external model request. The
+complete CEO-to-worker journey therefore remains partial. The release decision remains
+`NO-RELEASE / RELEASE_CERTIFICATION_PENDING`.
+
+## Historical local validation snapshot (2026-10-02)
 
 This snapshot was refreshed on 2026-10-02 against code revision
 `c84cddf09e8997ed9b54762887f59548b2c99e7a` and current local evidence. The

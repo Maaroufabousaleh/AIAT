@@ -192,6 +192,7 @@ response evidence.
 - Versioned `aiat.worker.v1` and `aiat.adapter.v1` protocol models and negotiation.
 - Normalized requests, capabilities, events, results, errors, artifacts, usage, tool responses, pause/resume/cancel, health, and readiness.
 - `WorkerRunController` with durable lifecycle, compare-and-set transitions, evidence persistence, queue leases, heartbeat recovery, mediated-tool effect replay/ambiguity handling, and run APIs.
+- OpenCode artifact registration now reads bounded, regular files from the run workspace without following symlinks, derives project ownership from the durable WorkerRun, stores bytes in the configured S3-compatible object store, and persists artifact metadata. The operator-authenticated project download route validates the artifact's project/run binding and checksum; 19 focused API tests pass, including an OpenAPI binary-response regression. Project Detail offers download only when its project/run/blob/hash/size metadata validates; the BFF tests pass 4/4 and focused download/recovery Playwright passes 1/1 with typecheck passing (`e14d20dc`, `1641bf2f`, `83eff8a6`). This closes local artifact byte retrieval, not the execution gap: there is no real OpenCode task or provider-backed completion in this evidence.
 - Operators can retry a `FAILED` or `TIMED_OUT` Worker Run from its detail
   view. A retry is a new durable run linked to the source (migration
   `0048_worker_run_retry_lineage`), preserves the original result/evidence,
