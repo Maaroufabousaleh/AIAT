@@ -67,6 +67,27 @@ This scoreboard does not replace per-feature acceptance criteria. Existing
 full-suite snapshots below are historical; this wave's focused tests are
 reported separately from a full current-candidate regression run.
 
+## Functional Alpha product-gap backlog
+
+These are user-facing implementation/integration gaps on the path to a
+Functional Alpha. They are separate from the
+[post-feature production certification backlog](AIAT_POST_FEATURE_CERTIFICATION_BACKLOG.md);
+provider, native-host, and production-only evidence does not close these items.
+
+| Priority | Product gap | Current implementation and evidence | Acceptance to close |
+| --- | --- | --- | --- |
+| P1 | Complete the project-scoped OpenCode path from assignment through governed tool use to a real artifact and project evidence. | Project creation, WorkerRun control, OpenCode runtime, tool mediation, and artifact/evidence surfaces exist and are separately exercised. The canonical project-to-OpenCode-to-tool-to-artifact journey is not yet demonstrated end-to-end; the runtime-only OpenCode harness does not use the canonical WorkerRun, Tool Service, or artifact registrar. The production-facing `/workers/runs` API also calls `WorkerRunController` directly and does not connect the existing `HostScheduler`, `WorkerRunHostBindingService`, or `WorkerHostExecutor`. | Integrate existing host scheduling/binding/execution with queued dispatch, then use an isolated Level A project, the real WorkerRunController, OpenCode adapter/process, and required sandbox; limit any deterministic provider fixture to the model endpoint; run a bounded task that writes a file and test, execute the test through mediated tools, and verify the terminal WorkerRun, host binding, artifact/evidence links, and test result in Project Detail. No external provider call is required or implied. |
+| P1 | Complete the Research Brief worker-binding journey from template configuration through task execution and report evidence. | The editor exposes per-task governed worker and approved Model Profile selection and blocks readiness/activation while required bindings are missing (`flow-builder-states.spec.ts`, Research Brief case). Governed flow-worker binding/settlement exists, but a Research Brief has not been verified as a complete operator journey that dispatches its bound tasks and exposes the resulting report/evidence. | From the dashboard, apply Research Brief, bind each task to an eligible governed worker and required approved profile, save/activate, run through the canonical flow and WorkerRun APIs, resolve its review gate, and verify the produced report and evidence in Project Detail. A Level A local model boundary may be used; do not label it provider-backed. |
+
+Recent CEO prepare-only integration evidence: the live local dashboard/API
+Playwright handoff passed **1/1**. It verified the running API contract before
+submission, a saved project brief and `INIT` state, **zero WorkerRuns**, and
+the canonical Project Detail evidence link. Cleanup re-read the exact
+disposable project's state and run count, deleted only that still-`INIT`
+project through the authenticated `DELETE /api/projects/{project_id}` path,
+then verified the exact project returned `404`; no work was started. See
+[`ceo-prepare-project-handoff.integration.spec.ts`](../../mas/apps/mas-dashboard/e2e/ceo-prepare-project-handoff.integration.spec.ts).
+
 ## Status vocabulary
 
 | Status | Meaning |
