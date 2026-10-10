@@ -3785,6 +3785,18 @@ export type OrchestratorApiOperations = {
       "422": HTTPValidationError;
     };
   };
+  "download_project_artifact_projects__project_id__artifacts__artifact_id__download_get": {
+    method: "GET";
+    path: "/projects/{project_id}/artifacts/{artifact_id}/download";
+    parameters: {
+      "path:project_id": string;
+      "path:artifact_id": number;
+    };
+    responses: {
+      "200": string;
+      "422": HTTPValidationError;
+    };
+  };
   "get_project_audit_timeline_projects__project_id__audit_timeline_get": {
     method: "GET";
     path: "/projects/{project_id}/audit-timeline";

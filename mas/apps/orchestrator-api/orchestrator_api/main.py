@@ -4913,7 +4913,20 @@ async def list_project_artifacts(
     return [_serialize(a) for a in await _project_artifact_rows(storage, project_id, limit)]
 
 
-@app.get("/projects/{project_id}/artifacts/{artifact_id}/download")
+@app.get(
+    "/projects/{project_id}/artifacts/{artifact_id}/download",
+    response_class=Response,
+    responses={
+        200: {
+            "description": "Verified artifact bytes",
+            "content": {
+                "application/octet-stream": {
+                    "schema": {"type": "string", "format": "binary"}
+                }
+            },
+        }
+    },
+)
 async def download_project_artifact(
     project_id: UUID,
     artifact_id: int,

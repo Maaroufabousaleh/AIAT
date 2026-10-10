@@ -18,6 +18,18 @@ if _app_dir not in sys.path:
     sys.path.insert(0, _app_dir)
 
 
+def test_artifact_download_openapi_declares_binary_content() -> None:
+    from orchestrator_api.main import app
+
+    operation = app.openapi()["paths"][
+        "/projects/{project_id}/artifacts/{artifact_id}/download"
+    ]["get"]
+
+    assert operation["responses"]["200"]["content"]["application/octet-stream"][
+        "schema"
+    ] == {"type": "string", "format": "binary"}
+
+
 class _Body:
     def __init__(self, content: bytes) -> None:
         self.content = content

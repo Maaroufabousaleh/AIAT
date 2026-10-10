@@ -2803,6 +2803,15 @@ OPERATIONS: dict[str, ApiOperation] = {
         request_body_type=None,
         response_types=('HTTPValidationError',),
     ),
+    'download_project_artifact_projects__project_id__artifacts__artifact_id__download_get': ApiOperation(
+        operation_id='download_project_artifact_projects__project_id__artifacts__artifact_id__download_get',
+        method='GET',
+        path='/projects/{project_id}/artifacts/{artifact_id}/download',
+        path_params=('artifact_id', 'project_id'),
+        query_params=(),
+        request_body_type=None,
+        response_types=('HTTPValidationError',),
+    ),
     'get_project_audit_timeline_projects__project_id__audit_timeline_get': ApiOperation(
         operation_id='get_project_audit_timeline_projects__project_id__audit_timeline_get',
         method='GET',
@@ -3652,7 +3661,7 @@ OPERATIONS: dict[str, ApiOperation] = {
 }
 
 MODEL_COUNT = 148
-OPERATION_COUNT = 277
+OPERATION_COUNT = 278
 
 __all__ = [
     "ApiOperation",

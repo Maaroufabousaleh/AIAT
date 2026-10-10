@@ -17183,6 +17183,57 @@
         "summary": "Delete Project Artifact"
       }
     },
+    "/projects/{project_id}/artifacts/{artifact_id}/download": {
+      "get": {
+        "description": "Download bounded worker artifact bytes for an authorized project owner.\n\nThe artifact row is joined to its durable WorkerRun and worker-artifact\nassociation before the object store is consulted. Project IDs in request\nmetadata are never treated as authority by themselves.",
+        "operationId": "download_project_artifact_projects__project_id__artifacts__artifact_id__download_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "artifact_id",
+            "required": true,
+            "schema": {
+              "title": "Artifact Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Verified artifact bytes"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Download Project Artifact"
+      }
+    },
     "/projects/{project_id}/audit-timeline": {
       "get": {
         "description": "Audit-friendly timeline for project transitions, approvals, and flow activity.",
