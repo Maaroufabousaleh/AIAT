@@ -109,6 +109,72 @@ async function emitLateCeoReceipt(page: Page, correlationId: string) {
   }, correlationId);
 }
 
+test("CEO chat prepares a project without starting work and shows the project evidence", async ({
+  page,
+}) => {
+  const projectId = "91d526bf-526c-4a85-b72a-6ee5ed4bd185";
+  const directive = "Prepare a project named Expense Analyzer for a Python CSV expense app with category totals, tests, and a README.";
+  const submission: { current: Record<string, unknown> | null } = { current: null };
+
+  await installCeoReceiptStream(page);
+  await page.route((url) => url.pathname === "/api/ceo/messages", async (route) => {
+    submission.current = route.request().postDataJSON() as Record<string, unknown>;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, status: "accepted" }),
+    });
+  });
+
+  await authenticate(page, "/ceo/chat");
+  const chat = page.getByRole("main", { name: "CEO Command Center chat" });
+  await chat.getByRole("radio", { name: "Prepare project only" }).check();
+  const input = chat.getByRole("textbox", { name: "Message to CEO" });
+  await input.fill(directive);
+  await input.press("Enter");
+
+  await expect.poll(() => submission.current).toMatchObject({
+    message: directive,
+    project_start_mode: "prepare_only",
+  });
+  const requestId = submission.current?.request_id;
+  expect(requestId).toEqual(expect.any(String));
+  await page.evaluate(({ requestId, projectId }) => {
+    window.dispatchEvent(new CustomEvent("ceo-test-message", {
+      detail: JSON.stringify({
+        message_id: "ceo-prepared-project-receipt-001",
+        correlation_id: requestId,
+        message_type: "RESPONSE",
+        sender_id: "ceo",
+        timestamp: "2026-10-10T12:00:01Z",
+        payload: {
+          response: `I prepared project Expense Analyzer with ID ${projectId}. It is in INIT and no feasibility or workflow work was started. The brief is saved in project context. Start it later from Project Detail when you are ready.`,
+          action: {
+            type: "project_create",
+            status: "prepared",
+            project: { id: projectId, name: "Expense Analyzer", state: "INIT" },
+          },
+          evidence: {
+            status: "verified",
+            refs: [{ kind: "project", id: projectId }],
+            trace: ["created_project_record", "prepared_project_without_workflow_transition"],
+          },
+        },
+      }),
+    }));
+  }, { requestId, projectId });
+
+  await expect(chat.getByText(directive, { exact: true })).toBeVisible();
+  await expect(chat.getByTestId("ceo-project-mode")).toHaveText("Prepare only");
+  await expect(chat.getByText(/in INIT and no feasibility or workflow work was started/i)).toBeVisible();
+  await expect(chat.getByText("prepared", { exact: true })).toBeVisible();
+  await expect(chat.getByRole("link", { name: `Open project evidence ${projectId}` })).toHaveAttribute(
+    "href",
+    `/projects/${projectId}`,
+  );
+  await expect(input).toBeEnabled();
+});
+
 test("CEO chat retains history through a stream failure and recovers on retry", async ({
   page,
 }) => {

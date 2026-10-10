@@ -880,7 +880,7 @@ def _extract_named_text(text: str, default: str) -> str:
     if quoted:
         return quoted.group(1).strip()
     bare = re.search(
-        r"(?:named|called|title(?:d)?|name)\s+(.+?)(?:\s+with\s+description|\s+description|[.;]|$)",
+        r"(?:named|called|title(?:d)?|name)\s+(.+?)(?:\s+with\s+description|\s+description|\s+(?:for|to|with|that|which)\b|[.;]|$)",
         text,
         re.I,
     )
@@ -15637,6 +15637,7 @@ class OperatorToCeoRequest(BaseModel):
     context_confirmation_token: UUID | None = None
     request_id: UUID | None = None
     async_mode: bool = False
+    project_start_mode: Literal["start_immediately", "prepare_only"] = "start_immediately"
 
     @field_validator("message")
     @classmethod
@@ -16570,6 +16571,8 @@ async def _handle_ceo_project_intent(
     instruction: str,
     *,
     principal: str | None = None,
+    project_start_mode: Literal["start_immediately", "prepare_only"] = "start_immediately",
+    project_create_idempotency_key: str | None = None,
 ) -> dict[str, Any] | None:
     lowered = instruction.lower()
     if "project" not in lowered and not _is_ceo_project_work_request(instruction):
@@ -16975,9 +16978,13 @@ async def _handle_ceo_project_intent(
             ),
         )
 
+    prepare_project_requested = (
+        project_start_mode == "prepare_only"
+        and _is_ceo_project_create_intent(instruction)
+    )
     if _is_ceo_project_work_request(instruction) or any(
         word in lowered for word in ("create", "new", "start", "initialize", "init")
-    ):
+    ) or prepare_project_requested:
         if principal != "operator":
             raise HTTPException(403, "CEO project creation requires an operator credential")
         name = _extract_named_text(
@@ -16985,30 +16992,52 @@ async def _handle_ceo_project_intent(
             _infer_ceo_project_name(instruction) or "CEO Chat Project",
         )
         description = _extract_description_text(instruction)
+        project_brief = ProjectContextSeedRequest(
+            item_type="TEXT",
+            name="CEO project brief",
+            content_text=instruction.strip(),
+            tags=["project-brief", "ceo-chat"],
+        )
+        prepared_only = project_start_mode == "prepare_only"
         project = await _create_project_for_principal(
             CreateProjectRequest(
                 name=name,
                 description=description,
-                start_immediately=True,
+                start_immediately=not prepared_only,
+                idempotency_key=project_create_idempotency_key,
+                initial_context=[project_brief],
             ),
             principal=principal,
         )
-        response = (
-            f"I created project `{project.get('name')}` with ID `{project.get('id')}`. "
-            f"Current state is `{project.get('state')}`. I also queued the CEO feasibility "
-            "directive so the operating workflow can move through departments, reviews, "
-            "approvals, artifacts, and audit state."
-        )
+        if prepared_only:
+            response = (
+                f"I prepared project `{project.get('name')}` with ID `{project.get('id')}`. "
+                f"It is in `{project.get('state')}` and no feasibility or workflow work was started. "
+                "The brief is saved in project context. Start it later from Project Detail when you are ready."
+            )
+        else:
+            response = (
+                f"I created project `{project.get('name')}` with ID `{project.get('id')}`. "
+                f"Current state is `{project.get('state')}`. I also queued the CEO feasibility "
+                "directive so the operating workflow can move through departments, reviews, "
+                "approvals, artifacts, and audit state."
+            )
         return {
             "type": "project_create",
-            "status": "created",
+            "status": "prepared" if prepared_only else "created",
             "project": project,
             "response": response,
             "trace": [
                 "parsed_project_creation_intent",
                 "created_project_record",
-                "attempted_initial_workflow_transition",
-                "published_start_feasibility_directive",
+                *(
+                    ["prepared_project_without_workflow_transition"]
+                    if prepared_only
+                    else [
+                        "attempted_initial_workflow_transition",
+                        "published_start_feasibility_directive",
+                    ]
+                ),
             ],
         }
 
@@ -17913,6 +17942,16 @@ def _is_ceo_project_work_request(instruction: str) -> bool:
     )
 
 
+def _is_ceo_project_create_intent(instruction: str) -> bool:
+    """Recognize project-creation requests independent of the chosen start mode."""
+    lowered = instruction.lower()
+    if _is_ceo_project_work_request(instruction):
+        return True
+    return "project" in lowered and re.search(
+        r"\b(?:create|new|initialize|init|prepare)\b", lowered
+    ) is not None
+
+
 def _infer_ceo_project_name(instruction: str) -> str | None:
     """Derive a concise title from a natural build request when none is named."""
     match = re.search(
@@ -17935,6 +17974,8 @@ async def _handle_ceo_operator_intent(
     context_confirmation_token: UUID | None = None,
     *,
     principal: str,
+    project_start_mode: Literal["start_immediately", "prepare_only"] = "start_immediately",
+    project_create_idempotency_key: str | None = None,
 ) -> dict[str, Any] | None:
     confirmation = await _handle_ceo_confirmation_intent(
         instruction,
@@ -17959,7 +18000,12 @@ async def _handle_ceo_operator_intent(
     )
     for handler, accepts_worker_context in handlers:
         if handler is _handle_ceo_project_intent:
-            action = await _handle_ceo_project_intent(instruction, principal=principal)
+            action = await _handle_ceo_project_intent(
+                instruction,
+                principal=principal,
+                project_start_mode=project_start_mode,
+                project_create_idempotency_key=project_create_idempotency_key,
+            )
         elif accepts_worker_context:
             action = await handler(instruction, context_worker_id)
         else:
@@ -18015,6 +18061,7 @@ async def _store_new_ceo_command(
     principal: str,
     context_worker_id: UUID | None,
     context_confirmation_token: UUID | None,
+    project_start_mode: Literal["start_immediately", "prepare_only"] = "start_immediately",
 ) -> tuple[dict[str, Any], bool]:
     record = {
         "request_id": message_id,
@@ -18024,6 +18071,7 @@ async def _store_new_ceo_command(
         "context_confirmation_token": (
             str(context_confirmation_token) if context_confirmation_token else None
         ),
+        "project_start_mode": project_start_mode,
         "status": "PENDING",
         "created_at": datetime.now(tz=UTC).isoformat(),
         "updated_at": datetime.now(tz=UTC).isoformat(),
@@ -18209,6 +18257,12 @@ async def _recover_ceo_commands(storage: AgentStorage) -> None:
         if principal != "operator":
             logger.error("Refusing to recover CEO command without operator provenance")
             continue
+        project_start_mode = str(
+            record.get("project_start_mode") or "start_immediately"
+        )
+        if project_start_mode not in {"start_immediately", "prepare_only"}:
+            logger.error("Refusing to recover CEO command with invalid project start mode")
+            continue
         if status == "RUNNING":
             recovered = await _transition_ceo_command(
                 storage,
@@ -18234,6 +18288,7 @@ async def _recover_ceo_commands(storage: AgentStorage) -> None:
             ),
             message_id=message_id,
             principal=principal,
+            project_start_mode=project_start_mode,
         )
         task_group = app.state.ceo_command_task_group
         if task_group is None:
@@ -18252,6 +18307,7 @@ async def _process_ceo_operator_intent(
     context_confirmation_token: UUID | None,
     message_id: str,
     principal: str,
+    project_start_mode: Literal["start_immediately", "prepare_only"] = "start_immediately",
 ) -> None:
     """Run an API-owned CEO command after the chat request has been accepted."""
     storage: AgentStorage | None = app.state.storage
@@ -18276,6 +18332,8 @@ async def _process_ceo_operator_intent(
             context_worker_id,
             context_confirmation_token,
             principal=principal,
+            project_start_mode=project_start_mode,
+            project_create_idempotency_key=message_id,
         )
         if action is None:
             await _publish_ceo_chat_response(
@@ -18345,16 +18403,22 @@ async def operator_send_to_ceo(
     message_id = str(req.request_id or uuid4())
     instruction = req.message.strip()
     stream_instruction = _ceo_stream_instruction(instruction)
+    prepare_project_request = (
+        req.project_start_mode == "prepare_only"
+        and _is_ceo_project_create_intent(instruction)
+    )
     payload = {
         "action": "HUMAN_DIRECTIVE",
         "instruction": stream_instruction,
         "source": "ceo_chat",
     }
+    if req.project_start_mode == "prepare_only":
+        payload["project_start_mode"] = "prepare_only"
     api_owned = _ceo_operator_intent_is_api_owned(
         instruction,
         req.context_worker_id,
         req.context_confirmation_token,
-    )
+    ) or prepare_project_request
     principal = _authenticated_principal(request)
     if api_owned:
         _require_operator_identity(request)
@@ -18370,18 +18434,21 @@ async def operator_send_to_ceo(
             principal=principal,
             context_worker_id=req.context_worker_id,
             context_confirmation_token=req.context_confirmation_token,
+            project_start_mode=req.project_start_mode,
         )
         expected_identity = (
             instruction,
             principal,
             str(req.context_worker_id) if req.context_worker_id else None,
             str(req.context_confirmation_token) if req.context_confirmation_token else None,
+            req.project_start_mode,
         )
         stored_identity = (
             durable_record.get("instruction"),
             durable_record.get("principal"),
             durable_record.get("context_worker_id"),
             durable_record.get("context_confirmation_token"),
+            durable_record.get("project_start_mode") or "start_immediately",
         )
         if stored_identity != expected_identity:
             raise HTTPException(409, "request_id is already bound to a different CEO command")
@@ -18469,6 +18536,7 @@ async def operator_send_to_ceo(
                 context_confirmation_token=req.context_confirmation_token,
                 message_id=message_id,
                 principal=principal,
+                project_start_mode=req.project_start_mode,
             )
         else:
             background_tasks.add_task(
@@ -18490,6 +18558,8 @@ async def operator_send_to_ceo(
         req.context_worker_id,
         req.context_confirmation_token,
         principal=principal,
+        project_start_mode=req.project_start_mode,
+        project_create_idempotency_key=message_id,
     )
     if action is not None:
         background_tasks.add_task(

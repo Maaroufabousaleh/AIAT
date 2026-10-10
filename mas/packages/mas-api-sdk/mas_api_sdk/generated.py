@@ -580,6 +580,7 @@ class OperatorToCeoRequest(TypedDict):
     context_confirmation_token: NotRequired[str | Any]
     context_worker_id: NotRequired[str | Any]
     message: Required[str]
+    project_start_mode: NotRequired[Literal['start_immediately', 'prepare_only']]
     request_id: NotRequired[str | Any]
 
 class PMApplyRequest(TypedDict):

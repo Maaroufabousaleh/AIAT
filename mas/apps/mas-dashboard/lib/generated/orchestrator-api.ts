@@ -729,6 +729,7 @@ export type OperatorToCeoRequest = {
   context_confirmation_token?: (string | null);
   context_worker_id?: (string | null);
   message: string;
+  project_start_mode?: ("start_immediately" | "prepare_only");
   request_id?: (string | null);
 };
 

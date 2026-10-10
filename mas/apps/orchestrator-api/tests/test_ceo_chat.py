@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 import httpx
 import pytest
 from orchestrator_api.main import (
+    DEFAULT_COMPANY_ID,
     _ceo_action_evidence,
     _ceo_fallback_evidence,
     _ceo_operator_intent_is_api_owned,
@@ -2132,6 +2133,108 @@ async def test_operator_send_to_ceo_creates_project_and_traces_workflow(
     assert published[0]["envelope"]["payload"]["execution_owner"] == "orchestrator-api"
     assert published[1]["envelope"]["msg_type"] == "RESPONSE"
     assert {"kind": "project", "id": str(project_id)} in published[1]["envelope"]["payload"]["evidence"]["refs"]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "instruction",
+    [
+        "Prepare a project named Expense Analyzer for a Python CSV expense app with category totals, tests, and a README.",
+        "Create a project named Expense Analyzer for a Python CSV expense app with category totals, tests, and a README.",
+    ],
+)
+async def test_operator_send_to_ceo_prepares_project_without_starting_workflow(
+    client, monkeypatch, instruction: str
+):
+    from orchestrator_api.main import app
+
+    published: list[dict[str, Any]] = []
+
+    class FakeResponse:
+        status_code = 200
+        text = "ok"
+
+        @property
+        def is_success(self) -> bool:
+            return True
+
+        def json(self) -> dict[str, str]:
+            return {"entry_id": f"stream-entry-{len(published)}"}
+
+    class FakeAsyncClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> "FakeAsyncClient":
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+        async def post(self, url: str, json: dict[str, Any]) -> FakeResponse:
+            published.append({"url": url, "envelope": json})
+            return FakeResponse()
+
+    request_id = "a5ec5a8f-6b7c-46fa-9bb5-74844dcab011"
+    project_id = uuid5(
+        NAMESPACE_URL,
+        f"aiat:project-create:{DEFAULT_COMPANY_ID}:{request_id}",
+    )
+    storage = MagicMock()
+    storage.get_project = AsyncMock(return_value=None)
+    storage.create_project = AsyncMock(
+        return_value={
+            "id": project_id,
+            "name": "Expense Analyzer",
+            "description": instruction,
+            "state": "INIT",
+            "created_by": "operator",
+        }
+    )
+    app.state.storage = storage
+    controller = MagicMock()
+    controller.transition = AsyncMock()
+    app.state.controller = controller
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+
+    response = await client.post(
+        "/ceo/message",
+        headers={"X-API-Key": "test-operator-key"},
+        json={
+            "message": instruction,
+            "request_id": request_id,
+            "project_start_mode": "prepare_only",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["action"]["type"] == "project_create"
+    assert body["action"]["status"] == "prepared"
+    assert body["action"]["project"]["state"] == "INIT"
+    assert "no feasibility or workflow work was started" in body["action"]["response"]
+    assert {"kind": "project", "id": str(project_id)} in body["evidence"]["refs"]
+    storage.create_project.assert_awaited_once()
+    create_kwargs = storage.create_project.await_args.kwargs
+    assert create_kwargs["name"] == "Expense Analyzer"
+    assert create_kwargs["description"] == instruction
+    assert create_kwargs["project_id"] == project_id
+    assert create_kwargs["initial_context"] == [
+        {
+            "item_type": "TEXT",
+            "name": "CEO project brief",
+            "content_text": instruction,
+            "tags": ["project-brief", "ceo-chat"],
+            "created_by": "operator",
+        }
+    ]
+    controller.transition.assert_not_awaited()
+    # Only the operator's CEO request and its receipt are published. With no
+    # WorkflowController transition, no feasibility outbox directive is made.
+    assert [item["envelope"]["msg_type"] for item in published] == ["TASK", "RESPONSE"]
+    assert published[0]["envelope"]["payload"]["execution_owner"] == "orchestrator-api"
+    assert published[0]["envelope"]["payload"]["project_start_mode"] == "prepare_only"
+    assert published[1]["envelope"]["payload"]["action"]["status"] == "prepared"
 
 
 @pytest.mark.anyio

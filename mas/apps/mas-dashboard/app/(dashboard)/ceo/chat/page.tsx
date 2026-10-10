@@ -216,6 +216,7 @@ function CeoMarkdown({ children }: { children: string }) {
 
 export default function CeoChatPage() {
   const [input, setInput] = useState("");
+  const [projectStartMode, setProjectStartMode] = useState<"start_immediately" | "prepare_only">("start_immediately");
   const [sending, setSending] = useState(false);
   const [activeRequest, setActiveRequest] = useState<ActiveRequest | null>(null);
   const [failedRequestStates, setFailedRequestStates] = useState<Map<string, FailedRequestState>>(new Map());
@@ -425,10 +426,10 @@ export default function CeoChatPage() {
         correlation_id: requestId,
         message_type: "OUTBOUND",
         sender_id: "you",
-        payload: { instruction: displayText },
+        payload: { instruction: displayText, project_start_mode: projectStartMode },
         created_at: new Date(now).toISOString(),
       },
-      raw: JSON.stringify({ message_id: requestId, message_type: "OUTBOUND", payload: { instruction: displayText } }),
+      raw: JSON.stringify({ message_id: requestId, message_type: "OUTBOUND", payload: { instruction: displayText, project_start_mode: projectStartMode } }),
       ts: now,
       outbound: true,
     };
@@ -452,6 +453,7 @@ export default function CeoChatPage() {
         body: JSON.stringify({
           message: text,
           request_id: requestId,
+          project_start_mode: projectStartMode,
           ...(contextWorkerIdRef.current ? { context_worker_id: contextWorkerIdRef.current } : {}),
           ...(pendingConfirmationToken ? { context_confirmation_token: pendingConfirmationToken } : {}),
         }),
@@ -504,7 +506,7 @@ export default function CeoChatPage() {
       setSending(false);
       inputRef.current?.focus();
     }
-  }, [accessDenied, activeRequest, append, input, pendingConfirmationToken, scrollToBottom, sending]);
+  }, [accessDenied, activeRequest, append, input, pendingConfirmationToken, projectStartMode, scrollToBottom, sending]);
 
   const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === "Enter" && !event.shiftKey) {
@@ -697,6 +699,9 @@ export default function CeoChatPage() {
                         const user = isUserEntry(entry);
                         const text = user ? userText(entry) : payloadText(entry.parsed?.payload) ?? "";
                         if (!text) return null;
+                        const projectMode = user
+                          ? entry.parsed?.payload?.project_start_mode
+                          : undefined;
                         const action = !user && entry.parsed?.payload?.action && typeof entry.parsed.payload.action === "object"
                           ? entry.parsed.payload.action as Record<string, unknown>
                           : null;
@@ -719,7 +724,16 @@ export default function CeoChatPage() {
                             </div>
                             <div className={clsx("min-w-0", user ? "max-w-[82%] sm:max-w-[72%]" : "max-w-[calc(100%-2.75rem)] flex-1")}>
                               <div className={clsx("rounded-2xl border px-4 py-3 text-sm leading-6 shadow-sm", user ? "rounded-tr-md border-violet-400/25 bg-violet-500/15 text-violet-50" : "rounded-tl-md border-slate-700/70 bg-slate-900/75 text-slate-100")}>
-                                {user ? <p className="whitespace-pre-wrap break-words">{text}</p> : <CeoMarkdown>{text}</CeoMarkdown>}
+                                {user ? (
+                                  <>
+                                    <p className="whitespace-pre-wrap break-words">{text}</p>
+                                    {projectMode === "prepare_only" && (
+                                      <div className="mt-2 text-[10px] font-semibold uppercase tracking-wide text-violet-200" data-testid="ceo-project-mode">
+                                        Prepare only
+                                      </div>
+                                    )}
+                                  </>
+                                ) : <CeoMarkdown>{text}</CeoMarkdown>}
                                 {action && (
                                   <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-700/60 pt-2.5 text-[11px]">
                                     {needsConfirmation ? (
@@ -834,6 +848,36 @@ export default function CeoChatPage() {
               {error && (
                 <div className="mb-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200" role="alert">{error}</div>
               )}
+              <fieldset disabled={isBusy} className="mb-2 grid gap-2 px-1 sm:grid-cols-2" aria-label="New project start mode">
+                <legend className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">When CEO creates a project</legend>
+                <label className={clsx("flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-xs", projectStartMode === "start_immediately" ? "border-cyan-500/40 bg-cyan-500/10 text-cyan-100" : "border-slate-700/70 bg-slate-950/35 text-slate-400")}>
+                  <input
+                    type="radio"
+                    name="ceo-project-start-mode"
+                    value="start_immediately"
+                    checked={projectStartMode === "start_immediately"}
+                    onChange={() => setProjectStartMode("start_immediately")}
+                    aria-label="Start work after project creation"
+                    className="h-4 w-4 accent-cyan-400"
+                  />
+                  <span>Start feasibility after creation</span>
+                </label>
+                <label className={clsx("flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-xs", projectStartMode === "prepare_only" ? "border-violet-500/40 bg-violet-500/10 text-violet-100" : "border-slate-700/70 bg-slate-950/35 text-slate-400")}>
+                  <input
+                    type="radio"
+                    name="ceo-project-start-mode"
+                    value="prepare_only"
+                    checked={projectStartMode === "prepare_only"}
+                    onChange={() => setProjectStartMode("prepare_only")}
+                    aria-label="Prepare project only"
+                    className="h-4 w-4 accent-violet-400"
+                  />
+                  <span>Prepare project only</span>
+                </label>
+                <p className="text-[10px] leading-4 text-slate-500 sm:col-span-2">
+                  Prepare only saves the brief in an INIT project and queues no feasibility or workflow work. You can start it later from Project Detail.
+                </p>
+              </fieldset>
               <div className={clsx("rounded-2xl border bg-slate-900/80 p-2 shadow-inner transition", isBusy ? "border-cyan-500/25" : "border-slate-700/80 focus-within:border-cyan-500/45")}>
                 <textarea
                   ref={inputRef}

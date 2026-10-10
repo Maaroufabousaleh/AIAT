@@ -4081,6 +4081,15 @@
             "title": "Message",
             "type": "string"
           },
+          "project_start_mode": {
+            "default": "start_immediately",
+            "enum": [
+              "start_immediately",
+              "prepare_only"
+            ],
+            "title": "Project Start Mode",
+            "type": "string"
+          },
           "request_id": {
             "anyOf": [
               {
