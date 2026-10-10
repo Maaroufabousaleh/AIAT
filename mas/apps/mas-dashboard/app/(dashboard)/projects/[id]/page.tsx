@@ -296,7 +296,16 @@ interface WorkspaceSummary {
     path: string;
     agent_id?: string;
     size_bytes?: number;
+    sha256?: string;
     created_at?: string;
+    metadata?: {
+      project_id?: string;
+      worker_run_id?: string;
+      blob_bucket?: string;
+      blob_key?: string;
+      blob_sha256?: string;
+      blob_size_bytes?: number;
+    };
   }>;
   logs: Array<{
     id?: string;
@@ -317,6 +326,48 @@ interface WorkspaceSummary {
     source?: string;
   };
   flow_instance?: FlowInstance | null;
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const SHA256_PATTERN = /^[a-f0-9]{64}$/i;
+
+function hasDownloadableArtifactContent(
+  artifact: WorkspaceSummary["artifacts"][number],
+  projectId: string,
+): boolean {
+  const metadata = artifact.metadata;
+  if (
+    !Number.isSafeInteger(artifact.id) ||
+    (artifact.id ?? 0) < 1 ||
+    !metadata ||
+    metadata.project_id?.toLowerCase() !== projectId.toLowerCase() ||
+    !metadata.worker_run_id ||
+    !UUID_PATTERN.test(metadata.worker_run_id) ||
+    !metadata.blob_bucket ||
+    !metadata.blob_key ||
+    !SHA256_PATTERN.test(artifact.sha256 ?? "") ||
+    metadata.blob_sha256?.toLowerCase() !== artifact.sha256?.toLowerCase() ||
+    !Number.isSafeInteger(artifact.size_bytes) ||
+    (artifact.size_bytes ?? -1) < 0 ||
+    metadata.blob_size_bytes !== artifact.size_bytes
+  ) {
+    return false;
+  }
+
+  const path = artifact.path;
+  if (
+    !path ||
+    path.length > 1_000 ||
+    path.startsWith("/") ||
+    path.includes("\\") ||
+    path.includes("\0") ||
+    path.split("/").some((segment) => !segment || segment === "." || segment === "..")
+  ) {
+    return false;
+  }
+
+  return metadata.blob_key ===
+    `${projectId}/worker-runs/${metadata.worker_run_id}/${path}`;
 }
 
 interface ProjectWorkerRun {
@@ -671,6 +722,11 @@ export default function ProjectDetailPage() {
   const [documentDownloadId, setDocumentDownloadId] = useState<string | null>(null);
   const [documentActionError, setDocumentActionError] = useState<{
     itemId: string;
+    message: string;
+  } | null>(null);
+  const [artifactDownloadId, setArtifactDownloadId] = useState<number | null>(null);
+  const [artifactDownloadError, setArtifactDownloadError] = useState<{
+    artifactId: number;
     message: string;
   } | null>(null);
   const documentPreviewRequestId = useRef(0);
@@ -1061,6 +1117,58 @@ export default function ProjectDetailPage() {
       });
     } finally {
       setDocumentDownloadId(null);
+    }
+  }
+
+  async function handleDownloadProjectArtifact(
+    artifact: WorkspaceSummary["artifacts"][number],
+  ) {
+    if (!hasDownloadableArtifactContent(artifact, id) || artifact.id === undefined) {
+      return;
+    }
+    setArtifactDownloadError(null);
+    setArtifactDownloadId(artifact.id);
+    try {
+      const response = await fetch(
+        `/api/projects/${encodeURIComponent(id)}/artifacts/${artifact.id}/download`,
+        { cache: "no-store" },
+      );
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(
+          payload && typeof payload.error === "string"
+            ? payload.error
+            : `Artifact download failed (HTTP ${response.status}).`,
+        );
+      }
+
+      const blob = await response.blob();
+      const disposition = response.headers.get("content-disposition") ?? "";
+      const providedFilename = disposition.match(
+        /^attachment;\s*filename="([a-zA-Z0-9][a-zA-Z0-9._-]{0,99})"$/i,
+      )?.[1];
+      const pathFilename = artifact.path.split("/").at(-1) ?? "";
+      const fallbackFilename = pathFilename.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const filename =
+        providedFilename || fallbackFilename || `artifact-${artifact.id}`;
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    } catch (error) {
+      setArtifactDownloadError({
+        artifactId: artifact.id,
+        message:
+          error instanceof Error
+            ? error.message
+            : "Artifact download is unavailable. Refresh project data and try again.",
+      });
+    } finally {
+      setArtifactDownloadId(null);
     }
   }
 
@@ -3423,6 +3531,32 @@ export default function ProjectDetailPage() {
                               Inspect artifact evidence
                             </Link>
                           )}
+                        {hasDownloadableArtifactContent(artifact, id) && (
+                          <div className="mt-2">
+                            <button
+                              type="button"
+                              data-testid={`download-project-artifact-${artifact.id}`}
+                              aria-label={`Download artifact ${artifact.path}`}
+                              onClick={() => void handleDownloadProjectArtifact(artifact)}
+                              disabled={artifactDownloadId === artifact.id}
+                              className="inline-flex min-h-11 items-center rounded-md border border-cyan-700/60 px-3 py-2 text-xs font-medium text-cyan-200 hover:bg-cyan-950/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:cursor-wait disabled:opacity-50"
+                            >
+                              {artifactDownloadId === artifact.id
+                                ? "Preparing download…"
+                                : "Download artifact"}
+                            </button>
+                            {artifactDownloadError &&
+                              artifactDownloadError.artifactId === artifact.id && (
+                              <p
+                                role="alert"
+                                data-testid="project-artifact-download-error"
+                                className="mt-2 text-xs text-rose-300"
+                              >
+                                {artifactDownloadError.message}
+                              </p>
+                            )}
+                          </div>
+                        )}
                       </div>
                     ))
                   )}

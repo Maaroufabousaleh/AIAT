@@ -27,7 +27,21 @@ const INITIAL_WORKSPACE = {
     },
   ],
   worker_activity: [],
-  artifacts: [{ id: 1, path: "initial-report.md", agent_id: "fixture-agent" }],
+  artifacts: [{
+    id: 1,
+    path: "initial-report.md",
+    agent_id: "fixture-agent",
+    sha256: "a".repeat(64),
+    size_bytes: 1024,
+    metadata: {
+      project_id: PROJECT_ID,
+      worker_run_id: "30000000-0000-4000-8000-000000000399",
+      blob_bucket: "worker-artifacts",
+      blob_key: `${PROJECT_ID}/worker-runs/30000000-0000-4000-8000-000000000399/initial-report.md`,
+      blob_sha256: "a".repeat(64),
+      blob_size_bytes: 1024,
+    },
+  }],
   logs: [],
   cost_usage: {
     available: true,
@@ -66,6 +80,7 @@ test("project workspace retains data through a failed refresh and recovers", asy
   page,
 }) => {
   let workspaceReads = 0;
+  let artifactDownloadRequests = 0;
 
   await page.route(`**/api/projects/${PROJECT_ID}`, async (route) => {
     await route.fulfill({
@@ -120,6 +135,28 @@ test("project workspace retains data through a failed refresh and recovers", asy
     });
   });
   await page.route(
+    `**/api/projects/${PROJECT_ID}/artifacts/1/download`,
+    async (route) => {
+      artifactDownloadRequests += 1;
+      if (artifactDownloadRequests > 1) {
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "Artifact download failed with status 503" }),
+        });
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/octet-stream",
+        headers: {
+          "Content-Disposition": 'attachment; filename="initial-report.md"',
+        },
+        body: "# Generated report",
+      });
+    },
+  );
+  await page.route(
     `**/api/projects/${PROJECT_ID}/repository`,
     async (route) => {
       await route.fulfill({
@@ -137,6 +174,28 @@ test("project workspace retains data through a failed refresh and recovers", asy
   ).toBeVisible();
   await expect(page.getByText("Review initial workspace")).toBeVisible();
   await expect(page.getByText("Initial workspace activity")).toBeVisible();
+
+  const resourceTabForDownload = page.getByRole("tab", {
+    name: "Resources",
+    exact: true,
+  });
+  await resourceTabForDownload.click();
+  const downloadArtifact = page.getByRole("button", {
+    name: "Download artifact initial-report.md",
+  });
+  await expect(downloadArtifact).toBeVisible();
+  const downloadPromise = page.waitForEvent("download");
+  await downloadArtifact.click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe("initial-report.md");
+  expect(artifactDownloadRequests).toBe(1);
+
+  await downloadArtifact.click();
+  await expect(page.getByTestId("project-artifact-download-error")).toContainText(
+    "Artifact download failed with status 503",
+  );
+  expect(artifactDownloadRequests).toBe(2);
+  await page.getByRole("tab", { name: "Activity", exact: true }).click();
 
   await page.getByRole("button", { name: "Refresh project data" }).click();
 
@@ -174,6 +233,9 @@ test("project workspace retains data through a failed refresh and recovers", asy
 
   await resourcesTab.click();
   await expect(page.getByText("recovered-report.md")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Download artifact recovered-report.md" }),
+  ).toHaveCount(0);
 
   await resourcesTab.focus();
   await resourcesTab.press("ArrowRight");
