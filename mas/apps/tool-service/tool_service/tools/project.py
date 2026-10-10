@@ -27,7 +27,7 @@ from mas_tools_sdk.groups import ToolGroup
 
 from ._orch_client import orch_get, orch_post
 from .adapters import _run_process
-from .file import _workspace_root
+from .file import _resolve_project_id, _workspace_root
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -360,7 +360,7 @@ class ProjectRepositoryTool(BaseTool):
         project_id, branch, remote_name = _validate_git_options(
             branch=requested_branch or "main",
             remote_name=str(kwargs.get("remote_name") or "origin"),
-            project_id=str(kwargs.get("project_id") or ""),
+            project_id=_resolve_project_id(kwargs),
         )
         repository_url = _validate_git_url(kwargs.get("repository_url"))
         root = _workspace_root()

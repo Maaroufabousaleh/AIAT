@@ -20,6 +20,30 @@ def _workspace_root() -> Path:
     return Path(os.getenv("TOOL_WORKSPACE_ROOT", "/tmp/workspace")).resolve()
 
 
+def _resolve_project_id(kwargs: dict[str, Any], *, default: str = "") -> str:
+    """Resolve project scope from authenticated tool context.
+
+    Tool kwargs are caller-controlled.  When the gateway has attached the
+    authenticated request context, its project ID is authoritative for
+    project-scoped file and artifact operations. Workers must not select a
+    project solely by supplying a ``project_id`` argument.
+    """
+    supplied_project_id = str(kwargs.get("project_id") or "").strip()
+    context = kwargs.get("_aiat_context")
+    if not isinstance(context, dict):
+        return supplied_project_id or default
+
+    caller_role = str(context.get("caller_role") or "")
+    authenticated_project_id = str(context.get("project_id") or "").strip()
+    if caller_role == AgentRole.WORKER.value and not authenticated_project_id:
+        raise ValueError("worker tool access requires an authenticated project scope")
+    if authenticated_project_id:
+        if supplied_project_id and supplied_project_id != authenticated_project_id:
+            raise ValueError("project_id does not match authenticated project scope")
+        return authenticated_project_id
+    return supplied_project_id or default
+
+
 def _safe_workspace_path(path: str, *, project_id: str = "") -> Path:
     if not path:
         raise ValueError("path is required")
@@ -27,12 +51,32 @@ def _safe_workspace_path(path: str, *, project_id: str = "") -> Path:
         raise ValueError("path contains null byte")
 
     root = _workspace_root()
-    candidate = root / project_id / path if project_id else root / path
+    if project_id:
+        if (
+            project_id in {".", ".."}
+            or "\x00" in project_id
+            or "/" in project_id
+            or "\\" in project_id
+        ):
+            raise ValueError("project_id must be a single workspace directory name")
+        untrusted_project_root = root / project_id
+        if untrusted_project_root.is_symlink():
+            raise ValueError("project workspace symlinks are denied")
+        project_root = untrusted_project_root.resolve()
+        try:
+            project_root.relative_to(root)
+        except ValueError as exc:
+            raise ValueError("project workspace escapes the configured workspace root") from exc
+        allowed_root = project_root
+        candidate = project_root / path
+    else:
+        allowed_root = root
+        candidate = root / path
     resolved = candidate.resolve()
     try:
-        resolved.relative_to(root)
+        resolved.relative_to(allowed_root)
     except ValueError as exc:
-        raise ValueError("Path traversal detected") from exc
+        raise ValueError("Path traversal escapes the project workspace") from exc
     return resolved
 
 
@@ -52,7 +96,7 @@ class FileReadTool(BaseTool):
     max_concurrency = 10
 
     async def execute(self, **kwargs: Any) -> Any:
-        project_id = kwargs.get("project_id", "")
+        project_id = _resolve_project_id(kwargs)
         path = kwargs.get("path", "")
 
         try:
@@ -90,7 +134,7 @@ class FileWriteTool(BaseTool):
     max_concurrency = 5
 
     async def execute(self, **kwargs: Any) -> Any:
-        project_id = kwargs.get("project_id", "")
+        project_id = _resolve_project_id(kwargs)
         path = kwargs.get("path", "")
         content = kwargs.get("content", "")
 
@@ -126,7 +170,7 @@ class FilePatchTool(BaseTool):
     max_concurrency = 3
 
     async def execute(self, **kwargs: Any) -> Any:
-        project_id = kwargs.get("project_id", "")
+        project_id = _resolve_project_id(kwargs)
         unified_diff = kwargs.get("unified_diff")
         path = kwargs.get("path", "")
         find = kwargs.get("find")
