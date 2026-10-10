@@ -1280,6 +1280,14 @@ export default function WorkersPage() {
     }
   }, [statusFilter]);
 
+  // Team hierarchy links carry a bounded team ID so an operator lands on the
+  // matching roster instead of having to copy the ID into the Hiring Board.
+  // A route-provided team takes precedence over the operator's previous search.
+  useEffect(() => {
+    const teamId = new URLSearchParams(window.location.search).get("team_id")?.trim();
+    if (teamId && /^[a-z][a-z0-9_-]{0,119}$/.test(teamId)) setSearch(teamId);
+  }, []);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError("");

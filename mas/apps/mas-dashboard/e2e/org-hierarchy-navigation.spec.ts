@@ -67,7 +67,26 @@ test("operator can inspect a department and open the canonical worker registry",
         dbFlows: [],
       },
       "/api/system/org-graph": { nodes: [], edges: [], capability_edges: [] },
-      "/api/workers": [],
+      "/api/workers": [
+        {
+          id: "worker-production-001",
+          worker_id: "research-worker",
+          name: "Research Worker",
+          team_id: department.teamId,
+          status: "ACTIVE",
+          evaluation_status: "approved",
+          version: "1.0.0",
+        },
+        {
+          id: "worker-qa-001",
+          worker_id: "qa-worker",
+          name: "QA Worker",
+          team_id: "dept_qa",
+          status: "ACTIVE",
+          evaluation_status: "approved",
+          version: "1.0.0",
+        },
+      ],
       "/api/runtimes": { runtimes: [] },
     };
 
@@ -95,11 +114,23 @@ test("operator can inspect a department and open the canonical worker registry",
   const openWorkers = details.getByRole("link", {
     name: `Open worker registry for ${department.displayName}`,
   });
-  await expect(openWorkers).toHaveAttribute("href", "/workers");
+  await page.evaluate(() => {
+    window.localStorage.setItem("mas.workers.search", "stale-previous-team");
+  });
+  await expect(openWorkers).toHaveAttribute(
+    "href",
+    `/workers?team_id=${department.teamId}`,
+  );
   await openWorkers.click();
-  await expect(page).toHaveURL(/\/workers$/);
+  await expect(page).toHaveURL(new RegExp(`/workers\\?team_id=${department.teamId}$`));
   await expect(page.getByRole("heading", { name: "Hiring Board" })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Registered workers" })).toBeVisible();
+  const registry = page.getByRole("region", { name: "Registered workers" });
+  await expect(registry).toBeVisible();
+  await expect(page.getByRole("searchbox", { name: "Search workers" })).toHaveValue(
+    department.teamId,
+  );
+  await expect(registry.getByLabel("research-worker worker row")).toBeVisible();
+  await expect(registry.getByLabel("qa-worker worker row")).toHaveCount(0);
 
   expect(interceptedPaths).toEqual(
     expect.arrayContaining([
@@ -111,4 +142,18 @@ test("operator can inspect a department and open the canonical worker registry",
       "/api/runtimes",
     ]),
   );
+});
+
+test("worker registry ignores malformed team ID query filters", async ({ page }) => {
+  await page.route("**/api/**", async (route) => {
+    const url = new URL(route.request().url());
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(url.pathname === "/api/workers" ? [] : {}),
+    });
+  });
+
+  await authenticate(page, "/workers?team_id=dept%2Fproduction");
+  await expect(page.getByRole("searchbox", { name: "Search workers" })).toHaveValue("");
 });
