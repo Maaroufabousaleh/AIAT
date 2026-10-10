@@ -2166,7 +2166,140 @@
         "title": "EvidencePolicyRequest",
         "type": "object"
       },
+      "ExecutiveActionCatalogueResponse": {
+        "properties": {
+          "ceo_privileged_actions": {
+            "items": {
+              "$ref": "#/components/schemas/ExecutivePrivilegedActionOption"
+            },
+            "title": "Ceo Privileged Actions",
+            "type": "array"
+          },
+          "cfo_model_override_fields": {
+            "items": {
+              "$ref": "#/components/schemas/ExecutiveActionFormField"
+            },
+            "title": "Cfo Model Override Fields",
+            "type": "array"
+          },
+          "cto_worker_run_fields": {
+            "items": {
+              "$ref": "#/components/schemas/ExecutiveActionFormField"
+            },
+            "title": "Cto Worker Run Fields",
+            "type": "array"
+          },
+          "schema_version": {
+            "const": "aiat.executive-actions.catalogue.v1",
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "cfo_model_override_fields",
+          "cto_worker_run_fields",
+          "ceo_privileged_actions"
+        ],
+        "title": "ExecutiveActionCatalogueResponse",
+        "type": "object"
+      },
+      "ExecutiveActionFormField": {
+        "properties": {
+          "control": {
+            "enum": [
+              "select",
+              "text",
+              "textarea",
+              "number"
+            ],
+            "title": "Control",
+            "type": "string"
+          },
+          "help_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Help Text"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "max_length": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Length"
+          },
+          "maximum": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maximum"
+          },
+          "minimum": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Minimum"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "option_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "projects",
+                  "workers",
+                  "model_profiles"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Option Source"
+          },
+          "required": {
+            "title": "Required",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "label",
+          "control",
+          "required"
+        ],
+        "title": "ExecutiveActionFormField",
+        "type": "object"
+      },
       "ExecutiveCEOPrivilegedActionRequest": {
+        "additionalProperties": false,
         "description": "CEO request for a privileged operation through the audited gate.",
         "properties": {
           "action": {
@@ -2176,7 +2309,9 @@
             "type": "string"
           },
           "payload": {
-            "additionalProperties": true,
+            "additionalProperties": {
+              "type": "string"
+            },
             "title": "Payload",
             "type": "object"
           },
@@ -2195,6 +2330,7 @@
         "type": "object"
       },
       "ExecutiveCFOModelOverrideRequest": {
+        "additionalProperties": false,
         "description": "CFO request for a project-scoped model-profile override.",
         "properties": {
           "project_id": {
@@ -2220,11 +2356,6 @@
             "minLength": 1,
             "title": "Requested Profile Id",
             "type": "string"
-          },
-          "scope": {
-            "additionalProperties": true,
-            "title": "Scope",
-            "type": "object"
           }
         },
         "required": [
@@ -2235,11 +2366,86 @@
         "title": "ExecutiveCFOModelOverrideRequest",
         "type": "object"
       },
+      "ExecutiveCTOWorkerRunDispatchRequest": {
+        "additionalProperties": false,
+        "description": "Bounded operator form for the common prompt-based worker dispatch.",
+        "properties": {
+          "budget_usd": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Budget Usd"
+          },
+          "idempotency_key": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "prompt": {
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Prompt",
+            "type": "string"
+          },
+          "task_type": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Task Type",
+            "type": "string"
+          },
+          "timeout_seconds": {
+            "anyOf": [
+              {
+                "maximum": 86400.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout Seconds"
+          },
+          "worker_id": {
+            "format": "uuid",
+            "title": "Worker Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "worker_id",
+          "idempotency_key",
+          "task_type",
+          "prompt"
+        ],
+        "title": "ExecutiveCTOWorkerRunDispatchRequest",
+        "type": "object"
+      },
       "ExecutiveCTOWorkerRunRequest": {
+        "additionalProperties": false,
         "description": "CTO request for a governed worker run using the canonical dispatch contract.",
         "properties": {
           "dispatch": {
-            "$ref": "#/components/schemas/WorkerRunDispatchRequest"
+            "$ref": "#/components/schemas/ExecutiveCTOWorkerRunDispatchRequest"
           },
           "requested_by": {
             "default": "cto",
@@ -2253,6 +2459,42 @@
           "dispatch"
         ],
         "title": "ExecutiveCTOWorkerRunRequest",
+        "type": "object"
+      },
+      "ExecutivePrivilegedActionOption": {
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/ExecutiveActionFormField"
+            },
+            "title": "Fields",
+            "type": "array"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "requires_approval": {
+            "title": "Requires Approval",
+            "type": "boolean"
+          },
+          "risk": {
+            "title": "Risk",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "label",
+          "risk",
+          "requires_approval",
+          "fields"
+        ],
+        "title": "ExecutivePrivilegedActionOption",
         "type": "object"
       },
       "FlowDiffRequest": {
@@ -11498,6 +11740,25 @@
         "tags": [
           "project-evidence"
         ]
+      }
+    },
+    "/executive/actions/catalogue": {
+      "get": {
+        "description": "Return bounded operator-form fields from request schemas and policy.",
+        "operationId": "executive_action_catalogue_executive_actions_catalogue_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutiveActionCatalogueResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Executive Action Catalogue"
       }
     },
     "/executive/actions/ceo/privileged-actions": {

@@ -33,25 +33,35 @@ type ModelProfileOption = {
   status?: string;
 };
 
-type GuidedPrivilegedAction = {
-  action: string;
+type ExecutiveActionField = {
+  name: string;
   label: string;
-  risk: "high" | "critical";
+  control: "select" | "text" | "textarea" | "number";
+  required: boolean;
+  max_length?: number | null;
+  minimum?: number | null;
+  maximum?: number | null;
+  option_source?: "projects" | "workers" | "model_profiles" | null;
+  help_text?: string | null;
 };
 
-// A deliberately small UI subset of approval-required actions in
-// mas_core/policy/privileged_ops.py. This list is for discoverability only;
-// the backend policy gate remains authoritative.
-const GUIDED_PRIVILEGED_ACTIONS: GuidedPrivilegedAction[] = [
-  { action: "system.restart", label: "Restart the AIAT system", risk: "critical" },
-  { action: "team.shutdown", label: "Stop a team", risk: "high" },
-  { action: "container.stop", label: "Stop a container", risk: "high" },
-  { action: "worker.force_stop", label: "Force stop a worker", risk: "high" },
-];
+type PrivilegedActionOption = {
+  action: string;
+  label: string;
+  risk: string;
+  requires_approval: boolean;
+  fields: ExecutiveActionField[];
+};
 
-const DEFAULT_TASK_INPUT = "{}";
-const DEFAULT_PAYLOAD = "{}";
+type ExecutiveActionCatalogue = {
+  schema_version: "aiat.executive-actions.catalogue.v1";
+  cfo_model_override_fields: ExecutiveActionField[];
+  cto_worker_run_fields: ExecutiveActionField[];
+  ceo_privileged_actions: PrivilegedActionOption[];
+};
+
 const EXECUTIVE_ACTION_SCHEMA = "aiat.executive-action.v1";
+const EXECUTIVE_ACTION_CATALOGUE_SCHEMA = "aiat.executive-actions.catalogue.v1";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const FIELD_CLASS = "mt-1 min-h-11 w-full rounded border border-slate-700 bg-slate-900 px-2 py-2 text-base text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70 disabled:cursor-not-allowed disabled:opacity-60";
 const MONO_FIELD_CLASS = `${FIELD_CLASS} font-mono`;
@@ -108,25 +118,28 @@ function apiErrorMessage(payload: unknown, status: number, fallback: string): st
   return `${fallback} (HTTP ${status})`;
 }
 
-function parseJsonObject(value: string, label: string): Record<string, unknown> {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch {
-    throw new Error(`${label} must be valid JSON.`);
-  }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(`${label} must be a JSON object.`);
-  }
-  return parsed as Record<string, unknown>;
-}
-
 async function readOptionList(path: string, label: string, signal?: AbortSignal): Promise<unknown[]> {
   const response = await fetch(path, { cache: "no-store", signal });
   const payload = await response.json().catch(() => null) as unknown;
   if (!response.ok) throw new Error(apiErrorMessage(payload, response.status, `${label} could not be loaded`));
   if (!Array.isArray(payload)) throw new Error(`${label} returned an unexpected response. Refresh the choices and try again.`);
   return payload;
+}
+
+async function readActionCatalogue(signal?: AbortSignal): Promise<ExecutiveActionCatalogue> {
+  const response = await fetch("/api/executive/actions/catalogue", { cache: "no-store", signal });
+  const payload = await response.json().catch(() => null) as unknown;
+  if (!response.ok) throw new Error(apiErrorMessage(payload, response.status, "Executive action fields could not be loaded"));
+  const body = objectRecord(payload);
+  if (
+    body?.schema_version !== EXECUTIVE_ACTION_CATALOGUE_SCHEMA
+    || !Array.isArray(body.cfo_model_override_fields)
+    || !Array.isArray(body.cto_worker_run_fields)
+    || !Array.isArray(body.ceo_privileged_actions)
+  ) {
+    throw new Error("Executive action fields returned an unexpected response. Refresh the choices and try again.");
+  }
+  return body as unknown as ExecutiveActionCatalogue;
 }
 
 function projectOptions(data: unknown[]): ProjectOption[] {
@@ -187,36 +200,35 @@ export function ExecutiveActionPanel({ accessDenied = false }: { accessDenied?: 
   const [projects, setProjects] = useState<ProjectOption[]>([]);
   const [workers, setWorkers] = useState<WorkerOption[]>([]);
   const [profiles, setProfiles] = useState<ModelProfileOption[]>([]);
+  const [catalogue, setCatalogue] = useState<ExecutiveActionCatalogue | null>(null);
   const [optionsLoading, setOptionsLoading] = useState(true);
   const [projectOptionsError, setProjectOptionsError] = useState<string | null>(null);
   const [workerOptionsError, setWorkerOptionsError] = useState<string | null>(null);
   const [profileOptionsError, setProfileOptionsError] = useState<string | null>(null);
+  const [catalogueError, setCatalogueError] = useState<string | null>(null);
   const [projectId, setProjectId] = useState("");
   const [profileId, setProfileId] = useState("");
   const [reason, setReason] = useState("");
   const [workerId, setWorkerId] = useState("");
   const [idempotencyKey, setIdempotencyKey] = useState("");
-  const [taskType, setTaskType] = useState("kpi.reconcile");
-  const [taskInput, setTaskInput] = useState(DEFAULT_TASK_INPUT);
+  const [taskType, setTaskType] = useState("code.edit");
+  const [taskPrompt, setTaskPrompt] = useState("");
   const [runBudgetUsd, setRunBudgetUsd] = useState("");
   const [runTimeoutSeconds, setRunTimeoutSeconds] = useState("");
   const [dispatchProjectId, setDispatchProjectId] = useState("");
-  const [scopeInput, setScopeInput] = useState("");
-  const [ceoAction, setCeoAction] = useState("");
-  const [ceoPayload, setCeoPayload] = useState(DEFAULT_PAYLOAD);
   const [guidedCeoAction, setGuidedCeoAction] = useState("");
-  const [guidedCeoReason, setGuidedCeoReason] = useState("");
-  const [advancedPrivilegedAction, setAdvancedPrivilegedAction] = useState(false);
+  const [ceoFieldValues, setCeoFieldValues] = useState<Record<string, string>>({});
   const [confirmPrivileged, setConfirmPrivileged] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [result, setResult] = useState<ActionResult | null>(null);
 
   const loadActionOptions = useCallback(async (signal?: AbortSignal) => {
     setOptionsLoading(true);
-    const [projectResult, workerResult, profileResult] = await Promise.allSettled([
+    const [projectResult, workerResult, profileResult, catalogueResult] = await Promise.allSettled([
       readOptionList("/api/projects?limit=1000", "Project choices", signal),
       readOptionList("/api/workers", "Worker choices", signal),
       readOptionList("/api/governance/model-profiles", "Model Profile choices", signal),
+      readActionCatalogue(signal),
     ]);
     if (signal?.aborted) return;
 
@@ -246,6 +258,15 @@ export function ExecutiveActionPanel({ accessDenied = false }: { accessDenied?: 
       setProfileOptionsError(profileResult.reason instanceof Error
         ? profileResult.reason.message
         : "Model Profile choices could not be loaded. Refresh action choices and try again.");
+    }
+    if (catalogueResult.status === "fulfilled") {
+      setCatalogue(catalogueResult.value);
+      setCatalogueError(null);
+    } else {
+      setCatalogue(null);
+      setCatalogueError(catalogueResult.reason instanceof Error
+        ? catalogueResult.reason.message
+        : "Executive action fields could not be loaded. Refresh action choices and try again.");
     }
     setOptionsLoading(false);
   }, []);
@@ -291,13 +312,11 @@ export function ExecutiveActionPanel({ accessDenied = false }: { accessDenied?: 
       const normalizedReason = reason.trim();
       if (!normalizedReason) throw new Error("Enter a reason for the model override.");
       if (normalizedReason.length > 4_000) throw new Error("Reason must be 4,000 characters or fewer.");
-      const scope = scopeInput.trim() ? parseJsonObject(scopeInput, "Scope") : undefined;
       const body: ExecutiveCFOModelOverrideRequest = {
         project_id: normalizedProjectId,
         requested_profile_id: normalizedProfileId,
         requested_by: "office_cfo",
         reason: normalizedReason,
-        ...(scope ? { scope } : {}),
       };
       await runAction("CFO model override", "/api/executive/actions/cfo/model-overrides", body);
     } catch (error) {
@@ -329,6 +348,9 @@ export function ExecutiveActionPanel({ accessDenied = false }: { accessDenied?: 
       if (!normalizedTaskType || normalizedTaskType.length > 256) {
         throw new Error("Task type is required and must be 256 characters or fewer.");
       }
+      const normalizedPrompt = taskPrompt.trim();
+      if (!normalizedPrompt) throw new Error("Enter task instructions for the selected worker.");
+      if (normalizedPrompt.length > 20_000) throw new Error("Task instructions must be 20,000 characters or fewer.");
       const budgetUsd = runBudgetUsd.trim() ? Number(runBudgetUsd) : undefined;
       if (budgetUsd !== undefined && (!Number.isFinite(budgetUsd) || budgetUsd <= 0)) {
         throw new Error("Maximum run cost must be a positive amount in USD. Leave it blank to use the existing budget policy.");
@@ -343,7 +365,7 @@ export function ExecutiveActionPanel({ accessDenied = false }: { accessDenied?: 
           worker_id: normalizedWorkerId,
           idempotency_key: normalizedKey,
           task_type: normalizedTaskType,
-          task_input: parseJsonObject(taskInput, "Task input"),
+          prompt: normalizedPrompt,
           project_id: normalizedProjectId || null,
           ...(budgetUsd !== undefined ? { budget_usd: budgetUsd } : {}),
           ...(timeoutSeconds !== undefined ? { timeout_seconds: timeoutSeconds } : {}),
@@ -359,23 +381,17 @@ export function ExecutiveActionPanel({ accessDenied = false }: { accessDenied?: 
     event.preventDefault();
     if (!confirmPrivileged) return;
     try {
-      const action = advancedPrivilegedAction ? ceoAction.trim() : guidedCeoAction.trim();
-      if (!action || action.length > 256) {
-        throw new Error(advancedPrivilegedAction
-          ? "Action is required and must be 256 characters or fewer."
-          : "Choose a supported approval-gated action.");
-      }
-      let payload: Record<string, unknown>;
-      if (advancedPrivilegedAction) {
-        payload = parseJsonObject(ceoPayload, "Payload");
-      } else {
-        if (!GUIDED_PRIVILEGED_ACTIONS.some((item) => item.action === action)) {
-          throw new Error("Choose a supported approval-gated action.");
+      const action = guidedCeoAction.trim();
+      const selectedAction = catalogue?.ceo_privileged_actions.find((item) => item.action === action && item.requires_approval);
+      if (!selectedAction) throw new Error("Choose a supported approval-gated action from the current catalogue.");
+      const payload: Record<string, string> = {};
+      for (const field of selectedAction.fields) {
+        const normalized = (ceoFieldValues[field.name] ?? "").trim();
+        if (field.required && !normalized) throw new Error(`${field.label} is required.`);
+        if (field.max_length && normalized.length > field.max_length) {
+          throw new Error(`${field.label} must be ${field.max_length.toLocaleString()} characters or fewer.`);
         }
-        const normalizedReason = guidedCeoReason.trim();
-        if (!normalizedReason) throw new Error("Enter a reason and target context for the request.");
-        if (normalizedReason.length > 4_000) throw new Error("Reason must be 4,000 characters or fewer.");
-        payload = { reason: normalizedReason };
+        if (normalized) payload[field.name] = normalized;
       }
       const body: ExecutiveCEOPrivilegedActionRequest = {
         action,
@@ -406,6 +422,13 @@ export function ExecutiveActionPanel({ accessDenied = false }: { accessDenied?: 
     ?? (optionsLoading ? "Loading current worker choices…" : workers.length === 0 ? "No workers are available from the control plane." : "Choose a current worker.");
   const profileChoiceMessage = profileOptionsError
     ?? (optionsLoading ? "Loading current Model Profile choices…" : profiles.length === 0 ? "No Model Profiles are available from the control plane." : "Choose a current Model Profile.");
+  const approvalActions = catalogue?.ceo_privileged_actions.filter((item) => item.requires_approval) ?? [];
+  const selectedPrivilegedAction = approvalActions.find((item) => item.action === guidedCeoAction) ?? null;
+  const privilegedFieldsReady = Boolean(selectedPrivilegedAction?.fields.every((field) => {
+    const value = (ceoFieldValues[field.name] ?? "").trim();
+    return !field.required || value.length > 0;
+  }));
+  const taskPromptField = catalogue?.cto_worker_run_fields.find((field) => field.name === "prompt");
   const pendingApprovalReceipt = result?.label === "CEO privileged action" && !result.error
     ? pendingPrivilegedActionReceipt(result.body)
     : null;
@@ -417,7 +440,7 @@ export function ExecutiveActionPanel({ accessDenied = false }: { accessDenied?: 
         <span className="font-mono text-[11px] text-slate-500">aiat.executive-action.v1</span>
       </div>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <p className="max-w-3xl text-xs text-slate-400">Operator-authenticated requests are recorded by the control plane. Responses contain identifiers and decisions, never worker output or arbitrary payloads.</p>
+        <p className="max-w-3xl text-xs text-slate-400">Operator-authenticated requests are recorded by the control plane. Response records contain decision identifiers; privileged requests still require the human approval shown by the gate.</p>
         <button
           type="button"
           onClick={() => void loadActionOptions()}
@@ -447,14 +470,7 @@ export function ExecutiveActionPanel({ accessDenied = false }: { accessDenied?: 
           <label className="block text-sm text-slate-300" htmlFor="cfo-reason">Reason
             <textarea id="cfo-reason" required maxLength={4000} value={reason} onChange={(event) => setReason(event.target.value)} rows={3} className={`${FIELD_CLASS} resize-y`} />
           </label>
-          <details className="rounded border border-slate-800 px-3 py-2">
-            <summary className="min-h-11 cursor-pointer py-3 text-sm text-slate-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70">Advanced scope (optional JSON object)</summary>
-            <label className="block text-sm text-slate-300" htmlFor="cfo-scope">Scope (JSON object)
-              <textarea id="cfo-scope" value={scopeInput} onChange={(event) => setScopeInput(event.target.value)} rows={3} spellCheck={false} aria-describedby="cfo-scope-help" className={`${MONO_FIELD_CLASS} resize-y`} />
-            </label>
-            <p id="cfo-scope-help" className="mt-1 text-xs text-slate-500">The API accepts an optional scope object but publishes no fields for it. Leave blank unless your request needs action-specific scope data.</p>
-          </details>
-          <button type="submit" disabled={busy !== null || optionsLoading || Boolean(projectOptionsError) || Boolean(profileOptionsError) || projects.length === 0 || profiles.length === 0} className="min-h-11 rounded border border-amber-700 px-3 py-2 text-sm text-amber-200 hover:bg-amber-950 disabled:cursor-not-allowed disabled:opacity-50">{busy === "CFO model override" ? "Submitting…" : "Request override"}</button>
+          <button type="submit" disabled={busy !== null || optionsLoading || Boolean(catalogueError) || !catalogue || Boolean(projectOptionsError) || Boolean(profileOptionsError) || projects.length === 0 || profiles.length === 0} className="min-h-11 rounded border border-amber-700 px-3 py-2 text-sm text-amber-200 hover:bg-amber-950 disabled:cursor-not-allowed disabled:opacity-50">{busy === "CFO model override" ? "Submitting…" : "Request override"}</button>
         </form>
 
         <form className="min-w-0 space-y-3 rounded-lg border border-slate-800 bg-slate-950/60 p-3" aria-labelledby="cto-worker-run-heading" onSubmit={(event) => void dispatchWorker(event)}>
@@ -470,6 +486,10 @@ export function ExecutiveActionPanel({ accessDenied = false }: { accessDenied?: 
             <input id="cto-task-type" required maxLength={256} value={taskType} onChange={(event) => setTaskType(event.target.value)} placeholder="code.edit" className={MONO_FIELD_CLASS} />
           </label>
           <p className="-mt-2 text-xs text-slate-500">The worker registry does not publish a task-type catalogue; use the task type supported by the selected worker.</p>
+          <label className="block text-sm text-slate-300" htmlFor="cto-task-prompt">Task instructions
+            <textarea id="cto-task-prompt" required maxLength={taskPromptField?.max_length ?? 20_000} value={taskPrompt} onChange={(event) => setTaskPrompt(event.target.value)} rows={5} placeholder="Describe the task and the expected result." aria-describedby="cto-task-prompt-help" className={`${FIELD_CLASS} resize-y`} />
+          </label>
+          <p id="cto-task-prompt-help" className="-mt-2 text-xs text-slate-500">{taskPromptField?.help_text || "Instructions are sent to the selected worker as its prompt."}</p>
           <label className="block text-sm text-slate-300" htmlFor="cto-idempotency-key">Idempotency key
             <div className="mt-1 flex flex-wrap gap-2">
               <input id="cto-idempotency-key" required maxLength={256} value={idempotencyKey} onChange={(event) => setIdempotencyKey(event.target.value)} autoComplete="off" className={`${MONO_FIELD_CLASS} mt-0 min-w-0 flex-1`} />
@@ -489,75 +509,65 @@ export function ExecutiveActionPanel({ accessDenied = false }: { accessDenied?: 
           </label>
           <p id="cto-run-budget-help" className="-mt-2 text-xs text-slate-500">A positive value requests a per-run cost reservation. Leave blank to use existing company and project budget policy; zero is not an unset value.</p>
           <label className="block text-sm text-slate-300" htmlFor="cto-run-timeout">Execution timeout (seconds, optional)
-            <input id="cto-run-timeout" type="number" min="1" step="1" value={runTimeoutSeconds} onChange={(event) => setRunTimeoutSeconds(event.target.value)} inputMode="numeric" placeholder="Use worker/runtime policy" aria-describedby="cto-run-timeout-help" className={FIELD_CLASS} />
+            <input id="cto-run-timeout" type="number" min="1" max="86400" step="1" value={runTimeoutSeconds} onChange={(event) => setRunTimeoutSeconds(event.target.value)} inputMode="numeric" placeholder="Use worker/runtime policy" aria-describedby="cto-run-timeout-help" className={FIELD_CLASS} />
           </label>
-          <p id="cto-run-timeout-help" className="-mt-2 text-xs text-slate-500">Set a positive whole number to bound this run; leave blank to use worker/runtime policy.</p>
-          <details className="rounded border border-slate-800 px-3 py-2">
-            <summary className="min-h-11 cursor-pointer py-3 text-sm text-slate-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70">Advanced task input (JSON object)</summary>
-            <label className="block text-sm text-slate-300" htmlFor="cto-task-input">Task input (JSON object)
-              <textarea id="cto-task-input" value={taskInput} onChange={(event) => setTaskInput(event.target.value)} rows={4} spellCheck={false} aria-describedby="cto-task-input-help" className={`${MONO_FIELD_CLASS} resize-y`} />
-            </label>
-            <p id="cto-task-input-help" className="mt-1 text-xs text-slate-500">The API has no schema for this worker-specific object. Use an object such as {`{"issue":"Fix the failing test"}`}; arrays and scalar JSON values are rejected.</p>
-          </details>
-          <button type="submit" disabled={busy !== null || optionsLoading || Boolean(workerOptionsError) || workers.length === 0} className="min-h-11 rounded border border-amber-700 px-3 py-2 text-sm text-amber-200 hover:bg-amber-950 disabled:cursor-not-allowed disabled:opacity-50">{busy === "CTO worker dispatch" ? "Dispatching…" : "Dispatch governed run"}</button>
+          <p id="cto-run-timeout-help" className="-mt-2 text-xs text-slate-500">Set a positive whole number up to 86,400 seconds to bound this run; leave blank to use worker/runtime policy.</p>
+          <button type="submit" disabled={busy !== null || optionsLoading || Boolean(catalogueError) || !catalogue || Boolean(workerOptionsError) || workers.length === 0 || !taskPrompt.trim()} className="min-h-11 rounded border border-amber-700 px-3 py-2 text-sm text-amber-200 hover:bg-amber-950 disabled:cursor-not-allowed disabled:opacity-50">{busy === "CTO worker dispatch" ? "Dispatching…" : "Dispatch governed run"}</button>
         </form>
 
         <form className="min-w-0 space-y-3 rounded-lg border border-rose-900/60 bg-slate-950/60 p-3" aria-labelledby="ceo-privileged-action-heading" onSubmit={(event) => void requestPrivilegedAction(event)}>
           <h3 id="ceo-privileged-action-heading" className="text-xs font-semibold uppercase tracking-wide text-rose-200">CEO · privileged action</h3>
           <p className="text-xs text-slate-400">A request is recorded for a separate human decision. Submitting here does not dispatch or execute the action.</p>
-          {!advancedPrivilegedAction && (
-            <div className="space-y-3">
-              <label className="block text-sm text-slate-300" htmlFor="ceo-guided-action">Approval-gated action
-                <select
-                  id="ceo-guided-action"
-                  required
-                  value={guidedCeoAction}
-                  onChange={(event) => setGuidedCeoAction(event.target.value)}
-                  aria-required="true"
-                  aria-describedby="ceo-guided-action-help"
-                  className={FIELD_CLASS}
-                >
-                  <option value="">Choose an action</option>
-                  {GUIDED_PRIVILEGED_ACTIONS.map((item) => (
-                    <option key={item.action} value={item.action}>{item.label} · {item.risk} risk</option>
-                  ))}
-                </select>
-              </label>
-              <p id="ceo-guided-action-help" className="text-xs text-slate-500">
-                The guided list includes currently supported actions that require human approval. The policy gate still decides whether a request is allowed.
-              </p>
-              <label className="block text-sm text-slate-300" htmlFor="ceo-guided-reason">Justification and target context
+          <label className="block text-sm text-slate-300" htmlFor="ceo-guided-action">Approval-gated action
+            <select
+              id="ceo-guided-action"
+              required
+              value={guidedCeoAction}
+              onChange={(event) => { setGuidedCeoAction(event.target.value); setCeoFieldValues({}); }}
+              disabled={optionsLoading || Boolean(catalogueError) || approvalActions.length === 0}
+              aria-required="true"
+              aria-describedby="ceo-guided-action-help"
+              className={FIELD_CLASS}
+            >
+              <option value="">{optionsLoading ? "Loading action fields…" : "Choose an action"}</option>
+              {approvalActions.map((item) => (
+                <option key={item.action} value={item.action}>{item.label} · {item.risk} risk</option>
+              ))}
+            </select>
+          </label>
+          <p id="ceo-guided-action-help" className="text-xs text-slate-500" aria-live="polite">
+            {catalogueError || (approvalActions.length === 0 ? "No approval-gated actions are available." : "Fields come from the current privileged-action policy. The policy gate and human approval remain authoritative.")}
+          </p>
+          {selectedPrivilegedAction?.fields.map((field) => (
+            <label key={field.name} className="block text-sm text-slate-300" htmlFor={`ceo-field-${field.name}`}>
+              {field.label}
+              {field.control === "textarea" ? (
                 <textarea
-                  id="ceo-guided-reason"
-                  required
-                  maxLength={4_000}
-                  value={guidedCeoReason}
-                  onChange={(event) => setGuidedCeoReason(event.target.value)}
+                  id={`ceo-field-${field.name}`}
+                  required={field.required}
+                  maxLength={field.max_length ?? undefined}
+                  value={ceoFieldValues[field.name] ?? ""}
+                  onChange={(event) => setCeoFieldValues((current) => ({ ...current, [field.name]: event.target.value }))}
                   rows={3}
-                  placeholder="Explain why this is needed and identify the team, container, or worker when relevant."
                   className={`${FIELD_CLASS} resize-y`}
                 />
-              </label>
-              <p className="-mt-2 text-xs text-slate-500">Do not include credentials or secrets. This reason is recorded with the approval request.</p>
-            </div>
-          )}
-          <details
-            className="rounded border border-rose-900/60 px-3 py-2"
-            open={advancedPrivilegedAction}
-            onToggle={(event) => setAdvancedPrivilegedAction(event.currentTarget.open)}
-          >
-            <summary className="min-h-11 cursor-pointer py-3 text-sm text-rose-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300/70">Advanced action and payload</summary>
-            <p className="mb-3 text-xs text-slate-500">The executive API publishes no action catalogue or payload field schema. Enter an action recognized by CEO policy and its required object fields.</p>
-            <label className="block text-sm text-slate-300" htmlFor="ceo-action">Action
-              <input id="ceo-action" maxLength={256} value={ceoAction} onChange={(event) => setCeoAction(event.target.value)} placeholder="security.override_cso" className={MONO_FIELD_CLASS} />
+              ) : (
+                <input
+                  id={`ceo-field-${field.name}`}
+                  required={field.required}
+                  maxLength={field.max_length ?? undefined}
+                  value={ceoFieldValues[field.name] ?? ""}
+                  onChange={(event) => setCeoFieldValues((current) => ({ ...current, [field.name]: event.target.value }))}
+                  autoComplete="off"
+                  className={FIELD_CLASS}
+                />
+              )}
+              {field.help_text && <span className="mt-1 block text-xs text-slate-500">{field.help_text}</span>}
             </label>
-            <label className="mt-3 block text-sm text-slate-300" htmlFor="ceo-payload">Payload (JSON object)
-              <textarea id="ceo-payload" value={ceoPayload} onChange={(event) => setCeoPayload(event.target.value)} rows={5} spellCheck={false} aria-describedby="ceo-payload-help" className={`${MONO_FIELD_CLASS} resize-y`} />
-            </label>
-            <p id="ceo-payload-help" className="mt-1 text-xs text-slate-500">Enter a JSON object such as {`{"ticket":"SEC-12"}`}.</p>
-          </details>
+          ))}
+          <p className="-mt-2 text-xs text-slate-500">Do not include credentials, secret values, or access tokens. Requests wait for a separate human decision.</p>
           <label className="flex items-start gap-2 text-sm text-slate-300"><input type="checkbox" checked={confirmPrivileged} onChange={(event) => setConfirmPrivileged(event.target.checked)} className="mt-0.5 min-h-11 min-w-11" />I understand this enters the audited privileged-action approval gate.</label>
-          <button type="submit" disabled={busy !== null || !confirmPrivileged || (!advancedPrivilegedAction && (!guidedCeoAction || !guidedCeoReason.trim()))} className="min-h-11 rounded border border-rose-700 px-3 py-2 text-sm text-rose-200 hover:bg-rose-950 disabled:cursor-not-allowed disabled:opacity-50">{busy === "CEO privileged action" ? "Submitting…" : "Request privileged action"}</button>
+          <button type="submit" disabled={busy !== null || optionsLoading || Boolean(catalogueError) || !confirmPrivileged || !selectedPrivilegedAction || !privilegedFieldsReady} className="min-h-11 rounded border border-rose-700 px-3 py-2 text-sm text-rose-200 hover:bg-rose-950 disabled:cursor-not-allowed disabled:opacity-50">{busy === "CEO privileged action" ? "Submitting…" : "Request privileged action"}</button>
         </form>
       </div>
       {result && <div className={`mt-4 rounded-lg border p-3 text-sm ${result.error ? "border-rose-900 bg-rose-950/30 text-rose-200" : "border-emerald-900 bg-emerald-950/20 text-emerald-200"}`} role="status" aria-live="polite" aria-label="Executive action result">

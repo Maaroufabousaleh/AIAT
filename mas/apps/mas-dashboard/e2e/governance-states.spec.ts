@@ -2,6 +2,34 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { authenticate } from "./auth";
 
+function executiveActionCatalogueFixture() {
+  const reason = { name: "reason", label: "Reason", control: "textarea", required: true, max_length: 4000 };
+  return {
+    schema_version: "aiat.executive-actions.catalogue.v1",
+    cfo_model_override_fields: [
+      { name: "project_id", label: "Project", control: "select", required: true, option_source: "projects" },
+      { name: "requested_profile_id", label: "Model Profile", control: "select", required: true, max_length: 256, option_source: "model_profiles" },
+      reason,
+    ],
+    cto_worker_run_fields: [
+      { name: "worker_id", label: "Worker", control: "select", required: true, option_source: "workers" },
+      { name: "idempotency_key", label: "Idempotency key", control: "text", required: true, max_length: 256 },
+      { name: "task_type", label: "Task type", control: "text", required: true, max_length: 256 },
+      { name: "prompt", label: "Task instructions", control: "textarea", required: true, max_length: 20_000 },
+      { name: "project_id", label: "Project (optional)", control: "select", required: false, option_source: "projects" },
+      { name: "budget_usd", label: "Maximum run cost (USD, optional)", control: "number", required: false, minimum: 0 },
+      { name: "timeout_seconds", label: "Execution timeout (seconds, optional)", control: "number", required: false, minimum: 1, maximum: 86_400 },
+    ],
+    ceo_privileged_actions: [
+      { action: "system.restart", label: "Restart the AIAT system", risk: "critical", requires_approval: true, fields: [reason] },
+      { action: "team.shutdown", label: "Stop a team", risk: "high", requires_approval: true, fields: [{ name: "team_id", label: "Team identifier", control: "text", required: true, max_length: 256 }, reason] },
+      { action: "container.stop", label: "Stop a container", risk: "high", requires_approval: true, fields: [{ name: "container_id", label: "Container identifier", control: "text", required: true, max_length: 256 }, reason] },
+      { action: "worker.force_stop", label: "Force stop a worker", risk: "high", requires_approval: true, fields: [{ name: "worker_id", label: "Worker identifier", control: "text", required: true, max_length: 256 }, reason] },
+      { action: "security.override_cso", label: "Request a security review override", risk: "high", requires_approval: true, fields: [{ name: "finding_id", label: "Security finding identifier", control: "text", required: true, max_length: 256 }, reason] },
+    ],
+  };
+}
+
 async function setupGuidedPrivilegedActionPage(
   page: Page,
   onSubmit: (body: Record<string, unknown>) => void,
@@ -22,6 +50,10 @@ async function setupGuidedPrivilegedActionPage(
     }
     if (path === "/api/workers" && request.method() === "GET") {
       await route.fulfill({ json: [] });
+      return;
+    }
+    if (path === "/api/executive/actions/catalogue" && request.method() === "GET") {
+      await route.fulfill({ json: executiveActionCatalogueFixture() });
       return;
     }
     if (path === "/api/governance/model-profiles/catalogue" && request.method() === "GET") {
@@ -174,6 +206,9 @@ test("governance retains the last known state when a refresh fails", async ({
     },
   );
 
+  await page.route("**/api/executive/actions/catalogue", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(executiveActionCatalogueFixture()) });
+  });
   await authenticate(page, "/governance");
   await expect(page.getByRole("heading", { name: "Governance" })).toBeVisible();
   const governance = page.getByRole("main", { name: "Governance" });
@@ -195,6 +230,7 @@ test("governance retains the last known state when a refresh fails", async ({
     governance.getByLabel("Reason"),
     governance.getByRole("combobox", { name: "Worker", exact: true }),
     governance.getByLabel("Task type"),
+    governance.getByLabel("Task instructions"),
     governance.getByLabel("Idempotency key"),
     governance.getByRole("combobox", { name: "Project (optional)", exact: true }),
     governance.getByLabel("Maximum run cost (USD, optional)"),
@@ -204,15 +240,11 @@ test("governance retains the last known state when a refresh fails", async ({
     await expect(control).toHaveCSS("min-height", "44px");
   }
   const executiveActions = governance.getByRole("region", { name: "Executive actions" });
-  await executiveActions.getByText("Advanced task input (JSON object)").click();
-  await executiveActions.getByText("Advanced action and payload").click();
-  for (const control of [
-    executiveActions.getByLabel("Task input (JSON object)"),
-    executiveActions.getByLabel("Action", { exact: true }),
-    executiveActions.getByLabel("Payload (JSON object)"),
-  ]) {
-    await expect(control).toHaveCSS("min-height", "44px");
-  }
+  const privilegedAction = executiveActions.getByLabel("Approval-gated action");
+  await expect(privilegedAction).toBeEnabled();
+  await privilegedAction.selectOption("container.stop");
+  await expect(executiveActions.getByLabel("Container identifier")).toHaveCSS("min-height", "44px");
+  await expect(executiveActions.getByLabel("Reason").last()).toHaveCSS("min-height", "44px");
   for (const action of [
     executiveActions.getByRole("button", { name: "Request override" }),
     executiveActions.getByRole("button", { name: "Dispatch governed run" }),
@@ -294,7 +326,14 @@ test("executive action forms validate structured requests before sending", async
       ]),
     });
   });
+  await page.route("**/api/executive/actions/catalogue", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(executiveActionCatalogueFixture()) });
+  });
   await page.route("**/api/executive/actions/**", async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(executiveActionCatalogueFixture()) });
+      return;
+    }
     submitted.push({
       path: new URL(route.request().url()).pathname,
       body: route.request().postDataJSON() as Record<string, unknown>,
@@ -309,7 +348,10 @@ test("executive action forms validate structured requests before sending", async
   await authenticate(page, "/governance");
   const actions = page.getByRole("region", { name: "Executive actions" });
 
-  await actions.getByRole("combobox", { name: "Worker", exact: true }).selectOption("20000000-0000-4000-8000-000000000002");
+  const workerChoice = actions.getByRole("combobox", { name: "Worker", exact: true });
+  await expect(workerChoice).toBeEnabled();
+  await workerChoice.selectOption("20000000-0000-4000-8000-000000000002");
+  await actions.getByLabel("Task instructions").fill("Perform a bounded local validation task.");
   await actions.getByLabel("Task type").fill("code.edit");
   const idempotencyInput = actions.getByLabel("Idempotency key");
   await expect(idempotencyInput).not.toHaveValue("");
@@ -328,20 +370,18 @@ test("executive action forms validate structured requests before sending", async
   await actions.getByRole("button", { name: "Dispatch governed run" }).click();
   await expect.poll(() => submitted.length).toBe(0);
   await runTimeout.fill("");
-  await actions.getByText("Advanced task input (JSON object)").click();
-  await actions.getByLabel("Task input (JSON object)").fill("[\"not an object\"]");
-  await actions.getByRole("button", { name: "Dispatch governed run" }).click();
-  await expect(page.getByRole("status", { name: "Executive action result" })).toContainText("Task input must be a JSON object.");
+  await actions.getByLabel("Task instructions").fill("   ");
+  await expect(actions.getByRole("button", { name: "Dispatch governed run" })).toBeDisabled();
   await expect.poll(() => submitted.length).toBe(0);
 
   await actions.getByRole("combobox", { name: "Worker", exact: true }).selectOption("not-a-uuid");
-  await actions.getByLabel("Task input (JSON object)").fill("{}");
+  await actions.getByLabel("Task instructions").fill("Run the bounded test task.");
   await actions.getByRole("button", { name: "Dispatch governed run" }).click();
   await expect(page.getByRole("status", { name: "Executive action result" })).toContainText("selected worker ID is invalid");
   await expect.poll(() => submitted.length).toBe(0);
 
   await actions.getByRole("combobox", { name: "Worker", exact: true }).selectOption("20000000-0000-4000-8000-000000000002");
-  await actions.getByLabel("Task input (JSON object)").fill('{"issue":"Fix the failing test"}');
+  await actions.getByLabel("Task instructions").fill("Fix the failing test.");
   await actions.getByRole("button", { name: "Dispatch governed run" }).click();
   await expect.poll(() => submitted.length).toBe(1);
   expect(submitted[0]).toMatchObject({
@@ -352,23 +392,19 @@ test("executive action forms validate structured requests before sending", async
         worker_id: "20000000-0000-4000-8000-000000000002",
         idempotency_key: generatedKey,
         task_type: "code.edit",
-        task_input: { issue: "Fix the failing test" },
+        prompt: "Fix the failing test.",
         project_id: "10000000-0000-4000-8000-000000000001",
       },
     },
   });
 
-  await actions.getByText("Advanced action and payload").click();
-  await actions.getByLabel("Action", { exact: true }).fill("security.override_cso");
-  await actions.getByLabel("Payload (JSON object)").fill("[]");
+  await actions.getByLabel("Approval-gated action").selectOption("security.override_cso");
   const privilegedAction = actions.getByRole("button", { name: "Request privileged action" });
   await expect(privilegedAction).toBeDisabled();
   await actions.getByRole("checkbox").check();
-  await privilegedAction.click();
-  await expect(page.getByRole("status", { name: "Executive action result" })).toContainText("Payload must be a JSON object.");
-  await expect.poll(() => submitted.length).toBe(1);
-
-  await actions.getByLabel("Payload (JSON object)").fill('{"ticket":"SEC-12"}');
+  await expect(privilegedAction).toBeDisabled();
+  await actions.getByLabel("Security finding identifier").fill("SEC-12");
+  await actions.getByLabel("Reason").last().fill("Request review of the documented finding.");
   await privilegedAction.click();
   await expect.poll(() => submitted.length).toBe(2);
   expect(submitted[1]).toMatchObject({
@@ -376,7 +412,7 @@ test("executive action forms validate structured requests before sending", async
     body: {
       requested_by: "exec_ceo",
       action: "security.override_cso",
-      payload: { ticket: "SEC-12" },
+      payload: { finding_id: "SEC-12", reason: "Request review of the documented finding." },
     },
   });
 });
@@ -423,7 +459,14 @@ test("executive action forms submit canonical choices without copied IDs", async
       ]),
     });
   });
+  await page.route("**/api/executive/actions/catalogue", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(executiveActionCatalogueFixture()) });
+  });
   await page.route("**/api/executive/actions/**", async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(executiveActionCatalogueFixture()) });
+      return;
+    }
     submitted.push({
       path: new URL(route.request().url()).pathname,
       body: route.request().postDataJSON() as Record<string, unknown>,
@@ -465,8 +508,7 @@ test("executive action forms submit canonical choices without copied IDs", async
   const requestKey = await actions.getByLabel("Idempotency key").inputValue();
   expect(requestKey).toBeTruthy();
   await actions.getByRole("combobox", { name: "Project (optional)", exact: true }).selectOption("10000000-0000-4000-8000-000000000001");
-  await actions.getByText("Advanced task input (JSON object)").click();
-  await actions.getByLabel("Task input (JSON object)").fill('{"issue":"Fix the failing test"}');
+  await actions.getByLabel("Task instructions").fill("Fix the failing test.");
   await actions.getByRole("button", { name: "Dispatch governed run" }).click();
   await expect.poll(() => submitted.length).toBe(2);
   expect(submitted[1]).toMatchObject({
@@ -477,7 +519,7 @@ test("executive action forms submit canonical choices without copied IDs", async
         worker_id: "20000000-0000-4000-8000-000000000002",
         idempotency_key: requestKey,
         task_type: "code.edit",
-        task_input: { issue: "Fix the failing test" },
+        prompt: "Fix the failing test.",
         project_id: "10000000-0000-4000-8000-000000000001",
         budget_usd: 2.5,
         timeout_seconds: 90,
@@ -526,7 +568,14 @@ test("executive action forms reject malformed and stale option IDs before submis
       ];
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(workers) });
   });
+  await page.route("**/api/executive/actions/catalogue", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(executiveActionCatalogueFixture()) });
+  });
   await page.route("**/api/executive/actions/**", async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(executiveActionCatalogueFixture()) });
+      return;
+    }
     submitted.push(new URL(route.request().url()).pathname);
     await route.fulfill({ status: 202, contentType: "application/json", body: "{}" });
   });
@@ -544,6 +593,7 @@ test("executive action forms reject malformed and stale option IDs before submis
   await expect.poll(() => submitted.length).toBe(0);
 
   await workerSelect.selectOption("not-a-uuid");
+  await actions.getByLabel("Task instructions").fill("Run the bounded test task.");
   await actions.getByRole("button", { name: "Dispatch governed run" }).click();
   await expect(page.getByRole("status", { name: "Executive action result" })).toContainText("selected worker ID is invalid");
   await expect.poll(() => submitted.length).toBe(0);
@@ -666,8 +716,10 @@ test("guided CEO privileged request submits a bounded approved action and reason
   const submitted: Array<Record<string, unknown>> = [];
   const { unexpectedApiRequests, externalOrigins } = await setupGuidedPrivilegedActionPage(page, (body) => submitted.push(body));
   const actions = page.getByRole("region", { name: "Executive actions" });
+  const ceoForm = actions.locator('form[aria-labelledby="ceo-privileged-action-heading"]');
   const guidedAction = actions.getByLabel("Approval-gated action");
 
+  await expect(guidedAction).toBeEnabled();
   await expect(guidedAction.locator('option[value="system.restart"]')).toHaveText("Restart the AIAT system · critical risk");
   await expect(guidedAction.locator('option[value="team.shutdown"]')).toHaveCount(1);
   await expect(guidedAction.locator('option[value="container.stop"]')).toHaveCount(1);
@@ -676,7 +728,7 @@ test("guided CEO privileged request submits a bounded approved action and reason
   await expect(guidedAction.locator('option[value="credentials.export"]')).toHaveCount(0);
 
   await guidedAction.selectOption("system.restart");
-  await actions.getByLabel("Justification and target context").fill("Restart after the approved maintenance window.");
+  await ceoForm.getByLabel("Reason").fill("Restart after the approved maintenance window.");
   await actions.getByRole("checkbox").check();
   await actions.getByRole("button", { name: "Request privileged action" }).click();
 
@@ -694,14 +746,19 @@ test("guided CEO privileged request requires an action and reason before submiss
   const submitted: Array<Record<string, unknown>> = [];
   const { unexpectedApiRequests, externalOrigins } = await setupGuidedPrivilegedActionPage(page, (body) => submitted.push(body));
   const actions = page.getByRole("region", { name: "Executive actions" });
+  const ceoForm = actions.locator('form[aria-labelledby="ceo-privileged-action-heading"]');
   const request = actions.getByRole("button", { name: "Request privileged action" });
   const guidedAction = actions.getByLabel("Approval-gated action");
-  const reason = actions.getByLabel("Justification and target context");
+  const target = ceoForm.getByLabel("Container identifier");
+  const reason = ceoForm.getByLabel("Reason");
 
-  await reason.fill("Needs a reviewed target and justification.");
+  await expect(guidedAction).toBeEnabled();
   await actions.getByRole("checkbox").check();
   await expect(request).toBeDisabled();
   await guidedAction.selectOption("container.stop");
+  await reason.fill("Needs a reviewed target and justification.");
+  await expect(request).toBeDisabled();
+  await target.fill("aiat-tool-service");
   await expect(request).toBeEnabled();
   await reason.fill("   ");
   await expect(request).toBeDisabled();
@@ -709,4 +766,28 @@ test("guided CEO privileged request requires an action and reason before submiss
 
   expect(unexpectedApiRequests).toEqual([]);
   expect(externalOrigins).toEqual([]);
+});
+
+test("executive write forms fail closed when the canonical action catalogue cannot load", async ({ page }) => {
+  await page.route("**/api/executive/actions/catalogue", async (route) => {
+    await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Action schema service unavailable." }) });
+  });
+  await page.route("**/api/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === "/api/projects" || path === "/api/workers" || path.startsWith("/api/governance/")) {
+      await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+      return;
+    }
+    if (path === "/api/executive/actions/catalogue") {
+      await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Action schema service unavailable." }) });
+      return;
+    }
+    await route.fulfill({ status: 501, contentType: "application/json", body: "{}" });
+  });
+  await authenticate(page, "/governance");
+  const actions = page.getByRole("region", { name: "Executive actions" });
+  await expect(actions.getByText("Action schema service unavailable.", { exact: false })).toBeVisible();
+  await expect(actions.getByRole("button", { name: "Request privileged action" })).toBeDisabled();
+  await expect(actions.getByRole("button", { name: "Request override" })).toBeDisabled();
+  await expect(actions.getByRole("button", { name: "Dispatch governed run" })).toBeDisabled();
 });

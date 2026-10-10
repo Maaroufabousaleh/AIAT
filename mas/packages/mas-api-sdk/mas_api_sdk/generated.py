@@ -302,9 +302,26 @@ class EvidencePolicyRequest(TypedDict):
     requirements: NotRequired[dict[str, Any]]
     scope: NotRequired[Literal['project', 'milestone']]
 
+class ExecutiveActionCatalogueResponse(TypedDict):
+    ceo_privileged_actions: Required[list[ExecutivePrivilegedActionOption]]
+    cfo_model_override_fields: Required[list[ExecutiveActionFormField]]
+    cto_worker_run_fields: Required[list[ExecutiveActionFormField]]
+    schema_version: Required[Literal['aiat.executive-actions.catalogue.v1']]
+
+class ExecutiveActionFormField(TypedDict):
+    control: Required[Literal['select', 'text', 'textarea', 'number']]
+    help_text: NotRequired[str | Any]
+    label: Required[str]
+    max_length: NotRequired[int | Any]
+    maximum: NotRequired[float | Any]
+    minimum: NotRequired[float | Any]
+    name: Required[str]
+    option_source: NotRequired[Literal['projects', 'workers', 'model_profiles'] | Any]
+    required: Required[bool]
+
 class ExecutiveCEOPrivilegedActionRequest(TypedDict):
     action: Required[str]
-    payload: NotRequired[dict[str, Any]]
+    payload: NotRequired[dict[str, str]]
     requested_by: NotRequired[str]
 
 class ExecutiveCFOModelOverrideRequest(TypedDict):
@@ -312,11 +329,26 @@ class ExecutiveCFOModelOverrideRequest(TypedDict):
     reason: Required[str]
     requested_by: NotRequired[str]
     requested_profile_id: Required[str]
-    scope: NotRequired[dict[str, Any]]
+
+class ExecutiveCTOWorkerRunDispatchRequest(TypedDict):
+    budget_usd: NotRequired[float | Any]
+    idempotency_key: Required[str]
+    project_id: NotRequired[str | Any]
+    prompt: Required[str]
+    task_type: Required[str]
+    timeout_seconds: NotRequired[int | Any]
+    worker_id: Required[str]
 
 class ExecutiveCTOWorkerRunRequest(TypedDict):
-    dispatch: Required[WorkerRunDispatchRequest]
+    dispatch: Required[ExecutiveCTOWorkerRunDispatchRequest]
     requested_by: NotRequired[str]
+
+class ExecutivePrivilegedActionOption(TypedDict):
+    action: Required[str]
+    fields: Required[list[ExecutiveActionFormField]]
+    label: Required[str]
+    requires_approval: Required[bool]
+    risk: Required[str]
 
 class FlowDiffRequest(TypedDict):
     from_flow_id: Required[str]
@@ -1771,6 +1803,15 @@ OPERATIONS: dict[str, ApiOperation] = {
         query_params=(),
         request_body_type=None,
         response_types=(),
+    ),
+    'executive_action_catalogue_executive_actions_catalogue_get': ApiOperation(
+        operation_id='executive_action_catalogue_executive_actions_catalogue_get',
+        method='GET',
+        path='/executive/actions/catalogue',
+        path_params=(),
+        query_params=(),
+        request_body_type=None,
+        response_types=('ExecutiveActionCatalogueResponse',),
     ),
     'executive_ceo_privileged_action_executive_actions_ceo_privileged_actions_post': ApiOperation(
         operation_id='executive_ceo_privileged_action_executive_actions_ceo_privileged_actions_post',
@@ -3610,8 +3651,8 @@ OPERATIONS: dict[str, ApiOperation] = {
     ),
 }
 
-MODEL_COUNT = 144
-OPERATION_COUNT = 276
+MODEL_COUNT = 148
+OPERATION_COUNT = 277
 
 __all__ = [
     "ApiOperation",
@@ -3658,9 +3699,13 @@ __all__ = [
     'DocumentStatusRequest',
     'DocumentationSnapshotRequest',
     'EvidencePolicyRequest',
+    'ExecutiveActionCatalogueResponse',
+    'ExecutiveActionFormField',
     'ExecutiveCEOPrivilegedActionRequest',
     'ExecutiveCFOModelOverrideRequest',
+    'ExecutiveCTOWorkerRunDispatchRequest',
     'ExecutiveCTOWorkerRunRequest',
+    'ExecutivePrivilegedActionOption',
     'FlowDiffRequest',
     'FlowDryRunRequest',
     'FlowFromTemplateRequest',

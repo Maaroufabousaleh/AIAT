@@ -43,7 +43,15 @@ import sqlalchemy as sa
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from prometheus_client import Counter
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictStr,
+    field_validator,
+    model_validator,
+)
 
 from mas_core.company_manifest import (
     DEFAULT_COMPANY_ID,
@@ -119,6 +127,11 @@ from mas_core.policy.dashboard_access import (
     principal_can_access_section,
     sections_for_principal,
     serialize_dashboard_acl,
+)
+from mas_core.policy.privileged_ops import (
+    PRIVILEGED_ACTION_PAYLOAD_FIELDS,
+    PRIVILEGED_ACTIONS,
+    validate_privileged_action_payload,
 )
 from mas_core.policy.tool_access import can_use_tool_with_metadata
 from mas_core.protocols.enums import AgentRole, MessageType
@@ -2122,26 +2135,132 @@ EXECUTIVE_ACTION_SCHEMA = "aiat.executive-action.v1"
 class ExecutiveCFOModelOverrideRequest(BaseModel):
     """CFO request for a project-scoped model-profile override."""
 
+    model_config = ConfigDict(extra="forbid")
+
     project_id: UUID
     requested_profile_id: str = Field(..., min_length=1, max_length=256)
     requested_by: str = Field(default="cfo", min_length=1, max_length=256)
     reason: str = Field(..., min_length=1, max_length=4_000)
-    scope: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("requested_profile_id", "requested_by", "reason")
+    @classmethod
+    def normalize_executive_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("value must not be blank")
+        return normalized
+
+
+class ExecutiveCTOWorkerRunDispatchRequest(BaseModel):
+    """Bounded operator form for the common prompt-based worker dispatch."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    worker_id: UUID
+    idempotency_key: str = Field(..., min_length=1, max_length=256)
+    task_type: str = Field(..., min_length=1, max_length=256)
+    prompt: str = Field(..., min_length=1, max_length=20_000)
+    project_id: UUID | None = None
+    budget_usd: float | None = Field(default=None, gt=0)
+    timeout_seconds: int | None = Field(default=None, ge=1, le=86_400)
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_bounded_legacy_prompt(cls, value: Any) -> Any:
+        """Accept the old nested shape only when it contains a prompt string."""
+
+        if not isinstance(value, dict) or "task_input" not in value:
+            return value
+        normalized = dict(value)
+        task_input = normalized.pop("task_input")
+        if "prompt" in normalized:
+            raise ValueError("provide prompt or task_input.prompt, not both")
+        if not isinstance(task_input, dict) or set(task_input) != {"prompt"}:
+            raise ValueError("task_input must contain only a prompt string")
+        normalized["prompt"] = task_input["prompt"]
+        return normalized
+
+    @field_validator("idempotency_key", "task_type", "prompt")
+    @classmethod
+    def normalize_worker_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("value must not be blank")
+        return normalized
+
+    def to_worker_dispatch_request(self) -> WorkerRunDispatchRequest:
+        values = self.model_dump(exclude={"prompt"})
+        return WorkerRunDispatchRequest(**values, task_input={"prompt": self.prompt})
 
 
 class ExecutiveCTOWorkerRunRequest(BaseModel):
     """CTO request for a governed worker run using the canonical dispatch contract."""
 
+    model_config = ConfigDict(extra="forbid")
+
     requested_by: str = Field(default="cto", min_length=1, max_length=256)
-    dispatch: WorkerRunDispatchRequest
+    dispatch: ExecutiveCTOWorkerRunDispatchRequest
+
+    @field_validator("requested_by")
+    @classmethod
+    def normalize_requested_by(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("requested_by must not be blank")
+        return normalized
 
 
 class ExecutiveCEOPrivilegedActionRequest(BaseModel):
     """CEO request for a privileged operation through the audited gate."""
 
+    model_config = ConfigDict(extra="forbid")
+
     action: str = Field(..., min_length=1, max_length=256)
     requested_by: str = Field(default="ceo", min_length=1, max_length=256)
-    payload: dict[str, Any] = Field(default_factory=dict)
+    payload: dict[str, StrictStr] = Field(default_factory=dict)
+
+    @field_validator("action", "requested_by")
+    @classmethod
+    def normalize_privileged_request_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("value must not be blank")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_payload_from_policy(self) -> ExecutiveCEOPrivilegedActionRequest:
+        try:
+            self.payload = validate_privileged_action_payload(self.action, self.payload)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+        return self
+
+
+class ExecutiveActionFormField(BaseModel):
+    name: str
+    label: str
+    control: Literal["select", "text", "textarea", "number"]
+    required: bool
+    max_length: int | None = None
+    minimum: float | None = None
+    maximum: float | None = None
+    option_source: Literal["projects", "workers", "model_profiles"] | None = None
+    help_text: str | None = None
+
+
+class ExecutivePrivilegedActionOption(BaseModel):
+    action: str
+    label: str
+    risk: str
+    requires_approval: bool
+    fields: list[ExecutiveActionFormField]
+
+
+class ExecutiveActionCatalogueResponse(BaseModel):
+    schema_version: Literal["aiat.executive-actions.catalogue.v1"]
+    cfo_model_override_fields: list[ExecutiveActionFormField]
+    cto_worker_run_fields: list[ExecutiveActionFormField]
+    ceo_privileged_actions: list[ExecutivePrivilegedActionOption]
 
 
 class WorkerRunPauseRequest(BaseModel):
@@ -11444,6 +11563,162 @@ def _executive_action_envelope(
     }
 
 
+def _executive_form_field_from_model(
+    model: type[BaseModel],
+    *,
+    name: str,
+    label: str,
+    control: Literal["select", "text", "textarea", "number"],
+    option_source: Literal["projects", "workers", "model_profiles"] | None = None,
+    help_text: str | None = None,
+) -> ExecutiveActionFormField:
+    """Project a bounded form descriptor from the canonical Pydantic schema."""
+
+    schema = model.model_json_schema()
+    properties = schema.get("properties")
+    if not isinstance(properties, dict) or not isinstance(properties.get(name), dict):
+        raise RuntimeError(f"executive form field {name!r} is absent from {model.__name__}")
+    property_schema = properties[name]
+    constraint_schema = property_schema
+    alternatives = property_schema.get("anyOf")
+    if isinstance(alternatives, list):
+        constraint_schema = next(
+            (item for item in alternatives if isinstance(item, dict) and item.get("type") != "null"),
+            property_schema,
+        )
+    minimum = constraint_schema.get("exclusiveMinimum", constraint_schema.get("minimum"))
+    maximum = constraint_schema.get("maximum")
+    return ExecutiveActionFormField(
+        name=name,
+        label=label,
+        control=control,
+        required=name in schema.get("required", []),
+        max_length=property_schema.get("maxLength"),
+        minimum=float(minimum) if isinstance(minimum, (int, float)) else None,
+        maximum=float(maximum) if isinstance(maximum, (int, float)) else None,
+        option_source=option_source,
+        help_text=help_text,
+    )
+
+
+def _executive_action_catalogue() -> ExecutiveActionCatalogueResponse:
+    if set(PRIVILEGED_ACTION_PAYLOAD_FIELDS) != set(PRIVILEGED_ACTIONS):
+        raise RuntimeError("privileged action policy and request-field catalogue are out of sync")
+
+    cfo_fields = [
+        _executive_form_field_from_model(
+            ExecutiveCFOModelOverrideRequest,
+            name="project_id",
+            label="Project",
+            control="select",
+            option_source="projects",
+        ),
+        _executive_form_field_from_model(
+            ExecutiveCFOModelOverrideRequest,
+            name="requested_profile_id",
+            label="Model Profile",
+            control="select",
+            option_source="model_profiles",
+        ),
+        _executive_form_field_from_model(
+            ExecutiveCFOModelOverrideRequest,
+            name="reason",
+            label="Reason",
+            control="textarea",
+        ),
+    ]
+    cto_fields = [
+        _executive_form_field_from_model(
+            ExecutiveCTOWorkerRunDispatchRequest,
+            name="worker_id",
+            label="Worker",
+            control="select",
+            option_source="workers",
+        ),
+        _executive_form_field_from_model(
+            ExecutiveCTOWorkerRunDispatchRequest,
+            name="idempotency_key",
+            label="Idempotency key",
+            control="text",
+            help_text="Keep the same key when retrying this request.",
+        ),
+        _executive_form_field_from_model(
+            ExecutiveCTOWorkerRunDispatchRequest,
+            name="task_type",
+            label="Task type",
+            control="text",
+        ),
+        _executive_form_field_from_model(
+            ExecutiveCTOWorkerRunDispatchRequest,
+            name="prompt",
+            label="Task instructions",
+            control="textarea",
+            help_text="Instructions are sent to the selected worker as its prompt. Maximum 20,000 characters.",
+        ),
+        _executive_form_field_from_model(
+            ExecutiveCTOWorkerRunDispatchRequest,
+            name="project_id",
+            label="Project (optional)",
+            control="select",
+            option_source="projects",
+        ),
+        _executive_form_field_from_model(
+            ExecutiveCTOWorkerRunDispatchRequest,
+            name="budget_usd",
+            label="Maximum run cost (USD, optional)",
+            control="number",
+        ),
+        _executive_form_field_from_model(
+            ExecutiveCTOWorkerRunDispatchRequest,
+            name="timeout_seconds",
+            label="Execution timeout (seconds, optional)",
+            control="number",
+        ),
+    ]
+
+    action_options: list[ExecutivePrivilegedActionOption] = []
+    for action, policy in sorted(PRIVILEGED_ACTIONS.items()):
+        fields = [
+            ExecutiveActionFormField(
+                name=str(field["name"]),
+                label=str(field["label"]),
+                control=field["type"],
+                required=bool(field.get("required", False)),
+                max_length=int(field["max_length"]),
+            )
+            for field in PRIVILEGED_ACTION_PAYLOAD_FIELDS[action]
+        ]
+        action_options.append(
+            ExecutivePrivilegedActionOption(
+                action=action,
+                label=str(policy.get("label") or action.replace(".", " · ").replace("_", " ").title()),
+                risk=str(policy.get("risk", "unknown")),
+                requires_approval=bool(policy.get("require_approval", False)),
+                fields=fields,
+            )
+        )
+    return ExecutiveActionCatalogueResponse(
+        schema_version="aiat.executive-actions.catalogue.v1",
+        cfo_model_override_fields=cfo_fields,
+        cto_worker_run_fields=cto_fields,
+        ceo_privileged_actions=action_options,
+    )
+
+
+@app.get(
+    "/executive/actions/catalogue",
+    response_model=ExecutiveActionCatalogueResponse,
+)
+async def executive_action_catalogue(request: Request) -> ExecutiveActionCatalogueResponse:
+    """Return bounded operator-form fields from request schemas and policy."""
+
+    _require_executive_write_principal(request)
+    try:
+        return _executive_action_catalogue()
+    except RuntimeError as exc:
+        raise HTTPException(500, "executive action request catalogue is inconsistent") from exc
+
+
 @app.post("/executive/actions/cfo/model-overrides", status_code=201)
 async def executive_cfo_model_override(
     req: ExecutiveCFOModelOverrideRequest,
@@ -11458,7 +11733,7 @@ async def executive_cfo_model_override(
             requested_by=req.requested_by,
             requested_profile_id=req.requested_profile_id,
             reason=req.reason,
-            scope=req.scope,
+            scope={},
         ),
         requested_by=principal,
     )
@@ -11498,7 +11773,7 @@ async def executive_cto_worker_run(
     """Dispatch one governed CTO worker run through the canonical route."""
 
     principal = _require_executive_write_principal(request)
-    dispatch_result = await dispatch_worker_run(req.dispatch)
+    dispatch_result = await dispatch_worker_run(req.dispatch.to_worker_dispatch_request())
     # Worker outputs/events may contain project data. The executive action
     # surface returns only durable identifiers and routing state; callers can
     # use the normal run/status/evidence endpoints with their existing grants.

@@ -386,10 +386,29 @@ export type EvidencePolicyRequest = {
   scope?: ("project" | "milestone");
 };
 
+export type ExecutiveActionCatalogueResponse = {
+  ceo_privileged_actions: Array<ExecutivePrivilegedActionOption>;
+  cfo_model_override_fields: Array<ExecutiveActionFormField>;
+  cto_worker_run_fields: Array<ExecutiveActionFormField>;
+  schema_version: "aiat.executive-actions.catalogue.v1";
+};
+
+export type ExecutiveActionFormField = {
+  control: ("select" | "text" | "textarea" | "number");
+  help_text?: (string | null);
+  label: string;
+  max_length?: (number | null);
+  maximum?: (number | null);
+  minimum?: (number | null);
+  name: string;
+  option_source?: (("projects" | "workers" | "model_profiles") | null);
+  required: boolean;
+};
+
 export type ExecutiveCEOPrivilegedActionRequest = {
   action: string;
   payload?: {
-  [key: string]: unknown;
+  [key: string]: string;
 };
   requested_by?: string;
 };
@@ -399,14 +418,29 @@ export type ExecutiveCFOModelOverrideRequest = {
   reason: string;
   requested_by?: string;
   requested_profile_id: string;
-  scope?: {
-  [key: string]: unknown;
 };
+
+export type ExecutiveCTOWorkerRunDispatchRequest = {
+  budget_usd?: (number | null);
+  idempotency_key: string;
+  project_id?: (string | null);
+  prompt: string;
+  task_type: string;
+  timeout_seconds?: (number | null);
+  worker_id: string;
 };
 
 export type ExecutiveCTOWorkerRunRequest = {
-  dispatch: WorkerRunDispatchRequest;
+  dispatch: ExecutiveCTOWorkerRunDispatchRequest;
   requested_by?: string;
+};
+
+export type ExecutivePrivilegedActionOption = {
+  action: string;
+  fields: Array<ExecutiveActionFormField>;
+  label: string;
+  requires_approval: boolean;
+  risk: string;
 };
 
 export type FlowDiffRequest = {
@@ -2321,6 +2355,13 @@ export type OrchestratorApiOperations = {
       "200": {
   [key: string]: unknown;
 };
+    };
+  };
+  "executive_action_catalogue_executive_actions_catalogue_get": {
+    method: "GET";
+    path: "/executive/actions/catalogue";
+    responses: {
+      "200": ExecutiveActionCatalogueResponse;
     };
   };
   "executive_ceo_privileged_action_executive_actions_ceo_privileged_actions_post": {
