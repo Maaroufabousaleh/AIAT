@@ -37,6 +37,14 @@ const STORAGE_KEYS = {
   status: "mas.workers.statusFilter",
 } as const;
 
+const TEAM_ID_PATTERN = /^[a-z][a-z0-9_-]{0,119}$/;
+
+function teamIdFromLocation(): string {
+  if (typeof window === "undefined") return "";
+  const teamId = new URLSearchParams(window.location.search).get("team_id")?.trim() ?? "";
+  return TEAM_ID_PATTERN.test(teamId) ? teamId : "";
+}
+
 interface WorkerCapability {
   name: string;
   version: string;
@@ -1248,12 +1256,11 @@ export default function WorkersPage() {
   const [accessDenied, setAccessDenied] = useState(false);
   const [hasReadContext, setHasReadContext] = useState(false);
   const hasLoadedRef = useRef(false);
-  // Filter state — initialized from localStorage so user choices persist
-  // across page reloads. Falls back to empty/ALL on first visit.
-  const [search, setSearch] = useState<string>(() => {
-    if (typeof window === "undefined") return "";
-    return window.localStorage.getItem(STORAGE_KEYS.search) ?? "";
-  });
+  // A team route filter is an exact roster scope. Keep free-text search
+  // separate so a selected team ID cannot match another worker's name/ID.
+  const [teamFilter, setTeamFilter] = useState("");
+  const [search, setSearch] = useState("");
+  const [filtersInitialized, setFiltersInitialized] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>(() => {
     if (typeof window === "undefined") return "ALL";
     return window.localStorage.getItem(STORAGE_KEYS.status) ?? "ALL";
@@ -1266,12 +1273,27 @@ export default function WorkersPage() {
 
   // Persist filter values whenever they change. Safe to run on the client only.
   useEffect(() => {
+    const teamId = teamIdFromLocation();
+    if (teamId) {
+      setTeamFilter(teamId);
+    } else {
+      try {
+        setSearch(window.localStorage.getItem(STORAGE_KEYS.search) ?? "");
+      } catch {
+        // localStorage may be unavailable; keep the default empty search.
+      }
+    }
+    setFiltersInitialized(true);
+  }, []);
+
+  useEffect(() => {
+    if (!filtersInitialized) return;
     try {
       window.localStorage.setItem(STORAGE_KEYS.search, search);
     } catch {
       // localStorage may be unavailable (private mode, quota); silently ignore.
     }
-  }, [search]);
+  }, [filtersInitialized, search]);
   useEffect(() => {
     try {
       window.localStorage.setItem(STORAGE_KEYS.status, statusFilter);
@@ -1279,14 +1301,6 @@ export default function WorkersPage() {
       // ignore
     }
   }, [statusFilter]);
-
-  // Team hierarchy links carry a bounded team ID so an operator lands on the
-  // matching roster instead of having to copy the ID into the Hiring Board.
-  // A route-provided team takes precedence over the operator's previous search.
-  useEffect(() => {
-    const teamId = new URLSearchParams(window.location.search).get("team_id")?.trim();
-    if (teamId && /^[a-z][a-z0-9_-]{0,119}$/.test(teamId)) setSearch(teamId);
-  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1369,8 +1383,21 @@ export default function WorkersPage() {
       workerName.toLowerCase().includes(search.toLowerCase()) ||
       teamId.toLowerCase().includes(search.toLowerCase());
     const matchStatus = statusFilter === "ALL" || w.status === statusFilter;
-    return matchSearch && matchStatus;
+    const matchTeam = !teamFilter || w.team_id === teamFilter;
+    return matchTeam && matchSearch && matchStatus;
   });
+
+  const clearTeamFilter = () => {
+    setTeamFilter("");
+    const params = new URLSearchParams(window.location.search);
+    params.delete("team_id");
+    const query = params.toString();
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`,
+    );
+  };
 
   // Per-status counts power the chip badges. Computed from the unfiltered list
   // so the chips always show the full population, not just what passes the
@@ -1615,6 +1642,24 @@ export default function WorkersPage() {
 
       {/* Filters */}
       <section className="dashboard-toolbar flex flex-col sm:flex-row gap-3" aria-label="Hiring board filters">
+        {teamFilter && (
+          <div
+            role="group"
+            aria-label="Active team filter"
+            className="flex min-h-11 items-center gap-2 rounded-lg border border-blue-500/40 bg-blue-500/10 px-3 text-sm text-blue-100"
+          >
+            <span>
+              Team: <code>{teamFilter}</code>
+            </span>
+            <button
+              type="button"
+              onClick={clearTeamFilter}
+              className="min-h-11 rounded px-2 text-xs font-medium underline underline-offset-2 hover:bg-blue-500/20 focus-visible:ring-2 focus-visible:ring-blue-300"
+            >
+              Clear team filter
+            </button>
+          </div>
+        )}
         <div className="relative flex-1 min-w-0">
           <input
             ref={searchRef}

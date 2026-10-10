@@ -86,6 +86,15 @@ test("operator can inspect a department and open the canonical worker registry",
           evaluation_status: "approved",
           version: "1.0.0",
         },
+        {
+          id: "worker-qa-collision-001",
+          worker_id: "dept_production_helper",
+          name: "QA Research Assistant",
+          team_id: "dept_qa",
+          status: "ACTIVE",
+          evaluation_status: "approved",
+          version: "1.0.0",
+        },
       ],
       "/api/runtimes": { runtimes: [] },
     };
@@ -126,11 +135,22 @@ test("operator can inspect a department and open the canonical worker registry",
   await expect(page.getByRole("heading", { name: "Hiring Board" })).toBeVisible();
   const registry = page.getByRole("region", { name: "Registered workers" });
   await expect(registry).toBeVisible();
-  await expect(page.getByRole("searchbox", { name: "Search workers" })).toHaveValue(
-    department.teamId,
-  );
+  const search = page.getByRole("searchbox", { name: "Search workers" });
+  await expect(search).toHaveValue("");
+  const teamFilter = page.getByRole("group", { name: "Active team filter" });
+  await expect(teamFilter).toContainText(`Team: ${department.teamId}`);
   await expect(registry.getByLabel("research-worker worker row")).toBeVisible();
   await expect(registry.getByLabel("qa-worker worker row")).toHaveCount(0);
+  await expect(registry.getByLabel("dept_production_helper worker row")).toHaveCount(0);
+
+  await search.fill(department.teamId);
+  await expect(registry.getByLabel("research-worker worker row")).toBeVisible();
+  await expect(registry.getByLabel("dept_production_helper worker row")).toHaveCount(0);
+  await teamFilter.getByRole("button", { name: "Clear team filter" }).click();
+  await expect(page).toHaveURL(/\/workers$/);
+  await expect(page.getByRole("group", { name: "Active team filter" })).toHaveCount(0);
+  await expect(search).toHaveValue(department.teamId);
+  await expect(registry.getByLabel("dept_production_helper worker row")).toBeVisible();
 
   expect(interceptedPaths).toEqual(
     expect.arrayContaining([
