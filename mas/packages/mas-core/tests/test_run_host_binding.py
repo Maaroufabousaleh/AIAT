@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import pytest
+from sqlalchemy.dialects import postgresql
 
 from mas_core.worker_registry.host_reservations import HostCapacityReservationLedger
 from mas_core.worker_registry.placement import WorkerPlacementRequest
@@ -119,6 +120,107 @@ class _FirstMappingResult:
 
     def first(self) -> dict[str, object] | None:
         return self.row
+
+
+class _AllMappingResult:
+    def __init__(self, rows: list[dict[str, object]]) -> None:
+        self.rows = rows
+
+    def mappings(self) -> _AllMappingResult:
+        return self
+
+    def all(self) -> list[dict[str, object]]:
+        return self.rows
+
+
+@pytest.mark.asyncio
+async def test_host_queue_read_is_exact_host_fenced_bounded_and_payload_free() -> None:
+    now = datetime.now(tz=UTC)
+    row = {
+        "id": UUID("00000000-0000-4000-a000-000000000040"),
+        "run_id": UUID("00000000-0000-4000-a000-000000000041"),
+        "worker_id": UUID("00000000-0000-4000-a000-000000000042"),
+        "host_id": UUID("00000000-0000-4000-a000-000000000043"),
+        "host_key": "worker-host-a",
+        "host_plane": "worker",
+        "host_status": "READY",
+        "reservation_id": UUID("00000000-0000-4000-a000-000000000044"),
+        "host_lease_generation": 3,
+        "current_host_lease_generation": 3,
+        "current_host_lease_expires_at": now + timedelta(minutes=1),
+        "assignment_key": "run-host-queue-1",
+        "owner": "worker-host-a",
+        "state": "COMMITTED",
+        "reservation_state": "COMMITTED",
+        "metadata": {"authorization": "secret-like-value"},
+        "created_at": now,
+        "committed_at": now,
+        "released_at": None,
+        # A permissive fake result must not cause request contents to escape.
+        "task_input": {"prompt": "private task input"},
+    }
+    connection = MagicMock()
+    connection.execute = AsyncMock(return_value=_AllMappingResult([row]))
+    transaction = MagicMock()
+    transaction.__aenter__ = AsyncMock(return_value=connection)
+    transaction.__aexit__ = AsyncMock(return_value=False)
+    engine = MagicMock()
+    engine.connect.return_value = transaction
+    service = WorkerRunHostBindingService(SimpleNamespace(engine=engine))  # type: ignore[arg-type]
+    service._now = lambda: now  # type: ignore[method-assign]
+
+    result = await service.list_queued_committed_for_host("worker-host-a", limit=7)
+
+    assert len(result) == 1
+    assert result[0]["host_id"] == "worker-host-a"
+    assert result[0]["state"] == "COMMITTED"
+    assert result[0]["reservation_state"] == "COMMITTED"
+    assert result[0]["current_host_lease_valid"] is True
+    assert result[0]["metadata"] == {}
+    assert "task_input" not in result[0]
+    assert "result_json" not in result[0]
+
+    query = connection.execute.await_args.args[0]
+    compiled = query.compile(dialect=postgresql.dialect())
+    sql = " ".join(str(compiled).replace('"', "").split())
+    params = compiled.params
+    assert params["host_id_1"] == "worker-host-a"
+    assert params["host_plane_1"] == "worker"
+    assert params["status_1"] == "READY"
+    assert params["state_1"] == "COMMITTED"
+    assert params["state_2"] == "COMMITTED"
+    assert params["state_3"] == "QUEUED"
+    assert params["lease_expires_at_1"] == now
+    assert params["param_1"] == 7
+    assert "worker_hosts.host_id = %(host_id_1)s" in sql
+    assert "worker_hosts.host_plane = %(host_plane_1)s" in sql
+    assert "worker_hosts.status = %(status_1)s" in sql
+    assert "worker_hosts.lease_expires_at IS NOT NULL" in sql
+    assert "worker_hosts.lease_expires_at > %(lease_expires_at_1)s" in sql
+    assert "worker_run_host_bindings.host_lease_generation = worker_hosts.lease_generation" in sql
+    assert "worker_run_host_bindings.state = %(state_1)s" in sql
+    assert "worker_host_reservations.state = %(state_2)s" in sql
+    assert "worker_runs.state = %(state_3)s" in sql
+    assert "ORDER BY worker_run_host_bindings.created_at ASC, worker_run_host_bindings.id ASC" in sql
+    assert "LIMIT %(param_1)s" in sql
+    assert "worker_run_host_bindings.metadata" not in sql
+    assert "worker_runs.request_json" not in sql
+    assert "worker_runs.result_json" not in sql
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("host_id", "limit"),
+    [("", 1), ("worker-host-a", 0), ("worker-host-a", 1001), ("worker-host-a", True)],
+)
+async def test_host_queue_read_rejects_invalid_host_or_limit(
+    host_id: str,
+    limit: int,
+) -> None:
+    service = WorkerRunHostBindingService(SimpleNamespace())  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError):
+        await service.list_queued_committed_for_host(host_id, limit=limit)
 
 
 @pytest.mark.asyncio

@@ -213,6 +213,112 @@ class WorkerRunHostBindingService:
             row = await self._fetch(connection, run_id=normalized)
         return public_run_host_binding(row) if row else None
 
+    async def list_queued_committed_for_host(
+        self,
+        host_id: str,
+        *,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """List payload-free queued bindings eligible for one exact host.
+
+        This is a host-consumer read boundary: callers receive run and binding
+        identity, never the Worker Run request or result payload.  The SQL
+        predicate rechecks the current host lease and generation so a stale
+        host process cannot discover work after fencing.
+        """
+
+        host_key = str(host_id or "").strip()
+        if not host_key:
+            raise ValueError("host_id is required")
+        if isinstance(limit, bool):
+            raise ValueError("limit must be between 1 and 1000")
+        try:
+            bounded_limit = int(limit)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("limit must be between 1 and 1000") from exc
+        if bounded_limit < 1 or bounded_limit > 1000:
+            raise ValueError("limit must be between 1 and 1000")
+
+        from ..memory import models as t
+
+        now = self._now()
+        query = (
+            sa.select(
+                t.worker_run_host_bindings.c.id,
+                t.worker_run_host_bindings.c.run_id,
+                t.worker_run_host_bindings.c.worker_id,
+                t.worker_run_host_bindings.c.host_id,
+                t.worker_run_host_bindings.c.reservation_id,
+                t.worker_run_host_bindings.c.host_lease_generation,
+                t.worker_run_host_bindings.c.assignment_key,
+                t.worker_run_host_bindings.c.owner,
+                t.worker_run_host_bindings.c.state,
+                t.worker_run_host_bindings.c.created_at,
+                t.worker_run_host_bindings.c.committed_at,
+                t.worker_run_host_bindings.c.released_at,
+                t.worker_hosts.c.host_id.label("host_key"),
+                t.worker_hosts.c.host_plane,
+                t.worker_hosts.c.status.label("host_status"),
+                t.worker_hosts.c.lease_generation.label("current_host_lease_generation"),
+                t.worker_hosts.c.lease_expires_at.label("current_host_lease_expires_at"),
+                t.worker_host_reservations.c.state.label("reservation_state"),
+            )
+            .select_from(
+                t.worker_run_host_bindings.join(
+                    t.worker_hosts,
+                    t.worker_hosts.c.id == t.worker_run_host_bindings.c.host_id,
+                )
+                .join(
+                    t.worker_host_reservations,
+                    t.worker_host_reservations.c.id
+                    == t.worker_run_host_bindings.c.reservation_id,
+                )
+                .join(
+                    t.worker_runs,
+                    t.worker_runs.c.id == t.worker_run_host_bindings.c.run_id,
+                )
+            )
+            .where(
+                sa.and_(
+                    t.worker_hosts.c.host_id == host_key,
+                    t.worker_hosts.c.host_plane == "worker",
+                    t.worker_hosts.c.status == "READY",
+                    t.worker_hosts.c.lease_expires_at.is_not(None),
+                    t.worker_hosts.c.lease_expires_at > now,
+                    t.worker_run_host_bindings.c.host_lease_generation
+                    == t.worker_hosts.c.lease_generation,
+                    t.worker_run_host_bindings.c.state == "COMMITTED",
+                    t.worker_host_reservations.c.state == "COMMITTED",
+                    t.worker_runs.c.state == "QUEUED",
+                )
+            )
+            .order_by(
+                t.worker_run_host_bindings.c.created_at.asc(),
+                t.worker_run_host_bindings.c.id.asc(),
+            )
+            .limit(bounded_limit)
+        )
+        async with self._storage.engine.connect() as connection:
+            rows = (await connection.execute(query)).mappings().all()
+        results: list[dict[str, Any]] = []
+        for row in rows:
+            values = dict(row)
+            lease_expires_at = values.get("current_host_lease_expires_at")
+            if isinstance(lease_expires_at, datetime) and lease_expires_at.tzinfo is None:
+                lease_expires_at = lease_expires_at.replace(tzinfo=UTC)
+            values["current_host_lease_valid"] = (
+                values.get("host_status") == "READY"
+                and isinstance(lease_expires_at, datetime)
+                and lease_expires_at > now
+            )
+            values["reservation_lease_valid"] = None
+            # Binding metadata is caller supplied and is not part of the host
+            # queue contract. The query omits it and the projection rejects it
+            # defensively if a test double or future query adds it back.
+            values.pop("metadata", None)
+            results.append(public_run_host_binding(values))
+        return results
+
     async def assign(self, request: RunHostBindingRequest) -> dict[str, Any]:
         run_id, worker_id, assignment_key, owner = request.validate()
         existing = await self.get(run_id)

@@ -49,9 +49,14 @@ and exercised by the scoped Postgres certificates below. The current
 production-facing `POST /workers/runs` handler does not call those components:
 its inline and queued branches call `WorkerRunController` directly, and the
 repository has no worker-host service wired to consume scheduled runs. The
-certificates therefore prove the host-execution library boundary, not that a
-normal dashboard worker request is placed and executed through it. This
-product integration gap is tracked in the [Functional Alpha backlog](AIAT_IMPLEMENTATION_INDEX.md#functional-alpha-product-gap-backlog).
+binding service now exposes a bounded, payload-free queue read for one exact
+host; it returns only queued runs with a committed worker-plane binding,
+committed reservation, READY host lease, and matching fencing generation.
+There is still no host process or API dispatch integration using that read
+boundary. The certificates therefore prove the host-execution library
+boundary, not that a normal dashboard worker request is placed and executed
+through it. This product integration gap is tracked in the [Functional Alpha
+backlog](AIAT_IMPLEMENTATION_INDEX.md#functional-alpha-product-gap-backlog).
 
 The 2026-08-18 continuation (`2bc7ca5`) isolated the local Postgres fixtures
 from one another with explicit fixture labels and deterministic priorities.
