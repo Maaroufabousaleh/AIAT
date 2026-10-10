@@ -845,6 +845,7 @@ export default function CompaniesPage() {
     : null;
   const selectedUsage = selectedReconciliation?.projects?.usage;
   const selectedBudgetState = selectedReconciliation?.budgets;
+  const selectedCompanyDetailsReady = detail?.company?.id === selectedId;
   const activeManifestVersion = Number(detail?.manifest?.manifest_version ?? 0);
   const canApply = Boolean(parsedManifest && validationDigest && validatedManifestVersion !== null && validatedText === manifestText && !manifestBusy);
 
@@ -931,14 +932,18 @@ export default function CompaniesPage() {
                   </div>
                   <div className="text-xs text-slate-500">{detailLoading ? "Refreshing details…" : `Created ${dateTime(company.created_at)}`}</div>
                 </div>
-                <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
-                  <Metric label="Departments" value={departments.length} />
-                  <Metric label="Worker assignments" value={assignments.length} />
-                  <Metric label="Budgets" value={budgets.length} />
-                  <Metric label="Manifest version" value={activeManifestVersion} />
-                </div>
+                {selectedCompanyDetailsReady && (
+                  <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
+                    <Metric label="Departments" value={departments.length} />
+                    <Metric label="Worker assignments" value={assignments.length} />
+                    <Metric label="Budgets" value={budgets.length} />
+                    <Metric label="Manifest version" value={activeManifestVersion} />
+                  </div>
+                )}
               </section>
 
+              {selectedCompanyDetailsReady ? (
+                <>
               <section
                 className="rounded-2xl border border-slate-800 bg-slate-950/45 p-5"
                 aria-label="Company usage and budgets"
@@ -1270,6 +1275,34 @@ export default function CompaniesPage() {
                 <div className="flex items-center justify-between gap-3"><div><h2 className="text-base font-semibold text-white">Manifest history</h2><p className="mt-1 text-sm text-slate-400">Applied versions are retained by AIAT for review and rollback.</p></div><span className="text-xs text-slate-500">{history.length} versions</span></div>
                 {history.length === 0 ? <p className="mt-4 rounded-xl border border-dashed border-slate-700 px-4 py-6 text-center text-sm text-slate-500">No manifest versions have been applied yet.</p> : <ol className="mt-4 space-y-2">{history.map((version) => <li key={version.id ?? version.manifest_version} className="rounded-xl border border-slate-800 bg-slate-900/50 p-3"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="text-sm font-medium text-slate-200">Version {version.manifest_version} {version.manifest_version === activeManifestVersion && <span className="ml-1 rounded bg-emerald-500/10 px-1.5 py-0.5 text-xs text-emerald-300">Active</span>}</div><div className="mt-1 text-xs text-slate-500">{display(version.status)} · {display(version.source)} · {dateTime(version.compiled_at ?? version.created_at)}</div><div className="mt-1 break-all font-mono text-[11px] text-slate-600">{display(version.digest)}</div></div>{version.manifest_version !== activeManifestVersion && <button type="button" className={buttonClass} onClick={() => { setRollbackVersion(version.manifest_version); setRollbackReason(""); }}><RotateCcw size={14} /> Roll back</button>}</div>{rollbackVersion === version.manifest_version && <div className="mt-3 rounded-lg border border-amber-800/60 bg-amber-950/20 p-3"><label className="block text-xs text-slate-300" htmlFor={`rollback-reason-${version.manifest_version}`}>Reason for rollback to version {version.manifest_version}</label><textarea id={`rollback-reason-${version.manifest_version}`} className={`${fieldClass} mt-1`} rows={2} maxLength={2000} value={rollbackReason} onChange={(event) => setRollbackReason(event.target.value)} placeholder="Explain why this version should be restored" /><div className="mt-2 flex flex-wrap gap-2"><button type="button" className={primaryButtonClass} disabled={!rollbackReason.trim() || rollbackBusy} onClick={() => void rollbackManifest()}>{rollbackBusy ? "Rolling back…" : `Confirm rollback to v${version.manifest_version}`}</button><button type="button" className={buttonClass} onClick={() => setRollbackVersion(null)} disabled={rollbackBusy}>Cancel</button></div></div>}</li>)}</ol>}
               </section>
+                </>
+              ) : (
+                <section
+                  className="rounded-2xl border border-amber-800/60 bg-amber-950/20 p-5"
+                  aria-label="Company detail recovery"
+                  aria-busy={detailLoading}
+                >
+                  {detailLoading || !error ? (
+                    <p role="status" className="text-sm text-amber-100">
+                      Loading the selected company’s hierarchy, settings, and manifest history…
+                    </p>
+                  ) : (
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <p role="alert" className="text-sm text-amber-100">
+                        Company details could not be loaded: {error} Retry to inspect or edit the saved hierarchy and manifest.
+                      </p>
+                      <button
+                        type="button"
+                        className={buttonClass}
+                        onClick={() => void loadSelected(selectedId)}
+                        disabled={detailLoading || !selectedId}
+                      >
+                        {detailLoading ? "Retrying…" : "Retry company details"}
+                      </button>
+                    </div>
+                  )}
+                </section>
+              )}
             </>
           )}
         </div>
