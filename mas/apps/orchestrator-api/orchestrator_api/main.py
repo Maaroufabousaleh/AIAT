@@ -16178,7 +16178,7 @@ async def _handle_ceo_project_intent(
     principal: str | None = None,
 ) -> dict[str, Any] | None:
     lowered = instruction.lower()
-    if "project" not in lowered:
+    if "project" not in lowered and not _is_ceo_project_work_request(instruction):
         return None
 
     # A CSO veto is a recoverable security workflow, not a normal human
@@ -16581,10 +16581,15 @@ async def _handle_ceo_project_intent(
             ),
         )
 
-    if any(word in lowered for word in ("create", "new", "start", "initialize", "init")):
+    if _is_ceo_project_work_request(instruction) or any(
+        word in lowered for word in ("create", "new", "start", "initialize", "init")
+    ):
         if principal != "operator":
             raise HTTPException(403, "CEO project creation requires an operator credential")
-        name = _extract_named_text(instruction, "CEO Chat Project")
+        name = _extract_named_text(
+            instruction,
+            _infer_ceo_project_name(instruction) or "CEO Chat Project",
+        )
         description = _extract_description_text(instruction)
         project = await _create_project_for_principal(
             CreateProjectRequest(
@@ -17435,6 +17440,8 @@ def _ceo_operator_intent_is_api_owned(
                 _extract_uuid_from_text(instruction) is not None
                 or _extract_project_status_query(instruction) is not None
             )
+    if _is_ceo_project_work_request(instruction):
+        return True
     if any(token in lowered for token in ("company", "org", "organization", "department", "departments", "dept", "dep", "graph")):
         return True
     if "hire" not in lowered and any(
@@ -17476,6 +17483,56 @@ def _ceo_operator_intent_is_api_owned(
             "workflow",
         )
     )
+
+
+def _is_ceo_project_work_request(instruction: str) -> bool:
+    """Recognize artifact-building requests that should enter project control."""
+    verb = re.search(
+        r"\b(?:create|build|develop|implement|write|make|produce|prototype)\b",
+        instruction,
+        flags=re.IGNORECASE,
+    )
+    if verb is None:
+        return False
+
+    first_target = re.split(
+        r"\b(?:and|then|while)\b|[.;]",
+        instruction[verb.end() :],
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+    if re.search(
+        r"\b(?:department|team|worker|agent|candidate|company|organization|organisation|"
+        r"credential|account|password)\s*$",
+        first_target,
+        flags=re.IGNORECASE,
+    ):
+        return False
+
+    return bool(
+        re.search(
+            r"\b(?:app|application|program|script|service|website|api|package|library|"
+            r"software|tool|code|module|report|document|research|prototype|feature|workflow)\b",
+            instruction,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _infer_ceo_project_name(instruction: str) -> str | None:
+    """Derive a concise title from a natural build request when none is named."""
+    match = re.search(
+        r"\b(?:create|build|develop|implement|write|make|produce|prototype)\s+"
+        r"(?:a|an|the)\s+(.+?)"
+        r"(?:\s+(?:that|which|with|including|for|to)\b|[.;]|$)",
+        instruction,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    name = re.sub(r"\s+", " ", match.group(1)).strip(" \t\r\n\"'.,;:")
+    name = re.sub(r"^(?:new|simple|small)\s+", "", name, flags=re.IGNORECASE) or name
+    return name[:200] or None
 
 
 async def _handle_ceo_operator_intent(

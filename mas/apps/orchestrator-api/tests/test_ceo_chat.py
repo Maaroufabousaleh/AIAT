@@ -98,6 +98,22 @@ def test_project_decisions_are_owned_by_the_orchestrator_api():
     assert _ceo_operator_intent_is_api_owned(f"retry project {project_id} after an infra failure") is True
 
 
+def test_natural_software_build_request_is_owned_by_the_project_control_plane():
+    instruction = (
+        "Create a small Python application that accepts a CSV of expenses, "
+        "calculates totals by category, includes tests, and produces a README."
+    )
+
+    assert _ceo_operator_intent_is_api_owned(instruction) is True
+    assert _ceo_operator_intent_is_api_owned("Create a password for the test account") is False
+    assert (
+        _ceo_operator_intent_is_api_owned(
+            "Create a software engineering department and hire OpenCode as an engineer."
+        )
+        is True
+    )
+
+
 def test_security_blocker_revision_is_owned_by_the_orchestrator_api():
     project_id = UUID("00000000-0000-4000-a000-0000000000c1")
 
@@ -2008,8 +2024,25 @@ async def test_operator_send_to_ceo_hiring_request_without_repo_asks_for_source(
     assert "need a GitHub repository URL" in published[1]["envelope"]["payload"]["response"]
 
 
+@pytest.mark.parametrize(
+    ("instruction", "expected_project_name"),
+    [
+        (
+            "Initialize a new project named 'CEO Command Project' "
+            "with description 'Build through CEO chat'.",
+            "CEO Command Project",
+        ),
+        (
+            "Create a small Python application that accepts a CSV of expenses, "
+            "calculates totals by category, includes tests, and produces a README.",
+            "Python application",
+        ),
+    ],
+)
 @pytest.mark.anyio
-async def test_operator_send_to_ceo_creates_project_and_traces_workflow(client, monkeypatch):
+async def test_operator_send_to_ceo_creates_project_and_traces_workflow(
+    client, monkeypatch, instruction: str, expected_project_name: str
+):
     from mas_core.workflow import WorkflowEvent, WorkflowTransitionResult
     from mas_core.workflow.states import ProjectState
     from orchestrator_api.main import app
@@ -2075,12 +2108,7 @@ async def test_operator_send_to_ceo_creates_project_and_traces_workflow(client, 
     response = await client.post(
         "/ceo/message",
         headers={"X-API-Key": "test-operator-key"},
-        json={
-            "message": (
-                "Initialize a new project named 'CEO Command Project' "
-                "with description 'Build through CEO chat'."
-            )
-        },
+        json={"message": instruction},
     )
 
     assert response.status_code == 200
@@ -2090,6 +2118,10 @@ async def test_operator_send_to_ceo_creates_project_and_traces_workflow(client, 
     assert "created_project_record" in body["action"]["trace"]
     assert {"kind": "project", "id": str(project_id)} in body["evidence"]["refs"]
     storage.create_project.assert_awaited_once()
+    assert storage.create_project.await_args.kwargs["name"] == expected_project_name
+    assert storage.create_project.await_args.kwargs["description"] == (
+        "Build through CEO chat" if expected_project_name == "CEO Command Project" else instruction
+    )
     assert len(app.state.controller.transitions) == 1
     assert app.state.controller.transitions[0]["event"] == WorkflowEvent.PROJECT_CREATED
     # The transition publisher owns the durable SYSTEM_EVENT and its stage
