@@ -409,6 +409,35 @@ async def test_artifact_download_rejects_worker_run_identity_mismatch(
 
 
 @pytest.mark.anyio
+async def test_artifact_download_fails_closed_when_worker_run_identity_is_missing(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import orchestrator_api.artifact_content as artifact_content
+    from orchestrator_api.main import app
+
+    run_id = uuid.uuid4()
+    artifact = _artifact_fixture(run_id, b"worker identity required")
+    storage = MagicMock()
+    storage.get_project = AsyncMock(return_value={"id": PROJECT_ID})
+    storage.get_artifact = AsyncMock(return_value=artifact)
+    storage.get_worker_run = AsyncMock(return_value={"id": run_id, "project_id": PROJECT_ID})
+    storage.list_worker_artifacts = AsyncMock(return_value=[])
+    app.state.storage = storage
+    blob = _Blob(b"worker identity required")
+    monkeypatch.setattr(artifact_content, "new_artifact_blob_client", lambda: blob)
+
+    response = await client.get(
+        f"/projects/{PROJECT_ID}/artifacts/{artifact['id']}/download",
+        headers={"X-API-Key": "test-operator-key"},
+    )
+
+    assert response.status_code == 404
+    storage.list_worker_artifacts.assert_not_awaited()
+    assert blob.client.requested == []
+
+
+@pytest.mark.anyio
 async def test_artifact_download_rejects_corrupt_object_bytes(client, monkeypatch: pytest.MonkeyPatch) -> None:
     import orchestrator_api.artifact_content as artifact_content
     from orchestrator_api.main import app
