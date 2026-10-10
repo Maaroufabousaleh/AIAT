@@ -57,6 +57,10 @@ async function mockWorkerRunApi(page: Page, cancelMode: CancelMode = "terminal",
       await route.fulfill({ json: [] });
       return;
     }
+    if (path === "/api/executive/actions/catalogue" && request.method() === "GET") {
+      await route.fulfill({ json: [] });
+      return;
+    }
     if ((path === "/api/projects" || path === "/api/workers") && request.method() === "GET") {
       await route.fulfill({ json: [] });
       return;
@@ -107,8 +111,34 @@ async function mockWorkerRunApi(page: Page, cancelMode: CancelMode = "terminal",
       await route.fulfill({ json: runRecord(observed.state, observed.cancelRequestedAt, observed.retryRunId, observed.flowBound) });
       return;
     }
+    if (path === "/api/evidence/artifact/42" && request.method() === "GET") {
+      await route.fulfill({
+        json: {
+          schema_version: "aiat.evidence-detail.v1",
+          kind: "artifact",
+          id: "42",
+          source: "worker-artifacts",
+          record: { kind: "file", path: "workspace/artifacts/review-summary.json", sha256: "a".repeat(64) },
+        },
+      });
+      return;
+    }
     if (path === "/api/governance/runs/" + RUN_ID + "/events" && request.method() === "GET") {
-      await route.fulfill({ json: [{ id: "event-1", event_type: "progress", created_at: "2026-10-07T12:01:10Z", payload: { phase: "review" } }] });
+      await route.fulfill({ json: [
+        { id: "event-1", event_type: "progress", created_at: "2026-10-07T12:01:10Z", event_json: { progress: { phase: "review" } } },
+        {
+          id: "event-tool-request",
+          event_type: "tool_request",
+          occurred_at: "2026-10-07T12:01:20Z",
+          event_json: { event_type: "tool_request", tool_request: { tool_name: "filesystem.write", arguments: { path: "summary.json" } } },
+        },
+        {
+          id: "event-tool-response",
+          event_type: "tool_response",
+          occurred_at: "2026-10-07T12:01:21Z",
+          event_json: { event_type: "tool_response", tool_response: { tool_name: "filesystem.write", success: true, result: { written: true } } },
+        },
+      ] });
       return;
     }
     if (path === "/api/governance/runs/" + RUN_ID + "/transitions" && request.method() === "GET") {
@@ -211,11 +241,15 @@ test("operator opens a Worker Run, inspects durable evidence, and sees governed 
   await expect(runPage.getByTestId("run-identity")).toContainText("RUNNING");
   await expect(runPage.getByTestId("run-identity")).toContainText("review-worker");
   await expect(runPage.getByTestId("run-events")).toContainText("progress");
+  await expect(runPage.getByTestId("run-events")).toContainText("Tool requested · filesystem.write");
+  await expect(runPage.getByTestId("run-events")).toContainText("Tool succeeded · filesystem.write");
   await expect(runPage.getByTestId("run-transitions")).toContainText("QUEUED");
   await expect(runPage.getByTestId("run-artifacts")).toContainText("review-summary.json");
   await expect(
     runPage.getByTestId("run-artifacts").getByRole("listitem").first().getByText("review-summary.json", { exact: true }),
   ).toBeVisible();
+  const artifactEvidenceLink = runPage.getByRole("link", { name: "Open artifact evidence 42" });
+  await expect(artifactEvidenceLink).toHaveAttribute("href", "/evidence/artifact/42");
   await expect(runPage.getByTestId("run-usage")).toContainText("fixture/review-model");
   await expect(runPage.getByTestId("run-checkpoints")).toContainText("resumable");
 
@@ -241,6 +275,20 @@ test("operator opens a Worker Run, inspects durable evidence, and sees governed 
   });
   expect(observed.cancelPayload).not.toHaveProperty("requested_by");
   await expect(runPage.getByRole("button", { name: "Cancel Worker Run" })).toHaveCount(0);
+  expect(observed.unexpected).toEqual([]);
+});
+
+test("operator opens canonical artifact evidence from a Worker Run", async ({ page }) => {
+  const observed = await mockWorkerRunApi(page);
+  await authenticate(page, "/workers/runs/" + RUN_ID);
+
+  const runPage = page.getByRole("main", { name: "Worker Run detail" });
+  const artifactEvidenceLink = runPage.getByRole("link", { name: "Open artifact evidence 42" });
+  await expect(artifactEvidenceLink).toBeVisible();
+  await artifactEvidenceLink.click();
+
+  await expect(page).toHaveURL(/\/evidence\/artifact\/42$/);
+  await expect(page.getByTestId("ceo-evidence-detail")).toContainText("workspace/artifacts/review-summary.json");
   expect(observed.unexpected).toEqual([]);
 });
 

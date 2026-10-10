@@ -118,9 +118,24 @@ function stateLabel(run: JsonRecord): string {
 }
 
 function recordSummary(kind: EvidenceKey, row: JsonRecord, index: number): string {
-  const when = dateTime(row.created_at ?? row.occurred_at ?? row.timestamp);
+  const eventPayload = asRecord(row.event_json ?? row.event ?? row.payload);
+  const when = dateTime(row.created_at ?? row.occurred_at ?? row.timestamp ?? eventPayload.emitted_at);
   if (kind === "events") {
     const label = display(row.event_type ?? row.type ?? row.state, "Worker event");
+    const eventType = label.toLowerCase();
+    if (eventType === "tool_request" || eventType === "tool_response") {
+      const request = asRecord(eventPayload.tool_request);
+      const response = asRecord(eventPayload.tool_response);
+      const toolName = display(request.tool_name ?? response.tool_name, "tool");
+      const outcome = eventType === "tool_request"
+        ? "Tool requested"
+        : response.success === true
+          ? "Tool succeeded"
+          : response.success === false
+            ? "Tool failed"
+            : "Tool response";
+      return when === "—" ? outcome + " · " + toolName : outcome + " · " + toolName + " · " + when;
+    }
     return when === "—" ? label : label + " · " + when;
   }
   if (kind === "transitions") {
@@ -140,6 +155,14 @@ function recordSummary(kind: EvidenceKey, row: JsonRecord, index: number): strin
     return model + tokens + cost;
   }
   return "Checkpoint " + display(row.sequence, String(index + 1)) + " · " + (row.resumable === true ? "resumable" : "not resumable");
+}
+
+function artifactEvidenceHref(row: JsonRecord): string | null {
+  const artifactId = row.artifact_id;
+  if (typeof artifactId !== "number" || !Number.isSafeInteger(artifactId) || artifactId < 1) {
+    return null;
+  }
+  return "/evidence/artifact/" + encodeURIComponent(String(artifactId));
 }
 
 function EvidenceSection({
@@ -163,12 +186,23 @@ function EvidenceSection({
         <p className="mt-3 text-sm text-slate-500">{emptyText}</p>
       ) : (
         <ol className="mt-3 divide-y divide-slate-800" aria-label={title + " records"}>
-          {rows.map((row, index) => (
-            <li key={display(row.id, kind + "-" + index)} className="py-3 first:pt-0 last:pb-0">
+          {rows.map((row, index) => {
+            const artifactHref = kind === "artifacts" ? artifactEvidenceHref(row) : null;
+            return (
+              <li key={display(row.id, kind + "-" + index)} className="py-3 first:pt-0 last:pb-0">
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <p className="break-all text-sm text-slate-200">{recordSummary(kind, row, index)}</p>
                 <span className="font-mono text-[11px] text-slate-500">{display(row.id, "")}</span>
               </div>
+              {artifactHref && (
+                <Link
+                  href={artifactHref}
+                  aria-label={"Open artifact evidence " + String(row.artifact_id)}
+                  className="mt-2 inline-flex min-h-11 items-center rounded-md border border-cyan-700/60 px-3 py-2 text-xs font-medium text-cyan-200 underline decoration-cyan-700/50 underline-offset-4 hover:bg-cyan-950/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
+                >
+                  Inspect artifact evidence
+                </Link>
+              )}
               {kind === "checkpoints" && (
                 <p className="mt-1 text-xs text-slate-400">
                   {row.resumable === true ? "Can be selected for resume." : "This checkpoint is not marked resumable."}
@@ -181,8 +215,9 @@ function EvidenceSection({
                 </summary>
                 <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded bg-slate-950 p-3 text-[11px] leading-5 text-slate-300">{pretty(row)}</pre>
               </details>
-            </li>
-          ))}
+              </li>
+            );
+          })}
         </ol>
       )}
     </section>
