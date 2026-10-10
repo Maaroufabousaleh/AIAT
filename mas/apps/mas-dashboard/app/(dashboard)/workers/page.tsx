@@ -584,6 +584,19 @@ function WorkerRow({
         </td>
       </tr>
 
+      {actionError && !expanded && (
+        <tr className="border-b border-slate-800 bg-rose-950/20">
+          <td colSpan={9} className="px-4 py-3">
+            <p
+              className="rounded border border-rose-700 bg-rose-400/10 px-3 py-2 text-sm text-rose-300"
+              role="alert"
+            >
+              {actionError}
+            </p>
+          </td>
+        </tr>
+      )}
+
       {expanded && (
         <tr className="bg-slate-950/50 border-b border-slate-800">
           <td colSpan={9} className="px-6 py-4">

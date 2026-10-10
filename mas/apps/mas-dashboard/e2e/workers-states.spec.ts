@@ -109,6 +109,37 @@ test("hiring board retains workers when refresh fails", async ({ page }) => {
   await expect(row.getByText("Inactive", { exact: true })).toBeVisible();
 });
 
+test("hiring board shows a failed status action while the worker row is collapsed", async ({
+  page,
+}) => {
+  await page.route("**/api/workers", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(WORKER_FIXTURE),
+    });
+  });
+  await page.route("**/api/workers/worker-states-001/status", async (route) => {
+    await route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ detail: "worker status service unavailable" }),
+    });
+  });
+
+  await authenticate(page, "/workers");
+  const row = page.getByRole("row", { name: /worker-states/ });
+  await expect(row).toHaveAttribute("aria-expanded", "false");
+  await row.getByRole("button", { name: "Deactivate worker-states" }).click();
+
+  await expect(row).toHaveAttribute("aria-expanded", "false");
+  const actionError = page.getByText("worker status service unavailable", {
+    exact: true,
+  });
+  await expect(actionError).toHaveAttribute("role", "alert");
+  await expect(row.getByText("Active", { exact: true })).toBeVisible();
+});
+
 test("hiring board exposes a first-load access-denied state without retry or mutations", async ({
   page,
 }) => {
