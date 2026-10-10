@@ -557,7 +557,7 @@ response evidence.
   canonical read-only reconciliation endpoint and emits bounded coverage and
   finding counts only. `--require-clean` fails on findings; absent API/DB
   evidence blocks and the check never replaces the underlying ledger.
-- Central tool registry with explicit grants, aliases, policy, rate/concurrency limits, circuit breakers, audit, cache, and usage records.
+- Central tool registry with explicit grants, aliases, policy, rate/concurrency limits, circuit breakers, audit, cache, and usage records. `web_fetch` also has a deterministic success-path fixture covering HTML text extraction, relative redirects, output truncation, and private-address redirect rejection (`mas/apps/tool-service/tests/test_web_fetch.py`, 3/3); its HTTP requests use an in-memory transport, so this is not public-network or live research evidence.
 - Worker registration and partial updates constrain `update_policy` to the four
   manifest values (`manual`, `auto-patch`, `auto-minor`, `auto-all`). When
   capability IDs or team context changes, persisted capability `required_tools`
