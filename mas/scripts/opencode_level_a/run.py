@@ -488,6 +488,33 @@ def _safe_opencode_probe_summary(opencode: dict[str, Any]) -> dict[str, Any]:
     return summary
 
 
+def _initial_report(project: str) -> dict[str, Any]:
+    """Declare exactly which parts the isolated runtime smoke does not exercise."""
+
+    return {
+        "schema_version": "aiat.opencode-level-a-disposable-runtime.v1",
+        "level": "A_LOCAL_DETERMINISTIC_FIXTURE",
+        "promotable": False,
+        "project": project,
+        "scope": {
+            "opencode_runtime": "real_pinned_process",
+            "sandbox": "runsc_required",
+            "provider_boundary": "local_deterministic_fixture",
+            "canonical_worker_run": "not_exercised",
+            "aiat_tool_mediation": "not_exercised",
+            "artifact_persistence": "not_exercised",
+        },
+        "provider_fixture": "not_run",
+        "egress_probe": "not_run",
+        "opencode_process": "not_run",
+        "canonical_worker_run": "not_run",
+        "artifact_and_tool_mediation": "not_run",
+        "external_provider_call_performed": False,
+        "provider_dispatch": "UNVERIFIED",
+        "provider_fixture_summary": {"status": "NOT_COLLECTED"},
+    }
+
+
 def _run_live(opencode_image: str, litellm_image: str) -> dict[str, Any]:
     if not opencode_image or not litellm_image:
         raise HarnessError("both local image references must be supplied explicitly")
@@ -500,20 +527,7 @@ def _run_live(opencode_image: str, litellm_image: str) -> dict[str, Any]:
     stage = "preflight.runsc"
     stage_override: str | None = None
     gateway_ip = ""
-    report: dict[str, Any] = {
-        "schema_version": "aiat.opencode-level-a-disposable-runtime.v1",
-        "level": "A_LOCAL_DETERMINISTIC_FIXTURE",
-        "promotable": False,
-        "project": project,
-        "provider_fixture": "not_run",
-        "egress_probe": "not_run",
-        "opencode_process": "not_run",
-        "canonical_worker_run": "not_run",
-        "artifact_and_tool_mediation": "not_run",
-        "external_provider_call_performed": False,
-        "provider_dispatch": "UNVERIFIED",
-        "provider_fixture_summary": {"status": "NOT_COLLECTED"},
-    }
+    report = _initial_report(project)
     try:
         stage = "preflight.subnet"
         env["AIAT_LEVEL_A_SUBNET"] = _available_subnet(env)

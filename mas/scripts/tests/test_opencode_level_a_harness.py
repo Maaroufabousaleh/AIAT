@@ -76,6 +76,24 @@ def test_subnet_selection_skips_existing_docker_or_host_ranges() -> None:
     assert level_a._select_subnet(["172.28.240.0/20", "172.29.240.0/20"]) == "172.30.240.0/29"
 
 
+def test_report_keeps_runtime_smoke_distinct_from_canonical_worker_execution() -> None:
+    report = _module()._initial_report("disposable-level-a-project")
+
+    assert report["level"] == "A_LOCAL_DETERMINISTIC_FIXTURE"
+    assert report["promotable"] is False
+    assert report["external_provider_call_performed"] is False
+    assert report["scope"] == {
+        "opencode_runtime": "real_pinned_process",
+        "sandbox": "runsc_required",
+        "provider_boundary": "local_deterministic_fixture",
+        "canonical_worker_run": "not_exercised",
+        "aiat_tool_mediation": "not_exercised",
+        "artifact_persistence": "not_exercised",
+    }
+    assert report["canonical_worker_run"] == "not_run"
+    assert report["artifact_and_tool_mediation"] == "not_run"
+
+
 def test_fixed_service_addresses_use_unique_non_gateway_hosts() -> None:
     level_a = _module()
     assert level_a._service_addresses("172.31.255.0/29") == {
