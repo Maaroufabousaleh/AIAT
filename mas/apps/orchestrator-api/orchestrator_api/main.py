@@ -10085,12 +10085,15 @@ def _worker_tool_dispatcher(storage: AgentStorage, worker: dict[str, Any]):
         if run is None:
             raise RuntimeError("Worker Run is not persisted; tool dispatch is denied")
         request_json = dict(run.get("request_json") or {})
+        execution_claim_fence = tool_request.execution_claim_fence
         body = {
             "caller_id": str(worker["id"]),
             "caller_role": AgentRole.WORKER.value,
             "caller_team": worker.get("team_id"),
             "project_id": str(run["project_id"]) if run.get("project_id") else None,
             "worker_run_id": str(tool_request.run_id),
+            "claim_owner": execution_claim_fence.get("claim_owner"),
+            "claim_attempt_count": int(execution_claim_fence.get("attempt_count") or 0),
             "permission_scope": list(tool_request.permission_scope),
             "budget_snapshot": request_json.get("budget") or {},
             "audit_context": {
@@ -10226,6 +10229,7 @@ async def _certified_worker_adapter(
                 verification,
                 base_url=str(config["base_url"]),
                 worker_id=str(worker_id),
+                model_mapper=_governed_opencode_model_mapper,
                 endpoints=config.get("endpoints"),
                 context=context,
                 capabilities=capabilities,
@@ -10246,6 +10250,34 @@ async def _certified_worker_adapter(
     adapter._aiat_adapter_id = immutable_adapter_id
     _worker_adapter_runtimes[cache_key] = adapter
     return adapter
+
+
+def _governed_opencode_model_mapper(exact_model_id: str) -> str | None:
+    """Resolve only model IDs with an explicit OpenCode identity in the catalogue.
+
+    The OpenCode runtime has a configured ``aiat`` gateway provider. Gateway
+    model aliases may be unqualified in AIAT model profiles, so the runtime
+    identity comes from the model catalogue's explicit
+    ``profile_identity_aliases`` metadata. Unknown aliases stay unavailable;
+    this function never infers a provider or sends a direct provider request.
+    """
+
+    from mas_core.llm_gateway.providers import MODEL_REGISTRY
+
+    entry = MODEL_REGISTRY.get(str(exact_model_id or "").strip())
+    if entry is None:
+        return None
+    aliases = entry.extra.get("profile_identity_aliases")
+    if not isinstance(aliases, list):
+        return None
+    matches = {
+        str(alias.get("model_id") or "").strip()
+        for alias in aliases
+        if isinstance(alias, dict)
+        and str(alias.get("provider") or "").strip() == "aiat"
+        and str(alias.get("model_id") or "").strip().startswith("aiat/")
+    }
+    return next(iter(matches)) if len(matches) == 1 else None
 
 
 @app.get("/worker-contract/version")
@@ -12146,6 +12178,7 @@ async def _execute_queued_worker_run(
     model_resolution_snapshot_id: UUID | None,
     lease_seconds: int,
     canonical_run_id: UUID,
+    attempt_count: int,
     budget_reservations: list[tuple[UUID, str]] | None = None,
 ) -> None:
     """Execute one claimed run in an application-owned background task."""
@@ -12159,12 +12192,56 @@ async def _execute_queued_worker_run(
     async def renew_lease() -> None:
         while True:
             await asyncio.sleep(max(5, lease_seconds // 3))
-            refreshed = await storage.heartbeat_worker_run(
-                run_id,
-                owner=owner,
-                lease_seconds=lease_seconds,
-            )
+            try:
+                refreshed = await storage.heartbeat_worker_run(
+                    run_id,
+                    owner=owner,
+                    attempt_count=attempt_count,
+                    lease_seconds=lease_seconds,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning(
+                    "queued_worker_run_heartbeat_failed",
+                    extra={"run_id": str(run_id), "error": type(exc).__name__},
+                )
+                refreshed = None
             if refreshed is None:
+                try:
+                    current = await storage.get_worker_run(run_id)
+                except Exception as exc:
+                    logger.warning(
+                        "queued_worker_run_state_read_after_heartbeat_loss_failed",
+                        extra={"run_id": str(run_id), "error": type(exc).__name__},
+                    )
+                    current = None
+                if current is not None and str(current.get("state") or "") in {
+                    "SUCCEEDED",
+                    "FAILED",
+                    "CANCELLED",
+                    "TIMED_OUT",
+                }:
+                    return
+                from mas_core.worker_contract import WorkerCancellation
+
+                try:
+                    cancellation = WorkerCancellation(
+                        run_id=run_id,
+                        reason="worker run claim or lease is no longer current",
+                        requested_by="worker-run-controller",
+                        force=True,
+                    )
+                    cancellation._execution_claim_fence = {
+                        "claim_owner": owner,
+                        "attempt_count": attempt_count,
+                    }
+                    await adapter.cancel(cancellation)
+                except Exception as exc:
+                    logger.warning(
+                        "queued_worker_run_cancel_after_heartbeat_loss_failed",
+                        extra={"run_id": str(run_id), "error": type(exc).__name__},
+                    )
                 return
 
     try:
@@ -12193,12 +12270,33 @@ async def _execute_queued_worker_run(
         if heartbeat_task is not None:
             heartbeat_task.cancel()
             await asyncio.gather(heartbeat_task, return_exceptions=True)
-        await _settle_worker_run_budgets(
-            storage,
-            budget_reservations or [],
-            state=outcome_state,
-            actual_cost_usd=actual_cost_usd,
-        )
+        try:
+            current = await storage.get_worker_run(run_id)
+        except Exception as exc:
+            logger.warning(
+                "queued_worker_run_budget_settlement_state_unavailable",
+                extra={"run_id": str(run_id), "error": type(exc).__name__},
+            )
+            current = None
+        current_attempt = int((current or {}).get("attempt_count") or 0)
+        current_state = str((current or {}).get("state") or "")
+        if (
+            current is not None
+            and current_attempt == attempt_count
+            and current_state == outcome_state
+            and current_state in {"SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT"}
+        ):
+            await _settle_worker_run_budgets(
+                storage,
+                budget_reservations or [],
+                state=current_state,
+                actual_cost_usd=actual_cost_usd,
+            )
+        elif budget_reservations:
+            logger.warning(
+                "queued_worker_run_budget_settlement_deferred",
+                extra={"run_id": str(run_id), "state": current_state or "UNKNOWN"},
+            )
         current = asyncio.current_task()
         if current is not None:
             app.state.worker_run_tasks.discard(current)
@@ -12488,6 +12586,7 @@ async def _dispatch_worker_run(
                         model_resolution_snapshot_id=model_resolution_snapshot_id,
                         lease_seconds=req.lease_seconds,
                         canonical_run_id=canonical_run_id,
+                        attempt_count=int(claim.get("attempt_count") or 0),
                         budget_reservations=budget_reservations,
                     )
                 )
@@ -12551,14 +12650,31 @@ async def recover_expired_worker_runs(limit: int = Query(default=100, ge=1, le=1
 
 
 @app.post("/workers/runs/{run_id}/heartbeat")
-async def heartbeat_worker_run(run_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
+async def heartbeat_worker_run(
+    run_id: UUID,
+    payload: dict[str, Any],
+    request: Request,
+) -> dict[str, Any]:
+    # This endpoint extends a durable execution lease. Keep it on the internal
+    # service principal; operator, governance-agent, gateway, and worker keys
+    # are not host/executor credentials and must not be able to renew arbitrary
+    # runs by supplying a discovered run ID and claim tuple.
+    if getattr(request.state, "aiat_auth_principal", None) != "service":
+        raise HTTPException(403, "worker run heartbeat requires the service principal")
     owner = str(payload.get("owner") or "").strip()
     if not owner:
         raise HTTPException(422, "owner is required")
+    attempt_count = payload.get("attempt_count")
+    if isinstance(attempt_count, bool) or not isinstance(attempt_count, int) or attempt_count < 1:
+        raise HTTPException(422, "attempt_count must be a positive integer")
+    lease_seconds = payload.get("lease_seconds", 300)
+    if isinstance(lease_seconds, bool) or not isinstance(lease_seconds, int) or not 1 <= lease_seconds <= 300:
+        raise HTTPException(422, "lease_seconds must be an integer between 1 and 300")
     row = await _storage().heartbeat_worker_run(
         run_id,
         owner=owner,
-        lease_seconds=int(payload.get("lease_seconds") or 300),
+        attempt_count=attempt_count,
+        lease_seconds=lease_seconds,
     )
     if row is None:
         raise HTTPException(409, "run is not owned by this executor or is terminal")
@@ -12975,6 +13091,7 @@ async def cancel_worker_run(
                 },
                 actor=principal,
                 reason="cancelled before runtime activation",
+                allow_unfenced_cancel=True,
             )
             if cancelled is None:
                 raise HTTPException(409, "worker run state changed before cancellation")
@@ -13005,6 +13122,7 @@ async def cancel_worker_run(
         reason=req.reason,
         requested_by=principal,
         force=req.force,
+        allow_unfenced_cancel=True,
     )
     if row is None:
         raise HTTPException(404, "Worker run not found")

@@ -6218,11 +6218,13 @@ class AgentStorage:
         run_id: UUID | None = None,
         worker_id: UUID | None = None,
         provider_id: str | None = None,
+        claim_owner: str | None = None,
+        attempt_count: int | None = None,
         billing_code: str | None = None,
         pricing_snapshot: dict[str, Any] | None = None,
         resource_json: dict[str, Any] | None = None,
         idempotency_key: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> dict[str, Any] | None:
         """Append one immutable, project-scoped LLM or tool usage event.
 
         Usage events are deliberately idempotent.  Worker retries, gateway
@@ -6274,6 +6276,23 @@ class AgentStorage:
             "occurred_at": occurred_at_value,
         }
         async with self.engine.begin() as conn:
+            if claim_owner is not None or attempt_count is not None:
+                if run_id is None or attempt_count is None:
+                    return None
+                run = (
+                    await conn.execute(
+                        t.worker_runs.select()
+                        .where(t.worker_runs.c.id == run_id)
+                        .with_for_update()
+                    )
+                ).mappings().first()
+                if not self._worker_run_claim_matches(
+                    run,
+                    claim_owner=claim_owner,
+                    attempt_count=int(attempt_count),
+                    now=datetime.now(tz=UTC),
+                ):
+                    return None
             if idempotency_key:
                 existing = (
                     await conn.execute(
@@ -10078,14 +10097,48 @@ class AgentStorage:
             updated = (await conn.execute(t.worker_runs.select().where(t.worker_runs.c.id == row["id"]))).mappings().first()
         return dict(updated) if updated else None
 
-    async def heartbeat_worker_run(self, run_id: UUID, *, owner: str, lease_seconds: int = 300) -> dict[str, Any] | None:
-        now = datetime.now(tz=UTC)
-        result = None
+    async def heartbeat_worker_run(
+        self,
+        run_id: UUID,
+        *,
+        owner: str,
+        attempt_count: int,
+        lease_seconds: int = 300,
+    ) -> dict[str, Any] | None:
         async with self.engine.begin() as conn:
+            current = (
+                await conn.execute(
+                    t.worker_runs.select()
+                    .where(t.worker_runs.c.id == run_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if (
+                current is None
+                or current.get("claim_owner") != owner
+                or int(current.get("attempt_count") or 0) != attempt_count
+                or current.get("lease_expires_at") is None
+                or str(current.get("state")) in TERMINAL_WORKER_RUN_STATES
+            ):
+                return None
+            now = datetime.now(tz=UTC)
+            if current["lease_expires_at"] <= now:
+                return None
             result = await conn.execute(
                 t.worker_runs.update()
-                .where(sa.and_(t.worker_runs.c.id == run_id, t.worker_runs.c.claim_owner == owner, t.worker_runs.c.state.notin_(TERMINAL_WORKER_RUN_STATES)))
-                .values(heartbeat_at=now, lease_expires_at=now + timedelta(seconds=max(1, lease_seconds)))
+                .where(
+                    sa.and_(
+                        t.worker_runs.c.id == run_id,
+                        t.worker_runs.c.claim_owner == owner,
+                        t.worker_runs.c.attempt_count == attempt_count,
+                        t.worker_runs.c.lease_expires_at > now,
+                        t.worker_runs.c.state.notin_(TERMINAL_WORKER_RUN_STATES),
+                    )
+                )
+                .values(
+                    heartbeat_at=now,
+                    lease_expires_at=now + timedelta(seconds=max(1, lease_seconds)),
+                )
             )
         return await self.get_worker_run(run_id) if result.rowcount else None
 
@@ -10106,7 +10159,7 @@ class AgentStorage:
                             sa.and_(
                                 t.worker_runs.c.state.in_(("CLAIMED", "VALIDATING", "READY", "DISPATCHING", "RUNNING", "PAUSING", "RESUMING")),
                                 t.worker_runs.c.lease_expires_at.is_not(None),
-                                t.worker_runs.c.lease_expires_at < now,
+                                t.worker_runs.c.lease_expires_at <= now,
                             ),
                             sa.and_(
                                 t.worker_runs.c.state == "QUEUED",
@@ -10197,6 +10250,192 @@ class AgentStorage:
     async def get_worker_run(self, run_id: UUID) -> dict[str, Any] | None:
         return await self._get_table_row(t.worker_runs, t.worker_runs.c.id, run_id)
 
+    @staticmethod
+    def _worker_run_claim_matches(
+        row: Mapping[str, Any] | None,
+        *,
+        claim_owner: str | None,
+        attempt_count: int,
+        now: datetime,
+        reject_cancel_requested: bool = False,
+    ) -> bool:
+        if row is None or str(row.get("state") or "") != "RUNNING":
+            return False
+        # A durable cancellation request closes the execution capability
+        # before the adapter has necessarily acknowledged cancellation.  The
+        # row lock held by callers serializes this check with the request write.
+        if reject_cancel_requested and row.get("cancel_requested_at") is not None:
+            return False
+        current_owner = row.get("claim_owner")
+        current_attempt = int(row.get("attempt_count") or 0)
+        if current_owner is None and current_attempt == 0:
+            return claim_owner is None and attempt_count == 0
+        lease_expires_at = row.get("lease_expires_at")
+        return (
+            claim_owner is not None
+            and claim_owner == current_owner
+            and attempt_count == current_attempt
+            and lease_expires_at is not None
+            and lease_expires_at > now
+        )
+
+    async def validate_worker_run_claim(
+        self,
+        *,
+        run_id: UUID,
+        claim_owner: str | None,
+        attempt_count: int,
+    ) -> bool:
+        """Check one execution fence under the canonical WorkerRun row lock."""
+
+        async with self.engine.begin() as conn:
+            row = (
+                await conn.execute(
+                    t.worker_runs.select()
+                    .where(t.worker_runs.c.id == run_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            return self._worker_run_claim_matches(
+                row,
+                claim_owner=claim_owner,
+                attempt_count=attempt_count,
+                now=datetime.now(tz=UTC),
+                reject_cancel_requested=True,
+            )
+
+    async def persist_worker_result_evidence_claim_fenced(
+        self,
+        *,
+        run_id: UUID,
+        claim_owner: str | None,
+        attempt_count: int,
+        artifacts: list[dict[str, Any]],
+        usage: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Insert worker artifact links and usage while holding the live claim.
+
+        The row lock serializes these evidence writes against lease recovery.
+        Object-store bytes are external and cannot share this SQL transaction;
+        callers use attempt-scoped keys and delete them if this fence rejects.
+        """
+
+        stored_artifacts: list[dict[str, Any]] = []
+        trace_id = usage.get("trace_id") or current_trace_id()
+        span_id = (usage.get("span_id") or current_span_id() or new_span_id()) if trace_id else usage.get("span_id")
+        async with self.engine.begin() as conn:
+            run = (
+                await conn.execute(
+                    t.worker_runs.select()
+                    .where(t.worker_runs.c.id == run_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            # Sample lease validity only after this transaction has acquired
+            # the canonical WorkerRun row lock. Otherwise a lock wait can
+            # carry a pre-expiry timestamp past the lease boundary.
+            now = datetime.now(tz=UTC)
+            if not self._worker_run_claim_matches(
+                run,
+                claim_owner=claim_owner,
+                attempt_count=attempt_count,
+                now=now,
+            ):
+                return None
+
+            usage_values = {
+                "id": uuid4(),
+                "run_id": run_id,
+                "prompt_tokens": usage.get("prompt_tokens", 0),
+                "completion_tokens": usage.get("completion_tokens", 0),
+                "total_tokens": usage.get("total_tokens", 0),
+                "cost_usd": usage.get("cost_usd", 0),
+                "duration_ms": usage.get("duration_ms", 0),
+                "resource_json": usage.get("resource_json") or {},
+                "provider_id": usage.get("provider_id"),
+                "exact_model_id": usage.get("exact_model_id"),
+                "trace_id": trace_id,
+                "span_id": span_id,
+                "created_at": now,
+            }
+
+            for artifact in artifacts:
+                artifact_created_at = now
+                artifact_values = {
+                    "agent_id": artifact["agent_id"],
+                    "path": artifact["path"],
+                    "metadata": artifact.get("metadata"),
+                    "sha256": artifact.get("sha256"),
+                    "size_bytes": artifact.get("size_bytes"),
+                    "created_at": artifact_created_at,
+                }
+                artifact_id = (
+                    await conn.execute(
+                        t.artifacts.insert()
+                        .values(**artifact_values)
+                        .returning(t.artifacts.c.id)
+                    )
+                ).scalar_one()
+                worker_artifact_values = {
+                    "id": uuid4(),
+                    "run_id": run_id,
+                    "artifact_id": artifact_id,
+                    "kind": artifact["kind"],
+                    "uri": artifact["uri"],
+                    "sha256": artifact["sha256"],
+                    "size_bytes": artifact.get("size_bytes"),
+                    "metadata": artifact.get("metadata") or {},
+                    "trace_id": artifact.get("trace_id"),
+                    "span_id": artifact.get("span_id"),
+                    "created_at": artifact_created_at,
+                }
+                await conn.execute(t.worker_artifacts.insert().values(**worker_artifact_values))
+                artifact_row = {**artifact_values, "id": artifact_id}
+                worker_artifact_row = worker_artifact_values
+                stored_artifacts.append(
+                    {"artifact": artifact_row, "worker_artifact": worker_artifact_row}
+                )
+                if artifact.get("trace_id"):
+                    await self._insert_native_trace_span_tx(
+                        conn,
+                        trace_id=str(artifact["trace_id"]),
+                        span_id=new_span_id(),
+                        parent_span_id=artifact.get("span_id"),
+                        source_kind="audit",
+                        operation=f"artifact.{artifact['kind']}",
+                        service="worker_evidence",
+                        status="success",
+                        started_at=artifact_created_at,
+                        ended_at=artifact_created_at,
+                        attributes={
+                            "kind": artifact["kind"],
+                            "size_bytes": artifact.get("size_bytes") or 0,
+                        },
+                    )
+
+            await conn.execute(t.worker_usage_records.insert().values(**usage_values))
+            if trace_id:
+                duration_ms = usage.get("duration_ms") or 0
+                await self._insert_native_trace_span_tx(
+                    conn,
+                    trace_id=trace_id,
+                    span_id=new_span_id(),
+                    parent_span_id=span_id,
+                    source_kind="model",
+                    operation=usage.get("exact_model_id") or "worker.model",
+                    service="worker_evidence",
+                    status="success",
+                    started_at=now - timedelta(milliseconds=float(duration_ms or 0)),
+                    ended_at=now,
+                    duration_ms=duration_ms,
+                    attributes={
+                        "run_id": str(run_id),
+                        "prompt_tokens": usage.get("prompt_tokens", 0),
+                        "completion_tokens": usage.get("completion_tokens", 0),
+                    },
+                )
+        return {"artifacts": stored_artifacts, "usage": usage_values}
+
     async def list_worker_runs(self, *, project_id: UUID | None = None, worker_id: UUID | None = None, flow_instance_id: UUID | None = None, state: str | None = None, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
         q = t.worker_runs.select().order_by(t.worker_runs.c.created_at.desc()).limit(limit).offset(offset)
         clauses = []
@@ -10228,14 +10467,31 @@ class AgentStorage:
         reason: str | None = None,
         correlation_id: str | None = None,
         transition_metadata: dict[str, Any] | None = None,
+        claim_owner: str | None = None,
+        attempt_count: int | None = None,
+        allow_unfenced_cancel: bool = False,
     ) -> dict[str, Any] | None:
         allowed = {"CREATED": {"QUEUED", "VALIDATING", "CANCELLED", "FAILED"}, "QUEUED": {"VALIDATING", "CANCELLED", "FAILED"}, "CLAIMED": {"VALIDATING", "QUEUED", "CANCELLED", "FAILED"}, "VALIDATING": {"READY", "FAILED", "CANCELLED", "QUEUED"}, "READY": {"DISPATCHING", "FAILED", "CANCELLED", "QUEUED"}, "DISPATCHING": {"RUNNING", "FAILED", "CANCELLED", "TIMED_OUT", "QUEUED"}, "RUNNING": {"PAUSING", "SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT", "QUEUED"}, "PAUSING": {"PAUSED", "SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT", "QUEUED"}, "PAUSED": {"RESUMING", "CANCELLED", "FAILED", "QUEUED"}, "RESUMING": {"RUNNING", "FAILED", "CANCELLED", "QUEUED"}, "SUCCEEDED": set(), "FAILED": set(), "CANCELLED": set(), "TIMED_OUT": set()}
-        now = datetime.now(tz=UTC)
         async with self.engine.begin() as conn:
             current = (await conn.execute(t.worker_runs.select().where(t.worker_runs.c.id == run_id).with_for_update())).mappings().first()
             if not current:
                 return None
+            now = datetime.now(tz=UTC)
             if expected_state is not None and current["state"] != expected_state:
+                return None
+            current_owner = current.get("claim_owner")
+            current_attempt = int(current.get("attempt_count") or 0)
+            control_cancel = new_state == "CANCELLED" and allow_unfenced_cancel
+            if not control_cancel and (current_owner is not None or current_attempt > 0):
+                lease_expires_at = current.get("lease_expires_at")
+                if (
+                    claim_owner != current_owner
+                    or attempt_count != current_attempt
+                    or lease_expires_at is None
+                    or lease_expires_at <= now
+                ):
+                    return None
+            elif not control_cancel and (claim_owner is not None or attempt_count is not None):
                 return None
             if new_state not in allowed.get(str(current["state"]), set()):
                 raise ValueError(f"invalid worker run transition {current['state']} -> {new_state}")
@@ -10323,7 +10579,31 @@ class AgentStorage:
                     )
                     .values(status=new_state, updated_at=now)
                 )
-            await conn.execute(t.worker_runs.update().where(t.worker_runs.c.id == run_id).values(**values))
+            update_query = t.worker_runs.update().where(t.worker_runs.c.id == run_id)
+            if control_cancel:
+                # Operator cancellation is authorized by the API boundary and
+                # remains available even when an executor lease has expired.
+                # All worker/controller transitions continue to require the
+                # active owner and attempt fence.
+                pass
+            elif current_owner is not None or current_attempt > 0:
+                update_query = update_query.where(
+                    sa.and_(
+                        t.worker_runs.c.claim_owner == claim_owner,
+                        t.worker_runs.c.attempt_count == attempt_count,
+                        t.worker_runs.c.lease_expires_at > now,
+                    )
+                )
+            else:
+                update_query = update_query.where(
+                    sa.and_(
+                        t.worker_runs.c.claim_owner.is_(None),
+                        t.worker_runs.c.attempt_count <= 0,
+                    )
+                )
+            updated = await conn.execute(update_query.values(**values))
+            if not updated.rowcount:
+                return None
             await conn.execute(
                 t.worker_run_transitions.insert().values(
                     id=uuid4(),
@@ -10425,6 +10705,8 @@ class AgentStorage:
         idempotency_key: str,
         tool_name: str,
         request_sha256: str,
+        claim_owner: str | None = None,
+        attempt_count: int | None = None,
     ) -> dict[str, Any]:
         """Reserve or recover one mediated tool effect for a worker run.
 
@@ -10445,6 +10727,30 @@ class AgentStorage:
             "state": "IN_FLIGHT",
         }
         async with self.engine.begin() as conn:
+            # Serialize effect admission with claim recovery/reassignment.  A
+            # replay is also denied to an expired owner: the run row is checked
+            # before looking up the idempotency row.
+            run = (
+                await conn.execute(
+                    t.worker_runs.select()
+                    .where(t.worker_runs.c.id == run_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            now = datetime.now(tz=UTC)
+            if run is None:
+                return {"disposition": "CLAIM_LOST"}
+            supplied_attempt = int(attempt_count) if attempt_count is not None else -1
+            current_claim = self._worker_run_claim_matches(
+                run,
+                claim_owner=claim_owner,
+                attempt_count=supplied_attempt,
+                now=now,
+                reject_cancel_requested=True,
+            )
+            if not current_claim:
+                return {"disposition": "CLAIM_LOST"}
+
             insert = pg_insert(t.worker_tool_effects).values(**values).on_conflict_do_nothing(
                 index_elements=[
                     t.worker_tool_effects.c.run_id,

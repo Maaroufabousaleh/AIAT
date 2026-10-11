@@ -71,12 +71,24 @@ class _ControllableAdapter:
         self.capabilities = WorkerCapabilities(checkpoint_mode=checkpoint_mode)
         self.pause_calls: list[object] = []
         self.resume_calls: list[object] = []
+        self.cancel_calls: list[object] = []
 
     async def pause(self, request):
         self.pause_calls.append(request)
 
     async def resume(self, request):
         self.resume_calls.append(request)
+
+    async def cancel(self, request):
+        from mas_core.worker_contract import WorkerCancellationReceipt
+
+        self.cancel_calls.append(request)
+        return WorkerCancellationReceipt(
+            run_id=RUN_ID,
+            accepted=True,
+            terminal=True,
+            runtime_status="CANCELLED",
+        )
 
 
 def _patch_storage(storage: _RunControlStorage) -> None:
@@ -246,7 +258,34 @@ async def test_operator_can_cancel_unbound_run_with_principal_attribution(client
     assert response.json()["state"] == "CANCELLED"
     assert storage.cancel_requests == [RUN_ID]
     assert storage.transitions[0]["actor"] == "operator"
+    assert storage.transitions[0]["allow_unfenced_cancel"] is True
     assert storage.transitions[0]["error"]["message"] == "operator requested cancellation"
+
+
+@pytest.mark.anyio
+async def test_operator_can_cancel_bound_run_after_lease_expiry(client, monkeypatch) -> None:
+    import orchestrator_api.main as main
+
+    storage = _RunControlStorage(state="RUNNING")
+    adapter = _ControllableAdapter("native")
+    _patch_storage(storage)
+    monkeypatch.setattr(
+        main,
+        "_certified_worker_adapter",
+        AsyncMock(return_value=adapter),
+    )
+
+    response = await client.post(
+        f"/workers/runs/{RUN_ID}/cancel",
+        headers=OPERATOR_HEADERS,
+        json={"reason": "operator recovery", "force": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["state"] == "CANCELLED"
+    assert len(adapter.cancel_calls) == 1
+    assert storage.transitions[-1]["actor"] == "operator"
+    assert storage.transitions[-1]["allow_unfenced_cancel"] is True
 
 
 @pytest.mark.anyio

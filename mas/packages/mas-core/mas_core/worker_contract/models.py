@@ -13,7 +13,7 @@ from enum import StrEnum
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
 from mas_core.sandbox_policy import SandboxProfileName
 
@@ -237,6 +237,26 @@ class WorkerManifest(_ContractModel):
 
 
 class WorkerRunRequest(_ContractModel):
+    # Server-owned execution fence.  Private attributes keep the lease
+    # generation out of the public request/schema, persisted request JSON,
+    # prompts, and adapter event payloads while still allowing adapters to
+    # bind short-lived runtime capabilities to the canonical claim.
+    _execution_claim_fence: dict[str, Any] = PrivateAttr(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def discard_untrusted_execution_fence(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            value = dict(value)
+            for name in (
+                "execution_claim_fence",
+                "claim_owner",
+                "attempt_count",
+                "claim_attempt_count",
+            ):
+                value.pop(name, None)
+        return value
+
     protocol: ProtocolVersion = Field(default_factory=ProtocolVersion)
     run_id: UUID = Field(default_factory=uuid4)
     idempotency_key: str
@@ -263,6 +283,10 @@ class WorkerRunRequest(_ContractModel):
     trace_id: str | None = None
     span_id: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    @property
+    def execution_claim_fence(self) -> dict[str, Any]:
+        return dict(self._execution_claim_fence)
 
     @field_validator("idempotency_key", "worker_id", "task_type")
     @classmethod
@@ -304,6 +328,22 @@ class WorkerProgress(_ContractModel):
 
 
 class WorkerToolRequest(_ContractModel):
+    _execution_claim_fence: dict[str, Any] = PrivateAttr(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def discard_untrusted_execution_fence(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            value = dict(value)
+            for name in (
+                "execution_claim_fence",
+                "claim_owner",
+                "attempt_count",
+                "claim_attempt_count",
+            ):
+                value.pop(name, None)
+        return value
+
     request_id: UUID = Field(default_factory=uuid4)
     run_id: UUID
     tool_name: str
@@ -311,6 +351,10 @@ class WorkerToolRequest(_ContractModel):
     permission_scope: list[str] = Field(default_factory=list)
     approval_required: bool = False
     idempotency_key: str
+
+    @property
+    def execution_claim_fence(self) -> dict[str, Any]:
+        return dict(self._execution_claim_fence)
 
 
 class WorkerToolResponse(_ContractModel):
@@ -404,11 +448,40 @@ class WorkerCheckpoint(_ContractModel):
 
 
 class WorkerCancellation(_ContractModel):
+    # Cancellation authority is supplied only by the controller/executor from
+    # the durable claim.  Keep it out of the public schema and wire payload so
+    # a caller cannot cancel a replacement execution by guessing its attempt.
+    _execution_claim_fence: dict[str, Any] = PrivateAttr(default_factory=dict)
+    _runtime_run_id: str | None = PrivateAttr(default=None)
+
+    @model_validator(mode="before")
+    @classmethod
+    def discard_untrusted_cancellation_fence(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            value = dict(value)
+            for name in (
+                "execution_claim_fence",
+                "claim_owner",
+                "attempt_count",
+                "claim_attempt_count",
+                "runtime_run_id",
+            ):
+                value.pop(name, None)
+        return value
+
     run_id: UUID
     reason: str
     requested_by: str
     force: bool = False
     requested_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    @property
+    def execution_claim_fence(self) -> dict[str, Any]:
+        return dict(self._execution_claim_fence)
+
+    @property
+    def runtime_run_id(self) -> str | None:
+        return self._runtime_run_id
 
 
 class WorkerCancellationReceipt(_ContractModel):

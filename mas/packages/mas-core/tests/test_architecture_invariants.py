@@ -56,6 +56,7 @@ from mas_core.worker_registry.host_executor import (
     WorkerHostExecutor,
 )
 from mas_core.worker_registry.host_recovery import HostLeaseRecovery
+from mas_core.worker_registry.run_host_binding import RunHostBindingIdentity
 from mas_core.workflow import (
     InvalidTransitionError,
     ProjectState,
@@ -283,9 +284,12 @@ async def test_host_executor_claims_before_controller_and_releases_binding_after
     order: list[str] = []
 
     binding = {
+        "id": UUID("00000000-0000-4000-a000-000000000901"),
         "run_id": str(PROJECT_ID),
         "worker_id": str(WORKER_REGISTRY_ID),
         "host_id": "worker-host-a",
+        "host_uuid": UUID("00000000-0000-4000-a000-000000000902"),
+        "reservation_id": UUID("00000000-0000-4000-a000-000000000903"),
         "owner": "host-executor",
         "host_plane": "worker",
         "host_status": "READY",
@@ -301,8 +305,15 @@ async def test_host_executor_claims_before_controller_and_releases_binding_after
             order.append("binding")
             return binding
 
-        async def release(self, _run_id: UUID, *, owner: str) -> dict[str, object]:
+        async def release(
+            self,
+            _run_id: UUID,
+            *,
+            owner: str,
+            expected_identity: object,
+        ) -> dict[str, object]:
             assert owner == "host-executor"
+            assert expected_identity == RunHostBindingIdentity.from_binding(binding)
             order.append("release")
             return {"state": "RELEASED"}
 
@@ -310,7 +321,15 @@ async def test_host_executor_claims_before_controller_and_releases_binding_after
         async def claim_worker_run(self, **kwargs: object) -> dict[str, object]:
             assert kwargs["owner"] == "host-executor"
             order.append("claim")
-            return {"state": "CLAIMED", "worker_id": str(WORKER_REGISTRY_ID)}
+            return {
+                "state": "CLAIMED",
+                "worker_id": str(WORKER_REGISTRY_ID),
+                "claim_owner": "host-executor",
+                "attempt_count": 1,
+            }
+
+        async def heartbeat_worker_run(self, *_args: object, **_kwargs: object):
+            return None
 
     class _Controller:
         def __init__(self, *, storage: object) -> None:

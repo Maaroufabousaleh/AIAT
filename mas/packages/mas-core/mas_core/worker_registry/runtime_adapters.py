@@ -376,6 +376,14 @@ class ProcessAdapter(BaseWorkerAdapter):
             self._force_cancel_requested.discard(request.run_id)
 
     async def cancel(self, request: WorkerCancellation) -> WorkerCancellationReceipt:
+        if not self._cancellation_matches_active_attempt(request):
+            return WorkerCancellationReceipt(
+                run_id=request.run_id,
+                accepted=False,
+                terminal=False,
+                runtime_status="RUNNING",
+                details={"reason": "stale attempt cancellation ignored"},
+            )
         # Record intent before looking up the process.  This closes the
         # start/cancel race where the adapter has accepted a run but the
         # subprocess has not yet been created.
@@ -610,6 +618,14 @@ class HTTPAdapter(BaseWorkerAdapter):
         return {"success": True, "output": data}
 
     async def cancel(self, request: WorkerCancellation) -> WorkerCancellationReceipt:
+        if not self._cancellation_matches_active_attempt(request):
+            return WorkerCancellationReceipt(
+                run_id=request.run_id,
+                accepted=False,
+                terminal=False,
+                runtime_status="RUNNING",
+                details={"reason": "stale attempt cancellation ignored"},
+            )
         client = await self._get_client()
         endpoint = self.endpoints["cancel"].format(run_id=request.run_id)
         try:
@@ -685,6 +701,14 @@ class MCPAdapter(BaseWorkerAdapter):
         return result
 
     async def cancel(self, request: WorkerCancellation) -> WorkerCancellationReceipt:
+        if not self._cancellation_matches_active_attempt(request):
+            return WorkerCancellationReceipt(
+                run_id=request.run_id,
+                accepted=False,
+                terminal=False,
+                runtime_status="RUNNING",
+                details={"reason": "stale attempt cancellation ignored"},
+            )
         await self.client.cancel(request.model_dump(mode="json"))
         return await super().cancel(request)
 
@@ -1829,6 +1853,32 @@ class OpenCodeAdapter(HTTPAdapter):
         except KeyError as exc:
             raise RuntimeError(f"OpenCode certified manifest has no {key!r} endpoint") from exc
 
+    def _resolved_runtime_model_id(self, exact_model_id: str) -> str | None:
+        """Map one governed model identity to OpenCode's provider/model form.
+
+        The AIAT Model Profile may name a gateway alias without a provider
+        prefix (for example, a LiteLLM deployment alias).  OpenCode requires
+        a provider-qualified runtime ID.  Only the explicit mapper supplied
+        by the control plane may translate between those namespaces; an
+        unmapped alias must remain unavailable rather than guessing a
+        provider from the current runtime configuration.
+        """
+        try:
+            mapped = self.model_mapper(exact_model_id)
+        except Exception:
+            return None
+        if not isinstance(mapped, str):
+            return None
+        provider, separator, model = mapped.partition("/")
+        if (
+            not separator
+            or not provider.strip()
+            or not model.strip()
+            or not self.verification.validate_model_id(mapped)
+        ):
+            return None
+        return mapped
+
     def _acceptance_runtime_run_id(self, request: WorkerRunRequest) -> str | None:
         return self._session_by_run.get(request.run_id)
 
@@ -1894,8 +1944,10 @@ class OpenCodeAdapter(HTTPAdapter):
                 model_id = request.resolved_model_profile.exact_model_id
                 if not model_id:
                     blockers.append("OpenCode requires an exact provider-qualified model ID")
-                elif not self.verification.validate_model_id(model_id):
-                    blockers.append("OpenCode model ID must be provider/model qualified")
+                elif self._resolved_runtime_model_id(model_id) is None:
+                    blockers.append(
+                        "OpenCode requires a control-plane-resolved provider/model mapping"
+                    )
         return WorkerReadiness(
             worker_id=self.worker_id,
             ready=not blockers,
@@ -1926,6 +1978,7 @@ class OpenCodeAdapter(HTTPAdapter):
             if response.status_code == 200:
                 self._session_by_key[request.idempotency_key] = persisted
                 self._session_by_run[request.run_id] = persisted
+                self._runtime_run_id_by_run[request.run_id] = persisted
                 return persisted
         title = f"AIAT {request.task_type} {request.run_id} [{request.idempotency_key}]"
         # Reconcile a timed-out create response before issuing another POST.
@@ -1939,6 +1992,7 @@ class OpenCodeAdapter(HTTPAdapter):
                         session_id = str(candidate["id"])
                         self._session_by_key[request.idempotency_key] = session_id
                         self._session_by_run[request.run_id] = session_id
+                        self._runtime_run_id_by_run[request.run_id] = session_id
                         return session_id
         except (httpx.HTTPError, ValueError):
             pass
@@ -1969,10 +2023,12 @@ class OpenCodeAdapter(HTTPAdapter):
         }
         model_id = request.resolved_model_profile.exact_model_id if request.resolved_model_profile else None
         if model_id:
-            mapped = self.model_mapper(model_id)
+            mapped = self._resolved_runtime_model_id(model_id)
+            if mapped is None:
+                raise ValueError(
+                    "OpenCode requires a control-plane-resolved provider/model mapping"
+                )
             provider, separator, model = mapped.partition("/")
-            if not separator or not provider or not model:
-                raise ValueError("OpenCode requires provider/model")
             payload["model"] = {"providerID": provider, "id": model, "variant": request.resolved_model_profile.version or ""}
         response = await client.post(self._endpoint("session_create"), params=self._query(request), json=payload)
         response.raise_for_status()
@@ -1982,6 +2038,7 @@ class OpenCodeAdapter(HTTPAdapter):
             raise RuntimeError("OpenCode session.create returned no valid session ID")
         self._session_by_key[request.idempotency_key] = session_id
         self._session_by_run[request.run_id] = session_id
+        self._runtime_run_id_by_run[request.run_id] = session_id
         return session_id
 
     async def _configure_tool_bridge(
@@ -2012,12 +2069,15 @@ class OpenCodeAdapter(HTTPAdapter):
             # without changing the permission name pinned into the session.
             issued_at = int(time.time())
             signing_secret = str(self.context.secrets.get("tool_secret") or "")
+            execution_claim_fence = request.execution_claim_fence
             grant = issue_opencode_tool_grant(
                 signing_secret,
                 worker_id=self.worker_id,
                 run_id=request.run_id,
                 project_id=request.project_id,
                 tool_names=request.tool_grants,
+                claim_owner=execution_claim_fence.get("claim_owner"),
+                attempt_count=int(execution_claim_fence.get("attempt_count") or 0),
                 ttl_seconds=self._MCP_GRANT_TTL_SECONDS,
                 now=issued_at,
             )
@@ -2109,7 +2169,9 @@ class OpenCodeAdapter(HTTPAdapter):
             raise WorkerStartCancelled("OpenCode run was cancelled before startup")
         existing = self._accepted_by_key.get(request.idempotency_key)
         if existing is not None:
-            return existing
+            # Reuse the base acceptance path so the stored attempt fence is
+            # checked before returning an earlier session for this run key.
+            return await BaseWorkerAdapter.start(self, request)
         readiness = await self.readiness(request)
         if not readiness.ready:
             raise RuntimeError("; ".join(readiness.blockers))
@@ -2165,9 +2227,14 @@ class OpenCodeAdapter(HTTPAdapter):
         if request.run_id in self._submitted:
             return True
         model_id = request.resolved_model_profile.exact_model_id if request.resolved_model_profile else ""
-        provider, separator, model = self.model_mapper(model_id).partition("/")
-        if not separator:
-            raise WorkerError(code="INVALID_MODEL_ID", message="OpenCode requires provider/model", category="policy")
+        mapped = self._resolved_runtime_model_id(model_id)
+        if mapped is None:
+            raise WorkerError(
+                code="INVALID_MODEL_ID",
+                message="OpenCode requires a control-plane-resolved provider/model mapping",
+                category="policy",
+            )
+        provider, _, model = mapped.partition("/")
         body: dict[str, Any] = {
             "parts": [{"type": "text", "text": self._prompt_text(request)}],
             "model": {"providerID": provider, "modelID": model},
@@ -2344,6 +2411,7 @@ class OpenCodeAdapter(HTTPAdapter):
 
         session_id = str(session_id)
         self._session_by_run[run_id] = session_id
+        self._runtime_run_id_by_run[run_id] = session_id
         request = WorkerRunRequest(
             run_id=run_id,
             idempotency_key=f"aiat-reconcile:{run_id}",
@@ -2488,7 +2556,10 @@ class OpenCodeAdapter(HTTPAdapter):
             )
             artifacts.append(artifact)
             if self.context.artifact_registrar is not None:
-                await self.context.artifact_registrar(artifact)
+                await self.context.artifact_registrar(
+                    artifact,
+                    claim_fence=request.execution_claim_fence,
+                )
         return artifacts
 
     async def _cleanup_session(self, request: WorkerRunRequest, session_id: str) -> None:
@@ -2643,14 +2714,33 @@ class OpenCodeAdapter(HTTPAdapter):
             response.raise_for_status()
 
     async def cancel(self, request: WorkerCancellation) -> WorkerCancellationReceipt:
+        if not self._cancellation_matches_active_attempt(request):
+            return WorkerCancellationReceipt(
+                run_id=request.run_id,
+                accepted=False,
+                terminal=False,
+                runtime_status="RUNNING",
+                details={"reason": "stale attempt cancellation ignored"},
+            )
         if self._terminal_status.get(request.run_id) is not None:
             return await BaseWorkerAdapter.cancel(self, request)
         # Publish cancellation intent before any network await so session
         # creation/bridge setup cannot race ahead into prompt submission.
         self._cancel_requested.add(request.run_id)
         self._cancelled.add(request.run_id)
-        session_id = self._session_by_run.get(request.run_id)
+        session_id = self._session_by_run.get(request.run_id) or request.runtime_run_id
+        if session_id is not None and not re.fullmatch(r"ses[a-zA-Z0-9_-]+", session_id):
+            return WorkerCancellationReceipt(
+                run_id=request.run_id,
+                accepted=False,
+                terminal=False,
+                runtime_status="UNKNOWN",
+                details={"reason": "invalid OpenCode runtime binding for cancellation"},
+            )
         if session_id:
+            request._runtime_run_id = session_id
+            self._session_by_run[request.run_id] = session_id
+            self._runtime_run_id_by_run[request.run_id] = session_id
             client = await self._get_client()
             path = self._endpoint("abort").replace("{sessionID}", session_id)
             try:

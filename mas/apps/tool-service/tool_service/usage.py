@@ -33,6 +33,76 @@ class WorkerToolEffectRepository:
     def __init__(self, pool: asyncpg.Pool) -> None:
         self._pool = pool
 
+    @staticmethod
+    def _claim_matches(
+        row: Any,
+        *,
+        claim_owner: str | None,
+        attempt_count: int,
+        now: datetime,
+    ) -> bool:
+        if row is None:
+            return False
+        current = dict(row)
+        if current.get("cancel_requested_at") is not None:
+            return False
+        current_owner = current.get("claim_owner")
+        current_attempt = int(current.get("attempt_count") or 0)
+        if str(current.get("state") or "") != "RUNNING":
+            return False
+        if current_owner is None and current_attempt == 0:
+            return claim_owner is None and attempt_count == 0
+        lease_expires_at = current.get("lease_expires_at")
+        return (
+            claim_owner is not None
+            and claim_owner == current_owner
+            and attempt_count == current_attempt
+            and attempt_count > 0
+            and lease_expires_at is not None
+            and lease_expires_at > now
+        )
+
+    async def _lock_and_check_worker_run_claim(
+        self,
+        connection: asyncpg.Connection,
+        *,
+        run_id: UUID,
+        claim_owner: str | None,
+        attempt_count: int,
+    ) -> bool:
+        row = await connection.fetchrow(
+            """
+                SELECT id, state, claim_owner, attempt_count, lease_expires_at,
+                       cancel_requested_at
+                FROM worker_runs
+                WHERE id = $1
+                FOR UPDATE
+                """,
+            run_id,
+        )
+        return self._claim_matches(
+            row,
+            claim_owner=claim_owner,
+            attempt_count=attempt_count,
+            now=datetime.now(tz=UTC),
+        )
+
+    async def validate_worker_run_claim(
+        self,
+        *,
+        run_id: UUID,
+        claim_owner: str | None,
+        attempt_count: int,
+    ) -> bool:
+        """Revalidate a run fence immediately before Tool Service dispatch."""
+        async with self._pool.acquire() as connection, connection.transaction():
+            return await self._lock_and_check_worker_run_claim(
+                connection,
+                run_id=run_id,
+                claim_owner=claim_owner,
+                attempt_count=attempt_count,
+            )
+
     async def begin_worker_tool_effect(
         self,
         *,
@@ -41,6 +111,8 @@ class WorkerToolEffectRepository:
         idempotency_key: str,
         tool_name: str,
         request_sha256: str,
+        claim_owner: str | None = None,
+        attempt_count: int = 0,
     ) -> dict[str, Any]:
         """Reserve an effect before dispatch and classify any existing row."""
 
@@ -55,6 +127,14 @@ class WorkerToolEffectRepository:
 
         effect_id = uuid4()
         async with self._pool.acquire() as connection, connection.transaction():
+            current_claim = await self._lock_and_check_worker_run_claim(
+                connection,
+                run_id=run_id,
+                claim_owner=claim_owner,
+                attempt_count=attempt_count,
+            )
+            if not current_claim:
+                return {"disposition": "CLAIM_LOST"}
             await connection.execute(
                 """
                     INSERT INTO worker_tool_effects (

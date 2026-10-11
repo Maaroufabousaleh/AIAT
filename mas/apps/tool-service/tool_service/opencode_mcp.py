@@ -117,6 +117,8 @@ def create_opencode_mcp_app(parent: FastAPI):
                 idempotency_key=str(request_id),
                 tool_name=tool_name,
                 request_sha256=request_sha256,
+                claim_owner=grant.claim_owner,
+                attempt_count=grant.attempt_count,
             )
         except Exception:
             return _error_response(
@@ -136,6 +138,14 @@ def create_opencode_mcp_app(parent: FastAPI):
                 idempotency_key=request_id,
             )
         disposition = str(effect.get("disposition", "")).upper()
+        if disposition == "CLAIM_LOST":
+            return _error_response(
+                tool_name,
+                grant.run_id,
+                error_code="WORKER_RUN_CLAIM_LOST",
+                error="Worker Run claim is no longer current; tool dispatch was denied",
+                idempotency_key=request_id,
+            )
         if disposition == "REPLAY":
             replay = _completed_replay(
                 effect.get("response_json"),
@@ -176,6 +186,66 @@ def create_opencode_mcp_app(parent: FastAPI):
                 error="AIAT returned an invalid worker-tool effect reservation",
                 idempotency_key=request_id,
             )
+
+        validate_claim = getattr(effect_repository, "validate_worker_run_claim", None)
+        if not callable(validate_claim):
+            denied = _error_response_model(
+                tool_name,
+                grant.run_id,
+                error_code="WORKER_RUN_CLAIM_VALIDATION_UNAVAILABLE",
+                error="AIAT cannot verify the current Worker Run claim before tool dispatch",
+                idempotency_key=request_id,
+            )
+            try:
+                settled = await complete_effect(
+                    effect["id"],
+                    state="COMPLETED",
+                    response_json=denied.model_dump(mode="json", exclude_none=True),
+                )
+            except Exception:
+                settled = None
+            if settled is None:
+                return _error_response(
+                    tool_name,
+                    grant.run_id,
+                    error_code="TOOL_EFFECT_COMPLETION_UNAVAILABLE",
+                    error="AIAT could not persist the denied worker-tool outcome",
+                    idempotency_key=request_id,
+                )
+            return denied.model_dump(mode="json", exclude_none=True)
+        try:
+            claim_current = await validate_claim(
+                run_id=grant.run_id,
+                claim_owner=grant.claim_owner,
+                attempt_count=grant.attempt_count,
+            )
+        except Exception:
+            claim_current = False
+        if not claim_current:
+            denied = _error_response_model(
+                tool_name,
+                grant.run_id,
+                error_code="WORKER_RUN_CLAIM_LOST",
+                error="Worker Run claim expired or was reassigned before tool dispatch",
+                idempotency_key=request_id,
+            )
+            try:
+                settled = await complete_effect(
+                    effect["id"],
+                    state="COMPLETED",
+                    response_json=denied.model_dump(mode="json", exclude_none=True),
+                )
+            except Exception:
+                settled = None
+            if settled is None:
+                return _error_response(
+                    tool_name,
+                    grant.run_id,
+                    error_code="TOOL_EFFECT_COMPLETION_UNAVAILABLE",
+                    error="AIAT could not persist the denied worker-tool outcome",
+                    idempotency_key=request_id,
+                )
+            return denied.model_dump(mode="json", exclude_none=True)
 
         try:
             registry = parent.state.registry

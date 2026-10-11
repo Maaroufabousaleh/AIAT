@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -12,8 +13,13 @@ from tool_service.usage import WorkerToolEffectRepository
 
 
 class _Connection:
-    def __init__(self, row: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        row: dict[str, Any] | None = None,
+        worker_run: dict[str, Any] | None = None,
+    ) -> None:
         self.row = row
+        self.worker_run = worker_run
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
 
     @asynccontextmanager
@@ -37,6 +43,18 @@ class _Connection:
 
     async def fetchrow(self, query: str, *args: Any) -> dict[str, Any] | None:
         self.calls.append((query, args))
+        if query.lstrip().startswith("SELECT id, state, claim_owner"):
+            if self.worker_run is None:
+                return {
+                    "id": args[0],
+                    "state": "RUNNING",
+                    "claim_owner": None,
+                    "attempt_count": 0,
+                    "lease_expires_at": None,
+                }
+            if self.worker_run is not None and self.worker_run["id"] == args[0]:
+                return dict(self.worker_run)
+            return None
         if query.lstrip().startswith("SELECT id, run_id, request_id"):
             if (
                 self.row is not None
@@ -86,14 +104,24 @@ def _inputs() -> dict[str, Any]:
         "idempotency_key": str(uuid4()),
         "tool_name": "repository.read",
         "request_sha256": "a" * 64,
+        "claim_owner": None,
+        "attempt_count": 0,
     }
 
 
 @pytest.mark.asyncio
 async def test_begin_inserts_before_select_and_classifies_new_row() -> None:
-    connection = _Connection()
-    repository = WorkerToolEffectRepository(_Pool(connection))  # type: ignore[arg-type]
     inputs = _inputs()
+    connection = _Connection(
+        worker_run={
+            "id": inputs["run_id"],
+            "state": "RUNNING",
+            "claim_owner": None,
+            "attempt_count": 0,
+            "lease_expires_at": None,
+        }
+    )
+    repository = WorkerToolEffectRepository(_Pool(connection))  # type: ignore[arg-type]
 
     effect = await repository.begin_worker_tool_effect(**inputs)
 
@@ -103,11 +131,14 @@ async def test_begin_inserts_before_select_and_classifies_new_row() -> None:
     assert effect["request_id"] == inputs["request_id"]
     assert effect["idempotency_key"] == inputs["idempotency_key"]
     assert [query.lstrip().split(None, 2)[0:2] for query, _ in connection.calls] == [
+        ["SELECT", "id,"],
         ["INSERT", "INTO"],
         ["SELECT", "id,"],
     ]
-    assert "ON CONFLICT (run_id, idempotency_key) DO NOTHING" in connection.calls[0][0]
-    assert "FOR UPDATE" in connection.calls[1][0]
+    assert "FROM worker_runs" in connection.calls[0][0]
+    assert "FOR UPDATE" in connection.calls[0][0]
+    assert "ON CONFLICT (run_id, idempotency_key) DO NOTHING" in connection.calls[1][0]
+    assert "FOR UPDATE" in connection.calls[2][0]
 
 
 @pytest.mark.asyncio
@@ -153,6 +184,88 @@ async def test_begin_classifies_changed_payload_as_conflict() -> None:
     effect = await repository.begin_worker_tool_effect(**inputs)
 
     assert effect["disposition"] == "CONFLICT"
+
+
+@pytest.mark.asyncio
+async def test_begin_rejects_reclaimed_attempt_before_effect_insert() -> None:
+    inputs = _inputs()
+    inputs.update({"claim_owner": "executor-old", "attempt_count": 1})
+    connection = _Connection(
+        worker_run={
+            "id": inputs["run_id"],
+            "state": "RUNNING",
+            "claim_owner": "executor-new",
+            "attempt_count": 2,
+            "lease_expires_at": datetime.now(tz=UTC) + timedelta(minutes=2),
+        }
+    )
+    repository = WorkerToolEffectRepository(_Pool(connection))  # type: ignore[arg-type]
+
+    effect = await repository.begin_worker_tool_effect(**inputs)
+
+    assert effect["disposition"] == "CLAIM_LOST"
+    assert len(connection.calls) == 1
+    assert "FOR UPDATE" in connection.calls[0][0]
+
+
+@pytest.mark.asyncio
+async def test_dispatch_claim_check_rejects_expired_or_reassigned_attempt() -> None:
+    run_id = uuid4()
+    connection = _Connection(
+        worker_run={
+            "id": run_id,
+            "state": "RUNNING",
+            "claim_owner": "executor-new",
+            "attempt_count": 2,
+            "lease_expires_at": datetime.now(tz=UTC) + timedelta(minutes=2),
+        }
+    )
+    repository = WorkerToolEffectRepository(_Pool(connection))  # type: ignore[arg-type]
+
+    current = await repository.validate_worker_run_claim(
+        run_id=run_id,
+        claim_owner="executor-old",
+        attempt_count=1,
+    )
+
+    assert current is False
+    assert len(connection.calls) == 1
+    assert "FOR UPDATE" in connection.calls[0][0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["validate", "begin"])
+async def test_cancel_requested_claim_cannot_validate_or_reserve_tool_effect(
+    operation: str,
+) -> None:
+    inputs = _inputs()
+    inputs.update({"claim_owner": "executor-a", "attempt_count": 3})
+    connection = _Connection(
+        worker_run={
+            "id": inputs["run_id"],
+            "state": "RUNNING",
+            "claim_owner": "executor-a",
+            "attempt_count": 3,
+            "lease_expires_at": datetime.now(tz=UTC) + timedelta(minutes=1),
+            "cancel_requested_at": datetime.now(tz=UTC),
+        }
+    )
+    repository = WorkerToolEffectRepository(_Pool(connection))  # type: ignore[arg-type]
+
+    if operation == "validate":
+        current = await repository.validate_worker_run_claim(
+            run_id=inputs["run_id"],
+            claim_owner="executor-a",
+            attempt_count=3,
+        )
+        assert current is False
+    else:
+        effect = await repository.begin_worker_tool_effect(**inputs)
+        assert effect["disposition"] == "CLAIM_LOST"
+
+    assert len(connection.calls) == 1
+    assert "cancel_requested_at" in connection.calls[0][0]
+    assert "FOR UPDATE" in connection.calls[0][0]
 
 
 @pytest.mark.asyncio

@@ -15,6 +15,8 @@ import re
 import stat
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
+from contextlib import suppress
+from datetime import UTC, datetime
 from pathlib import PurePosixPath
 from typing import Any
 
@@ -36,6 +38,10 @@ class ArtifactStorageUnavailable(RuntimeError):
 
 class ArtifactIntegrityError(RuntimeError):
     """The stored artifact bytes do not match their canonical metadata."""
+
+
+class ArtifactClaimLostError(ArtifactContentError):
+    """A worker attempt lost its durable claim before artifact registration."""
 
 
 def _object_store_settings() -> tuple[str, str, str, str]:
@@ -147,7 +153,7 @@ def make_opencode_artifact_registrar(
     worker_id: uuid.UUID,
     workspace_root: str | os.PathLike[str] = "/workspace",
     blob_client_factory: Callable[..., Any] = BlobClient,
-) -> Callable[[Any], Awaitable[None]]:
+) -> Callable[..., Awaitable[None]]:
     """Build the orchestrator-owned registrar used by the certified adapter.
 
     The callback derives project ownership from the durable WorkerRun, never
@@ -155,7 +161,12 @@ def make_opencode_artifact_registrar(
     before WorkerRunController persists the terminal result and artifact row.
     """
 
-    async def register(artifact: Any) -> None:
+    async def register(
+        artifact: Any,
+        *,
+        claim_fence: Mapping[str, Any] | None = None,
+        cleanup: bool = False,
+    ) -> None:
         metadata = getattr(artifact, "metadata", None)
         if not isinstance(metadata, dict):
             raise ArtifactContentError("worker artifact metadata is invalid")
@@ -163,6 +174,72 @@ def make_opencode_artifact_registrar(
             run_id = uuid.UUID(str(metadata.get("worker_run_id") or ""))
         except (TypeError, ValueError, AttributeError) as exc:
             raise ArtifactContentError("worker artifact has no canonical run binding") from exc
+
+        if cleanup:
+            project_id_value = metadata.get("project_id")
+            try:
+                project_id = uuid.UUID(str(project_id_value or ""))
+                attempt_count = int(metadata.get("worker_run_attempt"))
+            except (TypeError, ValueError, AttributeError) as exc:
+                raise ArtifactContentError("artifact cleanup reference is invalid") from exc
+            if attempt_count < 0:
+                raise ArtifactContentError("artifact cleanup attempt is invalid")
+            segments = validate_artifact_uri(str(getattr(artifact, "uri", "") or ""))
+            expected_key = "/".join(
+                (
+                    str(project_id),
+                    "worker-runs",
+                    str(run_id),
+                    f"attempt-{attempt_count}",
+                    *segments,
+                )
+            )
+            bucket = str(metadata.get("blob_bucket") or "")
+            key = str(metadata.get("blob_key") or "")
+            endpoint, access_key, secret_key, configured_bucket = _object_store_settings()
+            if bucket != configured_bucket or key != expected_key:
+                raise ArtifactContentError("artifact cleanup reference failed validation")
+            digest = str(metadata.get("blob_sha256") or "").lower()
+            size = metadata.get("blob_size_bytes")
+            if (
+                not _SHA256.fullmatch(digest)
+                or isinstance(size, bool)
+                or not isinstance(size, int)
+                or size < 0
+            ):
+                raise ArtifactContentError("artifact cleanup integrity metadata is invalid")
+            ref = BlobRef(
+                bucket=bucket,
+                key=key,
+                sha256=digest,
+                size_bytes=size,
+                content_type=_artifact_mime_type(
+                    str(getattr(artifact, "uri", "") or ""),
+                    metadata.get("blob_content_type"),
+                ),
+            )
+            blob = blob_client_factory(
+                endpoint,
+                access_key=access_key,
+                secret_key=secret_key,
+                bucket=configured_bucket,
+            )
+            try:
+                await blob.connect()
+                await blob.delete(ref)
+            except Exception as exc:
+                raise ArtifactStorageUnavailable("unpersisted worker artifact cleanup failed") from exc
+            finally:
+                await blob.close()
+            for key_name in (
+                "blob_bucket",
+                "blob_key",
+                "blob_sha256",
+                "blob_size_bytes",
+                "blob_content_type",
+            ):
+                metadata.pop(key_name, None)
+            return
 
         get_run = getattr(storage, "get_worker_run", None)
         if not callable(get_run):
@@ -182,6 +259,41 @@ def make_opencode_artifact_registrar(
         if metadata.get("project_id") not in (None, str(project_id)):
             raise ArtifactContentError("artifact metadata conflicts with WorkerRun project ownership")
 
+        try:
+            attempt_count = int((claim_fence or {}).get("attempt_count") or 0)
+        except (TypeError, ValueError) as exc:
+            raise ArtifactClaimLostError("worker artifact claim fence is invalid") from exc
+        claim_owner = (claim_fence or {}).get("claim_owner")
+
+        async def claim_is_current() -> bool:
+            validate_claim = getattr(storage, "validate_worker_run_claim", None)
+            if callable(validate_claim):
+                return bool(
+                    await validate_claim(
+                        run_id=run_id,
+                        claim_owner=claim_owner,
+                        attempt_count=attempt_count,
+                    )
+                )
+            current = await get_run(run_id)
+            if not isinstance(current, Mapping) or str(current.get("state") or "") != "RUNNING":
+                return False
+            owner = current.get("claim_owner")
+            current_attempt = int(current.get("attempt_count") or 0)
+            if owner is None and current_attempt == 0:
+                return claim_owner is None and attempt_count == 0
+            lease = current.get("lease_expires_at")
+            return (
+                claim_owner is not None
+                and owner == claim_owner
+                and current_attempt == attempt_count
+                and lease is not None
+                and lease > datetime.now(UTC)
+            )
+
+        if not await claim_is_current():
+            raise ArtifactClaimLostError("worker artifact claim is no longer current")
+
         uri = str(getattr(artifact, "uri", "") or "")
         segments = validate_artifact_uri(uri)
         content = read_workspace_artifact(workspace_root, run_id, uri)
@@ -194,7 +306,9 @@ def make_opencode_artifact_registrar(
             raise ArtifactIntegrityError("workspace artifact size does not match its WorkerArtifact")
 
         endpoint, access_key, secret_key, bucket = _object_store_settings()
-        object_key = "/".join(("worker-runs", str(run_id), *segments))
+        object_key = "/".join(
+            ("worker-runs", str(run_id), f"attempt-{attempt_count}", *segments)
+        )
         content_type = _artifact_mime_type(uri, getattr(artifact, "mime_type", None))
         blob = blob_client_factory(
             endpoint,
@@ -211,6 +325,13 @@ def make_opencode_artifact_registrar(
                 content_type=content_type,
                 bucket=bucket,
             )
+            if not await claim_is_current():
+                with suppress(Exception):
+                    await blob.delete(ref)
+                    # Attempt-scoped objects cannot overwrite a later claim.
+                raise ArtifactClaimLostError("worker artifact claim expired during upload")
+        except ArtifactClaimLostError:
+            raise
         except Exception as exc:
             raise ArtifactStorageUnavailable("worker artifact upload failed") from exc
         finally:
@@ -228,6 +349,7 @@ def make_opencode_artifact_registrar(
         metadata.update(
             {
                 "project_id": str(project_id),
+                "worker_run_attempt": attempt_count,
                 "blob_bucket": ref.bucket,
                 "blob_key": ref.key,
                 "blob_sha256": ref.sha256,
@@ -256,7 +378,23 @@ def artifact_download_reference(
 
     path = str(artifact.get("path") or "")
     segments = validate_artifact_uri(path)
-    expected_key = "/".join((str(project_id), "worker-runs", str(run_id), *segments))
+    attempt_value = metadata.get("worker_run_attempt")
+    if attempt_value is None:
+        # Keep download compatibility with artifact pointers created before
+        # attempt-scoped object keys were introduced.
+        expected_key = "/".join((str(project_id), "worker-runs", str(run_id), *segments))
+    else:
+        if isinstance(attempt_value, bool) or not isinstance(attempt_value, int) or attempt_value < 0:
+            raise ArtifactContentError("artifact attempt binding is invalid")
+        expected_key = "/".join(
+            (
+                str(project_id),
+                "worker-runs",
+                str(run_id),
+                f"attempt-{attempt_value}",
+                *segments,
+            )
+        )
     bucket = str(metadata.get("blob_bucket") or "")
     key = str(metadata.get("blob_key") or "")
     sha256 = str(artifact.get("sha256") or "").lower()

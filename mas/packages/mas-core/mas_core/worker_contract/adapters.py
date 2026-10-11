@@ -59,7 +59,7 @@ class AdapterContext:
     """
 
     tool_dispatcher: Callable[[Any], Awaitable[Any]] | None = None
-    artifact_registrar: Callable[[Any], Awaitable[Any]] | None = None
+    artifact_registrar: Callable[..., Awaitable[Any]] | None = None
     audit_sink: Callable[[WorkerAuditEvent], Awaitable[None]] | None = None
     workspace_path: str | None = None
     secrets: dict[str, str] = field(default_factory=dict, repr=False)
@@ -126,7 +126,38 @@ class BaseWorkerAdapter:
         self._cancel_requested: set[UUID] = set()
         self._stream_closed: set[UUID] = set()
         self._terminal_status: dict[UUID, str] = {}
+        self._execution_claim_fence_by_run: dict[UUID, dict[str, Any]] = {}
+        self._runtime_run_id_by_run: dict[UUID, str] = {}
         self._closed = False
+
+    @staticmethod
+    def _normalized_claim_fence(fence: dict[str, Any] | None) -> tuple[str | None, int]:
+        value = fence or {}
+        owner = value.get("claim_owner")
+        try:
+            attempt_count = int(value.get("attempt_count") or 0)
+        except (TypeError, ValueError):
+            attempt_count = -1
+        return (str(owner) if owner is not None else None, attempt_count)
+
+    def _cancellation_matches_active_attempt(self, request: WorkerCancellation) -> bool:
+        """Reject stale cancellation before any adapter-specific side effect."""
+
+        active_fence = self._execution_claim_fence_by_run.get(request.run_id)
+        if active_fence is not None and self._normalized_claim_fence(active_fence) != self._normalized_claim_fence(
+            request.execution_claim_fence
+        ):
+            return False
+        active_runtime_id = self._runtime_run_id_by_run.get(request.run_id)
+        if active_runtime_id is None:
+            return True
+        if request.runtime_run_id is not None:
+            return request.runtime_run_id == active_runtime_id
+        # A live adapter with the matching private attempt fence owns the
+        # runtime reference and may cancel that attempt without exposing the
+        # runtime ID to its caller. Rehydrated adapters have no active fence,
+        # so their controller must supply the exact durable runtime ID.
+        return active_fence is not None
 
     def _protocol(self) -> ProtocolVersion:
         return ProtocolVersion(
@@ -167,7 +198,24 @@ class BaseWorkerAdapter:
             raise WorkerStartCancelled("worker run was cancelled before adapter acceptance")
         existing = self._accepted_by_key.get(request.idempotency_key)
         if existing is not None:
+            accepted_fence = self._execution_claim_fence_by_run.get(request.run_id)
+            if (
+                accepted_fence is not None
+                and self._normalized_claim_fence(accepted_fence)
+                != self._normalized_claim_fence(request.execution_claim_fence)
+            ):
+                raise RuntimeError("idempotent WorkerRun acceptance belongs to a different claim attempt")
             return existing
+        active_task = self._active_tasks.get(request.run_id)
+        active_fence = self._execution_claim_fence_by_run.get(request.run_id)
+        if (
+            active_task is not None
+            and not active_task.done()
+            and active_fence is not None
+            and self._normalized_claim_fence(active_fence)
+            != self._normalized_claim_fence(request.execution_claim_fence)
+        ):
+            raise RuntimeError("previous WorkerRun attempt is still active")
         readiness = await self.readiness(request)
         if not readiness.ready:
             raise RuntimeError("; ".join(readiness.blockers))
@@ -182,6 +230,9 @@ class BaseWorkerAdapter:
             negotiated_capabilities=self.capabilities,
             metadata=self._acceptance_metadata(request),
         )
+        self._execution_claim_fence_by_run[request.run_id] = request.execution_claim_fence
+        if accepted.runtime_run_id:
+            self._runtime_run_id_by_run[request.run_id] = str(accepted.runtime_run_id)
         self._accepted_by_key[request.idempotency_key] = accepted
         await self._emit(WorkerEvent(
             protocol=self._protocol(),
@@ -364,6 +415,14 @@ class BaseWorkerAdapter:
                 break
 
     async def cancel(self, request: WorkerCancellation) -> WorkerCancellationReceipt:
+        if not self._cancellation_matches_active_attempt(request):
+            return WorkerCancellationReceipt(
+                run_id=request.run_id,
+                accepted=False,
+                terminal=False,
+                runtime_status="RUNNING",
+                details={"reason": "stale attempt cancellation ignored"},
+            )
         terminal_status = self._terminal_status.get(request.run_id)
         if terminal_status is not None:
             return WorkerCancellationReceipt(

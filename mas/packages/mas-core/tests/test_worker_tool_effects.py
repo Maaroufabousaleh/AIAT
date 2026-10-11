@@ -10,8 +10,11 @@ from uuid import UUID, uuid4
 import pytest
 
 from mas_core.worker_contract import (
+    ArtifactKind,
     EventType,
+    WorkerArtifact,
     WorkerEvent,
+    WorkerResult,
     WorkerRunController,
     WorkerRunRequest,
     WorkerToolRequest,
@@ -240,6 +243,52 @@ async def test_tool_idempotency_key_conflict_does_not_dispatch() -> None:
 
 
 @pytest.mark.asyncio
+async def test_reclaimed_attempt_is_rejected_before_mediated_tool_dispatch() -> None:
+    class ReclaimedStore(_EffectStore):
+        async def begin_worker_tool_effect(self, **values):
+            if (
+                values.get("claim_owner") != "executor-new"
+                or values.get("attempt_count") != 2
+            ):
+                return {"disposition": "CLAIM_LOST"}
+            return await super().begin_worker_tool_effect(**values)
+
+    store = ReclaimedStore()
+    run_id = uuid4()
+    request = WorkerRunRequest(
+        run_id=run_id,
+        idempotency_key="stale-attempt-run",
+        worker_id="worker-1",
+        task_type="tool-effect",
+        tool_grants=["mail.send"],
+    )
+    tool_request = _request(run_id=run_id, key="stale-attempt-effect")
+    calls: list[str] = []
+
+    async def dispatcher(_tool_request: WorkerToolRequest) -> WorkerToolResponse:
+        calls.append("dispatched")
+        raise AssertionError("a reclaimed worker attempt must not dispatch")
+
+    adapter = _DeliveryAdapter(dispatcher)
+    with pytest.raises(WorkerRunError, match="claim is no longer current") as caught:
+        await WorkerRunController(storage=store)._mediate_tool_request(
+            request,
+            adapter,  # type: ignore[arg-type]
+            WorkerEvent(
+                run_id=run_id,
+                worker_id=request.worker_id,
+                event_type=EventType.TOOL_REQUEST,
+                tool_request=tool_request,
+            ),
+            claim_fence={"claim_owner": "executor-old", "attempt_count": 1},
+        )
+
+    assert caught.value.code == "WORKER_RUN_CLAIM_LOST"
+    assert calls == []
+    assert store.rows == {}
+
+
+@pytest.mark.asyncio
 async def test_cross_run_tool_request_is_rejected_before_effect_reservation() -> None:
     store = _EffectStore()
     controller_run_id = uuid4()
@@ -270,3 +319,109 @@ async def test_cross_run_tool_request_is_rejected_before_effect_reservation() ->
     assert caught.value.code == "TOOL_REQUEST_SCOPE_MISMATCH"
     assert store.rows == {}
     assert adapter.responses == []
+
+
+@pytest.mark.asyncio
+async def test_claim_loss_before_atomic_result_evidence_cleans_attempt_artifact() -> None:
+    run_id = uuid4()
+    request = WorkerRunRequest(
+        run_id=run_id,
+        idempotency_key="result-evidence-claim-loss",
+        worker_id="worker-1",
+        task_type="evidence",
+    )
+    request._execution_claim_fence = {
+        "claim_owner": "executor-old",
+        "attempt_count": 4,
+    }
+    digest = "a" * 64
+    artifact = WorkerArtifact(
+        kind=ArtifactKind.FILE,
+        name="out.txt",
+        uri="out.txt",
+        sha256=digest,
+        size_bytes=3,
+        metadata={
+            "worker_run_id": str(run_id),
+            "worker_run_attempt": 4,
+            "blob_bucket": "worker-artifacts",
+            "blob_key": f"project/worker-runs/{run_id}/attempt-4/out.txt",
+            "blob_sha256": digest,
+            "blob_size_bytes": 3,
+            "blob_content_type": "text/plain",
+        },
+    )
+    result = WorkerResult(
+        run_id=run_id,
+        worker_id="worker-1",
+        success=True,
+        artifacts=[artifact],
+    )
+    atomic_writer = AsyncMock(return_value=None)
+    registrar = AsyncMock()
+    storage = SimpleNamespace(
+        persist_worker_result_evidence_claim_fenced=atomic_writer,
+    )
+    adapter = SimpleNamespace(context=SimpleNamespace(artifact_registrar=registrar))
+
+    with pytest.raises(WorkerRunError) as caught:
+        await WorkerRunController(storage=storage)._persist_result_evidence(
+            request,
+            result,
+            adapter=adapter,  # type: ignore[arg-type]
+        )
+
+    assert caught.value.code == "WORKER_RUN_CLAIM_LOST"
+    atomic_writer.assert_awaited_once()
+    assert atomic_writer.await_args.kwargs["claim_owner"] == "executor-old"
+    assert atomic_writer.await_args.kwargs["attempt_count"] == 4
+    registrar.assert_awaited_once_with(
+        artifact,
+        claim_fence=request.execution_claim_fence,
+        cleanup=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_project_usage_is_idempotent_per_claimed_attempt() -> None:
+    run_id = uuid4()
+    project_id = uuid4()
+    project_usage = AsyncMock(return_value={})
+    storage = SimpleNamespace(
+        persist_worker_result_evidence_claim_fenced=AsyncMock(
+            return_value={"artifacts": [], "usage": {}}
+        ),
+        record_project_usage=project_usage,
+    )
+    result = WorkerResult(
+        run_id=run_id,
+        worker_id="worker-1",
+        success=True,
+        usage={"prompt_tokens": 10, "completion_tokens": 5, "cost_usd": 0.02},
+    )
+
+    for attempt_count in (2, 3):
+        request = WorkerRunRequest(
+            run_id=run_id,
+            idempotency_key=f"usage-attempt-{attempt_count}",
+            worker_id="worker-1",
+            task_type="usage-accounting",
+            project_id=project_id,
+        )
+        request._execution_claim_fence = {
+            "claim_owner": f"executor-{attempt_count}",
+            "attempt_count": attempt_count,
+        }
+        await WorkerRunController(storage=storage)._persist_result_evidence(
+            request,
+            result,
+        )
+
+    keys = [
+        call.kwargs["idempotency_key"]
+        for call in project_usage.await_args_list
+    ]
+    assert keys == [
+        f"worker-run:{run_id}:attempt:2:usage",
+        f"worker-run:{run_id}:attempt:3:usage",
+    ]

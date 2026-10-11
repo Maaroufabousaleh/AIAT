@@ -19,11 +19,35 @@ from mas_core.worker_contract.opencode_bridge import issue_opencode_tool_grant
 class _EffectLedger:
     """Durable-store test double at the SQL repository boundary."""
 
-    def __init__(self, *, preexisting_state: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        preexisting_state: str | None = None,
+        claim_owner: str | None = None,
+        attempt_count: int = 0,
+        reassign_on_validate: bool = False,
+    ) -> None:
         self.rows: dict[tuple[UUID, str], dict[str, Any]] = {}
         self.preexisting_state = preexisting_state
+        self.claim_owner = claim_owner
+        self.attempt_count = attempt_count
+        self.reassign_on_validate = reassign_on_validate
+
+    def _claim_matches(self, values: dict[str, Any]) -> bool:
+        return (
+            self.claim_owner == values.get("claim_owner")
+            and self.attempt_count == values.get("attempt_count")
+        )
+
+    async def validate_worker_run_claim(self, **values: Any) -> bool:
+        if self.reassign_on_validate:
+            self.claim_owner = "executor-new"
+            self.attempt_count = 2
+        return self._claim_matches(values)
 
     async def begin_worker_tool_effect(self, **values: Any) -> dict[str, Any]:
+        if not self._claim_matches(values):
+            return {"disposition": "CLAIM_LOST"}
         key = (values["run_id"], values["idempotency_key"])
         row = self.rows.get(key)
         if row is None:
@@ -147,9 +171,25 @@ async def _call_tool(
 
 
 def _parent(
-    *, with_ledger: bool = True, preexisting_state: str | None = None
+    *,
+    with_ledger: bool = True,
+    preexisting_state: str | None = None,
+    current_claim_owner: str | None = None,
+    current_attempt_count: int = 0,
+    grant_claim_owner: str | None = None,
+    grant_attempt_count: int = 0,
+    reassign_on_validate: bool = False,
 ) -> tuple[Any, _Registry, _EffectLedger | None, UUID, str]:
-    ledger = _EffectLedger(preexisting_state=preexisting_state) if with_ledger else None
+    ledger = (
+        _EffectLedger(
+            preexisting_state=preexisting_state,
+            claim_owner=current_claim_owner,
+            attempt_count=current_attempt_count,
+            reassign_on_validate=reassign_on_validate,
+        )
+        if with_ledger
+        else None
+    )
     registry = _Registry(ledger)
     run_id = uuid4()
     state = SimpleNamespace(
@@ -164,6 +204,8 @@ def _parent(
         run_id=run_id,
         project_id=uuid4(),
         tool_names=["repository.read", "opencode.workspace_read"],
+        claim_owner=grant_claim_owner,
+        attempt_count=grant_attempt_count,
     )
     return parent, registry, ledger, run_id, token
 
@@ -236,6 +278,45 @@ async def test_unfinished_effect_is_ambiguous_and_never_redispatched(state: str)
     row = next(iter(ledger.rows.values()))
     assert row["run_id"] == run_id
     assert row["state"] == state
+
+
+@pytest.mark.asyncio
+async def test_stale_signed_attempt_after_reclaim_is_denied_before_effect_reservation() -> None:
+    parent, registry, ledger, _, token = _parent(
+        current_claim_owner="executor-new",
+        current_attempt_count=2,
+        grant_claim_owner="executor-old",
+        grant_attempt_count=1,
+    )
+    assert ledger is not None
+
+    async with _open_mcp_client(parent, token) as client:
+        result = await _call_tool(client, request_id="stale-after-reclaim")
+
+    assert result["error_code"] == "WORKER_RUN_CLAIM_LOST"
+    assert registry.requests == []
+    assert ledger.rows == {}
+
+
+@pytest.mark.asyncio
+async def test_claim_reclaimed_after_effect_reservation_is_denied_at_dispatch_admission() -> None:
+    parent, registry, ledger, _, token = _parent(
+        current_claim_owner="executor-old",
+        current_attempt_count=1,
+        grant_claim_owner="executor-old",
+        grant_attempt_count=1,
+        reassign_on_validate=True,
+    )
+    assert ledger is not None
+
+    async with _open_mcp_client(parent, token) as client:
+        result = await _call_tool(client, request_id="stale-at-dispatch")
+
+    assert result["error_code"] == "WORKER_RUN_CLAIM_LOST"
+    assert registry.requests == []
+    row = next(iter(ledger.rows.values()))
+    assert row["state"] == "COMPLETED"
+    assert row["response_json"]["error_code"] == "WORKER_RUN_CLAIM_LOST"
 
 
 @pytest.mark.asyncio

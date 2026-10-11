@@ -73,6 +73,7 @@ class _Blob:
         self.content = content
         self.client = _ObjectClient(content)
         self.uploads: list[tuple[str, str, bytes, str, str]] = []
+        self.deletes: list[BlobRef] = []
         self.connected = False
         self.closed = False
 
@@ -100,6 +101,9 @@ class _Blob:
             content_type=content_type,
         )
 
+    async def delete(self, ref: BlobRef) -> None:
+        self.deletes.append(ref)
+
 
 @pytest.mark.anyio
 async def test_opencode_registrar_uploads_run_workspace_bytes_with_canonical_project_scope(
@@ -124,6 +128,9 @@ async def test_opencode_registrar_uploads_run_workspace_bytes_with_canonical_pro
         "id": run_id,
         "project_id": PROJECT_ID,
         "worker_id": worker_id,
+        "state": "RUNNING",
+        "claim_owner": None,
+        "attempt_count": 0,
     }
     storage = SimpleNamespace(get_worker_run=AsyncMock(return_value=run))
     artifact = WorkerArtifact(
@@ -148,7 +155,7 @@ async def test_opencode_registrar_uploads_run_workspace_bytes_with_canonical_pro
     assert blob.uploads == [
         (
             str(PROJECT_ID),
-            f"worker-runs/{run_id}/src/totals.py",
+            f"worker-runs/{run_id}/attempt-0/src/totals.py",
             content,
             "text/x-python",
             "worker-artifacts",
@@ -156,8 +163,9 @@ async def test_opencode_registrar_uploads_run_workspace_bytes_with_canonical_pro
     ]
     assert artifact.metadata["project_id"] == str(PROJECT_ID)
     assert artifact.metadata["blob_key"] == (
-        f"{PROJECT_ID}/worker-runs/{run_id}/src/totals.py"
+        f"{PROJECT_ID}/worker-runs/{run_id}/attempt-0/src/totals.py"
     )
+    assert artifact.metadata["worker_run_attempt"] == 0
     assert artifact.metadata["blob_sha256"] == hashlib.sha256(content).hexdigest()
     assert artifact.metadata["blob_size_bytes"] == len(content)
 
@@ -183,7 +191,14 @@ async def test_opencode_registrar_rejects_traversal_and_symlink_paths(
     monkeypatch.setenv("MINIO_ENDPOINT", "http://object-store.test")
     monkeypatch.setenv("MINIO_ACCESS_KEY", "test-access")
     monkeypatch.setenv("MINIO_SECRET_KEY", "test-secret")
-    run = {"id": run_id, "project_id": PROJECT_ID, "worker_id": worker_id}
+    run = {
+        "id": run_id,
+        "project_id": PROJECT_ID,
+        "worker_id": worker_id,
+        "state": "RUNNING",
+        "claim_owner": None,
+        "attempt_count": 0,
+    }
     storage = SimpleNamespace(get_worker_run=AsyncMock(return_value=run))
     blob = _Blob()
     registrar = make_opencode_artifact_registrar(
@@ -205,6 +220,94 @@ async def test_opencode_registrar_rejects_traversal_and_symlink_paths(
         with pytest.raises(ArtifactContentError):
             await registrar(artifact)
     assert blob.uploads == []
+
+
+@pytest.mark.anyio
+async def test_opencode_registrar_deletes_attempt_scoped_object_when_claim_expires_during_upload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from orchestrator_api.artifact_content import (
+        ArtifactClaimLostError,
+        make_opencode_artifact_registrar,
+    )
+
+    run_id = uuid.uuid4()
+    worker_id = uuid.uuid4()
+    owner = "host-attempt-2"
+    workspace = tmp_path / "workspace"
+    content = b"print('safe')\n"
+    path = workspace / str(run_id) / "main.py"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(content)
+    monkeypatch.setenv("MINIO_ENDPOINT", "http://object-store.test")
+    monkeypatch.setenv("MINIO_ACCESS_KEY", "test-access")
+    monkeypatch.setenv("MINIO_SECRET_KEY", "test-secret")
+    monkeypatch.setenv("MINIO_BUCKET", "worker-artifacts")
+    storage = SimpleNamespace(
+        get_worker_run=AsyncMock(
+            return_value={
+                "id": run_id,
+                "project_id": PROJECT_ID,
+                "worker_id": worker_id,
+                "state": "RUNNING",
+                "claim_owner": owner,
+                "attempt_count": 2,
+            }
+        ),
+        validate_worker_run_claim=AsyncMock(side_effect=[True, False]),
+    )
+    blob = _Blob()
+    artifact = WorkerArtifact(
+        kind="file",
+        name="main.py",
+        uri="main.py",
+        sha256=hashlib.sha256(content).hexdigest(),
+        size_bytes=len(content),
+        metadata={"worker_run_id": str(run_id)},
+    )
+    registrar = make_opencode_artifact_registrar(
+        storage,
+        worker_id=worker_id,
+        workspace_root=workspace,
+        blob_client_factory=lambda *args, **kwargs: blob,
+    )
+
+    with pytest.raises(ArtifactClaimLostError, match="expired during upload"):
+        await registrar(
+            artifact,
+            claim_fence={"claim_owner": owner, "attempt_count": 2},
+        )
+
+    assert blob.uploads[0][1] == f"worker-runs/{run_id}/attempt-2/main.py"
+    assert len(blob.deletes) == 1
+    assert blob.deletes[0].key == f"{PROJECT_ID}/worker-runs/{run_id}/attempt-2/main.py"
+    assert storage.validate_worker_run_claim.await_count == 2
+
+
+@pytest.mark.anyio
+async def test_artifact_download_validates_attempt_scoped_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from orchestrator_api.artifact_content import ArtifactContentError, artifact_download_reference
+
+    monkeypatch.setenv("MINIO_ENDPOINT", "http://object-store.test")
+    monkeypatch.setenv("MINIO_ACCESS_KEY", "test-access")
+    monkeypatch.setenv("MINIO_SECRET_KEY", "test-secret")
+    monkeypatch.setenv("MINIO_BUCKET", "worker-artifacts")
+    run_id = uuid.uuid4()
+    artifact = _artifact_fixture(run_id, b"source")
+    artifact["metadata"]["worker_run_attempt"] = 3
+    artifact["metadata"]["blob_key"] = (
+        f"{PROJECT_ID}/worker-runs/{run_id}/attempt-3/src/totals.py"
+    )
+
+    ref = artifact_download_reference(project_id=PROJECT_ID, artifact=artifact, run_id=run_id)
+    assert ref.key == artifact["metadata"]["blob_key"]
+
+    artifact["metadata"]["blob_key"] = f"{PROJECT_ID}/worker-runs/{run_id}/attempt-2/src/totals.py"
+    with pytest.raises(ArtifactContentError, match="failed validation"):
+        artifact_download_reference(project_id=PROJECT_ID, artifact=artifact, run_id=run_id)
 
 
 @pytest.mark.anyio
