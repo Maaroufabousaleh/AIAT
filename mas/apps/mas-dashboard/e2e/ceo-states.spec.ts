@@ -94,6 +94,11 @@ test("CEO live feed retains messages when reconnect fails", async ({ page }) => 
   await expect(page.getByRole("heading", { name: "CEO Live Feed" })).toBeVisible();
   const ceo = page.getByRole("main", { name: "CEO live feed" });
   await expect(ceo).toBeVisible();
+  await expect(ceo.getByText("DIRECTIVE", { exact: true }).first()).toBeVisible();
+  await expect(ceo.getByRole("link", { name: "Open CEO Command" })).toHaveAttribute(
+    "href",
+    "/ceo/chat",
+  );
   await expect(
     ceo.getByRole("region", { name: "CEO message composer" }),
   ).toBeVisible();
