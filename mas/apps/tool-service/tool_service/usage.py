@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
@@ -12,11 +13,125 @@ import asyncpg
 from mas_core.observability import build_native_trace_span, current_trace_id
 
 
+class WorkerToolEffectRepository:
+    """Durable effect journal for tool calls that bypass WorkerRunController.
+
+    OpenCode's signed MCP bridge executes inside Tool Service, so it must
+    reserve and settle the same worker_tool_effects rows used by the worker
+    controller before returning a result to the runtime.  This repository is
+    intentionally separate from best-effort usage and trace accounting.
+    """
+
+    _SELECT_EFFECT = """
+        SELECT id, run_id, request_id, idempotency_key, tool_name,
+               request_sha256, state, response_json
+        FROM worker_tool_effects
+        WHERE run_id = $1 AND idempotency_key = $2
+        FOR UPDATE
+    """
+
+    def __init__(self, pool: asyncpg.Pool) -> None:
+        self._pool = pool
+
+    async def begin_worker_tool_effect(
+        self,
+        *,
+        run_id: UUID,
+        request_id: UUID,
+        idempotency_key: str,
+        tool_name: str,
+        request_sha256: str,
+    ) -> dict[str, Any]:
+        """Reserve an effect before dispatch and classify any existing row."""
+
+        if not isinstance(run_id, UUID) or not isinstance(request_id, UUID):
+            raise ValueError("worker tool effect IDs must be UUIDs")
+        if not idempotency_key or len(idempotency_key) > 256:
+            raise ValueError("worker tool effect idempotency key is invalid")
+        if not tool_name or len(tool_name) > 256:
+            raise ValueError("worker tool effect tool name is invalid")
+        if not re.fullmatch(r"[0-9a-f]{64}", request_sha256):
+            raise ValueError("worker tool effect request hash is invalid")
+
+        effect_id = uuid4()
+        async with self._pool.acquire() as connection, connection.transaction():
+            await connection.execute(
+                """
+                    INSERT INTO worker_tool_effects (
+                        id, run_id, request_id, idempotency_key, tool_name,
+                        request_sha256, state
+                    ) VALUES ($1, $2, $3, $4, $5, $6, 'IN_FLIGHT')
+                    ON CONFLICT (run_id, idempotency_key) DO NOTHING
+                    """,
+                effect_id,
+                run_id,
+                request_id,
+                idempotency_key,
+                tool_name,
+                request_sha256,
+            )
+            row = await connection.fetchrow(
+                self._SELECT_EFFECT,
+                run_id,
+                idempotency_key,
+            )
+
+        if row is None:
+            raise RuntimeError("worker tool effect reservation was not persisted")
+        result = dict(row)
+        if result.get("request_sha256") != request_sha256:
+            result["disposition"] = "CONFLICT"
+        elif result.get("state") == "COMPLETED" and result.get("response_json") is not None:
+            result["disposition"] = "REPLAY"
+        elif result.get("state") == "IN_FLIGHT" and result.get("id") == effect_id:
+            result["disposition"] = "NEW"
+        else:
+            # Both existing IN_FLIGHT and AMBIGUOUS rows can represent a
+            # consequential action whose response was lost. Never re-dispatch.
+            result["disposition"] = "AMBIGUOUS"
+        return result
+
+    async def complete_worker_tool_effect(
+        self,
+        effect_id: UUID,
+        *,
+        state: str,
+        response_json: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Settle only an IN_FLIGHT row; never overwrite a prior disposition."""
+
+        normalized_state = str(state).strip().upper()
+        if normalized_state not in {"COMPLETED", "AMBIGUOUS"}:
+            raise ValueError("worker tool effect completion state is invalid")
+        if not isinstance(effect_id, UUID) or not isinstance(response_json, dict):
+            raise ValueError("worker tool effect completion payload is invalid")
+        now = datetime.now(tz=UTC)
+        async with self._pool.acquire() as connection, connection.transaction():
+            row = await connection.fetchrow(
+                """
+                    UPDATE worker_tool_effects
+                    SET state = $2,
+                        response_json = $3::jsonb,
+                        updated_at = $4,
+                        completed_at = CASE WHEN $2 = 'COMPLETED' THEN $4 ELSE NULL END
+                    WHERE id = $1 AND state = 'IN_FLIGHT'
+                    RETURNING id, run_id, request_id, idempotency_key, tool_name,
+                              request_sha256, state, response_json
+                    """,
+                effect_id,
+                normalized_state,
+                json.dumps(response_json, separators=(",", ":")),
+                now,
+            )
+        return dict(row) if row is not None else None
+
+
 class ProjectUsageWriter:
     """Small asyncpg writer that keeps tool accounting independent of ORM releases."""
 
     def __init__(self, pool: asyncpg.Pool) -> None:
         self._pool = pool
+        self.worker_tool_effects = WorkerToolEffectRepository(pool)
 
     @classmethod
     async def connect(cls, dsn: str) -> ProjectUsageWriter:
