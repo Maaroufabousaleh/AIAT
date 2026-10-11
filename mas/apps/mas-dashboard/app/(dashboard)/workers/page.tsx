@@ -473,6 +473,15 @@ function WorkerRow({
         aria-expanded={expanded}
         onClick={() => void toggleExpanded()}
         onKeyDown={(event) => {
+          const target = event.target;
+          if (
+            target instanceof Element &&
+            target.closest(
+              'button, a, input, select, textarea, summary, [role="checkbox"], [contenteditable="true"]',
+            )
+          ) {
+            return;
+          }
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
             void toggleExpanded();
