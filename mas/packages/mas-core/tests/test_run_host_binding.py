@@ -12,12 +12,16 @@ from mas_core.worker_registry.host_reservations import HostCapacityReservationLe
 from mas_core.worker_registry.placement import WorkerPlacementRequest
 from mas_core.worker_registry.run_host_binding import (
     RUN_HOST_BINDING_SCHEMA,
+    RunHostBindingIdentity,
     RunHostBindingRecoveryRejected,
     RunHostBindingRejected,
     RunHostBindingRequest,
     WorkerRunHostBindingService,
     public_run_host_binding,
 )
+
+RELEASE_HOST_UUID = UUID("00000000-0000-4000-a000-000000000051")
+RELEASE_RESERVATION_ID = UUID("00000000-0000-4000-a000-000000000052")
 
 
 def _placement() -> WorkerPlacementRequest:
@@ -209,6 +213,47 @@ async def test_host_queue_read_is_exact_host_fenced_bounded_and_payload_free() -
 
 
 @pytest.mark.asyncio
+async def test_binding_release_lock_targets_binding_row() -> None:
+    now = datetime.now(tz=UTC)
+    connection = MagicMock()
+    connection.execute = AsyncMock(
+        return_value=_FirstMappingResult(
+            {
+                "id": UUID("00000000-0000-4000-a000-000000000045"),
+                "run_id": UUID("00000000-0000-4000-a000-000000000046"),
+                "worker_id": UUID("00000000-0000-4000-a000-000000000047"),
+                "host_id": UUID("00000000-0000-4000-a000-000000000048"),
+                "host_key": "worker-host-a",
+                "host_plane": "worker",
+                "host_status": "READY",
+                "lease_generation": 3,
+                "current_host_lease_generation": 3,
+                "current_host_lease_expires_at": now + timedelta(seconds=30),
+                "reservation_id": UUID("00000000-0000-4000-a000-000000000049"),
+                "reservation_state": "COMMITTED",
+                "reservation_lease_expires_at": None,
+                "host_lease_generation": 3,
+                "assignment_key": "run-host-lock-test",
+                "owner": "host-executor",
+                "state": "COMMITTED",
+            }
+        )
+    )
+    service = WorkerRunHostBindingService(SimpleNamespace())  # type: ignore[arg-type]
+
+    await service._fetch(
+        connection,
+        run_id=UUID("00000000-0000-4000-a000-000000000046"),
+        for_update=True,
+    )
+
+    statement = connection.execute.await_args.args[0]
+    compiled = statement.compile(dialect=postgresql.dialect())
+    sql = " ".join(str(compiled).replace('"', "").split())
+    assert "FOR UPDATE OF worker_run_host_bindings" in sql
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("host_id", "limit"),
     [("", 1), ("worker-host-a", 0), ("worker-host-a", 1001), ("worker-host-a", True)],
@@ -334,6 +379,154 @@ async def test_binding_replay_repairs_one_sided_reservation_settlement() -> None
     service._ledger.transition_in_transaction.assert_awaited_once()  # type: ignore[attr-defined]
     assert result["reservation_state"] == "COMMITTED"
     assert result["idempotent_replay"] is True
+
+
+def _release_binding_rows(
+    *,
+    state: str = "COMMITTED",
+    reservation_state: str = "COMMITTED",
+    host_uuid: UUID = RELEASE_HOST_UUID,
+    reservation_id: UUID = RELEASE_RESERVATION_ID,
+    host_lease_generation: int = 4,
+) -> tuple[dict[str, object], dict[str, object]]:
+    binding_id = UUID("00000000-0000-4000-a000-000000000050")
+    run_id = UUID("00000000-0000-4000-a000-000000000053")
+    public_row: dict[str, object] = {
+        "id": binding_id,
+        "run_id": run_id,
+        "owner": "host-executor",
+        "host_id": "worker-host-a",
+        "host_uuid": host_uuid,
+        "reservation_id": reservation_id,
+        "host_lease_generation": host_lease_generation,
+        "state": state,
+        "reservation_state": reservation_state,
+    }
+    locked_row = {
+        **public_row,
+        "host_id": host_uuid,
+        "reservation_state": reservation_state,
+    }
+    return public_row, locked_row
+
+
+def _binding_test_engine() -> tuple[MagicMock, MagicMock]:
+    connection = MagicMock()
+    transaction = MagicMock()
+    transaction.__aenter__ = AsyncMock(return_value=connection)
+    transaction.__aexit__ = AsyncMock(return_value=False)
+    engine = MagicMock()
+    engine.begin.return_value = transaction
+    return connection, engine
+
+
+@pytest.mark.asyncio
+async def test_binding_release_updates_exact_assignment_identity() -> None:
+    public_row, locked_row = _release_binding_rows()
+    released_row = {**public_row, "state": "RELEASED", "reservation_state": "RELEASED"}
+    identity = RunHostBindingIdentity.from_binding(public_row)
+    connection, engine = _binding_test_engine()
+    connection.execute = AsyncMock(return_value=SimpleNamespace(rowcount=1))
+    service = WorkerRunHostBindingService(SimpleNamespace(engine=engine))  # type: ignore[arg-type]
+    service.get = AsyncMock(return_value=released_row)  # type: ignore[method-assign]
+    service._fetch = AsyncMock(return_value=locked_row)  # type: ignore[method-assign]
+    now = datetime.now(tz=UTC)
+    service._now = lambda: now  # type: ignore[method-assign]
+    service._ledger.transition_in_transaction = AsyncMock(  # type: ignore[method-assign]
+        return_value=(locked_row, False)
+    )
+
+    result = await service.release(
+        public_row["run_id"],
+        owner="host-executor",
+        expected_identity=identity,
+    )
+
+    assert result["state"] == "RELEASED"
+    assert result["idempotent_replay"] is False
+    service._fetch.assert_awaited_once_with(
+        connection,
+        run_id=public_row["run_id"],
+        for_update=True,
+    )
+    service._ledger.transition_in_transaction.assert_awaited_once_with(  # type: ignore[attr-defined]
+        connection,
+        identity.reservation_id,
+        owner="host-executor",
+        target="RELEASED",
+        now=now,
+    )
+    statement = connection.execute.await_args.args[0]
+    compiled = statement.compile(dialect=postgresql.dialect())
+    sql = " ".join(str(compiled).replace('"', "").split())
+    params = list(compiled.params.values())
+    for field in (
+        "id",
+        "run_id",
+        "owner",
+        "reservation_id",
+        "host_id",
+        "host_lease_generation",
+    ):
+        assert f"worker_run_host_bindings.{field} =" in sql
+    assert identity.binding_id in params
+    assert identity.reservation_id in params
+    assert identity.host_uuid in params
+    assert identity.host_lease_generation in params
+
+
+@pytest.mark.asyncio
+async def test_stale_binding_release_does_not_touch_replacement_reservation() -> None:
+    public_row, _locked_old_row = _release_binding_rows()
+    identity = RunHostBindingIdentity.from_binding(public_row)
+    _, locked_replacement = _release_binding_rows(
+        host_uuid=UUID("00000000-0000-4000-a000-000000000061"),
+        reservation_id=UUID("00000000-0000-4000-a000-000000000062"),
+        host_lease_generation=5,
+    )
+    connection, engine = _binding_test_engine()
+    connection.execute = AsyncMock(return_value=SimpleNamespace(rowcount=1))
+    service = WorkerRunHostBindingService(SimpleNamespace(engine=engine))  # type: ignore[arg-type]
+    service.get = AsyncMock(return_value=public_row)  # type: ignore[method-assign]
+    service._fetch = AsyncMock(return_value=locked_replacement)  # type: ignore[method-assign]
+    service._ledger.transition_in_transaction = AsyncMock()  # type: ignore[method-assign]
+
+    with pytest.raises(RunHostBindingRejected) as caught:
+        await service.release(
+            public_row["run_id"],
+            owner="host-executor",
+            expected_identity=identity,
+        )
+
+    assert caught.value.reason_code == "run_host_binding_release_fence_mismatch"
+    service._ledger.transition_in_transaction.assert_not_awaited()  # type: ignore[attr-defined]
+    connection.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_binding_release_replay_is_idempotent_for_same_assignment() -> None:
+    released_row, locked_row = _release_binding_rows(
+        state="RELEASED",
+        reservation_state="RELEASED",
+    )
+    identity = RunHostBindingIdentity.from_binding(released_row)
+    connection, engine = _binding_test_engine()
+    connection.execute = AsyncMock(return_value=SimpleNamespace(rowcount=1))
+    service = WorkerRunHostBindingService(SimpleNamespace(engine=engine))  # type: ignore[arg-type]
+    service.get = AsyncMock(return_value=released_row)  # type: ignore[method-assign]
+    service._fetch = AsyncMock(return_value=locked_row)  # type: ignore[method-assign]
+    service._ledger.transition_in_transaction = AsyncMock()  # type: ignore[method-assign]
+
+    result = await service.release(
+        released_row["run_id"],
+        owner="host-executor",
+        expected_identity=identity,
+    )
+
+    assert result["state"] == "RELEASED"
+    assert result["idempotent_replay"] is True
+    service._ledger.transition_in_transaction.assert_not_awaited()  # type: ignore[attr-defined]
+    connection.execute.assert_not_awaited()
 
 
 @pytest.mark.asyncio

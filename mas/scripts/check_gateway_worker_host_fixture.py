@@ -14,8 +14,9 @@ import argparse
 import asyncio
 import json
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 MAS_ROOT = Path(__file__).resolve().parents[1]
@@ -40,6 +41,9 @@ from mas_core.worker_registry.host_executor import (  # noqa: E402
 from mas_core.worker_registry.runtime_adapters import (  # noqa: E402
     GatewayWorkerAdapter,
 )
+
+if TYPE_CHECKING:
+    from mas_core.worker_registry.run_host_binding import RunHostBindingIdentity
 
 CHECK_SCHEMA = "aiat.gateway-worker-host-fixture.v1"
 RUN_ID = UUID("00000000-0000-4000-a000-000000000c41")
@@ -74,9 +78,12 @@ class _MemoryBindingService:
 
     def __init__(self) -> None:
         self.binding: dict[str, Any] = {
+            "id": UUID("00000000-0000-4000-a000-000000000c43"),
             "run_id": RUN_ID,
             "worker_id": WORKER_ID,
+            "host_uuid": UUID("00000000-0000-4000-a000-000000000c44"),
             "host_id": HOST_ID,
+            "reservation_id": UUID("00000000-0000-4000-a000-000000000c45"),
             "host_plane": "worker",
             "host_status": "READY",
             "state": "COMMITTED",
@@ -92,8 +99,18 @@ class _MemoryBindingService:
             return None
         return dict(self.binding)
 
-    async def release(self, run_id: UUID | str, *, owner: str) -> dict[str, Any]:
-        if str(run_id) != str(RUN_ID) or owner != OWNER:
+    async def release(
+        self,
+        run_id: UUID | str,
+        *,
+        owner: str,
+        expected_identity: RunHostBindingIdentity,
+    ) -> dict[str, Any]:
+        if (
+            str(run_id) != str(RUN_ID)
+            or owner != OWNER
+            or not expected_identity.matches(self.binding)
+        ):
             raise RuntimeError("fixture binding owner mismatch")
         self.binding["state"] = "RELEASED"
         self.binding["reservation_state"] = "RELEASED"
@@ -129,11 +146,37 @@ class _MemoryStorage:
         lease_seconds: int,
         run_id: UUID | str,
     ) -> dict[str, Any] | None:
-        del lease_seconds
         if str(run_id) != str(RUN_ID) or not owner or self.run["state"] != "QUEUED":
             return None
         self.run["state"] = "CLAIMED"
         self.run["claim_owner"] = owner
+        self.run["attempt_count"] = int(self.run.get("attempt_count") or 0) + 1
+        self.run["lease_expires_at"] = datetime.now(tz=UTC) + timedelta(seconds=lease_seconds)
+        return dict(self.run)
+
+    async def heartbeat_worker_run(
+        self,
+        run_id: UUID | str,
+        *,
+        owner: str,
+        attempt_count: int,
+        lease_seconds: int = 300,
+    ) -> dict[str, Any] | None:
+        if str(run_id) != str(RUN_ID):
+            return None
+        lease_expires_at = self.run.get("lease_expires_at")
+        if (
+            self.run.get("claim_owner") != owner
+            or int(self.run.get("attempt_count") or 0) != attempt_count
+            or lease_expires_at is None
+            or lease_expires_at <= datetime.now(tz=UTC)
+            or self.run.get("state")
+            in {"SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT"}
+        ):
+            return None
+        now = datetime.now(tz=UTC)
+        self.run["heartbeat_at"] = now
+        self.run["lease_expires_at"] = now + timedelta(seconds=lease_seconds)
         return dict(self.run)
 
     async def transition_worker_run(

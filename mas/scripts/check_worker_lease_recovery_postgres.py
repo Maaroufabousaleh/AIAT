@@ -37,7 +37,7 @@ if CORE_ROOT.exists() and str(CORE_ROOT) not in sys.path:
 from mas_core.memory.storage import AgentStorage  # noqa: E402
 
 CHECK_SCHEMA = "aiat.worker-lease-recovery-postgres-certification.v1"
-EXPECTED_MIGRATION = "0046_project_approval_inbox_index"
+EXPECTED_MIGRATION = "0048_worker_run_retry_lineage"
 WORKER_NAME = "aiat-cert-worker-lease-recovery-v1"
 WORKER_PREFIX = f"{WORKER_NAME}%"
 WORKER_REGISTRY_ID = UUID("00000000-0000-4000-a000-000000000961")
@@ -246,10 +246,16 @@ async def _run(dsn: str | None) -> dict[str, Any]:
         claim_a = await storage.claim_worker_run(owner=OWNER_A, lease_seconds=300, run_id=RUN_ID)
         claim_b_live = await storage.claim_worker_run(owner=OWNER_B, lease_seconds=300, run_id=RUN_ID)
         heartbeat_wrong_owner = await storage.heartbeat_worker_run(
-            RUN_ID, owner=OWNER_B, lease_seconds=300
+            RUN_ID,
+            owner=OWNER_B,
+            attempt_count=int((claim_a or {}).get("attempt_count") or 0),
+            lease_seconds=300,
         )
         heartbeat_owner = await storage.heartbeat_worker_run(
-            RUN_ID, owner=OWNER_A, lease_seconds=300
+            RUN_ID,
+            owner=OWNER_A,
+            attempt_count=int((claim_a or {}).get("attempt_count") or 0),
+            lease_seconds=300,
         )
 
         await _expire_fixture_lease(storage)
@@ -257,6 +263,21 @@ async def _run(dsn: str | None) -> dict[str, Any]:
         reclaim_b = await storage.claim_worker_run(owner=OWNER_B, lease_seconds=300, run_id=RUN_ID)
         if reclaim_b is None:
             raise RuntimeError("owner B could not reclaim the expired reserved run")
+
+        heartbeat_stale_attempt = await storage.heartbeat_worker_run(
+            RUN_ID,
+            owner=OWNER_A,
+            attempt_count=int((claim_a or {}).get("attempt_count") or 0),
+            lease_seconds=300,
+        )
+        heartbeat_current_attempt = await storage.heartbeat_worker_run(
+            RUN_ID,
+            owner=OWNER_B,
+            attempt_count=int(reclaim_b.get("attempt_count") or 0),
+            lease_seconds=300,
+        )
+        if heartbeat_stale_attempt is not None or heartbeat_current_attempt is None:
+            raise RuntimeError("worker-run heartbeat attempt fencing did not reject stale ownership")
 
         current_state = "CLAIMED"
         for next_state in ("VALIDATING", "READY", "DISPATCHING", "RUNNING"):
@@ -266,6 +287,8 @@ async def _run(dsn: str | None) -> dict[str, Any]:
                 expected_state=current_state,
                 actor=OWNER_B,
                 reason="lease recovery fixture progression",
+                claim_owner=OWNER_B,
+                attempt_count=int(reclaim_b.get("attempt_count") or 0),
             )
             if transitioned is None:
                 raise RuntimeError(f"transition to {next_state} lost its compare-and-set")
@@ -277,6 +300,8 @@ async def _run(dsn: str | None) -> dict[str, Any]:
             result={"private_marker": PAYLOAD_MARKER, "result": "recovered"},
             actor=OWNER_B,
             reason="lease recovery fixture terminal success",
+            claim_owner=OWNER_B,
+            attempt_count=int(reclaim_b.get("attempt_count") or 0),
         )
         terminal_claim = await storage.claim_worker_run(owner=OWNER_A, run_id=RUN_ID)
 

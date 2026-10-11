@@ -52,10 +52,16 @@ repository has no worker-host service wired to consume scheduled runs. The
 binding service now exposes a bounded, payload-free queue read for one exact
 host; it returns only queued runs with a committed worker-plane binding,
 committed reservation, READY host lease, and matching fencing generation.
-There is still no host process or API dispatch integration using that read
-boundary. The certificates therefore prove the host-execution library
-boundary, not that a normal dashboard worker request is placed and executed
-through it. This product integration gap is tracked in the [Functional Alpha
+The bounded `HostQueueConsumer` in
+[`host_queue_consumer.py`](../../mas/packages/mas-core/mas_core/worker_registry/host_queue_consumer.py)
+uses that read boundary and validates the persisted worker and exact adapter
+pins before invoking `WorkerHostExecutor`. It is covered by focused tests but
+has not been registered in an API or host process, and its eligibility reads
+are not atomic with worker deactivation or pin revocation. There is still no
+host process or API dispatch integration using the queue boundary. The
+certificates therefore prove the host-execution library boundary, not that a
+normal dashboard worker request is placed and executed through it. This
+product integration gap is tracked in the [Functional Alpha
 backlog](AIAT_IMPLEMENTATION_INDEX.md#functional-alpha-product-gap-backlog).
 
 The 2026-08-18 continuation (`2bc7ca5`) isolated the local Postgres fixtures
@@ -125,6 +131,15 @@ through the caller's database connection, so reservation and binding state are
 committed or rolled back together. If assignment persistence fails after a new
 reservation is created, the binding service compensates that reservation; a
 replayed scheduler reservation is never released by this cleanup path.
+
+During a long execution, the host executor renews the Worker Run lease using
+the persisted owner and attempt number, then re-reads the exact binding and
+current host lease. A lost run claim cancels only that adapter runtime; a lost
+host binding/lease requests cancellation through the controller with the same
+owner/attempt fence. Binding release compares the captured binding, reservation,
+host, and lease generation before settling either record. The host agent remains
+responsible for renewing its host lease; this monitor detects loss at a bounded
+poll interval and does not renew host ownership itself.
 
 Host-loss reassignment remains a separate recovery boundary because scheduling
 the replacement reservation is still a separate transaction. Once scheduling
