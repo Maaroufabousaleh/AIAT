@@ -53,6 +53,9 @@ interface EvidencePackage {
   snapshot?: { id?: string; generated_at?: string; status?: string } | null;
 }
 
+const WORKER_RUN_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 function statusClass(status: string): string {
   const normalized = status.toLowerCase();
   if (normalized === "complete" || normalized === "present" || normalized === "passed") {
@@ -66,6 +69,10 @@ function statusClass(status: string): string {
 
 export default function ProjectEvidencePage() {
   const { id } = useParams<{ id: string }>();
+  return <ProjectEvidenceView key={id} id={id} />;
+}
+
+function ProjectEvidenceView({ id }: { id: string }) {
   const [packageView, setPackageView] = useState<EvidencePackage | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -99,6 +106,9 @@ export default function ProjectEvidencePage() {
       }
       if (!response.ok) {
         throw new Error(typeof payload.error === "string" ? payload.error : "Evidence package unavailable");
+      }
+      if (!payload || payload.project_id !== id) {
+        throw new Error("Evidence package project identity did not match the requested project");
       }
       setPackageView(payload as EvidencePackage);
       hasPackageRef.current = true;
@@ -260,6 +270,14 @@ export default function ProjectEvidencePage() {
                           <Link
                             href={`/evidence/artifact/${encodeURIComponent(item.id)}`}
                             aria-label={`Open artifact evidence ${item.id}`}
+                            className="text-cyan-200 underline decoration-cyan-500/50 underline-offset-4 hover:text-cyan-100 focus-visible:rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300"
+                          >
+                            {item.id}
+                          </Link>
+                        ) : item.source === "worker_runs" && WORKER_RUN_ID_PATTERN.test(item.id) ? (
+                          <Link
+                            href={`/workers/runs/${encodeURIComponent(item.id)}`}
+                            aria-label={`Open WorkerRun evidence ${item.id}`}
                             className="text-cyan-200 underline decoration-cyan-500/50 underline-offset-4 hover:text-cyan-100 focus-visible:rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300"
                           >
                             {item.id}

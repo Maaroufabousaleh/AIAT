@@ -2,6 +2,8 @@ import { expect, test } from "@playwright/test";
 
 import { authenticate } from "./auth";
 
+const WORKER_RUN_ID = "30000000-0000-4000-8000-000000000103";
+
 const PACKAGE_FIXTURE = {
   schema_version: "aiat.project-evidence-package.v1",
   project_id: "project-evidence-stale",
@@ -49,6 +51,20 @@ const PACKAGE_FIXTURE = {
       status: "stored",
       source: "artifacts",
       checksum: "sha256:fixture-checksum",
+    },
+    {
+      id: WORKER_RUN_ID,
+      category: "workers",
+      kind: "worker_run",
+      status: "QUEUED",
+      source: "worker_runs",
+    },
+    {
+      id: "../unexpected-route",
+      category: "workers",
+      kind: "worker_run",
+      status: "unavailable",
+      source: "worker_runs",
     },
   ],
   notices: [],
@@ -100,6 +116,12 @@ test("project evidence opens a canonical artifact record from its item list", as
     "href",
     "/evidence/artifact/42",
   );
+  await expect(
+    page.getByRole("link", { name: `Open WorkerRun evidence ${WORKER_RUN_ID}` }),
+  ).toHaveAttribute("href", `/workers/runs/${WORKER_RUN_ID}`);
+  await expect(
+    page.getByRole("link", { name: "Open WorkerRun evidence ../unexpected-route" }),
+  ).toHaveCount(0);
   await artifactLink.click();
   await expect(page).toHaveURL(/\/evidence\/artifact\/42$/);
   await expect(page.getByTestId("ceo-evidence-detail")).toContainText(
@@ -224,6 +246,33 @@ test("project evidence fails closed when the initial package read is denied", as
   await expect(page.getByRole("link", { name: "Back to project" })).toBeVisible();
 });
 
+test("project evidence rejects a successful package response for another project", async ({
+  page,
+}) => {
+  await page.route(
+    "**/api/projects/project-evidence-mismatch/evidence/package",
+    async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ...PACKAGE_FIXTURE, project_id: "different-project" }),
+      });
+    },
+  );
+
+  await authenticate(page, "/projects/project-evidence-mismatch/evidence");
+
+  await expect(
+    page.getByText("Evidence package project identity did not match the requested project"),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Evidence package summary" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("link", { name: `Open WorkerRun evidence ${WORKER_RUN_ID}` }),
+  ).toHaveCount(0);
+});
+
 test("project evidence retains the last-known package after read denial", async ({
   page,
 }) => {
@@ -270,4 +319,53 @@ test("project evidence retains the last-known package after read denial", async 
     page.getByRole("button", { name: "Refresh project evidence" }),
   ).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Retry" })).toHaveCount(0);
+});
+
+test("project evidence denies a second project without showing the first project's package", async ({
+  page,
+}) => {
+  await page.route(
+    "**/api/projects/project-evidence-open/evidence/package",
+    async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ...PACKAGE_FIXTURE,
+          project_id: "project-evidence-open",
+        }),
+      });
+    },
+  );
+  await page.route(
+    "**/api/projects/project-evidence-next/evidence/package",
+    async (route) => {
+      await route.fulfill({
+        status: 403,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "evidence access denied" }),
+      });
+    },
+  );
+
+  await authenticate(page, "/projects/project-evidence-open/evidence");
+  await expect(
+    page.getByRole("region", { name: "Evidence package summary" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: `Open WorkerRun evidence ${WORKER_RUN_ID}` }),
+  ).toBeVisible();
+
+  await page.goto("/projects/project-evidence-next/evidence");
+
+  await expect(page).toHaveURL(/\/projects\/project-evidence-next\/evidence$/);
+  await expect(
+    page.getByRole("region", { name: "Project evidence access status" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Evidence package summary" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("link", { name: `Open WorkerRun evidence ${WORKER_RUN_ID}` }),
+  ).toHaveCount(0);
 });
