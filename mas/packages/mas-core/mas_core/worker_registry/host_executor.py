@@ -92,6 +92,7 @@ class WorkerHostExecutor:
         *,
         run_id: UUID,
         host_id: str,
+        owner: str,
         worker_registry_id: UUID,
     ) -> None:
         if binding is None:
@@ -102,6 +103,8 @@ class WorkerHostExecutor:
             raise WorkerHostExecutionRejected("run_host_binding_worker_mismatch")
         if str(binding.get("host_id") or "") != host_id:
             raise WorkerHostExecutionRejected("run_host_binding_host_mismatch")
+        if str(binding.get("owner") or "") != owner:
+            raise WorkerHostExecutionRejected("run_host_binding_owner_mismatch")
         if str(binding.get("state") or "") != "COMMITTED":
             raise WorkerHostExecutionRejected("run_host_binding_not_committed")
         if str(binding.get("reservation_state") or "") != "COMMITTED":
@@ -235,6 +238,7 @@ class WorkerHostExecutor:
             binding,
             run_id=run_id,
             host_id=host_id,
+            owner=owner,
             worker_registry_id=normalized_worker_registry_id,
         )
         await self._validate_model_resolution(worker_request, model_resolution_snapshot_id)

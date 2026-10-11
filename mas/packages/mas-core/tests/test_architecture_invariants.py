@@ -286,6 +286,7 @@ async def test_host_executor_claims_before_controller_and_releases_binding_after
         "run_id": str(PROJECT_ID),
         "worker_id": str(WORKER_REGISTRY_ID),
         "host_id": "worker-host-a",
+        "owner": "host-executor",
         "host_plane": "worker",
         "host_status": "READY",
         "state": "COMMITTED",

@@ -21,6 +21,7 @@ def _binding(**overrides: object) -> dict[str, object]:
         "run_id": RUN_ID,
         "worker_id": WORKER_ID,
         "host_id": "worker-host-a",
+        "owner": "host-executor",
         "host_plane": "worker",
         "host_status": "READY",
         "state": "COMMITTED",
@@ -54,6 +55,7 @@ def test_host_execution_request_rejects_invalid_lease() -> None:
         ("state", "ASSIGNED", "run_host_binding_not_committed"),
         ("reservation_state", "RESERVED", "run_host_reservation_not_committed"),
         ("host_plane", "control", "run_host_plane_mismatch"),
+        ("owner", "other-executor", "run_host_binding_owner_mismatch"),
         ("host_lease_generation", 1, "run_host_lease_generation_mismatch"),
         ("current_host_lease_valid", False, "run_host_lease_invalid"),
     ],
@@ -68,6 +70,7 @@ def test_executor_enforces_committed_worker_plane_admission(
             _binding(**{field: value}),
             run_id=RUN_ID,
             host_id="worker-host-a",
+            owner="host-executor",
             worker_registry_id=WORKER_ID,
         )
 
@@ -80,6 +83,7 @@ def test_executor_rejects_missing_binding_and_exposes_schema() -> None:
             None,
             run_id=RUN_ID,
             host_id="worker-host-a",
+            owner="host-executor",
             worker_registry_id=WORKER_ID,
         )
 
@@ -187,3 +191,37 @@ async def test_host_model_snapshot_lookup_preserves_project_scope() -> None:
     await executor._validate_model_resolution(request, snapshot_id)
 
     assert storage.project_ids == [project_id]
+
+
+@pytest.mark.asyncio
+async def test_executor_rejects_binding_owner_mismatch_before_claim() -> None:
+    class _Bindings:
+        async def get(self, _run_id: UUID) -> dict[str, object]:
+            return _binding(owner="binding-owner")
+
+    class _Storage:
+        claim_count = 0
+
+        async def claim_worker_run(self, **_kwargs: object) -> dict[str, object] | None:
+            self.claim_count += 1
+            return None
+
+    storage = _Storage()
+    executor = WorkerHostExecutor(storage, binding_service=_Bindings())  # type: ignore[arg-type]
+    request = WorkerRunRequest(
+        run_id=RUN_ID,
+        idempotency_key="host-owner-mismatch-test",
+        worker_id=str(WORKER_ID),
+        task_type="host-owner-mismatch",
+    )
+
+    with pytest.raises(WorkerHostExecutionRejected) as caught:
+        await executor.execute(
+            HostExecutionRequest(RUN_ID, "worker-host-a", "host-executor"),
+            request,
+            object(),
+            worker_registry_id=WORKER_ID,
+        )
+
+    assert caught.value.reason_code == "run_host_binding_owner_mismatch"
+    assert storage.claim_count == 0

@@ -538,7 +538,7 @@ async def _run(dsn: str | None) -> dict[str, Any]:
                         HostExecutionRequest(
                             run_id=RUN_A,
                             host_id=HOST_A,
-                            owner=f"{OWNER_A}-duplicate",
+                            owner=OWNER_A,
                             lease_seconds=30,
                         ),
                         request_a,
