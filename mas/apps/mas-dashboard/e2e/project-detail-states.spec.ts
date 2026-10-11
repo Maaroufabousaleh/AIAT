@@ -155,6 +155,14 @@ test("prepared project exposes the canonical start action and updates its state"
 }) => {
   let currentState = "INIT";
   let startCalls = 0;
+  let workerRunReads = 0;
+  const startedRun = {
+    id: "30000000-0000-4000-8000-000000000301",
+    project_id: PROJECT_ID,
+    worker_id: "worker-alpha",
+    task_type: "project.feasibility",
+    state: "QUEUED",
+  };
   const currentProject = () => ({
     ...PROJECT_FIXTURE,
     state: currentState,
@@ -201,11 +209,40 @@ test("prepared project exposes the canonical start action and updates its state"
       body: JSON.stringify(WORKSPACE_FIXTURE),
     });
   });
+  await page.route(`**/api/projects/${PROJECT_ID}/issues?**`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: "[]",
+    });
+  });
   await page.route(`**/api/projects/${PROJECT_ID}/repository`, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({ workspace: null }),
+    });
+  });
+  await page.route(`**/api/projects/${PROJECT_ID}/flow-instance`, async (route) => {
+    await route.fulfill({
+      status: 404,
+      contentType: "application/json",
+      body: JSON.stringify({ detail: "No workflow is attached to this fixture." }),
+    });
+  });
+  await page.route("**/api/flows?is_active=true", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: "[]",
+    });
+  });
+  await page.route("**/api/governance/runs**", async (route) => {
+    workerRunReads += 1;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(startCalls > 0 ? [startedRun] : []),
     });
   });
 
@@ -218,11 +255,19 @@ test("prepared project exposes the canonical start action and updates its state"
     page.getByRole("button", { name: "project created", exact: true }),
   ).toBeVisible();
 
+  const workerRunReadsBeforeStart = workerRunReads;
   await page.getByRole("button", { name: "Start CEO work" }).click();
   await expect(
     page.getByRole("status", { name: "Project state: FEASIBILITY CHECK" }),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "Start CEO work" })).toHaveCount(0);
+  await expect.poll(() => workerRunReads).toBe(workerRunReadsBeforeStart + 1);
+  await page.getByRole("tab", { name: "Workspace", exact: true }).click();
+  await expect(
+    page.getByRole("link", {
+      name: "Open WorkerRun 30000000-0000-4000-8000-000000000301",
+    }),
+  ).toBeVisible();
   expect(startCalls).toBe(1);
 });
 

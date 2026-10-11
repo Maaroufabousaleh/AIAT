@@ -2005,7 +2005,7 @@ export default function ProjectDetailPage() {
             : `Project could not be started (HTTP ${res.status})`,
         );
       }
-      await load();
+      await Promise.all([load(), loadFlowData(), loadWorkspace()]);
     } catch (cause) {
       setStartError(
         cause instanceof Error ? cause.message : "Project could not be started",
