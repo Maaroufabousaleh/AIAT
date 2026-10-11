@@ -220,14 +220,23 @@ function ApprovalsContent() {
           setConfirmed(false);
         }
         refreshFailedRef.current = false;
-        const pendingList = Array.isArray(pendingResult.value) ? pendingResult.value.slice(0, 100) : [];
+        const allPending = Array.isArray(pendingResult.value) ? pendingResult.value : [];
+        const pendingList = allPending.slice(0, 100);
+        const linkedRequest = linkedRequestId
+          ? allPending.find((item) => item.id === linkedRequestId)
+          : undefined;
+        // CEO receipt links can target older requests outside the latest-100
+        // inbox window. Keep that exact pending item reachable without
+        // expanding the ordinary queue or changing the owning API.
+        if (linkedRequest && !pendingList.some((item) => item.id === linkedRequest.id)) {
+          pendingList.push(linkedRequest);
+        }
         setPending(pendingList);
         if (invalidRequestedId) {
           requestDeepLinkedIdRef.current = null;
           setSelected(null);
           setNotice("The linked CEO request identifier is invalid. Refresh the inbox to inspect the current queue.");
         } else if (linkedRequestId) {
-          const linkedRequest = pendingList.find((item) => item.id === linkedRequestId);
           if (linkedRequest) {
             if (requestDeepLinkedIdRef.current !== linkedRequestId) {
               setReason("");

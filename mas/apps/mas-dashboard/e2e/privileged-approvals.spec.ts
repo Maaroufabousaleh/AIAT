@@ -188,3 +188,48 @@ test("approval decisions stay disabled until a failed refresh recovers", async (
   await expect(details.getByRole("button", { name: "Approve request" })).toBeEnabled();
   await expect(details.getByRole("button", { name: "Reject request" })).toBeEnabled();
 });
+
+test("a CEO receipt link can inspect and decide a pending request outside the latest 100", async ({ page }) => {
+  const linkedRequestId = "10000000-0000-4000-8000-000000000101";
+  const linkedRequest = {
+    ...pendingRequest,
+    id: linkedRequestId,
+    action: "project.archive",
+    requested_at: "2026-10-01T12:00:00Z",
+  };
+  let pending = Array.from({ length: 100 }, (_, index) => ({
+    ...pendingRequest,
+    id: `10000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+  })).concat(linkedRequest);
+  let audit: Array<Record<string, unknown>> = [];
+  let decisionCalls = 0;
+
+  await page.route((url) => url.pathname === "/api/ceo/privileged-actions/pending", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(pending) });
+  });
+  await page.route((url) => url.pathname === "/api/ceo/privileged-actions/audit", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(audit) });
+  });
+  await mockEmptyProjectInbox(page);
+  await page.route((url) => url.pathname === `/api/ceo/privileged-actions/${linkedRequestId}/approve`, async (route) => {
+    decisionCalls += 1;
+    expect(route.request().postDataJSON()).toEqual({ approved: true, reason: "Reviewed linked archive request" });
+    pending = pending.filter((item) => item.id !== linkedRequestId);
+    audit = [{ ...linkedRequest, payload_json: undefined, decision: "approved", decided_by: "dashboard-operator", reason: "Reviewed linked archive request" }];
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ record_id: linkedRequestId, decision: "approved" }) });
+  });
+
+  await authenticate(page, `/approvals?request_id=${linkedRequestId}`);
+  const main = page.getByRole("main", { name: "Privileged action approvals" });
+  const details = main.getByRole("region", { name: "Request details" });
+  await expect(details.getByText("project.archive", { exact: true })).toBeVisible();
+  await expect(details.getByLabel("Decision reason (required)")).toBeVisible();
+  await expect(main.getByText("The linked CEO request is not currently pending.")).toHaveCount(0);
+  await details.getByLabel("Decision reason (required)").fill("Reviewed linked archive request");
+  await details.getByLabel("I reviewed this request and intend to record a decision.").check();
+  await details.getByRole("button", { name: "Approve request" }).click();
+
+  await expect(main.getByRole("status").filter({ hasText: "Decision recorded: approved" })).toBeVisible();
+  await expect(main.getByRole("list", { name: "Privileged action audit records" }).getByText("approved", { exact: true })).toBeVisible();
+  expect(decisionCalls).toBe(1);
+});
