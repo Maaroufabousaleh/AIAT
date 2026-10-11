@@ -54,6 +54,7 @@ type InboxRow =
   | { kind: "project"; id: string; created_at: string; item: ProjectDecision };
 
 type HttpError = Error & { status?: number };
+type InboxSourceErrors = { pending: string | null; audit: string | null; project: string | null };
 
 const PAGE_SIZE = 50;
 const SENSITIVE_FIELD = /secret|token|password|credential|api[_-]?key|authorization|private[_-]?key/i;
@@ -124,6 +125,7 @@ function ApprovalsContent() {
   const [submitting, setSubmitting] = useState(false);
   const [accessDenied, setAccessDenied] = useState(false);
   const [error, setError] = useState("");
+  const [sourceErrors, setSourceErrors] = useState<InboxSourceErrors>({ pending: null, audit: null, project: null });
   const [notice, setNotice] = useState("");
   const submittingRef = useRef(false);
   const pagingRef = useRef(false);
@@ -154,44 +156,98 @@ function ApprovalsContent() {
     if (!preserveNoticeOnRefreshRef.current) setNotice("");
     try {
       const projectQuery = new URLSearchParams({ limit: String(PAGE_SIZE) });
-      const [pendingRows, auditRows, projectPage] = await Promise.all([
+      const [pendingResult, auditResult, projectResult] = await Promise.allSettled([
         requestJson<ApprovalRequest[]>("/api/ceo/privileged-actions/pending"),
         requestJson<ApprovalAuditRow[]>("/api/ceo/privileged-actions/audit"),
         requestJson<ProjectDecisionPage>(`/api/approvals/project-decisions?${projectQuery.toString()}`),
       ]);
       if (refreshGeneration !== refreshGenerationRef.current) return;
-      if (refreshFailedRef.current) {
-        setReason("");
-        setConfirmed(false);
-        refreshFailedRef.current = false;
-      }
-      const pendingList = Array.isArray(pendingRows) ? pendingRows.slice(0, 100) : [];
-      setPending(pendingList);
-      setAudit(Array.isArray(auditRows) ? auditRows : []);
-      setProjectDecisions(Array.isArray(projectPage.items) ? projectPage.items : []);
-      setProjectCursor(typeof projectPage.next_cursor === "string" ? projectPage.next_cursor : null);
-      if (invalidRequestedId) {
+      const failures = [pendingResult, auditResult, projectResult].filter(
+        (result): result is PromiseRejectedResult => result.status === "rejected",
+      );
+      const unauthorized = failures.find((result) => {
+        const status = result.reason instanceof Error ? (result.reason as HttpError).status : undefined;
+        return status === 401 || status === 403;
+      });
+      if (unauthorized) {
+        setPending([]);
+        setAudit([]);
+        setProjectDecisions([]);
+        setProjectCursor(null);
+        setSourceErrors({ pending: null, audit: null, project: null });
         requestDeepLinkedIdRef.current = null;
         setSelected(null);
-        setNotice("The linked CEO request identifier is invalid. Refresh the inbox to inspect the current queue.");
-      } else if (linkedRequestId) {
-        const linkedRequest = pendingList.find((item) => item.id === linkedRequestId);
-        if (linkedRequest) {
-          if (requestDeepLinkedIdRef.current !== linkedRequestId) {
-            setReason("");
-            setConfirmed(false);
-            requestDeepLinkFocusRef.current = linkedRequestId;
-          }
-          requestDeepLinkedIdRef.current = linkedRequestId;
-          setSelected(linkedRequest);
-        } else {
-          requestDeepLinkedIdRef.current = linkedRequestId;
+        setAccessDenied(true);
+        setError("This operator identity is not authorized to inspect or decide approvals.");
+        return;
+      }
+
+      const failureMessage = (result: PromiseRejectedResult) =>
+        result.reason instanceof Error ? result.reason.message : "Approval data is unavailable.";
+      const nextSourceErrors: InboxSourceErrors = {
+        pending: pendingResult.status === "rejected" ? failureMessage(pendingResult) : null,
+        audit: auditResult.status === "rejected" ? failureMessage(auditResult) : null,
+        project: projectResult.status === "rejected" ? failureMessage(projectResult) : null,
+      };
+      setSourceErrors(nextSourceErrors);
+      const sourceFailureDetails = [
+        nextSourceErrors.pending && `CEO request queue: ${nextSourceErrors.pending}`,
+        nextSourceErrors.audit && `Decision audit: ${nextSourceErrors.audit}`,
+        nextSourceErrors.project && `Project decision queue: ${nextSourceErrors.project}`,
+      ].filter((detail): detail is string => Boolean(detail));
+      if (sourceFailureDetails.length > 0) {
+        setError(`Some approval queues could not be loaded. Retry to refresh the inbox. ${sourceFailureDetails.join(" · ")}`);
+      } else {
+        setError("");
+      }
+
+      if (auditResult.status === "fulfilled") {
+        setAudit(Array.isArray(auditResult.value) ? auditResult.value : []);
+      } else {
+        setAudit([]);
+      }
+      if (projectResult.status === "fulfilled") {
+        setProjectDecisions(Array.isArray(projectResult.value?.items) ? projectResult.value.items : []);
+        setProjectCursor(typeof projectResult.value?.next_cursor === "string" ? projectResult.value.next_cursor : null);
+      } else {
+        setProjectDecisions([]);
+        setProjectCursor(null);
+      }
+
+      if (pendingResult.status === "fulfilled") {
+        if (refreshFailedRef.current) {
+          setReason("");
+          setConfirmed(false);
+        }
+        refreshFailedRef.current = false;
+        const pendingList = Array.isArray(pendingResult.value) ? pendingResult.value.slice(0, 100) : [];
+        setPending(pendingList);
+        if (invalidRequestedId) {
+          requestDeepLinkedIdRef.current = null;
           setSelected(null);
-          setNotice("The linked CEO request is not currently pending. Refresh the inbox to inspect the current queue.");
+          setNotice("The linked CEO request identifier is invalid. Refresh the inbox to inspect the current queue.");
+        } else if (linkedRequestId) {
+          const linkedRequest = pendingList.find((item) => item.id === linkedRequestId);
+          if (linkedRequest) {
+            if (requestDeepLinkedIdRef.current !== linkedRequestId) {
+              setReason("");
+              setConfirmed(false);
+              requestDeepLinkFocusRef.current = linkedRequestId;
+            }
+            requestDeepLinkedIdRef.current = linkedRequestId;
+            setSelected(linkedRequest);
+          } else {
+            requestDeepLinkedIdRef.current = linkedRequestId;
+            setSelected(null);
+            setNotice("The linked CEO request is not currently pending. Refresh the inbox to inspect the current queue.");
+          }
+        } else {
+          requestDeepLinkedIdRef.current = null;
+          setSelected(null);
         }
       } else {
-        requestDeepLinkedIdRef.current = null;
-        setSelected(null);
+        refreshFailedRef.current = true;
+        setPending([]);
       }
       setStaleRequestId(null);
       setAccessDenied(false);
@@ -204,11 +260,14 @@ function ApprovalsContent() {
         setAudit([]);
         setProjectDecisions([]);
         setProjectCursor(null);
+        setSourceErrors({ pending: null, audit: null, project: null });
         requestDeepLinkedIdRef.current = null;
         setSelected(null);
         setAccessDenied(true);
         setError("This operator identity is not authorized to inspect or decide approvals.");
       } else {
+        const reason = cause instanceof Error ? cause.message : "Approval data is unavailable.";
+        setSourceErrors({ pending: reason, audit: reason, project: reason });
         setError(cause instanceof Error ? cause.message : "Approval data is unavailable.");
       }
     } finally {
@@ -274,7 +333,9 @@ function ApprovalsContent() {
     if (!selected || !confirmed || !reason.trim() || submittingRef.current) return;
     submittingRef.current = true;
     setSubmitting(true);
-    setError("");
+    setError(Object.values(sourceErrors).some(Boolean)
+      ? "Some approval queues could not be loaded. Retry to refresh the inbox."
+      : "");
     setNotice("");
     setStaleRequestId(null);
     try {
@@ -316,7 +377,7 @@ function ApprovalsContent() {
   };
 
   const selectedIsPending = selected
-    ? !loading && !error && requestedRequestId === selected.id && pending.some((item) => item.id === selected.id) && staleRequestId !== selected.id
+    ? !loading && !sourceErrors.pending && requestedRequestId === selected.id && pending.some((item) => item.id === selected.id) && staleRequestId !== selected.id
     : false;
 
   return (
@@ -339,7 +400,7 @@ function ApprovalsContent() {
         </section>
       ) : (
         <>
-          {error && <div className="mt-6"><ErrorBanner tone="error" title="Approvals unavailable" action={<button type="button" onClick={() => void refresh()} disabled={loading} className="min-h-11 rounded border border-current px-3 text-xs font-medium hover:bg-white/10 disabled:opacity-50">Retry</button>}>{error}</ErrorBanner></div>}
+          {error && <div className="mt-6"><ErrorBanner tone="error" title="Approval data unavailable" action={<button type="button" onClick={() => void refresh()} disabled={loading} className="min-h-11 rounded border border-current px-3 text-xs font-medium hover:bg-white/10 disabled:opacity-50">Retry</button>}>{error}</ErrorBanner></div>}
           {notice && <p role="status" className="mt-6 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">{notice}</p>}
 
           <div className="mt-6 grid gap-6 xl:grid-cols-2">
@@ -348,11 +409,13 @@ function ApprovalsContent() {
                 <h2 id="pending-heading" className="flex items-center gap-2 text-sm font-semibold text-white"><ShieldCheck size={16} className="text-amber-300" /> Pending requests</h2>
                 <span className="text-xs text-slate-400">{inboxRows.length} loaded · CEO and project queues</span>
               </div>
+              {sourceErrors.pending && inboxRows.length > 0 && <p role="status" className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-200">The CEO approval queue could not be refreshed. Refresh before recording a decision.</p>}
+              {sourceErrors.project && inboxRows.length > 0 && <p role="status" className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-200">The project decision queue is unavailable. CEO privileged-action requests remain available.</p>}
               {loading && inboxRows.length === 0 ? <p className="text-sm text-slate-400">Loading approvals…</p> : inboxRows.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-slate-700 p-4 text-sm text-slate-400">
-                  <p>No approvals are currently waiting for review.</p>
-                  <p className="mt-1">No privileged-action requests are waiting for review.</p>
-                  <p className="mt-1">No project decisions are waiting for review.</p>
+                  {!sourceErrors.pending && !sourceErrors.project && <p>No approvals are currently waiting for review.</p>}
+                  {sourceErrors.pending ? <p>CEO privileged-action requests are unavailable ({sourceErrors.pending}).</p> : <p className="mt-1">No privileged-action requests are waiting for review.</p>}
+                  {sourceErrors.project ? <p className="mt-1">Project decisions are unavailable ({sourceErrors.project}).</p> : <p className="mt-1">No project decisions are waiting for review.</p>}
                 </div>
               ) : (
                 <ul className="space-y-3" aria-label="Unified approval inbox">
@@ -402,7 +465,7 @@ function ApprovalsContent() {
 
             <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5" aria-labelledby="audit-heading" aria-busy={loading}>
               <div className="mb-4 flex items-center justify-between gap-3"><h2 id="audit-heading" className="text-sm font-semibold text-white">Recent CEO decision audit</h2><span className="text-xs text-slate-400">latest 100 records</span></div>
-              {loading && audit.length === 0 ? <p className="text-sm text-slate-400">Loading audit records…</p> : audit.length === 0 ? <p className="rounded-lg border border-dashed border-slate-700 p-4 text-sm text-slate-400">No privileged-action audit records are available.</p> : (
+              {loading && audit.length === 0 && !sourceErrors.audit ? <p className="text-sm text-slate-400">Loading audit records…</p> : audit.length === 0 && sourceErrors.audit ? <p className="rounded-lg border border-dashed border-slate-700 p-4 text-sm text-amber-200">Audit history is unavailable ({sourceErrors.audit}).</p> : audit.length === 0 ? <p className="rounded-lg border border-dashed border-slate-700 p-4 text-sm text-slate-400">No privileged-action audit records are available.</p> : (
                 <div className="max-h-[34rem] space-y-2 overflow-y-auto" role="list" aria-label="Privileged action audit records">
                   {audit.map((row) => (
                     <article key={row.id} role="listitem" className="rounded-lg border border-slate-800 bg-slate-950/50 p-3 text-xs">
@@ -442,7 +505,7 @@ function ApprovalsContent() {
                       <button type="button" onClick={() => void decide(false)} disabled={!confirmed || !reason.trim() || submitting} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-rose-500/50 px-4 py-2 text-sm font-medium text-rose-200 hover:bg-rose-500/10 disabled:cursor-not-allowed disabled:opacity-50"><X size={15} /> Reject request</button>
                     </div>
                   </div>
-                ) : <p role="status" className="mt-5 border-t border-slate-800 pt-4 text-sm text-slate-400">{loading || error || invalidRequestedId || requestedRequestId !== selected.id ? "Current pending status could not be verified. Refresh the inbox before recording a decision." : "This request is no longer pending. Refresh the inbox to see its current status."}</p>}
+                ) : <p role="status" className="mt-5 border-t border-slate-800 pt-4 text-sm text-slate-400">{loading || sourceErrors.pending || invalidRequestedId || requestedRequestId !== selected.id ? "Current pending status could not be verified. Refresh the inbox before recording a decision." : "This request is no longer pending. Refresh the inbox to see its current status."}</p>}
               </section>
             )}
           </div>

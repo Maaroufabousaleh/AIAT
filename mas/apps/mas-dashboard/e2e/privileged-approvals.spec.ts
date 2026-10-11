@@ -105,10 +105,49 @@ test("approval page presents a retryable error when the audit API is unavailable
   await mockEmptyProjectInbox(page);
   await authenticate(page, "/approvals");
   const main = page.getByRole("main", { name: "Privileged action approvals" });
-  await expect(main.getByText("Request failed (HTTP 503)")).toBeVisible();
+  await expect(main.getByRole("alert").getByText("Request failed (HTTP 503)")).toBeVisible();
   fail = false;
   await main.getByRole("button", { name: "Retry" }).click();
   await expect(main.getByText("No privileged-action requests are waiting for review.")).toBeVisible();
+});
+
+test("a project-decision outage does not block reviewing a CEO approval", async ({ page }) => {
+  let pending = [pendingRequest];
+  let audit: Array<Record<string, unknown>> = [];
+  let decisionCalls = 0;
+  await page.route((url) => url.pathname === "/api/ceo/privileged-actions/pending", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(pending) });
+  });
+  await page.route((url) => url.pathname === "/api/ceo/privileged-actions/audit", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(audit) });
+  });
+  await page.route((url) => url.pathname === "/api/approvals/project-decisions", async (route) => {
+    await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "temporarily unavailable" }) });
+  });
+  await page.route((url) => url.pathname === `/api/ceo/privileged-actions/${pendingRequest.id}/approve`, async (route) => {
+    decisionCalls += 1;
+    const request = route.request().postDataJSON() as { approved: boolean; reason: string };
+    pending = [];
+    audit = [{ ...pendingRequest, payload_json: undefined, decision: request.approved ? "approved" : "rejected", decided_by: "dashboard-operator", reason: request.reason }];
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ record_id: pendingRequest.id, decision: "approved" }) });
+  });
+
+  await authenticate(page, "/approvals");
+  const main = page.getByRole("main", { name: "Privileged action approvals" });
+  const inbox = main.getByRole("list", { name: "Unified approval inbox" });
+  await expect(main.getByText("Some approval queues could not be loaded. Retry to refresh the inbox.")).toBeVisible();
+  await expect(inbox.getByText("system.shutdown")).toBeVisible();
+  await expect(main.getByText("The project decision queue is unavailable. CEO privileged-action requests remain available.")).toBeVisible();
+
+  await inbox.getByRole("button", { name: "View details" }).click();
+  const details = main.getByRole("region", { name: "Request details" });
+  await details.getByLabel("Decision reason (required)").fill("Reviewed the CEO request");
+  await details.getByLabel("I reviewed this request and intend to record a decision.").check();
+  await expect(details.getByRole("button", { name: "Approve request" })).toBeEnabled();
+  await details.getByRole("button", { name: "Approve request" }).click();
+
+  await expect(main.getByRole("status").filter({ hasText: "Decision recorded: approved" })).toBeVisible();
+  expect(decisionCalls).toBe(1);
 });
 
 test("approval decisions stay disabled until a failed refresh recovers", async ({ page }) => {
@@ -134,7 +173,7 @@ test("approval decisions stay disabled until a failed refresh recovers", async (
 
   fail = true;
   await main.getByRole("button", { name: "Refresh approvals" }).click();
-  await expect(main.getByText("Request failed (HTTP 503)")).toBeVisible();
+  await expect(main.getByRole("alert").getByText("Request failed (HTTP 503)")).toBeVisible();
   await expect(details.getByText("Current pending status could not be verified. Refresh the inbox before recording a decision.")).toBeVisible();
   await expect(details.getByRole("button", { name: "Approve request" })).toHaveCount(0);
   await expect(details.getByRole("button", { name: "Reject request" })).toHaveCount(0);
