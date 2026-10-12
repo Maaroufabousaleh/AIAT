@@ -21,13 +21,12 @@ reviews:
   status: open
   gate_status: blocked
   finding_disposition: unreviewed
-  finding_review_ref: mas/docs/provenance/opencode_partial_security_review_2026-10-12.json
-  finding_review_sha256: a8c4b84cc5b249dd19f894c1e2cfea92b7ccc9035af78fc78c1d3a5f4c0607b1
-  next_action: Review all 328 current exact-source Semgrep findings, with priority on the two runtime
-    process-launch candidates. The linked partial review documents test-only E2E regex records and launch
-    semantics without closing this row. Continue disposition of all remaining findings and keep coverage
-    incomplete until the six exact parser gaps receive equivalent security analysis. Seven excluded-rule
-    findings are tracked separately and remain open.
+  finding_review_ref: mas/docs/provenance/opencode_security_review_supplement_2026-10-12.json
+  finding_review_sha256: 51a99f4d29c9289af3f9e2241bd06beeeec6f0553f0c25141a950b3f44dc48fd
+  next_action: The linked bounded review records exact dispositions for the adapter-denied native shell
+    findings, the confirmed project-plugin autoload defect and image-recipe mitigation, test-only regexes,
+    wrapper spawns, and AIAT prompt-route reachability. All 328 primary findings have individual source-level dispositions; coverage remains incomplete, confirmed
+    upstream issues remain, and the exact 1.18.21 image/adapter must be verified before activation.
   engine_warning_action: 'Semgrep has zero execution failures and six explained TypeScript parser coverage gaps;
     the pinned Bun parser/transpiler check succeeds on all six exact paths but does not replace security analysis.
     The two workflow rule exclusions have compensating Actionlint/Zizmor scans; seven findings from the excluded
@@ -49,9 +48,9 @@ reviews:
     - yaml.github-actions.security.github-actions-mutable-action-tag.github-actions-mutable-action-tag
     - yaml.github-actions.security.run-shell-injection.run-shell-injection
     finding_count: 328
-    next_action: Disposition every remaining current rule/location. See the linked partial review for scoped
-      test-only and process-launch classifications; keep unresolved findings open and prioritize the two
-      runtime shell-launch candidates.
+    next_action: All 328 primary records now have individual source-level dispositions. Keep this group open because confirmed
+      upstream issues, candidate-image/adapter compatibility, and six parser coverage gaps remain; do not close
+      the technical gate or activation gate.
 - id: opencode-1.18.21-semgrep-excluded-rule-carry-forward-2026-10-02-review
   scan_ref:
     mas/docs/provenance/security_scan_evidence.yaml#opencode-1.18.21-semgrep-excluded-rule-carry-forward-2026-10-02
@@ -59,8 +58,12 @@ reviews:
   status: open
   gate_status: blocked
   finding_disposition: unreviewed
-  next_action: Review all seven carried-forward findings individually from the sanitized same-source result
-    register; retain a reason for each disposition.
+  finding_review_ref: mas/docs/provenance/opencode_security_review_supplement_2026-10-12.json
+  finding_review_sha256: 51a99f4d29c9289af3f9e2241bd06beeeec6f0553f0c25141a950b3f44dc48fd
+  next_action: The supplement individually records all seven exact-source workflow locations as upstream CI
+    supply-chain risks with untrusted workflow/installer input paths. Keep open until the operator decides
+    whether the upstream release pipeline is an acceptable trust source or an independently verified build
+    is required.
   engine_warning_action: The prior unfiltered exact-source Semgrep run found seven records for the excluded
     workflow rule and had 54 parser/execution diagnostics overall. The current exclusion is not a waiver; the
     raw prior result hash and current filtered invocation are retained.
@@ -69,16 +72,20 @@ reviews:
     rules:
     - yaml.github-actions.security.gha-curl-pipe-shell.gha-curl-pipe-shell
     finding_count: 7
-    next_action: Review each exact workflow file/location and keep the result open until individually
-      dispositioned.
+    next_action: See each finding ID/path/line in the linked supplement; the Semgrep exclusion is a scanner
+      limitation, not a waiver. Retain the human upstream-release trust decision.
 - id: opencode-1.18.21-trufflehog-2026-10-02-review
   scan_ref: mas/docs/provenance/security_scan_evidence.yaml#opencode-1.18.21-trufflehog-2026-10-02
   owner: personal-operator
   status: open
   gate_status: blocked
   finding_disposition: unreviewed
-  next_action: Review the 53 unique unverified detector/source locations. Two duplicate scanner records are
-    collapsed in normalized triage; no detected value was verified or retained.
+  finding_review_ref: mas/docs/provenance/opencode_security_review_supplement_2026-10-12.json
+  finding_review_sha256: 51a99f4d29c9289af3f9e2241bd06beeeec6f0553f0c25141a950b3f44dc48fd
+  next_action: All 53 unique locations are path/line classified in the linked supplement as documentation
+    examples, test fixtures, or specific false positives; zero detections were verified and no values or
+    source context are retained. The operator must confirm whether any example was historically a live
+    credential; rotate that credential only if outside account history establishes it was real.
   engine_warning_action: TruffleHog completed with 55 unverified raw records, 53 unique findings after two
     duplicate URI records, and zero verified credentials. Preserve the findings as open until individually
     reviewed.
@@ -93,8 +100,8 @@ reviews:
     - Postgres
     - URI
     finding_count: 55
-    next_action: Review each unique detector/path/line without exposing values; classify
-      docs/examples/fixtures or investigate any actual credential and require rotation if one is confirmed.
+    next_action: The exact sanitized locations and classifications are in the linked supplement. No .env path
+      was detected; do not disclose or copy scanner values into evidence.
 - id: opencode-1.18.21-skillspector-2026-10-02-review
   scan_ref: mas/docs/provenance/security_scan_evidence.yaml#opencode-1.18.21-skillspector-2026-10-02
   owner: personal-operator
@@ -112,8 +119,12 @@ reviews:
   status: open
   gate_status: blocked
   finding_disposition: unreviewed
-  next_action: Review all 27 normalized actionlint diagnostics; confirm custom runner labels and workflow
-    expression/condition findings before activation.
+  finding_review_ref: mas/docs/provenance/opencode_security_review_supplement_2026-10-12.json
+  finding_review_sha256: 51a99f4d29c9289af3f9e2241bd06beeeec6f0553f0c25141a950b3f44dc48fd
+  next_action: >-
+    The supplement lists all 27 exact locations: 25 custom Blacksmith runner labels and the disabled-job
+    condition and expression diagnostic. These are upstream CI context and do not execute in the AIAT server;
+    confirm the provider context only if relying on upstream workflows.
   engine_warning_action: Actionlint completed with diagnostics (exit 1); this exit reflects findings, not a
     scanner execution failure.
   rule_groups:
@@ -123,16 +134,20 @@ reviews:
     - if-cond
     - expression
     finding_count: 27
-    next_action: Review each runner-label, expression, and condition diagnostic against the configured CI
-      provider.
+    next_action: The supplement includes every path/line/column and classifies runtime relevance. Retain the
+      runner inventory confirmation as part of the upstream release trust decision.
 - id: opencode-1.18.21-zizmor-2026-10-02-review
   scan_ref: mas/docs/provenance/security_scan_evidence.yaml#opencode-1.18.21-zizmor-2026-10-02
   owner: personal-operator
   status: open
   gate_status: blocked
   finding_disposition: unreviewed
-  next_action: Review all 92 normalized Zizmor findings. Raw source-bearing output was not retained;
-    deterministic locations and rule/severity records are retained.
+  finding_review_ref: mas/docs/provenance/opencode_security_review_supplement_2026-10-12.json
+  finding_review_sha256: 51a99f4d29c9289af3f9e2241bd06beeeec6f0553f0c25141a950b3f44dc48fd
+  next_action: All 92 normalized rule/severity/location records are individually mapped in the supplement.
+    High and medium findings concern upstream CI triggers, template interpolation, permissions, app
+    credentials and action provenance; decide on upstream release trust only after technical runtime and
+    image checks are complete. No blanket acceptance is recorded.
   engine_warning_action: Zizmor completed and returned findings (exit 14); this exit reflects findings, not a
     scanner execution failure.
   rule_groups:
@@ -147,26 +162,28 @@ reviews:
     - template-injection
     - unpinned-uses
     finding_count: 92
-    next_action: Disposition each normalized workflow/action supply-chain rule result.
+    next_action: Each normalized finding ID and exact location is retained in the linked supplement; the
+      remaining decision is trust in the upstream Actions/release path, not AIAT runtime reachability.
 - id: opencode-1.18.21-semgrep-transpiled-typescript-2026-10-03-review
   scan_ref: mas/docs/provenance/security_scan_evidence.yaml#opencode-1.18.21-semgrep-transpiled-typescript-2026-10-03
   owner: personal-operator
   status: open
   gate_status: blocked
   finding_disposition: unreviewed
-  next_action: Review the four mapped findings at three exact upstream source locations, inspect all
-    optional lock-directory callers and trust boundaries, and record each disposition before OpenCode
-    activation.
+  next_action: The supplement maps all four records to the three exact EffectFlock source locations. Inspected
+    in-tree production callers use the fixed lock root and omit optional dir; AIAT project plugin loading is
+    disabled by the image recipe. Keep the upstream API risk documented and the review row open until the
+    aligned runtime image is verified.
   engine_warning_action: The pinned Semgrep run completed with exit 0 and four warnings; it also reported one
     parser error on non-AIAT-serving LSP source. All three AIAT-serving TypeScript paths completed without
     parser errors. Keep the finding gate blocked and retain the non-runtime coverage limitation.
-  finding_review_ref: mas/docs/provenance/opencode_partial_security_review_2026-10-12.json
-  finding_review_sha256: a8c4b84cc5b249dd19f894c1e2cfea92b7ccc9035af78fc78c1d3a5f4c0607b1
+  finding_review_ref: mas/docs/provenance/opencode_security_review_supplement_2026-10-12.json
+  finding_review_sha256: 51a99f4d29c9289af3f9e2241bd06beeeec6f0553f0c25141a950b3f44dc48fd
   rule_groups:
   - id: semgrep-transpiled-path-join-findings
     rules:
     - javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
     finding_count: 4
-    next_action: The linked partial review confirms safe behavior only for inspected in-tree callers; resolve
-      optional-dir API reachability and trust boundary before disposition. Keep all four records open, including
-      the duplicate pair at line 257.
+    next_action: The exact source locations, in-tree call sites and residual API trust boundary are described
+      in the linked supplement. Keep all four records open (including the duplicate pair at line 257) until
+      post-image verification confirms the AIAT configuration path.

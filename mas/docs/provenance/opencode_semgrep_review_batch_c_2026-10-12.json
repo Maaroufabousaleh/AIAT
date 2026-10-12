@@ -1,0 +1,1170 @@
+{
+  "schema_version": "aiat.opencode-semgrep-review-batch.v1",
+  "title": "OpenCode v1.18.21 r4 Semgrep scoped review batch C",
+  "reviewed_at": "2026-10-12",
+  "review_scope": {
+    "scanner": "Semgrep OSS",
+    "scanner_version": "1.168.0",
+    "scan_id": "opencode-1.18.21-semgrep-2026-10-02",
+    "candidate_upstream_commit": "826d9ad46a22bef0294998e08daa3c4904fea28f",
+    "candidate_release": "1.18.21",
+    "candidate_source_snapshot_sha256": "e338f0fc18145f7fc0ac848da5593ae77ea63adbd5f1d386ca8d82151a280370",
+    "candidate_source_archive_sha256": "77b8cee43c3f74d94ad4651c375ec02bcd55a20aff06f9aac8e7be59c70811a0",
+    "semgrep_result": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/semgrep.json",
+    "semgrep_result_sha256": "bcc70a2a32f1330179ce5d63f24e8a9582b8f89b98637a69ce1c469c6ac0a235",
+    "scanner_ordinals_inclusive": [
+      224,
+      260
+    ],
+    "additional_scanner_ordinals": [
+      289,
+      290
+    ],
+    "final_scanner_ordinals_inclusive": [
+      299,
+      328
+    ],
+    "requested_record_count": 68,
+    "actual_record_count": 69,
+    "count_note": "The supplied inclusive ranges contain 69 records (37 + 2 + 30). All exact scanner ordinals in those ranges are included; none was silently dropped to force the requested count of 68."
+  },
+  "aiat_runtime_boundary": {
+    "worker_adapter": "OpenCode headless server, prompt_async endpoint, AIAT-managed config, run-scoped AIAT MCP only",
+    "project_config": "AIAT image sets OPENCODE_DISABLE_PROJECT_CONFIG=true; the managed config sets snapshot=false. The exact 1.18.21 candidate image has not yet been rebuilt/probed with that profile.",
+    "native_ui_and_optional_packages": "TUI, stats, storybook, and translation maintenance scripts are not invoked by the AIAT headless worker adapter.",
+    "external_provider_dispatch": "Not performed by this review."
+  },
+  "gate_semantics": {
+    "batch_disposition_complete": true,
+    "aggregate_security_review_complete": false,
+    "aggregate_technical_gate": "BLOCKED",
+    "worker_candidate_activation": "BLOCKED",
+    "human_approval_performed": false,
+    "release_gate_changed": false,
+    "note": "This batch is not a waiver. Confirmed upstream findings, remaining open groups, exact candidate build/runtime evidence, and human decisions remain governed by the canonical register."
+  },
+  "findings": [
+    {
+      "finding_id": "semgrep-r4-record-224",
+      "scanner_record_ordinal": 224,
+      "source_path": "packages/opencode/src/snapshot/index.ts",
+      "source_line": 71,
+      "source_column": 59,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "CONFIRMED_DEFECT",
+      "reachable_path_and_inputs": "OpenCode server project initialization resolves a Git project ID; the cache reader in packages/core/src/project.ts accepts the contents of the repository-local .git/opencode file as a branded string when no valid remote origin supersedes it. Snapshot state uses that ID in its data-directory path. The AIAT headless adapter can reach snapshot operations only when snapshots are enabled; the managed runtime profile is being configured with snapshot disabled, but this r4 candidate has not been rebuilt/probed with that profile.",
+      "justification": "The ID is not path-segment validated before path.join(Global.Path.data, \"snapshot\", project.id, ...). ProjectV2.cached reads .git/opencode and wraps any nonempty text with ID.make without validating separators or dot segments. A repository-local cache value such as traversal segments can therefore redirect snapshot paths outside the intended snapshot subtree when snapshot work executes. Findings at downstream snapshot.gitdir joins are the same root cause, not independent defects.",
+      "residual_owner_action": "Keep this OpenCode candidate inadmissible until the upstream candidate is fixed or the exact AIAT runtime image is rebuilt with the managed snapshot=false profile and a runtime test proves snapshot APIs cannot perform writes. The durable upstream fix is to validate/hash project IDs before using them as path segments and test traversal and symlink cases. The current source scan remains an upstream technical finding."
+    },
+    {
+      "finding_id": "semgrep-r4-record-225",
+      "scanner_record_ordinal": 225,
+      "source_path": "packages/opencode/src/snapshot/index.ts",
+      "source_line": 71,
+      "source_column": 75,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "CONFIRMED_DEFECT",
+      "reachable_path_and_inputs": "OpenCode server project initialization resolves a Git project ID; the cache reader in packages/core/src/project.ts accepts the contents of the repository-local .git/opencode file as a branded string when no valid remote origin supersedes it. Snapshot state uses that ID in its data-directory path. The AIAT headless adapter can reach snapshot operations only when snapshots are enabled; the managed runtime profile is being configured with snapshot disabled, but this r4 candidate has not been rebuilt/probed with that profile.",
+      "justification": "The ID is not path-segment validated before path.join(Global.Path.data, \"snapshot\", project.id, ...). ProjectV2.cached reads .git/opencode and wraps any nonempty text with ID.make without validating separators or dot segments. A repository-local cache value such as traversal segments can therefore redirect snapshot paths outside the intended snapshot subtree when snapshot work executes. Findings at downstream snapshot.gitdir joins are the same root cause, not independent defects.",
+      "residual_owner_action": "Keep this OpenCode candidate inadmissible until the upstream candidate is fixed or the exact AIAT runtime image is rebuilt with the managed snapshot=false profile and a runtime test proves snapshot APIs cannot perform writes. The durable upstream fix is to validate/hash project IDs before using them as path segments and test traversal and symlink cases. The current source scan remains an upstream technical finding."
+    },
+    {
+      "finding_id": "semgrep-r4-record-226",
+      "scanner_record_ordinal": 226,
+      "source_path": "packages/opencode/src/snapshot/index.ts",
+      "source_line": 110,
+      "source_column": 25,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "Snapshot ignore handling joins the Git-discovered worktree with the literal .git child for a git check-ignore invocation. The worktree is an absolute repository path selected by the host project context; the joined tail is constant.",
+      "justification": "The input is a host-resolved absolute worktree, not an attacker-controlled path segment; the literal .git child does not permit an additional path component. This line is not the project-ID traversal finding.",
+      "residual_owner_action": "No issue established at this location. Keep workspace selection under AIAT host policy and avoid passing model-controlled directory paths."
+    },
+    {
+      "finding_id": "semgrep-r4-record-227",
+      "scanner_record_ordinal": 227,
+      "source_path": "packages/opencode/src/snapshot/index.ts",
+      "source_line": 184,
+      "source_column": 36,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "CONFIRMED_DEFECT",
+      "reachable_path_and_inputs": "OpenCode server project initialization resolves a Git project ID; the cache reader in packages/core/src/project.ts accepts the contents of the repository-local .git/opencode file as a branded string when no valid remote origin supersedes it. Snapshot state uses that ID in its data-directory path. The AIAT headless adapter can reach snapshot operations only when snapshots are enabled; the managed runtime profile is being configured with snapshot disabled, but this r4 candidate has not been rebuilt/probed with that profile.",
+      "justification": "The ID is not path-segment validated before path.join(Global.Path.data, \"snapshot\", project.id, ...). ProjectV2.cached reads .git/opencode and wraps any nonempty text with ID.make without validating separators or dot segments. A repository-local cache value such as traversal segments can therefore redirect snapshot paths outside the intended snapshot subtree when snapshot work executes. Findings at downstream snapshot.gitdir joins are the same root cause, not independent defects.",
+      "residual_owner_action": "Keep this OpenCode candidate inadmissible until the upstream candidate is fixed or the exact AIAT runtime image is rebuilt with the managed snapshot=false profile and a runtime test proves snapshot APIs cannot perform writes. The durable upstream fix is to validate/hash project IDs before using them as path segments and test traversal and symlink cases. The current source scan remains an upstream technical finding."
+    },
+    {
+      "finding_id": "semgrep-r4-record-228",
+      "scanner_record_ordinal": 228,
+      "source_path": "packages/opencode/src/snapshot/index.ts",
+      "source_line": 191,
+      "source_column": 41,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "CONFIRMED_DEFECT",
+      "reachable_path_and_inputs": "OpenCode server project initialization resolves a Git project ID; the cache reader in packages/core/src/project.ts accepts the contents of the repository-local .git/opencode file as a branded string when no valid remote origin supersedes it. Snapshot state uses that ID in its data-directory path. The AIAT headless adapter can reach snapshot operations only when snapshots are enabled; the managed runtime profile is being configured with snapshot disabled, but this r4 candidate has not been rebuilt/probed with that profile.",
+      "justification": "The ID is not path-segment validated before path.join(Global.Path.data, \"snapshot\", project.id, ...). ProjectV2.cached reads .git/opencode and wraps any nonempty text with ID.make without validating separators or dot segments. A repository-local cache value such as traversal segments can therefore redirect snapshot paths outside the intended snapshot subtree when snapshot work executes. Findings at downstream snapshot.gitdir joins are the same root cause, not independent defects.",
+      "residual_owner_action": "Keep this OpenCode candidate inadmissible until the upstream candidate is fixed or the exact AIAT runtime image is rebuilt with the managed snapshot=false profile and a runtime test proves snapshot APIs cannot perform writes. The durable upstream fix is to validate/hash project IDs before using them as path segments and test traversal and symlink cases. The current source scan remains an upstream technical finding."
+    },
+    {
+      "finding_id": "semgrep-r4-record-229",
+      "scanner_record_ordinal": 229,
+      "source_path": "packages/opencode/src/snapshot/index.ts",
+      "source_line": 211,
+      "source_column": 43,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "Snapshot seed reads Git common-directory/object metadata from the repository selected by the host; it resolves the common directory through Git and checks that the returned absolute path exists.",
+      "justification": "The joined components are a Git-resolved absolute common directory, the literal objects/info/alternates names, and a local file. No request or model value is concatenated as a path segment here. Snapshot writes remain affected by the separate project-ID defect.",
+      "residual_owner_action": "Keep Git repository/worktree selection host-controlled. Reassess if workspace Git metadata is considered adversarial or snapshot support is enabled."
+    },
+    {
+      "finding_id": "semgrep-r4-record-230",
+      "scanner_record_ordinal": 230,
+      "source_path": "packages/opencode/src/snapshot/index.ts",
+      "source_line": 212,
+      "source_column": 50,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "Snapshot seed reads Git common-directory/object metadata from the repository selected by the host; it resolves the common directory through Git and checks that the returned absolute path exists.",
+      "justification": "The joined components are a Git-resolved absolute common directory, the literal objects/info/alternates names, and a local file. No request or model value is concatenated as a path segment here. Snapshot writes remain affected by the separate project-ID defect.",
+      "residual_owner_action": "Keep Git repository/worktree selection host-controlled. Reassess if workspace Git metadata is considered adversarial or snapshot support is enabled."
+    },
+    {
+      "finding_id": "semgrep-r4-record-231",
+      "scanner_record_ordinal": 231,
+      "source_path": "packages/opencode/src/snapshot/index.ts",
+      "source_line": 222,
+      "source_column": 41,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "CONFIRMED_DEFECT",
+      "reachable_path_and_inputs": "OpenCode server project initialization resolves a Git project ID; the cache reader in packages/core/src/project.ts accepts the contents of the repository-local .git/opencode file as a branded string when no valid remote origin supersedes it. Snapshot state uses that ID in its data-directory path. The AIAT headless adapter can reach snapshot operations only when snapshots are enabled; the managed runtime profile is being configured with snapshot disabled, but this r4 candidate has not been rebuilt/probed with that profile.",
+      "justification": "The ID is not path-segment validated before path.join(Global.Path.data, \"snapshot\", project.id, ...). ProjectV2.cached reads .git/opencode and wraps any nonempty text with ID.make without validating separators or dot segments. A repository-local cache value such as traversal segments can therefore redirect snapshot paths outside the intended snapshot subtree when snapshot work executes. Findings at downstream snapshot.gitdir joins are the same root cause, not independent defects.",
+      "residual_owner_action": "Keep this OpenCode candidate inadmissible until the upstream candidate is fixed or the exact AIAT runtime image is rebuilt with the managed snapshot=false profile and a runtime test proves snapshot APIs cannot perform writes. The durable upstream fix is to validate/hash project IDs before using them as path segments and test traversal and symlink cases. The current source scan remains an upstream technical finding."
+    },
+    {
+      "finding_id": "semgrep-r4-record-232",
+      "scanner_record_ordinal": 232,
+      "source_path": "packages/opencode/src/snapshot/index.ts",
+      "source_line": 224,
+      "source_column": 40,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "CONFIRMED_DEFECT",
+      "reachable_path_and_inputs": "OpenCode server project initialization resolves a Git project ID; the cache reader in packages/core/src/project.ts accepts the contents of the repository-local .git/opencode file as a branded string when no valid remote origin supersedes it. Snapshot state uses that ID in its data-directory path. The AIAT headless adapter can reach snapshot operations only when snapshots are enabled; the managed runtime profile is being configured with snapshot disabled, but this r4 candidate has not been rebuilt/probed with that profile.",
+      "justification": "The ID is not path-segment validated before path.join(Global.Path.data, \"snapshot\", project.id, ...). ProjectV2.cached reads .git/opencode and wraps any nonempty text with ID.make without validating separators or dot segments. A repository-local cache value such as traversal segments can therefore redirect snapshot paths outside the intended snapshot subtree when snapshot work executes. Findings at downstream snapshot.gitdir joins are the same root cause, not independent defects.",
+      "residual_owner_action": "Keep this OpenCode candidate inadmissible until the upstream candidate is fixed or the exact AIAT runtime image is rebuilt with the managed snapshot=false profile and a runtime test proves snapshot APIs cannot perform writes. The durable upstream fix is to validate/hash project IDs before using them as path segments and test traversal and symlink cases. The current source scan remains an upstream technical finding."
+    },
+    {
+      "finding_id": "semgrep-r4-record-233",
+      "scanner_record_ordinal": 233,
+      "source_path": "packages/opencode/src/snapshot/index.ts",
+      "source_line": 229,
+      "source_column": 41,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "CONFIRMED_DEFECT",
+      "reachable_path_and_inputs": "OpenCode server project initialization resolves a Git project ID; the cache reader in packages/core/src/project.ts accepts the contents of the repository-local .git/opencode file as a branded string when no valid remote origin supersedes it. Snapshot state uses that ID in its data-directory path. The AIAT headless adapter can reach snapshot operations only when snapshots are enabled; the managed runtime profile is being configured with snapshot disabled, but this r4 candidate has not been rebuilt/probed with that profile.",
+      "justification": "The ID is not path-segment validated before path.join(Global.Path.data, \"snapshot\", project.id, ...). ProjectV2.cached reads .git/opencode and wraps any nonempty text with ID.make without validating separators or dot segments. A repository-local cache value such as traversal segments can therefore redirect snapshot paths outside the intended snapshot subtree when snapshot work executes. Findings at downstream snapshot.gitdir joins are the same root cause, not independent defects.",
+      "residual_owner_action": "Keep this OpenCode candidate inadmissible until the upstream candidate is fixed or the exact AIAT runtime image is rebuilt with the managed snapshot=false profile and a runtime test proves snapshot APIs cannot perform writes. The durable upstream fix is to validate/hash project IDs before using them as path segments and test traversal and symlink cases. The current source scan remains an upstream technical finding."
+    },
+    {
+      "finding_id": "semgrep-r4-record-234",
+      "scanner_record_ordinal": 234,
+      "source_path": "packages/opencode/src/snapshot/index.ts",
+      "source_line": 231,
+      "source_column": 55,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "CONFIRMED_DEFECT",
+      "reachable_path_and_inputs": "OpenCode server project initialization resolves a Git project ID; the cache reader in packages/core/src/project.ts accepts the contents of the repository-local .git/opencode file as a branded string when no valid remote origin supersedes it. Snapshot state uses that ID in its data-directory path. The AIAT headless adapter can reach snapshot operations only when snapshots are enabled; the managed runtime profile is being configured with snapshot disabled, but this r4 candidate has not been rebuilt/probed with that profile.",
+      "justification": "The ID is not path-segment validated before path.join(Global.Path.data, \"snapshot\", project.id, ...). ProjectV2.cached reads .git/opencode and wraps any nonempty text with ID.make without validating separators or dot segments. A repository-local cache value such as traversal segments can therefore redirect snapshot paths outside the intended snapshot subtree when snapshot work executes. Findings at downstream snapshot.gitdir joins are the same root cause, not independent defects.",
+      "residual_owner_action": "Keep this OpenCode candidate inadmissible until the upstream candidate is fixed or the exact AIAT runtime image is rebuilt with the managed snapshot=false profile and a runtime test proves snapshot APIs cannot perform writes. The durable upstream fix is to validate/hash project IDs before using them as path segments and test traversal and symlink cases. The current source scan remains an upstream technical finding."
+    },
+    {
+      "finding_id": "semgrep-r4-record-235",
+      "scanner_record_ordinal": 235,
+      "source_path": "packages/opencode/src/snapshot/index.ts",
+      "source_line": 281,
+      "source_column": 35,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "Snapshot collection obtains item names from Git diff/ls-files output and calls fs.stat on path.join(worktree, item); the result is used only to identify large regular files.",
+      "justification": "Git supplies repository-relative tracked/untracked names; these are not arbitrary API path strings. The operation only stats the resulting entry and does not read its contents or write to the target. Symlinks can affect metadata observation but do not escape into a consequential file operation in this code.",
+      "residual_owner_action": "Retain Git-produced relative paths and the regular-file check. If this changes to read/write file contents, add canonical root and symlink containment checks."
+    },
+    {
+      "finding_id": "semgrep-r4-record-236",
+      "scanner_record_ordinal": 236,
+      "source_path": "packages/opencode/src/snapshot/index.ts",
+      "source_line": 281,
+      "source_column": 51,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "Snapshot collection obtains item names from Git diff/ls-files output and calls fs.stat on path.join(worktree, item); the result is used only to identify large regular files.",
+      "justification": "Git supplies repository-relative tracked/untracked names; these are not arbitrary API path strings. The operation only stats the resulting entry and does not read its contents or write to the target. Symlinks can affect metadata observation but do not escape into a consequential file operation in this code.",
+      "residual_owner_action": "Retain Git-produced relative paths and the regular-file check. If this changes to read/write file contents, add canonical root and symlink containment checks."
+    },
+    {
+      "finding_id": "semgrep-r4-record-237",
+      "scanner_record_ordinal": 237,
+      "source_path": "packages/opencode/src/snapshot/index.ts",
+      "source_line": 376,
+      "source_column": 41,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "Snapshot output maps Git-produced repository-relative file names to worktree paths for the returned diff result.",
+      "justification": "Git path output is repository-relative; the code converts separators and records a path string. It does not open or mutate the joined file here. No absolute/parent path can be supplied by the AIAT model through the adapter tool interface at this point.",
+      "residual_owner_action": "Preserve Git-relative path provenance; require root containment before any future filesystem access based on these returned strings."
+    },
+    {
+      "finding_id": "semgrep-r4-record-238",
+      "scanner_record_ordinal": 238,
+      "source_path": "packages/opencode/src/snapshot/index.ts",
+      "source_line": 376,
+      "source_column": 57,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "Snapshot output maps Git-produced repository-relative file names to worktree paths for the returned diff result.",
+      "justification": "Git path output is repository-relative; the code converts separators and records a path string. It does not open or mutate the joined file here. No absolute/parent path can be supplied by the AIAT model through the adapter tool interface at this point.",
+      "residual_owner_action": "Preserve Git-relative path provenance; require root containment before any future filesystem access based on these returned strings."
+    },
+    {
+      "finding_id": "semgrep-r4-record-239",
+      "scanner_record_ordinal": 239,
+      "source_path": "packages/opencode/src/storage/storage.ts",
+      "source_line": 64,
+      "source_column": 20,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "OpenCode internal JSON storage. The current production source caller found for writes uses the fixed key prefix ['session_diff', sessionID]; sessionID is generated/validated by the session schema. Storage.list has no production caller in the candidate source. Migration keys are derived from bounded glob entries, path basenames, and decoded project/session/message records.",
+      "justification": "The joins are generic and do not themselves prove containment, but inspected production callers do not supply arbitrary request path arrays: session_diff writes use a fixed prefix plus a validated session ID, and list(prefix) has no production caller or HTTP exposure. Migration inputs are enumerated beneath the migration root and use path.basename for source filenames; project/session/message IDs come from decoded local records. No route permits a worker/model to set an arbitrary storage key.",
+      "residual_owner_action": "No reachable AIAT adapter exploit established for this candidate scope. Preserve validated ID schemas and fixed prefixes. Before adding any HTTP/tool caller or untrusted key input, add canonical-root containment (including symlink handling) and a regression test; do not interpret this disposition as approval of arbitrary keys."
+    },
+    {
+      "finding_id": "semgrep-r4-record-240",
+      "scanner_record_ordinal": 240,
+      "source_path": "packages/opencode/src/storage/storage.ts",
+      "source_line": 64,
+      "source_column": 25,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "OpenCode internal JSON storage. The current production source caller found for writes uses the fixed key prefix ['session_diff', sessionID]; sessionID is generated/validated by the session schema. Storage.list has no production caller in the candidate source. Migration keys are derived from bounded glob entries, path basenames, and decoded project/session/message records.",
+      "justification": "The joins are generic and do not themselves prove containment, but inspected production callers do not supply arbitrary request path arrays: session_diff writes use a fixed prefix plus a validated session ID, and list(prefix) has no production caller or HTTP exposure. Migration inputs are enumerated beneath the migration root and use path.basename for source filenames; project/session/message IDs come from decoded local records. No route permits a worker/model to set an arbitrary storage key.",
+      "residual_owner_action": "No reachable AIAT adapter exploit established for this candidate scope. Preserve validated ID schemas and fixed prefixes. Before adding any HTTP/tool caller or untrusted key input, add canonical-root containment (including symlink handling) and a regression test; do not interpret this disposition as approval of arbitrary keys."
+    },
+    {
+      "finding_id": "semgrep-r4-record-241",
+      "scanner_record_ordinal": 241,
+      "source_path": "packages/opencode/src/storage/storage.ts",
+      "source_line": 83,
+      "source_column": 34,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "OpenCode internal JSON storage. The current production source caller found for writes uses the fixed key prefix ['session_diff', sessionID]; sessionID is generated/validated by the session schema. Storage.list has no production caller in the candidate source. Migration keys are derived from bounded glob entries, path basenames, and decoded project/session/message records.",
+      "justification": "The joins are generic and do not themselves prove containment, but inspected production callers do not supply arbitrary request path arrays: session_diff writes use a fixed prefix plus a validated session ID, and list(prefix) has no production caller or HTTP exposure. Migration inputs are enumerated beneath the migration root and use path.basename for source filenames; project/session/message IDs come from decoded local records. No route permits a worker/model to set an arbitrary storage key.",
+      "residual_owner_action": "No reachable AIAT adapter exploit established for this candidate scope. Preserve validated ID schemas and fixed prefixes. Before adding any HTTP/tool caller or untrusted key input, add canonical-root containment (including symlink handling) and a regression test; do not interpret this disposition as approval of arbitrary keys."
+    },
+    {
+      "finding_id": "semgrep-r4-record-242",
+      "scanner_record_ordinal": 242,
+      "source_path": "packages/opencode/src/storage/storage.ts",
+      "source_line": 90,
+      "source_column": 30,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "OpenCode internal JSON storage. The current production source caller found for writes uses the fixed key prefix ['session_diff', sessionID]; sessionID is generated/validated by the session schema. Storage.list has no production caller in the candidate source. Migration keys are derived from bounded glob entries, path basenames, and decoded project/session/message records.",
+      "justification": "The joins are generic and do not themselves prove containment, but inspected production callers do not supply arbitrary request path arrays: session_diff writes use a fixed prefix plus a validated session ID, and list(prefix) has no production caller or HTTP exposure. Migration inputs are enumerated beneath the migration root and use path.basename for source filenames; project/session/message IDs come from decoded local records. No route permits a worker/model to set an arbitrary storage key.",
+      "residual_owner_action": "No reachable AIAT adapter exploit established for this candidate scope. Preserve validated ID schemas and fixed prefixes. Before adding any HTTP/tool caller or untrusted key input, add canonical-root containment (including symlink handling) and a regression test; do not interpret this disposition as approval of arbitrary keys."
+    },
+    {
+      "finding_id": "semgrep-r4-record-243",
+      "scanner_record_ordinal": 243,
+      "source_path": "packages/opencode/src/storage/storage.ts",
+      "source_line": 90,
+      "source_column": 39,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "OpenCode internal JSON storage. The current production source caller found for writes uses the fixed key prefix ['session_diff', sessionID]; sessionID is generated/validated by the session schema. Storage.list has no production caller in the candidate source. Migration keys are derived from bounded glob entries, path basenames, and decoded project/session/message records.",
+      "justification": "The joins are generic and do not themselves prove containment, but inspected production callers do not supply arbitrary request path arrays: session_diff writes use a fixed prefix plus a validated session ID, and list(prefix) has no production caller or HTTP exposure. Migration inputs are enumerated beneath the migration root and use path.basename for source filenames; project/session/message IDs come from decoded local records. No route permits a worker/model to set an arbitrary storage key.",
+      "residual_owner_action": "No reachable AIAT adapter exploit established for this candidate scope. Preserve validated ID schemas and fixed prefixes. Before adding any HTTP/tool caller or untrusted key input, add canonical-root containment (including symlink handling) and a regression test; do not interpret this disposition as approval of arbitrary keys."
+    },
+    {
+      "finding_id": "semgrep-r4-record-244",
+      "scanner_record_ordinal": 244,
+      "source_path": "packages/opencode/src/storage/storage.ts",
+      "source_line": 122,
+      "source_column": 21,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "OpenCode internal JSON storage. The current production source caller found for writes uses the fixed key prefix ['session_diff', sessionID]; sessionID is generated/validated by the session schema. Storage.list has no production caller in the candidate source. Migration keys are derived from bounded glob entries, path basenames, and decoded project/session/message records.",
+      "justification": "The joins are generic and do not themselves prove containment, but inspected production callers do not supply arbitrary request path arrays: session_diff writes use a fixed prefix plus a validated session ID, and list(prefix) has no production caller or HTTP exposure. Migration inputs are enumerated beneath the migration root and use path.basename for source filenames; project/session/message IDs come from decoded local records. No route permits a worker/model to set an arbitrary storage key.",
+      "residual_owner_action": "No reachable AIAT adapter exploit established for this candidate scope. Preserve validated ID schemas and fixed prefixes. Before adding any HTTP/tool caller or untrusted key input, add canonical-root containment (including symlink handling) and a regression test; do not interpret this disposition as approval of arbitrary keys."
+    },
+    {
+      "finding_id": "semgrep-r4-record-245",
+      "scanner_record_ordinal": 245,
+      "source_path": "packages/opencode/src/storage/storage.ts",
+      "source_line": 122,
+      "source_column": 37,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "OpenCode internal JSON storage. The current production source caller found for writes uses the fixed key prefix ['session_diff', sessionID]; sessionID is generated/validated by the session schema. Storage.list has no production caller in the candidate source. Migration keys are derived from bounded glob entries, path basenames, and decoded project/session/message records.",
+      "justification": "The joins are generic and do not themselves prove containment, but inspected production callers do not supply arbitrary request path arrays: session_diff writes use a fixed prefix plus a validated session ID, and list(prefix) has no production caller or HTTP exposure. Migration inputs are enumerated beneath the migration root and use path.basename for source filenames; project/session/message IDs come from decoded local records. No route permits a worker/model to set an arbitrary storage key.",
+      "residual_owner_action": "No reachable AIAT adapter exploit established for this candidate scope. Preserve validated ID schemas and fixed prefixes. Before adding any HTTP/tool caller or untrusted key input, add canonical-root containment (including symlink handling) and a regression test; do not interpret this disposition as approval of arbitrary keys."
+    },
+    {
+      "finding_id": "semgrep-r4-record-246",
+      "scanner_record_ordinal": 246,
+      "source_path": "packages/opencode/src/storage/storage.ts",
+      "source_line": 143,
+      "source_column": 34,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "OpenCode internal JSON storage. The current production source caller found for writes uses the fixed key prefix ['session_diff', sessionID]; sessionID is generated/validated by the session schema. Storage.list has no production caller in the candidate source. Migration keys are derived from bounded glob entries, path basenames, and decoded project/session/message records.",
+      "justification": "The joins are generic and do not themselves prove containment, but inspected production callers do not supply arbitrary request path arrays: session_diff writes use a fixed prefix plus a validated session ID, and list(prefix) has no production caller or HTTP exposure. Migration inputs are enumerated beneath the migration root and use path.basename for source filenames; project/session/message IDs come from decoded local records. No route permits a worker/model to set an arbitrary storage key.",
+      "residual_owner_action": "No reachable AIAT adapter exploit established for this candidate scope. Preserve validated ID schemas and fixed prefixes. Before adding any HTTP/tool caller or untrusted key input, add canonical-root containment (including symlink handling) and a regression test; do not interpret this disposition as approval of arbitrary keys."
+    },
+    {
+      "finding_id": "semgrep-r4-record-247",
+      "scanner_record_ordinal": 247,
+      "source_path": "packages/opencode/src/storage/storage.ts",
+      "source_line": 143,
+      "source_column": 50,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "OpenCode internal JSON storage. The current production source caller found for writes uses the fixed key prefix ['session_diff', sessionID]; sessionID is generated/validated by the session schema. Storage.list has no production caller in the candidate source. Migration keys are derived from bounded glob entries, path basenames, and decoded project/session/message records.",
+      "justification": "The joins are generic and do not themselves prove containment, but inspected production callers do not supply arbitrary request path arrays: session_diff writes use a fixed prefix plus a validated session ID, and list(prefix) has no production caller or HTTP exposure. Migration inputs are enumerated beneath the migration root and use path.basename for source filenames; project/session/message IDs come from decoded local records. No route permits a worker/model to set an arbitrary storage key.",
+      "residual_owner_action": "No reachable AIAT adapter exploit established for this candidate scope. Preserve validated ID schemas and fixed prefixes. Before adding any HTTP/tool caller or untrusted key input, add canonical-root containment (including symlink handling) and a regression test; do not interpret this disposition as approval of arbitrary keys."
+    },
+    {
+      "finding_id": "semgrep-r4-record-248",
+      "scanner_record_ordinal": 248,
+      "source_path": "packages/opencode/src/storage/storage.ts",
+      "source_line": 143,
+      "source_column": 61,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "OpenCode internal JSON storage. The current production source caller found for writes uses the fixed key prefix ['session_diff', sessionID]; sessionID is generated/validated by the session schema. Storage.list has no production caller in the candidate source. Migration keys are derived from bounded glob entries, path basenames, and decoded project/session/message records.",
+      "justification": "The joins are generic and do not themselves prove containment, but inspected production callers do not supply arbitrary request path arrays: session_diff writes use a fixed prefix plus a validated session ID, and list(prefix) has no production caller or HTTP exposure. Migration inputs are enumerated beneath the migration root and use path.basename for source filenames; project/session/message IDs come from decoded local records. No route permits a worker/model to set an arbitrary storage key.",
+      "residual_owner_action": "No reachable AIAT adapter exploit established for this candidate scope. Preserve validated ID schemas and fixed prefixes. Before adding any HTTP/tool caller or untrusted key input, add canonical-root containment (including symlink handling) and a regression test; do not interpret this disposition as approval of arbitrary keys."
+    },
+    {
+      "finding_id": "semgrep-r4-record-249",
+      "scanner_record_ordinal": 249,
+      "source_path": "packages/opencode/src/storage/storage.ts",
+      "source_line": 154,
+      "source_column": 36,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "OpenCode internal JSON storage. The current production source caller found for writes uses the fixed key prefix ['session_diff', sessionID]; sessionID is generated/validated by the session schema. Storage.list has no production caller in the candidate source. Migration keys are derived from bounded glob entries, path basenames, and decoded project/session/message records.",
+      "justification": "The joins are generic and do not themselves prove containment, but inspected production callers do not supply arbitrary request path arrays: session_diff writes use a fixed prefix plus a validated session ID, and list(prefix) has no production caller or HTTP exposure. Migration inputs are enumerated beneath the migration root and use path.basename for source filenames; project/session/message IDs come from decoded local records. No route permits a worker/model to set an arbitrary storage key.",
+      "residual_owner_action": "No reachable AIAT adapter exploit established for this candidate scope. Preserve validated ID schemas and fixed prefixes. Before adding any HTTP/tool caller or untrusted key input, add canonical-root containment (including symlink handling) and a regression test; do not interpret this disposition as approval of arbitrary keys."
+    },
+    {
+      "finding_id": "semgrep-r4-record-250",
+      "scanner_record_ordinal": 250,
+      "source_path": "packages/opencode/src/storage/storage.ts",
+      "source_line": 154,
+      "source_column": 52,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "OpenCode internal JSON storage. The current production source caller found for writes uses the fixed key prefix ['session_diff', sessionID]; sessionID is generated/validated by the session schema. Storage.list has no production caller in the candidate source. Migration keys are derived from bounded glob entries, path basenames, and decoded project/session/message records.",
+      "justification": "The joins are generic and do not themselves prove containment, but inspected production callers do not supply arbitrary request path arrays: session_diff writes use a fixed prefix plus a validated session ID, and list(prefix) has no production caller or HTTP exposure. Migration inputs are enumerated beneath the migration root and use path.basename for source filenames; project/session/message IDs come from decoded local records. No route permits a worker/model to set an arbitrary storage key.",
+      "residual_owner_action": "No reachable AIAT adapter exploit established for this candidate scope. Preserve validated ID schemas and fixed prefixes. Before adding any HTTP/tool caller or untrusted key input, add canonical-root containment (including symlink handling) and a regression test; do not interpret this disposition as approval of arbitrary keys."
+    },
+    {
+      "finding_id": "semgrep-r4-record-251",
+      "scanner_record_ordinal": 251,
+      "source_path": "packages/opencode/src/storage/storage.ts",
+      "source_line": 154,
+      "source_column": 67,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "OpenCode internal JSON storage. The current production source caller found for writes uses the fixed key prefix ['session_diff', sessionID]; sessionID is generated/validated by the session schema. Storage.list has no production caller in the candidate source. Migration keys are derived from bounded glob entries, path basenames, and decoded project/session/message records.",
+      "justification": "The joins are generic and do not themselves prove containment, but inspected production callers do not supply arbitrary request path arrays: session_diff writes use a fixed prefix plus a validated session ID, and list(prefix) has no production caller or HTTP exposure. Migration inputs are enumerated beneath the migration root and use path.basename for source filenames; project/session/message IDs come from decoded local records. No route permits a worker/model to set an arbitrary storage key.",
+      "residual_owner_action": "No reachable AIAT adapter exploit established for this candidate scope. Preserve validated ID schemas and fixed prefixes. Before adding any HTTP/tool caller or untrusted key input, add canonical-root containment (including symlink handling) and a regression test; do not interpret this disposition as approval of arbitrary keys."
+    },
+    {
+      "finding_id": "semgrep-r4-record-252",
+      "scanner_record_ordinal": 252,
+      "source_path": "packages/opencode/src/storage/storage.ts",
+      "source_line": 169,
+      "source_column": 37,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "OpenCode internal JSON storage. The current production source caller found for writes uses the fixed key prefix ['session_diff', sessionID]; sessionID is generated/validated by the session schema. Storage.list has no production caller in the candidate source. Migration keys are derived from bounded glob entries, path basenames, and decoded project/session/message records.",
+      "justification": "The joins are generic and do not themselves prove containment, but inspected production callers do not supply arbitrary request path arrays: session_diff writes use a fixed prefix plus a validated session ID, and list(prefix) has no production caller or HTTP exposure. Migration inputs are enumerated beneath the migration root and use path.basename for source filenames; project/session/message IDs come from decoded local records. No route permits a worker/model to set an arbitrary storage key.",
+      "residual_owner_action": "No reachable AIAT adapter exploit established for this candidate scope. Preserve validated ID schemas and fixed prefixes. Before adding any HTTP/tool caller or untrusted key input, add canonical-root containment (including symlink handling) and a regression test; do not interpret this disposition as approval of arbitrary keys."
+    },
+    {
+      "finding_id": "semgrep-r4-record-253",
+      "scanner_record_ordinal": 253,
+      "source_path": "packages/opencode/src/storage/storage.ts",
+      "source_line": 169,
+      "source_column": 50,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "OpenCode internal JSON storage. The current production source caller found for writes uses the fixed key prefix ['session_diff', sessionID]; sessionID is generated/validated by the session schema. Storage.list has no production caller in the candidate source. Migration keys are derived from bounded glob entries, path basenames, and decoded project/session/message records.",
+      "justification": "The joins are generic and do not themselves prove containment, but inspected production callers do not supply arbitrary request path arrays: session_diff writes use a fixed prefix plus a validated session ID, and list(prefix) has no production caller or HTTP exposure. Migration inputs are enumerated beneath the migration root and use path.basename for source filenames; project/session/message IDs come from decoded local records. No route permits a worker/model to set an arbitrary storage key.",
+      "residual_owner_action": "No reachable AIAT adapter exploit established for this candidate scope. Preserve validated ID schemas and fixed prefixes. Before adding any HTTP/tool caller or untrusted key input, add canonical-root containment (including symlink handling) and a regression test; do not interpret this disposition as approval of arbitrary keys."
+    },
+    {
+      "finding_id": "semgrep-r4-record-254",
+      "scanner_record_ordinal": 254,
+      "source_path": "packages/opencode/src/storage/storage.ts",
+      "source_line": 169,
+      "source_column": 65,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "OpenCode internal JSON storage. The current production source caller found for writes uses the fixed key prefix ['session_diff', sessionID]; sessionID is generated/validated by the session schema. Storage.list has no production caller in the candidate source. Migration keys are derived from bounded glob entries, path basenames, and decoded project/session/message records.",
+      "justification": "The joins are generic and do not themselves prove containment, but inspected production callers do not supply arbitrary request path arrays: session_diff writes use a fixed prefix plus a validated session ID, and list(prefix) has no production caller or HTTP exposure. Migration inputs are enumerated beneath the migration root and use path.basename for source filenames; project/session/message IDs come from decoded local records. No route permits a worker/model to set an arbitrary storage key.",
+      "residual_owner_action": "No reachable AIAT adapter exploit established for this candidate scope. Preserve validated ID schemas and fixed prefixes. Before adding any HTTP/tool caller or untrusted key input, add canonical-root containment (including symlink handling) and a regression test; do not interpret this disposition as approval of arbitrary keys."
+    },
+    {
+      "finding_id": "semgrep-r4-record-255",
+      "scanner_record_ordinal": 255,
+      "source_path": "packages/opencode/src/storage/storage.ts",
+      "source_line": 192,
+      "source_column": 19,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "OpenCode internal JSON storage. The current production source caller found for writes uses the fixed key prefix ['session_diff', sessionID]; sessionID is generated/validated by the session schema. Storage.list has no production caller in the candidate source. Migration keys are derived from bounded glob entries, path basenames, and decoded project/session/message records.",
+      "justification": "The joins are generic and do not themselves prove containment, but inspected production callers do not supply arbitrary request path arrays: session_diff writes use a fixed prefix plus a validated session ID, and list(prefix) has no production caller or HTTP exposure. Migration inputs are enumerated beneath the migration root and use path.basename for source filenames; project/session/message IDs come from decoded local records. No route permits a worker/model to set an arbitrary storage key.",
+      "residual_owner_action": "No reachable AIAT adapter exploit established for this candidate scope. Preserve validated ID schemas and fixed prefixes. Before adding any HTTP/tool caller or untrusted key input, add canonical-root containment (including symlink handling) and a regression test; do not interpret this disposition as approval of arbitrary keys."
+    },
+    {
+      "finding_id": "semgrep-r4-record-256",
+      "scanner_record_ordinal": 256,
+      "source_path": "packages/opencode/src/storage/storage.ts",
+      "source_line": 192,
+      "source_column": 40,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "OpenCode internal JSON storage. The current production source caller found for writes uses the fixed key prefix ['session_diff', sessionID]; sessionID is generated/validated by the session schema. Storage.list has no production caller in the candidate source. Migration keys are derived from bounded glob entries, path basenames, and decoded project/session/message records.",
+      "justification": "The joins are generic and do not themselves prove containment, but inspected production callers do not supply arbitrary request path arrays: session_diff writes use a fixed prefix plus a validated session ID, and list(prefix) has no production caller or HTTP exposure. Migration inputs are enumerated beneath the migration root and use path.basename for source filenames; project/session/message IDs come from decoded local records. No route permits a worker/model to set an arbitrary storage key.",
+      "residual_owner_action": "No reachable AIAT adapter exploit established for this candidate scope. Preserve validated ID schemas and fixed prefixes. Before adding any HTTP/tool caller or untrusted key input, add canonical-root containment (including symlink handling) and a regression test; do not interpret this disposition as approval of arbitrary keys."
+    },
+    {
+      "finding_id": "semgrep-r4-record-257",
+      "scanner_record_ordinal": 257,
+      "source_path": "packages/opencode/src/storage/storage.ts",
+      "source_line": 196,
+      "source_column": 19,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "OpenCode internal JSON storage. The current production source caller found for writes uses the fixed key prefix ['session_diff', sessionID]; sessionID is generated/validated by the session schema. Storage.list has no production caller in the candidate source. Migration keys are derived from bounded glob entries, path basenames, and decoded project/session/message records.",
+      "justification": "The joins are generic and do not themselves prove containment, but inspected production callers do not supply arbitrary request path arrays: session_diff writes use a fixed prefix plus a validated session ID, and list(prefix) has no production caller or HTTP exposure. Migration inputs are enumerated beneath the migration root and use path.basename for source filenames; project/session/message IDs come from decoded local records. No route permits a worker/model to set an arbitrary storage key.",
+      "residual_owner_action": "No reachable AIAT adapter exploit established for this candidate scope. Preserve validated ID schemas and fixed prefixes. Before adding any HTTP/tool caller or untrusted key input, add canonical-root containment (including symlink handling) and a regression test; do not interpret this disposition as approval of arbitrary keys."
+    },
+    {
+      "finding_id": "semgrep-r4-record-258",
+      "scanner_record_ordinal": 258,
+      "source_path": "packages/opencode/src/storage/storage.ts",
+      "source_line": 196,
+      "source_column": 35,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "OpenCode internal JSON storage. The current production source caller found for writes uses the fixed key prefix ['session_diff', sessionID]; sessionID is generated/validated by the session schema. Storage.list has no production caller in the candidate source. Migration keys are derived from bounded glob entries, path basenames, and decoded project/session/message records.",
+      "justification": "The joins are generic and do not themselves prove containment, but inspected production callers do not supply arbitrary request path arrays: session_diff writes use a fixed prefix plus a validated session ID, and list(prefix) has no production caller or HTTP exposure. Migration inputs are enumerated beneath the migration root and use path.basename for source filenames; project/session/message IDs come from decoded local records. No route permits a worker/model to set an arbitrary storage key.",
+      "residual_owner_action": "No reachable AIAT adapter exploit established for this candidate scope. Preserve validated ID schemas and fixed prefixes. Before adding any HTTP/tool caller or untrusted key input, add canonical-root containment (including symlink handling) and a regression test; do not interpret this disposition as approval of arbitrary keys."
+    },
+    {
+      "finding_id": "semgrep-r4-record-259",
+      "scanner_record_ordinal": 259,
+      "source_path": "packages/opencode/src/storage/storage.ts",
+      "source_line": 196,
+      "source_column": 60,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "OpenCode internal JSON storage. The current production source caller found for writes uses the fixed key prefix ['session_diff', sessionID]; sessionID is generated/validated by the session schema. Storage.list has no production caller in the candidate source. Migration keys are derived from bounded glob entries, path basenames, and decoded project/session/message records.",
+      "justification": "The joins are generic and do not themselves prove containment, but inspected production callers do not supply arbitrary request path arrays: session_diff writes use a fixed prefix plus a validated session ID, and list(prefix) has no production caller or HTTP exposure. Migration inputs are enumerated beneath the migration root and use path.basename for source filenames; project/session/message IDs come from decoded local records. No route permits a worker/model to set an arbitrary storage key.",
+      "residual_owner_action": "No reachable AIAT adapter exploit established for this candidate scope. Preserve validated ID schemas and fixed prefixes. Before adding any HTTP/tool caller or untrusted key input, add canonical-root containment (including symlink handling) and a regression test; do not interpret this disposition as approval of arbitrary keys."
+    },
+    {
+      "finding_id": "semgrep-r4-record-260",
+      "scanner_record_ordinal": 260,
+      "source_path": "packages/opencode/src/storage/storage.ts",
+      "source_line": 303,
+      "source_column": 34,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "OpenCode internal JSON storage. The current production source caller found for writes uses the fixed key prefix ['session_diff', sessionID]; sessionID is generated/validated by the session schema. Storage.list has no production caller in the candidate source. Migration keys are derived from bounded glob entries, path basenames, and decoded project/session/message records.",
+      "justification": "The joins are generic and do not themselves prove containment, but inspected production callers do not supply arbitrary request path arrays: session_diff writes use a fixed prefix plus a validated session ID, and list(prefix) has no production caller or HTTP exposure. Migration inputs are enumerated beneath the migration root and use path.basename for source filenames; project/session/message IDs come from decoded local records. No route permits a worker/model to set an arbitrary storage key.",
+      "residual_owner_action": "No reachable AIAT adapter exploit established for this candidate scope. Preserve validated ID schemas and fixed prefixes. Before adding any HTTP/tool caller or untrusted key input, add canonical-root containment (including symlink handling) and a regression test; do not interpret this disposition as approval of arbitrary keys."
+    },
+    {
+      "finding_id": "semgrep-r4-record-289",
+      "scanner_record_ordinal": 289,
+      "source_path": "packages/opencode/src/util/archive.ts",
+      "source_line": 6,
+      "source_column": 37,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "UPSTREAM_RISK",
+      "reachable_path_and_inputs": "Windows-only archive helper accepts zipPath and destDir arguments. A source-wide call-site search found no production invocation of extractZip in this r4 source; it is only exported from its own module.",
+      "justification": "path.resolve normalizes caller-supplied paths but does not establish root containment; if called with untrusted input, extraction destination/source may point outside an intended root. The helper is currently unreachable through AIAT OpenCodeAdapter/server/tool flows. The same helper interpolates resolved values into a PowerShell command string, so future use also requires safe argument passing/quoting.",
+      "residual_owner_action": "Do not wire this helper to untrusted requests without a canonical destination-root check, safe archive extraction, and removal of command-string interpolation. Current AIAT adapter does not expose it."
+    },
+    {
+      "finding_id": "semgrep-r4-record-290",
+      "scanner_record_ordinal": 290,
+      "source_path": "packages/opencode/src/util/archive.ts",
+      "source_line": 7,
+      "source_column": 37,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "UPSTREAM_RISK",
+      "reachable_path_and_inputs": "Windows-only archive helper accepts zipPath and destDir arguments. A source-wide call-site search found no production invocation of extractZip in this r4 source; it is only exported from its own module.",
+      "justification": "path.resolve normalizes caller-supplied paths but does not establish root containment; if called with untrusted input, extraction destination/source may point outside an intended root. The helper is currently unreachable through AIAT OpenCodeAdapter/server/tool flows. The same helper interpolates resolved values into a PowerShell command string, so future use also requires safe argument passing/quoting.",
+      "residual_owner_action": "Do not wire this helper to untrusted requests without a canonical destination-root check, safe archive extraction, and removal of command-string interpolation. Current AIAT adapter does not expose it."
+    },
+    {
+      "finding_id": "semgrep-r4-record-299",
+      "scanner_record_ordinal": 299,
+      "source_path": "packages/opencode/src/util/html.ts",
+      "source_line": 2,
+      "source_column": 10,
+      "rule_id": "javascript.audit.detect-replaceall-sanitization.detect-replaceall-sanitization",
+      "severity": "INFO",
+      "cwe": [
+        "CWE-79: Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "OpenCode HTML helper is used to escape skill locations before they are placed in generated prompt markup.",
+      "justification": "escapeHtml replaces ampersand first, then angle brackets, quotes, and apostrophes. This order prevents entity double interpretation and covers the HTML delimiters relevant to text/attribute contexts. The Semgrep rule flags sequential replaceAll calls without modeling the order.",
+      "residual_owner_action": "No change required for this finding. Keep ampersand escaped first and do not reuse this helper for JavaScript/CSS/URL contexts."
+    },
+    {
+      "finding_id": "semgrep-r4-record-300",
+      "scanner_record_ordinal": 300,
+      "source_path": "packages/opencode/src/util/html.ts",
+      "source_line": 2,
+      "source_column": 10,
+      "rule_id": "javascript.audit.detect-replaceall-sanitization.detect-replaceall-sanitization",
+      "severity": "INFO",
+      "cwe": [
+        "CWE-79: Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "OpenCode HTML helper is used to escape skill locations before they are placed in generated prompt markup.",
+      "justification": "escapeHtml replaces ampersand first, then angle brackets, quotes, and apostrophes. This order prevents entity double interpretation and covers the HTML delimiters relevant to text/attribute contexts. The Semgrep rule flags sequential replaceAll calls without modeling the order.",
+      "residual_owner_action": "No change required for this finding. Keep ampersand escaped first and do not reuse this helper for JavaScript/CSS/URL contexts."
+    },
+    {
+      "finding_id": "semgrep-r4-record-301",
+      "scanner_record_ordinal": 301,
+      "source_path": "packages/opencode/src/util/html.ts",
+      "source_line": 2,
+      "source_column": 10,
+      "rule_id": "javascript.audit.detect-replaceall-sanitization.detect-replaceall-sanitization",
+      "severity": "INFO",
+      "cwe": [
+        "CWE-79: Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "OpenCode HTML helper is used to escape skill locations before they are placed in generated prompt markup.",
+      "justification": "escapeHtml replaces ampersand first, then angle brackets, quotes, and apostrophes. This order prevents entity double interpretation and covers the HTML delimiters relevant to text/attribute contexts. The Semgrep rule flags sequential replaceAll calls without modeling the order.",
+      "residual_owner_action": "No change required for this finding. Keep ampersand escaped first and do not reuse this helper for JavaScript/CSS/URL contexts."
+    },
+    {
+      "finding_id": "semgrep-r4-record-302",
+      "scanner_record_ordinal": 302,
+      "source_path": "packages/opencode/src/util/html.ts",
+      "source_line": 2,
+      "source_column": 10,
+      "rule_id": "javascript.audit.detect-replaceall-sanitization.detect-replaceall-sanitization",
+      "severity": "INFO",
+      "cwe": [
+        "CWE-79: Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "OpenCode HTML helper is used to escape skill locations before they are placed in generated prompt markup.",
+      "justification": "escapeHtml replaces ampersand first, then angle brackets, quotes, and apostrophes. This order prevents entity double interpretation and covers the HTML delimiters relevant to text/attribute contexts. The Semgrep rule flags sequential replaceAll calls without modeling the order.",
+      "residual_owner_action": "No change required for this finding. Keep ampersand escaped first and do not reuse this helper for JavaScript/CSS/URL contexts."
+    },
+    {
+      "finding_id": "semgrep-r4-record-303",
+      "scanner_record_ordinal": 303,
+      "source_path": "packages/opencode/src/util/process.ts",
+      "source_line": 115,
+      "source_column": 16,
+      "rule_id": "javascript.lang.security.audit.spawn-shell-true.spawn-shell-true",
+      "severity": "ERROR",
+      "cwe": [
+        "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "The generic process wrapper forwards its optional shell flag to Bun spawn. Source-wide production call sites use argv arrays and omit shell; shell:true was found only in a process utility test fixture. The AIAT worker adapter does not supply arbitrary process options.",
+      "justification": "This code does not force shell mode. `opts.shell` is undefined by default and no production caller sets it true in the candidate source. Commands are passed as argv arrays in the inspected production uses. The finding is a helper-level taint warning, not a reachable shell injection in the deployed AIAT adapter path.",
+      "residual_owner_action": "Keep shell disabled for production calls and avoid deriving command or shell options from worker/task input. Review any future caller that sets shell explicitly."
+    },
+    {
+      "finding_id": "semgrep-r4-record-304",
+      "scanner_record_ordinal": 304,
+      "source_path": "packages/opencode/src/util/repository.ts",
+      "source_line": 223,
+      "source_column": 39,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "Repository cache path is called with a parsed Repository.Reference. Remote references pass safeHost/safeSegment checks rejecting dot segments, separators, whitespace and colon; local file references are normalized absolute paths and are rejected by parseRemoteRepositoryReference for remote clone flows.",
+      "justification": "The parser constrains remote host and path segments before repositoryCachePath spreads them into path.join. File references are normalized from file URLs and are not accepted by the remote fetch API. No raw model-provided path array is accepted by this helper.",
+      "residual_owner_action": "Preserve parser validation and keep repositoryCachePath behind parsed Reference values; add root containment if callers are added that construct Reference objects directly."
+    },
+    {
+      "finding_id": "semgrep-r4-record-305",
+      "scanner_record_ordinal": 305,
+      "source_path": "packages/opencode/src/util/repository.ts",
+      "source_line": 223,
+      "source_column": 65,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "Repository cache path is called with a parsed Repository.Reference. Remote references pass safeHost/safeSegment checks rejecting dot segments, separators, whitespace and colon; local file references are normalized absolute paths and are rejected by parseRemoteRepositoryReference for remote clone flows.",
+      "justification": "The parser constrains remote host and path segments before repositoryCachePath spreads them into path.join. File references are normalized from file URLs and are not accepted by the remote fetch API. No raw model-provided path array is accepted by this helper.",
+      "residual_owner_action": "Preserve parser validation and keep repositoryCachePath behind parsed Reference values; add root containment if callers are added that construct Reference objects directly."
+    },
+    {
+      "finding_id": "semgrep-r4-record-306",
+      "scanner_record_ordinal": 306,
+      "source_path": "packages/opencode/src/util/wildcard.ts",
+      "source_line": 18,
+      "source_column": 10,
+      "rule_id": "javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-1333: Inefficient Regular Expression Complexity"
+      ],
+      "classification": "UPSTREAM_RISK",
+      "reachable_path_and_inputs": "Wildcard matching is used by the permission evaluator and session model-rule matching. Patterns originate in configured permission/model rules; in AIAT’s managed headless profile those settings are operator-governed, and project config is disabled.",
+      "justification": "Regex metacharacters are escaped before `*` and `?` are translated, so pattern data cannot inject arbitrary regex syntax. Repeated wildcards can still increase matching work on long values; no untrusted project configuration reaches this matcher in the AIAT profile because project config is disabled. This is a boundedness concern if untrusted patterns are ever admitted.",
+      "residual_owner_action": "No AIAT-runtime exploit established. Keep rule sources governed; consider limiting pattern length/repetition or using a linear glob matcher before accepting untrusted rule data."
+    },
+    {
+      "finding_id": "semgrep-r4-record-307",
+      "scanner_record_ordinal": 307,
+      "source_path": "packages/session-ui/src/components/markdown-stream.ts",
+      "source_line": 40,
+      "source_column": 11,
+      "rule_id": "javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-1333: Inefficient Regular Expression Complexity"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "Markdown streaming parses model output and uses the opening code-fence marker character (` backtick or tilde) and marker length in a simple anchored closing-fence regular expression.",
+      "justification": "The dynamic fragment is one of two fixed characters and a numeric quantifier; it is not arbitrary regex syntax. The expression has no nested ambiguous quantifiers, and work is linear in the bounded streamed line length. It cannot escape the regex or change filesystem/command behavior.",
+      "residual_owner_action": "No security defect established. Keep stream/input limits bounded and preserve the fixed-character derivation."
+    },
+    {
+      "finding_id": "semgrep-r4-record-308",
+      "scanner_record_ordinal": 308,
+      "source_path": "packages/stats/app/src/routes/sitemap.xml.ts",
+      "source_line": 107,
+      "source_column": 10,
+      "rule_id": "javascript.audit.detect-replaceall-sanitization.detect-replaceall-sanitization",
+      "severity": "INFO",
+      "cwe": [
+        "CWE-79: Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "Stats-site sitemap renderer escapes generated URL/date values before XML serialization. This package is not part of the AIAT OpenCode runtime image.",
+      "justification": "The XML escape function replaces ampersand first, then quote/apostrophe and angle brackets before interpolation into XML text. The sequential replacements are an effective encoder; the Semgrep rule does not infer escaping order.",
+      "residual_owner_action": "No finding for AIAT runtime. Preserve XML escaping if the stats application is separately deployed."
+    },
+    {
+      "finding_id": "semgrep-r4-record-309",
+      "scanner_record_ordinal": 309,
+      "source_path": "packages/stats/app/src/routes/sitemap.xml.ts",
+      "source_line": 107,
+      "source_column": 10,
+      "rule_id": "javascript.audit.detect-replaceall-sanitization.detect-replaceall-sanitization",
+      "severity": "INFO",
+      "cwe": [
+        "CWE-79: Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "Stats-site sitemap renderer escapes generated URL/date values before XML serialization. This package is not part of the AIAT OpenCode runtime image.",
+      "justification": "The XML escape function replaces ampersand first, then quote/apostrophe and angle brackets before interpolation into XML text. The sequential replacements are an effective encoder; the Semgrep rule does not infer escaping order.",
+      "residual_owner_action": "No finding for AIAT runtime. Preserve XML escaping if the stats application is separately deployed."
+    },
+    {
+      "finding_id": "semgrep-r4-record-310",
+      "scanner_record_ordinal": 310,
+      "source_path": "packages/stats/app/src/routes/sitemap.xml.ts",
+      "source_line": 107,
+      "source_column": 10,
+      "rule_id": "javascript.audit.detect-replaceall-sanitization.detect-replaceall-sanitization",
+      "severity": "INFO",
+      "cwe": [
+        "CWE-79: Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "Stats-site sitemap renderer escapes generated URL/date values before XML serialization. This package is not part of the AIAT OpenCode runtime image.",
+      "justification": "The XML escape function replaces ampersand first, then quote/apostrophe and angle brackets before interpolation into XML text. The sequential replacements are an effective encoder; the Semgrep rule does not infer escaping order.",
+      "residual_owner_action": "No finding for AIAT runtime. Preserve XML escaping if the stats application is separately deployed."
+    },
+    {
+      "finding_id": "semgrep-r4-record-311",
+      "scanner_record_ordinal": 311,
+      "source_path": "packages/stats/app/src/routes/sitemap.xml.ts",
+      "source_line": 107,
+      "source_column": 10,
+      "rule_id": "javascript.audit.detect-replaceall-sanitization.detect-replaceall-sanitization",
+      "severity": "INFO",
+      "cwe": [
+        "CWE-79: Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "Stats-site sitemap renderer escapes generated URL/date values before XML serialization. This package is not part of the AIAT OpenCode runtime image.",
+      "justification": "The XML escape function replaces ampersand first, then quote/apostrophe and angle brackets before interpolation into XML text. The sequential replacements are an effective encoder; the Semgrep rule does not infer escaping order.",
+      "residual_owner_action": "No finding for AIAT runtime. Preserve XML escaping if the stats application is separately deployed."
+    },
+    {
+      "finding_id": "semgrep-r4-record-312",
+      "scanner_record_ordinal": 312,
+      "source_path": "packages/stats/app/src/routes/sitemap.xml.ts",
+      "source_line": 107,
+      "source_column": 10,
+      "rule_id": "javascript.audit.detect-replaceall-sanitization.detect-replaceall-sanitization",
+      "severity": "INFO",
+      "cwe": [
+        "CWE-79: Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "Stats-site sitemap renderer escapes generated URL/date values before XML serialization. This package is not part of the AIAT OpenCode runtime image.",
+      "justification": "The XML escape function replaces ampersand first, then quote/apostrophe and angle brackets before interpolation into XML text. The sequential replacements are an effective encoder; the Semgrep rule does not infer escaping order.",
+      "residual_owner_action": "No finding for AIAT runtime. Preserve XML escaping if the stats application is separately deployed."
+    },
+    {
+      "finding_id": "semgrep-r4-record-313",
+      "scanner_record_ordinal": 313,
+      "source_path": "packages/stats/core/drizzle.config.ts",
+      "source_line": 17,
+      "source_column": 10,
+      "rule_id": "problem-based-packs.insecure-transport.js-node.bypass-tls-verification.bypass-tls-verification",
+      "severity": "WARNING",
+      "cwe": "CWE-319: Cleartext Transmission of Sensitive Information",
+      "classification": "UPSTREAM_RISK",
+      "reachable_path_and_inputs": "SST stats database migration/config tooling (`packages/stats/core/drizzle.config.ts`), outside the OpenCode server image and AIAT adapter request path.",
+      "justification": "`rejectUnauthorized: false` disables TLS certificate validation for this database connection and can permit MITM if the stats migration tooling connects over an untrusted network. This is a genuine configuration weakness in that optional stats scope, not a false positive; it is not used by the AIAT OpenCode runtime.",
+      "residual_owner_action": "If the optional stats service is used, require trusted CA validation or a documented private transport and test certificate rejection. No AIAT runtime remediation is in scope for this record."
+    },
+    {
+      "finding_id": "semgrep-r4-record-314",
+      "scanner_record_ordinal": 314,
+      "source_path": "packages/stats/server/Dockerfile",
+      "source_line": 32,
+      "source_column": 1,
+      "rule_id": "dockerfile.security.missing-user.missing-user",
+      "severity": "ERROR",
+      "cwe": [
+        "CWE-250: Execution with Unnecessary Privileges"
+      ],
+      "classification": "UPSTREAM_RISK",
+      "reachable_path_and_inputs": "Stats server image (`packages/stats/server/Dockerfile`) only; it is distinct from the pinned OpenCode runtime image used by AIAT.",
+      "justification": "No USER directive is present before the server command, so Docker runs this optional stats process as root by default. This is an upstream least-privilege concern but does not affect the AIAT OpenCode runtime image.",
+      "residual_owner_action": "Use a dedicated unprivileged user if this optional stats image is built/deployed; retain current AIAT runtime image identity separately."
+    },
+    {
+      "finding_id": "semgrep-r4-record-315",
+      "scanner_record_ordinal": 315,
+      "source_path": "packages/storybook/.storybook/playground-css-plugin.ts",
+      "source_line": 41,
+      "source_column": 16,
+      "rule_id": "javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-1333: Inefficient Regular Expression Complexity"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "Storybook playground CSS transformation runs in development/build tooling, not the OpenCode server runtime.",
+      "justification": "The regex selector is assembled from a static light/dark mode literal and parsed against local Storybook CSS. No model/request-controlled regex fragment or production server path is involved.",
+      "residual_owner_action": "No AIAT runtime issue. Retain as build-tool-only code and bound any future imported CSS source."
+    },
+    {
+      "finding_id": "semgrep-r4-record-316",
+      "scanner_record_ordinal": 316,
+      "source_path": "packages/tui/src/component/prompt/move.tsx",
+      "source_line": 45,
+      "source_column": 48,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "CONFIRMED_DEFECT",
+      "reachable_path_and_inputs": "TUI move/worktree UI uses the first six characters of projectID as a child directory under paths.worktree. The project ID can be loaded from repository-local `.git/opencode` through ProjectV2.cached without path-segment validation when no remote supersedes it. This finding is TUI-only and not invoked by the AIAT headless adapter.",
+      "justification": "A repository-controlled cached project ID beginning with parent-directory components can make the truncated value contain `../` and cause path.join to escape the intended worktree root. This is a real upstream path-boundary defect in the TUI path, linked to the unvalidated project ID cache; it is not reachable in the AIAT server/adapter execution plane.",
+      "residual_owner_action": "Upstream should derive the folder name from a fixed hash or validate a single safe path segment, and add traversal/symlink tests. Do not treat this as resolved by AIAT headless snapshot configuration; it is a separate TUI path."
+    },
+    {
+      "finding_id": "semgrep-r4-record-317",
+      "scanner_record_ordinal": 317,
+      "source_path": "packages/tui/src/context/path-format.tsx",
+      "source_line": 18,
+      "source_column": 66,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "TUI path formatter resolves a display path against a base path, computes `path.relative`, and formats it for presentation; it performs no filesystem read/write or process launch.",
+      "justification": "Absolute and parent-relative paths are intentionally normalized to determine what the UI displays. The result is not used as an authorized filesystem target, so traversal in the display string does not cross a security boundary.",
+      "residual_owner_action": "No code change needed at this location. Keep this helper presentation-only; apply containment where paths are actually opened."
+    },
+    {
+      "finding_id": "semgrep-r4-record-318",
+      "scanner_record_ordinal": 318,
+      "source_path": "packages/tui/src/context/path-format.tsx",
+      "source_line": 18,
+      "source_column": 72,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "TUI path formatter resolves a display path against a base path, computes `path.relative`, and formats it for presentation; it performs no filesystem read/write or process launch.",
+      "justification": "Absolute and parent-relative paths are intentionally normalized to determine what the UI displays. The result is not used as an authorized filesystem target, so traversal in the display string does not cross a security boundary.",
+      "residual_owner_action": "No code change needed at this location. Keep this helper presentation-only; apply containment where paths are actually opened."
+    },
+    {
+      "finding_id": "semgrep-r4-record-319",
+      "scanner_record_ordinal": 319,
+      "source_path": "packages/tui/src/editor.ts",
+      "source_line": 36,
+      "source_column": 21,
+      "rule_id": "javascript.lang.security.audit.spawn-shell-true.spawn-shell-true",
+      "severity": "ERROR",
+      "cwe": [
+        "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+      ],
+      "classification": "UPSTREAM_RISK",
+      "reachable_path_and_inputs": "Local TUI editor integration reads VISUAL/EDITOR from the operator process environment and, on Windows only, enables shell mode. It is not called by AIAT’s headless OpenCode server adapter.",
+      "justification": "The executable string is local operator configuration, not model/project input; the feature intentionally launches the operator-selected editor. Because it becomes shell command structure on Windows, a hostile inherited EDITOR value can execute commands, but that requires control of the local process environment and is outside the AIAT adapter threat path.",
+      "residual_owner_action": "Keep this TUI-only and do not propagate worker-controlled environment into it. If the UI is ever hosted for untrusted users, replace shell parsing with a bounded executable/argument parser and explicit consent."
+    },
+    {
+      "finding_id": "semgrep-r4-record-320",
+      "scanner_record_ordinal": 320,
+      "source_path": "packages/tui/src/prompt/frecency.tsx",
+      "source_line": 58,
+      "source_column": 52,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "TUI frecency stores user-selected file paths as string keys in an in-memory map and fixed frecency data file; the path key is not used as a filesystem path.",
+      "justification": "path.resolve is used to canonicalize/compare a key for ranking only. Reads/writes target the fixed frecency file, not the resolved key, so `..` does not escape a storage root.",
+      "residual_owner_action": "No finding at this location. Keep filePath as a data key; do not later use it as an open/delete target without containment."
+    },
+    {
+      "finding_id": "semgrep-r4-record-321",
+      "scanner_record_ordinal": 321,
+      "source_path": "packages/tui/src/prompt/frecency.tsx",
+      "source_line": 75,
+      "source_column": 95,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "TUI frecency stores user-selected file paths as string keys in an in-memory map and fixed frecency data file; the path key is not used as a filesystem path.",
+      "justification": "path.resolve is used to canonicalize/compare a key for ranking only. Reads/writes target the fixed frecency file, not the resolved key, so `..` does not escape a storage root.",
+      "residual_owner_action": "No finding at this location. Keep filePath as a data key; do not later use it as an open/delete target without containment."
+    },
+    {
+      "finding_id": "semgrep-r4-record-322",
+      "scanner_record_ordinal": 322,
+      "source_path": "packages/ui/script/build-oc2-v2-overrides.ts",
+      "source_line": 24,
+      "source_column": 27,
+      "rule_id": "javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-1333: Inefficient Regular Expression Complexity"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "OC-2 UI override build script selects a CSS selector from a closed `light | dark` mode value and parses local CSS at build time.",
+      "justification": "The dynamic regex interpolation is a fixed selector chosen from two literals; it cannot be controlled by project or model content.",
+      "residual_owner_action": "No security change needed; preserve the closed selector union."
+    },
+    {
+      "finding_id": "semgrep-r4-record-323",
+      "scanner_record_ordinal": 323,
+      "source_path": "script/stats.ts",
+      "source_line": 65,
+      "source_column": 18,
+      "rule_id": "javascript.lang.security.audit.unsafe-formatstring.unsafe-formatstring",
+      "severity": "INFO",
+      "cwe": [
+        "CWE-134: Use of Externally-Controlled Format String"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "Development stats script logs an interpolated package name and caught error while querying npm metadata; it does not execute the string as a format template or shell command.",
+      "justification": "The message template is source-controlled and the package name comes from the script’s fixed package list. Console interpolation renders a string; no external format parser consumes user-supplied format directives.",
+      "residual_owner_action": "No security defect established. Keep package names from the maintained package list."
+    },
+    {
+      "finding_id": "semgrep-r4-record-324",
+      "scanner_record_ordinal": 324,
+      "source_path": "script/translate-app.ts",
+      "source_line": 191,
+      "source_column": 28,
+      "rule_id": "javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-1333: Inefficient Regular Expression Complexity"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "Translation maintenance script builds a regex from provider name after passing it through `escapeRegExp`; provider is parsed from a local model identifier.",
+      "justification": "The regex metacharacters are escaped before interpolation and the script is a developer-only workflow; input cannot alter regex structure.",
+      "residual_owner_action": "No change needed; retain escaping if provider/model identifier parsing changes."
+    },
+    {
+      "finding_id": "semgrep-r4-record-325",
+      "scanner_record_ordinal": 325,
+      "source_path": "script/translate-app.ts",
+      "source_line": 329,
+      "source_column": 49,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "Translation change-detection reads paths emitted by `git diff --name-only` and `git ls-files --others` relative to the repository root, then hashes file contents. This is local developer tooling, not a server route.",
+      "justification": "Git emits repository-relative tracked/untracked names, not arbitrary absolute paths; the observed code hashes data and does not execute or write to the joined target. Symlinks are followed by Bun.file, so a malicious local symlink could cause an out-of-root read whose only retained result is a digest; no content is printed or sent. This is a narrow tooling hardening opportunity, not an AIAT runtime path traversal.",
+      "residual_owner_action": "If this script is run on untrusted working trees, lstat and enforce realpath containment before reading (or skip symlinks); otherwise no AIAT runtime action."
+    },
+    {
+      "finding_id": "semgrep-r4-record-326",
+      "scanner_record_ordinal": 326,
+      "source_path": "script/translate-app.ts",
+      "source_line": 379,
+      "source_column": 70,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "Translation script dynamically imports dictionary paths produced by targetFiles(locale), where locale is a closed application enum and domain paths are source-defined.",
+      "justification": "The file value is derived from a closed locale-to-file mapping, not external model/request data. The joined path remains within the source tree under the current mapping.",
+      "residual_owner_action": "Keep targetFiles locale-derived and add a path assertion if locale sources become external."
+    },
+    {
+      "finding_id": "semgrep-r4-record-327",
+      "scanner_record_ordinal": 327,
+      "source_path": "script/translate-app.ts",
+      "source_line": 397,
+      "source_column": 59,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "Translation script builds and reads a glossary path returned by glossaryFile(plan.locale); plan.locale is a closed set of supported locales.",
+      "justification": "The glossary path is source-defined from the locale enum, not worker/model-controlled input; the check and read are both under the repository root.",
+      "residual_owner_action": "No issue under the closed locale mapping. Keep locale validation and path construction together."
+    },
+    {
+      "finding_id": "semgrep-r4-record-328",
+      "scanner_record_ordinal": 328,
+      "source_path": "script/translate-app.ts",
+      "source_line": 398,
+      "source_column": 38,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "severity": "WARNING",
+      "cwe": [
+        "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      ],
+      "classification": "SAFE_BY_DESIGN",
+      "reachable_path_and_inputs": "Translation script builds and reads a glossary path returned by glossaryFile(plan.locale); plan.locale is a closed set of supported locales.",
+      "justification": "The glossary path is source-defined from the locale enum, not worker/model-controlled input; the check and read are both under the repository root.",
+      "residual_owner_action": "No issue under the closed locale mapping. Keep locale validation and path construction together."
+    }
+  ],
+  "batch_summary": {
+    "record_count": 69,
+    "classifications": {
+      "CONFIRMED_DEFECT": 9,
+      "SAFE_BY_DESIGN": 54,
+      "UPSTREAM_RISK": 6
+    },
+    "confirmed_defect_root_causes": [
+      "Unvalidated repository-local cached Project ID used in snapshot paths (records 224, 225, 227, 228, 231-234)",
+      "Truncated cached Project ID used as TUI worktree directory (record 316)"
+    ],
+    "upstream_risks": [
+      "Optional Windows archive helper does not constrain caller paths and interpolates paths into PowerShell command string (records 289-290)",
+      "Dynamic glob permission regex may need bounded pattern sizes if untrusted patterns are ever admitted (record 306)",
+      "Stats database TLS verification disabled (313)",
+      "Stats server image defaults to root (314)",
+      "Windows TUI launches operator-configured editor with shell mode (319)"
+    ],
+    "aggregate_gate": "BLOCKED"
+  }
+}
