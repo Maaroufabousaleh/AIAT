@@ -1,0 +1,358 @@
+{
+  "schema_version": "aiat.opencode-version-reconciliation.v1",
+  "observed_at": "2026-10-12",
+  "repository": {
+    "branch": "agent/fix-review-p1",
+    "head": "327c6ff2fda22a7472c412c6479e9021fdff7422",
+    "migration_head": "0048_worker_run_retry_lineage"
+  },
+  "decision": "BLOCKED_IDENTITY_COMPATIBILITY_AND_GOVERNANCE",
+  "activation_changed": false,
+  "live_database_mutated": false,
+  "external_provider_called": false,
+  "workers": [
+    {
+      "worker_id": "coding_worker",
+      "manifest_ref": "mas/workers/coding_worker.yaml",
+      "manifest_source_repo": "https://github.com/anomalyco/opencode",
+      "manifest_source_revision": "v1.17.13",
+      "manifest_version_pin": "1.17.13",
+      "manifest_source_provenance_exact_release": "1.17.13",
+      "manifest_interface_report_id": "opencode-phase0b-1.17.13",
+      "adapter_entrypoint": "OpenCodeAdapter",
+      "adapter_version": "1.0.0",
+      "evaluation_status": "pending",
+      "certification_status": "pending",
+      "security_scan_status": "findings_review_required",
+      "security_scan_evidence_ref": "mas/docs/provenance/security_scan_evidence.yaml#opencode-1.17.13-semgrep-2026-08-10"
+    },
+    {
+      "worker_id": "tester",
+      "manifest_ref": "mas/workers/tester.yaml",
+      "manifest_source_repo": "https://github.com/anomalyco/opencode",
+      "manifest_source_revision": "v1.17.13",
+      "manifest_version_pin": "1.17.13",
+      "manifest_source_provenance_exact_release": "1.17.13",
+      "manifest_interface_report_id": "opencode-phase0b-1.17.13",
+      "adapter_entrypoint": "OpenCodeAdapter",
+      "adapter_version": "1.0.0",
+      "evaluation_status": "pending",
+      "certification_status": "pending",
+      "security_scan_status": "findings_review_required",
+      "security_scan_evidence_ref": "mas/docs/provenance/security_scan_evidence.yaml#opencode-1.17.13-semgrep-2026-08-10"
+    }
+  ],
+  "candidate_1_18_21": {
+    "source": {
+      "repository": "https://github.com/anomalyco/opencode.git",
+      "tag": "v1.18.21",
+      "release": "1.18.21",
+      "commit": "826d9ad46a22bef0294998e08daa3c4904fea28f",
+      "snapshot_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/source-snapshot.tar.xz",
+      "snapshot_sha256": "e338f0fc18145f7fc0ac848da5593ae77ea63adbd5f1d386ca8d82151a280370",
+      "archive_sha256": "77b8cee43c3f74d94ad4651c375ec02bcd55a20aff06f9aac8e7be59c70811a0",
+      "source_manifest_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/source-manifest.json"
+    },
+    "upstream_oci_image": {
+      "reference": "ghcr.io/anomalyco/opencode:1.18.21@sha256:56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb",
+      "digest": "sha256:56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb",
+      "crosscheck_status": "pass",
+      "crosscheck_reason": "The exact retained digest was pulled in Docker context aiat-wsl; image ID and RepoDigest equal the pinned digest, and the binary reports 1.18.21.",
+      "local_observation": {
+        "docker_context": "aiat-wsl",
+        "image_id": "sha256:56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb",
+        "repo_digest_matches": true,
+        "binary_version_command": "docker run --rm --network none --entrypoint opencode <pinned-image> --version",
+        "binary_version_output": "1.18.21",
+        "scope": "local immutable image identity/version observation; not a production image attestation"
+      },
+      "evidence_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/candidate-triage.json"
+    },
+    "certification": {
+      "report_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/candidate-certification.json",
+      "status": "blocked",
+      "blockers": [
+        "scanner_coverage_incomplete",
+        "security_finding"
+      ],
+      "scanner_error_count": 6,
+      "security_disposition_complete": false,
+      "aiat_local_boundary_status": "pass",
+      "active_worker_status": "inactive_until_certification_passes"
+    },
+    "worker_manifest_registration": {
+      "coding_worker_manifest_pins_candidate": false,
+      "tester_manifest_pins_candidate": false,
+      "persisted_candidate_identity_observed": false,
+      "reason": "No 1.18.21 identity appears in either source manifest or the authenticated live worker API projection. No direct database access or mutation was performed."
+    }
+  },
+  "aiat_runtime": {
+    "compose_ref": "mas/infra/compose/docker-compose.yml:opencode-runtime",
+    "compose_image_environment_name": "AIAT_OPENCODE_RUNTIME_IMAGE_REF",
+    "compose_build_version": "1.17.13",
+    "compose_build_tarball_sha512_base64": "qUb9m6X6f9/imuDxc2tUcN+E1vx1XWjmQWJo2Pk/t+cNxqt5KGkaMF89CvJK6QQP7gx1E82gKpV7n1QiI5spxQ==",
+    "dockerfile_ref": "mas/infra/docker/Dockerfile.opencode",
+    "dockerfile_package": "opencode-ai",
+    "dockerfile_default_version": "1.17.13",
+    "dockerfile_base_image": "node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3",
+    "candidate_1_18_21_npm_tarball_checksum_configured": false,
+    "observed_local_container": {
+      "observation_method": [
+        "docker context show",
+        "docker inspect selected container/image identity and health fields",
+        "docker exec selected container opencode --version",
+        "docker exec selected container read OPENCODE_DISABLE_PROJECT_CONFIG"
+      ],
+      "container": "mas-opencode-runtime-1",
+      "configured_image": "mas/opencode-runtime:dev-project-config-disabled",
+      "state": "running",
+      "health": "healthy",
+      "application_version": "1.17.13",
+      "project_config_disabled": true,
+      "local_image_id": "sha256:1a6c7b1d6ec65563dc9ae752eac7657a2d5f062d9d51e906d2f9208326032542",
+      "registry_release_digest": null,
+      "scope": "local WSL development stack after security hardening; not a production image attestation or worker admission"
+    },
+    "deployment_candidate_match": false,
+    "security_hardening": {
+      "change": "Set OPENCODE_DISABLE_PROJECT_CONFIG=true in the managed runtime image",
+      "runtime_version": "1.17.13",
+      "local_runsc_smoke": "pass: authenticated server health returned 200; managed AIAT provider config present; sentinel project plugin did not execute",
+      "candidate_1_18_21_applied": false,
+      "active_worker_identity_changed": false,
+      "provider_dispatch_performed": false,
+      "limitation": "Flag-false runsc positive control did not complete because project plugin setup stalled on unavailable network; a separate upstream/runc control demonstrated plugin loading."
+    }
+  },
+  "adapter_compatibility": {
+    "adapter_source_ref": "mas/packages/mas-core/mas_core/worker_registry/runtime_adapters.py:OpenCodeAdapter",
+    "adapter_version": "1.0.0",
+    "interface_verification_loader_requires_committed_report": true,
+    "runtime_release_is_bound_to_report_release": true,
+    "approved_report_ref": "mas/packages/mas-core/mas_core/worker_registry/fixtures/opencode-phase0b-1.17.13.json",
+    "approved_report_id": "opencode-phase0b-1.17.13",
+    "approved_report_release": "1.17.13",
+    "approved_report_upstream_commit": "F8C45BAE73A8F1E2088023FDD34DC2FE0A7F93F505F073E0703E4E1A19AFE8FF",
+    "approved_report_openapi_sha256": "03d773f1ff66b1c2dc0b000fc541fb6955a8cb924cc5816dc6d0e67c31974a78",
+    "candidate_1_18_21_interface_report_present": false,
+    "candidate_1_18_21_live_interface_probe": {
+      "status": "required_operation_coverage_pass_schema_digest_mismatch",
+      "image_digest": "sha256:56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb",
+      "runtime_version": "1.18.21",
+      "authenticated_health_http": 200,
+      "unauthenticated_health_http": 401,
+      "invalid_auth_health_http": 401,
+      "openapi_path_count": 162,
+      "required_adapter_operation_count": 20,
+      "missing_required_operations": [],
+      "sanitized_openapi_sha256": "25c2d05b2d598898c8ca818253ad821dda574aebc507dea77ead15e695891683",
+      "approved_1_17_13_openapi_sha256": "03d773f1ff66b1c2dc0b000fc541fb6955a8cb924cc5816dc6d0e67c31974a78",
+      "schema_matches_approved_1_17_13_report": false,
+      "session_created": false,
+      "prompt_submitted": false,
+      "provider_request_made": false,
+      "container_configuration": [
+        "fresh disposable container",
+        "OPENCODE_DISABLE_PROJECT_CONFIG=true",
+        "--pure",
+        "no provider credentials supplied",
+        "temporary workspace"
+      ],
+      "scope": "read-only live interface probe; not adapter certification or activation evidence"
+    },
+    "static_route_source_comparison": {
+      "candidate_source_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/source-snapshot.tar.xz",
+      "candidate_paths_observed": [
+        "/global/health",
+        "/global/event",
+        "/session",
+        "/session/status",
+        "/session/:sessionID",
+        "/session/:sessionID/message",
+        "/session/:sessionID/prompt_async",
+        "/session/:sessionID/abort",
+        "/session/:sessionID/permissions/:permissionID",
+        "/file/content",
+        "/file/status",
+        "/mcp",
+        "/project/current"
+      ],
+      "result": "required_path_families_are_present_in_candidate_source",
+      "scope_limit": "Static route declarations only; no 1.18.21 live OpenAPI schema, request/response fixture, event-stream verification, auth verification, or adapter execution was captured."
+    },
+    "deployment_compatibility": "not_proven_blocked",
+    "deployment_compatibility_reason": "The pinned 1.18.21 image passed runtime-version, authenticated health, and required operation-ID coverage checks. Its sanitized OpenAPI digest differs from the adapter's approved 1.17.13 digest, and no 1.18.21 committed adapter-verification report, session/event fixtures, or canonical adapter execution evidence exists."
+  },
+  "security_evidence_identity": {
+    "old_manifest_scan_ref": "mas/docs/provenance/security_scan_evidence.yaml#opencode-1.17.13-semgrep-2026-08-10",
+    "old_manifest_scan_classification": "FAILED_UNREPRODUCIBLE",
+    "old_manifest_raw_findings_retained": false,
+    "old_manifest_source_snapshot_retained": false,
+    "candidate_scan_evidence_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/candidate-certification.json",
+    "candidate_scan_gate": "blocked",
+    "candidate_security_review_ref": "mas/docs/provenance/security_scan_review.yaml",
+    "human_or_security_disposition_required": true
+  },
+  "live_read_only_worker_and_project_observation": {
+    "observation_type": "authenticated API reads followed by canonical read-only readiness evaluation",
+    "direct_database_access": false,
+    "database_mutation": false,
+    "api_endpoints": [
+      "GET /capabilities/workers",
+      "GET /projects/{project_id}",
+      "GET /companies/{company_id}",
+      "GET /companies/{company_id}/assignments",
+      "GET /companies/{company_id}/budgets",
+      "GET /model-profiles",
+      "GET /capabilities/workers/{worker_id}/health"
+    ],
+    "readiness_evaluator": "evaluate_worker_run_readiness",
+    "worker": {
+      "id": "82210257-ef01-4f5a-b920-e40abd28b63a",
+      "worker_id": "coding_worker",
+      "status": "INACTIVE",
+      "version_pin": "1.17.13",
+      "evaluation_status": "compatibility_pending_governance",
+      "active_shell_version_id": null,
+      "active_adapter_id": null,
+      "active_skill_bundle_id": null,
+      "persisted_1_18_21_candidate": "not evidenced"
+    },
+    "project": {
+      "selection": "existing failed project supplied to readiness evaluation; ID not included in this report",
+      "terminal_code": "project_terminal"
+    },
+    "readiness_blocker_codes": [
+      "worker_not_active",
+      "worker_evaluation_not_approved",
+      "active_shell_version_id_missing",
+      "active_adapter_id_missing",
+      "active_skill_bundle_id_missing",
+      "worker_assignment_missing",
+      "project_terminal"
+    ],
+    "status": "blocked",
+    "runtime_security_update": {
+      "active_runtime_version": "1.17.13",
+      "active_runtime_image_id": "sha256:1a6c7b1d6ec65563dc9ae752eac7657a2d5f062d9d51e906d2f9208326032542",
+      "active_runtime_health": "healthy",
+      "project_config_disabled": true,
+      "worker_admission_changed": false,
+      "provider_dispatch_performed": false
+    }
+  },
+  "readiness_blocker_revalidation": {
+    "observation_date": "2026-10-12",
+    "method": "authenticated API reads followed by evaluate_worker_run_readiness",
+    "worker_id": "82210257-ef01-4f5a-b920-e40abd28b63a",
+    "worker_name": "coding_worker",
+    "project_selection": "existing FAILED project; no new project was created",
+    "mutations_performed": false,
+    "provider_dispatch_performed": false,
+    "before_codes_from_retained_observation": [
+      "worker_not_active",
+      "worker_evaluation_not_approved",
+      "active_shell_version_id_missing",
+      "active_adapter_id_missing",
+      "active_skill_bundle_id_missing",
+      "worker_assignment_missing"
+    ],
+    "after_codes_live_read_only": [
+      "worker_not_active",
+      "worker_evaluation_not_approved",
+      "active_shell_version_id_missing",
+      "active_adapter_id_missing",
+      "active_skill_bundle_id_missing",
+      "worker_assignment_missing",
+      "project_terminal"
+    ],
+    "blockers": [
+      {
+        "code": "worker_not_active",
+        "owner": "worker registry and operator",
+        "prerequisite": "all governed activation checks must pass before status can transition to ACTIVE",
+        "canonical_action": "PATCH /capabilities/workers/{worker_id}/status with action ACTIVATE",
+        "classification": "operator action after technical and governance prerequisites",
+        "depends_on_opencode_security_gate": true
+      },
+      {
+        "code": "worker_evaluation_not_approved",
+        "owner": "candidate certification and human approver",
+        "prerequisite": "server-run candidate certification passes and a human approves that exact immutable candidate",
+        "canonical_action": "POST /capabilities/workers/{worker_id}/steward/candidates/{candidate_id}/approve after certification",
+        "classification": "technical certification plus human decision",
+        "depends_on_opencode_security_gate": true
+      },
+      {
+        "code": "active_shell_version_id_missing",
+        "owner": "steward rollout lifecycle",
+        "prerequisite": "candidate certification materializes an immutable shell, followed by approval and rollout activation",
+        "canonical_action": "complete candidate intake, technical certification, approval, rollout, and activation in order",
+        "classification": "governed lifecycle; no direct pointer update",
+        "depends_on_opencode_security_gate": true
+      },
+      {
+        "code": "active_adapter_id_missing",
+        "owner": "steward rollout lifecycle",
+        "prerequisite": "candidate has an immutable runtime adapter with passed conformance, then rollout activation",
+        "canonical_action": "complete candidate intake, technical certification, approval, rollout, and activation in order",
+        "classification": "technical certification and governed rollout",
+        "depends_on_opencode_security_gate": true
+      },
+      {
+        "code": "active_skill_bundle_id_missing",
+        "owner": "steward rollout lifecycle",
+        "prerequisite": "candidate skill bundle is technically verified and approved, then rollout activation",
+        "canonical_action": "complete candidate intake, technical certification, approval, rollout, and activation in order",
+        "classification": "technical certification and governed rollout",
+        "depends_on_opencode_security_gate": true
+      },
+      {
+        "code": "worker_assignment_missing",
+        "owner": "company manifest authority and operator",
+        "prerequisite": "company manifest contains a department assignment with least-privilege grants; default manifest currently omits coding_worker and live assignment read returned zero rows",
+        "canonical_action": "POST /companies/{company_id}/manifest/validate, then operator-authenticated POST /companies/{company_id}/manifest/apply with the current expected_manifest_version; external worker assignment approval remains required by company policy",
+        "classification": "operator-governed company policy change; not changed in this run",
+        "depends_on_opencode_security_gate": false
+      },
+      {
+        "code": "project_terminal",
+        "owner": "project lifecycle and operator",
+        "prerequisite": "select or create a nonterminal project through canonical project APIs",
+        "canonical_action": "use a new disposable project or the supported project recovery flow; do not reuse the existing FAILED project",
+        "classification": "separate project-state blocker",
+        "depends_on_opencode_security_gate": false
+      }
+    ],
+    "live_api_result": {
+      "worker_status": "INACTIVE",
+      "evaluation_status": "compatibility_pending_governance",
+      "version_pin": "1.17.13",
+      "active_shell_version_id": null,
+      "active_adapter_id": null,
+      "active_skill_bundle_id": null,
+      "company_assignment_rows_for_worker": 0,
+      "selected_project_state": "FAILED",
+      "readiness_status": "blocked"
+    }
+  },
+  "version_alignment": {
+    "manifest_source_revision_vs_runtime": "match_at_1.17.13",
+    "manifest_vs_retained_candidate_source": "mismatch_1.17.13_vs_1.18.21",
+    "manifest_vs_retained_candidate_oci_image": "mismatch_1.17.13_vs_1.18.21",
+    "compose_vs_dockerfile": "match_at_1.17.13",
+    "compose_dockerfile_vs_candidate_source": "mismatch_1.17.13_vs_1.18.21",
+    "adapter_approved_interface_vs_current_runtime": "match_at_1.17.13",
+    "adapter_approved_interface_vs_candidate": "no_1.18.21_interface_approval",
+    "safe_to_change_active_manifests_or_runtime_config": false,
+    "reason": "The upstream 1.18.21 OCI digest and reported binary version are now locally verified, and the live OpenAPI contains every required adapter operation. However, AIAT's separate npm-based runtime recipe has no configured 1.18.21 tarball checksum; the 1.18.21 sanitized OpenAPI digest differs from the approved 1.17.13 report; no 1.18.21 adapter fixtures/report exist; and candidate security certification remains blocked. Do not change active manifests or runtime configuration until the exact candidate runtime and adapter interface are governed through the existing lifecycle."
+  },
+  "safe_next_governed_steps": [
+    "Keep coding_worker and tester inactive and unchanged.",
+    "Resolve the exact 1.18.21 deployment artifact: use the verified immutable OCI digest only if the AIAT runtime packaging/sandbox contract is proven compatible, or obtain and pin the exact npm tarball checksum for the existing AIAT image recipe.",
+    "Create the version-specific OpenCode interface candidate report and sanitized request/response/event fixtures; investigate the OpenAPI digest difference and run adapter contract checks under the required sandbox without submitting a model prompt.",
+    "Run or reuse security evidence only for the exact candidate bytes and finish technical review; preserve human decisions as pending.",
+    "Submit the new immutable shell/adapter/skill candidate through the existing steward candidate lifecycle, then complete intake, technical certification, human approval, rollout, and activation in order."
+  ]
+}
