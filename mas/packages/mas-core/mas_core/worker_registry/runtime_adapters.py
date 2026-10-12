@@ -19,6 +19,7 @@ import re
 import shutil
 import time
 from collections.abc import Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
@@ -153,6 +154,7 @@ _PROCESS_SECRET_KEY_RE = re.compile(
     re.IGNORECASE,
 )
 _REDACTED_PROCESS_VALUE = "[REDACTED]"
+_PROCESS_TOOL_PROTOCOL_MAX_MESSAGE_BYTES = 1_048_576
 
 
 def _copy_explicit_process_environment(
@@ -226,6 +228,12 @@ class ProcessAdapter(BaseWorkerAdapter):
     The command is a list of arguments and is never passed through a shell.
     A runtime must emit JSON lines for normalized events or a final JSON result;
     non-JSON stdout is retained as output text and does not become authority.
+    The opt-in bidirectional tool protocol keeps stdin open after the initial
+    request. A child emits a normal ``WorkerEvent`` with ``event_type`` set to
+    ``tool_request`` and waits for a line shaped as
+    ``{"message_type":"WorkerToolResponse","payload":...}``. Only the
+    controller can deliver that response after normal grant checks and tool
+    mediation. The default remains the legacy one-request/one-result mode.
     ``environment`` is an explicit child-environment allowlist.  It is never
     merged with the parent environment or ``AdapterContext.secrets``.
     """
@@ -243,6 +251,8 @@ class ProcessAdapter(BaseWorkerAdapter):
         context: AdapterContext | None = None,
         runner: Callable[..., Awaitable[Any]] | None = None,
         runtime_version: str | None = None,
+        bidirectional_tool_protocol: bool = False,
+        tool_response_timeout_seconds: float = 30.0,
     ) -> None:
         if not command or any(not isinstance(part, str) or not part for part in command):
             raise ValueError("process adapter command must be a non-empty argument list")
@@ -258,6 +268,84 @@ class ProcessAdapter(BaseWorkerAdapter):
         self._runner = runner
         self._processes: dict[UUID, asyncio.subprocess.Process] = {}
         self._force_cancel_requested: set[UUID] = set()
+        if not isinstance(bidirectional_tool_protocol, bool):
+            raise ValueError("bidirectional_tool_protocol must be a boolean opt-in")
+        if isinstance(tool_response_timeout_seconds, bool) or not (
+            0 < float(tool_response_timeout_seconds) <= 120
+        ):
+            raise ValueError("process tool response timeout must be greater than zero and at most 120 seconds")
+        self.bidirectional_tool_protocol = bidirectional_tool_protocol
+        self.tool_response_timeout_seconds = float(tool_response_timeout_seconds)
+        self._pending_process_tool_requests: dict[tuple[UUID, UUID], str] = {}
+        self._process_tool_timeout_tasks: dict[tuple[UUID, UUID], asyncio.Task[None]] = {}
+        self._process_tool_timed_out_runs: set[UUID] = set()
+        self._process_tool_protocol_errors: dict[UUID, tuple[str, str]] = {}
+        if self.bidirectional_tool_protocol and self._runner is not None:
+            raise ValueError("bidirectional tool protocol requires a real child process")
+
+    def _track_process_tool_request(
+        self,
+        request: WorkerRunRequest,
+        tool_request: WorkerToolRequest | None,
+        process: asyncio.subprocess.Process,
+    ) -> None:
+        if not self.bidirectional_tool_protocol:
+            return
+        if tool_request is None or tool_request.run_id != request.run_id:
+            raise ValueError("process tool request must be scoped to the active WorkerRun")
+        key = (request.run_id, tool_request.request_id)
+        if key in self._pending_process_tool_requests:
+            raise ValueError("process tool request ID is already pending")
+        self._pending_process_tool_requests[key] = tool_request.tool_name
+        self._process_tool_timeout_tasks[key] = asyncio.create_task(
+            self._expire_process_tool_request(key, process)
+        )
+
+    async def _expire_process_tool_request(
+        self,
+        key: tuple[UUID, UUID],
+        process: asyncio.subprocess.Process,
+    ) -> None:
+        try:
+            await asyncio.sleep(self.tool_response_timeout_seconds)
+            if key not in self._pending_process_tool_requests:
+                return
+            self._pending_process_tool_requests.pop(key, None)
+            self._process_tool_timed_out_runs.add(key[0])
+            if process.returncode is None:
+                with suppress(ProcessLookupError):
+                    process.kill()
+        except asyncio.CancelledError:
+            raise
+        finally:
+            if self._process_tool_timeout_tasks.get(key) is asyncio.current_task():
+                self._process_tool_timeout_tasks.pop(key, None)
+
+    async def _clear_process_tool_requests(self, run_id: UUID) -> None:
+        tasks: list[asyncio.Task[None]] = []
+        for key in [key for key in self._pending_process_tool_requests if key[0] == run_id]:
+            self._pending_process_tool_requests.pop(key, None)
+        for key in [key for key in self._process_tool_timeout_tasks if key[0] == run_id]:
+            task = self._process_tool_timeout_tasks.pop(key, None)
+            if task is not None and task is not asyncio.current_task():
+                task.cancel()
+                tasks.append(task)
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _abort_process_tool_protocol(
+        self,
+        run_id: UUID,
+        process: asyncio.subprocess.Process,
+        *,
+        code: str,
+        message: str,
+    ) -> None:
+        self._process_tool_protocol_errors[run_id] = (code, message)
+        await self._clear_process_tool_requests(run_id)
+        if process.returncode is None:
+            with suppress(ProcessLookupError):
+                process.kill()
 
     async def _execute(self, request: WorkerRunRequest) -> Any:
         if self._runner is not None:
@@ -292,7 +380,8 @@ class ProcessAdapter(BaseWorkerAdapter):
                 if request.run_id not in self._cancel_requested:
                     raise
             finally:
-                process.stdin.close()
+                if not self.bidirectional_tool_protocol:
+                    process.stdin.close()
         outputs: list[str] = []
         final: WorkerResult | None = None
         assert process.stdout is not None
@@ -302,6 +391,17 @@ class ProcessAdapter(BaseWorkerAdapter):
         stderr_task = asyncio.create_task(process.stderr.read())
         try:
             async for raw_line in process.stdout:
+                if (
+                    self.bidirectional_tool_protocol
+                    and len(raw_line) > _PROCESS_TOOL_PROTOCOL_MAX_MESSAGE_BYTES
+                ):
+                    await self._abort_process_tool_protocol(
+                        request.run_id,
+                        process,
+                        code="PROCESS_PROTOCOL_MESSAGE_TOO_LARGE",
+                        message="process worker emitted a JSON line larger than the 1 MiB protocol limit",
+                    )
+                    break
                 line = raw_line.decode(errors="replace").rstrip("\n")
                 if not line:
                     continue
@@ -317,6 +417,8 @@ class ProcessAdapter(BaseWorkerAdapter):
                         "worker_id": self.worker_id,
                         **data,
                     })
+                    if event.event_type == EventType.TOOL_REQUEST:
+                        self._track_process_tool_request(request, event.tool_request, process)
                     await self._emit(event)
                     if event.result is not None:
                         final = event.result
@@ -351,6 +453,46 @@ class ProcessAdapter(BaseWorkerAdapter):
                         category="cancellation",
                     ),
                 )
+            if request.run_id in self._process_tool_timed_out_runs:
+                return WorkerResult(
+                    run_id=request.run_id,
+                    worker_id=self.worker_id,
+                    success=False,
+                    error=WorkerError(
+                        code="TOOL_RESPONSE_TIMEOUT",
+                        message="process worker did not complete the bounded tool response protocol",
+                        retryable=False,
+                        terminal=True,
+                        category="tool_mediation",
+                    ),
+                )
+            protocol_error = self._process_tool_protocol_errors.get(request.run_id)
+            if protocol_error is not None:
+                return WorkerResult(
+                    run_id=request.run_id,
+                    worker_id=self.worker_id,
+                    success=False,
+                    error=WorkerError(
+                        code=protocol_error[0],
+                        message=protocol_error[1],
+                        retryable=False,
+                        terminal=True,
+                        category="transport",
+                    ),
+                )
+            if any(key[0] == request.run_id for key in self._pending_process_tool_requests):
+                return WorkerResult(
+                    run_id=request.run_id,
+                    worker_id=self.worker_id,
+                    success=False,
+                    error=WorkerError(
+                        code="TOOL_RESPONSE_UNDELIVERED",
+                        message="process worker exited with an unresolved mediated tool request",
+                        retryable=False,
+                        terminal=True,
+                        category="tool_mediation",
+                    ),
+                )
             if final is not None:
                 return final
             if process.returncode:
@@ -371,9 +513,82 @@ class ProcessAdapter(BaseWorkerAdapter):
             if not stderr_task.done():
                 stderr_task.cancel()
                 await asyncio.gather(stderr_task, return_exceptions=True)
+            if process.returncode is None:
+                with suppress(ProcessLookupError):
+                    process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=0.5)
+                except TimeoutError:
+                    with suppress(ProcessLookupError):
+                        process.kill()
+                    await process.wait()
+            await self._clear_process_tool_requests(request.run_id)
             self._processes.pop(request.run_id, None)
             self._cancel_requested.discard(request.run_id)
             self._force_cancel_requested.discard(request.run_id)
+            self._process_tool_timed_out_runs.discard(request.run_id)
+            self._process_tool_protocol_errors.pop(request.run_id, None)
+
+    async def deliver_tool_response(self, response: WorkerToolResponse) -> None:
+        """Return a controller-mediated tool result to an opted-in child."""
+
+        if not self.bidirectional_tool_protocol:
+            await super().deliver_tool_response(response)
+            return
+        key = (response.run_id, response.request_id)
+        expected_tool = self._pending_process_tool_requests.get(key)
+        process = self._processes.get(response.run_id)
+        if expected_tool is None or expected_tool != response.tool_name:
+            if process is not None and any(
+                pending_run_id == response.run_id
+                for pending_run_id, _request_id in self._pending_process_tool_requests
+            ):
+                await self._abort_process_tool_protocol(
+                    response.run_id,
+                    process,
+                    code="PROCESS_TOOL_RESPONSE_CORRELATION_MISMATCH",
+                    message="controller tool response did not match the pending child request",
+                )
+            raise RuntimeError("process tool response does not match a pending request")
+        if process is None or process.returncode is not None or process.stdin is None or process.stdin.is_closing():
+            raise RuntimeError("process worker is no longer available for the tool response")
+        payload = json.dumps(
+            {
+                "message_type": "WorkerToolResponse",
+                "payload": response.model_dump(mode="json"),
+            },
+            separators=(",", ":"),
+        ).encode("utf-8") + b"\n"
+        if len(payload) > _PROCESS_TOOL_PROTOCOL_MAX_MESSAGE_BYTES:
+            await self._abort_process_tool_protocol(
+                response.run_id,
+                process,
+                code="PROCESS_TOOL_RESPONSE_TOO_LARGE",
+                message="mediated tool response exceeds the 1 MiB protocol limit",
+            )
+            raise ValueError("process tool response exceeds the 1 MiB protocol limit")
+        try:
+            process.stdin.write(payload)
+            await asyncio.wait_for(
+                process.stdin.drain(),
+                timeout=self.tool_response_timeout_seconds,
+            )
+        except (BrokenPipeError, ConnectionResetError, TimeoutError) as exc:
+            await self._abort_process_tool_protocol(
+                response.run_id,
+                process,
+                code="PROCESS_TOOL_RESPONSE_DELIVERY_FAILED",
+                message="process worker did not accept the mediated tool response",
+            )
+            raise RuntimeError("process worker did not accept the mediated tool response") from exc
+        if self._pending_process_tool_requests.get(key) != expected_tool:
+            raise RuntimeError("process tool response timed out before delivery completed")
+        self._pending_process_tool_requests.pop(key, None)
+        timeout_task = self._process_tool_timeout_tasks.pop(key, None)
+        if timeout_task is not None:
+            timeout_task.cancel()
+            await asyncio.gather(timeout_task, return_exceptions=True)
+        await super().deliver_tool_response(response)
 
     async def cancel(self, request: WorkerCancellation) -> WorkerCancellationReceipt:
         if not self._cancellation_matches_active_attempt(request):
@@ -391,6 +606,7 @@ class ProcessAdapter(BaseWorkerAdapter):
         if request.force:
             self._force_cancel_requested.add(request.run_id)
         process = self._processes.get(request.run_id)
+        await self._clear_process_tool_requests(request.run_id)
         if process is not None:
             # Record the intent before signalling the child so an expected
             # non-zero process exit is normalized as cancellation below.
@@ -1460,10 +1676,11 @@ def _framework_runner(callable_worker: Callable[..., Any], *, call_style: str) -
 class OCIAdapter(ProcessAdapter):
     """OCI adapter using a pinned image digest and a certified runtime.
 
-    ``sandboxed`` maps to Docker's gVisor ``runsc`` runtime.  ``vm_isolated``
-    maps to a Kata runtime registered on the worker host.  The adapter never
-    selects runc and never treats the direct Firecracker launcher as a
-    substitute for Kata.
+    ``trusted`` maps to Docker's ``runc`` runtime only when the caller
+    explicitly attests that this is a trusted worker. ``sandboxed`` maps to
+    gVisor ``runsc`` and ``vm_isolated`` maps to a Kata runtime registered on
+    the worker host. The adapter never weakens a hardened profile to runc and
+    never treats the direct Firecracker launcher as a substitute for Kata.
     """
 
     runtime_type = "oci"
@@ -1476,6 +1693,7 @@ class OCIAdapter(ProcessAdapter):
         launcher: str = "docker",
         sandbox_profile: str | None = None,
         sandbox_runtime: str | None = None,
+        trusted_worker: bool = False,
         memory_limit: str = "512m",
         cpu_limit: str = "1.0",
         pids_limit: int = 256,
@@ -1488,22 +1706,23 @@ class OCIAdapter(ProcessAdapter):
             sandbox_class = canonical_sandbox_class(raw_profile)
         except ValueError as exc:
             raise ValueError(
-                "OCI workers require a hardened sandbox profile (sandboxed or vm_isolated)"
+                "OCI workers require an explicit sandbox profile: trusted, sandboxed, or vm_isolated"
             ) from exc
-        if sandbox_class not in {"sandboxed", "vm_isolated"}:
-            raise ValueError(
-                "OCI workers require a hardened sandbox profile (sandboxed or vm_isolated)"
-            )
+        if sandbox_class == "trusted" and trusted_worker is not True:
+            raise ValueError("trusted OCI execution requires an explicit trusted worker policy")
+        if sandbox_class != "trusted" and trusted_worker is not False:
+            raise ValueError("trusted_worker may only be set for the trusted OCI profile")
+        if not isinstance(trusted_worker, bool):
+            raise ValueError("trusted_worker must be a boolean")
         if launcher != "docker":
-            raise ValueError("AIAT OCI sandbox execution currently requires the certified Docker launcher")
+            raise ValueError("AIAT OCI execution currently requires the certified Docker launcher")
         sandbox_runtime = str(
-            sandbox_runtime
-            or ("runsc" if sandbox_class == "sandboxed" else "kata")
+            sandbox_runtime or required_runtime_for_sandbox(sandbox_class)
         ).strip().lower()
         required_runtime = required_runtime_for_sandbox(sandbox_class)
         if not runtime_implements_sandbox(sandbox_runtime, sandbox_class):
             raise ValueError(
-                f"{sandbox_class} OCI execution requires the {required_runtime} sandbox runtime"
+                f"{sandbox_class} OCI execution requires the {required_runtime} runtime"
             )
         if pids_limit <= 0:
             raise ValueError("OCI pids_limit must be positive")
@@ -1531,7 +1750,13 @@ class OCIAdapter(ProcessAdapter):
             cpu_limit,
             image,
         ]
-        super().__init__(command, worker_id=worker_id, **kwargs)
+        super().__init__(
+            command,
+            worker_id=worker_id,
+            bidirectional_tool_protocol=kwargs.pop("bidirectional_tool_protocol", False),
+            tool_response_timeout_seconds=float(kwargs.pop("tool_response_timeout_seconds", 30.0)),
+            **kwargs,
+        )
         self.image = image
         self.sandbox_profile = sandbox_class
         self.sandbox_class = sandbox_class
@@ -2837,9 +3062,19 @@ def adapter_for_transport(
         # canonical vm_isolated policy class.  Direct launcher execution is
         # available only through the explicit legacy compatibility switch.
         canonical_profile = "vm_isolated" if raw_profile == "firecracker" else sandbox_class
+        execution_policy = config.get("execution_policy")
+        trusted_worker = (
+            isinstance(execution_policy, Mapping)
+            and execution_policy.get("trust") == "trusted"
+            and execution_policy.get("minimum_isolation") in {None, "trusted"}
+        )
+        if canonical_profile == "trusted" and not trusted_worker:
+            raise ValueError(
+                "trusted OCI execution requires an immutable trusted execution policy"
+            )
         sandbox_runtime = str(
             config.get("sandbox_runtime")
-            or ("runsc" if sandbox_class == "sandboxed" else "kata")
+            or required_runtime_for_sandbox(canonical_profile)
         )
         return OCIAdapter(
             config["image"],
@@ -2848,9 +3083,15 @@ def adapter_for_transport(
             launcher=config.get("launcher", "docker"),
             sandbox_profile=canonical_profile,
             sandbox_runtime=sandbox_runtime,
+            trusted_worker=trusted_worker,
             memory_limit=config.get("memory_limit", "512m"),
             cpu_limit=config.get("cpu_limit", "1.0"),
             pids_limit=int(config.get("pids_limit", 256)),
+            cwd=config.get("cwd"),
+            environment=config.get("environment"),
+            bidirectional_tool_protocol=config.get("bidirectional_tool_protocol", False),
+            tool_response_timeout_seconds=float(config.get("tool_response_timeout_seconds", 30.0)),
+            runtime_version=config.get("runtime_version"),
         )
     if normalized in {"aiat_gateway", "gateway"}:
         from mas_core.llm_gateway.models import LLMConfig

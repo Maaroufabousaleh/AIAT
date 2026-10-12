@@ -7,6 +7,7 @@ import hashlib
 import json
 import re
 import sys
+from typing import Any
 from uuid import uuid4
 
 import httpx
@@ -846,6 +847,7 @@ async def test_project_scoped_opencode_run_cancels_at_provider_boundary_without_
     snapshot_id = uuid4()
     mcp_name: str | None = None
     prompt_calls = 0
+    session_payloads: list[dict[str, Any]] = []
     session_created = asyncio.Event()
     abort_paths: list[str] = []
     deleted_paths: list[str] = []
@@ -866,6 +868,7 @@ async def test_project_scoped_opencode_run_cancels_at_provider_boundary_without_
         if request.method == "GET" and path == "/session":
             return httpx.Response(200, json=[], request=request)
         if request.method == "POST" and path == "/session":
+            session_payloads.append(json.loads(request.content))
             session_created.set()
             return httpx.Response(200, json={"id": "ses_pre_provider_boundary"}, request=request)
         if request.method == "GET" and path == "/global/event":
@@ -961,6 +964,14 @@ async def test_project_scoped_opencode_run_cancels_at_provider_boundary_without_
     assert len(abort_paths) >= 1
     assert deleted_paths == ["/session/ses_pre_provider_boundary"]
     assert prompt_calls == 0
+    assert len(session_payloads) == 1
+    session_permissions = session_payloads[0]["permission"]
+    assert {"permission": "*", "pattern": "*", "action": "deny"} in session_permissions
+    assert {
+        "permission": f"{mcp_name}_aiat_tool",
+        "pattern": "*",
+        "action": "allow",
+    } in session_permissions
     assert request.project_id == project_id
     assert request.resolved_model_profile.resolution_snapshot_id == snapshot_id
     assert controller._memory_tool_effects == {}

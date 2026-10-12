@@ -37,12 +37,22 @@ from .models import (
     WorkerRunAccepted,
     WorkerRunRequest,
     WorkerRuntimeStatus,
+    WorkerToolRequest,
     WorkerToolResponse,
 )
 
 
 class WorkerStartCancelled(RuntimeError):
     """Raised when a pending cancellation prevents adapter acceptance."""
+
+
+class WorkerToolResponseTimeout(TimeoutError):
+    """Raised when a governed tool request receives no controller response."""
+
+
+class WorkerToolResponseCancelled(RuntimeError):
+    """Raised when cancellation interrupts a worker waiting for tool mediation."""
+
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +108,13 @@ class WorkerAdapter(Protocol):
 
     async def deliver_tool_response(self, response: WorkerToolResponse) -> None: ...
 
+    async def request_tool(
+        self,
+        request: WorkerToolRequest,
+        *,
+        timeout_seconds: float = 30.0,
+    ) -> WorkerToolResponse: ...
+
     async def close(self) -> None: ...
 
 
@@ -128,6 +145,8 @@ class BaseWorkerAdapter:
         self._terminal_status: dict[UUID, str] = {}
         self._execution_claim_fence_by_run: dict[UUID, dict[str, Any]] = {}
         self._runtime_run_id_by_run: dict[UUID, str] = {}
+        self._tool_response_waiters: dict[tuple[UUID, UUID], asyncio.Future[WorkerToolResponse]] = {}
+        self._tool_request_names: dict[tuple[UUID, UUID], str] = {}
         self._closed = False
 
     @staticmethod
@@ -299,6 +318,38 @@ class BaseWorkerAdapter:
                 error=result.error if not result.success else None,
                 usage=result.usage,
             ))
+        except WorkerToolResponseTimeout as exc:
+            self._terminal_status[request.run_id] = "FAILED"
+            error = WorkerError(
+                code="TOOL_RESPONSE_TIMEOUT",
+                message=str(exc),
+                retryable=True,
+                category="tool_mediation",
+                cause_type=type(exc).__name__,
+            )
+            await self._emit(WorkerEvent(
+                protocol=self._protocol(),
+                run_id=request.run_id,
+                worker_id=self.worker_id,
+                event_type=EventType.ERROR,
+                error=error,
+            ))
+        except WorkerToolResponseCancelled as exc:
+            self._terminal_status[request.run_id] = "CANCELLED"
+            error = WorkerError(
+                code="CANCELLED",
+                message=str(exc),
+                retryable=False,
+                terminal=True,
+                category="cancellation",
+            )
+            await self._emit(WorkerEvent(
+                protocol=self._protocol(),
+                run_id=request.run_id,
+                worker_id=self.worker_id,
+                event_type=EventType.CANCELLED,
+                error=error,
+            ))
         except asyncio.CancelledError:
             self._terminal_status[request.run_id] = "CANCELLED"
             error = WorkerError(
@@ -433,6 +484,7 @@ class BaseWorkerAdapter:
                 details={"reason": "runtime already terminal"},
             )
         self._cancel_requested.add(request.run_id)
+        self._wake_tool_response_waiters(request.run_id)
         task = self._active_tasks.get(request.run_id)
         if task is None:
             accepted = any(item.run_id == request.run_id for item in self._accepted_by_key.values())
@@ -588,6 +640,68 @@ class BaseWorkerAdapter:
             event_type=EventType.TOOL_RESPONSE,
             tool_response=response,
         ))
+        key = (response.run_id, response.request_id)
+        waiter = self._tool_response_waiters.get(key)
+        expected_tool = self._tool_request_names.get(key)
+        if waiter is not None and not waiter.done() and expected_tool == response.tool_name:
+            waiter.set_result(response)
+
+    async def request_tool(
+        self,
+        request: WorkerToolRequest,
+        *,
+        timeout_seconds: float = 30.0,
+    ) -> WorkerToolResponse:
+        """Emit a governed request and await the controller's durable response.
+
+        The controller remains responsible for grant checks, durable effect
+        records, approvals, and Tool Service dispatch. This method only
+        correlates the response with the active native worker task.
+        """
+
+        if self._closed:
+            raise RuntimeError("adapter is closed")
+        if isinstance(timeout_seconds, bool) or not 0 < float(timeout_seconds) <= 120:
+            raise ValueError("tool response timeout must be greater than zero and at most 120 seconds")
+        run_id = request.run_id
+        if run_id in self._cancel_requested:
+            raise WorkerToolResponseCancelled("worker run was cancelled before tool mediation")
+        active_task = self._active_tasks.get(run_id)
+        if active_task is None or active_task is not asyncio.current_task():
+            raise RuntimeError("tool requests may only be emitted by the active worker task")
+        key = (run_id, request.request_id)
+        if key in self._tool_response_waiters:
+            raise RuntimeError("tool request ID is already waiting for a response")
+
+        future = asyncio.get_running_loop().create_future()
+        self._tool_response_waiters[key] = future
+        self._tool_request_names[key] = request.tool_name
+        try:
+            await self._emit(WorkerEvent(
+                protocol=self._protocol(),
+                run_id=run_id,
+                worker_id=self.worker_id,
+                event_type=EventType.TOOL_REQUEST,
+                tool_request=request,
+            ))
+            try:
+                return await asyncio.wait_for(future, timeout=float(timeout_seconds))
+            except TimeoutError as exc:
+                raise WorkerToolResponseTimeout(
+                    "AIAT did not return a mediated tool response before timeout"
+                ) from exc
+        finally:
+            self._tool_response_waiters.pop(key, None)
+            self._tool_request_names.pop(key, None)
+            if not future.done():
+                future.cancel()
+
+    def _wake_tool_response_waiters(self, run_id: UUID) -> None:
+        for (waiting_run_id, _request_id), waiter in list(self._tool_response_waiters.items()):
+            if waiting_run_id == run_id and not waiter.done():
+                waiter.set_exception(
+                    WorkerToolResponseCancelled("worker run was cancelled while awaiting tool mediation")
+                )
 
     async def close(self) -> None:
         self._closed = True
