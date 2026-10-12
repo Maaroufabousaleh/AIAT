@@ -28,6 +28,7 @@ from mas_core.worker_registry.deterministic_file_worker import (
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 MODULE_PATH = Path(__file__).resolve().parents[1] / "mas_core" / "worker_registry" / "deterministic_file_worker.py"
+PROCESS_ENTRYPOINT = REPO_ROOT / "mas" / "workers" / "aiat_deterministic_file_worker_process.py"
 MANIFEST_PATH = REPO_ROOT / "mas" / "workers" / f"{WORKER_ID}.yaml"
 _UNSET = object()
 
@@ -250,29 +251,37 @@ async def test_worker_rejects_non_project_tasks_ungranted_tools_and_unbounded_in
         )
 
 
-def test_manifest_is_pending_and_pins_exact_worker_source() -> None:
+def test_manifest_is_pending_and_pins_exact_sandboxed_worker_image() -> None:
     raw = yaml.safe_load(MANIFEST_PATH.read_text(encoding="utf-8"))
     manifest = WorkerManifest.model_validate(raw)
-    source_hash = hashlib.sha256(MODULE_PATH.read_bytes()).hexdigest()
+    source_hash = hashlib.sha256(PROCESS_ENTRYPOINT.read_bytes()).hexdigest()
 
     assert manifest.metadata.id == WORKER_ID
     assert manifest.metadata.version == "0.1.0"
-    assert manifest.metadata.source_revision == f"sha256:{source_hash}"
-    assert manifest.metadata.version_pin == f"0.1.0+sha256.{source_hash}"
-    assert manifest.source_provenance["implementation_sha256"] == source_hash
-    assert manifest.runtime.transport == "native"
-    assert manifest.runtime.adapter_config["implementation_ref"] == (
-        "mas_core.worker_registry.deterministic_file_worker:generate_project_file"
+    assert manifest.metadata.source_repo == "https://github.com/Maaroufabousaleh/AIAT"
+    assert manifest.metadata.source_revision == "7796439efa79d5d1f587909cc2a91085ec4b721d"
+    assert manifest.metadata.version_pin == (
+        "0.1.0+sha256.009c038daba96a174924d1b14d33d67a0a987e1bb801d1db459f204be0d75b02"
     )
-    assert manifest.runtime.adapter_config["execution_environment"] == "in_process_host"
-    assert manifest.sandbox.network_mode == "unrestricted"
-    assert manifest.execution is None
-    assert any(
-        "does not apply a runc/container sandbox" in note
-        for note in manifest.source_provenance["notes"]
+    assert manifest.source_provenance["source_provider"] == "aiat"
+    assert manifest.source_provenance["commit_sha"] == manifest.metadata.source_revision
+    assert manifest.source_provenance["runtime_fingerprint"] == f"sha256:{source_hash}"
+    assert manifest.runtime.transport == "oci"
+    assert manifest.runtime.adapter_config["image"] == (
+        "aiat-deterministic-file-worker@sha256:"
+        "009c038daba96a174924d1b14d33d67a0a987e1bb801d1db459f204be0d75b02"
     )
+    assert manifest.runtime.adapter_config["sandbox_runtime"] == "runsc"
+    assert manifest.runtime.adapter_config["bidirectional_tool_protocol"] is True
+    assert manifest.execution is not None
+    assert manifest.execution.trust == "untrusted"
+    assert manifest.execution.minimum_isolation == "sandboxed"
+    assert manifest.execution.gvisor_compatible is True
+    assert manifest.sandbox.profile == "sandboxed"
+    assert manifest.sandbox.network_mode == "egress-deny-all"
+    assert manifest.sandbox.egress_allowlist == []
     assert any(
-        "not dispatchable" in note
+        "Local development image identity only" in note
         for note in manifest.source_provenance["notes"]
     )
     assert manifest.model_mode == "none"

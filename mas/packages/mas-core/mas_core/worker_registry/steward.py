@@ -13,6 +13,7 @@ import re
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -70,6 +71,13 @@ class StewardTransitionError(ValueError):
     """Raised when a governance transition would bypass a gate."""
 
 
+AIAT_FIRST_PARTY_SOURCE_PROVIDER = "aiat"
+_AIAT_FIRST_PARTY_REPOSITORY_HOST = "github.com"
+_AIAT_FIRST_PARTY_REPOSITORY_PATH = "maaroufabousaleh/aiat"
+_GIT_COMMIT_SHA = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$", re.IGNORECASE)
+_OCI_SHA256_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+
 def _is_license_metadata_check(name: str) -> bool:
     """Return whether a caller-supplied check is licence metadata only."""
     normalized = str(name).strip().lower().replace("-", "_")
@@ -83,7 +91,14 @@ def _is_license_metadata_check(name: str) -> bool:
 
 
 class ExternalProvenance(BaseModel):
-    """Pinned identity and supply-chain evidence for an external runtime."""
+    """Pinned identity and supply-chain evidence for an external runtime.
+
+    ``source_provider="aiat"`` is the explicit identity for an AIAT-owned
+    first-party worker.  That identity is deliberately stricter than generic
+    upstream provenance: it requires a canonical HTTPS repository, an exact
+    Git commit SHA, and a digest-addressed OCI image.  It does not imply that
+    security review, conformance, human approval, or rollout has passed.
+    """
 
     model_config = ConfigDict(extra="allow", frozen=True)
 
@@ -110,6 +125,38 @@ class ExternalProvenance(BaseModel):
             raise ValueError("external provenance requires an exact release, commit, package, or OCI digest")
         if self.transport_type == "oci" and not self.oci_image_digest:
             raise ValueError("OCI provenance requires an image digest")
+        if self.source_provider.strip().lower() == AIAT_FIRST_PARTY_SOURCE_PROVIDER:
+            repository = urlsplit(self.canonical_source_repository.strip())
+            repository_path = repository.path.strip("/").lower()
+            if repository_path.endswith(".git"):
+                repository_path = repository_path[:-4]
+            if (
+                repository.scheme.lower() != "https"
+                or repository.hostname is None
+                or repository.hostname.lower() != _AIAT_FIRST_PARTY_REPOSITORY_HOST
+                or repository_path != _AIAT_FIRST_PARTY_REPOSITORY_PATH
+                or repository.username is not None
+                or repository.password is not None
+                or repository.query
+                or repository.fragment
+            ):
+                raise ValueError(
+                    "AIAT first-party provenance requires the canonical AIAT HTTPS source repository"
+                )
+            if not self.commit_sha or not _GIT_COMMIT_SHA.fullmatch(self.commit_sha):
+                raise ValueError(
+                    "AIAT first-party provenance requires an exact 40- or 64-character Git commit SHA"
+                )
+            if not self.oci_image_digest or not _OCI_SHA256_DIGEST.fullmatch(
+                self.oci_image_digest
+            ):
+                raise ValueError(
+                    "AIAT first-party OCI provenance requires a sha256 image digest, not a mutable tag"
+                )
+            if self.transport_type.strip().lower() != "oci":
+                raise ValueError(
+                    "AIAT first-party provenance requires the OCI worker transport"
+                )
         return self
 
 

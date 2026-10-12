@@ -1,0 +1,69 @@
+metadata:
+  id: aiat_deterministic_file_worker
+  name: AIAT Deterministic File Worker
+  version: "0.1.0"
+  description: >-
+    First-party candidate that emits one bounded project-scoped file_write
+    request and waits for the correlated AIAT Tool Service response. It has no
+    model dispatch, workspace mount, network access, or direct file-write path.
+  source_repo: https://github.com/Maaroufabousaleh/AIAT
+  source_revision: 7796439efa79d5d1f587909cc2a91085ec4b721d
+  version_pin: "0.1.0+sha256.009c038daba96a174924d1b14d33d67a0a987e1bb801d1db459f204be0d75b02"
+  tags: [worker, integration_candidate, first_party]
+  update_policy: manual
+  evaluation_status: pending
+runtime:
+  transport: oci
+  adapter_config:
+    image: aiat-deterministic-file-worker@sha256:009c038daba96a174924d1b14d33d67a0a987e1bb801d1db459f204be0d75b02
+    sandbox_profile: sandboxed
+    sandbox_runtime: runsc
+    bidirectional_tool_protocol: true
+    tool_response_timeout_seconds: 30
+    runtime_version: aiat-deterministic-file-worker/0.1.0
+  timeout_seconds: 30
+  stop_grace_seconds: 5
+execution:
+  trust: untrusted
+  formats: [oci, linux]
+  preferred_runtime: [runsc]
+  minimum_isolation: sandboxed
+  gvisor_compatible: true
+  remote_vm_allowed: false
+integration:
+  adapter_entrypoint: ProcessAdapter
+  isolation_mode: wrapper
+  contract_version: aiat.worker.v1
+  adapter_api_version: aiat.adapter.v1
+runtime_tier: external
+capabilities:
+  - name: deterministic.file_generate
+    version: "0.1.0"
+    description: Emit one bounded file_write request without model dispatch.
+    risk_level: low
+    required_tools: [file_write]
+sandbox:
+  profile: sandboxed
+  network_mode: egress-deny-all
+  egress_allowlist: []
+model_mode: none
+model_requirements: []
+permission_grants: [project.workspace.write]
+tool_grants: [file_write]
+shell_version: 0.1.0
+certification_status: pending
+source_provenance:
+  repository: https://github.com/Maaroufabousaleh/AIAT
+  source_provider: aiat
+  exact_release: "0.1.0"
+  commit_sha: 7796439efa79d5d1f587909cc2a91085ec4b721d
+  transport_type: oci
+  oci_image_digest: sha256:009c038daba96a174924d1b14d33d67a0a987e1bb801d1db459f204be0d75b02
+  runtime_fingerprint: sha256:79426c1d02678b37dc8644a5ff565a15f9309dcc14e369520628c8587d2c0fcd
+  security_scan_status: pending
+  lifecycle_status: candidate_pending
+  notes:
+    - Local development image identity only; no registry promotion or release attestation is claimed.
+    - Candidate remains pending security scan, conformance, server certification, human approval, rollout, and activation.
+    - OCIAdapter applies runsc, no network, no mounts, no secrets, read-only root, dropped capabilities, no-new-privileges, and bounded resources.
+    - The worker requests file_write through the controller protocol and waits for the Tool Service response; it cannot write project files directly.
