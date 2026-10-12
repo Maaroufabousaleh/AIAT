@@ -1,0 +1,397 @@
+# Disposable local-only profile for the AIAT OpenCode Level A integration run.
+# It is deliberately independent from docker-compose.yml and never imports the
+# repository .env. The runner supplies ephemeral test credentials and a unique
+# Compose project name; `down -v` then owns only this profile's resources.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16@sha256:a36250871de0833b8757561c72f2477ef1ddd1101afa4e617fb552e0de514c6b
+    pull_policy: never
+    restart: "no"
+    environment:
+      POSTGRES_DB: aiat_level_a
+      POSTGRES_USER: aiat_level_a
+      POSTGRES_PASSWORD: ${AIAT_LEVEL_A_DB_PASSWORD:?runner must generate a disposable database password}
+    volumes:
+      - level_a_postgres_data:/var/lib/postgresql/data
+    networks: [control]
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U aiat_level_a -d aiat_level_a]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 5s
+    labels:
+      com.aiat.profile: opencode-integrated-level-a
+
+  redis:
+    image: redis:7.2-alpine@sha256:05a97a479bc73de66f087dc05b569010772880f778cc8671fa6b8aadee32e5c6
+    pull_policy: never
+    restart: "no"
+    command: [redis-server, --save, "", --appendonly, "no"]
+    volumes:
+      - level_a_redis_data:/data
+    networks: [control]
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 2s
+    labels:
+      com.aiat.profile: opencode-integrated-level-a
+
+  minio:
+    image: quay.io/minio/minio:latest@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    pull_policy: never
+    restart: "no"
+    command: [server, /data, --console-address, ":9001"]
+    environment:
+      MINIO_ROOT_USER: aiat_level_a_root
+      MINIO_ROOT_PASSWORD: ${AIAT_LEVEL_A_MINIO_PASSWORD:?runner must generate a disposable object-store password}
+    volumes:
+      - level_a_minio_data:/data
+    networks: [control]
+    healthcheck:
+      test: [CMD, mc, ready, local]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 5s
+    labels:
+      com.aiat.profile: opencode-integrated-level-a
+
+  minio-init:
+    image: quay.io/minio/mc:latest@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
+    pull_policy: never
+    restart: "no"
+    entrypoint: [/bin/sh, -ec]
+    command:
+      - >-
+        mc alias set level-a http://minio:9000 aiat_level_a_root "$${MINIO_ROOT_PASSWORD}";
+        mc mb --ignore-existing level-a/mas-agents;
+        mc admin user add level-a aiat_level_a_artifacts "$${MINIO_ARTIFACT_PASSWORD}";
+        mc admin policy attach level-a readwrite --user aiat_level_a_artifacts
+    environment:
+      MINIO_ROOT_PASSWORD: ${AIAT_LEVEL_A_MINIO_PASSWORD:?runner must generate a disposable object-store password}
+      MINIO_ARTIFACT_PASSWORD: ${AIAT_LEVEL_A_MINIO_ARTIFACT_PASSWORD:?runner must generate a disposable artifact-store password}
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks: [control]
+    labels:
+      com.aiat.profile: opencode-integrated-level-a
+
+  message-router:
+    image: ${AIAT_LEVEL_A_IMAGE_NAMESPACE:?runner must generate a unique disposable image namespace}/message-router:local
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.message-router
+    restart: "no"
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      POSTGRES_DSN: postgresql://aiat_level_a:${AIAT_LEVEL_A_DB_PASSWORD:?runner must generate a disposable database password}@postgres:5432/aiat_level_a
+      ROUTER_SECRET: ${AIAT_LEVEL_A_ROUTER_SECRET:?runner must generate an ephemeral router secret}
+      AGENT_TOKEN_SECRET: ${AIAT_LEVEL_A_ROUTER_SECRET:?runner must generate an ephemeral router secret}
+      LOG_LEVEL: INFO
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks: [control]
+    healthcheck:
+      test: [CMD, python, -c, "import httpx; httpx.get('http://127.0.0.1:8001/health', timeout=2).raise_for_status()"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+    labels:
+      com.aiat.profile: opencode-integrated-level-a
+
+  tool-service:
+    image: ${AIAT_LEVEL_A_IMAGE_NAMESPACE:?runner must generate a unique disposable image namespace}/tool-service:local
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.tool-service
+      args:
+        TOOL_SERVICE_PROFILE: core
+    restart: "no"
+    user: "10001:10001"
+    environment:
+      MAS_ENVIRONMENT: development
+      REDIS_URL: redis://redis:6379/1
+      PGBOUNCER_DSN: postgresql+asyncpg://aiat_level_a:${AIAT_LEVEL_A_DB_PASSWORD:?runner must generate a disposable database password}@postgres:5432/aiat_level_a
+      TOOL_SECRET: ${AIAT_LEVEL_A_TOOL_SECRET:?runner must generate an ephemeral tool secret}
+      ORCHESTRATOR_URL: http://orchestrator-api:8000
+      MAS_API_KEY: ${AIAT_LEVEL_A_API_KEY:?runner must generate an ephemeral API key}
+      AIAT_OPERATOR_API_KEY: ${AIAT_LEVEL_A_OPERATOR_KEY:?runner must generate an ephemeral operator key}
+      LLM_GATEWAY_URL: http://litellm:4000
+      LLM_API_KEY: sk-aiat-level-a-gateway-dummy
+      TOOL_WORKSPACE_ROOT: /workspace
+      OPENCODE_WORKSPACE_ROOT: /opencode-workspace
+      AIAT_MCP_SERVERS_JSON: '{"workspace":{"transport":"stdio","command":"python","args":["-m","tool_service.mcp_workspace_server"]}}'
+      AIAT_BROWSER_RUNTIME_LOCATION: operator_laptop
+      LOG_LEVEL: INFO
+    volumes:
+      - level_a_workspace:/workspace
+      - level_a_workspace:/opencode-workspace
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      workspace-init:
+        condition: service_completed_successfully
+    networks:
+      control: {}
+      sandbox_gateway:
+        ipv4_address: ${AIAT_LEVEL_A_TOOL_SERVICE_IP:?runner must select a private non-overlapping sandbox subnet}
+    healthcheck:
+      test: [CMD, python, -c, "import httpx; httpx.get('http://127.0.0.1:8002/health', timeout=2).raise_for_status()"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    labels:
+      com.aiat.profile: opencode-integrated-level-a
+
+  provider-fixture:
+    image: ${AIAT_LEVEL_A_IMAGE_NAMESPACE:?runner must generate a unique disposable image namespace}/provider-fixture:local
+    build:
+      context: ../..
+      dockerfile: scripts/opencode_integrated_level_a/Dockerfile.fixture
+    restart: "no"
+    read_only: true
+    environment:
+      AIAT_FIXTURE_HOST: 0.0.0.0
+      AIAT_FIXTURE_PORT: "8000"
+      AIAT_FIXTURE_PROVIDER_KEY: aiat-level-a-provider-dummy
+    networks:
+      sandbox_gateway:
+        ipv4_address: ${AIAT_LEVEL_A_FIXTURE_IP:?runner must select a private non-overlapping sandbox subnet}
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
+    cpus: "0.25"
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 2s
+    labels:
+      com.aiat.profile: opencode-integrated-level-a
+
+  litellm:
+    image: ${AIAT_LEVEL_A_LITELLM_IMAGE:-ghcr.io/berriai/litellm:main-stable}
+    pull_policy: never
+    command: [--config, /fixture/litellm_config.yaml, --host, 0.0.0.0, --port, "4000"]
+    restart: "no"
+    read_only: true
+    environment:
+      LITELLM_MASTER_KEY: ${AIAT_LEVEL_A_LITELLM_MASTER_KEY:?runner must generate an ephemeral local gateway key}
+      LITELLM_TELEMETRY: "false"
+      DISABLE_TELEMETRY: "true"
+    volumes:
+      - ../../scripts/opencode_integrated_level_a/litellm_config.yaml:/fixture/litellm_config.yaml:ro
+    extra_hosts:
+      - provider-fixture=${AIAT_LEVEL_A_FIXTURE_IP:?runner must select a private non-overlapping sandbox subnet}
+    networks:
+      sandbox_gateway:
+        ipv4_address: ${AIAT_LEVEL_A_LITELLM_IP:?runner must select a private non-overlapping sandbox subnet}
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+      - /root/.cache:rw,noexec,nosuid,size=64m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+    cpus: "0.75"
+    depends_on:
+      provider-fixture:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness', timeout=2).read()"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+    labels:
+      com.aiat.profile: opencode-integrated-level-a
+
+  opencode-runtime:
+    image: ${AIAT_LEVEL_A_IMAGE_NAMESPACE:?runner must generate a unique disposable image namespace}/opencode-runtime:1.17.13
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.opencode
+      args:
+        OPENCODE_VERSION: "1.17.13"
+        OPENCODE_TARBALL_SHA512: qUb9m6X6f9/imuDxc2tUcN+E1vx1XWjmQWJo2Pk/t+cNxqt5KGkaMF89CvJK6QQP7gx1E82gKpV7n1QiI5spxQ==
+    pull_policy: never
+    runtime: runsc
+    restart: "no"
+    user: "10001:10001"
+    read_only: true
+    environment:
+      OPENCODE_SERVER_USERNAME: aiat-level-a
+      OPENCODE_SERVER_PASSWORD: ${AIAT_LEVEL_A_OPENCODE_PASSWORD:?runner must generate an ephemeral OpenCode password}
+      OPENCODE_SERVER_HOSTNAME: 0.0.0.0
+      OPENCODE_SERVER_PORT: "4096"
+      AIAT_GATEWAY_URL: http://litellm:4000
+      AIAT_GATEWAY_API_KEY: sk-aiat-level-a-gateway-dummy
+    extra_hosts:
+      - litellm=${AIAT_LEVEL_A_LITELLM_IP:?runner must select a private non-overlapping sandbox subnet}
+      - tool-service=${AIAT_LEVEL_A_TOOL_SERVICE_IP:?runner must select a private non-overlapping sandbox subnet}
+    volumes:
+      - level_a_workspace:/workspace
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m,uid=10001,gid=10001
+      - /runtime:rw,noexec,nosuid,size=16m,uid=10001,gid=10001
+    networks:
+      sandbox_gateway:
+        ipv4_address: ${AIAT_LEVEL_A_OPENCODE_IP:?runner must select a private non-overlapping sandbox subnet}
+    depends_on:
+      workspace-init:
+        condition: service_completed_successfully
+      tool-service:
+        condition: service_healthy
+      litellm:
+        condition: service_healthy
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    mem_limit: 1024m
+    cpus: "1.0"
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:4096/global/health',{headers:{authorization:'Basic '+Buffer.from('aiat-level-a:'+process.env.OPENCODE_SERVER_PASSWORD).toString('base64')}}).then(r=>process.exit(r.status===200?0:1)).catch(()=>process.exit(1))"]
+      interval: 2s
+      timeout: 3s
+      retries: 40
+      start_period: 10s
+    labels:
+      com.aiat.profile: opencode-integrated-level-a
+
+  migrate:
+    image: ${AIAT_LEVEL_A_IMAGE_NAMESPACE:?runner must generate a unique disposable image namespace}/orchestrator-api:local
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.orchestrator-api
+    restart: "no"
+    command: [alembic, -c, /app/alembic.ini, upgrade, head]
+    environment:
+      PGBOUNCER_DSN: postgresql+psycopg2://aiat_level_a:${AIAT_LEVEL_A_DB_PASSWORD:?runner must generate a disposable database password}@postgres:5432/aiat_level_a
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [control]
+    labels:
+      com.aiat.profile: opencode-integrated-level-a
+
+  workspace-init:
+    image: alpine:3.21.3@sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c
+    pull_policy: never
+    restart: "no"
+    user: "0:0"
+    network_mode: none
+    volumes:
+      - level_a_workspace:/workspace
+    command: [/bin/sh, -ec, "mkdir -p /workspace && chown -R 10001:10001 /workspace"]
+    labels:
+      com.aiat.profile: opencode-integrated-level-a
+
+  orchestrator-api:
+    image: ${AIAT_LEVEL_A_IMAGE_NAMESPACE:?runner must generate a unique disposable image namespace}/orchestrator-api:local
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.orchestrator-api
+    restart: "no"
+    command: [uvicorn, orchestrator_api.main:app, --host, 0.0.0.0, --port, "8000"]
+    environment:
+      MAS_ENVIRONMENT: development
+      PGBOUNCER_DSN: postgresql+asyncpg://aiat_level_a:${AIAT_LEVEL_A_DB_PASSWORD:?runner must generate a disposable database password}@postgres:5432/aiat_level_a
+      REDIS_URL: redis://redis:6379/0
+      ROUTER_URL: http://message-router:8001
+      ROUTER_SECRET: ${AIAT_LEVEL_A_ROUTER_SECRET:?runner must generate an ephemeral router secret}
+      MAS_API_KEY: ${AIAT_LEVEL_A_API_KEY:?runner must generate an ephemeral API key}
+      AIAT_OPERATOR_API_KEY: ${AIAT_LEVEL_A_OPERATOR_KEY:?runner must generate an ephemeral operator key}
+      AIAT_WORKER_API_KEY: ${AIAT_LEVEL_A_WORKER_KEY:?runner must generate an ephemeral worker key}
+      AIAT_CEO_API_KEY: ${AIAT_LEVEL_A_CEO_KEY:?runner must generate an ephemeral CEO key}
+      TOOL_SECRET: ${AIAT_LEVEL_A_TOOL_SECRET:?runner must generate an ephemeral tool secret}
+      OPENCODE_SERVER_USERNAME: aiat-level-a
+      OPENCODE_SERVER_PASSWORD: ${AIAT_LEVEL_A_OPENCODE_PASSWORD:?runner must generate an ephemeral OpenCode password}
+      LLM_BACKEND: litellm
+      LLM_GATEWAY_URL: http://litellm:4000
+      LLM_DEFAULT_MODEL: omniroute-coding
+      LLM_API_KEY: sk-aiat-level-a-gateway-dummy
+      LITELLM_MASTER_KEY: ${AIAT_LEVEL_A_LITELLM_MASTER_KEY:?runner must generate an ephemeral local gateway key}
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: aiat_level_a_artifacts
+      MINIO_SECRET_KEY: ${AIAT_LEVEL_A_MINIO_ARTIFACT_PASSWORD:?runner must generate a disposable artifact-store password}
+      MINIO_BUCKET: mas-agents
+      WORKERS_DIR: /app/workers
+      AIAT_LOCAL_HOST_QUEUE_ENABLED: "true"
+      AIAT_LOCAL_WORKER_HOST_ID: aiat-level-a-host
+      AIAT_LOCAL_WORKER_HOST_TOKEN: ${AIAT_LEVEL_A_HOST_TOKEN:?runner must generate an ephemeral host token}
+      AIAT_LOCAL_WORKER_HOST_SANDBOX_PROFILE: sandboxed
+      AIAT_LOCAL_WORKER_HOST_SANDBOX_RUNTIME: runsc
+      AIAT_LOCAL_WORKER_HOST_SLOTS: "1"
+      AIAT_LOCAL_WORKER_HOST_LEASE_SECONDS: "60"
+      AIAT_LOCAL_HOST_QUEUE_POLL_SECONDS: "1"
+      AIAT_ALLOW_EXTERNAL_PROVIDER_DISPATCH: "false"
+      AIAT_LEVEL_A_API_URL: http://127.0.0.1:8000
+      AIAT_LEVEL_A_OPERATOR_API_KEY: ${AIAT_LEVEL_A_OPERATOR_KEY:?runner must generate an ephemeral operator key}
+      LOG_LEVEL: INFO
+    volumes:
+      - level_a_workspace:/workspace
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      message-router:
+        condition: service_healthy
+      tool-service:
+        condition: service_healthy
+      opencode-runtime:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      workspace-init:
+        condition: service_completed_successfully
+    networks:
+      control: {}
+      sandbox_gateway:
+        ipv4_address: ${AIAT_LEVEL_A_ORCHESTRATOR_IP:?runner must select a private non-overlapping sandbox subnet}
+    healthcheck:
+      test: [CMD, python, -c, "import httpx; httpx.get('http://127.0.0.1:8000/health', timeout=3).raise_for_status()"]
+      interval: 2s
+      timeout: 4s
+      retries: 45
+      start_period: 20s
+    labels:
+      com.aiat.profile: opencode-integrated-level-a
+
+networks:
+  control:
+    internal: true
+  sandbox_gateway:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${AIAT_LEVEL_A_SUBNET:?runner must select a private non-overlapping sandbox subnet}
+
+volumes:
+  level_a_postgres_data: {}
+  level_a_redis_data: {}
+  level_a_minio_data: {}
+  level_a_workspace: {}
