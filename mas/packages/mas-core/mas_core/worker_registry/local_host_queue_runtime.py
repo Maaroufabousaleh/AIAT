@@ -120,7 +120,9 @@ class LocalHostQueueRuntime:
         # A process-scoped host identity makes restart fencing explicit. A new
         # API process never inherits the previous process's host lease.
         self.host_id = f"{config.host_id_prefix}-{uuid4().hex[:12]}"
-        self.owner = f"aiat-local-host:{config.host_id_prefix}"
+        # Carry the same process identity into WorkerRun transition actors so
+        # durable claim evidence can be tied to this exact host binding.
+        self.owner = f"aiat-local-host:{self.host_id}"
         self._registry = WorkerHostRegistry(storage)
         self._bindings = WorkerRunHostBindingService(storage)
         self._adapter_resolver = adapter_resolver

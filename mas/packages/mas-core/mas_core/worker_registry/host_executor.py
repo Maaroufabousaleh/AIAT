@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
+import anyio
+
 from ..worker_contract.models import WorkerCancellation
 from .run_host_binding import RunHostBindingIdentity, WorkerRunHostBindingService
 
@@ -80,6 +82,9 @@ class WorkerHostExecutionResult:
 
 class WorkerHostExecutor:
     """Execute a committed binding through the canonical worker controller."""
+
+    _INTERRUPTED_RUNTIME_CLEANUP_TIMEOUT_SECONDS = 5.0
+    _BINDING_RELEASE_TIMEOUT_SECONDS = 5.0
 
     def __init__(
         self,
@@ -466,6 +471,7 @@ class WorkerHostExecutor:
             ),
             name=f"worker-host-run-supervisor-{run_id}",
         )
+        interrupted_by_host_shutdown = False
         try:
             outcome = await controller.execute(
                 worker_request,
@@ -477,16 +483,61 @@ class WorkerHostExecutor:
                 steward_id=steward_id,
                 model_resolution_snapshot_id=model_resolution_snapshot_id,
             )
+        except asyncio.CancelledError:
+            interrupted_by_host_shutdown = True
+            # API/host shutdown cancels the queue consumer task. Stop the
+            # runtime owned by this exact claim before allowing the durable
+            # WorkerRun lease to expire and be recovered. Do not settle the
+            # run here: the existing lease recovery path remains authoritative
+            # and may requeue it after this process exits.
+            with anyio.CancelScope(shield=True):
+                try:
+                    await asyncio.wait_for(
+                        self._cancel_stale_adapter_run(
+                            adapter,
+                            run_id=run_id,
+                            reason="host executor stopped while worker runtime was active",
+                            owner=owner,
+                            attempt_count=attempt_count,
+                        ),
+                        timeout=self._INTERRUPTED_RUNTIME_CLEANUP_TIMEOUT_SECONDS,
+                    )
+                except TimeoutError:
+                    logger.warning(
+                        "worker_host_runtime_cancel_on_shutdown_timed_out",
+                        extra={"run_id": str(run_id)},
+                    )
+                except Exception as exc:  # noqa: BLE001 - exception text may contain runtime data
+                    logger.warning(
+                        "worker_host_runtime_cancel_on_shutdown_failed",
+                        extra={"run_id": str(run_id), "error": type(exc).__name__},
+                    )
+            raise
         finally:
             execution_finished.set()
             supervisor_task.cancel()
             await asyncio.gather(supervisor_task, return_exceptions=True)
             try:
-                binding_after = await self._bindings.release(
-                    run_id,
-                    owner=owner,
-                    expected_identity=binding_identity,
-                )
+                # A cancelled ASGI task still needs to release this exact
+                # reservation. Bound and shield the write so shutdown cannot
+                # interrupt it halfway through. If storage is unavailable,
+                # host-lease recovery remains the fallback.
+                with anyio.CancelScope(shield=True):
+                    release_kwargs: dict[str, Any] = {
+                        "owner": owner,
+                        "expected_identity": binding_identity,
+                    }
+                    if interrupted_by_host_shutdown:
+                        release_kwargs.update(
+                            expected_claim_owner=owner,
+                            expected_attempt_count=attempt_count,
+                        )
+                    binding_after = await asyncio.wait_for(
+                        self._bindings.release(run_id, **release_kwargs),
+                        timeout=self._BINDING_RELEASE_TIMEOUT_SECONDS,
+                    )
+            except TimeoutError as exc:  # pragma: no cover - live storage timeout
+                release_error = exc
             except Exception as exc:  # pragma: no cover - live failure path
                 release_error = exc
         if release_error is not None:

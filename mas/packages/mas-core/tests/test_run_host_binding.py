@@ -476,6 +476,78 @@ async def test_binding_release_updates_exact_assignment_identity() -> None:
 
 
 @pytest.mark.asyncio
+async def test_shutdown_release_locks_and_checks_worker_claim_fence_atomically() -> None:
+    public_row, locked_row = _release_binding_rows()
+    identity = RunHostBindingIdentity.from_binding(public_row)
+    execution_result = MagicMock()
+    execution_result.mappings.return_value.first.return_value = {
+        "claim_owner": "host-executor",
+        "attempt_count": 7,
+    }
+    connection, engine = _binding_test_engine()
+    connection.execute = AsyncMock(
+        side_effect=[execution_result, SimpleNamespace(rowcount=1)]
+    )
+    service = WorkerRunHostBindingService(SimpleNamespace(engine=engine))  # type: ignore[arg-type]
+    released_row = {
+        **public_row,
+        "state": "RELEASED",
+        "reservation_state": "RELEASED",
+    }
+    service.get = AsyncMock(return_value=released_row)  # type: ignore[method-assign]
+    service._fetch = AsyncMock(return_value=locked_row)  # type: ignore[method-assign]
+    service._ledger.transition_in_transaction = AsyncMock(  # type: ignore[method-assign]
+        return_value=(locked_row, False)
+    )
+
+    result = await service.release(
+        public_row["run_id"],
+        owner="host-executor",
+        expected_identity=identity,
+        expected_claim_owner="host-executor",
+        expected_attempt_count=7,
+    )
+
+    assert result["state"] == "RELEASED"
+    execution_query = connection.execute.await_args_list[0].args[0]
+    compiled_query = execution_query.compile(dialect=postgresql.dialect())
+    query_sql = " ".join(str(compiled_query).replace('"', "").split())
+    assert "FROM worker_runs" in query_sql
+    assert "FOR UPDATE" in query_sql
+    service._ledger.transition_in_transaction.assert_awaited_once()  # type: ignore[attr-defined]
+    assert connection.execute.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_shutdown_release_does_not_release_binding_after_replacement_claim() -> None:
+    public_row, locked_row = _release_binding_rows()
+    identity = RunHostBindingIdentity.from_binding(public_row)
+    execution_result = MagicMock()
+    execution_result.mappings.return_value.first.return_value = {
+        "claim_owner": "replacement-executor",
+        "attempt_count": 8,
+    }
+    connection, engine = _binding_test_engine()
+    connection.execute = AsyncMock(return_value=execution_result)
+    service = WorkerRunHostBindingService(SimpleNamespace(engine=engine))  # type: ignore[arg-type]
+    service._fetch = AsyncMock(return_value=locked_row)  # type: ignore[method-assign]
+    service._ledger.transition_in_transaction = AsyncMock()  # type: ignore[method-assign]
+
+    with pytest.raises(RunHostBindingRejected) as caught:
+        await service.release(
+            public_row["run_id"],
+            owner="host-executor",
+            expected_identity=identity,
+            expected_claim_owner="host-executor",
+            expected_attempt_count=7,
+        )
+
+    assert caught.value.reason_code == "run_host_binding_execution_fence_mismatch"
+    service._ledger.transition_in_transaction.assert_not_awaited()  # type: ignore[attr-defined]
+    connection.execute.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_stale_binding_release_does_not_touch_replacement_reservation() -> None:
     public_row, _locked_old_row = _release_binding_rows()
     identity = RunHostBindingIdentity.from_binding(public_row)

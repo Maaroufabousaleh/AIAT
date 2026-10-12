@@ -685,6 +685,7 @@ async def test_running_local_queue_places_then_consumes_through_real_executor_co
     assert worker_calls == [str(RUN_ID)]
     assert len(binding_services) == 1
     assert len(binding_services[0].placement_requests) == 1
+    assert binding_services[0].placement_requests[0].owner == f"aiat-local-host:{runtime.host_id}"
     assert binding_services[0].placement_requests[0].placement.required_labels == (
         ("aiat.local_executor_host", runtime.host_id),
     )

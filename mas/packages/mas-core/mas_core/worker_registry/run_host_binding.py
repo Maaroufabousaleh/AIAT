@@ -557,6 +557,8 @@ class WorkerRunHostBindingService:
         *,
         owner: str,
         expected_identity: RunHostBindingIdentity,
+        expected_claim_owner: str | None = None,
+        expected_attempt_count: int | None = None,
     ) -> dict[str, Any]:
         """Release only the exact assignment observed by its executor.
 
@@ -575,6 +577,21 @@ class WorkerRunHostBindingService:
             raise ValueError("owner is required")
         if not isinstance(expected_identity, RunHostBindingIdentity):
             raise RunHostBindingRejected("run_host_binding_release_fence_invalid")
+        if (expected_claim_owner is None) != (expected_attempt_count is None):
+            raise RunHostBindingRejected("run_host_binding_execution_fence_invalid")
+        claim_owner = str(expected_claim_owner or "").strip()
+        fenced_attempt_count: int | None = None
+        if expected_claim_owner is not None:
+            if not claim_owner or isinstance(expected_attempt_count, bool):
+                raise RunHostBindingRejected("run_host_binding_execution_fence_invalid")
+            try:
+                fenced_attempt_count = int(expected_attempt_count or 0)
+            except (TypeError, ValueError) as exc:
+                raise RunHostBindingRejected(
+                    "run_host_binding_execution_fence_invalid"
+                ) from exc
+            if fenced_attempt_count < 1:
+                raise RunHostBindingRejected("run_host_binding_execution_fence_invalid")
 
         from ..memory import models as t
 
@@ -591,6 +608,26 @@ class WorkerRunHostBindingService:
                 raise PermissionError("run-host binding owner mismatch")
             if not expected_identity.matches(locked):
                 raise RunHostBindingRejected("run_host_binding_release_fence_mismatch")
+            if expected_claim_owner is not None:
+                execution = (
+                    await connection.execute(
+                        sa.select(
+                            t.worker_runs.c.claim_owner,
+                            t.worker_runs.c.attempt_count,
+                        )
+                        .where(t.worker_runs.c.id == normalized_run_id)
+                        .with_for_update()
+                    )
+                ).mappings().first()
+                if (
+                    execution is None
+                    or str(execution.get("claim_owner") or "") != claim_owner
+                    or int(execution.get("attempt_count") or 0)
+                    != fenced_attempt_count
+                ):
+                    raise RunHostBindingRejected(
+                        "run_host_binding_execution_fence_mismatch"
+                    )
 
             locked_state = str(locked.get("state") or "")
             reservation_state = str(locked.get("reservation_state") or "")
