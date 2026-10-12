@@ -87,10 +87,11 @@ const otherProjectIssue = {
 
 async function mockProjectReads(
   page: Page,
-  options: { failWorkerRuns?: boolean; empty?: boolean } = {},
+  options: { failWorkerRuns?: boolean; empty?: boolean; workerRunStates?: string[] } = {},
 ) {
   const requests: string[] = [];
   const mutations: string[] = [];
+  let workerRunReads = 0;
 
   await page.route("**/api/**", async (route) => {
     const request = route.request();
@@ -128,7 +129,18 @@ async function mockProjectReads(
       if (options.failWorkerRuns && requests.filter((item) => item.startsWith("GET /api/governance/runs")).length === 1) {
         await route.fulfill({ status: 503, json: { error: "run read unavailable" } });
       } else {
-        await route.fulfill({ json: options.empty ? [] : [projectRun, otherProjectRun] });
+        const state = options.workerRunStates?.[
+          Math.min(workerRunReads, options.workerRunStates.length - 1)
+        ];
+        workerRunReads += 1;
+        await route.fulfill({
+          json: options.empty
+            ? []
+            : [
+                state ? { ...projectRun, state } : projectRun,
+                otherProjectRun,
+              ],
+        });
       }
       return;
     }
@@ -199,4 +211,22 @@ test("project workspace gives useful empty and read-error states", async ({ page
   await expect(detail.getByText("No artifacts registered for this project.")).toBeVisible();
   await detail.getByRole("tab", { name: "Cost" }).click();
   await expect(detail.getByText("No usage has been recorded for this project.")).toBeVisible();
+});
+
+test("project workspace refreshes queued and running WorkerRuns from the canonical read API", async ({ page }) => {
+  const { requests } = await mockProjectReads(page, {
+    workerRunStates: ["QUEUED", "RUNNING", "SUCCEEDED"],
+  });
+
+  await authenticate(page, `/projects/${PROJECT_ID}`);
+
+  const detail = page.getByRole("main", { name: "Project detail" });
+  await expect(detail.getByTestId("project-worker-run-state-queued")).toBeVisible();
+  await expect(detail.getByText("Active runs auto-refresh every 10 seconds")).toBeVisible();
+  await expect(detail.getByTestId("project-worker-run-state-running")).toBeVisible({ timeout: 20_000 });
+  await expect(detail.getByTestId("project-worker-run-state-succeeded")).toBeVisible({ timeout: 20_000 });
+  await expect(
+    detail.getByRole("link", { name: `Open WorkerRun ${RUN_ID}` }),
+  ).toHaveAttribute("href", `/workers/runs/${RUN_ID}`);
+  expect(requests.filter((request) => request.startsWith("GET /api/governance/runs?")).length).toBeGreaterThanOrEqual(3);
 });

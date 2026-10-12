@@ -430,8 +430,47 @@ const MAX_ISSUE_PROMPT_DESCRIPTION_CHARS = 3_500;
 const PROJECT_WORKER_RUN_PAGE_SIZE = 100;
 const PROJECT_WORKER_RUN_DISPLAY_LIMIT = 50;
 const PROJECT_WORKER_RUN_MAX_OFFSET = 100_000;
+const PROJECT_WORKER_RUN_REFRESH_MS = 10_000;
+const ACTIVE_PROJECT_WORKER_RUN_STATES = new Set([
+  "CREATED",
+  "QUEUED",
+  "CLAIMED",
+  "VALIDATING",
+  "READY",
+  "DISPATCHING",
+  "RUNNING",
+  "PAUSING",
+  "PAUSED",
+  "RESUMING",
+]);
 const ISSUE_PROMPT_TRUNCATION_MARKER = " [truncated]";
 const PROJECT_RUN_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function projectWorkerRunStateClass(state: string): string {
+  switch (state.trim().toUpperCase()) {
+    case "SUCCEEDED":
+      return "border-emerald-700/70 bg-emerald-950/40 text-emerald-200";
+    case "FAILED":
+    case "TIMED_OUT":
+      return "border-rose-700/70 bg-rose-950/40 text-rose-200";
+    case "CANCELLED":
+      return "border-slate-700 bg-slate-900 text-slate-300";
+    case "RUNNING":
+    case "DISPATCHING":
+    case "PAUSING":
+    case "RESUMING":
+      return "border-amber-700/70 bg-amber-950/40 text-amber-100";
+    case "CREATED":
+    case "QUEUED":
+    case "CLAIMED":
+    case "VALIDATING":
+    case "READY":
+    case "PAUSED":
+      return "border-blue-700/70 bg-blue-950/40 text-blue-100";
+    default:
+      return "border-slate-700 bg-slate-950 text-slate-300";
+  }
+}
 
 function isProjectWorkerRun(value: unknown): value is ProjectWorkerRun {
   if (!value || typeof value !== "object") return false;
@@ -695,6 +734,9 @@ export default function ProjectDetailPage() {
   const [issueActionError, setIssueActionError] = useState<string | null>(null);
   const [issueActionNotice, setIssueActionNotice] = useState<string | null>(null);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
+  const hasActiveProjectWorkerRuns = projectWorkerRuns.some((run) =>
+    ACTIVE_PROJECT_WORKER_RUN_STATES.has(run.state.trim().toUpperCase()),
+  );
   const [workspaceStale, setWorkspaceStale] = useState(false);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const workspaceRef = useRef<WorkspaceSummary | null>(null);
@@ -1843,6 +1885,29 @@ export default function ProjectDetailPage() {
     const t = setInterval(load, 10000);
     return () => clearInterval(t);
   }, [project, load]);
+
+  useEffect(() => {
+    if (
+      activeTab !== "workspace" ||
+      workspaceLoading ||
+      projectWorkerRunsError ||
+      accessDenied ||
+      !hasActiveProjectWorkerRuns
+    ) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void loadWorkspace();
+    }, PROJECT_WORKER_RUN_REFRESH_MS);
+    return () => window.clearTimeout(timer);
+  }, [
+    accessDenied,
+    activeTab,
+    hasActiveProjectWorkerRuns,
+    loadWorkspace,
+    projectWorkerRunsError,
+    workspaceLoading,
+  ]);
 
   async function handleDecision(
     decisionId: string,
@@ -3061,10 +3126,16 @@ export default function ProjectDetailPage() {
               </div>
 
               <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-                <section className="dashboard-surface p-4" aria-labelledby="project-worker-runs-heading">
+                <section className="dashboard-surface p-4" aria-labelledby="project-worker-runs-heading" aria-busy={workspaceLoading}>
                   <div className="mb-3 flex items-center justify-between gap-3">
                     <h2 id="project-worker-runs-heading" className="text-sm font-medium text-white">Worker Runs</h2>
-                    <span className="text-xs text-slate-500">canonical runtime state</span>
+                    <span role="status" aria-live="polite" className="text-xs text-slate-500">
+                      {projectWorkerRunsError
+                        ? "Refresh required"
+                        : hasActiveProjectWorkerRuns
+                          ? "Active runs auto-refresh every 10 seconds"
+                          : "canonical runtime state"}
+                    </span>
                   </div>
                   {projectWorkerRunsError ? (
                     <div role="status" className="space-y-2 text-xs text-amber-200">
@@ -3081,7 +3152,14 @@ export default function ProjectDetailPage() {
                         <li key={run.id} className="rounded-lg border border-slate-800 bg-slate-950/55 p-3 text-xs">
                           <div className="flex flex-wrap items-start justify-between gap-2">
                             <Link href={`/workers/runs/${encodeURIComponent(run.id)}`} aria-label={`Open WorkerRun ${run.id}`} className="font-mono text-blue-300 underline decoration-blue-500/50 underline-offset-2 hover:text-blue-200">{run.id}</Link>
-                            <span className="rounded border border-slate-700 px-2 py-1 text-slate-200">{run.state.replace(/_/g, " ")}</span>
+                            <span
+                              role="status"
+                              aria-label={`Worker Run state: ${run.state.trim().toUpperCase().replace(/_/g, " ")}`}
+                              data-testid={`project-worker-run-state-${run.state.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
+                              className={clsx("rounded border px-2 py-1", projectWorkerRunStateClass(run.state))}
+                            >
+                              {run.state.trim().toUpperCase().replace(/_/g, " ")}
+                            </span>
                           </div>
                           <div className="mt-2 text-slate-400">{run.task_type || "Worker task"}{run.worker_id ? ` · worker ${run.worker_id}` : ""}</div>
                           <div className="mt-1 text-slate-500">
