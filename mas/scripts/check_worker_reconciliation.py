@@ -37,11 +37,17 @@ DEFAULT_COMPOSE = MAS_ROOT / "infra" / "compose" / "docker-compose.yml"
 DEFAULT_SECURITY_EVIDENCE = MAS_ROOT / "docs" / "provenance" / "security_scan_evidence.yaml"
 DEFAULT_NOTICES = PROGRAMME_ROOT / "THIRD_PARTY_NOTICES.md"
 CHECK_SCHEMA = "aiat.worker-reconciliation.v1"
+AIAT_FIRST_PARTY_SOURCE_PROVIDER = "aiat"
+AIAT_CANONICAL_SOURCE_REPOSITORY = "https://github.com/Maaroufabousaleh/AIAT"
 
 SUPPORTED_TRANSPORTS = frozenset(
     {"native", "process", "http", "oci", "mcp", "opencode", "aiat_gateway", "wasmtime", "human"}
 )
 CONCRETE_VERSION_RE = re.compile(r"^(?:v)?\d+(?:\.\d+){0,3}(?:[-+][0-9A-Za-z.-]+)?$")
+PINNED_VERSION_WITH_IMAGE_DIGEST_RE = re.compile(
+    r"^(?P<version>(?:v)?\d+(?:\.\d+){0,3})\+sha256\.[0-9a-f]{64}$",
+    re.IGNORECASE,
+)
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -64,6 +70,13 @@ def _normalise_source(value: Any) -> str:
 
 def _normalise_version(value: Any) -> str:
     return str(value or "").strip().removeprefix("v").lower()
+
+
+def _release_version_from_pin(value: Any) -> str:
+    """Return the release portion of a plain or OCI-digest-suffixed pin."""
+    raw = str(value or "").strip()
+    match = PINNED_VERSION_WITH_IMAGE_DIGEST_RE.fullmatch(raw)
+    return match.group("version") if match else raw
 
 
 def _is_concrete_version(value: Any) -> bool:
@@ -625,14 +638,15 @@ def reconcile(
                 if "security_scan_status" not in source_provenance:
                     errors.append(f"{path.name}: source_provenance.security_scan_status is required")
                 exact_release = source_provenance.get("exact_release")
+                pinned_release = _release_version_from_pin(manifest.metadata.version_pin)
                 if (
                     _is_concrete_version(exact_release)
-                    and _is_concrete_version(manifest.metadata.version_pin)
-                    and _normalise_version(exact_release) != _normalise_version(manifest.metadata.version_pin)
+                    and _is_concrete_version(pinned_release)
+                    and _normalise_version(exact_release) != _normalise_version(pinned_release)
                 ):
                     errors.append(
                         f"{path.name}: source_provenance.exact_release {exact_release!r} disagrees with "
-                        f"metadata.version_pin {manifest.metadata.version_pin!r}"
+                        f"metadata.version_pin release {pinned_release!r}"
                     )
                 transport_type = source_provenance.get("transport_type")
                 if transport_type and transport_type != manifest.runtime.transport:
@@ -640,29 +654,64 @@ def reconcile(
                         f"{path.name}: source_provenance.transport_type {transport_type!r} disagrees with "
                         f"runtime.transport {manifest.runtime.transport!r}"
                     )
-            matching_component = next(
-                (
-                    item
-                    for item in provenance.get("components") or []
-                    if isinstance(item, dict)
-                    and _normalise_source(item.get("source")) == _normalise_source(source_repo)
-                ),
-                None,
-            )
-            if matching_component is None:
-                errors.append(f"{path.name}: source_repo is absent from third-party provenance inventory")
-            else:
-                inventory_version = matching_component.get("version")
-                manifest_version = manifest.metadata.version_pin
+            source_provenance = manifest.source_provenance or {}
+            if str(source_provenance.get("source_provider") or "").strip().lower() == AIAT_FIRST_PARTY_SOURCE_PROVIDER:
+                repository = urlparse(source_repo)
+                canonical_repository = urlparse(AIAT_CANONICAL_SOURCE_REPOSITORY)
+                repository_path = repository.path.strip("/").removesuffix(".git").lower()
                 if (
-                    _is_concrete_version(inventory_version)
-                    and _is_concrete_version(manifest_version)
-                    and _normalise_version(inventory_version) != _normalise_version(manifest_version)
+                    repository.scheme.lower() != "https"
+                    or repository.hostname is None
+                    or repository.hostname.lower() != canonical_repository.hostname
+                    or repository_path != canonical_repository.path.strip("/").lower()
+                    or repository.username is not None
+                    or repository.password is not None
+                    or repository.query
+                    or repository.fragment
                 ):
                     errors.append(
-                        f"{path.name}: manifest version_pin {manifest_version!r} disagrees with "
-                        f"inventory version {inventory_version!r}"
+                        f"{path.name}: AIAT first-party source_repo must be the canonical HTTPS AIAT repository"
                     )
+                commit_sha = str(source_provenance.get("commit_sha") or "")
+                source_revision = str(manifest.metadata.source_revision or "")
+                if not re.fullmatch(r"(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})", commit_sha):
+                    errors.append(f"{path.name}: AIAT first-party provenance requires an exact Git commit SHA")
+                elif commit_sha != source_revision:
+                    errors.append(
+                        f"{path.name}: first-party provenance commit_sha disagrees with metadata.source_revision"
+                    )
+                image_digest = str(source_provenance.get("oci_image_digest") or "")
+                image_reference = str(manifest.runtime.adapter_config.get("image") or "")
+                if manifest.runtime.transport != "oci" or not re.fullmatch(r"sha256:[0-9a-f]{64}", image_digest):
+                    errors.append(f"{path.name}: AIAT first-party candidates require an OCI sha256 image digest")
+                elif image_reference.rsplit("@", 1)[-1] != image_digest or "@" not in image_reference:
+                    errors.append(
+                        f"{path.name}: first-party OCI image reference disagrees with source_provenance.oci_image_digest"
+                    )
+            else:
+                matching_component = next(
+                    (
+                        item
+                        for item in provenance.get("components") or []
+                        if isinstance(item, dict)
+                        and _normalise_source(item.get("source")) == _normalise_source(source_repo)
+                    ),
+                    None,
+                )
+                if matching_component is None:
+                    errors.append(f"{path.name}: source_repo is absent from third-party provenance inventory")
+                else:
+                    inventory_version = matching_component.get("version")
+                    manifest_version = _release_version_from_pin(manifest.metadata.version_pin)
+                    if (
+                        _is_concrete_version(inventory_version)
+                        and _is_concrete_version(manifest_version)
+                        and _normalise_version(inventory_version) != _normalise_version(manifest_version)
+                    ):
+                        errors.append(
+                            f"{path.name}: manifest version {manifest_version!r} disagrees with "
+                            f"inventory version {inventory_version!r}"
+                        )
             scan_status = str((manifest.source_provenance or {}).get("security_scan_status") or "pending")
             if scan_status.lower() != "passed":
                 pending_row: dict[str, Any] = {
