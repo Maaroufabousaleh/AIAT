@@ -3533,6 +3533,15 @@ OPERATIONS: dict[str, ApiOperation] = {
         request_body_type=None,
         response_types=(),
     ),
+    'local_host_queue_health_workers_host_local_health_get': ApiOperation(
+        operation_id='local_host_queue_health_workers_host_local_health_get',
+        method='GET',
+        path='/workers/host/local/health',
+        path_params=(),
+        query_params=(),
+        request_body_type=None,
+        response_types=(),
+    ),
     'list_worker_runs_api_workers_runs_get': ApiOperation(
         operation_id='list_worker_runs_api_workers_runs_get',
         method='GET',
@@ -3614,6 +3623,15 @@ OPERATIONS: dict[str, ApiOperation] = {
         request_body_type=None,
         response_types=('HTTPValidationError',),
     ),
+    'get_worker_run_host_binding_api_workers_runs__run_id__host_binding_get': ApiOperation(
+        operation_id='get_worker_run_host_binding_api_workers_runs__run_id__host_binding_get',
+        method='GET',
+        path='/workers/runs/{run_id}/host-binding',
+        path_params=('run_id',),
+        query_params=(),
+        request_body_type=None,
+        response_types=('HTTPValidationError',),
+    ),
     'pause_worker_run_workers_runs__run_id__pause_post': ApiOperation(
         operation_id='pause_worker_run_workers_runs__run_id__pause_post',
         method='POST',
@@ -3641,6 +3659,15 @@ OPERATIONS: dict[str, ApiOperation] = {
         request_body_type='WorkerRunRetryRequest',
         response_types=('HTTPValidationError',),
     ),
+    'get_worker_run_tool_effects_api_workers_runs__run_id__tool_effects_get': ApiOperation(
+        operation_id='get_worker_run_tool_effects_api_workers_runs__run_id__tool_effects_get',
+        method='GET',
+        path='/workers/runs/{run_id}/tool-effects',
+        path_params=('run_id',),
+        query_params=('limit',),
+        request_body_type=None,
+        response_types=('HTTPValidationError',),
+    ),
     'get_worker_run_transitions_workers_runs__run_id__transitions_get': ApiOperation(
         operation_id='get_worker_run_transitions_workers_runs__run_id__transitions_get',
         method='GET',
@@ -3662,7 +3689,7 @@ OPERATIONS: dict[str, ApiOperation] = {
 }
 
 MODEL_COUNT = 148
-OPERATION_COUNT = 278
+OPERATION_COUNT = 281
 
 __all__ = [
     "ApiOperation",

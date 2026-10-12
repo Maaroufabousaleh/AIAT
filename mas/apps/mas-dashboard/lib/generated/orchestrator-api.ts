@@ -4843,6 +4843,15 @@ export type OrchestratorApiOperations = {
 };
     };
   };
+  "local_host_queue_health_workers_host_local_health_get": {
+    method: "GET";
+    path: "/workers/host/local/health";
+    responses: {
+      "200": {
+  [key: string]: unknown;
+};
+    };
+  };
   "list_worker_runs_api_workers_runs_get": {
     method: "GET";
     path: "/workers/runs";
@@ -4971,6 +4980,19 @@ export type OrchestratorApiOperations = {
       "422": HTTPValidationError;
     };
   };
+  "get_worker_run_host_binding_api_workers_runs__run_id__host_binding_get": {
+    method: "GET";
+    path: "/workers/runs/{run_id}/host-binding";
+    parameters: {
+      "path:run_id": string;
+    };
+    responses: {
+      "200": {
+  [key: string]: unknown;
+};
+      "422": HTTPValidationError;
+    };
+  };
   "pause_worker_run_workers_runs__run_id__pause_post": {
     method: "POST";
     path: "/workers/runs/{run_id}/pause";
@@ -5008,6 +5030,20 @@ export type OrchestratorApiOperations = {
     requestBody: WorkerRunRetryRequest;
     responses: {
       "202": {
+  [key: string]: unknown;
+};
+      "422": HTTPValidationError;
+    };
+  };
+  "get_worker_run_tool_effects_api_workers_runs__run_id__tool_effects_get": {
+    method: "GET";
+    path: "/workers/runs/{run_id}/tool-effects";
+    parameters: {
+      "path:run_id": string;
+      "query:limit"?: number;
+    };
+    responses: {
+      "200": {
   [key: string]: unknown;
 };
       "422": HTTPValidationError;

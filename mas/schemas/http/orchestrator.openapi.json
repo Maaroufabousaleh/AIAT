@@ -21167,6 +21167,26 @@
         "summary": "Worker Contract Version"
       }
     },
+    "/workers/host/local/health": {
+      "get": {
+        "operationId": "local_host_queue_health_workers_host_local_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Local Host Queue Health Workers Host Local Health Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Local Host Queue Health"
+      }
+    },
     "/workers/runs": {
       "get": {
         "operationId": "list_worker_runs_api_workers_runs_get",
@@ -21705,6 +21725,49 @@
         "summary": "Heartbeat Worker Run"
       }
     },
+    "/workers/runs/{run_id}/host-binding": {
+      "get": {
+        "description": "Expose host placement evidence without WorkerRun/task payloads.",
+        "operationId": "get_worker_run_host_binding_api_workers_runs__run_id__host_binding_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Worker Run Host Binding Api Workers Runs  Run Id  Host Binding Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Worker Run Host Binding Api"
+      }
+    },
     "/workers/runs/{run_id}/pause": {
       "post": {
         "description": "Pause a running worker only when its certified contract supports checkpoints.",
@@ -21861,6 +21924,61 @@
           }
         },
         "summary": "Retry Worker Run Api"
+      }
+    },
+    "/workers/runs/{run_id}/tool-effects": {
+      "get": {
+        "description": "Expose durable mediated-effect evidence without request/response data.",
+        "operationId": "get_worker_run_tool_effects_api_workers_runs__run_id__tool_effects_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Worker Run Tool Effects Api Workers Runs  Run Id  Tool Effects Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Worker Run Tool Effects Api"
       }
     },
     "/workers/runs/{run_id}/transitions": {

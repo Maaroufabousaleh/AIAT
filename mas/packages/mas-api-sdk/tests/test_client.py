@@ -24,12 +24,17 @@ def _operation(path: str, method: str) -> str:
 
 def test_generated_contract_counts_and_parameter_metadata() -> None:
     assert MODEL_COUNT == 148
-    assert OPERATION_COUNT == 278
+    assert OPERATION_COUNT == 281
     operation = OPERATIONS[_operation("/projects/{project_id}", "GET")]
     assert operation.path_params == ("project_id",)
     assert operation.method == "GET"
     improvement = OPERATIONS[_operation("/projects/self-improvement", "POST")]
     assert improvement.request_body_type == "ImprovementOpportunity"
+    assert OPERATIONS[_operation("/workers/host/local/health", "GET")].path_params == ()
+    host_binding = OPERATIONS[_operation("/workers/runs/{run_id}/host-binding", "GET")]
+    assert host_binding.path_params == ("run_id",)
+    tool_effects = OPERATIONS[_operation("/workers/runs/{run_id}/tool-effects", "GET")]
+    assert tool_effects.path_params == ("run_id",)
 
 
 @pytest.mark.anyio
