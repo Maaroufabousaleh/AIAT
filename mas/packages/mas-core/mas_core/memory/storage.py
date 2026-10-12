@@ -6959,6 +6959,60 @@ class AgentStorage:
             rows = (await conn.execute(query)).mappings().all()
         return [dict(row) for row in rows]
 
+    async def list_terminal_worker_budget_reservations(
+        self,
+        *,
+        limit: int = 100,
+        after_created_at: datetime | None = None,
+        after_reservation_id: UUID | None = None,
+    ) -> list[dict[str, Any]]:
+        """Read a bounded page of unsettled reservations for terminal runs.
+
+        The keyset cursor lets a reconciler drain past an individual
+        reservation whose settlement repeatedly fails. Only the scalar usage
+        amount needed for canonical budget settlement is projected from the
+        run result; task and provider payloads are never returned.
+        """
+        if not 1 <= limit <= 1000:
+            raise ValueError("terminal budget reconciliation limit must be between 1 and 1000")
+        if (after_created_at is None) != (after_reservation_id is None):
+            raise ValueError("terminal budget reconciliation cursor is incomplete")
+
+        reservations = t.budget_reservations
+        runs = t.worker_runs
+        query = (
+            sa.select(
+                reservations.c.id.label("reservation_id"),
+                reservations.c.run_id,
+                reservations.c.budget_key,
+                reservations.c.created_at.label("reservation_created_at"),
+                runs.c.state.label("run_state"),
+                runs.c.result_json["usage"]["cost_usd"].astext.label("actual_cost_usd"),
+            )
+            .select_from(reservations.join(runs, reservations.c.run_id == runs.c.id))
+            .where(
+                sa.and_(
+                    reservations.c.state == "RESERVED",
+                    runs.c.state.in_(TERMINAL_WORKER_RUN_STATES),
+                )
+            )
+            .order_by(reservations.c.created_at.asc(), reservations.c.id.asc())
+            .limit(limit)
+        )
+        if after_created_at is not None and after_reservation_id is not None:
+            query = query.where(
+                sa.or_(
+                    reservations.c.created_at > after_created_at,
+                    sa.and_(
+                        reservations.c.created_at == after_created_at,
+                        reservations.c.id > after_reservation_id,
+                    ),
+                )
+            )
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
     async def get_budget_state(self, company_id: UUID, budget_key: str) -> dict[str, Any]:
         """Return the authoritative limit, usage, and available balance."""
         async with self.engine.connect() as conn:

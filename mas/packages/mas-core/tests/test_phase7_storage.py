@@ -13,6 +13,7 @@ TestMemoryInit           — Public API re-exports from mas_core.memory.
 from __future__ import annotations
 
 import hashlib
+from datetime import UTC, datetime
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
@@ -30,6 +31,7 @@ from mas_core.memory.models import (
     agent_checkpoints,
     agent_profiles,
     approval_gates,
+    budget_reservations,
     capabilities,
     compatibility_matrices,
     dead_letters,
@@ -1328,6 +1330,61 @@ class TestAgentStorageCRUD:
         assert first == committed
         assert replay == committed
         assert conn.execute.await_count == 7
+
+    @pytest.mark.asyncio
+    async def test_terminal_budget_recovery_query_is_bounded_and_keyset_ordered(self):
+        from sqlalchemy.dialects import postgresql
+
+        storage, engine = self._make_storage()
+        conn = engine._mock_conn
+        created_at = datetime(2026, 10, 12, tzinfo=UTC)
+        reservation_id = uuid4()
+        projected = {
+            "reservation_id": reservation_id,
+            "run_id": uuid4(),
+            "budget_key": "max_cost_usd",
+            "reservation_created_at": created_at,
+            "run_state": "SUCCEEDED",
+            "actual_cost_usd": "0.25",
+        }
+        result_mock = MagicMock()
+        result_mock.mappings.return_value.all.return_value = [projected]
+        conn.execute = AsyncMock(return_value=result_mock)
+
+        rows = await storage.list_terminal_worker_budget_reservations(
+            limit=2,
+            after_created_at=created_at,
+            after_reservation_id=uuid4(),
+        )
+
+        assert rows == [projected]
+        query = conn.execute.await_args.args[0]
+        sql = str(query.compile(dialect=postgresql.dialect()))
+        params = query.compile(dialect=postgresql.dialect()).params
+        assert budget_reservations.name in sql
+        assert "budget_reservations.state =" in sql
+        assert "worker_runs.state IN" in sql
+        assert "budget_reservations.created_at >" in sql
+        assert "budget_reservations.id >" in sql
+        assert "LIMIT" in sql
+        assert 2 in params.values()
+        assert ["SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT"] in params.values()
+        assert "actual_cost_usd" in sql
+        assert "request_json" not in sql
+        assert "result_json" in sql
+        assert "usage" in params.values()
+        assert "cost_usd" in params.values()
+
+    @pytest.mark.asyncio
+    async def test_terminal_budget_recovery_query_rejects_unbounded_or_incomplete_cursor(self):
+        storage, _engine = self._make_storage()
+
+        with pytest.raises(ValueError, match="between 1 and 1000"):
+            await storage.list_terminal_worker_budget_reservations(limit=1001)
+        with pytest.raises(ValueError, match="cursor is incomplete"):
+            await storage.list_terminal_worker_budget_reservations(
+                after_created_at=datetime(2026, 10, 12, tzinfo=UTC)
+            )
 
     # ── System Config ──
 

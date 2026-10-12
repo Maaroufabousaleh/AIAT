@@ -29,7 +29,7 @@ import ssl
 import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from enum import Enum
 from functools import partial
 from typing import Annotated, Any, Literal
@@ -85,7 +85,11 @@ from mas_core.integrations.providers.base import (
 )
 from mas_core.llm_gateway.client import LLMGatewayClient
 from mas_core.memory import models as memory_models
-from mas_core.memory.storage import AgentStorage, document_to_context_item
+from mas_core.memory.storage import (
+    TERMINAL_WORKER_RUN_STATES,
+    AgentStorage,
+    document_to_context_item,
+)
 from mas_core.observability import configure_logging
 from mas_core.observability.metrics import (
     observe_project_state,
@@ -2952,6 +2956,99 @@ async def worker_run_recovery_loop(
             logger.exception("worker_run_recovery_loop_error")
 
 
+async def worker_budget_reservation_recovery_loop(
+    storage: AgentStorage,
+    stop_event: Any,
+    *,
+    interval_seconds: int = 30,
+    batch_size: int = 100,
+) -> None:
+    """Settle bounded pages of terminal runs' durable reserved budgets."""
+    cursor: tuple[datetime, UUID] | None = None
+    bounded_batch_size = min(1000, max(1, int(batch_size)))
+    while not stop_event.is_set():
+        try:
+            _processed, cursor = await reconcile_terminal_worker_budget_reservations(
+                storage,
+                limit=bounded_batch_size,
+                cursor=cursor,
+            )
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            logger.exception("worker_budget_reservation_recovery_loop_error")
+            cursor = None
+        try:
+            await anyio.sleep(max(1, int(interval_seconds)))
+        except asyncio.CancelledError:
+            break
+
+
+async def reconcile_terminal_worker_budget_reservations(
+    storage: Any,
+    *,
+    limit: int = 100,
+    cursor: tuple[datetime, UUID] | None = None,
+) -> tuple[int, tuple[datetime, UUID] | None]:
+    """Settle one keyset page of RESERVED budget rows for terminal runs.
+
+    Storage filters terminal runs and bounds the page. This second state check
+    fails closed if a storage adapter returns an active row. Settlement uses
+    the existing policy and only the authoritative scalar usage amount read
+    alongside the run; no usage is inferred when it is absent.
+    """
+    list_pending = getattr(storage, "list_terminal_worker_budget_reservations", None)
+    if not inspect.iscoroutinefunction(list_pending):
+        return 0, None
+    query: dict[str, Any] = {"limit": limit}
+    if cursor is not None:
+        query["after_created_at"], query["after_reservation_id"] = cursor
+    rows = await list_pending(**query)
+    if not rows:
+        return 0, None
+
+    processed = 0
+    for row in rows:
+        try:
+            run_state = str(row.get("run_state") or "").upper()
+            if run_state not in TERMINAL_WORKER_RUN_STATES:
+                continue
+            reservation_id = UUID(str(row["reservation_id"]))
+            budget_key = str(row["budget_key"] or "")
+            if not budget_key:
+                continue
+            actual_cost = row.get("actual_cost_usd")
+            if actual_cost is not None:
+                try:
+                    actual_cost = Decimal(str(actual_cost))
+                except (InvalidOperation, TypeError, ValueError):
+                    logger.warning("terminal_worker_budget_usage_invalid")
+                    continue
+                if not actual_cost.is_finite() or actual_cost < 0:
+                    logger.warning("terminal_worker_budget_usage_invalid")
+                    continue
+            await _settle_worker_run_budgets(
+                storage,
+                [(reservation_id, budget_key)],
+                state=run_state,
+                actual_cost_usd=actual_cost,
+            )
+            processed += 1
+        except (KeyError, TypeError, ValueError):
+            logger.warning("terminal_worker_budget_projection_invalid")
+
+    next_cursor: tuple[datetime, UUID] | None = None
+    if len(rows) >= limit:
+        try:
+            next_cursor = (
+                rows[-1]["reservation_created_at"],
+                UUID(str(rows[-1]["reservation_id"])),
+            )
+        except (KeyError, TypeError, ValueError):
+            logger.warning("terminal_worker_budget_cursor_invalid")
+    return processed, next_cursor
+
+
 # ── Resume protocol ──────────────────────────────────────────────────────────
 
 
@@ -3319,6 +3416,11 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
         # jobs are eligible on the first scheduler cycle.
         ceo_command_task_group.start_soon(update_monitor_loop, storage, stop_event)
         ceo_command_task_group.start_soon(worker_run_recovery_loop, storage, stop_event)
+        ceo_command_task_group.start_soon(
+            worker_budget_reservation_recovery_loop,
+            storage,
+            stop_event,
+        )
         ceo_command_task_group.start_soon(project_transition_outbox_loop, storage, stop_event)
 
         try:
