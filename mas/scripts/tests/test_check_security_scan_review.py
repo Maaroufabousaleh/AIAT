@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 import yaml
@@ -38,6 +39,44 @@ def test_current_review_register_covers_open_scan_without_waiving_gate() -> None
     assert report["latest_reproduction"]["finding_count"] == 513
     assert report["latest_reproduction"]["scanner_error_count"] == 7
     assert report["latest_reproduction"]["technical_gate_status"] == "blocked"
+
+
+def test_partial_opencode_review_artifact_is_linked_without_closing_gate() -> None:
+    module = _load_module()
+    report = module.inspect(SCAN, REVIEW)
+    review_document = yaml.safe_load(REVIEW.read_text(encoding="utf-8"))
+    review = next(
+        row
+        for row in review_document["reviews"]
+        if row["id"] == "opencode-1.18.21-semgrep-2026-10-02-review"
+    )
+    artifact_path = module.REPO_ROOT / review["finding_review_ref"]
+    artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+
+    assert report["status"] == "pass", report["errors"]
+    assert report["technical_gate_status"] == "blocked"
+    assert review["status"] == "open"
+    assert review["gate_status"] == "blocked"
+    assert artifact["policy"]["does_not_close_review_groups"] is True
+    assert artifact["policy"]["does_not_change_scan_or_activation_gate"] is True
+
+
+def test_finding_review_artifact_hash_is_enforced(tmp_path: Path) -> None:
+    module = _load_module()
+    review_document = yaml.safe_load(REVIEW.read_text(encoding="utf-8"))
+    review = next(
+        row
+        for row in review_document["reviews"]
+        if row["id"] == "opencode-1.18.21-semgrep-2026-10-02-review"
+    )
+    review["finding_review_sha256"] = "0" * 64
+    review_path = tmp_path / "review.yaml"
+    review_path.write_text(yaml.safe_dump(review_document, sort_keys=False), encoding="utf-8")
+
+    report = module.inspect(SCAN, review_path)
+
+    assert report["status"] == "fail"
+    assert any("finding_review_sha256 does not match" in error for error in report["errors"])
 
 
 def test_zero_finding_scanner_has_explicit_passed_review() -> None:

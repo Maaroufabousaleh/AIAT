@@ -21,9 +21,13 @@ reviews:
   status: open
   gate_status: blocked
   finding_disposition: unreviewed
+  finding_review_ref: mas/docs/provenance/opencode_partial_security_review_2026-10-12.json
+  finding_review_sha256: a8c4b84cc5b249dd19f894c1e2cfea92b7ccc9035af78fc78c1d3a5f4c0607b1
   next_action: Review all 328 current exact-source Semgrep findings, with priority on the two runtime
-    process-launch candidates. Keep coverage incomplete until the six exact parser gaps receive equivalent
-    security analysis. Seven excluded-rule findings are tracked separately and remain open.
+    process-launch candidates. The linked partial review documents test-only E2E regex records and launch
+    semantics without closing this row. Continue disposition of all remaining findings and keep coverage
+    incomplete until the six exact parser gaps receive equivalent security analysis. Seven excluded-rule
+    findings are tracked separately and remain open.
   engine_warning_action: 'Semgrep has zero execution failures and six explained TypeScript parser coverage gaps;
     the pinned Bun parser/transpiler check succeeds on all six exact paths but does not replace security analysis.
     The two workflow rule exclusions have compensating Actionlint/Zizmor scans; seven findings from the excluded
@@ -45,8 +49,9 @@ reviews:
     - yaml.github-actions.security.github-actions-mutable-action-tag.github-actions-mutable-action-tag
     - yaml.github-actions.security.run-shell-injection.run-shell-injection
     finding_count: 328
-    next_action: Disposition every current rule/location. Keep unresolved findings open; prioritize runtime
-      process-launch candidates.
+    next_action: Disposition every remaining current rule/location. See the linked partial review for scoped
+      test-only and process-launch classifications; keep unresolved findings open and prioritize the two
+      runtime shell-launch candidates.
 - id: opencode-1.18.21-semgrep-excluded-rule-carry-forward-2026-10-02-review
   scan_ref:
     mas/docs/provenance/security_scan_evidence.yaml#opencode-1.18.21-semgrep-excluded-rule-carry-forward-2026-10-02
@@ -155,12 +160,13 @@ reviews:
   engine_warning_action: The pinned Semgrep run completed with exit 0 and four warnings; it also reported one
     parser error on non-AIAT-serving LSP source. All three AIAT-serving TypeScript paths completed without
     parser errors. Keep the finding gate blocked and retain the non-runtime coverage limitation.
-  finding_review_ref: mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/transpiled-semgrep-findings-review.json
-  finding_review_sha256: 7297c5617a2bea724701f78af20625006f6965e64c43feaa593c8ab1d7b07fef
+  finding_review_ref: mas/docs/provenance/opencode_partial_security_review_2026-10-12.json
+  finding_review_sha256: a8c4b84cc5b249dd19f894c1e2cfea92b7ccc9035af78fc78c1d3a5f4c0607b1
   rule_groups:
   - id: semgrep-transpiled-path-join-findings
     rules:
     - javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
     finding_count: 4
-    next_action: Review each mapped source location and caller trust boundary; the duplicate pair at line 257
-      remains two scanner records and one source-line location until dispositioned.
+    next_action: The linked partial review confirms safe behavior only for inspected in-tree callers; resolve
+      optional-dir API reachability and trust boundary before disposition. Keep all four records open, including
+      the duplicate pair at line 257.

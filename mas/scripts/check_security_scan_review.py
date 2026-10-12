@@ -64,6 +64,28 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _validate_finding_review_reference(review: dict[str, Any], review_id: str, errors: list[str]) -> None:
+    reference = str(review.get("finding_review_ref") or "").strip()
+    expected_sha256 = str(review.get("finding_review_sha256") or "").strip()
+    if not reference and not expected_sha256:
+        return
+    if not reference or not expected_sha256:
+        errors.append(f"{review_id}: finding_review_ref and finding_review_sha256 must be supplied together")
+        return
+    if not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
+        errors.append(f"{review_id}: finding_review_sha256 must be a full SHA-256")
+        return
+    evidence_path = (REPO_ROOT / reference).resolve()
+    if REPO_ROOT not in evidence_path.parents or not evidence_path.is_file():
+        errors.append(f"{review_id}: finding_review_ref must identify a repository file")
+        return
+    try:
+        if _sha256(evidence_path) != expected_sha256:
+            errors.append(f"{review_id}: finding_review_sha256 does not match the retained artifact")
+    except OSError:
+        errors.append(f"{review_id}: finding_review_ref could not be verified")
+
+
 def _resolve_scan_ref(reference: str, scan_path: Path) -> tuple[str, str] | None:
     raw_path, separator, scan_id = reference.partition("#")
     if not separator or not raw_path.strip() or not scan_id.strip():
@@ -342,6 +364,7 @@ def inspect(
             errors.append(f"{review_id or '<unnamed>'}: next_action is required")
         if not str(review.get("engine_warning_action") or "").strip():
             errors.append(f"{review_id or '<unnamed>'}: engine_warning_action is required")
+        _validate_finding_review_reference(review, review_id or "<unnamed>", errors)
         scan = scan_index.get(scan_id)
         if scan is not None and _is_historical(scan):
             errors.append(f"{review_id}: historical unreproducible scans cannot have active review rows")
