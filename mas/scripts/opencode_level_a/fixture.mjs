@@ -26,6 +26,14 @@ const toolOperations = [
     },
   },
   {
+    id: "aiat-fixture-write-sample-v1",
+    toolName: "opencode.workspace_write",
+    arguments: {
+      path: "sample_expenses.csv",
+      content: "category,amount\nfood,2.50\ntravel,7.00\nfood,1.25\n",
+    },
+  },
+  {
     id: "aiat-fixture-write-test-v1",
     toolName: "opencode.workspace_write",
     arguments: {

@@ -8,10 +8,15 @@ For boundary-contract tests only, a request containing the exact user message
 `AIAT_LEVEL_A_WORKSPACE_TOOL_LOOP` selects a fixed tool-call sequence. The
 fixture requires exactly one advertised run-scoped `aiat-<32 hex>_aiat_tool`
 function and emits fixed tool-call requests to write a CSV category-total function,
-`test_expenses.py`, and `README.md`, followed by a call to
+`sample_expenses.csv`, `test_expenses.py`, and `README.md`, followed by a call to
 `opencode.workspace_pytest`. The fixed final
 message makes no claim that the calls were executed or that tests passed. No
 tool arguments or command structure are derived from other prompt content.
+
+The `sample_expenses.csv` contents and all other tool-call arguments are fixed
+fixture data. This remains Level A deterministic local integration support;
+the fixture does not claim a live provider call or real OpenCode-generated
+output.
 
 Run the pure deterministic fixture contract tests with:
 
