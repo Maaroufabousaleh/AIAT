@@ -41,6 +41,8 @@ runInNewContext(javascript, {
     throw new Error(`Unexpected route dependency: ${specifier}`);
   },
   TextDecoder,
+  URL,
+  URLSearchParams,
 }, { filename: sourcePath });
 
 function props(resource = "retry") {
@@ -53,6 +55,10 @@ function post(body, { resource = "retry", contentType = "application/json" } = {
     headers: contentType ? { "content-type": contentType } : {},
     body: JSON.stringify(body),
   });
+}
+
+function get(resource, query = "") {
+  return new Request(`http://dashboard.local/api/governance/runs/${RUN_ID}/${resource}${query}`);
 }
 
 beforeEach(() => {
@@ -107,6 +113,27 @@ describe("Worker Run retry action BFF", () => {
       props(),
     );
     assert.equal(oversized.status, 413);
+    assert.equal(state.calls.length, 0);
+  });
+});
+
+describe("Worker Run evidence BFF", () => {
+  it("forwards the bounded tool-effect query through the allowlisted read path", async () => {
+    const response = await routeModule.exports.GET(
+      get("tool-effects", "?limit=9999&offset=50&payload=ignored"),
+      props("tool-effects"),
+    );
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), state.nextData);
+    assert.equal(state.calls.length, 1);
+    assert.equal(state.calls[0].path, `/workers/runs/${RUN_ID}/tool-effects?limit=200`);
+  });
+
+  it("rejects unlisted read resources before dispatch", async () => {
+    const response = await routeModule.exports.GET(get("request-payload"), props("request-payload"));
+
+    assert.equal(response.status, 404);
     assert.equal(state.calls.length, 0);
   });
 });

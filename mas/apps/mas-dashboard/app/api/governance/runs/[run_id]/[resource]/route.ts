@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { orchestratorFetch, OrchestratorError } from "@/lib/orchestrator";
 
-const READ_RESOURCES = new Set(["events", "transitions", "artifacts", "usage", "checkpoints"]);
+const READ_RESOURCES = new Set(["events", "transitions", "artifacts", "usage", "checkpoints", "tool-effects"]);
 const ACTION_RESOURCES = new Set(["cancel", "pause", "resume", "retry"]);
 const MAX_ACTION_BODY_BYTES = 8_192;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -118,7 +118,7 @@ function failureResponse(error: unknown) {
 function boundedQuery(request: Request, resource: string): string {
   const incoming = new URL(request.url).searchParams;
   const query = new URLSearchParams();
-  const maximumLimit = resource === "checkpoints" ? 1_000 : 10_000;
+  const maximumLimit = resource === "tool-effects" ? 200 : resource === "checkpoints" ? 1_000 : 10_000;
   const rawLimit = incoming.get("limit");
   if (rawLimit && /^\d+$/.test(rawLimit)) {
     query.set("limit", String(Math.min(maximumLimit, Math.max(1, Number(rawLimit)))));

@@ -224,6 +224,71 @@ function EvidenceSection({
   );
 }
 
+function ToolEffectsSection({
+  rows,
+  loading,
+  error,
+  onRetry,
+}: {
+  rows: JsonRecord[];
+  loading: boolean;
+  error: string;
+  onRetry: () => void;
+}) {
+  return (
+    <section className="rounded-xl border border-slate-800 bg-slate-900/50 p-4" aria-labelledby="run-tool-effects-heading" data-testid="run-tool-effects">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 id="run-tool-effects-heading" className="text-sm font-semibold text-white">Mediated tool effects</h2>
+        <span className="text-xs tabular-nums text-slate-500">{rows.length} effect{rows.length === 1 ? "" : "s"}</span>
+      </div>
+      {loading && rows.length === 0 ? (
+        <p className="mt-3 text-sm text-slate-400" role="status" aria-live="polite">Loading durable tool-effect evidence…</p>
+      ) : error ? (
+        <div className="mt-3 rounded-lg border border-amber-700/50 bg-amber-950/20 p-3" role="alert">
+          <p className="text-sm text-amber-100">{error}</p>
+          <button type="button" onClick={onRetry} disabled={loading} className="mt-2 inline-flex min-h-11 items-center rounded border border-amber-700/60 px-3 py-2 text-xs font-medium text-amber-100 hover:bg-amber-950/40 disabled:opacity-50">
+            {loading ? "Retrying…" : "Retry tool-effect evidence"}
+          </button>
+        </div>
+      ) : rows.length === 0 ? (
+        <p className="mt-3 text-sm text-slate-500">No durable mediated-tool effects have been recorded for this run.</p>
+      ) : (
+        <ol className="mt-3 divide-y divide-slate-800" aria-label="Mediated tool effects">
+          {rows.map((row, index) => {
+            const state = display(row.state, "UNKNOWN").toUpperCase();
+            const succeeded = row.response_success === true;
+            const failed = row.response_success === false;
+            const hash = typeof row.request_sha256 === "string" && /^[0-9a-f]{64}$/i.test(row.request_sha256)
+              ? row.request_sha256
+              : "";
+            return (
+              <li key={display(row.id, "effect-" + index)} className="py-3 first:pt-0 last:pb-0" data-testid="run-tool-effect">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <h3 className="break-all text-sm font-medium text-slate-100">{display(row.tool_name, "Mediated tool")}</h3>
+                    <p className="mt-1 text-xs text-slate-400">
+                      {succeeded ? "Tool succeeded" : failed ? "Tool returned a failure" : "Outcome not recorded"}
+                      {row.created_at ? " · Started " + dateTime(row.created_at) : ""}
+                      {row.completed_at ? " · Settled " + dateTime(row.completed_at) : ""}
+                    </p>
+                  </div>
+                  <span className="inline-flex min-h-7 items-center rounded-full border border-slate-700 bg-slate-950/60 px-2.5 py-1 text-[11px] font-semibold text-slate-200">{state}</span>
+                </div>
+                {hash && (
+                  <p className="mt-2 font-mono text-[11px] text-slate-500" title={hash}>
+                    Request SHA-256 · {hash.slice(0, 16)}…
+                  </p>
+                )}
+              </li>
+            );
+          })}
+        </ol>
+      )}
+      {loading && rows.length > 0 && <p className="mt-2 text-xs text-slate-500" role="status">Refreshing tool-effect evidence…</p>}
+    </section>
+  );
+}
+
 export default function WorkerRunDetailPage() {
   const params = useParams<{ run_id: string }>();
   const runId = typeof params.run_id === "string" ? params.run_id : "";
@@ -234,6 +299,9 @@ function WorkerRunDetail({ runId }: { runId: string }) {
   const validRunId = UUID_PATTERN.test(runId);
   const [data, setData] = useState<RunEvidence | null>(null);
   const dataRef = useRef<RunEvidence | null>(null);
+  const [toolEffects, setToolEffects] = useState<JsonRecord[]>([]);
+  const [toolEffectsLoading, setToolEffectsLoading] = useState(true);
+  const [toolEffectsError, setToolEffectsError] = useState("");
   const [loading, setLoading] = useState(true);
   const [stale, setStale] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -248,12 +316,36 @@ function WorkerRunDetail({ runId }: { runId: string }) {
   const [retryTarget, setRetryTarget] = useState<RetryTarget | null>(null);
   const [resumeCheckpointId, setResumeCheckpointId] = useState("");
 
+  const loadToolEffects = useCallback(async () => {
+    if (!validRunId) {
+      setToolEffects([]);
+      setToolEffectsLoading(false);
+      return;
+    }
+    setToolEffectsLoading(true);
+    setToolEffectsError("");
+    try {
+      const payload = asRecord(await readJson<unknown>(
+        "/api/governance/runs/" + encodeURIComponent(runId) + "/tool-effects?limit=100",
+      ));
+      setToolEffects(asRecords(payload.tool_effects));
+    } catch (cause) {
+      setToolEffects([]);
+      setToolEffectsError(cause instanceof RunApiError && [401, 403].includes(cause.status)
+        ? "You are not authorized to view mediated tool-effect evidence."
+        : "Mediated tool-effect evidence could not be loaded.");
+    } finally {
+      setToolEffectsLoading(false);
+    }
+  }, [runId, validRunId]);
+
   const loadRun = useCallback(async (quiet = false): Promise<RunEvidence | null> => {
     if (!validRunId) {
       setLoadError("This Worker Run link does not contain a valid run ID.");
       setLoading(false);
       return null;
     }
+    void loadToolEffects();
     if (!quiet) setLoading(true);
     setLoadError("");
     try {
@@ -310,7 +402,7 @@ function WorkerRunDetail({ runId }: { runId: string }) {
     } finally {
       setLoading(false);
     }
-  }, [runId, validRunId]);
+  }, [loadToolEffects, runId, validRunId]);
 
   useEffect(() => {
     void loadRun();
@@ -614,6 +706,7 @@ function WorkerRunDetail({ runId }: { runId: string }) {
 
           <div className="grid gap-4 xl:grid-cols-2">
             <EvidenceSection kind="events" title="Worker events" rows={data.events} emptyText="No worker events have been recorded." />
+            <ToolEffectsSection rows={toolEffects} loading={toolEffectsLoading} error={toolEffectsError} onRetry={() => void loadToolEffects()} />
             <EvidenceSection kind="transitions" title="State transitions" rows={data.transitions} emptyText="No state transitions have been recorded." />
             <EvidenceSection kind="artifacts" title="Artifacts" rows={data.artifacts} emptyText="No artifacts have been recorded for this run." />
             <EvidenceSection kind="usage" title="Usage" rows={data.usage} emptyText="No usage records have been recorded for this run." />

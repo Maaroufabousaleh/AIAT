@@ -43,6 +43,7 @@ async function mockWorkerRunApi(page: Page, cancelMode: CancelMode = "terminal",
     cancelPayload: null as Record<string, unknown> | null,
     retryPayload: null as Record<string, unknown> | null,
     retryRunId: null as string | null,
+    toolEffectsMode: "data" as "data" | "delayed" | "empty" | "error",
     retryConflict: false,
     denyRunReads: false,
     denyActions: false,
@@ -139,6 +140,36 @@ async function mockWorkerRunApi(page: Page, cancelMode: CancelMode = "terminal",
           event_json: { event_type: "tool_response", tool_response: { tool_name: "filesystem.write", success: true, result: { written: true } } },
         },
       ] });
+      return;
+    }
+    if (path === "/api/governance/runs/" + RUN_ID + "/tool-effects" && request.method() === "GET") {
+      if (observed.toolEffectsMode === "error") {
+        await route.fulfill({ status: 503, json: { detail: "temporary tool-effect store failure" } });
+      } else if (observed.toolEffectsMode === "empty") {
+        await route.fulfill({ json: { run_id: RUN_ID, tool_effects: [] } });
+      } else {
+        if (observed.toolEffectsMode === "delayed") {
+          await new Promise((resolve) => setTimeout(resolve, 800));
+        }
+        await route.fulfill({ json: {
+          run_id: RUN_ID,
+          tool_effects: [{
+            id: "effect-1",
+            run_id: RUN_ID,
+            request_id: "50000000-0000-4000-8000-000000000010",
+            tool_name: "filesystem.write",
+            request_sha256: "ab".repeat(32),
+            state: "COMPLETED",
+            response_success: true,
+            created_at: "2026-10-07T12:01:20Z",
+            updated_at: "2026-10-07T12:01:21Z",
+            completed_at: "2026-10-07T12:01:21Z",
+            request_payload: { contents: "PRIVATE_REQUEST_PAYLOAD_MUST_NOT_RENDER" },
+            response_payload: { contents: "PRIVATE_RESPONSE_PAYLOAD_MUST_NOT_RENDER" },
+            idempotency_key: "PRIVATE_IDEMPOTENCY_KEY_MUST_NOT_RENDER",
+          }],
+        } });
+      }
       return;
     }
     if (path === "/api/governance/runs/" + RUN_ID + "/transitions" && request.method() === "GET") {
@@ -243,6 +274,13 @@ test("operator opens a Worker Run, inspects durable evidence, and sees governed 
   await expect(runPage.getByTestId("run-events")).toContainText("progress");
   await expect(runPage.getByTestId("run-events")).toContainText("Tool requested · filesystem.write");
   await expect(runPage.getByTestId("run-events")).toContainText("Tool succeeded · filesystem.write");
+  await expect(runPage.getByTestId("run-tool-effects")).toContainText("filesystem.write");
+  await expect(runPage.getByTestId("run-tool-effects")).toContainText("COMPLETED");
+  await expect(runPage.getByTestId("run-tool-effects")).toContainText("Tool succeeded");
+  await expect(runPage.getByTestId("run-tool-effects")).toContainText("abababababababab…");
+  await expect(runPage).not.toContainText("PRIVATE_REQUEST_PAYLOAD_MUST_NOT_RENDER");
+  await expect(runPage).not.toContainText("PRIVATE_RESPONSE_PAYLOAD_MUST_NOT_RENDER");
+  await expect(runPage).not.toContainText("PRIVATE_IDEMPOTENCY_KEY_MUST_NOT_RENDER");
   await expect(runPage.getByTestId("run-transitions")).toContainText("QUEUED");
   await expect(runPage.getByTestId("run-artifacts")).toContainText("review-summary.json");
   await expect(
@@ -275,6 +313,30 @@ test("operator opens a Worker Run, inspects durable evidence, and sees governed 
   });
   expect(observed.cancelPayload).not.toHaveProperty("requested_by");
   await expect(runPage.getByRole("button", { name: "Cancel Worker Run" })).toHaveCount(0);
+  expect(observed.unexpected).toEqual([]);
+});
+
+test("tool-effect evidence reports service errors and supports retry to an empty state", async ({ page }) => {
+  const observed = await mockWorkerRunApi(page);
+  observed.toolEffectsMode = "error";
+  await authenticate(page, "/workers/runs/" + RUN_ID);
+
+  const effects = page.getByTestId("run-tool-effects");
+  await expect(effects.getByRole("alert")).toContainText("Mediated tool-effect evidence could not be loaded");
+  observed.toolEffectsMode = "empty";
+  await effects.getByRole("button", { name: "Retry tool-effect evidence" }).click();
+  await expect(effects).toContainText("No durable mediated-tool effects have been recorded for this run.");
+  expect(observed.unexpected).toEqual([]);
+});
+
+test("tool-effect evidence exposes a loading state before the timeline arrives", async ({ page }) => {
+  const observed = await mockWorkerRunApi(page);
+  observed.toolEffectsMode = "delayed";
+  await authenticate(page, "/workers/runs/" + RUN_ID);
+
+  const effects = page.getByTestId("run-tool-effects");
+  await expect(effects).toContainText("Loading durable tool-effect evidence…");
+  await expect(effects).toContainText("filesystem.write");
   expect(observed.unexpected).toEqual([]);
 });
 
