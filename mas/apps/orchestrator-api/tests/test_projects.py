@@ -859,6 +859,111 @@ async def test_project_evidence_policy_selection_is_persisted(client):
     )
 
 
+def _completion_transition_controller():
+    from mas_core.workflow import WorkflowEvent, WorkflowTransitionResult
+    from mas_core.workflow.states import ProjectState
+
+    controller = MagicMock()
+    controller.transition = AsyncMock(
+        return_value=WorkflowTransitionResult(
+            project_id=str(PROJECT_ID),
+            prior_state=ProjectState.KPI_PERSISTENCE,
+            event=WorkflowEvent.KPI_SAVED,
+            next_state=ProjectState.COMPLETED,
+            actor_id="operator",
+            context={},
+        )
+    )
+    return controller
+
+
+def _completion_evidence_storage(project, *, audit_events=()):
+    storage = _make_storage(project=project)
+    storage.get_flow_instance_by_project = AsyncMock(return_value=None)
+    storage.list_documents = AsyncMock(return_value=[])
+    storage.list_artifacts = AsyncMock(return_value=[])
+    storage.list_approval_gates = AsyncMock(return_value=[])
+    storage.list_worker_runs = AsyncMock(return_value=[])
+    storage.get_project_repository_record = AsyncMock(return_value=None)
+    storage.get_project_history = AsyncMock(return_value=list(audit_events))
+    return storage
+
+
+@pytest.mark.anyio
+async def test_project_completion_requires_persisted_software_delivery_evidence(client):
+    project = _fake_project("KPI_PERSISTENCE")
+    project["config"] = {
+        "evidence_policy": {
+            "policy_id": "software_delivery",
+            "version": "1.0",
+            "requirements": {},
+        }
+    }
+    storage = _completion_evidence_storage(project)
+    controller = _completion_transition_controller()
+    _patch_state(storage, controller)
+
+    response = await client.post(
+        f"/projects/{PROJECT_ID}/transition",
+        json={
+            "event": "kpi_saved",
+            "actor_id": "forged-actor",
+            # Transition context cannot override the persisted evidence policy
+            # or claim that the evidence checks have passed.
+            "context": {
+                "evidence_policy": {"policy_id": "manual"},
+                "evidence_status": "complete",
+            },
+        },
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "PROJECT_EVIDENCE_INCOMPLETE"
+    assert detail["policy_id"] == "software_delivery"
+    assert detail["policy_version"] == "1.0"
+    assert detail["evidence_status"] == "incomplete"
+    assert detail["failed_check_names"] == [
+        "flow_terminal",
+        "documents_exist",
+        "required_document_types",
+        "document_bodies_retrievable",
+        "artifacts_registered",
+        "repository_known",
+        "terminal_audit_present",
+    ]
+    assert detail["failed_check_count"] == len(detail["failed_check_names"])
+    assert detail["failed_check_names_truncated"] is False
+    controller.transition.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_project_completion_allows_complete_manual_evidence_policy(client):
+    project = _fake_project("KPI_PERSISTENCE")
+    project["config"] = {
+        "evidence_policy": {"policy_id": "manual", "version": "1.0", "requirements": {}}
+    }
+    storage = _completion_evidence_storage(
+        project,
+        audit_events=[{"id": "history-1", "to_state": "KPI_PERSISTENCE"}],
+    )
+    controller = _completion_transition_controller()
+    _patch_state(storage, controller)
+
+    response = await client.post(
+        f"/projects/{PROJECT_ID}/transition",
+        json={"event": "kpi_saved", "actor_id": "ignored-body-actor", "context": {}},
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["next_state"] == "COMPLETED"
+    controller.transition.assert_awaited_once()
+    assert controller.transition.await_args.kwargs["actor_id"] == "operator"
+    storage.get_project_history.assert_awaited_once_with(PROJECT_ID)
+
+
 @pytest.mark.anyio
 async def test_milestone_evidence_policy_selection_is_persisted(client):
     project = _fake_project("IN_PROGRESS")

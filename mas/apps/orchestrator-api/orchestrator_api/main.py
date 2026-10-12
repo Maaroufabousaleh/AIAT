@@ -4714,7 +4714,12 @@ async def _collect_project_evidence(
             company_selection=company_default,
         )
     if isinstance(selected, dict):
-        policy = policy_for(str(selected.get("policy_id") or "custom"), version=selected.get("version"), requirements=dict(selected.get("requirements") or {}))
+        policy_requirements = dict(selected.get("requirements") or {})
+        policy = policy_for(
+            str(selected.get("policy_id") or "custom"),
+            version=selected.get("version"),
+            requirements=policy_requirements or None,
+        )
     else:
         policy = policy_for(str(selected))
     documents = await storage.list_documents(project_id)
@@ -4807,7 +4812,11 @@ async def validate_project_evidence(project_id: UUID, req: EvidencePolicyRequest
         repository = await storage.get_project_repository_record(project_id) if inspect.iscoroutinefunction(getattr(storage, "get_project_repository_record", None)) else (config.get("workspace") or None)
         evidence = evaluate_project_evidence(
             project_id=str(project_id),
-            policy=policy_for(req.policy_id, version=req.policy_version, requirements=req.requirements),
+            policy=policy_for(
+                req.policy_id,
+                version=req.policy_version,
+                requirements=req.requirements or None,
+            ),
             project=project,
             documents=documents,
             artifacts=artifacts,
@@ -5783,6 +5792,32 @@ async def _execute_project_transition(
         event = WorkflowEvent(req.event)
     except ValueError:
         raise HTTPException(400, f"Unknown workflow event: {req.event}")
+
+    # Project completion is allowed only after the evidence policy already
+    # persisted on the project (or its resolved flow/company scope) passes.
+    # Request context is deliberately not consulted here: it is descriptive
+    # transition data, not a source of policy or evidence authority.
+    if resolve_transition(current_state, event) == ProjectState.COMPLETED:
+        evidence = await _build_project_evidence(project_id, storage)
+        if not evidence.can_complete:
+            failed_check_names = [
+                check.name for check in evidence.checks if check.required and not check.passed
+            ]
+            max_failed_check_names = 12
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "PROJECT_EVIDENCE_INCOMPLETE",
+                    "message": "Project cannot be completed until its required evidence is complete.",
+                    "policy_id": evidence.policy_id,
+                    "policy_version": evidence.policy_version,
+                    "evidence_status": evidence.status,
+                    "failed_check_names": failed_check_names[:max_failed_check_names],
+                    "failed_check_count": len(failed_check_names),
+                    "failed_check_names_truncated": len(failed_check_names)
+                    > max_failed_check_names,
+                },
+            )
 
     try:
         result = await _controller().transition(
