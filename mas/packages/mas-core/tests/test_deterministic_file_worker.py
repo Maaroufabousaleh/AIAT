@@ -257,11 +257,11 @@ def test_manifest_is_pending_and_pins_exact_sandboxed_worker_image() -> None:
     source_hash = hashlib.sha256(PROCESS_ENTRYPOINT.read_bytes()).hexdigest()
 
     assert manifest.metadata.id == WORKER_ID
-    assert manifest.metadata.version == "0.1.0"
+    assert manifest.metadata.version == "0.1.1"
     assert manifest.metadata.source_repo == "https://github.com/Maaroufabousaleh/AIAT"
-    assert manifest.metadata.source_revision == "7796439efa79d5d1f587909cc2a91085ec4b721d"
+    assert manifest.metadata.source_revision == "1855a75fb17243d8298b84468372e7a6e496da46"
     assert manifest.metadata.version_pin == (
-        "0.1.0+sha256.009c038daba96a174924d1b14d33d67a0a987e1bb801d1db459f204be0d75b02"
+        "0.1.1+sha256.fb1a347b40350519451872e6d4d818da757355d0bc3c7314f74563bed42407cc"
     )
     assert manifest.source_provenance["source_provider"] == "aiat"
     assert manifest.source_provenance["commit_sha"] == manifest.metadata.source_revision
@@ -269,7 +269,7 @@ def test_manifest_is_pending_and_pins_exact_sandboxed_worker_image() -> None:
     assert manifest.runtime.transport == "oci"
     assert manifest.runtime.adapter_config["image"] == (
         "aiat-deterministic-file-worker@sha256:"
-        "009c038daba96a174924d1b14d33d67a0a987e1bb801d1db459f204be0d75b02"
+        "fb1a347b40350519451872e6d4d818da757355d0bc3c7314f74563bed42407cc"
     )
     assert manifest.runtime.adapter_config["sandbox_runtime"] == "runsc"
     assert manifest.runtime.adapter_config["bidirectional_tool_protocol"] is True

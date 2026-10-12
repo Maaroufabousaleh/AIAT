@@ -1,26 +1,26 @@
 metadata:
   id: aiat_deterministic_file_worker
   name: AIAT Deterministic File Worker
-  version: "0.1.0"
+  version: "0.1.1"
   description: >-
     First-party candidate that emits one bounded project-scoped file_write
     request and waits for the correlated AIAT Tool Service response. It has no
     model dispatch, workspace mount, network access, or direct file-write path.
   source_repo: https://github.com/Maaroufabousaleh/AIAT
-  source_revision: 7796439efa79d5d1f587909cc2a91085ec4b721d
-  version_pin: "0.1.0+sha256.009c038daba96a174924d1b14d33d67a0a987e1bb801d1db459f204be0d75b02"
+  source_revision: 1855a75fb17243d8298b84468372e7a6e496da46
+  version_pin: "0.1.1+sha256.fb1a347b40350519451872e6d4d818da757355d0bc3c7314f74563bed42407cc"
   tags: [worker, integration_candidate, first_party]
   update_policy: manual
   evaluation_status: pending
 runtime:
   transport: oci
   adapter_config:
-    image: aiat-deterministic-file-worker@sha256:009c038daba96a174924d1b14d33d67a0a987e1bb801d1db459f204be0d75b02
+    image: aiat-deterministic-file-worker@sha256:fb1a347b40350519451872e6d4d818da757355d0bc3c7314f74563bed42407cc
     sandbox_profile: sandboxed
     sandbox_runtime: runsc
     bidirectional_tool_protocol: true
     tool_response_timeout_seconds: 30
-    runtime_version: aiat-deterministic-file-worker/0.1.0
+    runtime_version: aiat-deterministic-file-worker/0.1.1
   timeout_seconds: 30
   stop_grace_seconds: 5
 execution:
@@ -38,7 +38,7 @@ integration:
 runtime_tier: external
 capabilities:
   - name: deterministic.file_generate
-    version: "0.1.0"
+    version: "0.1.1"
     description: Emit one bounded file_write request without model dispatch.
     risk_level: low
     required_tools: [file_write]
@@ -50,20 +50,21 @@ model_mode: none
 model_requirements: []
 permission_grants: [project.workspace.write]
 tool_grants: [file_write]
-shell_version: 0.1.0
+shell_version: 0.1.1
 certification_status: pending
 source_provenance:
   repository: https://github.com/Maaroufabousaleh/AIAT
   source_provider: aiat
-  exact_release: "0.1.0"
-  commit_sha: 7796439efa79d5d1f587909cc2a91085ec4b721d
+  exact_release: "0.1.1"
+  commit_sha: 1855a75fb17243d8298b84468372e7a6e496da46
   transport_type: oci
-  oci_image_digest: sha256:009c038daba96a174924d1b14d33d67a0a987e1bb801d1db459f204be0d75b02
-  runtime_fingerprint: sha256:79426c1d02678b37dc8644a5ff565a15f9309dcc14e369520628c8587d2c0fcd
+  oci_image_digest: sha256:fb1a347b40350519451872e6d4d818da757355d0bc3c7314f74563bed42407cc
+  runtime_fingerprint: sha256:3b75bea1aa232ac5362d46b448cdc789a55f6e87e955ce4053a7d849ac858784
   security_scan_status: pending
   lifecycle_status: candidate_pending
   notes:
     - Local development image identity only; no registry promotion or release attestation is claimed.
+    - Version 0.1.1 binds the canonical registry worker UUID in emitted protocol events; no admission or activation is implied.
     - Candidate remains pending security scan, conformance, server certification, human approval, rollout, and activation.
     - OCIAdapter applies runsc, no network, no mounts, no secrets, read-only root, dropped capabilities, no-new-privileges, and bounded resources.
     - The worker requests file_write through the controller protocol and waits for the Tool Service response; it cannot write project files directly.

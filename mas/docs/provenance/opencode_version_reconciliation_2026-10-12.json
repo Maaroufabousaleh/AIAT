@@ -3,7 +3,7 @@
   "observed_at": "2026-10-12",
   "repository": {
     "branch": "agent/fix-review-p1",
-    "head": "327c6ff2fda22a7472c412c6479e9021fdff7422",
+    "head": "1855a75fb17243d8298b84468372e7a6e496da46",
     "migration_head": "0048_worker_run_retry_lineage"
   },
   "decision": "BLOCKED_IDENTITY_COMPATIBILITY_AND_GOVERNANCE",
@@ -354,5 +354,48 @@
     "Create the version-specific OpenCode interface candidate report and sanitized request/response/event fixtures; investigate the OpenAPI digest difference and run adapter contract checks under the required sandbox without submitting a model prompt.",
     "Run or reuse security evidence only for the exact candidate bytes and finish technical review; preserve human decisions as pending.",
     "Submit the new immutable shell/adapter/skill candidate through the existing steward candidate lifecycle, then complete intake, technical certification, human approval, rollout, and activation in order."
-  ]
+  ],
+  "first_party_deterministic_worker_candidate": {
+    "manifest_ref": "mas/workers/aiat_deterministic_file_worker.yaml",
+    "worker_id": "aiat_deterministic_file_worker",
+    "version": "0.1.1",
+    "source_repository": "https://github.com/Maaroufabousaleh/AIAT",
+    "source_revision": "1855a75fb17243d8298b84468372e7a6e496da46",
+    "source_entrypoint_sha256": "3b75bea1aa232ac5362d46b448cdc789a55f6e87e955ce4053a7d849ac858784",
+    "transport": "oci",
+    "adapter_entrypoint": "ProcessAdapter via OCIAdapter",
+    "runtime_image": "aiat-deterministic-file-worker@sha256:fb1a347b40350519451872e6d4d818da757355d0bc3c7314f74563bed42407cc",
+    "runtime_revision_label": "1855a75fb17243d8298b84468372e7a6e496da46",
+    "runtime_image_scope": "local development image digest; not registry promotion or production provenance",
+    "sandbox_policy": "sandboxed/runsc; no network; no mounts; no secrets; read-only root",
+    "model_mode": "none",
+    "tool_path": "WorkerRunController mediated file_write request; Tool Service dispatch remains unverified until normal registration and certification",
+    "local_build": "passed",
+    "focused_test_scope": "real child process and adapter/controller tool-response protocol with a local test dispatcher; not persisted Tool Service or host-queue integration",
+    "focused_test_count": 31,
+    "focused_test_command": "UV_PROJECT_ENVIRONMENT=/tmp/aiat-worker-admission-venv uv run --locked --directory mas pytest packages/mas-core/tests/test_deterministic_file_worker.py packages/mas-core/tests/test_first_party_worker_provenance.py packages/mas-core/tests/test_deterministic_file_worker_process.py -q",
+    "persisted_worker_registration_observed": false,
+    "steward_candidate_persisted": false,
+    "active": false,
+    "security_scan_status": "pending",
+    "certification_status": "pending",
+    "human_approval_status": "not_requested",
+    "company_assignment_status": "missing",
+    "dispatch_performed": false,
+    "provider_request_performed": false,
+    "admission_decision": "not_admitted_pending_normal_security_scan_conformance_server_certification_human_approval_rollout_and_company_assignment",
+    "image_verification": {
+      "docker_context": "aiat-wsl",
+      "build_recipe": "mas/workers/Dockerfile.aiat_deterministic_file_worker",
+      "base_image": "python:3.11-slim@sha256:90744cff8f32887f075c47d747a173ff333e9e98801667af93c357fa9f5e28ff",
+      "source_hash_build_check": "pass",
+      "oci_digest_inspect": "pass",
+      "revision_label_matches_source_commit": true,
+      "source_hash_label_matches_entrypoint": true,
+      "runtime_execution": "not_run_pending_normal_admission",
+      "local_tag": "aiat-deterministic-file-worker:local-0.1.1-1855a75f",
+      "image_config_id": "sha256:fb1a347b40350519451872e6d4d818da757355d0bc3c7314f74563bed42407cc",
+      "registry_promotion": "not_performed"
+    }
+  }
 }
