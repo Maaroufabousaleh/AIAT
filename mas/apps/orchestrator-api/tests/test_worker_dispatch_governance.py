@@ -441,6 +441,116 @@ async def test_company_dispatch_rejects_grants_outside_active_assignment(
 
 
 @pytest.mark.anyio
+async def test_company_dispatch_rejects_assignment_pending_approval(client, monkeypatch) -> None:
+    import orchestrator_api.main as main
+
+    class CompanyStorage(_DispatchStorage):
+        def __init__(self):
+            super().__init__()
+            self.created_runs: list[dict[str, object]] = []
+
+        async def get_project(self, project_id):
+            assert project_id == PROJECT_ID
+            return {"id": project_id, "company_id": COMPANY_ID}
+
+        async def list_company_worker_assignments(self, company_id):
+            assert company_id == COMPANY_ID
+            return [
+                {
+                    "worker_id": WORKER_ID,
+                    "status": "ACTIVE",
+                    "approval_required": True,
+                    "tool_grants": [],
+                    "permission_grants": [],
+                }
+            ]
+
+        async def create_worker_run(self, **kwargs):
+            self.created_runs.append(kwargs)
+            return {"id": kwargs["run_id"], "state": "QUEUED"}
+
+    storage = CompanyStorage()
+    _patch_storage(storage)
+    adapter_factory = AsyncMock(return_value=_Adapter())
+    monkeypatch.setattr(main, "_certified_worker_adapter", adapter_factory)
+
+    response = await client.post(
+        "/workers/runs",
+        json={
+            "worker_id": str(WORKER_ID),
+            "idempotency_key": "company-assignment-approval-required",
+            "task_type": "test.run",
+            "project_id": str(PROJECT_ID),
+            "dispatch_mode": "queued",
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == {
+        "code": "COMPANY_ASSIGNMENT_APPROVAL_REQUIRED",
+        "message": "Worker assignment requires approval before dispatch",
+    }
+    assert storage.created_runs == []
+    assert storage.reservations == []
+    assert storage.snapshots == []
+    adapter_factory.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_company_dispatch_accepts_active_assignment_without_pending_approval(
+    client, monkeypatch
+) -> None:
+    import orchestrator_api.main as main
+
+    class CompanyStorage(_DispatchStorage):
+        def __init__(self):
+            super().__init__()
+            self.created_runs: list[dict[str, object]] = []
+
+        async def get_project(self, project_id):
+            assert project_id == PROJECT_ID
+            return {"id": project_id, "company_id": COMPANY_ID}
+
+        async def list_company_worker_assignments(self, company_id):
+            assert company_id == COMPANY_ID
+            return [
+                {
+                    "worker_id": WORKER_ID,
+                    "status": "ACTIVE",
+                    "approval_required": False,
+                    "tool_grants": [],
+                    "permission_grants": [],
+                }
+            ]
+
+        async def create_worker_run(self, **kwargs):
+            self.created_runs.append(kwargs)
+            return {"id": kwargs["run_id"], "state": "QUEUED"}
+
+    storage = CompanyStorage()
+    _patch_storage(storage)
+    adapter_factory = AsyncMock(return_value=_Adapter())
+    monkeypatch.setattr(main, "_certified_worker_adapter", adapter_factory)
+
+    response = await client.post(
+        "/workers/runs",
+        json={
+            "worker_id": str(WORKER_ID),
+            "idempotency_key": "company-assignment-approved",
+            "task_type": "test.run",
+            "project_id": str(PROJECT_ID),
+            "dispatch_mode": "queued",
+        },
+    )
+
+    assert response.status_code == 202
+    assert response.json()["state"] == "QUEUED"
+    assert response.json()["dispatch_mode"] == "queued"
+    assert len(storage.created_runs) == 1
+    adapter_factory.assert_awaited_once()
+
+
+@pytest.mark.anyio
 async def test_successful_dispatch_commits_actual_cost_and_releases_concurrency(
     monkeypatch,
 ) -> None:

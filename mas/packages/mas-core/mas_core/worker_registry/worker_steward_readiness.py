@@ -17,6 +17,7 @@ from typing import Any
 
 WORKER_STEWARD_READINESS_SCHEMA = "aiat.worker-steward-readiness.v1"
 READY_STEWARD_STATUS = "READY"
+CERTIFIABLE_STEWARD_STATUSES = frozenset({"PROVISIONING", READY_STEWARD_STATUS})
 CERTIFIABLE_CANDIDATE_STAGES = frozenset({"CERTIFYING", "APPROVED"})
 TERMINAL_CANDIDATE_STAGES = frozenset({"REJECTED", "BLOCKED"})
 
@@ -136,8 +137,13 @@ def evaluate_worker_steward_readiness(
         if returned_worker_id and returned_worker_id != selected_worker_id:
             blockers.append(_blocker("steward_worker_mismatch", "the steward belongs to a different worker"))
         steward_status = _text(steward.get("status")).upper()
-        if steward_status != READY_STEWARD_STATUS:
-            blockers.append(_blocker("steward_not_ready", "the dedicated steward must be READY before candidate certification"))
+        if steward_status not in CERTIFIABLE_STEWARD_STATUSES:
+            blockers.append(
+                _blocker(
+                    "steward_state_blocks_certification",
+                    "the dedicated steward is suspended, retired, degraded, or otherwise unavailable for certification",
+                )
+            )
         provenance = _nested_mapping(steward, "provenance")
         if provenance is None:
             blockers.append(_blocker("provenance_missing", "the steward has no external provenance read model"))
@@ -216,6 +222,7 @@ def evaluate_worker_steward_readiness(
                 "present": steward_seen,
                 "status": steward_status,
                 "ready": steward_status == READY_STEWARD_STATUS,
+                "certifiable": steward_status in CERTIFIABLE_STEWARD_STATUSES,
                 "security_scan": _text((_nested_mapping(steward, "provenance") or {}).get("security_scan_status")) if steward else "missing",
             },
             "candidate": {

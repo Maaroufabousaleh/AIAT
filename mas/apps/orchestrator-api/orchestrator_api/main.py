@@ -57,6 +57,7 @@ from mas_core.company_manifest import (
     DEFAULT_COMPANY_ID,
     CompanyManifestError,
     compile_company_manifest,
+    validate_external_worker_assignment_approvals,
 )
 from mas_core.execution_policy import WorkloadExecutionPolicy
 from mas_core.integrations import ProviderRegistry
@@ -1933,6 +1934,27 @@ class StewardCreateRequest(BaseModel):
     redistribution_status: str = "pending"
     security_scan_status: str = "pending"
     monitoring_cadence: str = "daily"
+
+
+def _is_unverified_security_scan_pass(status: Any) -> bool:
+    return str(status or "").strip().lower() == "passed"
+
+
+def _reject_unverified_security_scan_pass(status: Any, *, status_code: int = 422) -> None:
+    """Reject scalar PASS claims until scanner evidence has a verified ingress.
+
+    External provenance currently has no evidence-bound update API.  Accepting
+    ``security_scan_status=passed`` here would let a caller satisfy the
+    certification gate with an unverified string alone.
+    """
+    if _is_unverified_security_scan_pass(status):
+        raise HTTPException(
+            status_code,
+            {
+                "code": "SECURITY_SCAN_EVIDENCE_REQUIRED",
+                "message": "security scan PASS requires retained, source-bound evidence; scalar PASS claims are not accepted",
+            },
+        )
 
 
 class DocumentationSnapshotRequest(BaseModel):
@@ -8285,6 +8307,7 @@ async def validate_company_manifest(company_id: UUID, req: CompanyManifestReques
         raise HTTPException(503, "company manifest version is invalid") from exc
     try:
         manifest, digest, canonical = compile_company_manifest(req.manifest)
+        await _validate_external_worker_assignment_approvals(storage, manifest)
     except CompanyManifestError as exc:
         raise HTTPException(422, str(exc)) from exc
     return {
@@ -8315,6 +8338,7 @@ async def apply_company_manifest(company_id: UUID, request: Request, req: Compan
     storage = _storage()
     try:
         manifest, digest, canonical = compile_company_manifest(req.manifest)
+        await _validate_external_worker_assignment_approvals(storage, manifest)
         result = await storage.apply_company_manifest(
             company_id=company_id,
             manifest=manifest,
@@ -8337,6 +8361,31 @@ async def apply_company_manifest(company_id: UUID, request: Request, req: Compan
             ) from exc
         raise HTTPException(409, str(exc)) from exc
     return _serialize(result)
+
+
+async def _validate_external_worker_assignment_approvals(
+    storage: Any,
+    manifest: Any,
+) -> None:
+    """Validate external-worker approval policy against registry provenance."""
+
+    if manifest.policy.require_human_approval_for_external_workers is not True:
+        return
+    get_worker_by_name = getattr(storage, "get_worker_by_name", None)
+    if not inspect.iscoroutinefunction(get_worker_by_name):
+        raise HTTPException(
+            503,
+            {
+                "code": "COMPANY_WORKER_PROVENANCE_UNAVAILABLE",
+                "message": "External worker assignment policy cannot be verified",
+            },
+        )
+    workers_by_name: dict[str, dict[str, Any]] = {}
+    for assignment in manifest.worker_assignments:
+        worker = await get_worker_by_name(assignment.worker_id)
+        if worker is not None:
+            workers_by_name[assignment.worker_id] = worker
+    validate_external_worker_assignment_approvals(manifest, workers_by_name)
 
 
 @app.post("/companies/{company_id}/manifest/rollback")
@@ -9312,6 +9361,12 @@ async def register_worker(req: RegisterWorkerRequest) -> dict[str, Any]:
     if req.identity_mailbox_class.strip().lower() not in {"permanent", "temporary"}:
         raise HTTPException(422, "identity_mailbox_class must be permanent or temporary")
     is_external_candidate = bool(req.source_repo and str(req.source_repo).lower() != "local")
+    if is_external_candidate:
+        provenance_evidence = req.adapter_config.get("provenance") or {}
+        if isinstance(provenance_evidence, dict):
+            _reject_unverified_security_scan_pass(
+                provenance_evidence.get("security_scan_status")
+            )
     execution_policy = req.execution or WorkloadExecutionPolicy(
         trust="untrusted" if is_external_candidate else "trusted",
         minimum_isolation=(
@@ -9721,6 +9776,13 @@ async def _worker_activation_blockers(
                 blockers.append("external worker requires immutable provenance")
             elif str(external_provenance.get("security_scan_status") or "").lower() != "passed":
                 blockers.append("external worker requires a passed security scan")
+            else:
+                # The persisted status column has no evidence-bound update
+                # path.  A legacy/caller-supplied scalar PASS is not scanner
+                # evidence and cannot satisfy the activation predicate.
+                blockers.append(
+                    "external worker security scan PASS requires retained, source-bound evidence"
+                )
 
     return blockers
 
@@ -9740,6 +9802,28 @@ async def transition_worker_status(
     - RECLASSIFY: change the worker's role (e.g. worker -> tool)
     """
     _require_operator_identity(request)
+    return await _transition_worker_status_for_principal(
+        worker_id,
+        req,
+        principal=_authenticated_principal(request),
+    )
+
+
+async def _transition_worker_status_for_principal(
+    worker_id: UUID,
+    req: WorkerStatusTransition,
+    *,
+    principal: str,
+) -> dict[str, Any]:
+    """Apply the canonical lifecycle transition after checking its principal.
+
+    CEO commands run after the HTTP request has returned, so they cannot carry
+    a Starlette ``Request`` object into the durable background task. They pass
+    the authenticated principal captured by the API (and revalidated during
+    recovery) through this same policy-enforcing implementation.
+    """
+    if principal.lower() != "operator":
+        raise HTTPException(403, "canonical mutation requires an operator credential")
     storage = _storage()
     existing = await storage.get_worker(worker_id)
     if existing is None:
@@ -9904,8 +9988,9 @@ async def upgrade_worker(
 
 
 @app.post("/capabilities/workers/import")
-async def import_workers(req: ImportWorkersRequest) -> dict[str, Any]:
+async def import_workers(req: ImportWorkersRequest, request: Request) -> dict[str, Any]:
     """Bulk import workers from a directory of YAML manifests."""
+    _require_operator_identity(request)
     from pathlib import Path
 
     from mas_core.worker_registry.seeder import seed_workers_from_directory
@@ -9917,7 +10002,7 @@ async def import_workers(req: ImportWorkersRequest) -> dict[str, Any]:
     try:
         workers_dir.relative_to(base)
     except ValueError:
-        raise HTTPException(400, f"Workers directory must be within {base}")
+        raise HTTPException(400, f"Workers directory must be within {base}") from None
 
     if not workers_dir.is_dir():
         raise HTTPException(400, f"Workers directory not found: {workers_dir}")
@@ -10057,6 +10142,7 @@ async def get_worker_evaluations(
 def _governed_external_provenance(worker: dict[str, Any], req: StewardCreateRequest):
     from mas_core.worker_registry.steward import ExternalProvenance
 
+    _reject_unverified_security_scan_pass(req.security_scan_status)
     source_repo = req.source_repo or worker.get("source_repo")
     if not source_repo:
         raise HTTPException(422, "external worker provenance requires source_repo")
@@ -10898,6 +10984,13 @@ async def certify_steward_candidate(
     if worker is None:
         raise HTTPException(404, "Worker not found")
     provenance = steward.provenance
+    # Protect against legacy persisted scalar claims as well as the current
+    # ingress guards.  No API currently binds this field to retained scan
+    # inputs/results, so it cannot authorize candidate certification.
+    _reject_unverified_security_scan_pass(
+        provenance.security_scan_status,
+        status_code=409,
+    )
     # Licence/redistribution fields are retained on provenance for metadata
     # and operator notices, but personal internal-use policy never makes them
     # a certification predicate.
@@ -11223,6 +11316,10 @@ async def advance_steward_rollout(
         candidate = steward.candidates.get(UUID(str(persisted_before["candidate_id"])))
         if candidate is None:
             raise HTTPException(409, "Rollout candidate is not present in the governed steward runtime")
+        _reject_unverified_security_scan_pass(
+            candidate.source_provenance.security_scan_status,
+            status_code=409,
+        )
         promotion_checks = operational_promotion_checks(candidate.source_provenance)
         failed_checks = [name for name, passed in promotion_checks.items() if not passed]
         if failed_checks:
@@ -12296,6 +12393,14 @@ async def _enforce_company_dispatch_grants(
             {
                 "code": "COMPANY_ASSIGNMENT_REQUIRED",
                 "message": "Worker has no active assignment for this company",
+            },
+        )
+    if bool(assignment.get("approval_required")):
+        raise HTTPException(
+            403,
+            {
+                "code": "COMPANY_ASSIGNMENT_APPROVAL_REQUIRED",
+                "message": "Worker assignment requires approval before dispatch",
             },
         )
     unapproved_tools = sorted(set(tool_grants) - set(assignment.get("tool_grants") or []))
@@ -18100,6 +18205,8 @@ async def _handle_ceo_company_intent(instruction: str) -> dict[str, Any] | None:
 async def _handle_ceo_worker_intent(
     instruction: str,
     context_worker_id: UUID | None = None,
+    *,
+    principal: str | None = None,
 ) -> dict[str, Any] | None:
     lowered = instruction.lower()
     lifecycle_requested = re.search(
@@ -18348,7 +18455,13 @@ async def _handle_ceo_worker_intent(
     elif re.search(r"\bactivate\b", lowered):
         action = "ACTIVATE"
     if action:
-        updated = await transition_worker_status(worker_id, WorkerStatusTransition(action=action))
+        if principal is None:
+            raise HTTPException(403, "canonical mutation requires an operator credential")
+        updated = await _transition_worker_status_for_principal(
+            worker_id,
+            WorkerStatusTransition(action=action),
+            principal=principal,
+        )
         return {
             "type": "worker_status_transition",
             "status": "transitioned",
@@ -18610,6 +18723,8 @@ async def _handle_ceo_operator_intent(
                 project_start_mode=project_start_mode,
                 project_create_idempotency_key=project_create_idempotency_key,
             )
+        elif handler is _handle_ceo_worker_intent:
+            action = await handler(instruction, context_worker_id, principal=principal)
         elif accepts_worker_context:
             action = await handler(instruction, context_worker_id)
         else:

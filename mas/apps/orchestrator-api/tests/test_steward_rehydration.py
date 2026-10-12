@@ -161,7 +161,7 @@ async def test_steward_certification_records_compatibility_matrix_without_provid
             canonical_source_repository="https://example.invalid/local-worker",
             exact_release="1.0.0",
             transport_type="http",
-            security_scan_status="passed",
+            security_scan_status="pending",
         ),
         status=StewardStatus.READY,
     )

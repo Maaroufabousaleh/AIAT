@@ -570,6 +570,7 @@ async def test_yaml_import_from_valid_manifest_creates_worker(client, tmp_path, 
     resp = await client.post(
         "/capabilities/workers/import",
         json={"workers_dir": "workers", "dry_run": False},
+        headers=OPERATOR_HEADERS,
     )
     assert resp.status_code == 200
     summary = resp.json()
@@ -615,6 +616,7 @@ async def test_yaml_import_dry_run_does_not_write_to_db(client, tmp_path, monkey
     resp = await client.post(
         "/capabilities/workers/import",
         json={"workers_dir": "workers", "dry_run": True},
+        headers=OPERATOR_HEADERS,
     )
     assert resp.status_code == 200
     summary = resp.json()
@@ -648,6 +650,7 @@ async def test_yaml_import_invalid_manifest_reports_error(client, tmp_path, monk
     resp = await client.post(
         "/capabilities/workers/import",
         json={"workers_dir": "workers", "dry_run": False},
+        headers=OPERATOR_HEADERS,
     )
     assert resp.status_code == 200
     summary = resp.json()
@@ -670,6 +673,7 @@ async def test_yaml_import_outside_cwd_returns_400(client, tmp_path, monkeypatch
     resp = await client.post(
         "/capabilities/workers/import",
         json={"workers_dir": str(tmp_path / "workers"), "dry_run": False},
+        headers=OPERATOR_HEADERS,
     )
     assert resp.status_code == 400
     assert "within" in resp.json()["detail"].lower() or "not found" in resp.json()["detail"].lower()
@@ -685,9 +689,26 @@ async def test_yaml_import_nonexistent_directory_returns_400(client, tmp_path, m
     resp = await client.post(
         "/capabilities/workers/import",
         json={"workers_dir": "nonexistent_workers_dir", "dry_run": False},
+        headers=OPERATOR_HEADERS,
     )
     assert resp.status_code == 400
     assert "not found" in resp.json()["detail"].lower()
+
+
+@pytest.mark.anyio
+async def test_yaml_import_requires_operator_identity(client, monkeypatch, tmp_path):
+    """Service credentials cannot register worker manifests."""
+    workers_dir = tmp_path / "workers"
+    workers_dir.mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    response = await client.post(
+        "/capabilities/workers/import",
+        json={"workers_dir": "workers", "dry_run": False},
+    )
+
+    assert response.status_code == 403
+    assert "operator" in response.json()["detail"].lower()
 
 
 # ── 11. Upstream info endpoint ────────────────────────────────────────────────

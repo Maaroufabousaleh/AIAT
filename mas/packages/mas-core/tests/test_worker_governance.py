@@ -30,6 +30,7 @@ from mas_core.worker_contract import (
     EventType,
     NativeWorkerAdapter,
     WorkerCancellation,
+    WorkerCapabilities,
     WorkerEvent,
     WorkerProgress,
     WorkerResult,
@@ -1252,6 +1253,169 @@ async def test_framework_transport_adapters_share_the_universal_conformance_suit
         )
         assert report.passed is True
         assert report.adapter_type == adapter_type.runtime_type
+        await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_versioned_deterministic_file_conformance_case_supplies_bounded_input_and_tool_fixture() -> None:
+    captured: dict[str, Any] = {}
+
+    async def worker(request: WorkerRunRequest, adapter: NativeWorkerAdapter) -> WorkerResult:
+        captured["request"] = request
+        response = await adapter.request_tool(
+            WorkerToolRequest(
+                run_id=request.run_id,
+                tool_name="file_write",
+                arguments=dict(request.task_input),
+                permission_scope=["file_write"],
+                approval_required=False,
+                idempotency_key="deterministic-file-conformance-write",
+            )
+        )
+        captured["response"] = response
+        return WorkerResult(
+            run_id=request.run_id,
+            worker_id=request.worker_id,
+            success=response.success,
+            output={"file_write_confirmed": response.success},
+        )
+
+    adapter = NativeWorkerAdapter(
+        worker,
+        worker_id="aiat_deterministic_file_worker",
+        capabilities=WorkerCapabilities(
+            capability_names=["deterministic.file_generate"],
+            extensions={
+                "aiat.conformance": {
+                    "schema_version": "aiat.conformance.v1",
+                    "case_id": "aiat.deterministic_file_generation.v1",
+                }
+            },
+        ),
+    )
+    try:
+        report = await ConformanceRunner().run(adapter, worker_id=adapter.worker_id)
+
+        request = captured["request"]
+        assert request.task_type == "deterministic_file_generation"
+        assert request.task_input == {
+            "path": "conformance/aiat-worker-check.txt",
+            "content": "AIAT worker conformance fixture v1\n",
+        }
+        assert request.project_id is not None
+        assert request.tool_grants == ["file_write"]
+        assert captured["response"].success is True
+        assert captured["response"].result["conformance_fixture"] is True
+        assert report.passed is True
+        tool_protocol = next(test for test in report.tests if test.name == "conformance_tool_protocol")
+        assert tool_protocol.passed is True
+        assert tool_protocol.evidence["response_source"] == "local_conformance_fixture_not_tool_service"
+    finally:
+        await adapter.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("declaration", "capability_names", "task_input"),
+    [
+        (
+            {"schema_version": "aiat.conformance.v1", "case_id": "not-a-supported-case"},
+            ["deterministic.file_generate"],
+            None,
+        ),
+        (
+            {
+                "schema_version": "aiat.conformance.v1",
+                "case_id": "aiat.deterministic_file_generation.v1",
+                "task_type": "shell.execute",
+            },
+            ["deterministic.file_generate"],
+            None,
+        ),
+        (
+            {"schema_version": "aiat.conformance.v1", "case_id": "aiat.deterministic_file_generation.v1"},
+            [],
+            None,
+        ),
+        (
+            {"schema_version": "aiat.conformance.v1", "case_id": "aiat.deterministic_file_generation.v1"},
+            ["deterministic.file_generate"],
+            {"path": "outside.txt", "content": "caller override"},
+        ),
+    ],
+)
+async def test_declared_conformance_case_rejects_unsupported_or_overridden_inputs(
+    declaration: dict[str, Any],
+    capability_names: list[str],
+    task_input: dict[str, Any] | None,
+) -> None:
+    started = False
+
+    async def worker(request: WorkerRunRequest, _adapter: NativeWorkerAdapter) -> WorkerResult:
+        nonlocal started
+        started = True
+        return WorkerResult(run_id=request.run_id, worker_id=request.worker_id, success=True)
+
+    adapter = NativeWorkerAdapter(
+        worker,
+        worker_id="candidate",
+        capabilities=WorkerCapabilities(
+            capability_names=capability_names,
+            extensions={"aiat.conformance": declaration},
+        ),
+    )
+    try:
+        with pytest.raises(ValueError):
+            await ConformanceRunner().run(adapter, task_input=task_input)
+        assert started is False
+    finally:
+        await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_deterministic_conformance_denies_unexpected_tool_request() -> None:
+    captured: dict[str, Any] = {}
+
+    async def worker(request: WorkerRunRequest, adapter: NativeWorkerAdapter) -> WorkerResult:
+        response = await adapter.request_tool(
+            WorkerToolRequest(
+                run_id=request.run_id,
+                tool_name="shell.execute",
+                arguments={"command": "unsafe"},
+                permission_scope=["shell.execute"],
+                idempotency_key="unexpected-conformance-tool",
+            )
+        )
+        captured["response"] = response
+        return WorkerResult(
+            run_id=request.run_id,
+            worker_id=request.worker_id,
+            success=response.success,
+            output={"unexpected_tool_succeeded": response.success},
+        )
+
+    adapter = NativeWorkerAdapter(
+        worker,
+        worker_id="candidate",
+        capabilities=WorkerCapabilities(
+            capability_names=["deterministic.file_generate"],
+            extensions={
+                "aiat.conformance": {
+                    "schema_version": "aiat.conformance.v1",
+                    "case_id": "aiat.deterministic_file_generation.v1",
+                }
+            },
+        ),
+    )
+    try:
+        report = await ConformanceRunner().run(adapter)
+
+        assert report.passed is False
+        assert captured["response"].success is False
+        assert captured["response"].error.code == "CONFORMANCE_TOOL_DENIED"
+        tool_protocol = next(test for test in report.tests if test.name == "conformance_tool_protocol")
+        assert tool_protocol.passed is False
+    finally:
         await adapter.close()
 
 

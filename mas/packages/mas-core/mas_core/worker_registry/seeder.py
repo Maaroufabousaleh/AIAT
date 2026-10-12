@@ -119,6 +119,22 @@ async def _seed_single_manifest(
     raw = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
     manifest = WorkerManifest.model_validate(raw)
 
+    # External manifest provenance is a declaration, not retained scanner
+    # evidence.  Reject scalar PASS claims before even a dry run reports the
+    # manifest as importable, and before any worker/capability rows are written.
+    if (
+        manifest.metadata.source_repo
+        and manifest.metadata.source_repo != "local"
+        and str(manifest.source_provenance.get("security_scan_status") or "")
+        .strip()
+        .lower()
+        == "passed"
+    ):
+        raise ValueError(
+            "SECURITY_SCAN_EVIDENCE_REQUIRED: external manifest security scan PASS "
+            "requires retained, source-bound evidence; scalar PASS claims are not accepted"
+        )
+
     worker_id = manifest.metadata.id
 
     if dry_run:

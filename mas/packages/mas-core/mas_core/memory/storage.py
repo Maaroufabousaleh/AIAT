@@ -36,7 +36,10 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from ..company_manifest import DEFAULT_COMPANY_ID
+from ..company_manifest import (
+    DEFAULT_COMPANY_ID,
+    validate_external_worker_assignment_approvals,
+)
 from ..observability.native_spans import build_native_trace_span
 from ..observability.tracing import current_span_id, current_trace_id, new_span_id
 from ..sandbox_policy import canonical_sandbox_class
@@ -595,6 +598,7 @@ class AgentStorage:
                 company_id=company_id,
                 manifest=manifest,
                 manifest_id=manifest_id,
+                actor=actor,
             )
             await conn.execute(
                 t.companies.update().where(t.companies.c.id == company_id).values(
@@ -628,6 +632,7 @@ class AgentStorage:
         company_id: UUID,
         manifest: Any,
         manifest_id: UUID,
+        actor: str | None = None,
     ) -> None:
         """Reconcile compiled departments, assignments, and budgets in one transaction."""
         workers: dict[str, Any] = {}
@@ -642,6 +647,16 @@ class AgentStorage:
             if row is None:
                 raise ValueError(f"manifest references unknown worker {worker_name!r}")
             workers[worker_name] = row
+
+        # Recheck inside the same transaction that materializes assignments.
+        # The API validation is useful feedback, while this protects direct
+        # storage callers and closes a provenance-change race before commit.
+        validate_external_worker_assignment_approvals(
+            manifest,
+            workers,
+            approving_actor=actor,
+            require_operator_approval=True,
+        )
 
         now = datetime.now(tz=UTC)
         await conn.execute(
@@ -793,6 +808,7 @@ class AgentStorage:
                 company_id=company_id,
                 manifest=manifest,
                 manifest_id=target["id"],
+                actor=actor,
             )
             now = datetime.now(tz=UTC)
             if active_id and active_id != target["id"]:

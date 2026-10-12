@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
@@ -59,3 +60,46 @@ sandbox:
     assert storage.register_kwargs is not None
     assert storage.register_kwargs["status"] == "ACTIVE"
     assert storage.register_kwargs["evaluation_status"] == "approved"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("dry_run", [False, True])
+async def test_external_manifest_cannot_assert_scalar_security_scan_pass(tmp_path, dry_run) -> None:
+    (tmp_path / "unverified-worker.yaml").write_text(
+        """
+metadata:
+  id: unverified-worker
+  name: Unverified Worker
+  version: "1.0.0"
+  source_repo: https://github.com/example/unverified-worker
+  version_pin: "1.0.0"
+runtime:
+  transport: process
+integration:
+  isolation_mode: wrapper
+sandbox:
+  profile: sandboxed
+runtime_tier: external
+source_provenance:
+  security_scan_status: passed
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    storage = MagicMock()
+    storage.get_worker_by_name = AsyncMock()
+    storage.register_worker = AsyncMock()
+    storage.create_capability = AsyncMock()
+
+    results = await seed_workers_from_directory(
+        storage,
+        workers_dir=tmp_path,
+        dry_run=dry_run,
+    )
+
+    assert len(results) == 1
+    assert results[0].action == "error"
+    assert results[0].details.startswith("SECURITY_SCAN_EVIDENCE_REQUIRED:")
+    storage.get_worker_by_name.assert_not_awaited()
+    storage.register_worker.assert_not_awaited()
+    storage.create_capability.assert_not_awaited()
