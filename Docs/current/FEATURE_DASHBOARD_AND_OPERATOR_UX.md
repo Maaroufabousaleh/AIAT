@@ -449,6 +449,12 @@ The dashboard is the human control and evidence surface for AIAT. It must make c
   tool arguments, responses, and idempotency keys are not shown. Focused
   Playwright passes 3/3, BFF tests pass 5/5, and typecheck/changed-file lint
   pass. These UI checks do not claim a live OpenCode execution.
+- Project completion failures now explain the selected evidence policy,
+  list bounded failed checks, and link to the canonical project evidence page.
+  The transition BFF derives the operator actor, accepts only bounded document
+  lifecycle context, and redacts arbitrary upstream error text. Its focused
+  BFF suite passes 3/3 and the Project Detail evidence/error Playwright cases
+  pass 2/2. These checks do not claim a completed worker run.
 
 ## Code anchors
 

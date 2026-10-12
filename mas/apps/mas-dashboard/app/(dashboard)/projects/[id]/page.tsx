@@ -103,6 +103,51 @@ interface StateHistoryEntry {
 
 type HttpError = Error & { status?: number };
 
+interface ProjectEvidenceIncompleteNotice {
+  policyId: string;
+  policyVersion: string;
+  failedCheckNames: string[];
+  failedCheckCount: number;
+  failedCheckNamesTruncated: boolean;
+}
+
+function readProjectEvidenceIncompleteNotice(
+  payload: unknown,
+): ProjectEvidenceIncompleteNotice | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+  const detail = (payload as { detail?: unknown }).detail;
+  if (!detail || typeof detail !== "object" || Array.isArray(detail)) {
+    return null;
+  }
+  const record = detail as Record<string, unknown>;
+  const names = record.failed_check_names;
+  if (
+    record.code !== "PROJECT_EVIDENCE_INCOMPLETE" ||
+    typeof record.policy_id !== "string" ||
+    !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/.test(record.policy_id) ||
+    typeof record.policy_version !== "string" ||
+    !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/.test(record.policy_version) ||
+    !Array.isArray(names) ||
+    names.length > 12 ||
+    !names.every((name) => typeof name === "string" && /^[a-z][a-z0-9_]{0,79}$/.test(name)) ||
+    !Number.isSafeInteger(record.failed_check_count) ||
+    (record.failed_check_count as number) < names.length ||
+    (record.failed_check_count as number) > 10_000 ||
+    typeof record.failed_check_names_truncated !== "boolean"
+  ) {
+    return null;
+  }
+  return {
+    policyId: record.policy_id,
+    policyVersion: record.policy_version,
+    failedCheckNames: names,
+    failedCheckCount: record.failed_check_count as number,
+    failedCheckNamesTruncated: record.failed_check_names_truncated,
+  };
+}
+
 type WorkspaceSubTab = "activity" | "resources" | "cost";
 
 const WORKSPACE_SUB_TABS: readonly WorkspaceSubTab[] = [
@@ -638,6 +683,7 @@ export default function ProjectDetailPage() {
   const [projectTransitionError, setProjectTransitionError] = useState<{
     event: string;
     message: string;
+    evidenceIncomplete?: ProjectEvidenceIncompleteNotice;
   } | null>(null);
   const [projectActionError, setProjectActionError] = useState<{
     action: "retry" | "archive";
@@ -2093,20 +2139,15 @@ export default function ProjectDetailPage() {
       if (handleDeniedResponse(res)) return;
       if (!res.ok) {
         const payload = await res.json().catch(() => null);
-        const detail =
-          payload && typeof payload === "object"
-            ? (payload as { detail?: unknown; error?: unknown }).detail ??
-              (payload as { detail?: unknown; error?: unknown }).error
-            : null;
-        const reason =
-          typeof detail === "string" && detail.trim()
-            ? detail.trim().slice(0, 300)
-            : `request failed (HTTP ${res.status})`;
+        const evidenceIncomplete = readProjectEvidenceIncompleteNotice(payload);
         await load();
         if (!accessDeniedRef.current) {
           setProjectTransitionError({
             event,
-            message: `${reason}. AIAT attempted to refresh project state; review the current status before retrying.`,
+            message: evidenceIncomplete
+              ? "Project cannot be completed until its required evidence is complete."
+              : `AIAT could not complete this transition (HTTP ${res.status}). AIAT refreshed project state; review it before retrying.`,
+            ...(evidenceIncomplete ? { evidenceIncomplete } : {}),
           });
         }
         return;
@@ -4045,7 +4086,35 @@ export default function ProjectDetailPage() {
                   </button>
                 )}
               >
-                {projectTransitionError.message}
+                <p>{projectTransitionError.message}</p>
+                {projectTransitionError.evidenceIncomplete && (
+                  <div className="mt-2 space-y-2" data-testid="project-evidence-incomplete-detail">
+                    <p>
+                      Required policy {projectTransitionError.evidenceIncomplete.policyId} v
+                      {projectTransitionError.evidenceIncomplete.policyVersion}.
+                    </p>
+                    <div>
+                      <p>Missing required evidence checks:</p>
+                      <ul className="ml-5 list-disc">
+                        {projectTransitionError.evidenceIncomplete.failedCheckNames.map((name) => (
+                          <li key={name}>{name.replace(/_/g, " ")}</li>
+                        ))}
+                      </ul>
+                      {projectTransitionError.evidenceIncomplete.failedCheckNamesTruncated && (
+                        <p>
+                          Showing {projectTransitionError.evidenceIncomplete.failedCheckNames.length} of{" "}
+                          {projectTransitionError.evidenceIncomplete.failedCheckCount} failed checks.
+                        </p>
+                      )}
+                    </div>
+                    <Link
+                      href={`/projects/${encodeURIComponent(id)}/evidence`}
+                      className="inline-flex min-h-11 items-center text-blue-200 underline underline-offset-2 hover:text-blue-100"
+                    >
+                      Review project evidence
+                    </Link>
+                  </div>
+                )}
               </ErrorBanner>
             </div>
           )}

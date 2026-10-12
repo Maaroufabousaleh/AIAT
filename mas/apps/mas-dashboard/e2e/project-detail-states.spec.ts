@@ -310,7 +310,7 @@ test("workflow transition failure refreshes state and retries only after operato
         await route.fulfill({
           status: 503,
           contentType: "application/json",
-          body: JSON.stringify({ detail: "Transition service unavailable" }),
+          body: JSON.stringify({ detail: "private upstream transition detail token=do-not-render" }),
         });
         return;
       }
@@ -349,8 +349,10 @@ test("workflow transition failure refreshes state and retries only after operato
   await page.getByRole("button", { name: "project created", exact: true }).click();
 
   const transitionError = page.getByTestId("project-transition-error");
-  await expect(transitionError).toContainText("Transition service unavailable");
-  await expect(transitionError).toContainText("AIAT attempted to refresh project state");
+  await expect(transitionError).toContainText("AIAT could not complete this transition (HTTP 503).");
+  await expect(transitionError).toContainText("AIAT refreshed project state; review it before retrying.");
+  await expect(transitionError).not.toContainText("private upstream transition detail");
+  await expect(transitionError).not.toContainText("do-not-render");
   await expect(page.getByRole("status", { name: "Project state: INIT" })).toBeVisible();
   expect(transitionCalls).toBe(1);
   expect(projectReads).toBeGreaterThanOrEqual(2);
@@ -360,6 +362,82 @@ test("workflow transition failure refreshes state and retries only after operato
   await expect(page.getByTestId("project-history-list")).toContainText("playwright");
   await expect(page.getByTestId("project-transition-error")).toHaveCount(0);
   expect(transitionCalls).toBe(2);
+});
+
+test("completion transition explains required evidence and links to its project evidence page", async ({
+  page,
+}) => {
+  let transitionCalls = 0;
+
+  await page.route("**/api/**", async (route) => {
+    const request = route.request();
+    const { pathname } = new URL(request.url());
+    if (pathname === `/api/projects/${PROJECT_ID}`) {
+      await route.fulfill({ json: PROJECT_FIXTURE });
+      return;
+    }
+    if (
+      pathname === `/api/projects/${PROJECT_ID}/state-history` ||
+      pathname === `/api/projects/${PROJECT_ID}/decisions`
+    ) {
+      await route.fulfill({ json: [] });
+      return;
+    }
+    if (pathname === `/api/projects/${PROJECT_ID}/transition`) {
+      if (request.method() === "GET") {
+        await route.fulfill({ json: ["kpi_saved"] });
+        return;
+      }
+      transitionCalls += 1;
+      await route.fulfill({
+        status: 409,
+        contentType: "application/json",
+        body: JSON.stringify({
+          detail: {
+            code: "PROJECT_EVIDENCE_INCOMPLETE",
+            message: "untrusted upstream text must not be displayed",
+            policy_id: "software_delivery",
+            policy_version: "1.0",
+            evidence_status: "incomplete",
+            failed_check_names: ["flow_terminal", "documents_exist", "terminal_audit_present"],
+            failed_check_count: 3,
+            failed_check_names_truncated: false,
+            internal_debug: "private upstream field",
+          },
+        }),
+      });
+      return;
+    }
+    if (pathname === `/api/projects/${PROJECT_ID}/workspace`) {
+      await route.fulfill({ json: WORKSPACE_FIXTURE });
+      return;
+    }
+    if (pathname === `/api/projects/${PROJECT_ID}/repository`) {
+      await route.fulfill({ json: { workspace: null } });
+      return;
+    }
+    await route.fulfill({ status: 404, json: { detail: "No API fixture for this request" } });
+  });
+
+  await authenticate(page, `/projects/${PROJECT_ID}`);
+  await page.getByRole("tab", { name: "Workflow", exact: true }).click();
+  await page.getByRole("button", { name: "kpi saved", exact: true }).click();
+
+  const transitionError = page.getByTestId("project-transition-error");
+  await expect(transitionError).toContainText(
+    "Project cannot be completed until its required evidence is complete.",
+  );
+  await expect(transitionError.getByTestId("project-evidence-incomplete-detail")).toContainText(
+    "Required policy software_delivery v1.0",
+  );
+  for (const check of ["flow terminal", "documents exist", "terminal audit present"]) {
+    await expect(transitionError.getByText(check, { exact: true })).toBeVisible();
+  }
+  const evidenceLink = transitionError.getByRole("link", { name: "Review project evidence" });
+  await expect(evidenceLink).toHaveAttribute("href", `/projects/${PROJECT_ID}/evidence`);
+  await expect(transitionError).not.toContainText("untrusted upstream text");
+  await expect(transitionError).not.toContainText("private upstream field");
+  expect(transitionCalls).toBe(1);
 });
 
 test("generated project documents can be previewed and downloaded through project-scoped routes", async ({
