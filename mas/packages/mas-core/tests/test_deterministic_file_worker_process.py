@@ -13,7 +13,9 @@ import pytest
 
 from mas_core.worker_contract import (
     AdapterContext,
+    ConformanceRunner,
     EventType,
+    WorkerCapabilities,
     WorkerRunController,
     WorkerRunRequest,
     WorkerToolResponse,
@@ -229,6 +231,39 @@ async def test_real_process_rejects_logical_worker_alias_before_tool_request() -
     assert outcome.result.error.code == "WORKER_INPUT_INVALID"
     assert not dispatched
     assert not any(event.event_type == EventType.TOOL_REQUEST for event in outcome.events)
+
+
+@pytest.mark.asyncio
+async def test_conformance_runner_executes_real_deterministic_process_case() -> None:
+    adapter = ProcessAdapter(
+        [sys.executable, "-I", str(PROCESS_ENTRYPOINT)],
+        worker_id=WORKER_REGISTRY_ID,
+        capabilities=WorkerCapabilities(
+            capability_names=["deterministic.file_generate"],
+            extensions={
+                "aiat.conformance": {
+                    "schema_version": "aiat.conformance.v1",
+                    "case_id": "aiat.deterministic_file_generation.v1",
+                }
+            },
+        ),
+        bidirectional_tool_protocol=True,
+        tool_response_timeout_seconds=3.0,
+    )
+    try:
+        report = await ConformanceRunner(timeout_seconds=5.0).run(
+            adapter,
+            worker_id=WORKER_REGISTRY_ID,
+        )
+    finally:
+        await adapter.close()
+
+    assert report.passed is True
+    case_result = next(test for test in report.tests if test.name == "conformance_case_result")
+    assert case_result.passed is True
+    tool_protocol = next(test for test in report.tests if test.name == "conformance_tool_protocol")
+    assert tool_protocol.passed is True
+    assert tool_protocol.evidence["response_source"] == "local_conformance_fixture_not_tool_service"
 
 
 @pytest.mark.parametrize(
