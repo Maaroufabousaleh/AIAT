@@ -22,7 +22,7 @@ from mas_core.worker_registry.runtime_adapters import OCIAdapter, ProcessAdapter
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 PROCESS_ENTRYPOINT = REPO_ROOT / "mas" / "workers" / "aiat_deterministic_file_worker_process.py"
-WORKER_ID = "aiat_deterministic_file_worker"
+WORKER_REGISTRY_ID = "d4c4a6d8-52fc-45ec-9136-89ca8aaec0e9"
 TASK_TYPE = "deterministic_file_generation"
 _UNSET = object()
 _EXPENSES_SOURCE = '''"""Calculate expense totals grouped by category."""
@@ -46,21 +46,31 @@ def read_expenses(path):
 '''
 
 
-def _process_adapter(*, context: AdapterContext | None = None) -> ProcessAdapter:
+def _process_adapter(
+    *,
+    context: AdapterContext | None = None,
+    worker_id: str = WORKER_REGISTRY_ID,
+) -> ProcessAdapter:
     return ProcessAdapter(
         [sys.executable, "-I", str(PROCESS_ENTRYPOINT)],
-        worker_id=WORKER_ID,
+        worker_id=worker_id,
         context=context,
         bidirectional_tool_protocol=True,
         tool_response_timeout_seconds=3.0,
     )
 
 
-def _request(*, project_id=_UNSET, task_type: str = TASK_TYPE, task_input=None) -> WorkerRunRequest:
+def _request(
+    *,
+    project_id=_UNSET,
+    task_type: str = TASK_TYPE,
+    task_input=None,
+    worker_id: str = WORKER_REGISTRY_ID,
+) -> WorkerRunRequest:
     if project_id is _UNSET:
         project_id = uuid4()
     return WorkerRunRequest(
-        worker_id=WORKER_ID,
+        worker_id=worker_id,
         task_type=task_type,
         idempotency_key="deterministic-process-file-write",
         project_id=project_id,
@@ -102,6 +112,7 @@ async def test_real_process_requests_governed_file_write_and_waits_for_result(tm
     request = _request()
     controller = WorkerRunController()
     adapter = _process_adapter(context=AdapterContext(tool_dispatcher=tool_service))
+    assert adapter.worker_id == request.worker_id == WORKER_REGISTRY_ID
     try:
         outcome = await controller.execute(request, adapter)
     finally:
@@ -123,7 +134,9 @@ async def test_real_process_requests_governed_file_write_and_waits_for_result(tm
             {"category": "food", "amount": "3.00"},
         ]
     ) == {"travel": 19.75, "food": 3.0}
-    assert [event.event_type for event in outcome.events].count(EventType.TOOL_REQUEST) == 1
+    tool_events = [event for event in outcome.events if event.event_type == EventType.TOOL_REQUEST]
+    assert len(tool_events) == 1
+    assert tool_events[0].worker_id == request.worker_id == adapter.worker_id
     assert [event.event_type for event in outcome.events].count(EventType.TOOL_RESPONSE) == 1
     assert outcome.result is not None and outcome.result.success is True
     effect = controller._memory_tool_effects[(request.run_id, dispatched[0].idempotency_key)]
@@ -183,6 +196,41 @@ async def test_real_process_rejects_unscoped_project_before_tool_request() -> No
     assert not any(event.event_type == EventType.TOOL_REQUEST for event in outcome.events)
 
 
+@pytest.mark.asyncio
+async def test_real_process_rejects_logical_worker_alias_before_tool_request() -> None:
+    logical_alias = "aiat_deterministic_file_worker"
+    dispatched = []
+
+    async def tool_service(tool_request):
+        dispatched.append(tool_request)
+        return WorkerToolResponse(
+            request_id=tool_request.request_id,
+            run_id=tool_request.run_id,
+            tool_name=tool_request.tool_name,
+            success=True,
+            result={"success": True, "path": "src/expenses.py", "bytes_written": 1},
+        )
+
+    adapter = _process_adapter(
+        context=AdapterContext(tool_dispatcher=tool_service),
+        worker_id=logical_alias,
+    )
+    try:
+        outcome = await WorkerRunController().execute(
+            _request(worker_id=logical_alias),
+            adapter,
+        )
+    finally:
+        await adapter.close()
+
+    assert outcome.state == "FAILED"
+    assert outcome.result is not None and outcome.result.success is False
+    assert outcome.result.error is not None
+    assert outcome.result.error.code == "WORKER_INPUT_INVALID"
+    assert not dispatched
+    assert not any(event.event_type == EventType.TOOL_REQUEST for event in outcome.events)
+
+
 @pytest.mark.parametrize(
     "task_input",
     [
@@ -212,7 +260,7 @@ def test_oci_process_command_is_networkless_mountless_and_receives_no_secrets() 
     image = "local.registry/aiat/deterministic-worker@sha256:" + "a" * 64
     adapter = OCIAdapter(
         image,
-        worker_id=WORKER_ID,
+        worker_id=WORKER_REGISTRY_ID,
         sandbox_profile="trusted",
         trusted_worker=True,
         context=AdapterContext(secrets={"provider_key": "must-not-enter-command"}),

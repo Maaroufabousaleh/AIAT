@@ -14,7 +14,6 @@ import re
 import sys
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
-WORKER_ID = "aiat_deterministic_file_worker"
 TASK_TYPE = "deterministic_file_generation"
 MAX_REQUEST_BYTES = 1024 * 1024
 MAX_RESPONSE_BYTES = 1024 * 1024
@@ -43,12 +42,17 @@ def _validated_request(request: object) -> tuple[str, str, str, str]:
     worker_id = request.get("worker_id")
     project_id = request.get("project_id")
     try:
-        UUID(str(run_id))
+        run_uuid = UUID(str(run_id))
+        worker_uuid = UUID(str(worker_id))
         UUID(str(project_id))
     except (ValueError, TypeError, AttributeError) as exc:
-        raise WorkerInputError("request must contain valid run and project identifiers") from exc
-    if worker_id != WORKER_ID:
-        raise WorkerInputError("request targets a different worker")
+        raise WorkerInputError(
+            "request must contain valid run, registry-worker, and project identifiers"
+        ) from exc
+    if not isinstance(run_id, str) or str(run_uuid) != run_id:
+        raise WorkerInputError("run identifier must use canonical UUID form")
+    if not isinstance(worker_id, str) or str(worker_uuid) != worker_id:
+        raise WorkerInputError("worker identifier must use canonical registry UUID form")
     if request.get("task_type") != TASK_TYPE:
         raise WorkerInputError("unsupported task type")
     tool_grants = request.get("tool_grants")
@@ -78,7 +82,7 @@ def _validated_request(request: object) -> tuple[str, str, str, str]:
         raise WorkerInputError("content must be valid UTF-8") from exc
     if len(content_bytes) > MAX_CONTENT_BYTES:
         raise WorkerInputError("content contains a null byte or exceeds 64 KiB")
-    return str(run_id), str(worker_id), path, content
+    return str(run_uuid), str(worker_uuid), path, content
 
 
 def _emit(value: dict[str, object]) -> None:
