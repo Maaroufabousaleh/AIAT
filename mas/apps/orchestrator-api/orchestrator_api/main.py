@@ -3165,6 +3165,17 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
     app.state.scheduler = None
     app.state.ceo_command_tasks = set()
     app.state.worker_run_tasks = set()
+    app.state.local_host_queue_config = None
+    app.state.local_host_queue_runtime = None
+    from mas_core.worker_registry.local_host_queue_runtime import (
+        LocalHostQueueConfig,
+        LocalHostQueueRuntime,
+    )
+
+    local_host_config = LocalHostQueueConfig.from_environment()
+    app.state.local_host_queue_config = local_host_config
+    if local_host_config is not None and storage is None:
+        raise RuntimeError("local host queue is enabled but orchestrator storage is unavailable")
 
     # Run resume sequence if DB is available
     if storage is not None:
@@ -3261,6 +3272,48 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
                 logger.info("Default model-profile bootstrap reconciled: %s", model_profile_result)
         except Exception:
             logger.exception("Default model-profile bootstrap failed; continuing with profile resolution fail-closed")
+
+        # The local host executor is an explicit development/test opt-in. It
+        # uses the same scheduler, reservations, fenced host queue, and
+        # WorkerRunController path as separately operated worker hosts.
+        try:
+            if local_host_config is not None:
+                async def resolve_local_host_adapter(pins: Any) -> Any:
+                    worker_row = await storage.get_worker(pins.worker_id)
+                    if worker_row is None:
+                        return None
+                    return await _certified_worker_adapter(
+                        storage,
+                        dict(worker_row),
+                        adapter_id=pins.adapter_id,
+                        allow_retired=True,
+                    )
+
+                async def settle_local_host_run(summary: Any) -> None:
+                    await _settle_host_queue_run_budgets(storage, summary)
+
+                local_host_runtime = LocalHostQueueRuntime(
+                    storage,
+                    local_host_config,
+                    adapter_resolver=resolve_local_host_adapter,
+                    terminal_run_handler=settle_local_host_run,
+                )
+                await local_host_runtime.start()
+                app.state.local_host_queue_runtime = local_host_runtime
+                ceo_command_task_group.start_soon(
+                    local_host_runtime.run,
+                    stop_event,
+                )
+                logger.info(
+                    "local_host_queue_started",
+                    extra={"host_id": local_host_runtime.host_id},
+                )
+        except Exception:
+            # An explicitly enabled local executor is an operator choice. Fail
+            # startup closed when its authenticated host cannot be registered.
+            if local_host_config is not None:
+                raise
+            logger.exception("Unexpected local host queue setup failure")
 
         # Start after seeding so newly created external-worker stewardship
         # jobs are eligible on the first scheduler cycle.
@@ -12168,6 +12221,40 @@ async def _settle_worker_run_budgets(
             )
 
 
+async def _settle_host_queue_run_budgets(storage: Any, summary: Any) -> None:
+    """Settle durable run reservations after host-controller terminal state."""
+
+    list_reservations = getattr(storage, "list_budget_reservations", None)
+    if not inspect.iscoroutinefunction(list_reservations):
+        return
+    try:
+        run_id = UUID(str(summary.run_id))
+        run = await storage.get_worker_run(run_id)
+        reservations = await list_reservations(run_id=run_id, limit=100)
+    except Exception:
+        logger.exception("host_worker_budget_reconciliation_read_failed")
+        return
+    pending: list[tuple[UUID, str]] = []
+    for reservation in reservations:
+        try:
+            if str(reservation.get("state") or "").upper() != "RESERVED":
+                continue
+            pending.append(
+                (UUID(str(reservation["id"])), str(reservation.get("budget_key") or ""))
+            )
+        except (KeyError, TypeError, ValueError):
+            logger.warning("host_worker_budget_reservation_projection_invalid")
+    result_json = (run or {}).get("result_json")
+    usage = result_json.get("usage") if isinstance(result_json, dict) else None
+    actual_cost = usage.get("cost_usd") if isinstance(usage, dict) else None
+    await _settle_worker_run_budgets(
+        storage,
+        pending,
+        state=str(summary.state or "FAILED").upper(),
+        actual_cost_usd=actual_cost,
+    )
+
+
 async def _execute_queued_worker_run(
     *,
     controller: Any,
@@ -12522,6 +12609,23 @@ async def _dispatch_worker_run(
     retry_context_json = _worker_run_retry_context(req)
     if retry_metadata:
         retry_context_json["operator_retry"] = retry_metadata
+    local_host_enabled = getattr(app.state, "local_host_queue_config", None) is not None
+    production_dispatch = os.getenv("MAS_ENVIRONMENT", "development").lower() in {
+        "production",
+        "prod",
+        "staging",
+    }
+    dispatch_mode = req.dispatch_mode or (
+        "queued" if local_host_enabled or production_dispatch else "inline"
+    )
+    if local_host_enabled and dispatch_mode != "queued":
+        raise HTTPException(
+            409,
+            {
+                "code": "LOCAL_HOST_REQUIRES_QUEUED_DISPATCH",
+                "message": "The configured local host queue accepts only host-scheduled queued runs.",
+            },
+        )
     controller = WorkerRunController(storage=storage)
     try:
         budget_reservations = await _reserve_worker_run_budgets(
@@ -12533,7 +12637,6 @@ async def _dispatch_worker_run(
         )
     except ValueError as exc:
         raise HTTPException(409, {"code": "BUDGET_EXCEEDED", "message": str(exc)}) from exc
-    dispatch_mode = req.dispatch_mode or ("queued" if os.getenv("MAS_ENVIRONMENT", "development").lower() in {"production", "prod", "staging"} else "inline")
     try:
         if dispatch_mode == "queued":
             queued = await storage.create_worker_run(
@@ -12569,6 +12672,26 @@ async def _dispatch_worker_run(
                     "accepted": {"run_id": str(canonical_run_id), "idempotency_key": req.idempotency_key, "initial_state": state},
                     "status_url": f"/workers/runs/{canonical_run_id}",
                     "events_url": f"/workers/runs/{canonical_run_id}/events",
+                }
+            if local_host_enabled:
+                host_runtime = getattr(app.state, "local_host_queue_runtime", None)
+                if host_runtime is not None:
+                    try:
+                        await host_runtime.schedule_run(canonical_run_id)
+                    except Exception as exc:  # noqa: BLE001 - queue loop retries
+                        logger.info(
+                            "local_host_run_initial_placement_deferred",
+                            extra={"run_id": str(canonical_run_id), "error": type(exc).__name__},
+                        )
+                return {
+                    "run_id": str(queued["id"]),
+                    "state": str(queued.get("state") or "QUEUED"),
+                    "dispatch_mode": "queued",
+                    "accepted": {"run_id": str(queued["id"]), "idempotency_key": req.idempotency_key, "initial_state": str(queued.get("state") or "QUEUED")},
+                    "status_url": f"/workers/runs/{queued['id']}",
+                    "events_url": f"/workers/runs/{queued['id']}/events",
+                    "host_binding_url": f"/workers/runs/{queued['id']}/host-binding",
+                    "tool_effects_url": f"/workers/runs/{queued['id']}/tool-effects",
                 }
             claim = await storage.claim_worker_run(
                 owner=f"orchestrator-background:{canonical_run_id}",
@@ -12647,6 +12770,102 @@ async def list_worker_runs_api(project_id: UUID | None = None, worker_id: UUID |
 async def recover_expired_worker_runs(limit: int = Query(default=100, ge=1, le=1000)) -> dict[str, Any]:
     rows = await _storage().recover_expired_worker_runs(limit=limit)
     return {"recovered": len(rows), "runs": [_serialize(row) for row in rows]}
+
+
+@app.get("/workers/host/local/health")
+async def local_host_queue_health(request: Request) -> dict[str, Any]:
+    _require_operator_identity(request)
+    runtime = getattr(request.app.state, "local_host_queue_runtime", None)
+    if runtime is None:
+        return {"enabled": False, "status": "DISABLED"}
+    return runtime.public_status()
+
+
+@app.get("/workers/runs/{run_id}/host-binding")
+async def get_worker_run_host_binding_api(run_id: UUID, request: Request) -> dict[str, Any]:
+    """Expose host placement evidence without WorkerRun/task payloads."""
+
+    _require_operator_identity(request)
+    storage = _storage()
+    run_reader = getattr(storage, "get_worker_run", None)
+    if not inspect.iscoroutinefunction(run_reader):
+        raise HTTPException(503, "worker-run persistence is unavailable")
+    if await run_reader(run_id) is None:
+        raise HTTPException(404, "Worker run not found")
+    from mas_core.worker_registry.run_host_binding import WorkerRunHostBindingService
+
+    binding = await WorkerRunHostBindingService(storage).get(run_id)
+    if binding is None:
+        return {"run_id": str(run_id), "binding_state": "UNBOUND", "host_binding": None}
+    public_fields = (
+        "schema_version",
+        "id",
+        "run_id",
+        "worker_id",
+        "host_uuid",
+        "host_id",
+        "host_plane",
+        "host_status",
+        "reservation_id",
+        "host_lease_generation",
+        "current_host_lease_generation",
+        "state",
+        "reservation_state",
+        "reservation_lease_valid",
+        "current_host_lease_valid",
+        "created_at",
+        "committed_at",
+        "released_at",
+    )
+    return {
+        "run_id": str(run_id),
+        "binding_state": str(binding.get("state") or "UNKNOWN"),
+        "host_binding": _serialize({key: binding.get(key) for key in public_fields}),
+    }
+
+
+@app.get("/workers/runs/{run_id}/tool-effects")
+async def get_worker_run_tool_effects_api(
+    run_id: UUID,
+    request: Request,
+    limit: int = Query(default=100, ge=1, le=1000),
+) -> dict[str, Any]:
+    """Expose durable mediated-effect evidence without request/response data."""
+
+    _require_operator_identity(request)
+    storage = _storage()
+    run_reader = getattr(storage, "get_worker_run", None)
+    if not inspect.iscoroutinefunction(run_reader):
+        raise HTTPException(503, "worker-run persistence is unavailable")
+    if await run_reader(run_id) is None:
+        raise HTTPException(404, "Worker run not found")
+    effects_reader = getattr(storage, "list_worker_tool_effects", None)
+    if not inspect.iscoroutinefunction(effects_reader):
+        raise HTTPException(503, "worker tool-effect evidence is unavailable")
+    try:
+        rows = await effects_reader(run_id, limit=limit)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    fields = (
+        "id",
+        "run_id",
+        "request_id",
+        "tool_name",
+        "request_sha256",
+        "state",
+        "response_success",
+        "created_at",
+        "updated_at",
+        "completed_at",
+    )
+    return {
+        "run_id": str(run_id),
+        "tool_effects": [
+            _serialize({key: row.get(key) for key in fields})
+            for row in rows
+            if isinstance(row, dict)
+        ],
+    }
 
 
 @app.post("/workers/runs/{run_id}/heartbeat")

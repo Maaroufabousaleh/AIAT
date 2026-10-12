@@ -5,17 +5,26 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
+import anyio
 import pytest
 
+import mas_core.worker_registry.local_host_queue_runtime as local_queue_module
 from mas_core.worker_contract.adapters import NativeWorkerAdapter
 from mas_core.worker_contract.models import WorkerResult, WorkerRunRequest
 from mas_core.worker_registry.host_queue_consumer import (
     HostQueueConsumer,
     PinnedWorkerAdapter,
 )
+from mas_core.worker_registry.local_host_queue_runtime import (
+    LocalHostQueueConfig,
+    LocalHostQueueRuntime,
+)
 
 if TYPE_CHECKING:
-    from mas_core.worker_registry.run_host_binding import RunHostBindingIdentity
+    from mas_core.worker_registry.run_host_binding import (
+        RunHostBindingIdentity,
+        RunHostBindingRequest,
+    )
 
 RUN_ID = UUID("00000000-0000-4000-a000-000000000301")
 WORKER_ID = UUID("00000000-0000-4000-a000-000000000302")
@@ -110,6 +119,20 @@ class _MemoryStorage:
 
     async def get_worker_run(self, run_id: UUID) -> dict[str, object] | None:
         return deepcopy(self.run) if run_id == RUN_ID else None
+
+    async def list_worker_runs(
+        self,
+        *,
+        state: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+        **_filters: object,
+    ) -> list[dict[str, object]]:
+        if offset > 0 or limit < 1:
+            return []
+        if state is not None and self.run.get("state") != state:
+            return []
+        return [deepcopy(self.run)]
 
     async def get_worker(self, worker_id: UUID) -> dict[str, object] | None:
         return deepcopy(self.worker) if worker_id == WORKER_ID else None
@@ -260,6 +283,103 @@ class _Bindings:
         self.releases.append(expected_identity)
         self.current = {**self.current, "state": "RELEASED"}
         return deepcopy(self.current)
+
+
+class _RuntimeBindings(_Bindings):
+    def __init__(self, storage: _MemoryStorage) -> None:
+        super().__init__({})
+        self.storage = storage
+        self.current = None
+        self.host_id: str | None = None
+        self.owner: str | None = None
+        self.placement_requests: list[RunHostBindingRequest] = []
+
+    async def get(self, run_id: UUID) -> dict[str, object] | None:
+        assert run_id == RUN_ID
+        return deepcopy(self.current)
+
+    async def assign(self, request: RunHostBindingRequest) -> dict[str, object]:
+        self.placement_requests.append(request)
+        labels = dict(request.placement.required_labels)
+        self.host_id = labels["aiat.local_executor_host"]
+        self.owner = request.owner
+        self.current = _binding(
+            host_id=self.host_id,
+            owner=self.owner,
+            state="ASSIGNED",
+            reservation_state="RESERVED",
+        )
+        return deepcopy(self.current)
+
+    async def commit(self, run_id: UUID, *, owner: str) -> dict[str, object]:
+        assert run_id == RUN_ID
+        assert owner == self.owner
+        self.current = {
+            **self.current,
+            "state": "COMMITTED",
+            "reservation_state": "COMMITTED",
+            "current_host_lease_valid": True,
+        }
+        self.snapshot = deepcopy(self.current)
+        return deepcopy(self.current)
+
+    async def list_queued_committed_for_host(
+        self,
+        host_id: str,
+        *,
+        limit: int,
+    ) -> list[dict[str, object]]:
+        assert limit >= 1
+        if (
+            host_id == self.host_id
+            and self.current is not None
+            and self.current.get("state") == "COMMITTED"
+            and self.current.get("reservation_state") == "COMMITTED"
+            and self.storage.run.get("state") == "QUEUED"
+        ):
+            return [deepcopy(self.current)]
+        return []
+
+    async def release(self, run_id: UUID, *, owner: str, expected_identity):
+        assert run_id == RUN_ID
+        assert owner == self.owner
+        self.releases.append(expected_identity)
+        self.current = {
+            **self.current,
+            "state": "RELEASED",
+            "reservation_state": "RELEASED",
+        }
+        return deepcopy(self.current)
+
+
+class _RuntimeHostRegistry:
+    def __init__(self, _storage: object) -> None:
+        self.calls: list[str] = []
+        self.host_id: str | None = None
+        self.token: str | None = None
+
+    async def register_host(self, **values: object) -> dict[str, object]:
+        self.host_id = str(values["host_id"])
+        self.token = str(values["registration_token"])
+        self.calls.append("register")
+        assert values["host_plane"] == "worker"
+        assert values["sandbox_profile"] == "sandboxed"
+        assert values["sandbox_runtime"] == "runsc"
+        assert values["labels"] == {"aiat.local_executor_host": self.host_id}
+        return {"host_id": self.host_id, "lease_generation": 1, "status": "REGISTERING"}
+
+    async def heartbeat(self, **values: object) -> dict[str, object]:
+        assert values["host_id"] == self.host_id
+        assert values["registration_token"] == self.token
+        self.calls.append("heartbeat")
+        return {"host_id": self.host_id, "lease_generation": 1, "status": "READY"}
+
+    async def set_status(self, **values: object) -> dict[str, object]:
+        assert values["host_id"] == self.host_id
+        assert values["registration_token"] == self.token
+        assert values["status"] == "OFFLINE"
+        self.calls.append("offline")
+        return {"host_id": self.host_id, "status": "OFFLINE"}
 
 
 def _consumer(
@@ -460,3 +580,115 @@ async def test_queue_consumer_rejects_factory_adapter_with_different_pin() -> No
     assert len(factory_calls) == 1
     assert storage.mutation_calls == []
     await wrong_adapter.close()
+
+
+def test_local_host_queue_configuration_is_explicit_and_development_only() -> None:
+    base = {
+        "AIAT_LOCAL_HOST_QUEUE_ENABLED": "true",
+        "MAS_ENVIRONMENT": "test",
+        "AIAT_LOCAL_WORKER_HOST_ID": "alpha-local",
+        "AIAT_LOCAL_WORKER_HOST_TOKEN": "local-host-test-token",
+        "AIAT_LOCAL_WORKER_HOST_SANDBOX_PROFILE": "sandboxed",
+        "AIAT_LOCAL_WORKER_HOST_SANDBOX_RUNTIME": "runsc",
+    }
+    config = LocalHostQueueConfig.from_environment(base)
+    assert config is not None
+    assert config.host_id_prefix == "alpha-local"
+    assert config.sandbox_profile == "sandboxed"
+    assert config.sandbox_runtime == "runsc"
+    assert LocalHostQueueConfig.from_environment({}) is None
+
+    with pytest.raises(ValueError, match="development/test"):
+        LocalHostQueueConfig.from_environment({**base, "MAS_ENVIRONMENT": "production"})
+    with pytest.raises(ValueError, match="sandboxed/runsc"):
+        LocalHostQueueConfig.from_environment(
+            {**base, "AIAT_LOCAL_WORKER_HOST_SANDBOX_RUNTIME": "runc"}
+        )
+
+
+@pytest.mark.asyncio
+async def test_running_local_queue_places_then_consumes_through_real_executor_controller(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = _MemoryStorage()
+    storage.worker.update(
+        {
+            "sandbox_profile": "sandboxed",
+            "adapter_config": {"execution_policy": {}},
+        }
+    )
+    config = LocalHostQueueConfig(
+        host_id_prefix="alpha-local",
+        registration_token="local-host-test-token",
+        sandbox_profile="sandboxed",
+        sandbox_runtime="runsc",
+        poll_seconds=0.01,
+    )
+    host_registries: list[_RuntimeHostRegistry] = []
+    binding_services: list[_RuntimeBindings] = []
+
+    def registry_factory(value: object) -> _RuntimeHostRegistry:
+        registry = _RuntimeHostRegistry(value)
+        host_registries.append(registry)
+        return registry
+
+    def binding_factory(_value: object) -> _RuntimeBindings:
+        bindings = _RuntimeBindings(storage)
+        binding_services.append(bindings)
+        return bindings
+
+    monkeypatch.setattr(local_queue_module, "WorkerHostRegistry", registry_factory)
+    monkeypatch.setattr(local_queue_module, "WorkerRunHostBindingService", binding_factory)
+
+    worker_calls: list[str] = []
+
+    async def local_worker(request, _adapter):
+        worker_calls.append(str(request.run_id))
+        return WorkerResult(
+            run_id=request.run_id,
+            worker_id=request.worker_id,
+            success=True,
+            output={"artifact": "generated by deterministic local worker"},
+        )
+
+    adapter = NativeWorkerAdapter(local_worker, worker_id=str(WORKER_ID))
+    adapter._aiat_adapter_id = str(ADAPTER_ID)
+    terminal_summaries = []
+
+    async def record_terminal(summary) -> None:
+        terminal_summaries.append(summary)
+
+    runtime = LocalHostQueueRuntime(
+        storage,  # type: ignore[arg-type]
+        config,
+        adapter_resolver=lambda _pins: adapter,
+        terminal_run_handler=record_terminal,
+    )
+    await runtime.start()
+    assert runtime.active
+
+    stop_event = anyio.Event()
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(runtime.run, stop_event)
+        try:
+            with anyio.fail_after(2):
+                while storage.run["state"] != "SUCCEEDED":
+                    await anyio.sleep(0.01)
+        finally:
+            stop_event.set()
+
+    assert storage.run["state"] == "SUCCEEDED"
+    assert storage.run["attempt_count"] == 1
+    assert worker_calls == [str(RUN_ID)]
+    assert len(binding_services) == 1
+    assert len(binding_services[0].placement_requests) == 1
+    assert binding_services[0].placement_requests[0].placement.required_labels == (
+        ("aiat.local_executor_host", runtime.host_id),
+    )
+    assert binding_services[0].current["state"] == "RELEASED"
+    assert [summary.state for summary in terminal_summaries] == ["SUCCEEDED"]
+    assert host_registries[0].calls == ["register", "heartbeat", "offline"]
+    assert runtime.public_status()["status"] == "STOPPED"
+    assert PAYLOAD_MARKER not in repr(runtime.public_status())
+    assert RESULT_MARKER not in repr(runtime.public_status())
+    await adapter.close()
