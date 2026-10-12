@@ -1,0 +1,17 @@
+# Source-only, stdlib worker image. Runtime network and mounts are disabled by
+# OCIAdapter; this image contains no model, tool client, credential, or package.
+FROM python:3.11-slim@sha256:90744cff8f32887f075c47d747a173ff333e9e98801667af93c357fa9f5e28ff
+
+ARG AIAT_WORKER_SOURCE_SHA256
+COPY --chown=65532:65532 aiat_deterministic_file_worker_process.py /opt/aiat-worker/worker.py
+RUN test -n "${AIAT_WORKER_SOURCE_SHA256}" \
+    && printf '%s  %s\n' "${AIAT_WORKER_SOURCE_SHA256}" /opt/aiat-worker/worker.py | sha256sum -c -
+
+LABEL org.opencontainers.image.title="AIAT deterministic file worker" \
+      org.opencontainers.image.version="0.1.0" \
+      org.opencontainers.image.revision="sha256:${AIAT_WORKER_SOURCE_SHA256}"
+
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+WORKDIR /opt/aiat-worker
+USER 65532:65532
+ENTRYPOINT ["/usr/local/bin/python3", "-I", "-B", "/opt/aiat-worker/worker.py"]
