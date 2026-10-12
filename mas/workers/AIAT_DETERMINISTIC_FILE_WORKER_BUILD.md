@@ -27,15 +27,15 @@ docker image inspect \
   aiat-deterministic-file-worker:local
 ```
 
-This build currently returns
-`aiat-deterministic-file-worker@sha256:009c038daba96a174924d1b14d33d67a0a987e1bb801d1db459f204be0d75b02`.
-Use the exact `repository@sha256:<manifest-digest>` result as the OCIAdapter
-image reference for this local Docker daemon. If `RepoDigests` is empty or the
-image must be used by another host, tag and push to the selected registry, then
-run the same inspect command against the pushed reference. The governed
+The result is specific to the source, build recipe, and Docker daemon. Record
+the exact `repository@sha256:<manifest-digest>` result in the matching
+immutable worker candidate and evidence report. If `RepoDigests` is empty or
+the image must be used by another host, tag and push to the selected registry,
+then run the same inspect command against the pushed reference. The governed
 candidate must also retain the source SHA label recorded in the image. Never
-infer a manifest digest from a mutable tag or substitute the local
-image-config ID for a manifest digest.
+infer a manifest digest from a mutable tag or substitute the local image-config
+ID for a manifest digest. A local digest is development evidence, not registry
+promotion or production provenance.
 
 At runtime OCIAdapter supplies `--network none`, drops all capabilities,
 enables no-new-privileges, mounts no workspace or host paths, and applies a
