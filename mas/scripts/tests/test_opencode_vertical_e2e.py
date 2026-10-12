@@ -69,4 +69,3 @@ def test_pending_worker_gate_still_cleans_disposable_project(
     assert stages["CLEANUP_VERIFIED"]["status"] == "PASS"
     assert ("DELETE", "/projects/disposable-project") in api.calls
     assert not any(method == "POST" and path == "/workers/runs" for method, path in api.calls)
-
