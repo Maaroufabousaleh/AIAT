@@ -22,7 +22,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-
 ROOT = Path(__file__).resolve().parents[3]
 MAS_ROOT = ROOT / "mas"
 COMPOSE_FILE = ROOT / "mas" / "infra" / "compose" / "level-a-opencode-integrated.yml"
@@ -240,9 +239,15 @@ def _copy_ignore(directory: str, names: list[str]) -> set[str]:
     ignored: set[str] = set()
     for name in names:
         path = Path(directory) / name
-        if name in _BUILD_IGNORED_DIRS or name == ".env" or name.startswith(".tmp"):
-            ignored.add(name)
-        elif path.is_file() and (name.endswith((".pyc", ".pyo", ".pyd")) or name.startswith(".env.")):
+        if (
+            name in _BUILD_IGNORED_DIRS
+            or name == ".env"
+            or name.startswith(".tmp")
+            or (
+                path.is_file()
+                and (name.endswith((".pyc", ".pyo", ".pyd")) or name.startswith(".env."))
+            )
+        ):
             ignored.add(name)
     return ignored
 
@@ -600,11 +605,46 @@ def _pending_worker_gate_verified(driver_result: dict[str, Any]) -> bool:
     stages = payload.get("stages") if isinstance(payload, dict) else None
     worker = stages.get("WORKER_SELECTED") if isinstance(stages, dict) else None
     submission = stages.get("WORKER_RUN_SUBMITTED") if isinstance(stages, dict) else None
+    worker_evidence = worker.get("evidence") if isinstance(worker, dict) else None
+    readiness = (
+        worker_evidence.get("readiness")
+        if isinstance(worker_evidence, dict)
+        else None
+    )
+    blocker_codes = (
+        set(readiness.get("blocker_codes") or [])
+        if isinstance(readiness, dict)
+        and isinstance(readiness.get("blocker_codes"), list)
+        else set()
+    )
+    admission_blockers = {
+        "worker_not_active",
+        "worker_version_pin_missing",
+        "worker_evaluation_not_approved",
+        "active_shell_version_id_missing",
+        "active_adapter_id_missing",
+        "active_skill_bundle_id_missing",
+        "worker_not_model_backed",
+        "sandbox_profile_invalid",
+        "sandbox_profile_not_hardened",
+        "worker_health_not_ready",
+    }
+    worker_gate_blocked = (
+        isinstance(worker, dict)
+        and worker.get("reason")
+        in {"WORKER_NOT_ACTIVE", "WORKER_EVALUATION_NOT_APPROVED"}
+    ) or (
+        isinstance(worker, dict)
+        and worker.get("reason") == "CANONICAL_WORKER_READINESS_BLOCKED"
+        and isinstance(readiness, dict)
+        and readiness.get("status") == "blocked"
+        and bool(blocker_codes.intersection(admission_blockers))
+    )
     return (
         driver_result.get("exit_code") == 2
         and isinstance(worker, dict)
         and worker.get("status") == "BLOCKED"
-        and worker.get("reason") in {"WORKER_NOT_ACTIVE", "WORKER_EVALUATION_NOT_APPROVED"}
+        and worker_gate_blocked
         and isinstance(submission, dict)
         and submission.get("status") == "NOT_RUN"
         and submission.get("reason") == "STAGE_NOT_REACHED"

@@ -30,6 +30,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from contextlib import suppress
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -46,6 +47,7 @@ REQUIRED_STAGES = (
     "WORKER_RUN_SUBMITTED",
     "HOST_RESERVED",
     "HOST_CLAIMED",
+    "HOST_CONSUMER_EXECUTED",
     "RUNTIME_STARTED",
     "MODEL_REQUEST_RESOLVED",
     "LOCAL_MODEL_RESPONSE_RECEIVED",
@@ -66,6 +68,7 @@ TOOL_GRANTS = [
 PERMISSION_REQUIREMENTS = ["repository.read", "repository.write", "tests.execute"]
 LOCAL_FIXTURE_PROMPT = "AIAT_LEVEL_A_WORKSPACE_TOOL_LOOP"
 TERMINAL_RUN_STATES = {"SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT"}
+MAX_RUN_BUDGET_USD = Decimal("0.25")
 
 
 class APIError(RuntimeError):
@@ -98,6 +101,315 @@ def _stage_not_reached(stages: dict[str, dict[str, Any]], name: str) -> bool:
         and item.get("status") == "NOT_RUN"
         and item.get("reason") == "STAGE_NOT_REACHED"
     )
+
+
+def _host_binding_has_reservation_history(binding: Any) -> bool:
+    if not isinstance(binding, dict):
+        return False
+
+    binding_state = str(binding.get("state") or "").upper()
+    reservation_state = str(binding.get("reservation_state") or "").upper()
+    committed = bool(binding.get("committed_at"))
+    released = bool(binding.get("released_at"))
+    host_fields_present = all(
+        binding.get(key)
+        for key in ("id", "reservation_id", "host_uuid", "host_id", "owner")
+    )
+    return host_fields_present and committed and (
+        (
+            binding_state == "COMMITTED"
+            and reservation_state in {"ACTIVE", "RESERVED", "COMMITTED"}
+        )
+        or (
+            binding_state == "RELEASED"
+            and reservation_state in {"RELEASED", "EXPIRED"}
+            and released
+        )
+    )
+
+
+def _host_consumer_execution_evidence(
+    binding: Any,
+    transitions: Any,
+    *,
+    run_id: str,
+    expected_state: str,
+    host_health: Any = None,
+) -> tuple[str, str | None, dict[str, Any]]:
+    """Classify persisted API readback for a host-consumer execution.
+
+    Compose configuration and local health are not execution evidence. A
+    consumer pass requires the run's durable host/reservation binding, a
+    host-owner CLAIMED transition, and the canonical WorkerRunController
+    DISPATCHING -> RUNNING transition, in that order. The local host health
+    summary is volatile, so it is recorded only as optional corroboration.
+    """
+
+    if not isinstance(binding, dict):
+        return "FAIL", "HOST_BINDING_NOT_FOUND", {}
+
+    binding_state = str(binding.get("state") or "").upper()
+    reservation_state = str(binding.get("reservation_state") or "").upper()
+    evidence: dict[str, Any] = {
+        "host_binding_id": binding.get("id"),
+        "host_id": binding.get("host_id"),
+        "reservation_id": binding.get("reservation_id"),
+        "binding_state": binding_state or "UNKNOWN",
+        "reservation_state": reservation_state or "UNKNOWN",
+    }
+    if not _host_binding_has_reservation_history(binding):
+        return "FAIL", "DURABLE_HOST_RESERVATION_NOT_FOUND", evidence
+
+    rows = transitions if isinstance(transitions, list) else []
+    claim_index: int | None = None
+    dispatch_index: int | None = None
+    claim_row: dict[str, Any] | None = None
+    dispatch_row: dict[str, Any] | None = None
+    running_row: dict[str, Any] | None = None
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            continue
+        from_state = str(row.get("from_state") or "").upper()
+        to_state = str(row.get("to_state") or "").upper()
+        actor = str(row.get("actor") or "")
+        expected_host_actor = f"aiat-local-host:{binding.get('host_id')}"
+        if (
+            to_state == "CLAIMED"
+            and from_state == "QUEUED"
+            and actor == expected_host_actor
+            and actor == str(binding.get("owner") or "")
+        ):
+            claim_index = index
+            claim_row = row
+        if (
+            to_state == "DISPATCHING"
+            and from_state == "READY"
+            and actor == "worker-run-controller"
+            and claim_index is not None
+            and index > claim_index
+        ):
+            dispatch_index = index
+            dispatch_row = row
+        if (
+            to_state == "RUNNING"
+            and from_state == "DISPATCHING"
+            and actor == "worker-run-controller"
+            and dispatch_index is not None
+            and index > dispatch_index
+        ):
+            running_row = row
+
+    if claim_row is None:
+        return "FAIL", "HOST_CLAIM_TRANSITION_NOT_FOUND", evidence
+    if dispatch_row is None:
+        evidence["claim_transition_id"] = claim_row.get("id")
+        return "FAIL", "CANONICAL_DISPATCHING_TRANSITION_NOT_FOUND", evidence
+    if running_row is None:
+        evidence.update(
+            {
+                "claim_transition_id": claim_row.get("id"),
+                "dispatch_transition_id": dispatch_row.get("id"),
+            }
+        )
+        return "FAIL", "CANONICAL_RUNNING_TRANSITION_NOT_FOUND", evidence
+
+    health_corroboration = "NOT_OBSERVED"
+    if isinstance(host_health, dict):
+        health_host_id = str(host_health.get("host_id") or "")
+        summaries = host_health.get("last_runs")
+        matching_summaries = [
+            row
+            for row in summaries
+            if isinstance(row, dict) and str(row.get("run_id") or "") == run_id
+        ] if isinstance(summaries, list) else []
+        if health_host_id and matching_summaries:
+            health_corroboration = (
+                "MATCHED"
+                if health_host_id == str(binding.get("host_id") or "")
+                and any(
+                    str(row.get("state") or "").upper() == expected_state.upper()
+                    for row in matching_summaries
+                )
+                else "MISMATCHED"
+            )
+        elif health_host_id and health_host_id != str(binding.get("host_id") or ""):
+            health_corroboration = "MISMATCHED"
+
+    evidence.update(
+        {
+            "claim_transition_id": claim_row.get("id"),
+            "dispatch_transition_id": dispatch_row.get("id"),
+            "running_transition_id": running_row.get("id"),
+            "running_transition_actor": "worker-run-controller",
+            "claim_preceded_running": True,
+            "host_health_corroboration": health_corroboration,
+        }
+    )
+    return "PASS", None, evidence
+
+
+def _project_evidence_readiness(
+    evidence: Any,
+    *,
+    project_id: str,
+    artifact_ids: set[str],
+) -> tuple[bool, str, dict[str, Any]]:
+    """Require a canonical complete package linked to the downloaded artifacts."""
+
+    if not isinstance(evidence, dict):
+        return False, "PROJECT_EVIDENCE_INVALID", {}
+    refs = evidence.get("evidence_refs")
+    artifact_refs = refs.get("artifacts") if isinstance(refs, dict) else None
+    normalized_refs = (
+        {str(value) for value in artifact_refs if value is not None}
+        if isinstance(artifact_refs, list)
+        else set()
+    )
+    checks = evidence.get("checks")
+    required_checks_pass = isinstance(checks, list) and bool(checks) and all(
+        isinstance(check, dict)
+        and (
+            check.get("required") is not True
+            or check.get("passed") is True
+        )
+        for check in checks
+    )
+    summary = {
+        "schema_version": evidence.get("schema_version"),
+        "policy_id": evidence.get("policy_id"),
+        "status": evidence.get("status"),
+        "artifact_ref_count": len(normalized_refs),
+        "required_checks_pass": required_checks_pass,
+    }
+    if evidence.get("schema_version") != "aiat.project-evidence-package.v1":
+        return False, "PROJECT_EVIDENCE_SCHEMA_INVALID", summary
+    if str(evidence.get("project_id") or "") != project_id:
+        return False, "PROJECT_EVIDENCE_SCOPE_MISMATCH", summary
+    if evidence.get("status") != "complete" or not required_checks_pass:
+        return False, "PROJECT_EVIDENCE_POLICY_INCOMPLETE", summary
+    if not artifact_ids or not artifact_ids.issubset(normalized_refs):
+        return False, "PROJECT_ARTIFACTS_NOT_LINKED_IN_EVIDENCE", summary
+    return True, "", summary
+
+
+def _canonical_worker_readiness(
+    api: API,
+    *,
+    worker_id: str,
+    project_id: str,
+) -> dict[str, Any]:
+    """Read public control-plane projections through AIAT's readiness evaluator.
+
+    There is no readiness API endpoint today. Reuse the same canonical
+    evaluator as ``check_worker_run_readiness.py`` rather than duplicating its
+    admission predicate or probing the mutating WorkerRun dispatch endpoint.
+    """
+
+    from mas_core.worker_registry.worker_run_readiness import evaluate_worker_run_readiness
+
+    fetch_errors: dict[str, str] = {}
+
+    def read(path: str, key: str) -> Any:
+        try:
+            _, _, payload, _ = api.request("GET", path)
+            return payload
+        except APIError as exc:
+            fetch_errors[key] = exc.code
+            return None
+
+    worker_rows = read("/capabilities/workers", "worker")
+    worker = next(
+        (
+            row
+            for row in worker_rows
+            if isinstance(row, dict) and str(row.get("id") or "") == worker_id
+        ),
+        None,
+    ) if isinstance(worker_rows, list) else None
+    if worker_rows is not None and not isinstance(worker_rows, list):
+        fetch_errors["worker"] = "invalid_collection"
+
+    project = read(f"/projects/{urllib.parse.quote(project_id)}", "project")
+    if not isinstance(project, dict):
+        project = None
+    company_id = str(project.get("company_id") or "") if project else ""
+
+    company: Any = None
+    assignments: Any = []
+    budgets: Any = []
+    if company_id:
+        company_payload = read(
+            f"/companies/{urllib.parse.quote(company_id)}", "company"
+        )
+        company = (
+            company_payload.get("company")
+            if isinstance(company_payload, dict)
+            else None
+        )
+        assignments = read(
+            f"/companies/{urllib.parse.quote(company_id)}/assignments", "assignments"
+        )
+        budgets = read(
+            f"/companies/{urllib.parse.quote(company_id)}/budgets", "budgets"
+        )
+    else:
+        fetch_errors["company"] = "project_company_id_missing"
+        fetch_errors["assignments"] = "project_company_id_missing"
+        fetch_errors["budgets"] = "project_company_id_missing"
+
+    model_profiles = read("/model-profiles", "model_profiles")
+    worker_health = read(
+        f"/capabilities/workers/{urllib.parse.quote(worker_id)}/health",
+        "worker_health",
+    )
+    if not isinstance(assignments, list) and "assignments" not in fetch_errors:
+        fetch_errors["assignments"] = "invalid_collection"
+    if not isinstance(budgets, list) and "budgets" not in fetch_errors:
+        fetch_errors["budgets"] = "invalid_collection"
+    if not isinstance(model_profiles, list) and "model_profiles" not in fetch_errors:
+        fetch_errors["model_profiles"] = "invalid_collection"
+    readiness = evaluate_worker_run_readiness(
+        worker=worker,
+        project=project,
+        company=company if isinstance(company, dict) else None,
+        assignments=assignments if isinstance(assignments, list) else [],
+        budgets=budgets if isinstance(budgets, list) else [],
+        model_profiles=model_profiles if isinstance(model_profiles, list) else [],
+        worker_id=worker_id,
+        project_id=project_id,
+        required_budget_usd=MAX_RUN_BUDGET_USD,
+        require_sandbox=True,
+        health=worker_health if isinstance(worker_health, dict) else None,
+        fetch_errors=fetch_errors,
+    )
+    blockers = readiness.get("blockers")
+    blocker_codes = [
+        str(item["code"])
+        for item in blockers
+        if isinstance(item, dict)
+        and isinstance(item.get("code"), str)
+        and item["code"].replace("_", "").isalnum()
+    ] if isinstance(blockers, list) else ["readiness_result_invalid"]
+    checks = readiness.get("checks") if isinstance(readiness.get("checks"), dict) else {}
+    worker_checks = checks.get("worker") if isinstance(checks.get("worker"), dict) else {}
+    return {
+        "schema_version": readiness.get("schema_version"),
+        "status": readiness.get("status"),
+        "blocker_codes": blocker_codes[:64],
+        "worker_status": worker_checks.get("status"),
+        "worker_evaluation_status": worker_checks.get("evaluation_status"),
+        "immutable_pointers": worker_checks.get("immutable_pointers"),
+        "project_state": (checks.get("project") or {}).get("state")
+        if isinstance(checks.get("project"), dict)
+        else None,
+        "assignment_status": (checks.get("assignment") or {}).get("status")
+        if isinstance(checks.get("assignment"), dict)
+        else None,
+        "sandbox": checks.get("sandbox"),
+        "budget_status": checks.get("budgets"),
+        "fetch_status": readiness.get("fetch_status"),
+        "read_error_codes": dict(sorted(fetch_errors.items())[:16]),
+    }
 
 
 def _safe_error_code(status: int, body: bytes) -> str:
@@ -274,21 +586,18 @@ def _run_project_journey(
                 evidence=worker_summary,
             )
             return project_id, run_id
-        if worker_summary["status"].upper() not in {"ACTIVE", "DRAINING"}:
+        readiness = _canonical_worker_readiness(
+            api,
+            worker_id=worker_id,
+            project_id=project_id,
+        )
+        worker_summary["readiness"] = readiness
+        if readiness.get("status") != "pass":
             _stage(
                 stages,
                 "WORKER_SELECTED",
                 "BLOCKED",
-                reason="WORKER_NOT_ACTIVE",
-                evidence=worker_summary,
-            )
-            return project_id, run_id
-        if worker_summary["evaluation_status"].lower() != "approved":
-            _stage(
-                stages,
-                "WORKER_SELECTED",
-                "BLOCKED",
-                reason="WORKER_EVALUATION_NOT_APPROVED",
+                reason="CANONICAL_WORKER_READINESS_BLOCKED",
                 evidence=worker_summary,
             )
             return project_id, run_id
@@ -312,7 +621,7 @@ def _run_project_journey(
         "permission_requirements": PERMISSION_REQUIREMENTS,
         "workspace_mode": "isolated",
         "timeout_seconds": timeout_seconds,
-        "budget_usd": 0.25,
+        "budget_usd": float(MAX_RUN_BUDGET_USD),
         "dispatch_mode": "queued",
         "queue_priority": 10,
         "lease_seconds": 300,
@@ -403,18 +712,34 @@ def _run_project_journey(
             if isinstance(transitions, list)
             else set()
         )
-        if isinstance(binding, dict) and binding.get("state") == "COMMITTED":
-            reserved = binding.get("reservation_state") in {"ACTIVE", "RESERVED", "COMMITTED"}
+        try:
+            _, _, host_health, _ = api.request("GET", "/workers/host/local/health")
+        except APIError:
+            # last_runs is a volatile process summary. Durable binding and
+            # transition evidence below remains authoritative when the status
+            # endpoint is unavailable or the summary has already rolled over.
+            host_health = None
+        reserved = _host_binding_has_reservation_history(binding)
+        if isinstance(binding, dict):
             _stage(
                 stages,
                 "HOST_RESERVED",
                 "PASS" if reserved else "FAIL",
+                reason=None if reserved else "DURABLE_HOST_RESERVATION_NOT_FOUND",
                 evidence={
+                    "host_binding_id": binding.get("id"),
                     "host_id": binding.get("host_id"),
                     "reservation_state": binding.get("reservation_state"),
+                    "binding_state": binding.get("state"),
                 },
             )
-            claimed = "CLAIMED" in transition_states
+            claimed = reserved and any(
+                isinstance(row, dict)
+                and str(row.get("from_state") or "").upper() == "QUEUED"
+                and str(row.get("to_state") or "").upper() == "CLAIMED"
+                and str(row.get("actor") or "").startswith("aiat-local-host:")
+                for row in transitions
+            )
             _stage(
                 stages,
                 "HOST_CLAIMED",
@@ -425,12 +750,30 @@ def _run_project_journey(
                     "observed_run_states": sorted(transition_states),
                 },
             )
+            execution_status, execution_reason, execution_evidence = (
+                _host_consumer_execution_evidence(
+                    binding,
+                    transitions,
+                    run_id=run_id,
+                    expected_state=run_state,
+                    host_health=host_health,
+                )
+            )
+            _stage(
+                stages,
+                "HOST_CONSUMER_EXECUTED",
+                execution_status,
+                reason=execution_reason,
+                evidence=execution_evidence,
+            )
         else:
             _stage(stages, "HOST_RESERVED", "FAIL", reason="HOST_BINDING_NOT_COMMITTED")
             _stage(stages, "HOST_CLAIMED", "FAIL", reason="HOST_BINDING_NOT_COMMITTED")
+            _stage(stages, "HOST_CONSUMER_EXECUTED", "FAIL", reason="HOST_BINDING_NOT_FOUND")
     except APIError as exc:
         _stage(stages, "HOST_RESERVED", "FAIL", reason=exc.code)
         _stage(stages, "HOST_CLAIMED", "FAIL", reason=exc.code)
+        _stage(stages, "HOST_CONSUMER_EXECUTED", "FAIL", reason=exc.code)
 
     try:
         _, _, events, _ = api.request(
@@ -522,6 +865,7 @@ def _run_project_journey(
         _stage(stages, "TOOL_EFFECT_PERSISTED", "FAIL", reason=exc.code)
 
     artifact_content: dict[str, bytes] = {}
+    verified_artifact_ids: set[str] = set()
     try:
         _, _, artifacts, _ = api.request(
             "GET", f"/workers/runs/{urllib.parse.quote(run_id)}/artifacts"
@@ -549,6 +893,7 @@ def _run_project_journey(
                 continue
             name = Path(uri).name
             artifact_content[name] = data
+            verified_artifact_ids.add(str(artifact_id))
             artifact_summary.append(
                 {"artifact_id": artifact_id, "uri": uri, "sha256": digest, "size_bytes": len(data)}
             )
@@ -582,15 +927,19 @@ def _run_project_journey(
 
     try:
         _, _, evidence, _ = api.request(
-            "GET", f"/projects/{urllib.parse.quote(project_id)}/evidence"
+            "GET", f"/projects/{urllib.parse.quote(project_id)}/evidence/package"
         )
-        evidence_dump = evidence if isinstance(evidence, dict) else {}
+        evidence_ok, evidence_reason, evidence_summary = _project_evidence_readiness(
+            evidence,
+            project_id=project_id,
+            artifact_ids=verified_artifact_ids,
+        )
         _stage(
             stages,
             "EVIDENCE_AVAILABLE",
-            "PASS" if evidence_dump else "FAIL",
-            reason=None if evidence_dump else "PROJECT_EVIDENCE_EMPTY",
-            evidence={"top_level_keys": sorted(evidence_dump)[:40]},
+            "PASS" if evidence_ok else "FAIL",
+            reason=None if evidence_ok else evidence_reason,
+            evidence=evidence_summary,
         )
     except APIError as exc:
         _stage(stages, "EVIDENCE_AVAILABLE", "FAIL", reason=exc.code)
@@ -602,15 +951,28 @@ def _run_project_journey(
             if isinstance(final_project, dict)
             else "UNKNOWN"
         )
-        completed = final_state == "COMPLETED"
+        completion_dependencies = (
+            "WORKER_RUN_SETTLED",
+            "TOOL_EFFECT_PERSISTED",
+            "FILE_GENERATED",
+            "ARTIFACT_REGISTERED",
+            "EVIDENCE_AVAILABLE",
+        )
+        evidence_chain_passed = all(
+            stages.get(name, {}).get("status") == "PASS"
+            for name in completion_dependencies
+        )
+        completed = final_state == "COMPLETED" and evidence_chain_passed
         _stage(
             stages,
             "PROJECT_COMPLETED",
             "PASS" if completed else "BLOCKED",
             reason=None
             if completed
-            else "PROJECT_WORKFLOW_COMPLETION_REQUIRES_ITS_GOVERNED_MILESTONES",
-            evidence={"state": final_state},
+            else "PROJECT_WORKFLOW_COMPLETION_REQUIRES_ITS_GOVERNED_MILESTONES"
+            if final_state != "COMPLETED"
+            else "PROJECT_COMPLETION_EVIDENCE_CHAIN_INCOMPLETE",
+            evidence={"state": final_state, "evidence_chain_passed": evidence_chain_passed},
         )
     except APIError as exc:
         _stage(stages, "PROJECT_COMPLETED", "FAIL", reason=exc.code)

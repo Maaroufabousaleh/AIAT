@@ -9,7 +9,6 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-
 SCRIPT = Path(__file__).resolve().parents[1] / "run.py"
 SPEC = importlib.util.spec_from_file_location("opencode_integrated_level_a", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
@@ -153,6 +152,66 @@ class IntegratedLevelAProfileTests(unittest.TestCase):
                                 "reason": "STAGE_NOT_REACHED",
                             },
                         }
+                    },
+                }
+            )
+        )
+
+    def test_driver_accepts_canonical_readiness_worker_block_without_dispatch(self) -> None:
+        self.assertTrue(
+            MODULE._pending_worker_gate_verified(
+                {
+                    "exit_code": 2,
+                    "result": {
+                        "worker_run_id": None,
+                        "stages": {
+                            "WORKER_SELECTED": {
+                                "status": "BLOCKED",
+                                "reason": "CANONICAL_WORKER_READINESS_BLOCKED",
+                                "evidence": {
+                                    "readiness": {
+                                        "status": "blocked",
+                                        "blocker_codes": [
+                                            "worker_not_active",
+                                            "active_shell_version_id_missing",
+                                            "worker_assignment_missing",
+                                        ],
+                                    }
+                                },
+                            },
+                            "WORKER_RUN_SUBMITTED": {
+                                "status": "NOT_RUN",
+                                "reason": "STAGE_NOT_REACHED",
+                            },
+                        },
+                    },
+                }
+            )
+        )
+
+    def test_driver_does_not_treat_project_only_readiness_block_as_worker_gate(self) -> None:
+        self.assertFalse(
+            MODULE._pending_worker_gate_verified(
+                {
+                    "exit_code": 2,
+                    "result": {
+                        "worker_run_id": None,
+                        "stages": {
+                            "WORKER_SELECTED": {
+                                "status": "BLOCKED",
+                                "reason": "CANONICAL_WORKER_READINESS_BLOCKED",
+                                "evidence": {
+                                    "readiness": {
+                                        "status": "blocked",
+                                        "blocker_codes": ["worker_assignment_missing"],
+                                    }
+                                },
+                            },
+                            "WORKER_RUN_SUBMITTED": {
+                                "status": "NOT_RUN",
+                                "reason": "STAGE_NOT_REACHED",
+                            },
+                        },
                     },
                 }
             )
