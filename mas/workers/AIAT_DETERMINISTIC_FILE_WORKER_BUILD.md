@@ -11,9 +11,11 @@ The Dockerfile pins its Python base by digest. Build from the repository root:
 
 ```bash
 SOURCE_SHA="$(sha256sum mas/workers/aiat_deterministic_file_worker_process.py | cut -d ' ' -f 1)"
+SOURCE_REVISION="$(git rev-parse HEAD)"
 docker build --pull \
   --file mas/workers/Dockerfile.aiat_deterministic_file_worker \
   --build-arg "AIAT_WORKER_SOURCE_SHA256=${SOURCE_SHA}" \
+  --build-arg "AIAT_WORKER_SOURCE_REVISION=${SOURCE_REVISION}" \
   --tag aiat-deterministic-file-worker:local \
   mas/workers
 ```
@@ -36,6 +38,11 @@ candidate must also retain the source SHA label recorded in the image. Never
 infer a manifest digest from a mutable tag or substitute the local image-config
 ID for a manifest digest. A local digest is development evidence, not registry
 promotion or production provenance.
+
+The OCI source revision label is the exact 40-character Git commit used for the
+candidate; `com.aiat.worker.source-sha256` records the separately checked
+entrypoint hash. Build from a committed source tree so both values can be
+reproduced and compared with the manifest.
 
 At runtime OCIAdapter supplies `--network none`, drops all capabilities,
 enables no-new-privileges, mounts no workspace or host paths, and applies a
