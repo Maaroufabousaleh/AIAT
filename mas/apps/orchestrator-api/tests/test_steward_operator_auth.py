@@ -1,0 +1,214 @@
+"""Operator-only authorization for mutating worker-steward governance."""
+
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock
+from uuid import UUID
+
+import pytest
+
+WORKER_ID = UUID("00000000-0000-4000-a000-0000000000a1")
+CANDIDATE_ID = UUID("00000000-0000-4000-a000-0000000000a2")
+ROLLOUT_ID = UUID("00000000-0000-4000-a000-0000000000a3")
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("path", "body"),
+    [
+        (
+            f"/capabilities/workers/{WORKER_ID}/steward",
+            {"source_repo": "https://github.com/example/opencode", "exact_release": "1.18.21"},
+        ),
+        (f"/capabilities/workers/{WORKER_ID}/steward/monitor", None),
+        (
+            f"/capabilities/workers/{WORKER_ID}/steward/documentation",
+            {"uri": "https://example.invalid/docs", "version": "1", "content_sha256": "a" * 64},
+        ),
+        (f"/capabilities/workers/{WORKER_ID}/steward/capabilities", {"capabilities": {}}),
+        (
+            f"/capabilities/workers/{WORKER_ID}/steward/candidates",
+            {
+                "semantic_version": "1.0.0",
+                "adapter_version": "1.0.0",
+                "upstream_compatibility_range": "==1.18.21",
+            },
+        ),
+        (
+            f"/capabilities/workers/{WORKER_ID}/steward/candidates/{CANDIDATE_ID}/stage",
+            {"target_status": "SOURCE_REVIEW", "actor": "forged-operator"},
+        ),
+        (
+            f"/capabilities/workers/{WORKER_ID}/steward/candidates/{CANDIDATE_ID}/certify",
+            {"conformance": {"passed": True}, "checks": {"security": True}},
+        ),
+        (
+            f"/capabilities/workers/{WORKER_ID}/steward/candidates/{CANDIDATE_ID}/approve",
+            {"decided_by": "forged-operator", "reason": "forged approval"},
+        ),
+        (
+            f"/capabilities/workers/{WORKER_ID}/steward/rollouts",
+            {"actor": "forged-operator", "eligible_task_classes": ["read_only"]},
+        ),
+        (
+            f"/capabilities/workers/{WORKER_ID}/steward/rollouts/{ROLLOUT_ID}/advance",
+            {"target_status": "SHADOW", "sample_count": 0},
+        ),
+        (
+            f"/capabilities/workers/{WORKER_ID}/steward/rollouts/{ROLLOUT_ID}/rollback",
+            {"reason": "forged rollback"},
+        ),
+    ],
+)
+async def test_steward_mutations_reject_shared_service_principal(client, path, body) -> None:
+    """A body actor field cannot elevate the MAS_API_KEY service principal."""
+    from orchestrator_api import main
+
+    storage = MagicMock()
+    storage.create_approval_record = AsyncMock()
+    previous_storage = getattr(main.app.state, "storage", None)
+    main.app.state.storage = storage
+    try:
+        response = await client.post(path, json=body) if body is not None else await client.post(path)
+    finally:
+        main.app.state.storage = previous_storage
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "canonical mutation requires an operator credential"
+    storage.create_approval_record.assert_not_awaited()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"action": "ACTIVATE"},
+        {"action": "RECLASSIFY", "new_role": "ToolAgent"},
+    ],
+)
+async def test_worker_status_mutations_reject_shared_service_principal(client, body) -> None:
+    """Service credentials cannot activate or reclassify a worker."""
+    from orchestrator_api import main
+
+    worker = {"id": WORKER_ID, "status": "INACTIVE", "adapter_entrypoint": "WorkerAgent"}
+    storage = MagicMock()
+    storage.get_worker = AsyncMock(return_value=worker)
+    storage.update_worker_status = AsyncMock()
+    storage.update_worker_config = AsyncMock()
+    previous_storage = getattr(main.app.state, "storage", None)
+    main.app.state.storage = storage
+    try:
+        response = await client.patch(
+            f"/capabilities/workers/{WORKER_ID}/status",
+            json=body,
+        )
+    finally:
+        main.app.state.storage = previous_storage
+
+    assert response.status_code == 403
+    assert worker["status"] == "INACTIVE"
+    storage.get_worker.assert_not_awaited()
+    storage.update_worker_status.assert_not_awaited()
+    storage.update_worker_config.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_operator_activation_still_requires_governed_records(client, monkeypatch) -> None:
+    """Operator identity does not weaken the existing activation predicate."""
+    from orchestrator_api import main
+
+    worker = {
+        "id": WORKER_ID,
+        "status": "INACTIVE",
+        "source_repo": "local",
+        "version_pin": None,
+        "adapter_config": {},
+        "model_mode": "none",
+    }
+    storage = MagicMock()
+    storage.get_worker = AsyncMock(return_value=worker)
+    storage.get_worker_shell_version = AsyncMock(return_value=None)
+    storage.get_runtime_adapter = AsyncMock(return_value=None)
+    storage.get_skill_bundle = AsyncMock(return_value=None)
+    storage.list_capability_snapshots = AsyncMock(return_value=[])
+    storage.update_worker_status = AsyncMock()
+    monkeypatch.setattr(main, "_storage", lambda: storage)
+
+    response = await client.patch(
+        f"/capabilities/workers/{WORKER_ID}/status",
+        headers={"X-API-Key": "test-operator-key"},
+        json={"action": "ACTIVATE"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "WORKER_ACTIVATION_GOVERNANCE_BLOCKED"
+    assert "missing active immutable WorkerShell" in response.json()["detail"]["blockers"]
+    storage.update_worker_status.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_operator_can_deactivate_worker(client, monkeypatch) -> None:
+    """Operator-only protection keeps normal deactivation available."""
+    from orchestrator_api import main
+
+    active = {"id": WORKER_ID, "status": "ACTIVE"}
+    inactive = {"id": WORKER_ID, "status": "INACTIVE"}
+    storage = MagicMock()
+    storage.get_worker = AsyncMock(side_effect=[active, inactive])
+    storage.update_worker_status = AsyncMock(return_value=None)
+    monkeypatch.setattr(main, "_storage", lambda: storage)
+    monkeypatch.setattr(main, "_suspend_worker_identity", AsyncMock(return_value=None))
+
+    response = await client.patch(
+        f"/capabilities/workers/{WORKER_ID}/status",
+        headers={"X-API-Key": "test-operator-key"},
+        json={"action": "DEACTIVATE"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "INACTIVE"
+    storage.update_worker_status.assert_awaited_once_with(WORKER_ID, status="INACTIVE")
+
+
+@pytest.mark.anyio
+async def test_operator_can_create_candidate_through_steward_api(client, monkeypatch) -> None:
+    """The operator credential can use the same canonical candidate endpoint."""
+    from orchestrator_api import main
+
+    from mas_core.worker_registry.steward import ExternalProvenance, ExternalWorkerSteward
+
+    steward = ExternalWorkerSteward(
+        worker_id=str(WORKER_ID),
+        provenance=ExternalProvenance(
+            canonical_source_repository="https://github.com/example/opencode",
+            exact_release="1.18.21",
+            transport_type="process",
+            security_scan_status="pending",
+        ),
+    )
+    storage = MagicMock()
+    storage.create_skill_bundle = AsyncMock(return_value={"id": UUID("00000000-0000-4000-a000-0000000000b1")})
+    storage.create_runtime_adapter = AsyncMock(return_value={"id": UUID("00000000-0000-4000-a000-0000000000b2")})
+    storage.create_skill_bundle_candidate = AsyncMock()
+    monkeypatch.setattr(main, "_storage", lambda: storage)
+    monkeypatch.setattr(main, "_steward_runtime", AsyncMock(return_value=steward))
+
+    response = await client.post(
+        f"/capabilities/workers/{WORKER_ID}/steward/candidates",
+        headers={"X-API-Key": "test-operator-key"},
+        json={
+            "semantic_version": "1.0.0",
+            "adapter_version": "1.0.0",
+            "upstream_compatibility_range": "==1.18.21",
+            "implementation_ref": "opencode-adapter@candidate",
+        },
+    )
+
+    assert response.status_code == 201
+    candidate = response.json()
+    assert candidate["intake_status"] == "DISCOVERED"
+    assert candidate["source_provenance"]["exact_release"] == "1.18.21"
+    storage.create_skill_bundle.assert_awaited_once()
+    storage.create_runtime_adapter.assert_awaited_once()
+    storage.create_skill_bundle_candidate.assert_awaited_once()
+

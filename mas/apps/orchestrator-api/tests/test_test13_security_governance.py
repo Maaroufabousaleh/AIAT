@@ -1128,6 +1128,7 @@ async def test_patch_worker_status_not_found(client):
 
     r = await client.patch(
         f"/capabilities/workers/{uuid4()}/status",
+        headers={"X-API-Key": "test-operator-key"},
         json={"action": "ACTIVATE"},
     )
     assert r.status_code == 404

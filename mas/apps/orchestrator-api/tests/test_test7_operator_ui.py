@@ -345,6 +345,7 @@ async def test_worker_status_transition(client):
     _patch(storage)
     r = await client.patch(
         f"/capabilities/workers/{WORKER_ID}/status",
+        headers={"X-API-Key": "test-operator-key"},
         json={
             "action": "DEACTIVATE",
             "new_status": "INACTIVE",

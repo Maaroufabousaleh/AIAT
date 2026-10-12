@@ -50,6 +50,7 @@ EVAL_ID = UUID("00000000-0000-4000-a000-000000000101")
 SOURCE_REPO = "https://github.com/example/code-reviewer"
 COMMIT_SHA_OLD = "abc123def456"
 COMMIT_SHA_NEW = "def789ghi012"
+OPERATOR_HEADERS = {"X-API-Key": "test-operator-key"}
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -345,6 +346,7 @@ async def test_activate_approved_worker_changes_status_to_active(client):
 
     resp = await client.patch(
         f"/capabilities/workers/{WORKER_ID}/status",
+        headers=OPERATOR_HEADERS,
         json={"action": "ACTIVATE"},
     )
     assert resp.status_code == 200
@@ -1121,6 +1123,7 @@ async def test_github_worker_full_lifecycle(client):
     # Step 3: Activate
     resp3 = await client.patch(
         f"/capabilities/workers/{WORKER_ID}/status",
+        headers=OPERATOR_HEADERS,
         json={"action": "ACTIVATE"},
     )
     assert resp3.status_code == 200
@@ -1292,6 +1295,7 @@ async def test_activate_external_worker_blocked_until_approved(client):
 
     resp = await client.patch(
         f"/capabilities/workers/{WORKER_ID}/status",
+        headers=OPERATOR_HEADERS,
         json={"action": "ACTIVATE"},
     )
     assert resp.status_code == 409
@@ -1345,6 +1349,7 @@ async def test_activate_medium_dual_use_worker_requires_hardened_sandbox_and_app
 
     resp = await client.patch(
         f"/capabilities/workers/{WORKER_ID}/status",
+        headers=OPERATOR_HEADERS,
         json={"action": "ACTIVATE"},
     )
     assert resp.status_code == 409
@@ -1358,6 +1363,7 @@ async def test_activate_medium_dual_use_worker_requires_hardened_sandbox_and_app
 
     resp = await client.patch(
         f"/capabilities/workers/{WORKER_ID}/status",
+        headers=OPERATOR_HEADERS,
         json={"action": "ACTIVATE"},
     )
     assert resp.status_code == 409

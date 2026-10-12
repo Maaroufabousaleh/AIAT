@@ -30,6 +30,7 @@ from conftest import NOW_ISO
 
 WORKER_ID = UUID("00000000-0000-4000-a000-0000000000c1")
 CAP_ID = UUID("00000000-0000-4000-a000-0000000000d1")
+OPERATOR_HEADERS = {"X-API-Key": "test-operator-key"}
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -267,6 +268,7 @@ async def test_deactivate_worker_changes_status_to_inactive(client):
 
     resp = await client.patch(
         f"/capabilities/workers/{WORKER_ID}/status",
+        headers=OPERATOR_HEADERS,
         json={"action": "DEACTIVATE"},
     )
     assert resp.status_code == 200
@@ -298,6 +300,7 @@ async def test_deactivate_nonexistent_worker_returns_404(client):
 
     resp = await client.patch(
         f"/capabilities/workers/{uuid4()}/status",
+        headers=OPERATOR_HEADERS,
         json={"action": "DEACTIVATE"},
     )
     assert resp.status_code == 404
@@ -318,6 +321,7 @@ async def test_reactivate_worker_changes_status_back_to_active(client):
 
     resp = await client.patch(
         f"/capabilities/workers/{WORKER_ID}/status",
+        headers=OPERATOR_HEADERS,
         json={"action": "ACTIVATE"},
     )
     assert resp.status_code == 200
@@ -356,6 +360,7 @@ async def test_drain_worker_changes_status_to_draining(client):
 
     resp = await client.patch(
         f"/capabilities/workers/{WORKER_ID}/status",
+        headers=OPERATOR_HEADERS,
         json={"action": "DRAIN"},
     )
     assert resp.status_code == 200
@@ -375,6 +380,7 @@ async def test_unknown_status_action_returns_400(client):
 
     resp = await client.patch(
         f"/capabilities/workers/{WORKER_ID}/status",
+        headers=OPERATOR_HEADERS,
         json={"action": "EXPLODE"},
     )
     assert resp.status_code == 400
@@ -740,6 +746,7 @@ async def test_reclassify_worker_updates_entrypoint(client):
 
     resp = await client.patch(
         f"/capabilities/workers/{WORKER_ID}/status",
+        headers=OPERATOR_HEADERS,
         json={"action": "RECLASSIFY", "new_role": "ToolAgent"},
     )
     assert resp.status_code == 200
@@ -798,6 +805,7 @@ async def test_worker_full_lifecycle(client):
     storage.update_worker_status = AsyncMock(return_value=None)
     resp4 = await client.patch(
         f"/capabilities/workers/{worker_id}/status",
+        headers=OPERATOR_HEADERS,
         json={"action": "DEACTIVATE"},
     )
     assert resp4.status_code == 200
@@ -814,6 +822,7 @@ async def test_worker_full_lifecycle(client):
     storage.update_worker_status = AsyncMock(return_value=None)
     resp6 = await client.patch(
         f"/capabilities/workers/{worker_id}/status",
+        headers=OPERATOR_HEADERS,
         json={"action": "ACTIVATE"},
     )
     assert resp6.status_code == 200

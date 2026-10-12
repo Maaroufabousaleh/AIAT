@@ -147,9 +147,11 @@ async def test_steward_runtime_fails_closed_on_unknown_active_pointer() -> None:
 async def test_steward_certification_records_compatibility_matrix_without_provider_dispatch(
     monkeypatch,
 ) -> None:
-    from mas_core.worker_registry import runtime_adapters
-    from mas_core.worker_contract import conformance as conformance_module
     from orchestrator_api import main
+    from starlette.requests import Request
+
+    from mas_core.worker_contract import conformance as conformance_module
+    from mas_core.worker_registry import runtime_adapters
 
     worker_id = uuid4()
     steward = ExternalWorkerSteward(
@@ -227,10 +229,13 @@ async def test_steward_certification_records_compatibility_matrix_without_provid
         LocalConformanceRunner,
     )
 
+    operator_request = Request({"type": "http", "headers": []})
+    operator_request.state.aiat_auth_principal = "operator"
     result = await main.certify_steward_candidate(
         worker_id,
         candidate.candidate_id,
         main.CandidateCertificationRequest(),
+        operator_request,
     )
 
     storage.create_compatibility_matrix.assert_awaited_once()

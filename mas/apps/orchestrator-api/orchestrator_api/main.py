@@ -9729,6 +9729,7 @@ async def _worker_activation_blockers(
 async def transition_worker_status(
     worker_id: UUID,
     req: WorkerStatusTransition,
+    request: Request,
 ) -> dict[str, Any]:
     """Transition a worker's lifecycle status.
 
@@ -9738,6 +9739,7 @@ async def transition_worker_status(
     - DRAIN: set status to DRAINING (finish current tasks, no new ones)
     - RECLASSIFY: change the worker's role (e.g. worker -> tool)
     """
+    _require_operator_identity(request)
     storage = _storage()
     existing = await storage.get_worker(worker_id)
     if existing is None:
@@ -10485,7 +10487,12 @@ async def worker_contract_version() -> dict[str, Any]:
 
 
 @app.post("/capabilities/workers/{worker_id}/steward", status_code=201)
-async def create_worker_steward(worker_id: UUID, req: StewardCreateRequest) -> dict[str, Any]:
+async def create_worker_steward(
+    worker_id: UUID,
+    req: StewardCreateRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _require_operator_identity(request)
     storage = _storage()
     worker = await storage.get_worker(worker_id)
     if worker is None:
@@ -10591,9 +10598,10 @@ async def list_worker_steward_monitoring(worker_id: UUID) -> list[dict[str, Any]
 
 
 @app.post("/capabilities/workers/{worker_id}/steward/monitor")
-async def run_worker_steward_monitor(worker_id: UUID) -> list[dict[str, Any]]:
+async def run_worker_steward_monitor(worker_id: UUID, request: Request) -> list[dict[str, Any]]:
     """Run one operator-requested, review-only upstream discovery pass."""
 
+    _require_operator_identity(request)
     from mas_core.worker_registry.monitoring import run_due_update_monitors
 
     storage = _storage()
@@ -10612,7 +10620,12 @@ async def run_worker_steward_monitor(worker_id: UUID) -> list[dict[str, Any]]:
 
 
 @app.post("/capabilities/workers/{worker_id}/steward/documentation", status_code=201)
-async def add_steward_documentation(worker_id: UUID, req: DocumentationSnapshotRequest) -> dict[str, Any]:
+async def add_steward_documentation(
+    worker_id: UUID,
+    req: DocumentationSnapshotRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _require_operator_identity(request)
     storage = _storage()
     steward = await _steward_runtime(storage, worker_id)
     if steward is None:
@@ -10643,7 +10656,12 @@ async def add_steward_documentation(worker_id: UUID, req: DocumentationSnapshotR
 
 
 @app.post("/capabilities/workers/{worker_id}/steward/capabilities", status_code=201)
-async def record_steward_capabilities(worker_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
+async def record_steward_capabilities(
+    worker_id: UUID,
+    payload: dict[str, Any],
+    request: Request,
+) -> dict[str, Any]:
+    _require_operator_identity(request)
     storage = _storage()
     steward = await _steward_runtime(storage, worker_id)
     if steward is None:
@@ -10751,7 +10769,12 @@ async def _materialize_candidate_worker_shell(
 
 
 @app.post("/capabilities/workers/{worker_id}/steward/candidates", status_code=201)
-async def generate_steward_candidate(worker_id: UUID, req: CandidateGenerationRequest) -> dict[str, Any]:
+async def generate_steward_candidate(
+    worker_id: UUID,
+    req: CandidateGenerationRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _require_operator_identity(request)
     storage = _storage()
     steward = await _steward_runtime(storage, worker_id)
     if steward is None:
@@ -10811,8 +10834,10 @@ async def advance_steward_candidate_stage(
     worker_id: UUID,
     candidate_id: UUID,
     req: CandidateStageAdvanceRequest,
+    request: Request,
 ) -> dict[str, Any]:
     """Record exactly one reviewed intake transition and its evidence."""
+    _require_operator_identity(request)
     storage = _storage()
     steward = await _steward_runtime(storage, worker_id)
     if steward is None:
@@ -10850,7 +10875,13 @@ async def advance_steward_candidate_stage(
 
 
 @app.post("/capabilities/workers/{worker_id}/steward/candidates/{candidate_id}/certify")
-async def certify_steward_candidate(worker_id: UUID, candidate_id: UUID, req: CandidateCertificationRequest) -> dict[str, Any]:
+async def certify_steward_candidate(
+    worker_id: UUID,
+    candidate_id: UUID,
+    req: CandidateCertificationRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _require_operator_identity(request)
     storage = _storage()
     steward = await _steward_runtime(storage, worker_id)
     if steward is None:
@@ -11067,7 +11098,9 @@ async def approve_steward_candidate(
     worker_id: UUID,
     candidate_id: UUID,
     req: CandidateApprovalRequest,
+    request: Request,
 ) -> dict[str, Any]:
+    _require_operator_identity(request)
     storage = _storage()
     steward = await _steward_runtime(storage, worker_id)
     if steward is None:
@@ -11120,7 +11153,12 @@ async def approve_steward_candidate(
 
 
 @app.post("/capabilities/workers/{worker_id}/steward/rollouts", status_code=201)
-async def start_steward_rollout(worker_id: UUID, req: RolloutStartRequest) -> dict[str, Any]:
+async def start_steward_rollout(
+    worker_id: UUID,
+    req: RolloutStartRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _require_operator_identity(request)
     storage = _storage()
     steward = await _steward_runtime(storage, worker_id)
     if steward is None:
@@ -11162,7 +11200,13 @@ async def start_steward_rollout(worker_id: UUID, req: RolloutStartRequest) -> di
 
 
 @app.post("/capabilities/workers/{worker_id}/steward/rollouts/{rollout_id}/advance")
-async def advance_steward_rollout(worker_id: UUID, rollout_id: UUID, req: RolloutAdvanceRequest) -> dict[str, Any]:
+async def advance_steward_rollout(
+    worker_id: UUID,
+    rollout_id: UUID,
+    req: RolloutAdvanceRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _require_operator_identity(request)
     storage = _storage()
     steward = await _steward_runtime(storage, worker_id)
     if steward is None:
@@ -11229,7 +11273,13 @@ async def advance_steward_rollout(worker_id: UUID, rollout_id: UUID, req: Rollou
 
 
 @app.post("/capabilities/workers/{worker_id}/steward/rollouts/{rollout_id}/rollback")
-async def rollback_steward_rollout(worker_id: UUID, rollout_id: UUID, req: RollbackRequest) -> dict[str, Any]:
+async def rollback_steward_rollout(
+    worker_id: UUID,
+    rollout_id: UUID,
+    req: RollbackRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _require_operator_identity(request)
     storage = _storage()
     steward = await _steward_runtime(storage, worker_id)
     if steward is None:
