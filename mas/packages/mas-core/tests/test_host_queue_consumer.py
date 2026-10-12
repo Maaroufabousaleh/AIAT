@@ -357,6 +357,7 @@ class _RuntimeHostRegistry:
         self.calls: list[str] = []
         self.host_id: str | None = None
         self.token: str | None = None
+        self.fail_heartbeat = False
 
     async def register_host(self, **values: object) -> dict[str, object]:
         self.host_id = str(values["host_id"])
@@ -372,6 +373,8 @@ class _RuntimeHostRegistry:
         assert values["host_id"] == self.host_id
         assert values["registration_token"] == self.token
         self.calls.append("heartbeat")
+        if self.fail_heartbeat:
+            raise RuntimeError("host readiness unavailable")
         return {"host_id": self.host_id, "lease_generation": 1, "status": "READY"}
 
     async def set_status(self, **values: object) -> dict[str, object]:
@@ -692,3 +695,31 @@ async def test_running_local_queue_places_then_consumes_through_real_executor_co
     assert PAYLOAD_MARKER not in repr(runtime.public_status())
     assert RESULT_MARKER not in repr(runtime.public_status())
     await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_local_host_startup_fences_registered_host_when_readiness_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = _MemoryStorage()
+    registry = _RuntimeHostRegistry(storage)
+    registry.fail_heartbeat = True
+    monkeypatch.setattr(local_queue_module, "WorkerHostRegistry", lambda _storage: registry)
+    config = LocalHostQueueConfig(
+        host_id_prefix="alpha-local",
+        registration_token="local-host-test-token",
+        sandbox_profile="sandboxed",
+        sandbox_runtime="runsc",
+    )
+    runtime = LocalHostQueueRuntime(
+        storage,  # type: ignore[arg-type]
+        config,
+        adapter_resolver=lambda _pins: None,
+    )
+
+    with pytest.raises(RuntimeError, match="host readiness unavailable"):
+        await runtime.start()
+
+    assert registry.calls == ["register", "heartbeat", "offline"]
+    assert not runtime.active
+    assert runtime.public_status()["status"] == "FAILED"

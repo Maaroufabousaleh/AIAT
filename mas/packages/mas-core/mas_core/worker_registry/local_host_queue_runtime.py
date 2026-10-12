@@ -177,17 +177,40 @@ class LocalHostQueueRuntime:
             },
             status="REGISTERING",
         )
-        self._host_generation = int(registered.get("lease_generation") or 0)
-        if self._host_generation < 1:
-            raise RuntimeError("local host registration returned invalid lease generation")
-        renewed = await self._registry.heartbeat(
-            host_id=self.host_id,
-            registration_token=self.config.registration_token,
-            lease_generation=self._host_generation,
-            lease_seconds=self.config.lease_seconds,
-        )
-        if renewed.get("status") != "READY":
-            raise RuntimeError("local worker host did not become READY")
+        try:
+            self._host_generation = int(registered.get("lease_generation") or 0)
+            if self._host_generation < 1:
+                raise RuntimeError("local host registration returned invalid lease generation")
+            renewed = await self._registry.heartbeat(
+                host_id=self.host_id,
+                registration_token=self.config.registration_token,
+                lease_generation=self._host_generation,
+                lease_seconds=self.config.lease_seconds,
+            )
+            if renewed.get("status") != "READY":
+                raise RuntimeError("local worker host did not become READY")
+        except BaseException:
+            # Registration is durable. If readiness fails after registration,
+            # immediately fence this process identity instead of leaving a
+            # REGISTERING row until its lease expires. Only use the exact
+            # generation returned by authenticated registration.
+            if self._host_generation is not None and self._host_generation > 0:
+                with anyio.CancelScope(shield=True):
+                    try:
+                        await self._registry.set_status(
+                            host_id=self.host_id,
+                            registration_token=self.config.registration_token,
+                            lease_generation=self._host_generation,
+                            status="OFFLINE",
+                        )
+                    except Exception as cleanup_exc:  # noqa: BLE001 - sanitized only
+                        logger.warning(
+                            "local_host_queue_startup_cleanup_failed",
+                            extra={"host_id": self.host_id, "error": type(cleanup_exc).__name__},
+                        )
+            self._status = "FAILED"
+            self._lease_valid = False
+            raise
         self._consumer = HostQueueConsumer(
             self.storage,
             host_id=self.host_id,
