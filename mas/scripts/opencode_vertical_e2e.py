@@ -91,6 +91,15 @@ def _stage(
     stages[name] = item
 
 
+def _stage_not_reached(stages: dict[str, dict[str, Any]], name: str) -> bool:
+    item = stages.get(name)
+    return (
+        isinstance(item, dict)
+        and item.get("status") == "NOT_RUN"
+        and item.get("reason") == "STAGE_NOT_REACHED"
+    )
+
+
 def _safe_error_code(status: int, body: bytes) -> str:
     """Extract only a stable reason code; never retain API error text."""
     try:
@@ -608,13 +617,13 @@ def _run_project_journey(
     return project_id, run_id
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--timeout-seconds", type=int, default=420)
     parser.add_argument(
         "--evidence", type=Path, help="write secret-safe JSON evidence to a new file"
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if not 30 <= args.timeout_seconds <= 1_800:
         parser.error("--timeout-seconds must be between 30 and 1800")
     if args.evidence is not None and args.evidence.exists():
@@ -708,7 +717,7 @@ def main() -> int:
                             break
             except APIError as exc:
                 _stage(stages, "CLEANUP_VERIFIED", "FAIL", reason=exc.code)
-        if not stages.get("CLEANUP_VERIFIED"):
+        if _stage_not_reached(stages, "CLEANUP_VERIFIED"):
             if not run_is_terminal:
                 _stage(stages, "CLEANUP_VERIFIED", "BLOCKED", reason="WORKER_RUN_REMAINS_ACTIVE")
             else:
