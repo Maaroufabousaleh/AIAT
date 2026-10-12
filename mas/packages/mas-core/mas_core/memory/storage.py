@@ -10802,6 +10802,43 @@ class AgentStorage:
             ).first()
         return row is not None
 
+    async def list_worker_tool_effects(
+        self,
+        run_id: UUID,
+        *,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Return bounded, payload-free effect evidence for one Worker Run.
+
+        Request arguments and stored tool responses may contain project data,
+        so this read model deliberately selects only effect identity,
+        disposition, integrity digests, and timestamps. Operator views can
+        prove that mediation happened without exposing tool payloads.
+        """
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1_000:
+            raise ValueError("limit must be between 1 and 1000")
+        columns = t.worker_tool_effects.c
+        query = (
+            sa.select(
+                columns.id,
+                columns.run_id,
+                columns.request_id,
+                columns.tool_name,
+                columns.request_sha256,
+                columns.state,
+                columns.response_json["success"].as_boolean().label("response_success"),
+                columns.created_at,
+                columns.updated_at,
+                columns.completed_at,
+            )
+            .where(columns.run_id == run_id)
+            .order_by(columns.created_at.asc(), columns.id.asc())
+            .limit(limit)
+        )
+        async with self.engine.connect() as connection:
+            rows = (await connection.execute(query)).mappings().all()
+        return [dict(row) for row in rows]
+
     async def complete_worker_tool_effect(
         self,
         effect_id: UUID,

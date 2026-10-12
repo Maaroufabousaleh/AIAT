@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy.dialects import postgresql
 
+from mas_core.memory.storage import AgentStorage
 from mas_core.worker_contract import (
     ArtifactKind,
     EventType,
@@ -21,6 +23,62 @@ from mas_core.worker_contract import (
     WorkerToolResponse,
 )
 from mas_core.worker_contract.controller import WorkerRunError
+
+
+@pytest.mark.asyncio
+async def test_effect_evidence_read_is_bounded_and_omits_payload_columns() -> None:
+    run_id = uuid4()
+    expected = {
+        "id": uuid4(),
+        "run_id": run_id,
+        "request_id": uuid4(),
+        "tool_name": "opencode.workspace_write",
+        "request_sha256": "a" * 64,
+        "state": "COMPLETED",
+        "response_success": True,
+        "created_at": None,
+        "updated_at": None,
+        "completed_at": None,
+    }
+    result = MagicMock()
+    result.mappings.return_value.all.return_value = [expected]
+    connection = MagicMock()
+    connection.execute = AsyncMock(return_value=result)
+    context = MagicMock()
+    context.__aenter__ = AsyncMock(return_value=connection)
+    context.__aexit__ = AsyncMock(return_value=False)
+    engine = MagicMock()
+    engine.connect.return_value = context
+    storage = AgentStorage.__new__(AgentStorage)
+    storage._engine = engine
+
+    rows = await storage.list_worker_tool_effects(run_id, limit=20)
+
+    assert rows == [expected]
+    query = connection.execute.await_args.args[0]
+    sql = str(query.compile(dialect=postgresql.dialect()))
+    selected_column_names = [column.key for column in query.selected_columns]
+    assert selected_column_names == [
+        "id",
+        "run_id",
+        "request_id",
+        "tool_name",
+        "request_sha256",
+        "state",
+        "response_success",
+        "created_at",
+        "updated_at",
+        "completed_at",
+    ]
+    assert "response_json ->>" in sql
+    assert "worker_tool_effects.idempotency_key" not in sql
+    assert "LIMIT" in sql
+
+    with pytest.raises(ValueError, match="between 1 and 1000"):
+        await storage.list_worker_tool_effects(run_id, limit=0)
+    with pytest.raises(ValueError, match="between 1 and 1000"):
+        await storage.list_worker_tool_effects(run_id, limit=True)  # type: ignore[arg-type]
+    assert connection.execute.await_count == 1
 
 
 class _EffectStore:
