@@ -24,6 +24,7 @@ WORKDIR /workspace
 ENV OPENCODE_SERVER_HOSTNAME=0.0.0.0 \
     OPENCODE_SERVER_PORT=4096 \
     OPENCODE_CONFIG=/runtime/opencode.json \
+    OPENCODE_DISABLE_PROJECT_CONFIG=true \
     HOME=/tmp/home \
     XDG_CONFIG_HOME=/tmp/home/.config \
     XDG_DATA_HOME=/tmp/home/.local/share
