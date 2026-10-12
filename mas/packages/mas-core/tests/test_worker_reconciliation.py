@@ -26,12 +26,18 @@ def test_checked_in_worker_inventory_reconciles() -> None:
     assert set(report["transport_counts"]) >= {"human", "opencode", "process"}
     pending = {row["worker"]: row for row in report["pending_evidence"]}
     assert set(pending) == {
+        "aiat_deterministic_file_worker",
         "coding_worker",
         "tester",
     }
-    assert all(row["evidence_status"] == "historical_unreproducible" for row in pending.values())
-    assert all(row["finding_count_status"] == "unavailable_no_retained_raw_evidence" for row in pending.values())
-    assert all("finding_count" not in row for row in pending.values())
+    for worker_id in ("coding_worker", "tester"):
+        row = pending[worker_id]
+        assert row["evidence_status"] == "historical_unreproducible"
+        assert row["finding_count_status"] == "unavailable_no_retained_raw_evidence"
+        assert "finding_count" not in row
+    candidate = pending["aiat_deterministic_file_worker"]
+    assert candidate["evidence"] == "security_scan_status"
+    assert candidate["status"] == "pending"
 
 
 def _load_checker():

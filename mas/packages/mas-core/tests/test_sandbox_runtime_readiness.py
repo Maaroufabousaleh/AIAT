@@ -9,8 +9,10 @@ from pathlib import Path
 
 import yaml
 
-SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "check_sandbox_runtime_readiness.py"
-COMPOSE = Path(__file__).resolve().parents[3] / "infra" / "compose" / "docker-compose.yml"
+REPO_ROOT = Path(__file__).resolve().parents[3]
+SCRIPT = REPO_ROOT / "scripts" / "check_sandbox_runtime_readiness.py"
+WORKERS = REPO_ROOT / "workers"
+COMPOSE = REPO_ROOT / "infra" / "compose" / "docker-compose.yml"
 
 
 def test_static_sandbox_declarations_pass() -> None:
@@ -25,7 +27,7 @@ def test_static_sandbox_declarations_pass() -> None:
     report = json.loads(result.stdout)
     assert report["schema_version"] == "aiat.sandbox-runtime-readiness.v1"
     assert report["status"] == "pass"
-    assert report["worker_count"] == 39
+    assert report["worker_count"] == len(list(WORKERS.glob("*.yaml")))
     assert report["hardened_worker_count"] > 0
     assert report["opencode_runtime"]["status"] == "pass"
     assert report["opencode_runtime"]["runtime"] == "runsc"

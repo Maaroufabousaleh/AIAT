@@ -10,6 +10,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "scripts" / "check_worker_runtime_readiness.py"
+WORKERS = REPO_ROOT / "workers"
 
 
 def _run(*args: str) -> dict:
@@ -39,7 +40,7 @@ def test_static_runtime_readiness_is_declaration_only() -> None:
     assert report["schema_version"] == "aiat.worker-runtime-readiness.v1"
     assert report["mode"] == "static"
     assert report["status"] == "pass"
-    assert report["worker_count"] == 39
+    assert report["worker_count"] == len(list(WORKERS.glob("*.yaml")))
     assert result["returncode"] == 0
     assert report["certification_boundary"]["security_scan"] == "not_checked"
 

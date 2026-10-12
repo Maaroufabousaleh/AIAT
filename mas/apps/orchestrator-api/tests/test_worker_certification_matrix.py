@@ -17,13 +17,17 @@ def test_worker_certification_matrix_is_deterministic_and_explicit_about_pending
     matrix = module.generate(workers_dir=mas_root / "workers")
 
     assert matrix["errors"] == []
-    assert len(matrix["workers"]) == 39
+    assert len(matrix["workers"]) == len(list((mas_root / "workers").glob("*.yaml")))
     assert matrix["programme_scope"] == "personal-internal-only"
     assert matrix["license_handling"] == "metadata-only"
     rows = {row["worker_id"]: row for row in matrix["workers"]}
     assert rows["coding_worker"]["evidence_state"] == "pending_security_evidence"
     assert rows["tester"]["evidence_state"] == "pending_security_evidence"
     assert rows["ceo"]["evidence_state"] == "pending_live_certification"
+    deterministic_candidate = rows["aiat_deterministic_file_worker"]
+    assert deterministic_candidate["certification_status"] == "pending"
+    assert deterministic_candidate["security_scan_status"] == "pending"
+    assert deterministic_candidate["evidence_state"] == "pending_security_evidence"
 
 
 def test_checked_in_worker_certification_matrix_matches_generator():
