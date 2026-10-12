@@ -44,25 +44,21 @@ independent-host outage recovery remain separate evidence boundaries.
 
 ### Product dispatch integration status
 
-The host registry, scheduler, durable run binding, and executor are implemented
-and exercised by the scoped Postgres certificates below. The current
-production-facing `POST /workers/runs` handler does not call those components:
-its inline and queued branches call `WorkerRunController` directly, and the
-repository has no worker-host service wired to consume scheduled runs. The
-binding service now exposes a bounded, payload-free queue read for one exact
-host; it returns only queued runs with a committed worker-plane binding,
-committed reservation, READY host lease, and matching fencing generation.
-The bounded `HostQueueConsumer` in
-[`host_queue_consumer.py`](../../mas/packages/mas-core/mas_core/worker_registry/host_queue_consumer.py)
-uses that read boundary and validates the persisted worker and exact adapter
-pins before invoking `WorkerHostExecutor`. It is covered by focused tests but
-has not been registered in an API or host process, and its eligibility reads
-are not atomic with worker deactivation or pin revocation. There is still no
-host process or API dispatch integration using the queue boundary. The
-certificates therefore prove the host-execution library boundary, not that a
-normal dashboard worker request is placed and executed through it. This
-product integration gap is tracked in the [Functional Alpha
-backlog](AIAT_IMPLEMENTATION_INDEX.md#functional-alpha-product-gap-backlog).
+The host registry, scheduler, durable run binding, and executor are exercised
+by the scoped Postgres certificates below. Local development/test API startup
+now has an opt-in `LocalHostQueueRuntime` which registers and heartbeats a
+host, consumes only its fenced READY bindings, and runs the existing
+`HostQueueConsumer`/`HostExecutor`/`WorkerRunController` lifecycle. It is
+restricted to development/test configuration and does not create a second run
+authority or queue. The isolated Level A profile proves service startup and
+canonical project create/delete, but current worker admission stops at the
+inactive `coding_worker` security/governance gate. No canonical WorkerRun was
+consumed and no OpenCode task artifact was produced by that live profile.
+Focused component tests cover host execution and the actual adapter/tool loop
+separately; they do not claim a real OpenCode process was run through the
+integrated profile. The project-to-OpenCode journey remains in the
+[Functional Alpha backlog](AIAT_IMPLEMENTATION_INDEX.md#functional-alpha-product-gap-backlog)
+until the exact worker pin completes its normal security and governance path.
 
 The 2026-08-18 continuation (`2bc7ca5`) isolated the local Postgres fixtures
 from one another with explicit fixture labels and deterministic priorities.

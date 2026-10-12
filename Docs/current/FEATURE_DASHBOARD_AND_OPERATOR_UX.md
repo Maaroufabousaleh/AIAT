@@ -436,6 +436,20 @@ The dashboard is the human control and evidence surface for AIAT. It must make c
   focused API/storage suite passes 278 tests with one database integration
   skip.
 
+### Product integration update (2026-10-12)
+
+- Project Detail now refreshes queued/nonterminal canonical WorkerRuns every
+  10 seconds while the project activity view is open, shows accessible state
+  badges and refresh status, and keeps the existing project-scoped run/evidence
+  links. The focused source-built activity E2E passes 3/3; this proves UI
+  refresh behavior against mocked API responses, not worker dispatch.
+- Worker Run detail now shows a bounded mediated-tool effect timeline through
+  the authenticated dashboard BFF. It renders only the safe scalar projection
+  and request digest prefix, with loading, empty, error, and retry states;
+  tool arguments, responses, and idempotency keys are not shown. Focused
+  Playwright passes 3/3, BFF tests pass 5/5, and typecheck/changed-file lint
+  pass. These UI checks do not claim a live OpenCode execution.
+
 ## Code anchors
 
 - Dashboard application: [`mas/apps/mas-dashboard/app/`](../../mas/apps/mas-dashboard/app/)
