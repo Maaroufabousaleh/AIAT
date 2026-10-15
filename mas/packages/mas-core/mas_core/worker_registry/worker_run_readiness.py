@@ -263,7 +263,8 @@ def evaluate_worker_run_readiness(
         else:
             budget_status[budget_key] = "available"
     fetch_status.setdefault("budgets", "observed")
-    fetch_status.setdefault("model_profiles", "observed")
+    if require_model_backed:
+        fetch_status.setdefault("model_profiles", "observed")
 
     sandbox_profile = _text(worker.get("sandbox_profile")).lower() if worker else "missing"
     try:
@@ -312,7 +313,11 @@ def evaluate_worker_run_readiness(
         },
         "fetch_status": fetch_status,
         "blockers": blockers,
-        "scope": "read-only selected model-backed worker-run readiness; no activation, identity provisioning, budget reservation, dispatch, or payload access",
+        "scope": (
+            "read-only selected model-backed worker-run readiness"
+            if require_model_backed
+            else "read-only selected non-model worker-run readiness"
+        ) + "; no activation, identity provisioning, budget reservation, dispatch, or payload access",
     }
     return report
 
