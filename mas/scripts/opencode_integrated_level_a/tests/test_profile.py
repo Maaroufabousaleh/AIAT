@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import importlib.util
+import io
 import shutil
 import socket as socket_module
 import unittest
@@ -279,22 +281,349 @@ class IntegratedLevelAProfileTests(unittest.TestCase):
 
     def test_worker_selection_uses_exact_governed_manifest_name(self) -> None:
         worker_id = "00000000-0000-4000-8000-000000000001"
-        selected = MODULE._select_coding_worker_id(
+        selected = MODULE._select_worker_id(
             [
                 {"id": "00000000-0000-4000-8000-000000000002", "name": "tester"},
                 {"id": worker_id, "name": "coding_worker"},
-            ]
+            ],
+            "coding_worker",
         )
         self.assertEqual(selected, worker_id)
 
     def test_worker_selection_does_not_invent_or_ambiguously_choose(self) -> None:
-        self.assertIsNone(MODULE._select_coding_worker_id([]))
-        with self.assertRaisesRegex(MODULE.HarnessError, "coding_worker_manifest_ambiguous"):
-            MODULE._select_coding_worker_id(
+        self.assertIsNone(MODULE._select_worker_id([], "coding_worker"))
+        with self.assertRaisesRegex(MODULE.HarnessError, "worker_manifest_ambiguous"):
+            MODULE._select_worker_id(
                 [
                     {"id": "00000000-0000-4000-8000-000000000001", "name": "coding_worker"},
                     {"id": "00000000-0000-4000-8000-000000000002", "name": "coding_worker"},
-                ]
+                ],
+                "coding_worker",
+            )
+
+    def test_worker_selection_supports_only_the_two_canonical_names(self) -> None:
+        worker_id = "00000000-0000-4000-8000-000000000002"
+        self.assertEqual(
+            MODULE._select_worker_id(
+                [{"id": worker_id, "name": "aiat_deterministic_file_worker"}],
+                "aiat_deterministic_file_worker",
+            ),
+            worker_id,
+        )
+        with self.assertRaisesRegex(MODULE.HarnessError, "worker_name_unsupported"):
+            MODULE._select_worker_id([], "some-other-worker")
+
+    def test_worker_resolution_uses_authenticated_api_and_exact_requested_name(self) -> None:
+        worker_id = "00000000-0000-4000-8000-000000000002"
+        calls: list[list[str]] = []
+        original_run = MODULE._run
+        MODULE._run = lambda argv, **_kwargs: calls.append(argv) or SimpleNamespace(
+            returncode=0,
+            stdout=MODULE.json.dumps([{"id": worker_id, "name": "aiat_deterministic_file_worker"}]),
+        )
+        try:
+            selected = MODULE._resolve_worker_id(
+                ["docker", "compose"], {}, "aiat_deterministic_file_worker"
+            )
+        finally:
+            MODULE._run = original_run
+        self.assertEqual(selected, worker_id)
+        lookup = calls[0][-1]
+        self.assertIn("/capabilities/workers", lookup)
+        self.assertIn("X-API-Key", lookup)
+        self.assertIn("row.get('name')==name", lookup)
+        self.assertIn('name="aiat_deterministic_file_worker"', lookup)
+
+    def test_deterministic_worker_manifest_identity_is_source_bound(self) -> None:
+        identity = MODULE._deterministic_worker_image_identity()
+        self.assertEqual(
+            identity["image_reference"],
+            "aiat-deterministic-file-worker@" + identity["image_digest"],
+        )
+        self.assertEqual(identity["source_sha256"], "3b75bea1aa232ac5362d46b448cdc789a55f6e87e955ce4053a7d849ac858784")
+
+    def test_deterministic_worker_local_image_requires_exact_digest_and_labels(self) -> None:
+        identity = MODULE._deterministic_worker_image_identity()
+        labels = {
+            "org.opencontainers.image.version": identity["version"],
+            "org.opencontainers.image.revision": identity["source_revision"],
+            "com.aiat.worker.source-sha256": identity["source_sha256"],
+        }
+        calls: list[list[str]] = []
+        original_run = MODULE._run
+
+        def inspect(argv: list[str], **_kwargs: Any) -> SimpleNamespace:
+            calls.append(argv)
+            if "RepoDigests" in argv[-2]:
+                stdout = MODULE.json.dumps([identity["image_reference"]])
+            else:
+                stdout = MODULE.json.dumps(labels)
+            return SimpleNamespace(returncode=0, stdout=stdout)
+
+        MODULE._run = inspect
+        try:
+            verified = MODULE._verify_local_deterministic_worker_image({})
+        finally:
+            MODULE._run = original_run
+        self.assertTrue(verified["local_digest_verified"])
+        self.assertTrue(verified["source_labels_verified"])
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(all(identity["image_reference"] in call for call in calls))
+        self.assertFalse(any("pull" in call or "build" in call for call in calls))
+        self.assertFalse(any(":local" in " ".join(call) for call in calls))
+
+    def test_deterministic_worker_image_missing_or_mismatched_fails_closed(self) -> None:
+        original_run = MODULE._run
+        MODULE._run = lambda *_args, **_kwargs: SimpleNamespace(returncode=1, stdout="")
+        try:
+            with self.assertRaisesRegex(
+                MODULE.HarnessError, "deterministic_worker_image_digest_not_present_locally"
+            ):
+                MODULE._verify_local_deterministic_worker_image({})
+        finally:
+            MODULE._run = original_run
+
+        identity = MODULE._deterministic_worker_image_identity()
+        MODULE._run = lambda argv, **_kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=MODULE.json.dumps(
+                ["aiat-deterministic-file-worker@sha256:" + "0" * 64]
+                if "RepoDigests" in argv[-2]
+                else {}
+            ),
+        )
+        try:
+            with self.assertRaisesRegex(
+                MODULE.HarnessError, "deterministic_worker_image_digest_mismatch"
+            ):
+                MODULE._verify_local_deterministic_worker_image({})
+        finally:
+            MODULE._run = original_run
+
+        calls = 0
+
+        def wrong_labels(argv: list[str], **_kwargs: Any) -> SimpleNamespace:
+            nonlocal calls
+            calls += 1
+            if "RepoDigests" in argv[-2]:
+                output: Any = [identity["image_reference"]]
+            else:
+                output = {
+                    "org.opencontainers.image.version": identity["version"],
+                    "org.opencontainers.image.revision": "0" * 40,
+                    "com.aiat.worker.source-sha256": identity["source_sha256"],
+                }
+            return SimpleNamespace(returncode=0, stdout=MODULE.json.dumps(output))
+
+        MODULE._run = wrong_labels
+        try:
+            with self.assertRaisesRegex(
+                MODULE.HarnessError, "deterministic_worker_image_source_labels_mismatch"
+            ):
+                MODULE._verify_local_deterministic_worker_image({})
+        finally:
+            MODULE._run = original_run
+
+    def test_worker_name_cli_rejects_unlisted_candidates_before_runtime(self) -> None:
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            MODULE.main(["--worker-name", "unlisted_worker", "--check-only"])
+
+    def test_worker_name_cli_propagates_selected_candidate(self) -> None:
+        calls: list[dict[str, Any]] = []
+        original = MODULE.run_profile
+        MODULE.run_profile = lambda **kwargs: calls.append(kwargs) or {"status": "CONFIG_PASS"}
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                status = MODULE.main(
+                    ["--worker-name", "aiat_deterministic_file_worker", "--check-only"]
+                )
+        finally:
+            MODULE.run_profile = original
+        self.assertEqual(status, 0)
+        self.assertEqual(calls[0]["worker_name"], "aiat_deterministic_file_worker")
+
+    def test_driver_receives_selected_worker_name(self) -> None:
+        calls: list[list[str]] = []
+        original_run = MODULE._run
+
+        def run(argv: list[str], **_kwargs: Any) -> SimpleNamespace:
+            calls.append(argv)
+            output = "{}" if "exec" in argv else ""
+            return SimpleNamespace(returncode=0, stdout=output)
+
+        MODULE._run = run
+        try:
+            MODULE._run_driver(
+                ["docker", "compose"],
+                {},
+                MODULE.DEFAULT_DRIVER,
+                {},
+                "00000000-0000-4000-8000-000000000001",
+                "aiat_deterministic_file_worker",
+            )
+        finally:
+            MODULE._run = original_run
+        self.assertTrue(
+            any("AIAT_LEVEL_A_WORKER_NAME=aiat_deterministic_file_worker" in call for call in calls)
+        )
+
+    def test_artifact_pass_completion_policy_block_is_reportable_as_partial(self) -> None:
+        worker_id = "00000000-0000-4000-8000-000000000001"
+        stages = {
+            name: {"status": "PASS"}
+            for name in (
+                "PROJECT_CREATED",
+                "WORKER_SELECTED",
+                "WORKER_RUN_SUBMITTED",
+                "HOST_RESERVED",
+                "HOST_CLAIMED",
+                "HOST_CONSUMER_EXECUTED",
+                "RUNTIME_STARTED",
+                "TOOL_SERVICE_CALLED",
+                "TOOL_EFFECT_PERSISTED",
+                "FILE_GENERATED",
+                "ARTIFACT_REGISTERED",
+                "WORKER_RUN_SETTLED",
+                "EVIDENCE_AVAILABLE",
+            )
+        }
+        stages.update(
+            {
+                "PROJECT_CREATED": {
+                    "status": "PASS",
+                    "evidence": {"project_id": "project-1"},
+                },
+                "WORKER_SELECTED": {
+                    "status": "PASS",
+                    "evidence": {
+                        "name": "aiat_deterministic_file_worker",
+                        "worker_id": worker_id,
+                    },
+                },
+                "WORKER_RUN_SUBMITTED": {
+                    "status": "PASS",
+                    "evidence": {"run_id": "run-1"},
+                },
+                "HOST_RESERVED": {
+                    "status": "PASS",
+                    "evidence": {"host_binding_id": "binding-1", "host_id": "host-1"},
+                },
+                "HOST_CONSUMER_EXECUTED": {
+                    "status": "PASS",
+                    "evidence": {
+                        "claim_transition_id": "claim-1",
+                        "dispatch_transition_id": "dispatch-1",
+                        "running_transition_id": "running-1",
+                        "running_transition_actor": "worker-run-controller",
+                        "claim_preceded_running": True,
+                    },
+                },
+                "RUNTIME_STARTED": {
+                    "status": "PASS",
+                    "evidence": {"accepted_event_observed": True},
+                },
+                "TOOL_SERVICE_CALLED": {
+                    "status": "PASS",
+                    "evidence": {"effect_count": 1, "tool_names": ["file_write"]},
+                },
+                "TOOL_EFFECT_PERSISTED": {
+                    "status": "PASS",
+                    "evidence": {"completed_effect_count": 1},
+                },
+                "FILE_GENERATED": {
+                    "status": "PASS",
+                    "evidence": {"files": ["expenses.py"]},
+                },
+                "ARTIFACT_REGISTERED": {
+                    "status": "PASS",
+                    "evidence": {
+                        "artifacts": [
+                            {
+                                "artifact_id": "artifact-1",
+                                "sha256": "a" * 64,
+                                "size_bytes": 42,
+                            }
+                        ]
+                    },
+                },
+                "WORKER_RUN_SETTLED": {
+                    "status": "PASS",
+                    "evidence": {"run_id": "run-1", "state": "SUCCEEDED"},
+                },
+                "EVIDENCE_AVAILABLE": {
+                    "status": "PASS",
+                    "evidence": {
+                        "required_checks_pass": True,
+                        "artifact_ref_count": 1,
+                        "artifact_ids": ["artifact-1"],
+                    },
+                },
+                "MODEL_REQUEST_RESOLVED": {"status": "N/A", "reason": "NON_MODEL_WORKER"},
+                "LOCAL_MODEL_RESPONSE_RECEIVED": {"status": "N/A", "reason": "NON_MODEL_WORKER"},
+                "PROJECT_COMPLETED": {
+                    "status": "BLOCKED",
+                    "reason": "PROJECT_WORKFLOW_COMPLETION_REQUIRES_ITS_GOVERNED_MILESTONES",
+                    "evidence": {"state": "INIT", "evidence_chain_passed": True},
+                },
+                "CLEANUP_VERIFIED": {
+                    "status": "PASS",
+                    "evidence": {"project_deleted": True},
+                },
+            }
+        )
+        driver_result = {
+            "exit_code": 2,
+            "result": {"project_id": "project-1", "worker_run_id": "run-1", "stages": stages},
+        }
+        self.assertTrue(
+            MODULE._worker_artifact_completion_blocked_verified(
+                driver_result, worker_id=worker_id, provider_fixture_calls=0
+            )
+        )
+        self.assertEqual(
+            MODULE._classify_driver_result(
+                driver_result,
+                worker_name="aiat_deterministic_file_worker",
+                worker_id=worker_id,
+                provider_fixture_calls=0,
+            ),
+            (
+                "DRIVER_PARTIAL",
+                "WORKER_ARTIFACT_PASS_PROJECT_COMPLETION_BLOCKED",
+                True,
+            ),
+        )
+
+        with self.subTest("provider fixture was called"):
+            self.assertFalse(
+                MODULE._worker_artifact_completion_blocked_verified(
+                    driver_result, worker_id=worker_id, provider_fixture_calls=1
+                )
+            )
+            self.assertEqual(
+                MODULE._classify_driver_result(
+                    driver_result,
+                    worker_name="aiat_deterministic_file_worker",
+                    worker_id=worker_id,
+                    provider_fixture_calls=1,
+                ),
+                ("DRIVER_BLOCKED", None, False),
+            )
+        with self.subTest("artifact is not in evidence"):
+            unlinked = copy.deepcopy(driver_result)
+            unlinked["result"]["stages"]["EVIDENCE_AVAILABLE"]["evidence"]["artifact_ids"] = []
+            self.assertFalse(
+                MODULE._worker_artifact_completion_blocked_verified(
+                    unlinked, worker_id=worker_id, provider_fixture_calls=0
+                )
+            )
+        with self.subTest("cleanup absent"):
+            unclean = copy.deepcopy(driver_result)
+            unclean["result"]["stages"]["CLEANUP_VERIFIED"]["status"] = "FAIL"
+            self.assertFalse(
+                MODULE._worker_artifact_completion_blocked_verified(
+                    unclean, worker_id=worker_id, provider_fixture_calls=0
+                )
             )
 
     def test_driver_blocked_status_requires_pending_worker_gate(self) -> None:

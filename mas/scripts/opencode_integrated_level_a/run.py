@@ -24,12 +24,17 @@ import urllib.parse
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[3]
 MAS_ROOT = ROOT / "mas"
 COMPOSE_FILE = ROOT / "mas" / "infra" / "compose" / "level-a-opencode-integrated.yml"
 DEFAULT_DRIVER = ROOT / "mas" / "scripts" / "opencode_vertical_e2e.py"
 PROFILE_LABEL = "opencode-integrated-level-a"
 PROJECT_RE = re.compile(r"aiat-level-a-[0-9a-f]{12}\Z")
+SUPPORTED_WORKER_NAMES = ("coding_worker", "aiat_deterministic_file_worker")
+DETERMINISTIC_WORKER_MANIFEST = MAS_ROOT / "workers" / "aiat_deterministic_file_worker.yaml"
+DETERMINISTIC_WORKER_SOURCE = MAS_ROOT / "workers" / "aiat_deterministic_file_worker_process.py"
 LITELLM_IMAGE = "ghcr.io/berriai/litellm:main-stable"
 BUILD_CONTEXT_PATHS = (
     "alembic.ini",
@@ -681,35 +686,40 @@ def _verify_profile_cleanup(project: str, env: dict[str, str]) -> None:
             raise HarnessError("profile_cleanup_left_local_image")
 
 
-def _select_coding_worker_id(workers: Any) -> str | None:
+def _select_worker_id(workers: Any, worker_name: str) -> str | None:
+    if worker_name not in SUPPORTED_WORKER_NAMES:
+        raise HarnessError("worker_name_unsupported")
     if not isinstance(workers, list):
         raise HarnessError("worker_manifest_list_invalid")
     matches = [
         row
         for row in workers
-        if isinstance(row, dict) and str(row.get("name") or "") == "coding_worker"
+        if isinstance(row, dict) and str(row.get("name") or "") == worker_name
     ]
     if not matches:
         return None
     if len(matches) != 1:
-        raise HarnessError("coding_worker_manifest_ambiguous")
+        raise HarnessError("worker_manifest_ambiguous")
     worker_id = str(matches[0].get("id") or "")
     if not re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", worker_id):
-        raise HarnessError("coding_worker_identifier_invalid")
+        raise HarnessError("worker_identifier_invalid")
     return worker_id
 
 
-def _resolve_coding_worker_id(base: list[str], env: dict[str, str]) -> str | None:
+def _resolve_worker_id(base: list[str], env: dict[str, str], worker_name: str) -> str | None:
     # Resolve the database UUID through the normal authenticated API. Never
     # infer a worker ID from an image, manifest file, or database internals.
+    if worker_name not in SUPPORTED_WORKER_NAMES:
+        raise HarnessError("worker_name_unsupported")
     lookup = (
         "import json,os,urllib.request; "
+        f"name={json.dumps(worker_name)}; "
         "key=os.environ.get('AIAT_LEVEL_A_OPERATOR_API_KEY',''); "
         "request=urllib.request.Request('http://127.0.0.1:8000/capabilities/workers', "
         "headers={'X-API-Key':key,'Accept':'application/json'}); "
         "response=urllib.request.urlopen(request,timeout=10); "
         "rows=json.load(response); "
-        "matches=[row for row in rows if isinstance(row,dict) and row.get('name')=='coding_worker']; "
+        "matches=[row for row in rows if isinstance(row,dict) and row.get('name')==name]; "
         "print(json.dumps(matches))"
     )
     result = _run(
@@ -719,12 +729,112 @@ def _resolve_coding_worker_id(base: list[str], env: dict[str, str]) -> str | Non
         check=False,
     )
     if result.returncode:
-        raise HarnessError("coding_worker_api_lookup_failed")
+        raise HarnessError("worker_api_lookup_failed")
     try:
         rows = json.loads(result.stdout)
     except json.JSONDecodeError as exc:
-        raise HarnessError("coding_worker_api_lookup_invalid") from exc
-    return _select_coding_worker_id(rows)
+        raise HarnessError("worker_api_lookup_invalid") from exc
+    return _select_worker_id(rows, worker_name)
+
+
+def _deterministic_worker_image_identity() -> dict[str, str]:
+    """Load and cross-check the source-bound OCI reference without resolving tags."""
+
+    try:
+        manifest = yaml.safe_load(DETERMINISTIC_WORKER_MANIFEST.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise HarnessError("deterministic_worker_manifest_unreadable") from exc
+    if not isinstance(manifest, dict):
+        raise HarnessError("deterministic_worker_manifest_invalid")
+    metadata = manifest.get("metadata")
+    runtime = manifest.get("runtime")
+    adapter = runtime.get("adapter_config") if isinstance(runtime, dict) else None
+    provenance = manifest.get("source_provenance")
+    if not all(isinstance(value, dict) for value in (metadata, runtime, adapter, provenance)):
+        raise HarnessError("deterministic_worker_manifest_invalid")
+
+    version = str(metadata.get("version") or "")
+    reference = str(adapter.get("image") or "")
+    digest = str(provenance.get("oci_image_digest") or "")
+    revision = str(provenance.get("commit_sha") or "")
+    source_fingerprint = str(provenance.get("runtime_fingerprint") or "")
+    version_pin = str(metadata.get("version_pin") or "")
+    if metadata.get("id") != "aiat_deterministic_file_worker" or runtime.get("transport") != "oci":
+        raise HarnessError("deterministic_worker_manifest_identity_invalid")
+    digest_match = re.fullmatch(r"sha256:([0-9a-f]{64})", digest)
+    source_match = re.fullmatch(r"sha256:([0-9a-f]{64})", source_fingerprint)
+    if not digest_match or not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise HarnessError("deterministic_worker_manifest_digest_invalid")
+    expected_reference = f"aiat-deterministic-file-worker@{digest}"
+    if (
+        reference != expected_reference
+        or provenance.get("transport_type") != "oci"
+        or provenance.get("exact_release") != version
+        or metadata.get("source_revision") != revision
+        or version_pin != f"{version}+sha256.{digest_match.group(1)}"
+        or adapter.get("runtime_version") != f"aiat-deterministic-file-worker/{version}"
+        or not source_match
+    ):
+        raise HarnessError("deterministic_worker_manifest_identity_mismatch")
+    if DETERMINISTIC_WORKER_SOURCE.is_symlink() or not DETERMINISTIC_WORKER_SOURCE.is_file():
+        raise HarnessError("deterministic_worker_source_unavailable")
+    try:
+        source_sha256 = hashlib.sha256(DETERMINISTIC_WORKER_SOURCE.read_bytes()).hexdigest()
+    except OSError as exc:
+        raise HarnessError("deterministic_worker_source_unavailable") from exc
+    if source_sha256 != source_match.group(1):
+        raise HarnessError("deterministic_worker_source_fingerprint_mismatch")
+    return {
+        "image_reference": reference,
+        "image_digest": digest,
+        "version": version,
+        "source_revision": revision,
+        "source_sha256": source_sha256,
+    }
+
+
+def _verify_local_deterministic_worker_image(env: dict[str, str]) -> dict[str, Any]:
+    """Require the manifest's exact image digest and source labels in the daemon."""
+
+    identity = _deterministic_worker_image_identity()
+    reference = identity["image_reference"]
+    digests = _run(
+        ["docker", "image", "inspect", "--format", "{{json .RepoDigests}}", reference],
+        env=env,
+        timeout=10,
+        check=False,
+    )
+    if digests.returncode:
+        raise HarnessError("deterministic_worker_image_digest_not_present_locally")
+    try:
+        repo_digests = json.loads(digests.stdout)
+    except json.JSONDecodeError as exc:
+        raise HarnessError("deterministic_worker_image_inspection_invalid") from exc
+    if not isinstance(repo_digests, list) or reference not in repo_digests:
+        raise HarnessError("deterministic_worker_image_digest_mismatch")
+
+    inspected_labels = _run(
+        ["docker", "image", "inspect", "--format", "{{json .Config.Labels}}", reference],
+        env=env,
+        timeout=10,
+        check=False,
+    )
+    if inspected_labels.returncode:
+        raise HarnessError("deterministic_worker_image_digest_not_present_locally")
+    try:
+        labels = json.loads(inspected_labels.stdout)
+    except json.JSONDecodeError as exc:
+        raise HarnessError("deterministic_worker_image_inspection_invalid") from exc
+    if not isinstance(labels, dict):
+        raise HarnessError("deterministic_worker_image_labels_missing")
+    expected_labels = {
+        "org.opencontainers.image.version": identity["version"],
+        "org.opencontainers.image.revision": identity["source_revision"],
+        "com.aiat.worker.source-sha256": identity["source_sha256"],
+    }
+    if any(labels.get(key) != value for key, value in expected_labels.items()):
+        raise HarnessError("deterministic_worker_image_source_labels_mismatch")
+    return {**identity, "local_digest_verified": True, "source_labels_verified": True}
 
 
 def _fixture_request_count(base: list[str], env: dict[str, str]) -> int:
@@ -818,6 +928,167 @@ def _api_project_cleanup_verified(driver_result: dict[str, Any]) -> bool:
     )
 
 
+def _worker_artifact_completion_blocked_verified(
+    driver_result: dict[str, Any],
+    *,
+    worker_id: str | None,
+    provider_fixture_calls: int,
+) -> bool:
+    """Recognize a real artifact/evidence pass stopped at governed completion."""
+
+    payload = driver_result.get("result")
+    stages = payload.get("stages") if isinstance(payload, dict) else None
+    if (
+        driver_result.get("exit_code") != 2
+        or provider_fixture_calls != 0
+        or not worker_id
+        or not isinstance(stages, dict)
+        or not payload.get("project_id")
+        or not payload.get("worker_run_id")
+    ):
+        return False
+    required_pass = (
+        "PROJECT_CREATED",
+        "WORKER_SELECTED",
+        "WORKER_RUN_SUBMITTED",
+        "HOST_RESERVED",
+        "HOST_CLAIMED",
+        "HOST_CONSUMER_EXECUTED",
+        "RUNTIME_STARTED",
+        "TOOL_SERVICE_CALLED",
+        "TOOL_EFFECT_PERSISTED",
+        "FILE_GENERATED",
+        "ARTIFACT_REGISTERED",
+        "WORKER_RUN_SETTLED",
+        "EVIDENCE_AVAILABLE",
+    )
+    if any(
+        not isinstance(stages.get(name), dict) or stages[name].get("status") != "PASS"
+        for name in required_pass
+    ):
+        return False
+
+    selected = stages["WORKER_SELECTED"].get("evidence")
+    if not isinstance(selected, dict) or (
+        selected.get("name") or selected.get("worker_name")
+    ) != "aiat_deterministic_file_worker" or str(selected.get("worker_id") or "") != worker_id:
+        return False
+    project_created = stages["PROJECT_CREATED"].get("evidence")
+    submission = stages["WORKER_RUN_SUBMITTED"].get("evidence")
+    settled = stages["WORKER_RUN_SETTLED"].get("evidence")
+    tool_effects = stages["TOOL_EFFECT_PERSISTED"].get("evidence")
+    tool_calls = stages["TOOL_SERVICE_CALLED"].get("evidence")
+    files = stages["FILE_GENERATED"].get("evidence")
+    artifacts = stages["ARTIFACT_REGISTERED"].get("evidence")
+    evidence = stages["EVIDENCE_AVAILABLE"].get("evidence")
+    host_reservation = stages["HOST_RESERVED"].get("evidence")
+    host_execution = stages["HOST_CONSUMER_EXECUTED"].get("evidence")
+    runtime = stages["RUNTIME_STARTED"].get("evidence")
+    if (
+        not isinstance(project_created, dict)
+        or str(project_created.get("project_id") or "") != str(payload["project_id"])
+        or not isinstance(submission, dict)
+        or str(submission.get("run_id") or "") != str(payload["worker_run_id"])
+        or not isinstance(settled, dict)
+        or str(settled.get("run_id") or "") != str(payload["worker_run_id"])
+        or str(settled.get("state") or "").upper() != "SUCCEEDED"
+        or not isinstance(tool_effects, dict)
+        or not isinstance(tool_effects.get("completed_effect_count"), int)
+        or isinstance(tool_effects.get("completed_effect_count"), bool)
+        or tool_effects["completed_effect_count"] < 1
+        or not isinstance(tool_calls, dict)
+        or not isinstance(tool_calls.get("effect_count"), int)
+        or isinstance(tool_calls.get("effect_count"), bool)
+        or tool_calls["effect_count"] < 1
+        or not isinstance(tool_calls.get("tool_names"), list)
+        or "file_write" not in tool_calls["tool_names"]
+        or not isinstance(host_reservation, dict)
+        or not host_reservation.get("host_binding_id")
+        or not host_reservation.get("host_id")
+        or not isinstance(host_execution, dict)
+        or not host_execution.get("claim_transition_id")
+        or not host_execution.get("dispatch_transition_id")
+        or not host_execution.get("running_transition_id")
+        or host_execution.get("running_transition_actor") != "worker-run-controller"
+        or host_execution.get("claim_preceded_running") is not True
+        or not isinstance(runtime, dict)
+        or runtime.get("accepted_event_observed") is not True
+        or not isinstance(files, dict)
+        or not isinstance(files.get("files"), list)
+        or not files["files"]
+        or not isinstance(artifacts, dict)
+        or not isinstance(artifacts.get("artifacts"), list)
+        or not artifacts["artifacts"]
+        or not isinstance(evidence, dict)
+        or evidence.get("required_checks_pass") is not True
+        or not isinstance(evidence.get("artifact_ref_count"), int)
+        or isinstance(evidence.get("artifact_ref_count"), bool)
+        or evidence["artifact_ref_count"] < 1
+    ):
+        return False
+    if not all(
+        isinstance(row, dict)
+        and row.get("artifact_id")
+        and re.fullmatch(r"[0-9a-f]{64}", str(row.get("sha256") or ""))
+        and isinstance(row.get("size_bytes"), int)
+        and not isinstance(row.get("size_bytes"), bool)
+        and row["size_bytes"] > 0
+        for row in artifacts["artifacts"]
+    ):
+        return False
+    artifact_ids = {str(row["artifact_id"]) for row in artifacts["artifacts"]}
+    evidence_artifact_ids = (
+        {str(value) for value in evidence.get("artifact_ids") if value is not None}
+        if isinstance(evidence, dict) and isinstance(evidence.get("artifact_ids"), list)
+        else set()
+    )
+    if not artifact_ids or not artifact_ids.issubset(evidence_artifact_ids):
+        return False
+
+    for name in ("MODEL_REQUEST_RESOLVED", "LOCAL_MODEL_RESPONSE_RECEIVED"):
+        stage = stages.get(name)
+        if (
+            not isinstance(stage, dict)
+            or stage.get("status") != "N/A"
+            or stage.get("reason") != "NON_MODEL_WORKER"
+        ):
+            return False
+    completion = stages.get("PROJECT_COMPLETED")
+    completion_evidence = completion.get("evidence") if isinstance(completion, dict) else None
+    if (
+        not isinstance(completion, dict)
+        or completion.get("status") != "BLOCKED"
+        or completion.get("reason") != "PROJECT_WORKFLOW_COMPLETION_REQUIRES_ITS_GOVERNED_MILESTONES"
+        or not isinstance(completion_evidence, dict)
+        or str(completion_evidence.get("state") or "").upper() == "COMPLETED"
+        or completion_evidence.get("evidence_chain_passed") is not True
+        or not _api_project_cleanup_verified(driver_result)
+    ):
+        return False
+    return True
+
+
+def _classify_driver_result(
+    driver_result: dict[str, Any],
+    *,
+    worker_name: str,
+    worker_id: str | None,
+    provider_fixture_calls: int,
+) -> tuple[str, str | None, bool]:
+    exit_code = driver_result.get("exit_code")
+    if exit_code == 0:
+        return "DRIVER_PASS", None, False
+    if exit_code == 2 and _worker_artifact_completion_blocked_verified(
+        driver_result,
+        worker_id=worker_id,
+        provider_fixture_calls=provider_fixture_calls,
+    ) and worker_name == "aiat_deterministic_file_worker":
+        return "DRIVER_PARTIAL", "WORKER_ARTIFACT_PASS_PROJECT_COMPLETION_BLOCKED", True
+    if exit_code == 2:
+        return "DRIVER_BLOCKED", None, False
+    return "DRIVER_FAIL", None, False
+
+
 def _require_runsc(env: dict[str, str]) -> None:
     result = _run(["docker", "info", "--format", "{{json .Runtimes}}"], env=env, timeout=15, check=False)
     if result.returncode:
@@ -858,6 +1129,7 @@ def _run_driver(
     driver: Path,
     values: dict[str, str],
     worker_id: str | None,
+    worker_name: str,
 ) -> dict[str, Any]:
     try:
         driver = driver.resolve(strict=True)
@@ -882,6 +1154,8 @@ def _run_driver(
                 "-T",
                 "-e",
                 f"AIAT_LEVEL_A_WORKER_ID={worker_id or 'not-found'}",
+                "-e",
+                f"AIAT_LEVEL_A_WORKER_NAME={worker_name}",
                 "-e",
                 "AIAT_LEVEL_A_PROVIDER_BOUNDARY=local_fixture",
                 "orchestrator-api",
@@ -918,7 +1192,15 @@ def _report(status: str, **kwargs: Any) -> dict[str, Any]:
     }
 
 
-def run_profile(*, stack_only: bool, config_only: bool, driver: Path) -> dict[str, Any]:
+def run_profile(
+    *,
+    stack_only: bool,
+    config_only: bool,
+    driver: Path,
+    worker_name: str = "coding_worker",
+) -> dict[str, Any]:
+    if worker_name not in SUPPORTED_WORKER_NAMES:
+        raise HarnessError("worker_name_unsupported")
     env = _docker_environment()
     project = f"aiat-level-a-{secrets.token_hex(6)}"
     with tempfile.TemporaryDirectory(prefix="aiat-opencode-integrated-level-a-") as temporary:
@@ -957,6 +1239,9 @@ def run_profile(*, stack_only: bool, config_only: bool, driver: Path) -> dict[st
         if config_only:
             return _report("CONFIG_PASS", compose_file=str(COMPOSE_FILE.relative_to(ROOT)))
 
+        worker_image_preflight = None
+        if not stack_only and worker_name == "aiat_deterministic_file_worker":
+            worker_image_preflight = _verify_local_deterministic_worker_image(env)
         _require_runsc(env)
         _check_local_base_images(config, env)
         _ensure_profile_images_unused(project, env)
@@ -1000,24 +1285,32 @@ def run_profile(*, stack_only: bool, config_only: bool, driver: Path) -> dict[st
                 if fixture_calls != 0:
                     error = HarnessError("provider_fixture_called_during_startup")
             else:
-                worker_id = _resolve_coding_worker_id(base, env)
-                driver_result = _run_driver(base, env, driver, values, worker_id)
+                worker_id = _resolve_worker_id(base, env, worker_name)
+                driver_result = _run_driver(base, env, driver, values, worker_id, worker_name)
                 fixture_calls = _fixture_request_count(base, env)
                 stack["provider_fixture_request_count"] = fixture_calls
-                driver_status = {
-                    0: "DRIVER_PASS",
-                    2: "DRIVER_BLOCKED",
-                }.get(driver_result["exit_code"], "DRIVER_FAIL")
+                driver_status, driver_reason, worker_artifact_partial = _classify_driver_result(
+                    driver_result,
+                    worker_name=worker_name,
+                    worker_id=worker_id,
+                    provider_fixture_calls=fixture_calls,
+                )
                 report = _report(
                     driver_status,
                     stack=stack,
                     driver=driver_result,
                     selected_worker_id=worker_id,
+                    selected_worker_name=worker_name,
+                    worker_image_preflight=worker_image_preflight,
+                    **({"reason_code": driver_reason} if driver_reason else {}),
                     pending_worker_gate_verified=_pending_worker_gate_verified(driver_result),
+                    worker_artifact_completion_blocked_verified=worker_artifact_partial,
                     api_project_cleanup_verified=_api_project_cleanup_verified(driver_result),
                 )
                 if driver_result["exit_code"] not in {0, 2}:
                     error = HarnessError("api_acceptance_driver_failed")
+                elif worker_artifact_partial:
+                    error = None
                 elif driver_result["exit_code"] == 2 and not _pending_worker_gate_verified(driver_result):
                     error = HarnessError("driver_blocked_outside_pending_worker_gate")
                 elif driver_result["exit_code"] == 2 and not _api_project_cleanup_verified(driver_result):
@@ -1063,18 +1356,29 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check-only", action="store_true", help="Render and validate the isolated Compose security profile without starting containers")
     parser.add_argument("--stack-only", action="store_true", help="Build/start/health-check/clean the isolated stack without dispatching a WorkerRun")
+    parser.add_argument(
+        "--worker-name",
+        choices=SUPPORTED_WORKER_NAMES,
+        default="coding_worker",
+        help="Canonical worker name to resolve through the authenticated workers API",
+    )
     parser.add_argument("--driver", type=Path, default=DEFAULT_DRIVER, help="Repository-local API acceptance driver to copy into the isolated Orchestrator container")
     args = parser.parse_args(argv)
     if args.check_only and args.stack_only:
         parser.error("--check-only and --stack-only cannot be combined")
     try:
-        report = run_profile(stack_only=args.stack_only, config_only=args.check_only, driver=args.driver)
+        report = run_profile(
+            stack_only=args.stack_only,
+            config_only=args.check_only,
+            driver=args.driver,
+            worker_name=args.worker_name,
+        )
     except HarnessError as exc:
         report = _report("FAIL", reason_code=exc.code)
         print(json.dumps(report, sort_keys=True))
         return 1
     print(json.dumps(report, sort_keys=True))
-    if report.get("status") == "DRIVER_BLOCKED":
+    if report.get("status") in {"DRIVER_BLOCKED", "DRIVER_PARTIAL"}:
         return 2
     return 0 if report.get("status") in {"CONFIG_PASS", "STACK_PASS", "DRIVER_PASS"} else 1
 
