@@ -129,7 +129,7 @@ services:
       MAS_API_KEY: ${AIAT_LEVEL_A_API_KEY:?runner must generate an ephemeral API key}
       AIAT_OPERATOR_API_KEY: ${AIAT_LEVEL_A_OPERATOR_KEY:?runner must generate an ephemeral operator key}
       LLM_GATEWAY_URL: http://litellm:4000
-      LLM_API_KEY: sk-aiat-level-a-gateway-dummy
+      LLM_API_KEY: ${AIAT_LEVEL_A_LITELLM_MASTER_KEY:?runner must generate an ephemeral local gateway key}
       TOOL_WORKSPACE_ROOT: /workspace
       OPENCODE_WORKSPACE_ROOT: /opencode-workspace
       AIAT_MCP_SERVERS_JSON: '{"workspace":{"transport":"stdio","command":"python","args":["-m","tool_service.mcp_workspace_server"]}}'
@@ -246,7 +246,7 @@ services:
       OPENCODE_SERVER_HOSTNAME: 0.0.0.0
       OPENCODE_SERVER_PORT: "4096"
       AIAT_GATEWAY_URL: http://litellm:4000
-      AIAT_GATEWAY_API_KEY: sk-aiat-level-a-gateway-dummy
+      AIAT_GATEWAY_API_KEY: ${AIAT_LEVEL_A_LITELLM_MASTER_KEY:?runner must generate an ephemeral local gateway key}
     extra_hosts:
       - litellm=${AIAT_LEVEL_A_LITELLM_IP:?runner must select a private non-overlapping sandbox subnet}
       - tool-service=${AIAT_LEVEL_A_TOOL_SERVICE_IP:?runner must select a private non-overlapping sandbox subnet}
@@ -330,21 +330,14 @@ services:
       LLM_BACKEND: litellm
       LLM_GATEWAY_URL: http://litellm:4000
       LLM_DEFAULT_MODEL: omniroute-coding
-      LLM_API_KEY: sk-aiat-level-a-gateway-dummy
+      LLM_API_KEY: ${AIAT_LEVEL_A_LITELLM_MASTER_KEY:?runner must generate an ephemeral local gateway key}
       LITELLM_MASTER_KEY: ${AIAT_LEVEL_A_LITELLM_MASTER_KEY:?runner must generate an ephemeral local gateway key}
       MINIO_ENDPOINT: http://minio:9000
       MINIO_ACCESS_KEY: aiat_level_a_artifacts
       MINIO_SECRET_KEY: ${AIAT_LEVEL_A_MINIO_ARTIFACT_PASSWORD:?runner must generate a disposable artifact-store password}
       MINIO_BUCKET: mas-agents
       WORKERS_DIR: /app/workers
-      AIAT_LOCAL_HOST_QUEUE_ENABLED: "true"
-      AIAT_LOCAL_WORKER_HOST_ID: aiat-level-a-host
-      AIAT_LOCAL_WORKER_HOST_TOKEN: ${AIAT_LEVEL_A_HOST_TOKEN:?runner must generate an ephemeral host token}
-      AIAT_LOCAL_WORKER_HOST_SANDBOX_PROFILE: sandboxed
-      AIAT_LOCAL_WORKER_HOST_SANDBOX_RUNTIME: runsc
-      AIAT_LOCAL_WORKER_HOST_SLOTS: "1"
-      AIAT_LOCAL_WORKER_HOST_LEASE_SECONDS: "60"
-      AIAT_LOCAL_HOST_QUEUE_POLL_SECONDS: "1"
+      AIAT_LOCAL_HOST_QUEUE_ENABLED: "false"
       AIAT_ALLOW_EXTERNAL_PROVIDER_DISPATCH: "false"
       AIAT_LEVEL_A_API_URL: http://127.0.0.1:8000
       AIAT_LEVEL_A_OPERATOR_API_KEY: ${AIAT_LEVEL_A_OPERATOR_KEY:?runner must generate an ephemeral operator key}
@@ -378,6 +371,74 @@ services:
       timeout: 4s
       retries: 45
       start_period: 20s
+    labels:
+      com.aiat.profile: opencode-integrated-level-a
+
+  worker-host:
+    image: ${AIAT_LEVEL_A_IMAGE_NAMESPACE:?runner must generate a unique disposable image namespace}/orchestrator-api:local
+    pull_policy: never
+    restart: "no"
+    command: [python, -m, orchestrator_api.local_host_runner]
+    user: "10001:10001"
+    group_add:
+      - ${AIAT_LEVEL_A_DOCKER_GID:?runner must detect the local Docker socket group}
+    read_only: true
+    environment:
+      MAS_ENVIRONMENT: development
+      PGBOUNCER_DSN: postgresql+asyncpg://aiat_level_a:${AIAT_LEVEL_A_DB_PASSWORD:?runner must generate a disposable database password}@postgres:5432/aiat_level_a
+      TOOL_SECRET: ${AIAT_LEVEL_A_TOOL_SECRET:?runner must generate an ephemeral tool secret}
+      TOOL_SERVICE_URL: http://tool-service:8002
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: aiat_level_a_artifacts
+      MINIO_SECRET_KEY: ${AIAT_LEVEL_A_MINIO_ARTIFACT_PASSWORD:?runner must generate a disposable artifact-store password}
+      MINIO_BUCKET: mas-agents
+      OPENCODE_SERVER_USERNAME: aiat-level-a
+      OPENCODE_SERVER_PASSWORD: ${AIAT_LEVEL_A_OPENCODE_PASSWORD:?runner must generate an ephemeral OpenCode password}
+      AIAT_LOCAL_HOST_QUEUE_ENABLED: "true"
+      AIAT_LOCAL_WORKER_HOST_ID: aiat-level-a-host
+      AIAT_LOCAL_WORKER_HOST_TOKEN: ${AIAT_LEVEL_A_HOST_TOKEN:?runner must generate an ephemeral host token}
+      AIAT_LOCAL_WORKER_HOST_SANDBOX_PROFILE: sandboxed
+      AIAT_LOCAL_WORKER_HOST_SANDBOX_RUNTIME: runsc
+      AIAT_LOCAL_WORKER_HOST_SLOTS: "1"
+      AIAT_LOCAL_WORKER_HOST_LEASE_SECONDS: "60"
+      AIAT_LOCAL_HOST_QUEUE_POLL_SECONDS: "1"
+      AIAT_ALLOW_EXTERNAL_PROVIDER_DISPATCH: "false"
+      LOG_LEVEL: INFO
+    volumes:
+      - level_a_workspace:/workspace
+      - type: bind
+        source: ${AIAT_LEVEL_A_DOCKER_SOCKET_PATH:?runner must identify the local Docker Unix socket}
+        target: /var/run/docker.sock
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m,uid=10001,gid=10001
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      tool-service:
+        condition: service_healthy
+      workspace-init:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+      orchestrator-api:
+        condition: service_healthy
+    networks:
+      control: {}
+      sandbox_gateway:
+        ipv4_address: ${AIAT_LEVEL_A_WORKER_HOST_IP:?runner must select a private non-overlapping sandbox subnet}
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: "1.0"
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/health', timeout=2).read()"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
     labels:
       com.aiat.profile: opencode-integrated-level-a
 

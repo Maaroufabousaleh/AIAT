@@ -1,19 +1,33 @@
 # Isolated OpenCode integrated Level A profile
 
 This profile composes an isolated, disposable AIAT control plane with the real
-Orchestrator API, its opt-in local host consumer, migrated Postgres, Redis
+Orchestrator API, a dedicated local host consumer, migrated Postgres, Redis
 Streams/router, Tool Service, MinIO artifact storage, and the pinned OpenCode
 runtime. The only model route is the deterministic local fixture carried over
 from the existing OpenCode Level A harness.
 
 It is separate from production/default Compose. It does not import `.env`, use
-the running AIAT database or Tool Service, publish service ports, mount the
-Docker socket, or make a public provider request. Control and sandbox networks
-are both Docker `internal` networks. OpenCode is configured with `runsc` and
-can reach only the sandbox peers; Postgres, Redis, and MinIO stay on the
-control network. The profile keeps the checked-in OpenCode worker approval
-gate unchanged. A queued run still needs to be accepted by normal AIAT worker,
-model, project, and budget governance.
+the running AIAT database or Tool Service, publish service ports, or make a
+public provider request. Control and sandbox networks are both Docker
+`internal` networks. OpenCode is configured with `runsc` and can reach only
+the sandbox peers; Postgres, Redis, and MinIO stay on the control network.
+
+The dedicated `worker-host` service owns the existing local host queue runtime.
+It is a trusted, elevated Level A boundary: access to the Docker socket is
+effectively host-authoritative even though the process runs as a non-root UID.
+Only `worker-host` receives the socket. It joins the internal control network
+and sandbox gateway so the canonical OpenCode adapter can reach the local
+OpenCode runtime; both networks have external egress disabled. The
+orchestrator API, Tool Service, router, and spawned worker containers remain
+socket-free; OCI workers use `--network none` and do not inherit the host
+process environment. Do not reuse this host service design as a production
+deployment without a separate host security review. The profile keeps the
+checked-in OpenCode worker approval gate unchanged. A queued run still needs
+normal AIAT worker, model, project, and budget governance.
+
+The gateway master key is generated per profile and shared only with the
+local gateway clients. The fixture provider key is separate and remains
+confined to the deterministic provider fixture route.
 
 ## Commands
 

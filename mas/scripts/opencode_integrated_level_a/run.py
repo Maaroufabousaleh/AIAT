@@ -15,10 +15,12 @@ import os
 import re
 import secrets
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
 import time
+import urllib.parse
 from pathlib import Path
 from typing import Any
 
@@ -89,6 +91,7 @@ _HEALTHY_SERVICES = (
     "litellm",
     "opencode-runtime",
     "orchestrator-api",
+    "worker-host",
 )
 _COMPLETED_SERVICES = ("migrate", "minio-init", "workspace-init")
 
@@ -106,6 +109,43 @@ def _docker_environment() -> dict[str, str]:
     env["COMPOSE_DISABLE_ENV_FILE"] = "1"
     env["DOCKER_CLI_HINTS"] = "false"
     return env
+
+
+def _docker_socket_identity(env: dict[str, str]) -> tuple[str, str]:
+    """Return the local Docker socket group for the isolated host process.
+
+    The Level A host process is the only container allowed to use the local
+    Docker daemon. Accept a verified Unix-socket Docker context (including a
+    WSL integration socket), but refuse remote/TLS/named-pipe endpoints.
+    """
+
+    inspected = _run(["docker", "context", "inspect"], env=env, timeout=15, check=False)
+    if inspected.returncode:
+        raise HarnessError("docker_context_inspection_failed")
+    try:
+        contexts = json.loads(inspected.stdout)
+        endpoint = contexts[0]["Endpoints"]["docker"]["Host"]
+    except (json.JSONDecodeError, IndexError, KeyError, TypeError) as exc:
+        raise HarnessError("docker_context_endpoint_invalid") from exc
+    endpoint = str(endpoint).strip()
+    override = str(env.get("DOCKER_HOST") or "").strip()
+    if override and override != endpoint:
+        raise HarnessError("worker_host_requires_local_docker_socket")
+    parsed = urllib.parse.urlsplit(endpoint)
+    if parsed.scheme != "unix" or parsed.netloc or parsed.query or parsed.fragment:
+        raise HarnessError("worker_host_requires_local_docker_socket")
+    endpoint_path = urllib.parse.unquote(parsed.path)
+    socket_path = Path(endpoint_path)
+    if not socket_path.is_absolute():
+        raise HarnessError("worker_host_requires_local_docker_socket")
+    try:
+        socket_path = socket_path.resolve(strict=True)
+        socket_stat = socket_path.stat()
+    except (OSError, RuntimeError) as exc:
+        raise HarnessError("local_docker_socket_unavailable") from exc
+    if not stat.S_ISSOCK(socket_stat.st_mode):
+        raise HarnessError("local_docker_socket_unavailable")
+    return str(socket_stat.st_gid), str(socket_path)
 
 
 def _run(
@@ -154,7 +194,7 @@ def _select_subnet(occupied: list[str]) -> str:
         "192.168.240.0/20",
     )
     for raw_pool in pools:
-        for candidate in ipaddress.ip_network(raw_pool).subnets(new_prefix=29):
+        for candidate in ipaddress.ip_network(raw_pool).subnets(new_prefix=28):
             if not any(candidate.overlaps(network) for network in occupied_networks):
                 return str(candidate)
     raise HarnessError("no_non_overlapping_private_subnet_available")
@@ -165,15 +205,19 @@ def _service_addresses(subnet: str) -> dict[str, str]:
         network = ipaddress.ip_network(subnet, strict=True)
     except ValueError as exc:
         raise HarnessError("isolated_subnet_invalid") from exc
-    if not isinstance(network, ipaddress.IPv4Network) or network.prefixlen != 29 or not network.is_private:
-        raise HarnessError("isolated_subnet_must_be_private_ipv4_slash_29")
+    if not isinstance(network, ipaddress.IPv4Network) or network.prefixlen != 28 or not network.is_private:
+        raise HarnessError("isolated_subnet_must_be_private_ipv4_slash_28")
     hosts = list(network.hosts())
-    # Docker reserves the first address as bridge gateway. The remaining five
-    # addresses belong to the four sandbox gateway peers and Orchestrator.
-    if len(hosts) != 6:
+    # Docker reserves the first address as bridge gateway. Six sandbox peers
+    # use the following stable addresses; the /28 leaves room for Docker and
+    # temporary diagnostics without exhausting the small profile network.
+    if len(hosts) != 14:
         raise HarnessError("isolated_subnet_capacity_invalid")
-    names = ("FIXTURE", "LITELLM", "TOOL_SERVICE", "OPENCODE", "ORCHESTRATOR")
-    return {f"AIAT_LEVEL_A_{name}_IP": str(address) for name, address in zip(names, hosts[1:], strict=True)}
+    names = ("FIXTURE", "LITELLM", "TOOL_SERVICE", "OPENCODE", "ORCHESTRATOR", "WORKER_HOST")
+    return {
+        f"AIAT_LEVEL_A_{name}_IP": str(address)
+        for name, address in zip(names, hosts[1 : len(names) + 1], strict=True)
+    }
 
 
 def _available_subnet(env: dict[str, str]) -> str:
@@ -333,6 +377,7 @@ def _assert_profile_config(config: dict[str, Any]) -> None:
         "migrate",
         "workspace-init",
         "orchestrator-api",
+        "worker-host",
     }
     if not isinstance(services, dict) or set(services) != expected_services:
         raise HarnessError("compose_service_set_changed")
@@ -363,6 +408,7 @@ def _assert_profile_config(config: dict[str, Any]) -> None:
         "opencode-runtime": "opencode-runtime:1.17.13",
         "migrate": "orchestrator-api:local",
         "orchestrator-api": "orchestrator-api:local",
+        "worker-host": "orchestrator-api:local",
     }
     if not PROJECT_RE.fullmatch(namespace):
         raise HarnessError("profile_compose_project_name_invalid")
@@ -370,15 +416,44 @@ def _assert_profile_config(config: dict[str, Any]) -> None:
         if services[service_name].get("image") != f"{namespace}/{suffix}":
             raise HarnessError(f"profile_image_not_uniquely_namespaced:{service_name}")
 
-    sandbox_services = {"provider-fixture", "litellm", "tool-service", "opencode-runtime", "orchestrator-api"}
-    control_services = {"postgres", "redis", "minio", "minio-init", "message-router", "tool-service", "migrate", "orchestrator-api"}
+    sandbox_services = {"provider-fixture", "litellm", "tool-service", "opencode-runtime", "orchestrator-api", "worker-host"}
+    control_services = {"postgres", "redis", "minio", "minio-init", "message-router", "tool-service", "migrate", "orchestrator-api", "worker-host"}
     for name, service in services.items():
         if service.get("env_file") or service.get("secrets") or service.get("ports"):
             raise HarnessError(f"ambient_or_host_exposure_forbidden:{name}")
         if service.get("privileged"):
             raise HarnessError(f"privileged_service_forbidden:{name}")
-        serialized_volumes = json.dumps(service.get("volumes") or []).lower()
-        if "/var/run/docker.sock" in serialized_volumes:
+        if service.get("cap_add") or service.get("devices"):
+            raise HarnessError(f"extra_host_authority_forbidden:{name}")
+        socket_mounts = [
+            volume
+            for volume in service.get("volumes") or []
+            if isinstance(volume, dict)
+            and (
+                "/var/run/docker.sock" in str(volume.get("source") or "")
+                or "/var/run/docker.sock" in str(volume.get("target") or "")
+            )
+        ]
+        if name == "worker-host":
+            if (
+                len(socket_mounts) != 1
+                or socket_mounts[0].get("type") != "bind"
+                or not Path(str(socket_mounts[0].get("source") or "")).is_absolute()
+                or socket_mounts[0].get("target") != "/var/run/docker.sock"
+                or service.get("user") != "10001:10001"
+                or service.get("read_only") is not True
+                or set(service.get("cap_drop") or []) != {"ALL"}
+                or "no-new-privileges:true" not in (service.get("security_opt") or [])
+                or set(service.get("networks") or []) != {"control", "sandbox_gateway"}
+                or service.get("privileged") is True
+            ):
+                raise HarnessError("worker_host_docker_authority_boundary_invalid")
+            group_add = service.get("group_add") or []
+            if len(group_add) != 1 or not str(group_add[0]).isdigit():
+                raise HarnessError("worker_host_docker_socket_group_invalid")
+            if (service.get("environment") or {}).get("AIAT_LOCAL_HOST_QUEUE_ENABLED") != "true":
+                raise HarnessError("worker_host_queue_opt_in_missing")
+        elif socket_mounts or "/var/run/docker.sock" in json.dumps(service).lower():
             raise HarnessError(f"docker_socket_mount_forbidden:{name}")
         build = service.get("build")
         if build:
@@ -387,6 +462,9 @@ def _assert_profile_config(config: dict[str, Any]) -> None:
             if not context.is_dir() or not (context / dockerfile).is_file():
                 raise HarnessError(f"profile_build_recipe_missing:{name}")
         attached = set(service.get("networks") or [])
+        environment = service.get("environment") or {}
+        if "DOCKER_HOST" in environment or "DOCKER_CONTEXT" in environment:
+            raise HarnessError(f"docker_daemon_environment_forbidden:{name}")
         if name in sandbox_services and "sandbox_gateway" not in attached:
             raise HarnessError(f"sandbox_gateway_membership_missing:{name}")
         if name in control_services and "control" not in attached:
@@ -402,10 +480,25 @@ def _assert_profile_config(config: dict[str, Any]) -> None:
         raise HarnessError("opencode_runtime_filesystem_must_be_read_only")
     if services["orchestrator-api"].get("environment", {}).get("AIAT_ALLOW_EXTERNAL_PROVIDER_DISPATCH") != "false":
         raise HarnessError("external_provider_dispatch_must_remain_disabled")
-    if services["orchestrator-api"].get("environment", {}).get("AIAT_LOCAL_HOST_QUEUE_ENABLED") != "true":
-        raise HarnessError("local_host_queue_opt_in_missing")
+    if services["worker-host"].get("environment", {}).get("AIAT_ALLOW_EXTERNAL_PROVIDER_DISPATCH") != "false":
+        raise HarnessError("external_provider_dispatch_must_remain_disabled")
+    if services["orchestrator-api"].get("environment", {}).get("AIAT_LOCAL_HOST_QUEUE_ENABLED") != "false":
+        raise HarnessError("api_must_not_own_local_host_queue")
     if services["litellm"].get("pull_policy") != "never":
         raise HarnessError("gateway_image_must_not_be_pulled_implicitly")
+
+    gateway_key = services["litellm"].get("environment", {}).get("LITELLM_MASTER_KEY")
+    if not gateway_key:
+        raise HarnessError("local_gateway_master_key_missing")
+    gateway_clients = {
+        "tool-service": "LLM_API_KEY",
+        "orchestrator-api": "LLM_API_KEY",
+        "opencode-runtime": "AIAT_GATEWAY_API_KEY",
+    }
+    for service_name, key_name in gateway_clients.items():
+        client_key = services[service_name].get("environment", {}).get(key_name)
+        if client_key != gateway_key:
+            raise HarnessError(f"local_gateway_client_key_mismatch:{service_name}")
 
     for name in ("tool-service", "orchestrator-api", "opencode-runtime"):
         env = services[name].get("environment") or {}
@@ -471,8 +564,18 @@ def _wait_for_container_state(
 
 
 def _check_local_base_images(config: dict[str, Any], env: dict[str, str]) -> None:
-    for service_name, service in (config.get("services") or {}).items():
-        if service.get("build") or service.get("pull_policy") != "never":
+    services = config.get("services") or {}
+    built_images = {
+        str(service.get("image") or "")
+        for service in services.values()
+        if service.get("build") and service.get("image")
+    }
+    for service_name, service in services.items():
+        if (
+            service.get("build")
+            or str(service.get("image") or "") in built_images
+            or service.get("pull_policy") != "never"
+        ):
             continue
         image = str(service.get("image") or "").strip()
         if not image:
@@ -480,6 +583,56 @@ def _check_local_base_images(config: dict[str, Any], env: dict[str, str]) -> Non
         result = _run(["docker", "image", "inspect", image], env=env, timeout=10, check=False)
         if result.returncode:
             raise HarnessError(f"local_base_image_missing_pull_is_disabled:{service_name}")
+
+
+def _safe_compose_start_reason(output: str) -> str:
+    """Map Compose diagnostics to fixed reason codes without retaining text."""
+
+    normalized = output.lower()
+    categories = (
+        ("permission denied", "host_permission_denied"),
+        ("operation not permitted", "host_permission_denied"),
+        ("mounts denied", "host_mount_rejected"),
+        ("invalid mount config", "host_mount_rejected"),
+        ("bind source path does not exist", "host_mount_rejected"),
+        ("no such file or directory", "host_path_unavailable"),
+        ("source path must be absolute", "host_path_unavailable"),
+        ("address already in use", "host_port_conflict"),
+        ("port is already allocated", "host_port_conflict"),
+        ("pull access denied", "base_image_unavailable"),
+        ("manifest unknown", "base_image_unavailable"),
+        ("not found: manifest", "base_image_unavailable"),
+        ("no such runtime", "container_runtime_unavailable"),
+        ("unknown runtime", "container_runtime_unavailable"),
+        ("failed to create shim", "container_runtime_unavailable"),
+    )
+    for needle, reason in categories:
+        if needle in normalized:
+            return reason
+    services = (
+        "worker-host",
+        "orchestrator-api",
+        "opencode-runtime",
+        "tool-service",
+        "message-router",
+        "provider-fixture",
+        "litellm",
+        "postgres",
+        "redis",
+        "minio",
+    )
+    failure_markers = ("error", "failed", "exited", "unhealthy", "cannot", "unable", "denied")
+    for line in normalized.splitlines():
+        if not any(marker in line for marker in failure_markers):
+            continue
+        if "runsc" in line or "runtime" in line and "unavailable" in line:
+            return "sandbox_runtime_start_failed"
+        for service in services:
+            if service in line:
+                return f"service_start_rejected:{service.replace('-', '_')}"
+    if "network" in normalized and "not found" in normalized:
+        return "network_setup_failed"
+    return "compose_start_rejected_unclassified"
 
 
 def _profile_image_tags(namespace: str) -> tuple[str, ...]:
@@ -770,11 +923,20 @@ def run_profile(*, stack_only: bool, config_only: bool, driver: Path) -> dict[st
     project = f"aiat-level-a-{secrets.token_hex(6)}"
     with tempfile.TemporaryDirectory(prefix="aiat-opencode-integrated-level-a-") as temporary:
         tempdir = Path(temporary)
-        subnet = "10.254.240.0/29" if config_only else _available_subnet(env)
+        subnet = "10.254.240.0/28" if config_only else _available_subnet(env)
+        docker_gid, docker_socket_path = (
+            ("10001", "/tmp/aiat-level-a-docker.sock")
+            if config_only
+            else _docker_socket_identity(env)
+        )
         values = {
             **_service_addresses(subnet),
             "AIAT_LEVEL_A_SUBNET": subnet,
             "AIAT_LEVEL_A_IMAGE_NAMESPACE": project,
+            # check-only renders synthetic socket metadata. Real runs derive
+            # both values from the exact local Unix socket used by Docker.
+            "AIAT_LEVEL_A_DOCKER_GID": docker_gid,
+            "AIAT_LEVEL_A_DOCKER_SOCKET_PATH": docker_socket_path,
             "AIAT_LEVEL_A_LITELLM_IMAGE": LITELLM_IMAGE,
             "AIAT_LEVEL_A_DB_PASSWORD": secrets.token_urlsafe(32),
             "AIAT_LEVEL_A_MINIO_PASSWORD": secrets.token_urlsafe(32),
@@ -812,7 +974,8 @@ def run_profile(*, stack_only: bool, config_only: bool, driver: Path) -> dict[st
                 raise HarnessError("profile_image_build_failed")
             up = _run(base + ["up", "--detach", "--remove-orphans"], env=env, timeout=240, check=False)
             if up.returncode:
-                raise HarnessError("isolated_compose_start_failed")
+                diagnostic = _safe_compose_start_reason(up.stdout + "\n" + up.stderr)
+                raise HarnessError(f"isolated_compose_start_failed:{diagnostic}")
             for service in _COMPLETED_SERVICES:
                 _wait_for_container_state(base, service, env, expected="completed")
             for service in _HEALTHY_SERVICES:
@@ -824,6 +987,11 @@ def run_profile(*, stack_only: bool, config_only: bool, driver: Path) -> dict[st
                 "api_url": "internal://orchestrator-api:8000",
                 "sandbox_runtime": "runsc",
                 "control_and_sandbox_egress": "blocked_by_internal_networks",
+                "worker_host": {
+                    "service": "worker-host",
+                    "docker_socket_scope": "worker_host_only",
+                    "authority": "trusted_host_equivalent_level_a_boundary",
+                },
             }
             fixture_calls = _fixture_request_count(base, env)
             stack["provider_fixture_request_count"] = fixture_calls
