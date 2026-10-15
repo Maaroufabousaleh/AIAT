@@ -16,6 +16,19 @@ hosting, or third-party commercial deployment.
   resource use, maintainability, and integration quality.
 - Treat every external runtime as untrusted execution regardless of licence.
 
+## Pre-commit secret safety
+
+Before every commit, AI agents must review the complete staged diff, including
+new files, for secrets and sensitive data. Run the repository's configured
+secret scanner when available, and inspect its results without printing or
+copying matched values. Check for API keys, tokens, passwords, private keys,
+cookies, credential-bearing URLs, connection strings, and secret-bearing logs
+or generated artifacts. Do not stage or commit `.env` files, credentials,
+private keys, or unredacted secret-bearing evidence. If a possible secret is
+found, stop the commit, keep the value out of chat and logs, remove it safely
+from the staged change without disturbing unrelated work, and notify the
+operator; treat an already exposed credential as requiring rotation.
+
 ## Licence handling
 
 Licence information is metadata only for this personal instance.
