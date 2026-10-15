@@ -10469,15 +10469,21 @@ async def _certified_worker_adapter(
     except ValueError as exc:
         raise HTTPException(409, f"active adapter capabilities are invalid: {exc}") from exc
     transport = str(adapter_row.get("transport_type") or worker.get("adapter_type") or "").lower()
-    artifact_registrar = None
-    if transport == "opencode":
-        from orchestrator_api.artifact_content import make_opencode_artifact_registrar
+    # Mediated Tool Service writes are stored in the shared run workspace for
+    # every adapter transport. Keep artifact ownership and upload inside the
+    # orchestrator rather than making non-OpenCode adapters persist evidence
+    # themselves.
+    from orchestrator_api.artifact_content import make_opencode_artifact_registrar
 
-        artifact_registrar = make_opencode_artifact_registrar(
-            storage,
-            worker_id=worker_id,
-            workspace_root=config.get("workspace_path") or "/workspace",
-        )
+    artifact_registrar = make_opencode_artifact_registrar(
+        storage,
+        worker_id=worker_id,
+        workspace_root=(
+            config.get("artifact_workspace_path")
+            or config.get("workspace_path")
+            or "/workspace"
+        ),
+    )
     context = AdapterContext(
         workspace_path=config.get("workspace_path"),
         tool_dispatcher=_worker_tool_dispatcher(storage, worker),

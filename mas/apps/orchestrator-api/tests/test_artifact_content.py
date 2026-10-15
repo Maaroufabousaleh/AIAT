@@ -387,6 +387,55 @@ async def test_certified_opencode_adapter_receives_orchestrator_artifact_registr
     assert callable(captured["context"].artifact_registrar)
 
 
+@pytest.mark.anyio
+async def test_certified_oci_adapter_receives_orchestrator_artifact_registrar(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import orchestrator_api.main as api
+
+    import mas_core.worker_registry.runtime_adapters as adapters
+
+    worker_id = uuid.uuid4()
+    adapter_id = uuid.uuid4()
+    captured: dict[str, object] = {}
+
+    class CapturedAdapter:
+        def __init__(self, *, context) -> None:
+            captured["context"] = context
+
+    adapter_row = {
+        "id": adapter_id,
+        "worker_id": worker_id,
+        "transport_type": "oci",
+        "status": "active",
+        "conformance_status": "passed",
+        "capabilities_json": {},
+    }
+    storage = SimpleNamespace(
+        get_runtime_adapter=AsyncMock(return_value=adapter_row),
+        get_worker_run=AsyncMock(),
+    )
+    worker = {
+        "id": worker_id,
+        "active_adapter_id": adapter_id,
+        "adapter_type": "oci",
+        "adapter_config": {"artifact_workspace_path": str(tmp_path)},
+    }
+    monkeypatch.setattr(
+        adapters,
+        "adapter_for_transport",
+        lambda *args, context, **kwargs: CapturedAdapter(context=context),
+    )
+    monkeypatch.setattr(api, "_worker_adapter_runtimes", {})
+
+    adapter = await api._certified_worker_adapter(storage, worker)
+
+    assert isinstance(adapter, CapturedAdapter)
+    context = captured["context"]
+    assert callable(context.artifact_registrar)
+
+
 def _artifact_fixture(run_id: uuid.UUID, content: bytes) -> dict:
     digest = hashlib.sha256(content).hexdigest()
     return {

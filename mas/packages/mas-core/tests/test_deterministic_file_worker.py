@@ -14,8 +14,11 @@ from mas_core.worker_contract import (
     AdapterContext,
     EventType,
     NativeWorkerAdapter,
+    WorkerArtifact,
     WorkerCancellation,
+    WorkerResult,
     WorkerRunController,
+    WorkerRunError,
     WorkerRunRequest,
     WorkerToolResponse,
 )
@@ -127,7 +130,13 @@ async def test_worker_run_controller_mediates_file_write_before_worker_success()
             run_id=tool_request.run_id,
             tool_name=tool_request.tool_name,
             success=True,
-            result={"success": True, "path": "src/expenses.py", "bytes_written": 10},
+            result={
+                "success": True,
+                "project_id": str(request.project_id),
+                "path": "src/expenses.py",
+                "bytes_written": len(b"TOTAL = 1\n"),
+                "sha256": hashlib.sha256(b"TOTAL = 1\n").hexdigest(),
+            },
         )
 
     request = _request()
@@ -145,6 +154,194 @@ async def test_worker_run_controller_mediates_file_write_before_worker_success()
     assert [event.event_type for event in outcome.events].count(EventType.TOOL_RESPONSE) == 1
     assert outcome.result is not None
     assert outcome.result.completion_criteria["file_write_confirmed_by_tool_service"] is True
+    assert len(outcome.result.artifacts) == 1
+    artifact = outcome.result.artifacts[0]
+    assert artifact.uri == "src/expenses.py"
+    assert artifact.sha256 == hashlib.sha256(b"TOTAL = 1\n").hexdigest()
+    assert artifact.metadata["worker_run_id"] == str(request.run_id)
+    assert artifact.metadata["project_id"] == str(request.project_id)
+    assert artifact.metadata["source_tool"] == "file_write"
+    assert artifact.metadata["tool_effect_id"]
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_mediated_file_artifact_is_registered_before_claim_fenced_evidence_write() -> None:
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    request = _request()
+    request._execution_claim_fence = {
+        "claim_owner": "executor-test",
+        "attempt_count": 1,
+    }
+    content = b"TOTAL = 1\n"
+    artifact = WorkerArtifact(
+        kind="file",
+        name="src/expenses.py",
+        uri="src/expenses.py",
+        sha256=hashlib.sha256(content).hexdigest(),
+        size_bytes=len(content),
+        metadata={
+            "worker_run_id": str(request.run_id),
+            "project_id": str(request.project_id),
+            "source_tool": "file_write",
+        },
+    )
+    registrar = AsyncMock()
+    atomic_writer = AsyncMock(return_value={"artifacts": [], "usage": {}})
+    storage = SimpleNamespace(
+        persist_worker_result_evidence_claim_fenced=atomic_writer,
+    )
+    adapter = SimpleNamespace(
+        context=SimpleNamespace(artifact_registrar=registrar),
+    )
+
+    await WorkerRunController(storage=storage)._persist_result_evidence(
+        request,
+        WorkerResult(
+            run_id=request.run_id,
+            worker_id=request.worker_id,
+            success=True,
+            artifacts=[artifact],
+        ),
+        adapter=adapter,
+    )
+
+    registrar.assert_awaited_once_with(artifact, claim_fence=request.execution_claim_fence)
+    atomic_writer.assert_awaited_once()
+    assert atomic_writer.await_args.kwargs["artifacts"][0]["metadata"]["source_tool"] == "file_write"
+
+
+@pytest.mark.asyncio
+async def test_registered_file_artifact_is_cleaned_up_when_claim_fenced_evidence_write_fails() -> None:
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    request = _request()
+    request._execution_claim_fence = {"claim_owner": "executor-test", "attempt_count": 2}
+    artifact = WorkerArtifact(
+        kind="file",
+        name="src/expenses.py",
+        uri="src/expenses.py",
+        sha256=hashlib.sha256(b"TOTAL = 1\n").hexdigest(),
+        size_bytes=len(b"TOTAL = 1\n"),
+        metadata={
+            "worker_run_id": str(request.run_id),
+            "project_id": str(request.project_id),
+            "source_tool": "file_write",
+        },
+    )
+    registrar = AsyncMock()
+    atomic_writer = AsyncMock(return_value=None)
+    adapter = SimpleNamespace(context=SimpleNamespace(artifact_registrar=registrar))
+    controller = WorkerRunController(
+        storage=SimpleNamespace(persist_worker_result_evidence_claim_fenced=atomic_writer)
+    )
+
+    with pytest.raises(WorkerRunError) as caught:
+        await controller._persist_result_evidence(
+            request,
+            WorkerResult(
+                run_id=request.run_id,
+                worker_id=request.worker_id,
+                success=True,
+                artifacts=[artifact],
+            ),
+            adapter=adapter,
+        )
+
+    assert caught.value.code == "WORKER_RUN_CLAIM_LOST"
+    assert registrar.await_args_list[0].kwargs == {"claim_fence": request.execution_claim_fence}
+    assert registrar.await_args_list[1].kwargs == {
+        "claim_fence": request.execution_claim_fence,
+        "cleanup": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_partial_file_artifact_registration_cleans_previously_registered_objects() -> None:
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    request = _request()
+    request._execution_claim_fence = {"claim_owner": "executor-test", "attempt_count": 3}
+    artifacts = [
+        WorkerArtifact(
+            kind="file",
+            name=f"src/file-{index}.py",
+            uri=f"src/file-{index}.py",
+            sha256=hashlib.sha256(f"VALUE = {index}\n".encode()).hexdigest(),
+            size_bytes=len(f"VALUE = {index}\n".encode()),
+            metadata={
+                "worker_run_id": str(request.run_id),
+                "project_id": str(request.project_id),
+                "source_tool": "file_write",
+            },
+        )
+        for index in range(2)
+    ]
+    calls: list[tuple[WorkerArtifact, bool]] = []
+
+    async def registrar(artifact, *, claim_fence=None, cleanup=False):
+        calls.append((artifact, cleanup))
+        if artifact is artifacts[1] and not cleanup:
+            raise RuntimeError("bounded registrar failure")
+
+    atomic_writer = AsyncMock()
+    adapter = SimpleNamespace(context=SimpleNamespace(artifact_registrar=registrar))
+    controller = WorkerRunController(
+        storage=SimpleNamespace(persist_worker_result_evidence_claim_fenced=atomic_writer)
+    )
+
+    with pytest.raises(RuntimeError, match="bounded registrar failure"):
+        await controller._persist_result_evidence(
+            request,
+            WorkerResult(
+                run_id=request.run_id,
+                worker_id=request.worker_id,
+                success=True,
+                artifacts=artifacts,
+            ),
+            adapter=adapter,
+        )
+
+    assert calls == [(artifacts[0], False), (artifacts[1], False), (artifacts[0], True)]
+    atomic_writer.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_successful_file_write_without_integrity_metadata_cannot_settle_successfully() -> None:
+    async def incomplete_tool_service(tool_request):
+        return WorkerToolResponse(
+            request_id=tool_request.request_id,
+            run_id=tool_request.run_id,
+            tool_name=tool_request.tool_name,
+            success=True,
+            result={
+                "success": True,
+                "project_id": str(request.project_id),
+                "path": "src/expenses.py",
+                "bytes_written": len(b"TOTAL = 1\n"),
+            },
+        )
+
+    request = _request()
+    adapter = NativeWorkerAdapter(
+        generate_project_file,
+        worker_id=WORKER_ID,
+        context=AdapterContext(tool_dispatcher=incomplete_tool_service),
+    )
+
+    controller = WorkerRunController()
+    outcome = await controller.execute(request, adapter)
+
+    assert outcome.state == "FAILED"
+    assert outcome.result is not None
+    assert outcome.result.success is False
+    assert outcome.result.error is not None
+    assert outcome.result.error.code == "TOOL_ARTIFACT_INTEGRITY_INVALID"
+    assert outcome.result.artifacts == []
     await adapter.close()
 
 

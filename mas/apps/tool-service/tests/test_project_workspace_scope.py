@@ -5,7 +5,12 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from tool_service.tools.file import FilePatchTool, FileReadTool, FileWriteTool
+from tool_service.tools.file import (
+    MAX_FILE_WRITE_BYTES,
+    FilePatchTool,
+    FileReadTool,
+    FileWriteTool,
+)
 from tool_service.tools.infra import BlobDeleteTool, BlobDownloadTool, BlobListTool, BlobUploadTool
 from tool_service.tools.project import ProjectRepositoryTool
 
@@ -57,13 +62,20 @@ class _MemoryBlob:
         del self.objects[(project_id, key)]
 
 
-def _worker_request(*, tool_name: str, project_id: str | None, kwargs: dict) -> ToolRequest:
+def _worker_request(
+    *,
+    tool_name: str,
+    project_id: str | None,
+    kwargs: dict,
+    run_id=None,
+    caller_role: AgentRole = AgentRole.WORKER,
+) -> ToolRequest:
     return ToolRequest(
         caller_id="coding-worker",
-        caller_role=AgentRole.WORKER,
+        caller_role=caller_role,
         caller_team="dept_system",
         project_id=project_id,
-        worker_run_id=uuid4(),
+        worker_run_id=run_id or uuid4(),
         tool_name=tool_name,
         kwargs=kwargs,
     )
@@ -135,11 +147,13 @@ async def test_worker_file_tools_are_bound_to_authenticated_project(
     assert "authenticated project scope" in (repository_read.error or "")
     assert (target / "private.txt").read_text(encoding="utf-8") == "private"
 
+    run_id = uuid4()
     write_own = await registry.execute(
         _worker_request(
             tool_name="file_write",
             project_id="assigned-project",
             kwargs={"path": "src/solution.py", "content": "VALUE = 42\n"},
+            run_id=run_id,
         )
     )
     read_own = await registry.execute(
@@ -147,6 +161,7 @@ async def test_worker_file_tools_are_bound_to_authenticated_project(
             tool_name="file_read",
             project_id="assigned-project",
             kwargs={"path": "src/solution.py"},
+            run_id=run_id,
         )
     )
     assert write_own.success is True
@@ -250,6 +265,113 @@ async def test_worker_cannot_self_assign_project_scope_for_files_or_artifacts(
 
 
 @pytest.mark.anyio
+async def test_worker_file_write_uses_authenticated_run_workspace_and_returns_integrity(
+    make_registry, monkeypatch, tmp_path
+) -> None:
+    _restore_real_tools(monkeypatch)
+    project_root = tmp_path / "projects"
+    worker_root = tmp_path / "worker-runs"
+    monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(project_root))
+    monkeypatch.setenv("OPENCODE_WORKSPACE_ROOT", str(worker_root))
+    registry = make_registry()
+    request = _worker_request(
+        tool_name="file_write",
+        project_id="assigned-project",
+        kwargs={"path": "src/solution.py", "content": "VALUE = 42\n"},
+    )
+
+    written = await registry.execute(request)
+    run_root = worker_root / str(request.worker_run_id)
+    artifact_path = run_root / "src" / "solution.py"
+    content = b"VALUE = 42\n"
+
+    assert written.success is True
+    assert written.result["project_id"] == "assigned-project"
+    assert written.result["bytes_written"] == len(content)
+    assert written.result["sha256"] == hashlib.sha256(content).hexdigest()
+    assert artifact_path.read_bytes() == content
+    assert not (project_root / "assigned-project" / "src" / "solution.py").exists()
+
+    readback = await registry.execute(
+        _worker_request(
+            tool_name="file_read",
+            project_id="assigned-project",
+            kwargs={"path": "src/solution.py"},
+            run_id=request.worker_run_id,
+        )
+    )
+    assert readback.success is True
+    assert readback.result["content"] == "VALUE = 42\n"
+
+
+@pytest.mark.anyio
+async def test_worker_file_access_fails_closed_without_authenticated_run_id(
+    make_registry, monkeypatch, tmp_path
+) -> None:
+    _restore_real_tools(monkeypatch)
+    project_root = tmp_path / "projects"
+    worker_root = tmp_path / "worker-runs"
+    monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(project_root))
+    monkeypatch.setenv("OPENCODE_WORKSPACE_ROOT", str(worker_root))
+    registry = make_registry()
+    requests = (
+        ToolRequest(
+            caller_id="coding-worker",
+            caller_role=AgentRole.WORKER,
+            caller_team="dept_system",
+            project_id="assigned-project",
+            worker_run_id=None,
+            tool_name="file_write",
+            kwargs={"path": "src/solution.py", "content": "VALUE = 42\n"},
+        ),
+        ToolRequest(
+            caller_id="coding-worker",
+            caller_role=AgentRole.WORKER,
+            caller_team="dept_system",
+            project_id="assigned-project",
+            worker_run_id=None,
+            tool_name="file_read",
+            kwargs={"path": "src/solution.py"},
+        ),
+    )
+
+    responses = [await registry.execute(request) for request in requests]
+
+    assert all(response.success is False for response in responses)
+    assert all("authenticated WorkerRun ID" in (response.error or "") for response in responses)
+    assert not project_root.exists()
+    assert not worker_root.exists()
+
+
+@pytest.mark.anyio
+async def test_file_write_rejects_content_above_byte_limit_before_workspace_creation(
+    make_registry, monkeypatch, tmp_path
+) -> None:
+    _restore_real_tools(monkeypatch)
+    project_root = tmp_path / "projects"
+    worker_root = tmp_path / "worker-runs"
+    monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(project_root))
+    monkeypatch.setenv("OPENCODE_WORKSPACE_ROOT", str(worker_root))
+    registry = make_registry()
+    request = _worker_request(
+        tool_name="file_write",
+        project_id="assigned-project",
+        kwargs={
+            "path": "src/too_large.py",
+            "content": "x" * (MAX_FILE_WRITE_BYTES + 1),
+        },
+    )
+
+    response = await registry.execute(request)
+
+    assert response.success is False
+    assert "FILE_WRITE_TOO_LARGE" in (response.error or "")
+    assert "10485760-byte limit" in (response.error or "")
+    assert not project_root.exists()
+    assert not worker_root.exists()
+
+
+@pytest.mark.anyio
 async def test_git_workspace_uses_authenticated_project_for_target(
     make_registry, monkeypatch, tmp_path
 ) -> None:
@@ -334,6 +456,7 @@ async def test_project_workspace_symlink_cannot_cross_into_another_project(
             tool_name="file_read",
             project_id="assigned-project",
             kwargs={"path": "linked-project/private.txt"},
+            caller_role=AgentRole.EXECUTIVE,
         )
     )
 

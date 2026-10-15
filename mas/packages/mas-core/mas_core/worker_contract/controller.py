@@ -12,6 +12,7 @@ import hashlib
 import inspect
 import json
 import logging
+import mimetypes
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -20,8 +21,10 @@ from uuid import UUID, uuid4
 
 from .adapters import BaseWorkerAdapter, WorkerAdapter, WorkerStartCancelled
 from .models import (
+    ArtifactKind,
     CheckpointMode,
     EventType,
+    WorkerArtifact,
     WorkerCancellation,
     WorkerCancellationReceipt,
     WorkerEvent,
@@ -91,6 +94,7 @@ class WorkerRunController:
         self._memory_runs: dict[UUID, dict[str, Any]] = {}
         self._memory_events: dict[UUID, list[dict[str, Any]]] = {}
         self._memory_tool_effects: dict[tuple[UUID, str], dict[str, Any]] = {}
+        self._tool_artifacts_by_run: dict[UUID, dict[str, WorkerArtifact]] = {}
         self._dispatch_locks: dict[UUID, asyncio.Lock] = {}
         self._dispatch_phase: dict[UUID, str] = {}
         self._cancel_events: dict[UUID, asyncio.Event] = {}
@@ -183,6 +187,99 @@ class WorkerRunController:
                     "response_json": response_json,
                 }
             )
+
+    def _record_file_write_artifact(
+        self,
+        request: WorkerRunRequest,
+        tool_request: Any,
+        response: WorkerToolResponse,
+        effect: dict[str, Any],
+    ) -> None:
+        """Promote a confirmed mediated file write into run evidence.
+
+        The path and bytes come from the ToolRequest, while the digest and
+        byte count are independently recomputed and compared with the
+        authenticated Tool Service response. The workspace bytes are later
+        opened without following symlinks by the artifact registrar.
+        """
+
+        if tool_request.tool_name != "file_write" or not response.success or request.project_id is None:
+            return
+        if not isinstance(tool_request.arguments, dict) or not isinstance(response.result, dict):
+            raise WorkerRunError(
+                "TOOL_ARTIFACT_INTEGRITY_INVALID",
+                "the mediated file write lacks verifiable project artifact metadata",
+            )
+        path = tool_request.arguments.get("path")
+        content = tool_request.arguments.get("content")
+        result = response.result
+        if (
+            not isinstance(path, str)
+            or not path
+            or path.startswith("/")
+            or "\\" in path
+            or "\x00" in path
+            or any(part in {"", ".", ".."} for part in path.split("/"))
+            or not isinstance(content, str)
+            or result.get("success") is not True
+            or result.get("path") != path
+            or str(result.get("project_id") or "") != str(request.project_id)
+        ):
+            raise WorkerRunError(
+                "TOOL_ARTIFACT_INTEGRITY_INVALID",
+                "the mediated file write does not match the authenticated project and safe path",
+            )
+        content_bytes = content.encode("utf-8")
+        digest = hashlib.sha256(content_bytes).hexdigest()
+        size_bytes = result.get("bytes_written")
+        if (
+            result.get("sha256") != digest
+            or isinstance(size_bytes, bool)
+            or not isinstance(size_bytes, int)
+            or size_bytes != len(content_bytes)
+        ):
+            raise WorkerRunError(
+                "TOOL_ARTIFACT_INTEGRITY_INVALID",
+                "the mediated file write checksum or byte count is invalid",
+            )
+        metadata: dict[str, Any] = {
+            "worker_run_id": str(request.run_id),
+            "project_id": str(request.project_id),
+            "source_tool": "file_write",
+        }
+        effect_id = effect.get("id")
+        if effect_id is not None:
+            metadata["tool_effect_id"] = str(effect_id)
+        artifact = WorkerArtifact(
+            kind=ArtifactKind.FILE,
+            name=path,
+            uri=path,
+            sha256=digest,
+            size_bytes=size_bytes,
+            mime_type=mimetypes.guess_type(path)[0],
+            metadata=metadata,
+        )
+        # A later confirmed write to the same run-relative path supersedes
+        # the earlier descriptor; artifact upload will verify its bytes.
+        self._tool_artifacts_by_run.setdefault(request.run_id, {})[path] = artifact
+
+    def _attach_tool_artifacts(
+        self,
+        request: WorkerRunRequest,
+        result: WorkerResult,
+    ) -> WorkerResult:
+        tool_artifacts = self._tool_artifacts_by_run.get(request.run_id, {})
+        if not tool_artifacts:
+            return result
+        result_uris = {artifact.uri for artifact in result.artifacts}
+        additional = [
+            artifact
+            for uri, artifact in sorted(tool_artifacts.items())
+            if uri not in result_uris
+        ]
+        if not additional:
+            return result
+        return result.model_copy(update={"artifacts": [*result.artifacts, *additional]})
 
     async def create_run(
         self,
@@ -496,6 +593,32 @@ class WorkerRunController:
             return
         claim_fence = request.execution_claim_fence
         attempt_count = int(claim_fence.get("attempt_count") or 0)
+        context = getattr(adapter, "context", None)
+        registrar = getattr(context, "artifact_registrar", None)
+        tool_artifacts = [
+            artifact
+            for artifact in result.artifacts
+            if artifact.metadata.get("source_tool") == "file_write"
+        ]
+        if tool_artifacts and not callable(registrar):
+            raise WorkerRunError(
+                "ARTIFACT_REGISTRAR_UNAVAILABLE",
+                "the mediated file output cannot be registered as project evidence",
+            )
+        registered_tool_artifacts: list[WorkerArtifact] = []
+        try:
+            if callable(registrar):
+                for artifact in tool_artifacts:
+                    await registrar(artifact, claim_fence=claim_fence)
+                    registered_tool_artifacts.append(artifact)
+        except Exception:
+            if registered_tool_artifacts:
+                await self._cleanup_unpersisted_artifacts(
+                    adapter,
+                    result.model_copy(update={"artifacts": registered_tool_artifacts}),
+                    claim_fence,
+                )
+            raise
         artifact_rows: list[dict[str, Any]] = []
         for artifact in result.artifacts:
             metadata = {
@@ -862,6 +985,26 @@ class WorkerRunController:
         deliver = getattr(adapter, "deliver_tool_response", None)
         if deliver is None:
             raise WorkerRunError("TOOL_RESPONSE_UNSUPPORTED", "adapter does not support mediated tool responses")
+        try:
+            self._record_file_write_artifact(request, tool_request, response, effect)
+        except WorkerRunError as exc:
+            # The file effect may already have happened. Preserve its durable
+            # effect row, but do not tell the worker it has a project artifact
+            # unless the Tool Service supplied verifiable integrity metadata.
+            # Delivering a bounded failure also lets the runtime exit cleanly
+            # instead of waiting for its tool-response timeout.
+            response = WorkerToolResponse(
+                request_id=tool_request.request_id,
+                run_id=request.run_id,
+                tool_name=tool_request.tool_name,
+                success=False,
+                error={
+                    "code": exc.code,
+                    "message": str(exc),
+                    "terminal": True,
+                    "category": "artifact",
+                },
+            )
         await deliver(response)
 
     async def append_event(self, event: WorkerEvent) -> dict[str, Any]:
@@ -944,6 +1087,7 @@ class WorkerRunController:
                     logger.warning("worker_result_rehydrate_failed", extra={"run_id": str(canonical_run_id)})
             return WorkerRunOutcome(run_id=canonical_run_id, state=str(row["state"]), result=stored_result)
         execution_claim_fence = self._claim_fence(row)
+        self._tool_artifacts_by_run[request.run_id] = {}
         request = request.model_copy(deep=False)
         request._execution_claim_fence = dict(execution_claim_fence)
         events: list[WorkerEvent] = []
@@ -1152,6 +1296,7 @@ class WorkerRunController:
             await asyncio.wait_for(collect_events(), timeout=timeout)
             if result is None:
                 raise WorkerRunError("MISSING_RESULT", "worker stream ended without a normalized result")
+            result = self._attach_tool_artifacts(request, result)
             await self._validate_result_model_attribution(
                 request,
                 result,
@@ -1273,6 +1418,7 @@ class WorkerRunController:
             return WorkerRunOutcome(run_id=request.run_id, state=str(current_row.get("state") or "FAILED"), accepted=accepted, events=tuple(events), readiness=readiness, negotiation=negotiation)
         finally:
             self._dispatch_phase.pop(request.run_id, None)
+            self._tool_artifacts_by_run.pop(request.run_id, None)
             self._cancel_events.pop(request.run_id, None)
             self._dispatch_locks.pop(request.run_id, None)
 
