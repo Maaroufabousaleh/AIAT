@@ -752,3 +752,35 @@ async def test_local_host_stop_fences_its_generation_before_storage_close(
     assert registry.calls == ["register", "heartbeat", "offline"]
     assert not runtime.active
     assert runtime.public_status()["status"] == "STOPPED"
+
+
+@pytest.mark.asyncio
+async def test_local_host_stop_bounds_a_stalled_offline_fence(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _StalledOfflineRegistry(_RuntimeHostRegistry):
+        async def set_status(self, **values: object) -> dict[str, object]:
+            self.calls.append("offline_started")
+            await anyio.sleep_forever()
+
+    storage = _MemoryStorage()
+    registry = _StalledOfflineRegistry(storage)
+    monkeypatch.setattr(local_queue_module, "WorkerHostRegistry", lambda _storage: registry)
+    monkeypatch.setattr(local_queue_module, "LOCAL_HOST_FENCE_TIMEOUT_SECONDS", 0.01)
+    config = LocalHostQueueConfig(
+        host_id_prefix="alpha-local",
+        registration_token="local-host-test-token",
+        sandbox_profile="sandboxed",
+        sandbox_runtime="runsc",
+    )
+    runtime = LocalHostQueueRuntime(
+        storage,  # type: ignore[arg-type]
+        config,
+        adapter_resolver=lambda _pins: None,
+    )
+
+    await runtime.start()
+    with anyio.fail_after(0.25):
+        await runtime.stop()
+
+    assert registry.calls == ["register", "heartbeat", "offline_started"]
+    assert not runtime.active
+    assert runtime.public_status()["status"] == "STOPPED"

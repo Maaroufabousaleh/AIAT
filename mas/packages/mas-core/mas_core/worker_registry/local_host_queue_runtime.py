@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from ..memory.storage import AgentStorage
 
 logger = logging.getLogger(__name__)
+LOCAL_HOST_FENCE_TIMEOUT_SECONDS = 5.0
 
 TerminalRunHandler = Callable[[HostQueueRunSummary], Awaitable[None]]
 
@@ -197,19 +198,7 @@ class LocalHostQueueRuntime:
             # REGISTERING row until its lease expires. Only use the exact
             # generation returned by authenticated registration.
             if self._host_generation is not None and self._host_generation > 0:
-                with anyio.CancelScope(shield=True):
-                    try:
-                        await self._registry.set_status(
-                            host_id=self.host_id,
-                            registration_token=self.config.registration_token,
-                            lease_generation=self._host_generation,
-                            status="OFFLINE",
-                        )
-                    except Exception as cleanup_exc:  # noqa: BLE001 - sanitized only
-                        logger.warning(
-                            "local_host_queue_startup_cleanup_failed",
-                            extra={"host_id": self.host_id, "error": type(cleanup_exc).__name__},
-                        )
+                await self._fence_registered_generation(event="startup_cleanup")
             self._status = "FAILED"
             self._lease_valid = False
             raise
@@ -248,9 +237,17 @@ class LocalHostQueueRuntime:
         if self._host_generation is None or self._status == "STOPPED":
             self._lease_valid = False
             return
-        # A bounded shield lets shutdown fence the host before storage is
-        # closed, including when the owning task group was cancelled.
-        with anyio.CancelScope(shield=True):
+        # A shield lets shutdown fence the host when its owning task group was
+        # cancelled, while the timeout keeps process cleanup bounded if the
+        # database is unavailable. Lease expiry remains the fallback.
+        await self._fence_registered_generation(event="shutdown")
+        self._lease_valid = False
+        self._status = "STOPPED"
+
+    async def _fence_registered_generation(self, *, event: str) -> None:
+        if self._host_generation is None or self._host_generation <= 0:
+            return
+        with anyio.move_on_after(LOCAL_HOST_FENCE_TIMEOUT_SECONDS, shield=True) as timeout_scope:
             try:
                 await self._registry.set_status(
                     host_id=self.host_id,
@@ -260,11 +257,14 @@ class LocalHostQueueRuntime:
                 )
             except Exception as exc:  # noqa: BLE001 - secret-safe status only
                 logger.warning(
-                    "local_host_queue_shutdown_fence_failed",
+                    f"local_host_queue_{event}_fence_failed",
                     extra={"host_id": self.host_id, "error": type(exc).__name__},
                 )
-            self._lease_valid = False
-            self._status = "STOPPED"
+        if timeout_scope.cancel_called:
+            logger.warning(
+                f"local_host_queue_{event}_fence_timed_out",
+                extra={"host_id": self.host_id, "timeout_seconds": LOCAL_HOST_FENCE_TIMEOUT_SECONDS},
+            )
 
     async def _heartbeat_loop(self, stop_event: Any) -> None:
         interval = max(0.1, min(5.0, self.config.lease_seconds / 3))
