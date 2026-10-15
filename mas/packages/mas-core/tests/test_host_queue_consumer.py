@@ -724,3 +724,31 @@ async def test_local_host_startup_fences_registered_host_when_readiness_fails(
     assert registry.calls == ["register", "heartbeat", "offline"]
     assert not runtime.active
     assert runtime.public_status()["status"] == "FAILED"
+
+
+@pytest.mark.asyncio
+async def test_local_host_stop_fences_its_generation_before_storage_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = _MemoryStorage()
+    registry = _RuntimeHostRegistry(storage)
+    monkeypatch.setattr(local_queue_module, "WorkerHostRegistry", lambda _storage: registry)
+    config = LocalHostQueueConfig(
+        host_id_prefix="alpha-local",
+        registration_token="local-host-test-token",
+        sandbox_profile="sandboxed",
+        sandbox_runtime="runsc",
+    )
+    runtime = LocalHostQueueRuntime(
+        storage,  # type: ignore[arg-type]
+        config,
+        adapter_resolver=lambda _pins: None,
+    )
+
+    await runtime.start()
+    await runtime.stop()
+    await runtime.stop()
+
+    assert registry.calls == ["register", "heartbeat", "offline"]
+    assert not runtime.active
+    assert runtime.public_status()["status"] == "STOPPED"

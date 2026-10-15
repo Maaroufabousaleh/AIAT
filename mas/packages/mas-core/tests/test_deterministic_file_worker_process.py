@@ -20,6 +20,7 @@ from mas_core.worker_contract import (
     WorkerRunRequest,
     WorkerToolResponse,
 )
+from mas_core.worker_registry import runtime_adapters
 from mas_core.worker_registry.runtime_adapters import OCIAdapter, ProcessAdapter
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -105,6 +106,7 @@ async def test_real_process_requests_governed_file_write_and_waits_for_result(tm
             success=True,
             result={
                 "success": True,
+                "project_id": str(request.project_id),
                 "path": tool_request.arguments["path"],
                 "bytes_written": len(content),
                 "sha256": hashlib.sha256(content).hexdigest(),
@@ -309,3 +311,121 @@ def test_oci_process_command_is_networkless_mountless_and_receives_no_secrets() 
     assert adapter.environment == {}
     assert adapter.context.secrets == {"provider_key": "must-not-enter-command"}
     assert adapter.command[-1] == image
+    assert adapter.command[0] == "docker"
+
+
+@pytest.mark.asyncio
+async def test_oci_launcher_uses_resolved_cli_with_shell_free_argv_and_no_environment_leakage(
+    monkeypatch, tmp_path
+) -> None:
+    docker_cli = tmp_path / "trusted-docker"
+    docker_cli.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    docker_cli.chmod(0o755)
+    monkeypatch.setattr(
+        runtime_adapters.shutil,
+        "which",
+        lambda executable: str(docker_cli) if executable == "docker" else None,
+    )
+    monkeypatch.setenv("AIAT_PARENT_ENV_CANARY", "parent-value-must-not-leak")
+    context = AdapterContext(secrets={"tool_secret": "context-value-must-not-leak"})
+    adapter = OCIAdapter(
+        "local.registry/aiat/worker@sha256:" + "b" * 64,
+        worker_id=WORKER_REGISTRY_ID,
+        sandbox_profile="sandboxed",
+        sandbox_runtime="runsc",
+        context=context,
+    )
+
+    class _Stdin:
+        def write(self, _data: bytes) -> None:
+            return None
+
+        async def drain(self) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+    class _Stdout:
+        def __init__(self) -> None:
+            self._lines = iter([b'{"success":true,"output":{"ok":true}}\n'])
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self) -> bytes:
+            try:
+                return next(self._lines)
+            except StopIteration as exc:
+                raise StopAsyncIteration from exc
+
+    class _Stderr:
+        async def read(self) -> bytes:
+            return b""
+
+    class _Process:
+        def __init__(self) -> None:
+            self.stdin = _Stdin()
+            self.stdout = _Stdout()
+            self.stderr = _Stderr()
+            self.returncode = None
+
+        async def wait(self) -> int:
+            self.returncode = 0
+            return 0
+
+    process = _Process()
+    launch_calls = []
+
+    async def fake_create_subprocess_exec(*argv, **kwargs):
+        launch_calls.append((argv, kwargs))
+        return process
+
+    monkeypatch.setattr(runtime_adapters.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    outcome = await adapter._execute(
+        WorkerRunRequest(
+            worker_id=WORKER_REGISTRY_ID,
+            task_type="launcher-test",
+            idempotency_key="launcher-test",
+        )
+    )
+
+    assert getattr(outcome, "success", False) is True
+    assert len(launch_calls) == 1
+    argv, kwargs = launch_calls[0]
+    assert argv == tuple(adapter.command)
+    assert argv[0] == str(docker_cli.resolve())
+    assert argv[1:3] == ("run", "--rm")
+    assert "--network" in argv and argv[argv.index("--network") + 1] == "none"
+    assert "/bin/sh" not in argv and "-c" not in argv
+    assert "shell" not in kwargs
+    assert kwargs["env"] == {}
+    assert "AIAT_PARENT_ENV_CANARY" not in kwargs["env"]
+    assert "parent-value-must-not-leak" not in " ".join(argv)
+    assert "context-value-must-not-leak" not in " ".join(argv)
+    assert adapter.environment == {}
+
+
+@pytest.mark.asyncio
+async def test_oci_launcher_fails_closed_when_host_docker_cli_is_missing(monkeypatch) -> None:
+    monkeypatch.setattr(runtime_adapters.shutil, "which", lambda _executable: None)
+    monkeypatch.setattr(
+        runtime_adapters.asyncio,
+        "create_subprocess_exec",
+        lambda *_args, **_kwargs: pytest.fail("missing Docker CLI must fail before process creation"),
+    )
+    adapter = OCIAdapter(
+        "local.registry/aiat/worker@sha256:" + "c" * 64,
+        worker_id=WORKER_REGISTRY_ID,
+        sandbox_profile="sandboxed",
+        sandbox_runtime="runsc",
+    )
+
+    with pytest.raises(RuntimeError, match="certified Docker launcher is unavailable"):
+        await adapter._execute(
+            WorkerRunRequest(
+                worker_id=WORKER_REGISTRY_ID,
+                task_type="launcher-test",
+                idempotency_key="launcher-missing",
+            )
+        )

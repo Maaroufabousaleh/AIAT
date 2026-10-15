@@ -1761,6 +1761,30 @@ class OCIAdapter(ProcessAdapter):
         self.sandbox_profile = sandbox_class
         self.sandbox_class = sandbox_class
         self.sandbox_runtime = sandbox_runtime
+        self._launcher_name = launcher
+        self._launcher_resolved = False
+
+    async def _execute(self, request: WorkerRunRequest) -> Any:
+        """Resolve the fixed Docker executable immediately before execution.
+
+        Adapter hydration and readiness inspection must not depend on a local
+        Docker CLI being installed. Actual execution still fails closed before
+        process creation when the certified launcher is unavailable.
+        """
+
+        if not self._launcher_resolved:
+            resolved_launcher = shutil.which(self._launcher_name)
+            if not resolved_launcher:
+                raise RuntimeError("certified Docker launcher is unavailable on this host")
+            try:
+                launcher_path = Path(resolved_launcher).resolve(strict=True)
+            except (OSError, RuntimeError) as exc:
+                raise RuntimeError("certified Docker launcher path is unavailable on this host") from exc
+            if not launcher_path.is_file() or not os.access(launcher_path, os.X_OK):
+                raise RuntimeError("certified Docker launcher is not an executable file")
+            self.command[0] = str(launcher_path)
+            self._launcher_resolved = True
+        return await super()._execute(request)
 
 
 class FirecrackerAdapter(ProcessAdapter):

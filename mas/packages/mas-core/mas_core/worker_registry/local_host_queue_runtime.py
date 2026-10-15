@@ -236,23 +236,35 @@ class LocalHostQueueRuntime:
                 await stop_event.wait()
                 task_group.cancel_scope.cancel()
         finally:
-            # A bounded shield lets shutdown fence the host before storage is
-            # closed, even when the lifespan task group is being cancelled.
-            with anyio.CancelScope(shield=True):
-                try:
-                    await self._registry.set_status(
-                        host_id=self.host_id,
-                        registration_token=self.config.registration_token,
-                        lease_generation=self._host_generation,
-                        status="OFFLINE",
-                    )
-                except Exception as exc:  # noqa: BLE001 - secret-safe status only
-                    logger.warning(
-                        "local_host_queue_shutdown_fence_failed",
-                        extra={"host_id": self.host_id, "error": type(exc).__name__},
-                    )
-                self._lease_valid = False
-                self._status = "STOPPED"
+            await self.stop()
+
+    async def stop(self) -> None:
+        """Fence this exact host generation before its storage is closed.
+
+        The dedicated runner also calls this when post-registration setup
+        fails before ``run`` starts (for example, a health-port bind failure).
+        """
+
+        if self._host_generation is None or self._status == "STOPPED":
+            self._lease_valid = False
+            return
+        # A bounded shield lets shutdown fence the host before storage is
+        # closed, including when the owning task group was cancelled.
+        with anyio.CancelScope(shield=True):
+            try:
+                await self._registry.set_status(
+                    host_id=self.host_id,
+                    registration_token=self.config.registration_token,
+                    lease_generation=self._host_generation,
+                    status="OFFLINE",
+                )
+            except Exception as exc:  # noqa: BLE001 - secret-safe status only
+                logger.warning(
+                    "local_host_queue_shutdown_fence_failed",
+                    extra={"host_id": self.host_id, "error": type(exc).__name__},
+                )
+            self._lease_valid = False
+            self._status = "STOPPED"
 
     async def _heartbeat_loop(self, stop_event: Any) -> None:
         interval = max(0.1, min(5.0, self.config.lease_seconds / 3))
