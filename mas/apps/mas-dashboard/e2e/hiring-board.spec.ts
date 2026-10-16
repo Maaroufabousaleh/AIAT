@@ -4,7 +4,7 @@ import { authenticate } from "./auth";
 test("hiring board blocks an external candidate until mandatory evaluation gates pass", async ({
   page,
 }) => {
-  const candidateId = `e2e_candidate_${Date.now()}`;
+  const candidateId = `aiat_e2e_candidate_${Date.now()}`;
 
   await authenticate(page, "/workers");
   await expect(

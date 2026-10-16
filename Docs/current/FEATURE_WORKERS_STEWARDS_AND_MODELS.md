@@ -128,6 +128,40 @@ cleanup at every iteration; it is a consistency soak for the local Compose
 boundary, not independent-host, provider-outage, sandbox, deployment-load,
 chaos, or disaster-recovery evidence.
 
+## Current operator dashboard surfaces (2026-10-07)
+
+- The Model Profiles page can save a catalogue-backed draft version and
+  approve/activate one exact version after the operator enters a reason. The
+  API binds the decision to the requested `version_id` and returns the durable
+  approval record; the page displays that receipt. Focused model-activation
+  API, storage, and contract coverage passes (15 tests). This does not provide
+  provider-backed model execution.
+- Governance's recent Worker Runs link each exact run ID to a detail page. The
+  page reads durable run identity, events, transitions, artifacts, usage, and
+  checkpoints through the authenticated dashboard proxy. It offers cancel,
+  pause, and resume requests with clear API errors; cancellation remains
+  accepted-but-unconfirmed until a refreshed run state proves termination.
+  Pause/resume support depends on the pinned adapter and checkpoint capability,
+  with unsupported capability reasons surfaced to the operator.
+- The pause/resume/cancel API routes independently require an operator
+  credential, reject extra request fields, and attribute the action to the
+  authenticated principal rather than caller-supplied actor metadata. The
+  dashboard BFF requires JSON, caps each action body at 8 KiB, validates
+  action-specific fields (including bounded reasons, a boolean `force`, and an
+  optional UUID checkpoint), and bounds read pagination. If a read or action
+  returns 401/403, the page clears cached run evidence and hides the controls.
+- A current-source isolated Webpack build generated 81 routes and passed
+  TypeScript; the mocked model-profile activation, WorkerRun operations, and PM
+  setup Playwright specs passed 8/8 with no live orchestrator/provider calls.
+  This targeted run does not replace the maintained 105-pass local dashboard
+  suite or certify provider-backed execution. The focused WorkerRun backend
+  route suite passes 40 tests. The payload-safe run summary is retained at
+  [`dashboard_feature_smoke_2026-10-07.json`](../../mas/docs/provenance/dashboard_feature_smoke_2026-10-07.json).
+- Model and Model Profiles resolution previews now clear prior results/errors
+  when any resolution input changes and ignore late responses from older
+  preview requests. Their focused mocked E2E specs pass 6/6 (`2a0b0933`);
+  previews remain dry runs and do not dispatch a provider request.
+
 ## Purpose
 
 AIAT keeps stable organisational workers while allowing their execution engines to evolve. A specialist is an AIAT shell backed by a certified adapter and pinned OSS runtime. One dedicated steward governs each external worker's documentation, compatibility, candidates, certification, rollout, and rollback.
@@ -158,6 +192,22 @@ response evidence.
 - Versioned `aiat.worker.v1` and `aiat.adapter.v1` protocol models and negotiation.
 - Normalized requests, capabilities, events, results, errors, artifacts, usage, tool responses, pause/resume/cancel, health, and readiness.
 - `WorkerRunController` with durable lifecycle, compare-and-set transitions, evidence persistence, queue leases, heartbeat recovery, mediated-tool effect replay/ambiguity handling, and run APIs.
+- OpenCode artifact registration now reads bounded, regular files from the run workspace without following symlinks, derives project ownership from the durable WorkerRun, stores bytes in the configured S3-compatible object store, and persists artifact metadata. The operator-authenticated project download route validates the artifact's project/run binding and checksum; 19 focused API tests pass, including an OpenAPI binary-response regression. Project Detail offers download only when its project/run/blob/hash/size metadata validates; the BFF tests pass 4/4 and focused download/recovery Playwright passes 1/1 with typecheck passing (`e14d20dc`, `1641bf2f`, `83eff8a6`). This closes local artifact byte retrieval, not the execution gap: there is no real OpenCode task or provider-backed completion in this evidence.
+- Operators can retry a `FAILED` or `TIMED_OUT` Worker Run from its detail
+  view. A retry is a new durable run linked to the source (migration
+  `0048_worker_run_retry_lineage`), preserves the original result/evidence,
+  and re-enters the normal dispatch path so current worker/company grants,
+  model approval, budget, and runtime policy are checked again. Replays use
+  an idempotency key. Generic retry fails closed for Flow-bound runs, which
+  must use FlowController, and for runs with durable tool effects, which need
+  explicit reconciliation before consequential work can be repeated. Focused
+  tests cover lineage, policy-input recovery, concurrent replay, shared budget
+  reservations, and the no-effects/no-flow retry boundaries; the dashboard
+  retry E2E uses mocked API responses and does not make provider calls.
+- Cancellation is serialized with the controller's `DISPATCHING` to adapter-start boundary. The OpenCode adapter checks cancellation during session creation and aborts/deletes a session that never reached acceptance before any prompt submission; known sessions use OpenCode's local abort endpoint. Focused barrier tests pass in `test_worker_governance.py` (`f18dd5dd`). This closes the local startup race but does not certify a provider-backed run.
+- The provider-independent boundary is now covered by `test_project_scoped_opencode_run_cancels_at_provider_boundary_without_dispatch` in `packages/mas-core/tests/test_worker_governance.py`: the production `OpenCodeAdapter` and `WorkerRunController` accept a project-scoped run, bind the OpenCode session, and cancel through the controller while paused immediately before the adapter's only `prompt_async` request. The local OpenCode protocol transport is a test double; no prompt request is sent. This is a controller/adapter boundary test, not a live project API, host scheduling, budget, durable-store, or gVisor certificate. OpenCode cannot emit a model-selected tool request before a model response, so a no-provider run cannot truthfully produce a mediated tool effect or model-generated artifact through this adapter. Reaching those stages without external authorization requires a deterministic local fixture at the provider boundary; until then, do not report the full project→OpenCode→tool/effect→artifact journey as passing.
+- The opt-in [`opencode_level_a` runtime harness](../../mas/scripts/opencode_level_a/run.py) runs the pinned OpenCode 1.17.13 process under `runsc`, LiteLLM, and a deterministic provider fixture on one internal-only, disposable network; its host environment excludes provider credentials, and it checks egress denial and residue cleanup. On 2026-10-10 the focused suite passes 14/14 and the isolated live smoke passes: one request reached the local fixture, the fixture response and OpenCode idle event were observed, public egress probes were denied, and cleanup left no containers. No external provider call occurred. Its report marks the result non-promotable and explicitly says canonical WorkerRun, AIAT tool mediation, and artifact persistence were not exercised. This remains a runtime-only smoke, not a WorkerRun or artifact certificate.
+- The same-date authenticated local API read reports all 39 registered workers `INACTIVE`; `coding_worker` has no active adapter. The canonical dispatch endpoint therefore rejects before creating a WorkerRun. No worker was activated to bypass its existing governance gate. The project-scoped OpenCode-to-tool-to-artifact journey remains a functional-alpha gap until it can run through a valid isolated test registration or an approved active worker.
 - Compatible `WorkerRuntimeStatus` reconciliation and `WorkerCancellationReceipt` acknowledgement models now expose the distinction between local runtime knowledge, cancellation-request acceptance, and proven terminal cancellation. Migration `0044_worker_run_runtime_bindings` persists one safe subordinate runtime reference per dispatch attempt, and controller reconciliation reads it before legacy transition metadata. Migration `0045_worker_tool_effects` persists one mediated-tool effect per run/idempotency key before dispatch; completed responses replay with the current request ID, while in-flight/ambiguous effects fail closed instead of being executed again. OpenCode now looks up a durable session reference through its certified session/status endpoints; the inactive OpenHands candidate performs a conservative conversation-status lookup (REST `finished` remains advisory), and the controller records the subordinate observation timestamp/status without changing canonical run state. The base adapter's accepted/task/terminal maps remain process-local; provider-specific effect reconciliation and adapter-specific live termination/result recovery remain open.
 - Governance checkpoint persistence retains the inbound
   `model_resolution_snapshot_id`; startup resume dispatch restores the scoped
@@ -508,7 +558,7 @@ response evidence.
   canonical read-only reconciliation endpoint and emits bounded coverage and
   finding counts only. `--require-clean` fails on findings; absent API/DB
   evidence blocks and the check never replaces the underlying ledger.
-- Central tool registry with explicit grants, aliases, policy, rate/concurrency limits, circuit breakers, audit, cache, and usage records.
+- Central tool registry with explicit grants, aliases, policy, rate/concurrency limits, circuit breakers, audit, cache, and usage records. `web_fetch` also has a deterministic success-path fixture covering HTML text extraction, relative redirects, output truncation, and private-address redirect rejection (`mas/apps/tool-service/tests/test_web_fetch.py`, 3/3); its HTTP requests use an in-memory transport, so this is not public-network or live research evidence.
 - Worker registration and partial updates constrain `update_policy` to the four
   manifest values (`manual`, `auto-patch`, `auto-minor`, `auto-all`). When
   capability IDs or team context changes, persisted capability `required_tools`
@@ -549,6 +599,16 @@ response evidence.
   [`workers-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/workers-states.spec.ts)
   against the dashboard build (`7541b84`); native/live worker certification
   remains a separate gate.
+- The Hiring Board supports bounded edits to a worker's team assignment and
+  adapter entrypoint/module. It uses the canonical worker update API, keeps
+  policy/schema failures visible with safe status-specific messages, and does
+  not expose runtime, credential, model, or sandbox fields through this form.
+  The focused management UI suite passes 3/3 and its BFF route tests pass 4/4;
+  these checks do not certify a provider-backed WorkerRun.
+- Candidate certification now imports and records the persisted compatibility
+  matrix in the current steward evidence cache after the canonical storage
+  write. A focused mocked certification regression passes 6/6 for the
+  rehydration module; it does not execute an external runtime or provider.
 - `scripts/check_default_worker_bindings.py --json` reconciles the 15 documented
   default worker slots with their department, runtime tier, transport,
   isolation mode, runtime-catalogue transport/isolation support, capability
@@ -778,7 +838,8 @@ response evidence.
 - Runtime catalogue and manifest reconciliation (`80e0ca3`): [`mas/packages/mas-core/mas_core/worker_registry/runtime_catalog.py`](../../mas/packages/mas-core/mas_core/worker_registry/runtime_catalog.py), [`mas/scripts/check_worker_reconciliation.py`](../../mas/scripts/check_worker_reconciliation.py), and [`test_worker_reconciliation.py`](../../mas/packages/mas-core/tests/test_worker_reconciliation.py). Static mode reconciles all 39 manifests and the read-only live mode compares persisted adapter/model/sandbox/source bindings without treating licence metadata as a gate; package availability, security, sandbox, canary, and live-run evidence remain separate.
 - Runtime readiness probe (`4c5fd68`): [`mas/scripts/check_worker_runtime_readiness.py`](../../mas/scripts/check_worker_runtime_readiness.py). Static mode reconciles all 39 manifests; the local Compose image import probe passes required LangGraph/CrewAI imports, while host-package, external-adapter, security, sandbox, canary, and live-run evidence remain separate.
 - Runtime install-profile contract (`9a10a4b`): [`mas/scripts/check_runtime_install_profile.py`](../../mas/scripts/check_runtime_install_profile.py). The `runtime-default` extra, lock metadata, runtime catalogue, and production Dockerfile install command reconcile to LangGraph `0.6.11` and CrewAI `1.6.1`.
-- Sandbox runtime readiness probe (`a24c554`): [`mas/scripts/check_sandbox_runtime_readiness.py`](../../mas/scripts/check_sandbox_runtime_readiness.py) and [`test_sandbox_runtime_readiness.py`](../../mas/packages/mas-core/tests/test_sandbox_runtime_readiness.py). Static reconciliation passes all 39 manifests with 10 hardened external workers; the dedicated WSL2 `aiat-wsl` Docker host registers pinned `runsc 20260914.0` and Kata runtime-rs/QEMU 4.2.0, and both digest-pinned bounded smokes pass without a `runc` fallback. The separate retained native Ubuntu certificate [`native_gvisor_certification_live.json`](../../mas/docs/provenance/native_gvisor_certification_live.json) from workflow run `32541110299` passes `runsc` registration, smoke, sandbox, cleanup, and zero-residue checks; broader native-host, Kata release, and network-denial release evidence remain separate.
+- Sandbox runtime readiness probe (`a24c554`): [`mas/scripts/check_sandbox_runtime_readiness.py`](../../mas/scripts/check_sandbox_runtime_readiness.py) and [`test_sandbox_runtime_readiness.py`](../../mas/packages/mas-core/tests/test_sandbox_runtime_readiness.py). Static reconciliation passes all 39 manifests with 10 hardened external workers; the dedicated WSL2 `aiat-wsl` Docker host registers pinned `runsc 20260914.0` and Kata runtime-rs/QEMU 4.2.0, and both digest-pinned bounded smokes pass without a `runc` fallback; [`sandbox_runtime_readiness_live_current.json`](../../mas/docs/provenance/sandbox_runtime_readiness_live_current.json) retains the current WSL2 runsc/Kata result and distinct Kata guest kernel. The separate retained native Ubuntu certificate [`native_gvisor_certification_live.json`](../../mas/docs/provenance/native_gvisor_certification_live.json) from workflow run `32541110299` passes `runsc` registration, smoke, sandbox, cleanup, and zero-residue checks; broader native-host, Kata release, and network-denial release evidence remain separate.
+- The shared OpenCode Compose runtime now explicitly uses `runsc`, drops broad `.env` injection, and allows only its server-auth and AIAT gateway environment names. The local WSL2 container was recreated through the normal Compose wrapper and reports healthy under `runsc`; an environment-name inspection found no database, Redis, tool-service, or provider credential names. This protects future runtime starts but does not establish per-run sandboxing or erase access from the prior container; operator rotation of credentials exposed to that container remains required.
 - Runtime benchmark probe (`ad31793`, bounded endpoint hardening `4d61279`): [`mas/scripts/check_runtime_benchmarks.py`](../../mas/scripts/check_runtime_benchmarks.py), [`test_runtime_benchmarks.py`](../../mas/packages/mas-core/tests/test_runtime_benchmarks.py), and [`test_epsilon_runtimes.py`](../../mas/apps/orchestrator-api/tests/test_epsilon_runtimes.py). It runs third-party imports off the API event loop, enforces a capped timeout, and reports explicit `blocked`/`benchmark_timeout`/`benchmark_error` status when the API, package, validation, or dependency path is unavailable; a dependency dry-run does not certify a worker canary or rollback.
 - Runtime adapter conformance probe (`9a10a4b`): [`mas/scripts/check_runtime_adapter_conformance.py`](../../mas/scripts/check_runtime_adapter_conformance.py) and [`runtime_adapter_conformance_live.json`](../../mas/docs/provenance/runtime_adapter_conformance_live.json). Deterministic LangGraph/CrewAI fixtures pass manifest/message translation, bounded completion, health, and shutdown; package-import and worker-canary evidence remain separate.
 - MAF/MCP compatibility contract, isolated profile, and deterministic certification (`b937a89`, extending `fc528a8`): [`mas/docs/provenance/runtime_compatibility.yaml`](../../mas/docs/provenance/runtime_compatibility.yaml), [`mas/infra/runtime/maf/README.md`](../../mas/infra/runtime/maf/README.md), [`mas/infra/runtime/maf/requirements.txt`](../../mas/infra/runtime/maf/requirements.txt), [`mas/packages/mas-core/mas_core/worker_registry/maf_compatibility.py`](../../mas/packages/mas-core/mas_core/worker_registry/maf_compatibility.py), [`mas/packages/mas-core/mas_core/worker_registry/microsoft_agent_framework_adapter.py`](../../mas/packages/mas-core/mas_core/worker_registry/microsoft_agent_framework_adapter.py), [`mas/scripts/check_runtime_compatibility.py`](../../mas/scripts/check_runtime_compatibility.py), [`mas/scripts/check_maf_runtime.py`](../../mas/scripts/check_maf_runtime.py), and [`maf_runtime_certification.json`](../../mas/docs/provenance/maf_runtime_certification.json)
@@ -790,6 +851,9 @@ response evidence.
 - Metadata-only provenance/evaluator group (`cbdcfa6`, enforcement hardening `9b84af3`): [`mas/scripts/check_provenance.py`](../../mas/scripts/check_provenance.py), [`worker_registry/evaluator.py`](../../mas/packages/mas-core/mas_core/worker_registry/evaluator.py), [`operational_promotion_checks`](../../mas/packages/mas-core/mas_core/worker_registry/steward.py), and the default-manifest regression tests. Source/version provenance and technical security remain operational gates; detected, missing, unclassified, or restricted licence values are retained as operator notices only and cannot block certification, rollout, activation, or normal internal use. The same group records the current coding/tester security findings state and keeps both manifests pending until technical triage passes.
 - Executive reconciliation verifier: [`mas/scripts/check_executive_reconciliation.py`](../../mas/scripts/check_executive_reconciliation.py)
 - Model profiles/resolver: [`mas/packages/mas-core/mas_core/llm_gateway/`](../../mas/packages/mas-core/mas_core/llm_gateway/)
+- Exact model-version approval UI/API: [`models/profiles/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/models/profiles/page.tsx>), [`activate/route.ts`](<../../mas/apps/mas-dashboard/app/api/model-profiles/[profile_id]/versions/[version_id]/activate/route.ts>), [`orchestrator_api/main.py`](../../mas/apps/orchestrator-api/orchestrator_api/main.py), and [`test_model_profile_activation.py`](../../mas/apps/orchestrator-api/tests/test_model_profile_activation.py). A reasoned decision applies to one exact version and returns its durable audit receipt.
+- WorkerRun operator detail/actions: [`governance/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/governance/page.tsx>), [`workers/runs/[run_id]/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/workers/runs/[run_id]/page.tsx>), [`governance/runs/[run_id]/route.ts`](<../../mas/apps/mas-dashboard/app/api/governance/runs/[run_id]/route.ts>), [`governance/runs/[run_id]/[resource]/route.ts`](<../../mas/apps/mas-dashboard/app/api/governance/runs/[run_id]/[resource]/route.ts>), and [`worker-run-operations.spec.ts`](../../mas/apps/mas-dashboard/e2e/worker-run-operations.spec.ts). The current-source mocked operator/detail scenarios pass in the targeted Playwright run; provider-backed WorkerRun execution remains separate.
+- WorkerRun mutation controls remain disabled while the displayed run snapshot is stale and become available only after a successful refresh verifies current state. [`worker-run-stale-actions.spec.ts`](../../mas/apps/mas-dashboard/e2e/worker-run-stale-actions.spec.ts) covers the stale/refresh transition 3/3 with mocked APIs; provider-backed execution remains separate.
 - Model health/cooldown state: [`mas/packages/mas-core/mas_core/llm_gateway/rate_limits.py`](../../mas/packages/mas-core/mas_core/llm_gateway/rate_limits.py)
 - Model catalogue/export/live check: [`mas/packages/mas-core/mas_core/llm_gateway/model_profiles.py`](../../mas/packages/mas-core/mas_core/llm_gateway/model_profiles.py), [`mas/scripts/check_model_profile_catalogue.py`](../../mas/scripts/check_model_profile_catalogue.py), [`/model-profiles/catalogue`](../../mas/apps/orchestrator-api/orchestrator_api/main.py), and the operator dashboard proxy [`catalogue/route.ts`](<../../mas/apps/mas-dashboard/app/api/governance/model-profiles/catalogue/route.ts>) (`ab0a0fe`)
 - Default profile bootstrap: [`mas/packages/mas-core/mas_core/llm_gateway/default_profiles.py`](../../mas/packages/mas-core/mas_core/llm_gateway/default_profiles.py), invoked idempotently by orchestrator startup and [`/system/seed-default-company`](../../mas/apps/orchestrator-api/orchestrator_api/main.py) (`09bdd19`)
@@ -853,10 +917,13 @@ response evidence.
   blocked and manifests remain pending.
 - [x] Add a machine-checked, owner/action security review register
   (`23e908e`; `scripts/check_security_scan_review.py`) that maps every exact
-  Semgrep rule count to a technical next action and tracks all 54 engine
-  warnings. The register is not a waiver: its contract passes while
-  `technical_gate_status: blocked` remains until findings are technically
-  dispositioned and a passing scan is rerun.
+  Semgrep finding to a technical next action and records scanner coverage
+  separately from finding review. The earlier same-source 54-error result is
+  historical; the current r4 run has zero Semgrep execution failures and six
+  explained TypeScript parser gaps, with three runtime-reachable files still
+  requiring coverage review. The register is not a waiver: its contract passes
+  while `technical_gate_status: blocked` remains until those gaps/findings are
+  resolved and a passing scan is rerun.
 - [x] Add Compose package/lifecycle conformance and lock-parity evidence for
   the LangGraph and CrewAI adapters (LangGraph `0.6.11`, CrewAI `1.6.1`);
   complete live conformance matrices for all default specialist adapters,

@@ -34,9 +34,31 @@ snapshot propagation, native adapter lifecycle, concurrent execution against
 two distinct durable worker-host records, duplicate claim rejection and
 terminal/alias replay without redispatch, and explicit queue recovery after a
 fenced host lease is lost. The active sandbox policy is `trusted → runc`,
-`sandboxed → gVisor/runsc`, and `vm_isolated → Kata`; runtime-specific sandbox
-certification and independent-host outage recovery remain separate evidence
-boundaries.
+`sandboxed → gVisor/runsc`, and `vm_isolated → Kata`; the format-aware
+execution resolver may select Kata as the stronger runtime for an untrusted
+OCI/Linux workload when host KVM and Kata evidence are available, while a
+WASM workload uses Wasmtime only when it is explicitly a WASM artifact. A
+host without KVM uses gVisor for compatible OCI/Linux work and never silently
+downgrades VM-required work. Runtime-specific sandbox certification and
+independent-host outage recovery remain separate evidence boundaries.
+
+### Product dispatch integration status
+
+The host registry, scheduler, durable run binding, and executor are exercised
+by the scoped Postgres certificates below. Local development/test API startup
+now has an opt-in `LocalHostQueueRuntime` which registers and heartbeats a
+host, consumes only its fenced READY bindings, and runs the existing
+`HostQueueConsumer`/`HostExecutor`/`WorkerRunController` lifecycle. It is
+restricted to development/test configuration and does not create a second run
+authority or queue. The isolated Level A profile proves service startup and
+canonical project create/delete, but current worker admission stops at the
+inactive `coding_worker` security/governance gate. No canonical WorkerRun was
+consumed and no OpenCode task artifact was produced by that live profile.
+Focused component tests cover host execution and the actual adapter/tool loop
+separately; they do not claim a real OpenCode process was run through the
+integrated profile. The project-to-OpenCode journey remains in the
+[Functional Alpha backlog](AIAT_IMPLEMENTATION_INDEX.md#functional-alpha-product-gap-backlog)
+until the exact worker pin completes its normal security and governance path.
 
 The 2026-08-18 continuation (`2bc7ca5`) isolated the local Postgres fixtures
 from one another with explicit fixture labels and deterministic priorities.
@@ -105,6 +127,15 @@ through the caller's database connection, so reservation and binding state are
 committed or rolled back together. If assignment persistence fails after a new
 reservation is created, the binding service compensates that reservation; a
 replayed scheduler reservation is never released by this cleanup path.
+
+During a long execution, the host executor renews the Worker Run lease using
+the persisted owner and attempt number, then re-reads the exact binding and
+current host lease. A lost run claim cancels only that adapter runtime; a lost
+host binding/lease requests cancellation through the controller with the same
+owner/attempt fence. Binding release compares the captured binding, reservation,
+host, and lease generation before settling either record. The host agent remains
+responsible for renewing its host lease; this monitor detects loss at a bounded
+poll interval and does not renew host ownership itself.
 
 Host-loss reassignment remains a separate recovery boundary because scheduling
 the replacement reservation is still a separate transaction. Once scheduling

@@ -90,7 +90,7 @@ The `license_provenance_evaluator` collects and reports this metadata; it is not
 
 The repository is a substantial working implementation rather than a greenfield proposal. The reviewed baseline contains 863 tracked files, 417 Python files, 169 TypeScript/JavaScript files, 116 test files, 41 worker YAML manifests, 11 team manifests, and 11 governance prompts. These counts are a repository snapshot, not release metrics.
 
-The core database migration graph has a single current head at `0045_worker_tool_effects`, with historical branches reconciled at `0008`. Historical certificates may intentionally name the migration revision they exercised; they do not override the current head. The identity service has its own migration line, currently headed by `0004_provider_neutral_mail` after `0003_mail_edge_observations`. The current schema includes durable records for projects, state transitions, documents, reviews, approvals, sprints, issues, context, artifacts, capabilities, workers, stewards, runtime provenance, certification, model profiles, worker runs, per-attempt subordinate runtime bindings, mediated worker-tool effect outcomes, flows, company manifests, budgets, API request observations, native payload-free trace spans, directly trace-correlated model/artifact/integration evidence, PM integrations, provider-neutral email bindings and inbound sync state, evidence, and outbox/reconciliation state.
+The core database migration graph has a single current head at `0048_worker_run_retry_lineage`, with historical branches reconciled at `0008`. Historical certificates may intentionally name the migration revision they exercised; they do not override the current head. The identity service has its own migration line, currently headed by `0004_provider_neutral_mail` after `0003_mail_edge_observations`. The current schema includes durable records for projects, state transitions, documents, reviews, approvals, sprints, issues, context, artifacts, capabilities, workers, stewards, runtime provenance, certification, model profiles, worker runs, per-attempt subordinate runtime bindings, mediated worker-tool effect outcomes, flows, company manifests, budgets, API request observations, native payload-free trace spans, directly trace-correlated model/artifact/integration evidence, PM integrations, provider-neutral email bindings and inbound sync state, evidence, and outbox/reconciliation state.
 
 ### 2.1 Capability status snapshot
 
@@ -923,6 +923,19 @@ External workers must resolve to `sandboxed` or `vm_isolated`. If gVisor is
 incompatible or unavailable, AIAT may select Kata only when the host advertises
 a certified Kata runtime. It must fail closed when neither hardened class is
 available; it must never silently fall back to runc.
+
+Runtime selection is format- and host-capability-aware. WASM workers use
+Wasmtime when the host advertises a certified Wasmtime runtime; Wasmtime is not
+treated as a fallback for arbitrary OCI/Linux applications. Untrusted OCI/Linux
+work prefers Kata/runtime-rs when local KVM and a passing Kata guest smoke are
+available, and otherwise uses gVisor/runsc systrap when the workload is
+gVisor-compatible. Hostile or explicitly VM-required work uses Kata or an
+explicitly advertised remote VM; it is unschedulable when neither exists.
+Worker manifests request `vm_isolated`, not QEMU, Dragonball, Cloud Hypervisor,
+or Firecracker. The selected Kata VMM is host configuration. This policy is
+implemented by the centralized
+[`mas_core/execution_policy.py`](mas/packages/mas-core/mas_core/execution_policy.py)
+resolver and host-capability fields, not by another execution backend.
 
 A production sandbox profile defines:
 

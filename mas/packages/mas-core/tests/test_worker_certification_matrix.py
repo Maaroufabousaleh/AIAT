@@ -31,12 +31,27 @@ def test_checked_in_matrix_is_deterministic_and_covers_all_worker_manifests() ->
     assert matrix["license_handling"] == "metadata-only"
     rows = matrix["workers"]
     assert isinstance(rows, list)
-    assert len(rows) == 39
+    manifest_ids = {path.stem for path in WORKERS.glob("*.yaml")}
+    assert len(rows) == len(manifest_ids)
     worker_ids = [row["worker_id"] for row in rows]
     assert worker_ids == sorted(worker_ids)
     assert len(worker_ids) == len(set(worker_ids))
-    assert set(worker_ids) == {path.stem for path in WORKERS.glob("*.yaml")}
+    assert set(worker_ids) == manifest_ids
     assert all("license" not in row and "licence" not in row for row in rows)
+
+    deterministic_candidate = next(
+        row for row in rows if row["worker_id"] == "aiat_deterministic_file_worker"
+    )
+    assert deterministic_candidate["certification_status"] == "pending"
+    assert deterministic_candidate["security_scan_status"] == "pending"
+    assert deterministic_candidate["evidence_state"] == "pending_security_evidence"
+    candidate_manifest = yaml.safe_load(
+        (WORKERS / "aiat_deterministic_file_worker.yaml").read_text(encoding="utf-8")
+    )
+    assert candidate_manifest["metadata"]["evaluation_status"] == "pending"
+    assert candidate_manifest["certification_status"] == "pending"
+    assert candidate_manifest.get("active_adapter_version") is None
+    assert candidate_manifest.get("active_skill_bundle_id") is None
 
 
 def test_matrix_separates_technical_evidence_from_live_certification() -> None:

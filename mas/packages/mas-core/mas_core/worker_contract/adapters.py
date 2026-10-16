@@ -37,8 +37,22 @@ from .models import (
     WorkerRunAccepted,
     WorkerRunRequest,
     WorkerRuntimeStatus,
+    WorkerToolRequest,
     WorkerToolResponse,
 )
+
+
+class WorkerStartCancelled(RuntimeError):
+    """Raised when a pending cancellation prevents adapter acceptance."""
+
+
+class WorkerToolResponseTimeout(TimeoutError):
+    """Raised when a governed tool request receives no controller response."""
+
+
+class WorkerToolResponseCancelled(RuntimeError):
+    """Raised when cancellation interrupts a worker waiting for tool mediation."""
+
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +69,7 @@ class AdapterContext:
     """
 
     tool_dispatcher: Callable[[Any], Awaitable[Any]] | None = None
-    artifact_registrar: Callable[[Any], Awaitable[Any]] | None = None
+    artifact_registrar: Callable[..., Awaitable[Any]] | None = None
     audit_sink: Callable[[WorkerAuditEvent], Awaitable[None]] | None = None
     workspace_path: str | None = None
     secrets: dict[str, str] = field(default_factory=dict, repr=False)
@@ -94,6 +108,13 @@ class WorkerAdapter(Protocol):
 
     async def deliver_tool_response(self, response: WorkerToolResponse) -> None: ...
 
+    async def request_tool(
+        self,
+        request: WorkerToolRequest,
+        *,
+        timeout_seconds: float = 30.0,
+    ) -> WorkerToolResponse: ...
+
     async def close(self) -> None: ...
 
 
@@ -122,7 +143,40 @@ class BaseWorkerAdapter:
         self._cancel_requested: set[UUID] = set()
         self._stream_closed: set[UUID] = set()
         self._terminal_status: dict[UUID, str] = {}
+        self._execution_claim_fence_by_run: dict[UUID, dict[str, Any]] = {}
+        self._runtime_run_id_by_run: dict[UUID, str] = {}
+        self._tool_response_waiters: dict[tuple[UUID, UUID], asyncio.Future[WorkerToolResponse]] = {}
+        self._tool_request_names: dict[tuple[UUID, UUID], str] = {}
         self._closed = False
+
+    @staticmethod
+    def _normalized_claim_fence(fence: dict[str, Any] | None) -> tuple[str | None, int]:
+        value = fence or {}
+        owner = value.get("claim_owner")
+        try:
+            attempt_count = int(value.get("attempt_count") or 0)
+        except (TypeError, ValueError):
+            attempt_count = -1
+        return (str(owner) if owner is not None else None, attempt_count)
+
+    def _cancellation_matches_active_attempt(self, request: WorkerCancellation) -> bool:
+        """Reject stale cancellation before any adapter-specific side effect."""
+
+        active_fence = self._execution_claim_fence_by_run.get(request.run_id)
+        if active_fence is not None and self._normalized_claim_fence(active_fence) != self._normalized_claim_fence(
+            request.execution_claim_fence
+        ):
+            return False
+        active_runtime_id = self._runtime_run_id_by_run.get(request.run_id)
+        if active_runtime_id is None:
+            return True
+        if request.runtime_run_id is not None:
+            return request.runtime_run_id == active_runtime_id
+        # A live adapter with the matching private attempt fence owns the
+        # runtime reference and may cancel that attempt without exposing the
+        # runtime ID to its caller. Rehydrated adapters have no active fence,
+        # so their controller must supply the exact durable runtime ID.
+        return active_fence is not None
 
     def _protocol(self) -> ProtocolVersion:
         return ProtocolVersion(
@@ -159,12 +213,33 @@ class BaseWorkerAdapter:
     async def start(self, request: WorkerRunRequest) -> WorkerRunAccepted:
         if self._closed:
             raise RuntimeError("adapter is closed")
+        if request.run_id in self._cancel_requested or self._terminal_status.get(request.run_id) == "CANCELLED":
+            raise WorkerStartCancelled("worker run was cancelled before adapter acceptance")
         existing = self._accepted_by_key.get(request.idempotency_key)
         if existing is not None:
+            accepted_fence = self._execution_claim_fence_by_run.get(request.run_id)
+            if (
+                accepted_fence is not None
+                and self._normalized_claim_fence(accepted_fence)
+                != self._normalized_claim_fence(request.execution_claim_fence)
+            ):
+                raise RuntimeError("idempotent WorkerRun acceptance belongs to a different claim attempt")
             return existing
+        active_task = self._active_tasks.get(request.run_id)
+        active_fence = self._execution_claim_fence_by_run.get(request.run_id)
+        if (
+            active_task is not None
+            and not active_task.done()
+            and active_fence is not None
+            and self._normalized_claim_fence(active_fence)
+            != self._normalized_claim_fence(request.execution_claim_fence)
+        ):
+            raise RuntimeError("previous WorkerRun attempt is still active")
         readiness = await self.readiness(request)
         if not readiness.ready:
             raise RuntimeError("; ".join(readiness.blockers))
+        if request.run_id in self._cancel_requested or self._terminal_status.get(request.run_id) == "CANCELLED":
+            raise WorkerStartCancelled("worker run was cancelled during adapter readiness")
         accepted = WorkerRunAccepted(
             protocol=self._protocol(),
             run_id=request.run_id,
@@ -174,6 +249,9 @@ class BaseWorkerAdapter:
             negotiated_capabilities=self.capabilities,
             metadata=self._acceptance_metadata(request),
         )
+        self._execution_claim_fence_by_run[request.run_id] = request.execution_claim_fence
+        if accepted.runtime_run_id:
+            self._runtime_run_id_by_run[request.run_id] = str(accepted.runtime_run_id)
         self._accepted_by_key[request.idempotency_key] = accepted
         await self._emit(WorkerEvent(
             protocol=self._protocol(),
@@ -182,6 +260,11 @@ class BaseWorkerAdapter:
             event_type=EventType.ACCEPTED,
             idempotency_key=request.idempotency_key,
         ))
+        # Cancellation can arrive while the acceptance event is being
+        # persisted. Do not create a runtime task after observing it.
+        if request.run_id in self._cancel_requested:
+            await self._emit_cancelled(request.run_id, "worker run was cancelled before runtime startup")
+            return accepted
         task = asyncio.create_task(self._run_and_emit(request), name=f"worker-run-{request.run_id}")
         self._active_tasks[request.run_id] = task
         return accepted
@@ -198,7 +281,21 @@ class BaseWorkerAdapter:
 
     async def _run_and_emit(self, request: WorkerRunRequest) -> None:
         try:
-            result = await self._execute(request)
+            if request.run_id in self._cancel_requested:
+                result = WorkerResult(
+                    run_id=request.run_id,
+                    worker_id=self.worker_id,
+                    success=False,
+                    error=WorkerError(
+                        code="CANCELLED",
+                        message="worker run was cancelled before runtime startup",
+                        retryable=False,
+                        terminal=True,
+                        category="cancellation",
+                    ),
+                )
+            else:
+                result = await self._execute(request)
             if not isinstance(result, WorkerResult):
                 result = self._coerce_result(request, result)
             if not result.success and result.error is not None and result.error.code == "CANCELLED":
@@ -220,6 +317,38 @@ class BaseWorkerAdapter:
                 result=result if result.success else None,
                 error=result.error if not result.success else None,
                 usage=result.usage,
+            ))
+        except WorkerToolResponseTimeout as exc:
+            self._terminal_status[request.run_id] = "FAILED"
+            error = WorkerError(
+                code="TOOL_RESPONSE_TIMEOUT",
+                message=str(exc),
+                retryable=True,
+                category="tool_mediation",
+                cause_type=type(exc).__name__,
+            )
+            await self._emit(WorkerEvent(
+                protocol=self._protocol(),
+                run_id=request.run_id,
+                worker_id=self.worker_id,
+                event_type=EventType.ERROR,
+                error=error,
+            ))
+        except WorkerToolResponseCancelled as exc:
+            self._terminal_status[request.run_id] = "CANCELLED"
+            error = WorkerError(
+                code="CANCELLED",
+                message=str(exc),
+                retryable=False,
+                terminal=True,
+                category="cancellation",
+            )
+            await self._emit(WorkerEvent(
+                protocol=self._protocol(),
+                run_id=request.run_id,
+                worker_id=self.worker_id,
+                event_type=EventType.CANCELLED,
+                error=error,
             ))
         except asyncio.CancelledError:
             self._terminal_status[request.run_id] = "CANCELLED"
@@ -260,6 +389,24 @@ class BaseWorkerAdapter:
 
     async def _execute(self, request: WorkerRunRequest) -> WorkerResult | Any:
         raise NotImplementedError
+
+    async def _emit_cancelled(self, run_id: UUID, message: str) -> None:
+        """Record a terminal runtime cancellation without starting work."""
+        self._terminal_status[run_id] = "CANCELLED"
+        await self._emit(WorkerEvent(
+            protocol=self._protocol(),
+            run_id=run_id,
+            worker_id=self.worker_id,
+            event_type=EventType.CANCELLED,
+            error=WorkerError(
+                code="CANCELLED",
+                message=message,
+                retryable=False,
+                terminal=True,
+                category="cancellation",
+            ),
+        ))
+        await self._close_queue(run_id)
 
     def _coerce_result(self, request: WorkerRunRequest, result: Any) -> WorkerResult:
         if isinstance(result, dict) and "success" in result:
@@ -319,6 +466,14 @@ class BaseWorkerAdapter:
                 break
 
     async def cancel(self, request: WorkerCancellation) -> WorkerCancellationReceipt:
+        if not self._cancellation_matches_active_attempt(request):
+            return WorkerCancellationReceipt(
+                run_id=request.run_id,
+                accepted=False,
+                terminal=False,
+                runtime_status="RUNNING",
+                details={"reason": "stale attempt cancellation ignored"},
+            )
         terminal_status = self._terminal_status.get(request.run_id)
         if terminal_status is not None:
             return WorkerCancellationReceipt(
@@ -329,6 +484,7 @@ class BaseWorkerAdapter:
                 details={"reason": "runtime already terminal"},
             )
         self._cancel_requested.add(request.run_id)
+        self._wake_tool_response_waiters(request.run_id)
         task = self._active_tasks.get(request.run_id)
         if task is None:
             accepted = any(item.run_id == request.run_id for item in self._accepted_by_key.values())
@@ -484,6 +640,68 @@ class BaseWorkerAdapter:
             event_type=EventType.TOOL_RESPONSE,
             tool_response=response,
         ))
+        key = (response.run_id, response.request_id)
+        waiter = self._tool_response_waiters.get(key)
+        expected_tool = self._tool_request_names.get(key)
+        if waiter is not None and not waiter.done() and expected_tool == response.tool_name:
+            waiter.set_result(response)
+
+    async def request_tool(
+        self,
+        request: WorkerToolRequest,
+        *,
+        timeout_seconds: float = 30.0,
+    ) -> WorkerToolResponse:
+        """Emit a governed request and await the controller's durable response.
+
+        The controller remains responsible for grant checks, durable effect
+        records, approvals, and Tool Service dispatch. This method only
+        correlates the response with the active native worker task.
+        """
+
+        if self._closed:
+            raise RuntimeError("adapter is closed")
+        if isinstance(timeout_seconds, bool) or not 0 < float(timeout_seconds) <= 120:
+            raise ValueError("tool response timeout must be greater than zero and at most 120 seconds")
+        run_id = request.run_id
+        if run_id in self._cancel_requested:
+            raise WorkerToolResponseCancelled("worker run was cancelled before tool mediation")
+        active_task = self._active_tasks.get(run_id)
+        if active_task is None or active_task is not asyncio.current_task():
+            raise RuntimeError("tool requests may only be emitted by the active worker task")
+        key = (run_id, request.request_id)
+        if key in self._tool_response_waiters:
+            raise RuntimeError("tool request ID is already waiting for a response")
+
+        future = asyncio.get_running_loop().create_future()
+        self._tool_response_waiters[key] = future
+        self._tool_request_names[key] = request.tool_name
+        try:
+            await self._emit(WorkerEvent(
+                protocol=self._protocol(),
+                run_id=run_id,
+                worker_id=self.worker_id,
+                event_type=EventType.TOOL_REQUEST,
+                tool_request=request,
+            ))
+            try:
+                return await asyncio.wait_for(future, timeout=float(timeout_seconds))
+            except TimeoutError as exc:
+                raise WorkerToolResponseTimeout(
+                    "AIAT did not return a mediated tool response before timeout"
+                ) from exc
+        finally:
+            self._tool_response_waiters.pop(key, None)
+            self._tool_request_names.pop(key, None)
+            if not future.done():
+                future.cancel()
+
+    def _wake_tool_response_waiters(self, run_id: UUID) -> None:
+        for (waiting_run_id, _request_id), waiter in list(self._tool_response_waiters.items()):
+            if waiting_run_id == run_id and not waiter.done():
+                waiter.set_exception(
+                    WorkerToolResponseCancelled("worker run was cancelled while awaiting tool mediation")
+                )
 
     async def close(self) -> None:
         self._closed = True

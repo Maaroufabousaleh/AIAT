@@ -208,8 +208,9 @@ The dashboard is the human control and evidence surface for AIAT. It must make c
 - The CEO Live Feed fetches bounded history with `cache: "no-store"`, guards reconnect generations, retains messages through failed history/SSE refreshes, labels the feed as last-known data, and exposes Reconnect plus Retry without changing the governed CEO message composer. A 401/403 history, SSE, or composer response now exposes a named access-denied region, preserves only previously loaded messages, invalidates in-flight stream callbacks, and hides reconnect/retry, copy/clear/filter, and composer controls. [`ceo/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/ceo/page.tsx>), [`app/api/streams/[team_id]/route.ts`](<../../mas/apps/mas-dashboard/app/api/streams/[team_id]/route.ts>), and [`ceo-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/ceo-states.spec.ts) cover failure retention, successful recovery, denial, and these semantics 3/3 against the source-built dashboard (`1761429`, `a3cbd99`).
 - The CEO Command Center chat fetches bounded history with `cache: "no-store"`, guards obsolete history/live callbacks, keeps history visible after a stream failure, labels the transcript as last known, and exposes a keyboard-visible Retry action. History and live errors remain independent so a late history response cannot hide a stream outage. Its accessibility baseline adds a named main/workspace/transcript/composer structure, a live transcript log with busy state, 44px navigation/composer/quick-command/recovery targets, explicit chat guidance regions, and a mobile-safe accessible activity link; [`ceo/chat/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/ceo/chat/page.tsx>), [`use-ceo-stream.ts`](../../mas/apps/mas-dashboard/lib/ceo-feed/use-ceo-stream.ts), and [`ceo-chat-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/ceo-chat-states.spec.ts) cover failure retention, recovery, and these semantics 1/1 against the source-built dashboard (`beabb95`, `8ffb5df`). Native/live Redis/router evidence remains separate.
 - Governance's combined model-profile, runtime-catalogue, WorkerRun, and external-steward read surface retains the last successful state when any source fails, labels the page as stale, and exposes both header Refresh and banner Retry controls. Its accessibility baseline adds a named main/read-surface structure, explicit executive/model-profile/WorkerRun/steward/catalogue regions, a captioned/scoped WorkerRun table, accessible catalogue status, and 44px refresh, retry, executive-form, and confirmation controls. A 401/403 from any combined read exposes a named access-denied region, hides Refresh/Retry and all executive action forms, and preserves only last-known read context after authorization is lost. [`governance/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/governance/page.tsx>), [`ExecutiveActionPanel.tsx`](../../mas/apps/mas-dashboard/components/governance/ExecutiveActionPanel.tsx), and [`governance-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/governance-states.spec.ts) cover failure retention, successful recovery, first-load denial, post-read denial, and these semantics 3/3 against the source-built dashboard (`52de581`, `f4ae7eb`, `888fde3`).
+- The executive action panel now loads its bounded choices from the policy-backed `/executive/actions/catalogue` API and presents typed, bounded forms for four existing approval-required CEO/CFO/CTO actions. It continues to submit only the existing audited approval request; a distinct human decision is still required before action. Free-form JSON remains under Advanced. The focused API suite passes 25/25 and the targeted dashboard E2E passes 9/9 with mocked API responses; no model/provider dispatch is part of these checks (`23a1bacd`).
 - System Control polls the canonical runtime status with `cache: "no-store"`, keeps the last successful status visible through a failed refresh, labels it as stale, and exposes a retry action. Its accessibility baseline adds a named main/loading state, explicit runtime-status/schedule/control/dialog regions, scheduled-event semantics, and 44px refresh, retry, shutdown/resume, schedule-input/save, and confirmation controls. A 401/403 status response now renders a named access-denied region, hides Refresh/Retry and all shutdown/resume/schedule mutations, and preserves only last-known read context after access is lost. [`system/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/system/page.tsx>) and [`system-status-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/system-status-states.spec.ts) cover stale recovery plus first-load and post-read denial 3/3 (`f445c17`, `543f392`, `14968d4`).
-- The Projects list reads projects and active flows with `cache: "no-store"`, treats the paired read as one canonical surface, retains the last successful data after either source fails, separates load errors from create/action errors, and exposes stale/retry recovery. Its table now has an accessible caption and column scopes, explicit description disclosure relationships, responsive overflow, and 44px targets for selection, filter, sort, link, and row-action controls. A 401/403 read or create/archive/delete response now exposes a named access-denied region, retains only previously loaded definitions as read-only text, clears selection, and hides refresh/retry, New Project, filters, sorting, archive, and delete controls. [`projects/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/projects/page.tsx>) and [`projects-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/projects-states.spec.ts) cover failure retention, the focused table/accessibility baseline, initial denial, retained-read denial, and mutation denial 4/4 (`7828b48`, `17d25b0`).
+- The Projects list reads projects and active flows with `cache: "no-store"`, treats the paired read as one canonical surface, retains the last successful data after either source fails, separates load errors from create/action errors, and exposes stale/retry recovery. Its table now has an accessible caption and column scopes, explicit description disclosure relationships, responsive overflow, and 44px targets for selection, filter, sort, link, and row-action controls. A 401/403 read or create/archive/delete response now exposes a named access-denied region, retains only previously loaded definitions as read-only text, clears selection, and hides refresh/retry, New Project, filters, sorting, archive, and delete controls. Project creation can save a prepared `INIT` project without starting CEO work; project detail exposes an explicit, retryable start action. Focused E2E coverage is added in `projects-states.spec.ts` and `project-detail-states.spec.ts`. [`projects/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/projects/page.tsx>) and [`projects-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/projects-states.spec.ts) also cover failure retention, the focused table/accessibility baseline, initial denial, retained-read denial, and mutation denial 4/4 (`7828b48`, `17d25b0`).
 - The Project evidence page reads the canonical package with `cache: "no-store"`, retains the last successful package when a refresh fails, labels the page as showing last-known evidence, and exposes a keyboard-visible Retry action; the first-load failure remains explicit. Its named main/package sections, labeled back/refresh actions with 44px targets, and captioned/scoped evidence table form a focused accessibility baseline. [`projects/[id]/evidence/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/projects/[id]/evidence/page.tsx>) and [`project-evidence-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/project-evidence-states.spec.ts) cover failed refresh retention, successful recovery, and these semantics 1/1 against the source-built dashboard (`bc80ad5`, `89091c1`). Full project-page composition and live provider/worker evidence remain open.
 - The Project evidence page reads the canonical package with `cache: "no-store"`, retains the last successful package when a refresh fails, labels the page as showing last-known evidence, and exposes a keyboard-visible Retry action; the first-load failure remains explicit. Its named main/package sections, labeled back/refresh actions with 44px targets, and captioned/scoped evidence table form a focused accessibility baseline. A 401/403 package response now exposes a named access-denied region, preserves a previously loaded package as read-only context, hides Refresh/Retry and package controls, and retains safe Back to project navigation. [`projects/[id]/evidence/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/projects/[id]/evidence/page.tsx>) and [`project-evidence-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/project-evidence-states.spec.ts) cover failed refresh retention, successful recovery, initial denial, retained-read denial, and these semantics 3/3 against the source-built dashboard (`bc80ad5`, `89091c1`, `00f81b5`). Full project-page composition and live provider/worker evidence remain open.
 - The Tools catalogue reads with `cache: "no-store"`, retains the last successful tool definitions and circuit-breaker summaries after a failed refresh, keeps them visible while retrying, labels the view as stale, and exposes both header Refresh and banner Retry controls. Its named main/search/group regions, captioned/scoped group tables, keyboard-visible tool expansion, and 44px refresh/group/search/copy/retry/empty-state targets form a focused accessibility baseline. [`tools/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/tools/page.tsx>) and [`tools-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/tools-states.spec.ts) cover failure retention, successful recovery, and these semantics 1/1 against the source-built dashboard (`5f4b0eb`, `83e39e6`).
@@ -290,6 +291,170 @@ The dashboard is the human control and evidence surface for AIAT. It must make c
   Secret-safe
   evidence is retained at
   [`mas/docs/provenance/dashboard_e2e_live.json`](../../mas/docs/provenance/dashboard_e2e_live.json).
+
+### Product integration updates (2026-10-10)
+
+- The Companies page now displays company-scoped recorded project usage,
+  aggregate reservation reconciliation, and each configured budget pool's
+  limit, used amount, available amount, and period. Each read is bound to the
+  selected company, stale responses are ignored after a company switch, and
+  the two sources expose independent loading, retry, and unconfigured states.
+  Focused current-source Playwright coverage passes 2/2 and the authenticated
+  BFF route tests pass 3/3 with mocked API responses and no provider dispatch.
+  A scoped TypeScript check passed while excluding malformed generated
+  `.next/dev/types` files; the workspace-wide check remains blocked by syntax
+  errors in those generated files.
+
+### Product integration updates (2026-10-09)
+
+- Company manifest editing now refreshes canonical detail/history after a
+  version conflict without discarding the operator's draft, shows the newer
+  applied manifest read-only for review, and ignores late detail responses
+  after company selection changes. The combined company-focused source-built
+  Playwright checks pass 3/3.
+- Project issue work now retains issue/revision-to-WorkerRun continuity after
+  retries and reloads, loads bounded older run history, filters BFF rows to the
+  requested project, and prevents stale history responses from replacing a
+  refreshed view. Worker Run retry is offered only for eligible unbound
+  failures; flow-bound runs are directed to their owning flow controls. The
+  affected company/project/worker dashboard suites pass 22/22 with mocked API
+  responses and no provider dispatch; focused BFF tests pass 11/11.
+- Additional current-source operator regressions now cover CEO pending
+  confirmation restoration (1/1), worker evaluation-history retry/error states
+  (5/5), URL-encoded credential deletion names (4/4), flow-editor route and
+  response-race recovery (6/6), tool-catalogue stale-refresh protection (4/4),
+  and visible WorkerRun artifact names (8/8). Model preview freshness passes
+  6/6, project artifact navigation passes 4/4, and PM project-list retry passes
+  1/1. These are separate fixture-backed runs, not a full-suite aggregate, and
+  none dispatched to an external provider.
+- The Companies page can retry only its worker-catalogue read after a registry
+  failure (focused group 4/4). The Approvals inbox fences a paged project
+  decision response from an older refresh snapshot (5/5), and the Flows list
+  now reports interrupted deletion and verifies status through refresh (5/5).
+  E2E cleanup recognizes namespaced fixture records; ordinary names such as
+  `tmp`, `proj-123`, `C-123 Workstream`, and `Test Project 123` no longer match
+  cleanup candidates (policy spec 1/1).
+- CEO chat now labels uncertain and denied delivery per request, reconciles a
+  delayed receipt, and restores or clears only the draft associated with that
+  request while preserving newer operator input. Its current-source suite
+  passes 10/10. Project retry/archive failures refresh canonical state and offer
+  recovery (1/1); stale WorkerRun actions remain disabled pending a successful
+  refresh (3/3); tool-group expansion choices survive refresh (5/5); and
+  external-account rotation/closure results explain pending approval and link
+  to its inbox (2/2).
+- Governance now offers a guided selector for four existing approval-required
+  operations; raw action/payload JSON remains under Advanced and every request
+  still requires separate human approval (8/8). PM integrations lists bounded
+  recent inbound-canary summaries for operator inspection while retaining the
+  existing plan-ID detail route (2/2). The current-source mocked CEO,
+  governance, and PM suites passed 20/20 together; no provider call was made.
+- Changed dashboard TS/TSX files pass targeted ESLint, and the isolated scoped
+  TypeScript check passes. The checked-in generated `.next/dev/types` artifacts
+  are not used by this isolated typecheck. The source-copied dashboard package
+  also passes `next build --webpack`, including its full TypeScript build check.
+  The default Turbopack attempt from `/tmp` was blocked by the temp workspace's
+  external `node_modules` symlink, so that was a harness limitation. These are
+  dashboard package checks, not native release evidence or the complete
+  CEO-to-provider journey.
+
+### Product integration updates (2026-10-07)
+
+- Executive actions now use separate worker-run fields and validate UUIDs, bounded required strings, and JSON-object inputs before submission. CEO privileged requests still require the explicit confirmation and go through the audited approval API. The focused governance E2E covers malformed and valid payloads (`2052982a`).
+- CEO privileged requests now default to a bounded selector for four existing approval-required operational actions, with a required justification/target context and explicit confirmation. The panel creates only the existing audited approval request; a separate human decision remains required. Free-form action and payload JSON are still available only under “Advanced action and payload.” The source-built governance suite passes 8/8, and the pending-receipt-to-inbox flow passes 1/1 with mocked APIs and no provider call.
+- The governed CTO worker-run form also exposes the canonical optional per-run USD cost cap and positive whole-second timeout. Blank values preserve the existing policy defaults; a zero cost is not presented as an unset cap. Worker-specific task input and the CFO's unstructured optional scope remain advanced because the API publishes no field schema for them. Focused mocked governance form tests pass 3/3, including invalid-value rejection and canonical request fields; no provider call was made.
+- The Models page exposes a read-only governance-resolution preview with selected profile/version, reason codes, and a cost estimate. Preview results do not authorize or dispatch provider calls (`89aa1a7d`).
+- Governance includes a worker steward surface for immutable-candidate review, rollout/canary actions, and rollback through existing steward APIs. It preserves section access denial and does not claim live worker certification (`e873e46b`).
+- The PM integrations page exposes connection-scoped reconciliation, conflict disposition, bounded recent canary-plan listing, selected-plan inspection, and outbox/reconciliation detail. Mapping and dead-letter collection discovery remain limited by the canonical API surface (`57d31337`, `1f9b7a1a`).
+- Project creation supports a prepared INIT record and the project page exposes an operator-only start action with retry feedback. The six-feature source-built dashboard E2E subset passed 19/19 on 2026-10-07 with API calls mocked; this does not claim provider-backed project execution (`1aea2f80`).
+- The Approvals page combines CEO privileged requests with a bounded, cursor-paged read of project decisions. Project-decision actions still go through the owning project endpoint, CEO privileged decisions use the audited existing endpoint, and model-version approvals remain a separate action. Its focused source-built suite passes 7/7, including paging, stale conflict, duplicate submission, and existing privileged-approval behavior; no provider call is made.
+- CEO privileged-action receipts now show the pending approval record, risk, and a deep link to its exact inbox request. Query changes update the selected request, stale refresh responses cannot overwrite newer selections, and decision controls stay hidden until the selected pending state is freshly verified. After a refresh failure, the operator must re-enter the reason and confirmation. Recording an inbox decision does not dispatch the privileged action. The focused source-built receipt/inbox E2E passes 5/5 (`ceo-action-approval-receipt.spec.ts`, `privileged-approvals.spec.ts`).
+- Project Detail now lets an operator create issues, edit revisioned issue fields, refresh after a `409` conflict, and add comments. The BFF fixes comment attribution to the authenticated dashboard operator; the source-built Playwright flow passes 1/1, and focused route-handler validation passes 7/7 through `npm run test:issue-bff`. Those route tests verify forwarding and upstream ownership-error propagation with an orchestrator stub; they do not claim live FastAPI ownership integration.
+- PM project discovery now filters provider-binding rows by both the selected project and connection, exposes provisioning details/blockers, offers the canonical retry action, and links to shared DLQ review without attributing queue items to a connection. Its focused source-built suite passes 3/3 without contacting a provider.
+- The Companies page now has guided controls for department/chief configuration,
+  registered-worker assignment, supported company budget keys, and a staged
+  CEO handoff. Drafts still use the canonical manifest validate/apply APIs.
+  Source-built Playwright coverage passes 1/1 for the guided editor; the
+  existing company create/review/apply/history spec passed 1/1 separately.
+  These tests use mocked API responses.
+
+### Product integration updates (2026-10-10)
+
+- CEO Chat now honors an explicit `prepare_only` choice for both project
+  creation and preparation requests. It creates one `INIT` project, records the
+  request as project context, and leaves feasibility dispatch to the operator's
+  later Project Detail start action. The CEO message ID is the stable project
+  creation idempotency key across command recovery. Focused CEO API tests pass
+  112/112, the source-built mocked chat E2E passes 1/1, and dashboard typecheck
+  passes. No model/provider call is made; the full CEO-to-worker journey remains
+  unproven.
+- The live local CEO prepare-only flow now verifies the running API contract
+  before submission, resolves the created project by its unique name instead
+  of relying on asynchronously hydrated chat history, checks the exact saved
+  brief and `INIT` state, confirms zero worker runs, opens the matching evidence
+  link, and deletes only that still-`INIT` disposable project. The focused live
+  Playwright flow passes 1/1. It does not start CEO work or prove provider-backed
+  execution.
+- Executive action forms now offer current project, Model Profile, and worker
+  choices instead of requiring copied identifiers, and reject malformed or
+  stale choices before submission. The focused governance UI suite passes 6/6,
+  including choice submission, stale-option rejection, and access boundaries.
+  API responses are mocked; no live executive action or provider call was run.
+- Project issue detail can start an audited CTO WorkerRun for a selected
+  dispatchable worker after explicit budget/provider-use confirmation. The
+  issue revision supplies retry idempotency and the result links to run
+  evidence. The bounded prompt preserves the gateway adapter's required input
+  shape and identifies issue text as untrusted data; the adapter sends it as a
+  user message without an ungoverned fallback. Its focused source-built
+  Playwright suite passes 5/5, including the gateway-shaped task payload, and
+  an isolated current-source dashboard build and typecheck pass. APIs were
+  mocked and no provider call was made. Provider-backed execution remains
+  unauthorized and the complete CEO-to-worker flow remains partial.
+- The Hiring Board provides a bounded edit form for team assignment and adapter
+  entrypoint/module. The focused worker-management Playwright suite passes
+  3/3, and its operator BFF tests pass 4/4; the form deliberately does not
+  expose runtime, credential, model, or sandbox policy fields.
+- Project Detail can preview bounded text documents and download generated
+  documents through a project-scoped authenticated BFF. The preview uses
+  text rendering with a 512 KiB cap; the source-built project-detail suite
+  passes 7/7 and the BFF tests pass 5/5. API responses are mocked, so this is
+  dashboard behavior coverage rather than live object-store certification.
+- Project Detail now offers an authenticated artifact-download action only
+  when project/run/blob/hash/size metadata passes bounded validation, including
+  project ownership, WorkerRun UUID, safe relative path, expected blob key,
+  SHA-256 agreement, and byte-size agreement. The BFF forwards only the
+  project-scoped artifact download route; the orchestrator rechecks ownership
+  and checksum before returning bytes. Download errors remain visible beside
+  the artifact. Focused validation passes: artifact-download BFF 4/4,
+  Project Detail download/recovery Playwright 1/1, and typecheck. These tests
+  mock the API response and do not certify live object storage or a generated
+  OpenCode artifact.
+- Flow approval-node actions now select exactly one pending project gate
+  bound to the running node execution, then use the canonical project decision
+  endpoint. Missing or ambiguous binding disables decisions; failed requests
+  remain retryable. Focused project-detail coverage passes 7/7. The backend
+  binds gates durably and resolves decisions with the flow transition; its
+  focused API/storage suite passes 278 tests with one database integration
+  skip.
+
+### Product integration update (2026-10-12)
+
+- Project Detail now refreshes queued/nonterminal canonical WorkerRuns every
+  10 seconds while the project activity view is open, shows accessible state
+  badges and refresh status, and keeps the existing project-scoped run/evidence
+  links. The focused source-built activity E2E passes 3/3; this proves UI
+  refresh behavior against mocked API responses, not worker dispatch.
+- Worker Run detail now shows a bounded mediated-tool effect timeline through
+  the authenticated dashboard BFF. It renders only the safe scalar projection
+  and request digest prefix, with loading, empty, error, and retry states;
+  tool arguments, responses, and idempotency keys are not shown. Focused
+  Playwright passes 3/3, BFF tests pass 5/5, and typecheck/changed-file lint
+  pass. These UI checks do not claim a live OpenCode execution.
+- Project completion failures now explain the selected evidence policy,
+  list bounded failed checks, and link to the canonical project evidence page.
+  The transition BFF derives the operator actor, accepts only bounded document
+  lifecycle context, and redacts arbitrary upstream error text. Its focused
+  BFF suite passes 3/3 and the Project Detail evidence/error Playwright cases
+  pass 2/2. These checks do not claim a completed worker run.
 
 ## Code anchors
 
@@ -386,7 +551,7 @@ baseline; native/live Redis/router and full WCAG evidence remain open
   project-detail stale/retry, and
   system-visualization partial/offline retry coverage; it is not native-Linux
   release evidence.
-- Generate typed forms/clients from backend schemas for the remaining governance actions; the CFO/CTO/CEO action panel is implemented, while broader governance action forms remain.
+- Generate typed forms/clients from backend schemas for the remaining governance actions. CEO has a guided subset of approval-required actions, while its full payload catalogue, optional CFO scope, and worker-specific CTO task input remain advanced because the current API publishes no field schemas.
 - Consolidate legacy flow compatibility aliases into an explicit extension editor after migration coverage is complete.
 - Complete page-by-page light/dark/system visual parity and responsive/mobile parity; the persisted preference, no-flash bootstrap, palette migration layer, and reduced-motion baseline are implemented in `5e3cc13`.
 - Complete the WCAG 2.2 AA audit and broader automated checks; the shell landmark/skip-link/focus baseline is covered, while page-level semantics, contrast, reduced motion, and native-Linux evidence remain.

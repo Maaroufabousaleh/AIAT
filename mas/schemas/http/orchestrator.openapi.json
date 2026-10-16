@@ -1258,6 +1258,33 @@
         "title": "CompanyCreateRequest",
         "type": "object"
       },
+      "CompanyManifestApplyRequest": {
+        "properties": {
+          "expected_manifest_version": {
+            "minimum": 0.0,
+            "title": "Expected Manifest Version",
+            "type": "integer"
+          },
+          "manifest": {
+            "additionalProperties": true,
+            "title": "Manifest",
+            "type": "object"
+          },
+          "source": {
+            "default": "api",
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "manifest",
+          "expected_manifest_version"
+        ],
+        "title": "CompanyManifestApplyRequest",
+        "type": "object"
+      },
       "CompanyManifestRequest": {
         "properties": {
           "manifest": {
@@ -1791,6 +1818,19 @@
             ],
             "title": "Human Requester"
           },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          },
           "initial_context": {
             "items": {
               "$ref": "#/components/schemas/ProjectContextSeedRequest"
@@ -1804,6 +1844,11 @@
             "minLength": 1,
             "title": "Name",
             "type": "string"
+          },
+          "start_immediately": {
+            "default": true,
+            "title": "Start Immediately",
+            "type": "boolean"
           },
           "workspace": {
             "anyOf": [
@@ -1913,11 +1958,18 @@
           },
           "decided_by": {
             "default": "human",
+            "description": "Legacy compatibility field; persisted attribution uses the authenticated principal.",
             "title": "Decided By",
             "type": "string"
           },
           "decision": {
-            "description": "APPROVED | REJECTED | EDITS | CANCELLED",
+            "description": "APPROVED | REJECTED | EDITS | CANCELLED (case-insensitive)",
+            "enum": [
+              "APPROVED",
+              "REJECTED",
+              "EDITS",
+              "CANCELLED"
+            ],
             "title": "Decision",
             "type": "string"
           },
@@ -1932,6 +1984,19 @@
               }
             ],
             "title": "Edits"
+          },
+          "gate_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Exact project approval gate to decide; omitted for legacy newest-pending behavior.",
+            "title": "Gate Id"
           }
         },
         "required": [
@@ -2101,7 +2166,140 @@
         "title": "EvidencePolicyRequest",
         "type": "object"
       },
+      "ExecutiveActionCatalogueResponse": {
+        "properties": {
+          "ceo_privileged_actions": {
+            "items": {
+              "$ref": "#/components/schemas/ExecutivePrivilegedActionOption"
+            },
+            "title": "Ceo Privileged Actions",
+            "type": "array"
+          },
+          "cfo_model_override_fields": {
+            "items": {
+              "$ref": "#/components/schemas/ExecutiveActionFormField"
+            },
+            "title": "Cfo Model Override Fields",
+            "type": "array"
+          },
+          "cto_worker_run_fields": {
+            "items": {
+              "$ref": "#/components/schemas/ExecutiveActionFormField"
+            },
+            "title": "Cto Worker Run Fields",
+            "type": "array"
+          },
+          "schema_version": {
+            "const": "aiat.executive-actions.catalogue.v1",
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "cfo_model_override_fields",
+          "cto_worker_run_fields",
+          "ceo_privileged_actions"
+        ],
+        "title": "ExecutiveActionCatalogueResponse",
+        "type": "object"
+      },
+      "ExecutiveActionFormField": {
+        "properties": {
+          "control": {
+            "enum": [
+              "select",
+              "text",
+              "textarea",
+              "number"
+            ],
+            "title": "Control",
+            "type": "string"
+          },
+          "help_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Help Text"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "max_length": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Length"
+          },
+          "maximum": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maximum"
+          },
+          "minimum": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Minimum"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "option_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "projects",
+                  "workers",
+                  "model_profiles"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Option Source"
+          },
+          "required": {
+            "title": "Required",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "label",
+          "control",
+          "required"
+        ],
+        "title": "ExecutiveActionFormField",
+        "type": "object"
+      },
       "ExecutiveCEOPrivilegedActionRequest": {
+        "additionalProperties": false,
         "description": "CEO request for a privileged operation through the audited gate.",
         "properties": {
           "action": {
@@ -2111,7 +2309,9 @@
             "type": "string"
           },
           "payload": {
-            "additionalProperties": true,
+            "additionalProperties": {
+              "type": "string"
+            },
             "title": "Payload",
             "type": "object"
           },
@@ -2130,6 +2330,7 @@
         "type": "object"
       },
       "ExecutiveCFOModelOverrideRequest": {
+        "additionalProperties": false,
         "description": "CFO request for a project-scoped model-profile override.",
         "properties": {
           "project_id": {
@@ -2155,11 +2356,6 @@
             "minLength": 1,
             "title": "Requested Profile Id",
             "type": "string"
-          },
-          "scope": {
-            "additionalProperties": true,
-            "title": "Scope",
-            "type": "object"
           }
         },
         "required": [
@@ -2170,11 +2366,86 @@
         "title": "ExecutiveCFOModelOverrideRequest",
         "type": "object"
       },
+      "ExecutiveCTOWorkerRunDispatchRequest": {
+        "additionalProperties": false,
+        "description": "Bounded operator form for the common prompt-based worker dispatch.",
+        "properties": {
+          "budget_usd": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Budget Usd"
+          },
+          "idempotency_key": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "prompt": {
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Prompt",
+            "type": "string"
+          },
+          "task_type": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Task Type",
+            "type": "string"
+          },
+          "timeout_seconds": {
+            "anyOf": [
+              {
+                "maximum": 86400.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout Seconds"
+          },
+          "worker_id": {
+            "format": "uuid",
+            "title": "Worker Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "worker_id",
+          "idempotency_key",
+          "task_type",
+          "prompt"
+        ],
+        "title": "ExecutiveCTOWorkerRunDispatchRequest",
+        "type": "object"
+      },
       "ExecutiveCTOWorkerRunRequest": {
+        "additionalProperties": false,
         "description": "CTO request for a governed worker run using the canonical dispatch contract.",
         "properties": {
           "dispatch": {
-            "$ref": "#/components/schemas/WorkerRunDispatchRequest"
+            "$ref": "#/components/schemas/ExecutiveCTOWorkerRunDispatchRequest"
           },
           "requested_by": {
             "default": "cto",
@@ -2188,6 +2459,42 @@
           "dispatch"
         ],
         "title": "ExecutiveCTOWorkerRunRequest",
+        "type": "object"
+      },
+      "ExecutivePrivilegedActionOption": {
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/ExecutiveActionFormField"
+            },
+            "title": "Fields",
+            "type": "array"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "requires_approval": {
+            "title": "Requires Approval",
+            "type": "boolean"
+          },
+          "risk": {
+            "title": "Risk",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "label",
+          "risk",
+          "requires_approval",
+          "fields"
+        ],
+        "title": "ExecutivePrivilegedActionOption",
         "type": "object"
       },
       "FlowDiffRequest": {
@@ -3398,6 +3705,7 @@
             "type": "array"
           },
           "status": {
+            "const": "draft",
             "default": "draft",
             "title": "Status",
             "type": "string"
@@ -3408,6 +3716,21 @@
           "purpose"
         ],
         "title": "ModelProfileCreateRequest",
+        "type": "object"
+      },
+      "ModelProfileVersionActivationRequest": {
+        "properties": {
+          "reason": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "ModelProfileVersionActivationRequest",
         "type": "object"
       },
       "ModelProfileVersionRequest": {
@@ -3556,6 +3879,7 @@
             "type": "array"
           },
           "status": {
+            "const": "draft",
             "default": "draft",
             "title": "Status",
             "type": "string"
@@ -3755,6 +4079,15 @@
           },
           "message": {
             "title": "Message",
+            "type": "string"
+          },
+          "project_start_mode": {
+            "default": "start_immediately",
+            "enum": [
+              "start_immediately",
+              "prepare_only"
+            ],
+            "title": "Project Start Mode",
             "type": "string"
           },
           "request_id": {
@@ -4753,6 +5086,86 @@
         "title": "ProjectContextSeedRequest",
         "type": "object"
       },
+      "ProjectDecisionInboxItem": {
+        "description": "Payload-safe project context for one pending human decision.",
+        "properties": {
+          "company_id": {
+            "format": "uuid",
+            "title": "Company Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "gate_type": {
+            "title": "Gate Type",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "project_name": {
+            "title": "Project Name",
+            "type": "string"
+          },
+          "project_state": {
+            "title": "Project State",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "project_name",
+          "project_state",
+          "company_id",
+          "gate_type",
+          "status",
+          "created_at"
+        ],
+        "title": "ProjectDecisionInboxItem",
+        "type": "object"
+      },
+      "ProjectDecisionInboxPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectDecisionInboxItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "ProjectDecisionInboxPage",
+        "type": "object"
+      },
       "ProjectEvidencePolicyRequest": {
         "description": "A policy selection persisted at project or milestone scope.",
         "properties": {
@@ -5005,6 +5418,16 @@
             },
             "title": "Capability Names",
             "type": "array"
+          },
+          "execution": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkloadExecutionPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "identity_mailbox_class": {
             "default": "permanent",
@@ -7228,6 +7651,16 @@
             ],
             "title": "Capability Ids"
           },
+          "execution": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkloadExecutionPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "isolation_mode": {
             "anyOf": [
               {
@@ -7418,6 +7851,25 @@
           }
         },
         "title": "WorkerEvaluateRequest",
+        "type": "object"
+      },
+      "WorkerRunCancelRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "force": {
+            "default": false,
+            "title": "Force",
+            "type": "boolean"
+          },
+          "reason": {
+            "default": "operator cancellation",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "title": "WorkerRunCancelRequest",
         "type": "object"
       },
       "WorkerRunDispatchRequest": {
@@ -7695,6 +8147,7 @@
         "type": "object"
       },
       "WorkerRunPauseRequest": {
+        "additionalProperties": false,
         "properties": {
           "reason": {
             "default": "operator pause",
@@ -7702,19 +8155,13 @@
             "minLength": 1,
             "title": "Reason",
             "type": "string"
-          },
-          "requested_by": {
-            "default": "operator",
-            "maxLength": 256,
-            "minLength": 1,
-            "title": "Requested By",
-            "type": "string"
           }
         },
         "title": "WorkerRunPauseRequest",
         "type": "object"
       },
       "WorkerRunResumeRequest": {
+        "additionalProperties": false,
         "properties": {
           "checkpoint_id": {
             "anyOf": [
@@ -7727,16 +8174,32 @@
               }
             ],
             "title": "Checkpoint Id"
-          },
-          "requested_by": {
-            "default": "operator",
-            "maxLength": 256,
-            "minLength": 1,
-            "title": "Requested By",
-            "type": "string"
           }
         },
         "title": "WorkerRunResumeRequest",
+        "type": "object"
+      },
+      "WorkerRunRetryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "idempotency_key",
+          "reason"
+        ],
+        "title": "WorkerRunRetryRequest",
         "type": "object"
       },
       "WorkerStatusTransition": {
@@ -7794,6 +8257,120 @@
           }
         },
         "title": "WorkerUpgradeRequest",
+        "type": "object"
+      },
+      "WorkloadExecutionPolicy": {
+        "additionalProperties": false,
+        "description": "Declarative workload requirements carried by a worker manifest.",
+        "properties": {
+          "allowed_runtimes": {
+            "default": [],
+            "items": {
+              "enum": [
+                "runc",
+                "wasmtime",
+                "runsc",
+                "kata",
+                "remote_vm"
+              ],
+              "type": "string"
+            },
+            "title": "Allowed Runtimes",
+            "type": "array"
+          },
+          "filesystem": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Filesystem",
+            "type": "object"
+          },
+          "formats": {
+            "default": [
+              "oci"
+            ],
+            "items": {
+              "enum": [
+                "oci",
+                "linux",
+                "wasm"
+              ],
+              "type": "string"
+            },
+            "title": "Formats",
+            "type": "array"
+          },
+          "gvisor_compatible": {
+            "default": true,
+            "title": "Gvisor Compatible",
+            "type": "boolean"
+          },
+          "minimum_isolation": {
+            "anyOf": [
+              {
+                "enum": [
+                  "trusted",
+                  "sandboxed",
+                  "vm_isolated",
+                  "remote_vm"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Minimum Isolation"
+          },
+          "network": {
+            "default": "egress-allowlist",
+            "enum": [
+              "none",
+              "egress-allowlist",
+              "egress-deny-all",
+              "unrestricted"
+            ],
+            "title": "Network",
+            "type": "string"
+          },
+          "preferred_runtimes": {
+            "default": [],
+            "items": {
+              "enum": [
+                "runc",
+                "wasmtime",
+                "runsc",
+                "kata",
+                "remote_vm"
+              ],
+              "type": "string"
+            },
+            "title": "Preferred Runtimes",
+            "type": "array"
+          },
+          "remote_vm_allowed": {
+            "default": true,
+            "title": "Remote Vm Allowed",
+            "type": "boolean"
+          },
+          "trust": {
+            "anyOf": [
+              {
+                "enum": [
+                  "trusted",
+                  "untrusted",
+                  "hostile"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trust"
+          }
+        },
+        "title": "WorkloadExecutionPolicy",
         "type": "object"
       }
     }
@@ -7948,6 +8525,67 @@
           }
         },
         "summary": "Observe Agent Profile"
+      }
+    },
+    "/approvals/project-decisions": {
+      "get": {
+        "description": "Return one bounded operator page of pending project decisions.\n\nProject ownership/context is resolved with a single indexed join. The\nendpoint only reads decisions; decisions remain owned by the existing\nproject-scoped write endpoint.",
+        "operationId": "list_project_decision_inbox_approvals_project_decisions_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectDecisionInboxPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Project Decision Inbox"
       }
     },
     "/artifacts/{artifact_id}": {
@@ -9295,6 +9933,49 @@
         "summary": "Rollback Steward Rollout"
       }
     },
+    "/capabilities/workers/{worker_id}/steward/security-scan": {
+      "post": {
+        "description": "Run the fixed, local source-bound scan for the first-party OCI worker.\n\nThis action accepts no report, source path, command, or candidate override.\nIt scans only the checked-in source and Dockerfile after matching them to\nthe immutable manifest and persisted worker/provenance records.",
+        "operationId": "scan_first_party_worker_security_source_capabilities_workers__worker_id__steward_security_scan_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "worker_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Worker Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Scan First Party Worker Security Source Capabilities Workers  Worker Id  Steward Security Scan Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Scan First Party Worker Security Source"
+      }
+    },
     "/capabilities/workers/{worker_id}/upgrade": {
       "post": {
         "description": "Trigger an upgrade for a worker from its upstream source.\n\nPulls latest from the upstream repo, runs compatibility tests,\nand updates the worker if successful.",
@@ -10067,7 +10748,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CompanyManifestRequest"
+                "$ref": "#/components/schemas/CompanyManifestApplyRequest"
               }
             }
           },
@@ -11113,6 +11794,25 @@
         ]
       }
     },
+    "/executive/actions/catalogue": {
+      "get": {
+        "description": "Return bounded operator-form fields from request schemas and policy.",
+        "operationId": "executive_action_catalogue_executive_actions_catalogue_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutiveActionCatalogueResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Executive Action Catalogue"
+      }
+    },
     "/executive/actions/ceo/privileged-actions": {
       "post": {
         "description": "Request a CEO privileged operation through the audited approval gate.",
@@ -12151,7 +12851,7 @@
     },
     "/flows/instances/{instance_id}/node-action": {
       "post": {
-        "description": "Perform an action on a node within a flow instance.",
+        "description": "Perform a flow action, enforcing operator identity for approvals.",
         "operationId": "flow_node_action_flows_instances__instance_id__node_action_post",
         "parameters": [
           {
@@ -14206,6 +14906,68 @@
         "summary": "Github Repository Metadata"
       }
     },
+    "/integrations/inbound-canaries": {
+      "get": {
+        "description": "List a bounded set of persisted canary summaries for operator inspection.",
+        "operationId": "list_inbound_canary_plans_integrations_inbound_canaries_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "connection_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Connection Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Inbound Canary Plans Integrations Inbound Canaries Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Inbound Canary Plans"
+      }
+    },
     "/integrations/inbound-canaries/{plan_id}": {
       "get": {
         "operationId": "get_inbound_canary_plan_integrations_inbound_canaries__plan_id__get",
@@ -15626,6 +16388,68 @@
         "summary": "Add Model Profile Version"
       }
     },
+    "/model-profiles/{profile_id}/versions/{version_id}/activate": {
+      "post": {
+        "description": "Approve one exact draft version through the operator governance path.",
+        "operationId": "activate_model_profile_version_model_profiles__profile_id__versions__version_id__activate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "profile_id",
+            "required": true,
+            "schema": {
+              "title": "Profile Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelProfileVersionActivationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Activate Model Profile Version Model Profiles  Profile Id  Versions  Version Id  Activate Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Activate Model Profile Version"
+      }
+    },
     "/observability/capacity/forecast": {
       "get": {
         "description": "Forecast cost and token demand from bounded durable usage aggregates.",
@@ -15996,7 +16820,7 @@
         "summary": "List Projects"
       },
       "post": {
-        "description": "Human creates a project request. Triggers CEO via SYSTEM_EVENT.",
+        "description": "Create a project and optionally start its CEO feasibility work.",
         "operationId": "create_project_projects_post",
         "requestBody": {
           "content": {
@@ -16409,6 +17233,57 @@
           }
         },
         "summary": "Delete Project Artifact"
+      }
+    },
+    "/projects/{project_id}/artifacts/{artifact_id}/download": {
+      "get": {
+        "description": "Download bounded worker artifact bytes for an authorized project owner.\n\nThe artifact row is joined to its durable WorkerRun and worker-artifact\nassociation before the object store is consulted. Project IDs in request\nmetadata are never treated as authority by themselves.",
+        "operationId": "download_project_artifact_projects__project_id__artifacts__artifact_id__download_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "artifact_id",
+            "required": true,
+            "schema": {
+              "title": "Artifact Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Verified artifact bytes"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Download Project Artifact"
       }
     },
     "/projects/{project_id}/audit-timeline": {
@@ -16876,7 +17751,7 @@
     },
     "/projects/{project_id}/decisions": {
       "post": {
-        "description": "Human submits a decision (approve/reject/edit).",
+        "description": "An authenticated operator submits a project approval decision.",
         "operationId": "submit_decision_projects__project_id__decisions_post",
         "parameters": [
           {
@@ -19218,6 +20093,49 @@
         "summary": "Update Canonical Sprint"
       }
     },
+    "/projects/{project_id}/start": {
+      "post": {
+        "description": "Start a prepared project through WorkflowController and queue CEO work.",
+        "operationId": "start_project_projects__project_id__start_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Start Project Projects  Project Id  Start Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Project"
+      }
+    },
     "/projects/{project_id}/state-history": {
       "get": {
         "description": "Audit log of all state transitions for a project.",
@@ -20292,6 +21210,26 @@
         "summary": "Worker Contract Version"
       }
     },
+    "/workers/host/local/health": {
+      "get": {
+        "operationId": "local_host_queue_health_workers_host_local_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Local Host Queue Health Workers Host Local Health Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Local Host Queue Health"
+      }
+    },
     "/workers/runs": {
       "get": {
         "operationId": "list_worker_runs_api_workers_runs_get",
@@ -20617,9 +21555,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "additionalProperties": true,
-                "title": "Payload",
-                "type": "object"
+                "$ref": "#/components/schemas/WorkerRunCancelRequest"
               }
             }
           },
@@ -20832,6 +21768,49 @@
         "summary": "Heartbeat Worker Run"
       }
     },
+    "/workers/runs/{run_id}/host-binding": {
+      "get": {
+        "description": "Expose host placement evidence without WorkerRun/task payloads.",
+        "operationId": "get_worker_run_host_binding_api_workers_runs__run_id__host_binding_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Worker Run Host Binding Api Workers Runs  Run Id  Host Binding Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Worker Run Host Binding Api"
+      }
+    },
     "/workers/runs/{run_id}/pause": {
       "post": {
         "description": "Pause a running worker only when its certified contract supports checkpoints.",
@@ -20936,6 +21915,113 @@
           }
         },
         "summary": "Resume Worker Run"
+      }
+    },
+    "/workers/runs/{run_id}/retry": {
+      "post": {
+        "operationId": "retry_worker_run_api_workers_runs__run_id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkerRunRetryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Retry Worker Run Api Workers Runs  Run Id  Retry Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Retry Worker Run Api"
+      }
+    },
+    "/workers/runs/{run_id}/tool-effects": {
+      "get": {
+        "description": "Expose durable mediated-effect evidence without request/response data.",
+        "operationId": "get_worker_run_tool_effects_api_workers_runs__run_id__tool_effects_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Worker Run Tool Effects Api Workers Runs  Run Id  Tool Effects Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Worker Run Tool Effects Api"
       }
     },
     "/workers/runs/{run_id}/transitions": {

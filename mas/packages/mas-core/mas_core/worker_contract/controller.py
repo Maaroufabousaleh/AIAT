@@ -12,16 +12,19 @@ import hashlib
 import inspect
 import json
 import logging
+import mimetypes
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from .adapters import BaseWorkerAdapter, WorkerAdapter
+from .adapters import BaseWorkerAdapter, WorkerAdapter, WorkerStartCancelled
 from .models import (
+    ArtifactKind,
     CheckpointMode,
     EventType,
+    WorkerArtifact,
     WorkerCancellation,
     WorkerCancellationReceipt,
     WorkerEvent,
@@ -91,6 +94,10 @@ class WorkerRunController:
         self._memory_runs: dict[UUID, dict[str, Any]] = {}
         self._memory_events: dict[UUID, list[dict[str, Any]]] = {}
         self._memory_tool_effects: dict[tuple[UUID, str], dict[str, Any]] = {}
+        self._tool_artifacts_by_run: dict[UUID, dict[str, WorkerArtifact]] = {}
+        self._dispatch_locks: dict[UUID, asyncio.Lock] = {}
+        self._dispatch_phase: dict[UUID, str] = {}
+        self._cancel_events: dict[UUID, asyncio.Event] = {}
 
     @staticmethod
     def _tool_request_sha256(tool_request: Any) -> str:
@@ -102,8 +109,16 @@ class WorkerRunController:
             json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
 
-    async def _begin_tool_effect(self, tool_request: Any) -> dict[str, Any]:
+    async def _begin_tool_effect(
+        self,
+        tool_request: Any,
+        *,
+        claim_fence: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         request_sha256 = self._tool_request_sha256(tool_request)
+        fence = dict(claim_fence or {})
+        claim_owner = fence.get("claim_owner")
+        attempt_count = int(fence.get("attempt_count") or 0)
         storage_begin = getattr(self.storage, "begin_worker_tool_effect", None)
         if callable(storage_begin):
             return await storage_begin(
@@ -112,7 +127,13 @@ class WorkerRunController:
                 idempotency_key=tool_request.idempotency_key,
                 tool_name=tool_request.tool_name,
                 request_sha256=request_sha256,
+                claim_owner=claim_owner,
+                attempt_count=attempt_count,
             )
+        if claim_owner is not None or attempt_count > 0:
+            # A claimed execution must have durable authority state against
+            # which the generation can be checked before any tool dispatch.
+            return {"disposition": "CLAIM_LOST"}
 
         key = (tool_request.run_id, tool_request.idempotency_key)
         existing = self._memory_tool_effects.get(key)
@@ -167,6 +188,99 @@ class WorkerRunController:
                 }
             )
 
+    def _record_file_write_artifact(
+        self,
+        request: WorkerRunRequest,
+        tool_request: Any,
+        response: WorkerToolResponse,
+        effect: dict[str, Any],
+    ) -> None:
+        """Promote a confirmed mediated file write into run evidence.
+
+        The path and bytes come from the ToolRequest, while the digest and
+        byte count are independently recomputed and compared with the
+        authenticated Tool Service response. The workspace bytes are later
+        opened without following symlinks by the artifact registrar.
+        """
+
+        if tool_request.tool_name != "file_write" or not response.success or request.project_id is None:
+            return
+        if not isinstance(tool_request.arguments, dict) or not isinstance(response.result, dict):
+            raise WorkerRunError(
+                "TOOL_ARTIFACT_INTEGRITY_INVALID",
+                "the mediated file write lacks verifiable project artifact metadata",
+            )
+        path = tool_request.arguments.get("path")
+        content = tool_request.arguments.get("content")
+        result = response.result
+        if (
+            not isinstance(path, str)
+            or not path
+            or path.startswith("/")
+            or "\\" in path
+            or "\x00" in path
+            or any(part in {"", ".", ".."} for part in path.split("/"))
+            or not isinstance(content, str)
+            or result.get("success") is not True
+            or result.get("path") != path
+            or str(result.get("project_id") or "") != str(request.project_id)
+        ):
+            raise WorkerRunError(
+                "TOOL_ARTIFACT_INTEGRITY_INVALID",
+                "the mediated file write does not match the authenticated project and safe path",
+            )
+        content_bytes = content.encode("utf-8")
+        digest = hashlib.sha256(content_bytes).hexdigest()
+        size_bytes = result.get("bytes_written")
+        if (
+            result.get("sha256") != digest
+            or isinstance(size_bytes, bool)
+            or not isinstance(size_bytes, int)
+            or size_bytes != len(content_bytes)
+        ):
+            raise WorkerRunError(
+                "TOOL_ARTIFACT_INTEGRITY_INVALID",
+                "the mediated file write checksum or byte count is invalid",
+            )
+        metadata: dict[str, Any] = {
+            "worker_run_id": str(request.run_id),
+            "project_id": str(request.project_id),
+            "source_tool": "file_write",
+        }
+        effect_id = effect.get("id")
+        if effect_id is not None:
+            metadata["tool_effect_id"] = str(effect_id)
+        artifact = WorkerArtifact(
+            kind=ArtifactKind.FILE,
+            name=path,
+            uri=path,
+            sha256=digest,
+            size_bytes=size_bytes,
+            mime_type=mimetypes.guess_type(path)[0],
+            metadata=metadata,
+        )
+        # A later confirmed write to the same run-relative path supersedes
+        # the earlier descriptor; artifact upload will verify its bytes.
+        self._tool_artifacts_by_run.setdefault(request.run_id, {})[path] = artifact
+
+    def _attach_tool_artifacts(
+        self,
+        request: WorkerRunRequest,
+        result: WorkerResult,
+    ) -> WorkerResult:
+        tool_artifacts = self._tool_artifacts_by_run.get(request.run_id, {})
+        if not tool_artifacts:
+            return result
+        result_uris = {artifact.uri for artifact in result.artifacts}
+        additional = [
+            artifact
+            for uri, artifact in sorted(tool_artifacts.items())
+            if uri not in result_uris
+        ]
+        if not additional:
+            return result
+        return result.model_copy(update={"artifacts": [*result.artifacts, *additional]})
+
     async def create_run(
         self,
         request: WorkerRunRequest,
@@ -177,6 +291,8 @@ class WorkerRunController:
         skill_bundle_id: UUID | None = None,
         steward_id: UUID | None = None,
         model_resolution_snapshot_id: UUID | None = None,
+        retry_of_run_id: UUID | None = None,
+        retry_context_json: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if self.storage is not None and worker_registry_id is not None:
             return await self.storage.create_worker_run(
@@ -194,6 +310,8 @@ class WorkerRunController:
                 skill_bundle_id=skill_bundle_id,
                 steward_id=steward_id,
                 model_resolution_snapshot_id=model_resolution_snapshot_id,
+                retry_of_run_id=retry_of_run_id,
+                retry_context_json=retry_context_json,
             )
         existing = next((row for row in self._memory_runs.values() if row["idempotency_key"] == request.idempotency_key and row["worker_id"] == request.worker_id), None)
         if existing:
@@ -207,6 +325,8 @@ class WorkerRunController:
             "request_json": request.model_dump(mode="json"),
             "project_id": request.project_id,
             "skill_bundle_id": skill_bundle_id,
+            "retry_of_run_id": retry_of_run_id,
+            "retry_context_json": retry_context_json or {},
             "created_at": datetime.now(UTC),
         }
         self._memory_runs[request.run_id] = row
@@ -217,6 +337,41 @@ class WorkerRunController:
         if self.storage is not None:
             return await self.storage.get_worker_run(run_id)
         return self._memory_runs.get(run_id)
+
+    @staticmethod
+    def _claim_fence(row: dict[str, Any] | None) -> dict[str, Any]:
+        """Return the persisted owner/attempt fence for a claimed run."""
+
+        if row is None:
+            return {}
+        owner = row.get("claim_owner")
+        attempt_count = int(row.get("attempt_count") or 0)
+        if owner is None and attempt_count == 0:
+            return {}
+        return {
+            "claim_owner": str(owner) if owner is not None else None,
+            "attempt_count": attempt_count,
+        }
+
+    @staticmethod
+    def _claim_is_current(
+        row: dict[str, Any] | None,
+        claim_fence: dict[str, Any],
+    ) -> bool:
+        if row is None:
+            return False
+        owner = row.get("claim_owner")
+        attempt_count = int(row.get("attempt_count") or 0)
+        if not claim_fence:
+            return owner is None and attempt_count == 0
+        lease_expires_at = row.get("lease_expires_at")
+        return (
+            owner == claim_fence.get("claim_owner")
+            and attempt_count == claim_fence.get("attempt_count")
+            and lease_expires_at is not None
+            and lease_expires_at > datetime.now(UTC)
+            and str(row.get("state") or "") not in TERMINAL_RUN_STATES
+        )
 
     async def transition(
         self,
@@ -232,6 +387,9 @@ class WorkerRunController:
         reason: str | None = None,
         correlation_id: str | None = None,
         transition_metadata: dict[str, Any] | None = None,
+        claim_owner: str | None = None,
+        attempt_count: int | None = None,
+        allow_unfenced_cancel: bool = False,
     ) -> dict[str, Any] | None:
         if self.storage is not None:
             return await self.storage.transition_worker_run(
@@ -246,12 +404,29 @@ class WorkerRunController:
                 reason=reason,
                 correlation_id=correlation_id,
                 transition_metadata=transition_metadata,
+                claim_owner=claim_owner,
+                attempt_count=attempt_count,
+                allow_unfenced_cancel=allow_unfenced_cancel,
             )
         row = self._memory_runs.get(run_id)
         if row is None:
             return None
         current = str(row["state"])
         if expected is not None and current != expected:
+            return None
+        current_owner = row.get("claim_owner")
+        current_attempt = int(row.get("attempt_count") or 0)
+        control_cancel = target == "CANCELLED" and allow_unfenced_cancel
+        if not control_cancel and (current_owner is not None or current_attempt > 0):
+            lease_expires_at = row.get("lease_expires_at")
+            if (
+                claim_owner != current_owner
+                or attempt_count != current_attempt
+                or lease_expires_at is None
+                or lease_expires_at <= datetime.now(UTC)
+            ):
+                return None
+        elif not control_cancel and (claim_owner is not None or attempt_count is not None):
             return None
         if target not in RUN_TRANSITIONS.get(current, frozenset()):
             raise WorkerRunError("INVALID_RUN_TRANSITION", f"invalid worker run transition {current} -> {target}")
@@ -401,7 +576,13 @@ class WorkerRunController:
                 details={"reason": "adapter reconciliation failed", "error_type": type(exc).__name__},
             )
 
-    async def _persist_result_evidence(self, request: WorkerRunRequest, result: WorkerResult) -> None:
+    async def _persist_result_evidence(
+        self,
+        request: WorkerRunRequest,
+        result: WorkerResult,
+        *,
+        adapter: WorkerAdapter | None = None,
+    ) -> None:
         """Persist every returned artifact and usage record before terminal state.
 
         A worker result is only authoritative once its evidence is queryable.
@@ -410,6 +591,35 @@ class WorkerRunController:
         """
         if self.storage is None:
             return
+        claim_fence = request.execution_claim_fence
+        attempt_count = int(claim_fence.get("attempt_count") or 0)
+        context = getattr(adapter, "context", None)
+        registrar = getattr(context, "artifact_registrar", None)
+        tool_artifacts = [
+            artifact
+            for artifact in result.artifacts
+            if artifact.metadata.get("source_tool") == "file_write"
+        ]
+        if tool_artifacts and not callable(registrar):
+            raise WorkerRunError(
+                "ARTIFACT_REGISTRAR_UNAVAILABLE",
+                "the mediated file output cannot be registered as project evidence",
+            )
+        registered_tool_artifacts: list[WorkerArtifact] = []
+        try:
+            if callable(registrar):
+                for artifact in tool_artifacts:
+                    await registrar(artifact, claim_fence=claim_fence)
+                    registered_tool_artifacts.append(artifact)
+        except Exception:
+            if registered_tool_artifacts:
+                await self._cleanup_unpersisted_artifacts(
+                    adapter,
+                    result.model_copy(update={"artifacts": registered_tool_artifacts}),
+                    claim_fence,
+                )
+            raise
+        artifact_rows: list[dict[str, Any]] = []
         for artifact in result.artifacts:
             metadata = {
                 **artifact.metadata,
@@ -418,35 +628,23 @@ class WorkerRunController:
                 "mime_type": artifact.mime_type,
                 "retention_class": artifact.retention_class,
                 "worker_run_id": str(request.run_id),
+                "worker_execution_attempt": attempt_count,
             }
-            stored = await self.storage.create_artifact(
-                agent_id=request.worker_id,
-                path=artifact.uri,
-                metadata=metadata,
-                sha256=artifact.sha256,
-                size_bytes=artifact.size_bytes,
-            )
-            artifact_id = stored.get("id")
-            if not isinstance(artifact_id, int):
-                raise WorkerRunError(
-                    "ARTIFACT_PERSISTENCE_FAILED",
-                    "artifact storage did not return a canonical artifact ID",
-                )
-            await self.storage.create_worker_artifact(
-                run_id=request.run_id,
-                artifact_id=artifact_id,
-                kind=artifact.kind.value,
-                uri=artifact.uri,
-                sha256=artifact.sha256,
-                size_bytes=artifact.size_bytes,
-                metadata=metadata,
-                trace_id=request.trace_id,
-                span_id=request.span_id,
+            artifact_rows.append(
+                {
+                    "agent_id": request.worker_id,
+                    "path": artifact.uri,
+                    "metadata": metadata,
+                    "sha256": artifact.sha256,
+                    "size_bytes": artifact.size_bytes,
+                    "kind": artifact.kind.value,
+                    "uri": artifact.uri,
+                    "trace_id": request.trace_id,
+                    "span_id": request.span_id,
+                }
             )
         usage = result.usage
-        await self.storage.create_worker_usage(
-            run_id=request.run_id,
-            usage={
+        usage_row = {
                 "prompt_tokens": usage.prompt_tokens,
                 "completion_tokens": usage.completion_tokens,
                 "total_tokens": usage.total_tokens,
@@ -460,8 +658,59 @@ class WorkerRunController:
                 "exact_model_id": usage.exact_model_id,
                 "trace_id": request.trace_id,
                 "span_id": request.span_id,
-            },
-        )
+            }
+        atomic_writer = getattr(self.storage, "persist_worker_result_evidence_claim_fenced", None)
+        if callable(atomic_writer):
+            try:
+                persisted = await atomic_writer(
+                    run_id=request.run_id,
+                    claim_owner=claim_fence.get("claim_owner"),
+                    attempt_count=attempt_count,
+                    artifacts=artifact_rows,
+                    usage=usage_row,
+                )
+            except Exception:
+                await self._cleanup_unpersisted_artifacts(adapter, result, claim_fence)
+                raise
+            if persisted is None:
+                await self._cleanup_unpersisted_artifacts(adapter, result, claim_fence)
+                raise WorkerRunError(
+                    "WORKER_RUN_CLAIM_LOST",
+                    "worker run claim changed before result evidence was persisted",
+                )
+        else:
+            if claim_fence:
+                await self._cleanup_unpersisted_artifacts(adapter, result, claim_fence)
+                raise WorkerRunError(
+                    "WORKER_RUN_CLAIM_LOST",
+                    "durable claim-fenced result evidence storage is unavailable",
+                )
+            for artifact in artifact_rows:
+                stored = await self.storage.create_artifact(
+                    agent_id=artifact["agent_id"],
+                    path=artifact["path"],
+                    metadata=artifact["metadata"],
+                    sha256=artifact["sha256"],
+                    size_bytes=artifact["size_bytes"],
+                )
+                artifact_id = stored.get("id")
+                if not isinstance(artifact_id, int):
+                    raise WorkerRunError(
+                        "ARTIFACT_PERSISTENCE_FAILED",
+                        "artifact storage did not return a canonical artifact ID",
+                    )
+                await self.storage.create_worker_artifact(
+                    run_id=request.run_id,
+                    artifact_id=artifact_id,
+                    kind=artifact["kind"],
+                    uri=artifact["uri"],
+                    sha256=artifact["sha256"],
+                    size_bytes=artifact["size_bytes"],
+                    metadata=artifact["metadata"],
+                    trace_id=request.trace_id,
+                    span_id=request.span_id,
+                )
+            await self.storage.create_worker_usage(run_id=request.run_id, usage=usage_row)
         # The worker-specific record preserves the exact runtime payload;
         # project_usage_events is the cross-tool/LLM accounting surface used
         # by budgets and dashboards.  Keep this best-effort for lightweight
@@ -473,11 +722,19 @@ class WorkerRunController:
             with suppress(TypeError, ValueError):
                 worker_id = UUID(str(request.worker_id))
             try:
-                await record_usage(
+                project_usage = await record_usage(
                     project_id=project_id,
                     event_type="llm",
                     run_id=request.run_id,
                     worker_id=worker_id,
+                    **(
+                        {
+                            "claim_owner": claim_fence.get("claim_owner"),
+                            "attempt_count": attempt_count,
+                        }
+                        if claim_fence
+                        else {}
+                    ),
                     model=usage.exact_model_id,
                     provider_id=usage.provider,
                     prompt_tokens=usage.prompt_tokens,
@@ -488,14 +745,48 @@ class WorkerRunController:
                         "cpu_seconds": usage.cpu_seconds,
                         "memory_bytes": usage.memory_bytes,
                     },
-                    idempotency_key=f"worker-run:{request.run_id}:usage",
+                    idempotency_key=(
+                        f"worker-run:{request.run_id}:attempt:{attempt_count}:usage"
+                        if claim_fence
+                        else f"worker-run:{request.run_id}:usage"
+                    ),
                     details={"source": "worker_result", "runtime_worker_id": request.worker_id},
                 )
+                if claim_fence and project_usage is None:
+                    raise WorkerRunError(
+                        "WORKER_RUN_CLAIM_LOST",
+                        "worker run claim changed before project usage was persisted",
+                    )
+            except WorkerRunError:
+                raise
             except Exception:
                 # The worker-specific usage record above remains authoritative
                 # if a legacy storage double or a telemetry-only backend does
                 # not yet expose the project ledger columns.
                 logger.exception("project_usage_ledger_write_failed", extra={"run_id": str(request.run_id)})
+
+    @staticmethod
+    async def _cleanup_unpersisted_artifacts(
+        adapter: WorkerAdapter | None,
+        result: WorkerResult,
+        claim_fence: dict[str, Any],
+    ) -> None:
+        context = getattr(adapter, "context", None)
+        registrar = getattr(context, "artifact_registrar", None)
+        if not callable(registrar):
+            return
+        for artifact in result.artifacts:
+            try:
+                await registrar(
+                    artifact,
+                    claim_fence=claim_fence,
+                    cleanup=True,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "worker_artifact_cleanup_after_claim_loss_failed",
+                    extra={"run_id": str(result.run_id), "error": type(exc).__name__},
+                )
 
     async def _validate_result_model_attribution(
         self,
@@ -572,10 +863,14 @@ class WorkerRunController:
         request: WorkerRunRequest,
         adapter: WorkerAdapter,
         event: WorkerEvent,
+        *,
+        claim_fence: dict[str, Any] | None = None,
     ) -> None:
         if event.tool_request is None:
             return
-        tool_request = event.tool_request
+        tool_request = event.tool_request.model_copy(deep=False)
+        fence = dict(claim_fence or request.execution_claim_fence)
+        tool_request._execution_claim_fence = fence
         if tool_request.run_id != request.run_id:
             raise WorkerRunError(
                 "TOOL_REQUEST_SCOPE_MISMATCH",
@@ -585,8 +880,14 @@ class WorkerRunController:
                     "tool_request_run_id": str(tool_request.run_id),
                 },
             )
-        effect = await self._begin_tool_effect(tool_request)
+        effect = await self._begin_tool_effect(tool_request, claim_fence=fence)
         disposition = str(effect.get("disposition") or "AMBIGUOUS")
+        if disposition == "CLAIM_LOST":
+            raise WorkerRunError(
+                "WORKER_RUN_CLAIM_LOST",
+                "worker run claim is no longer current for tool dispatch",
+                details={"current_state": "CLAIM_FENCE_REJECTED"},
+            )
         if disposition == "CONFLICT":
             response = WorkerToolResponse(
                 request_id=tool_request.request_id,
@@ -684,6 +985,26 @@ class WorkerRunController:
         deliver = getattr(adapter, "deliver_tool_response", None)
         if deliver is None:
             raise WorkerRunError("TOOL_RESPONSE_UNSUPPORTED", "adapter does not support mediated tool responses")
+        try:
+            self._record_file_write_artifact(request, tool_request, response, effect)
+        except WorkerRunError as exc:
+            # The file effect may already have happened. Preserve its durable
+            # effect row, but do not tell the worker it has a project artifact
+            # unless the Tool Service supplied verifiable integrity metadata.
+            # Delivering a bounded failure also lets the runtime exit cleanly
+            # instead of waiting for its tool-response timeout.
+            response = WorkerToolResponse(
+                request_id=tool_request.request_id,
+                run_id=request.run_id,
+                tool_name=tool_request.tool_name,
+                success=False,
+                error={
+                    "code": exc.code,
+                    "message": str(exc),
+                    "terminal": True,
+                    "category": "artifact",
+                },
+            )
         await deliver(response)
 
     async def append_event(self, event: WorkerEvent) -> dict[str, Any]:
@@ -726,6 +1047,8 @@ class WorkerRunController:
         skill_bundle_id: UUID | None = None,
         steward_id: UUID | None = None,
         model_resolution_snapshot_id: UUID | None = None,
+        retry_of_run_id: UUID | None = None,
+        retry_context_json: dict[str, Any] | None = None,
     ) -> WorkerRunOutcome:
         created_row = await self.create_run(
             request,
@@ -735,6 +1058,8 @@ class WorkerRunController:
             skill_bundle_id=skill_bundle_id,
             steward_id=steward_id,
             model_resolution_snapshot_id=model_resolution_snapshot_id,
+            retry_of_run_id=retry_of_run_id,
+            retry_context_json=retry_context_json,
         )
         canonical_run_id = UUID(str(created_row["id"]))
         if canonical_run_id != request.run_id:
@@ -761,14 +1086,58 @@ class WorkerRunController:
                 except (TypeError, ValueError):
                     logger.warning("worker_result_rehydrate_failed", extra={"run_id": str(canonical_run_id)})
             return WorkerRunOutcome(run_id=canonical_run_id, state=str(row["state"]), result=stored_result)
+        execution_claim_fence = self._claim_fence(row)
+        self._tool_artifacts_by_run[request.run_id] = {}
+        request = request.model_copy(deep=False)
+        request._execution_claim_fence = dict(execution_claim_fence)
         events: list[WorkerEvent] = []
         accepted: WorkerRunAccepted | None = None
         negotiation: dict[str, Any] | None = None
         readiness: WorkerReadiness | None = None
         result: WorkerResult | None = None
         try:
+            async def ensure_claim_current() -> None:
+                if not execution_claim_fence:
+                    return
+                current_row = await self.get_run(request.run_id)
+                if not self._claim_is_current(current_row, execution_claim_fence):
+                    raise WorkerRunError(
+                        "WORKER_RUN_CLAIM_LOST",
+                        "worker run claim is no longer current",
+                        details={"current_state": str((current_row or {}).get("state") or "UNKNOWN")},
+                    )
+
+            async def transition_before_dispatch(
+                target: str,
+                *,
+                expected: str,
+                **kwargs: Any,
+            ) -> dict[str, Any]:
+                persisted = await self.transition(
+                    request.run_id,
+                    target,
+                    expected=expected,
+                    **execution_claim_fence,
+                    **kwargs,
+                )
+                if persisted is not None:
+                    return persisted
+                current = await self.get_run(request.run_id)
+                current_state = str((current or {}).get("state") or "UNKNOWN")
+                if current_state == "CANCELLED":
+                    raise WorkerRunError(
+                        "CANCELLED",
+                        "worker run was cancelled before runtime dispatch",
+                        state="CANCELLED",
+                    )
+                raise WorkerRunError(
+                    "RUN_STATE_CONFLICT",
+                    "worker run state changed before runtime dispatch",
+                    details={"expected_state": expected, "current_state": current_state},
+                )
+
             current_state = str((await self.get_run(request.run_id) or {}).get("state") or "CREATED")
-            await self.transition(request.run_id, "VALIDATING", expected=current_state)
+            await transition_before_dispatch("VALIDATING", expected=current_state)
             if (
                 bool((request.checkpoint_policy or {}).get("required"))
                 and adapter.capabilities.checkpoint_mode == CheckpointMode.UNSUPPORTED
@@ -789,9 +1158,33 @@ class WorkerRunController:
                 negotiation = protocol.as_dict()
             except ProtocolNegotiationError as exc:
                 raise WorkerRunError("PROTOCOL_NEGOTIATION_FAILED", str(exc)) from exc
-            await self.transition(request.run_id, "READY", expected="VALIDATING", negotiation=negotiation)
-            await self.transition(request.run_id, "DISPATCHING", expected="READY")
-            accepted = await adapter.start(request)
+            await transition_before_dispatch(
+                "READY",
+                expected="VALIDATING",
+                negotiation=negotiation,
+            )
+            dispatch_lock = self._dispatch_locks.setdefault(request.run_id, asyncio.Lock())
+            cancel_event = self._cancel_events.setdefault(request.run_id, asyncio.Event())
+            self._dispatch_phase[request.run_id] = "NOT_STARTED"
+            await transition_before_dispatch("DISPATCHING", expected="READY")
+            async with dispatch_lock:
+                dispatch_row = await self.get_run(request.run_id)
+                if (
+                    str((dispatch_row or {}).get("state") or "") == "CANCELLED"
+                    or cancel_event.is_set()
+                ):
+                    raise WorkerRunError(
+                        "CANCELLED",
+                        "worker run was cancelled before adapter startup",
+                        state="CANCELLED",
+                    )
+                # This marker is set immediately before entering the adapter.
+                # A concurrent cancellation can still mark the adapter's
+                # pending-cancel bit while start awaits readiness, but it may
+                # no longer claim that no runtime startup was attempted.
+                self._dispatch_phase[request.run_id] = "STARTING"
+                accepted = await adapter.start(request)
+                self._dispatch_phase[request.run_id] = "ACCEPTED"
             runtime_run_id = accepted.runtime_run_id if accepted else None
             accepted_metadata = accepted.metadata if accepted else {}
             if runtime_run_id is None and isinstance(accepted_metadata, dict):
@@ -817,7 +1210,7 @@ class WorkerRunController:
                     ),
                 },
             }
-            await self.transition(
+            persisted_running = await self.transition(
                 request.run_id,
                 "RUNNING",
                 expected="DISPATCHING",
@@ -826,13 +1219,44 @@ class WorkerRunController:
                     "accepted_metadata": accepted_metadata,
                     "runtime_binding": runtime_binding,
                 },
+                **execution_claim_fence,
             )
+            if persisted_running is None:
+                # The adapter may have started a process before this write
+                # discovers that recovery reclaimed its lease. Stop this
+                # attempt's runtime before consuming events or persisting
+                # result evidence; its owner/attempt fence cannot settle the
+                # canonical run.
+                try:
+                    cancellation = WorkerCancellation(
+                        run_id=request.run_id,
+                        reason="worker run claim lost after runtime startup",
+                        requested_by="worker-run-controller",
+                        force=True,
+                    )
+                    cancellation._execution_claim_fence = dict(execution_claim_fence)
+                    cancellation._runtime_run_id = runtime_run_id
+                    await adapter.cancel(cancellation)
+                except Exception as exc:
+                    logger.warning(
+                        "worker_runtime_cancel_after_claim_loss_failed",
+                        extra={"run_id": str(request.run_id), "error": type(exc).__name__},
+                    )
+                current_row = await self.get_run(request.run_id) or {}
+                return WorkerRunOutcome(
+                    run_id=request.run_id,
+                    state=str(current_row.get("state") or "UNKNOWN"),
+                    accepted=accepted,
+                    readiness=readiness,
+                    negotiation=negotiation,
+                )
 
             async def collect_events() -> None:
                 nonlocal result
                 async for event in adapter.events(request.run_id):
                     if event.run_id != request.run_id or event.worker_id != request.worker_id:
                         raise WorkerRunError("EVENT_SCOPE_MISMATCH", "worker event does not match the requested run")
+                    await ensure_claim_current()
                     if events and event.sequence < events[-1].sequence:
                         # Duplicate events are persisted idempotently only when
                         # their content is identical; the store enforces that.
@@ -841,8 +1265,15 @@ class WorkerRunController:
                     events.append(event)
                     await self.append_event(event)
                     if event.event_type == EventType.TOOL_REQUEST:
-                        await self._mediate_tool_request(request, adapter, event)
+                        await ensure_claim_current()
+                        await self._mediate_tool_request(
+                            request,
+                            adapter,
+                            event,
+                            claim_fence=execution_claim_fence,
+                        )
                     if event.event_type == EventType.CHECKPOINT and event.checkpoint is not None and self.storage is not None:
+                        await ensure_claim_current()
                         await self.storage.create_worker_checkpoint(
                             run_id=request.run_id,
                             sequence=event.checkpoint.sequence,
@@ -865,6 +1296,7 @@ class WorkerRunController:
             await asyncio.wait_for(collect_events(), timeout=timeout)
             if result is None:
                 raise WorkerRunError("MISSING_RESULT", "worker stream ended without a normalized result")
+            result = self._attach_tool_artifacts(request, result)
             await self._validate_result_model_attribution(
                 request,
                 result,
@@ -872,7 +1304,8 @@ class WorkerRunController:
             )
             terminal = "SUCCEEDED" if result.success else "CANCELLED" if result.error and result.error.code == "CANCELLED" else "FAILED"
             if terminal != "CANCELLED":
-                await self._persist_result_evidence(request, result)
+                await ensure_claim_current()
+                await self._persist_result_evidence(request, result, adapter=adapter)
             terminal_kwargs = {
                 "result": result.model_dump(mode="json"),
                 "error": None if result.success else result.error.model_dump(mode="json") if result.error else None,
@@ -884,6 +1317,7 @@ class WorkerRunController:
                 request.run_id,
                 terminal,
                 expected="RUNNING",
+                **execution_claim_fence,
                 **terminal_kwargs,
             )
             # A pause request owns RUNNING -> PAUSING, but it does not make a
@@ -895,6 +1329,7 @@ class WorkerRunController:
                     request.run_id,
                     terminal,
                     expected="PAUSING",
+                    **execution_claim_fence,
                     **terminal_kwargs,
                 )
             if persisted_terminal is None:
@@ -903,41 +1338,223 @@ class WorkerRunController:
                 return WorkerRunOutcome(run_id=request.run_id, state=current_state, accepted=accepted, result=result, events=tuple(events), readiness=readiness, negotiation=negotiation)
             return WorkerRunOutcome(run_id=request.run_id, state=str(persisted_terminal["state"]), accepted=accepted, result=result, events=tuple(events), readiness=readiness, negotiation=negotiation)
         except TimeoutError:
-            await adapter.cancel(WorkerCancellation(run_id=request.run_id, reason="worker run timed out", requested_by="worker-run-controller", force=True))
-            await self.transition(request.run_id, "TIMED_OUT", expected="RUNNING", error={"code": "TIMEOUT", "message": "worker run exceeded timeout"})
-            return WorkerRunOutcome(run_id=request.run_id, state="TIMED_OUT", accepted=accepted, events=tuple(events), readiness=readiness, negotiation=negotiation)
+            cancellation = WorkerCancellation(
+                run_id=request.run_id,
+                reason="worker run timed out",
+                requested_by="worker-run-controller",
+                force=True,
+            )
+            cancellation._execution_claim_fence = dict(execution_claim_fence)
+            if runtime_run_id is not None:
+                cancellation._runtime_run_id = str(runtime_run_id)
+            await adapter.cancel(cancellation)
+            persisted = await self.transition(
+                request.run_id,
+                "TIMED_OUT",
+                expected="RUNNING",
+                error={"code": "TIMEOUT", "message": "worker run exceeded timeout"},
+                **execution_claim_fence,
+            )
+            current = persisted or await self.get_run(request.run_id) or {}
+            return WorkerRunOutcome(run_id=request.run_id, state=str(current.get("state") or "TIMED_OUT"), accepted=accepted, events=tuple(events), readiness=readiness, negotiation=negotiation)
+        except WorkerStartCancelled as exc:
+            current_row = await self.get_run(request.run_id)
+            current = str((current_row or {}).get("state") or "")
+            if current not in TERMINAL_RUN_STATES:
+                await self.transition(
+                    request.run_id,
+                    "CANCELLED",
+                    expected=current,
+                    error={"code": "CANCELLED", "message": str(exc)},
+                    **execution_claim_fence,
+                )
+                current_row = await self.get_run(request.run_id)
+                current = str((current_row or {}).get("state") or "")
+            outcome_state = current or "CANCELLED"
+            return WorkerRunOutcome(
+                run_id=request.run_id,
+                state=outcome_state,
+                accepted=accepted,
+                events=tuple(events),
+                readiness=readiness,
+                negotiation=negotiation,
+            )
         except WorkerRunError as exc:
-            current = (await self.get_run(request.run_id) or {}).get("state")
+            current_row = await self.get_run(request.run_id)
+            current = str((current_row or {}).get("state") or "")
             if current not in TERMINAL_RUN_STATES:
                 target = "CANCELLED" if exc.state == "CANCELLED" else "FAILED"
                 try:
-                    await self.transition(request.run_id, target, expected=str(current), error={"code": exc.code, "message": str(exc), "details": exc.details})
+                    await self.transition(
+                        request.run_id,
+                        target,
+                        expected=str(current),
+                        error={"code": exc.code, "message": str(exc), "details": exc.details},
+                        **execution_claim_fence,
+                    )
                 except Exception:
                     logger.exception("Failed to persist worker run failure")
-            return WorkerRunOutcome(run_id=request.run_id, state="CANCELLED" if exc.state == "CANCELLED" else "FAILED", accepted=accepted, events=tuple(events), readiness=readiness, negotiation=negotiation)
+                current_row = await self.get_run(request.run_id)
+                current = str((current_row or {}).get("state") or "")
+            fallback_state = "CANCELLED" if exc.state == "CANCELLED" else "FAILED"
+            outcome_state = current or fallback_state
+            return WorkerRunOutcome(run_id=request.run_id, state=outcome_state, accepted=accepted, events=tuple(events), readiness=readiness, negotiation=negotiation)
         except Exception as exc:
             logger.exception("Unexpected worker run controller failure")
-            current = (await self.get_run(request.run_id) or {}).get("state")
+            current_row = await self.get_run(request.run_id) or {}
+            current = current_row.get("state")
             if current not in TERMINAL_RUN_STATES:
                 try:
-                    await self.transition(request.run_id, "FAILED", expected=str(current), error={"code": "CONTROLLER_ERROR", "message": str(exc)})
+                    persisted = await self.transition(
+                        request.run_id,
+                        "FAILED",
+                        expected=str(current),
+                        error={"code": "CONTROLLER_ERROR", "message": str(exc)},
+                        **execution_claim_fence,
+                    )
+                    current_row = persisted or await self.get_run(request.run_id) or current_row
                 except Exception:
                     logger.exception("Failed to persist unexpected worker run failure")
-            return WorkerRunOutcome(run_id=request.run_id, state="FAILED", accepted=accepted, events=tuple(events), readiness=readiness, negotiation=negotiation)
+            return WorkerRunOutcome(run_id=request.run_id, state=str(current_row.get("state") or "FAILED"), accepted=accepted, events=tuple(events), readiness=readiness, negotiation=negotiation)
+        finally:
+            self._dispatch_phase.pop(request.run_id, None)
+            self._tool_artifacts_by_run.pop(request.run_id, None)
+            self._cancel_events.pop(request.run_id, None)
+            self._dispatch_locks.pop(request.run_id, None)
 
-    async def cancel(self, run_id: UUID, adapter: WorkerAdapter, *, reason: str, requested_by: str, force: bool = False) -> dict[str, Any] | None:
+    async def cancel(
+        self,
+        run_id: UUID,
+        adapter: WorkerAdapter,
+        *,
+        reason: str,
+        requested_by: str,
+        force: bool = False,
+        allow_unfenced_cancel: bool = False,
+        claim_owner: str | None = None,
+        attempt_count: int | None = None,
+    ) -> dict[str, Any] | None:
         row = await self.get_run(run_id)
         if row is None:
             return None
         if row.get("state") in TERMINAL_RUN_STATES:
             return row
+        claim_fence: dict[str, Any] = {}
+        if not allow_unfenced_cancel:
+            current_owner = row.get("claim_owner")
+            current_attempt = int(row.get("attempt_count") or 0)
+            if current_owner is not None or current_attempt > 0:
+                claim_fence = {
+                    "claim_owner": claim_owner,
+                    "attempt_count": attempt_count,
+                }
+                if (
+                    claim_owner != current_owner
+                    or attempt_count != current_attempt
+                    or not self._claim_is_current(row, claim_fence)
+                ):
+                    raise WorkerRunError(
+                        "WORKER_RUN_CLAIM_LOST",
+                        "worker run cancellation claim is no longer current",
+                        details={"current_state": str(row.get("state") or "UNKNOWN")},
+                    )
         current = str(row.get("state"))
-        if current in {"QUEUED", "CLAIMED", "CREATED"}:
-            await self.transition(run_id, "CANCELLED", expected=current, error={"code": "CANCELLED", "message": reason})
-            return await self.get_run(run_id)
-        raw_receipt = await adapter.cancel(
-            WorkerCancellation(run_id=run_id, reason=reason, requested_by=requested_by, force=force)
+        cancel_event = self._cancel_events.get(run_id)
+        if cancel_event is not None:
+            cancel_event.set()
+        pre_dispatch_states = {"QUEUED", "CLAIMED", "CREATED", "VALIDATING", "READY"}
+        while current in pre_dispatch_states:
+            cancelled = await self.transition(
+                run_id,
+                "CANCELLED",
+                expected=current,
+                error={"code": "CANCELLED", "message": reason},
+                actor=requested_by,
+                allow_unfenced_cancel=allow_unfenced_cancel,
+                **claim_fence,
+            )
+            if cancelled is not None:
+                return cancelled
+            row = await self.get_run(run_id)
+            if row is None or row.get("state") in TERMINAL_RUN_STATES:
+                return row
+            observed = str(row.get("state"))
+            if observed == current:
+                raise WorkerRunError(
+                    "RUN_STATE_CONFLICT",
+                    "worker run cancellation could not claim its current state",
+                    details={"state": current},
+                )
+            current = observed
+        if current == "DISPATCHING" and self._dispatch_phase.get(run_id) == "NOT_STARTED":
+            # The controller knows it has persisted DISPATCHING but has not
+            # entered adapter.start yet. Serialize this CAS against the
+            # controller's transition to STARTING so cancellation can win
+            # without asking an adapter to infer whether a remote process
+            # exists (which would be unsafe after a controller restart).
+            dispatch_lock = self._dispatch_locks.get(run_id)
+            if dispatch_lock is not None:
+                async with dispatch_lock:
+                    row = await self.get_run(run_id)
+                    if row is None or row.get("state") in TERMINAL_RUN_STATES:
+                        return row
+                    current = str(row.get("state"))
+                    if (
+                        current == "DISPATCHING"
+                        and self._dispatch_phase.get(run_id) == "NOT_STARTED"
+                    ):
+                        cancelled = await self.transition(
+                            run_id,
+                            "CANCELLED",
+                            expected="DISPATCHING",
+                            error={"code": "CANCELLED", "message": reason},
+                            actor=requested_by,
+                            allow_unfenced_cancel=allow_unfenced_cancel,
+                            **claim_fence,
+                        )
+                        if cancelled is not None:
+                            return cancelled
+                        row = await self.get_run(run_id)
+                        if row is None or row.get("state") in TERMINAL_RUN_STATES:
+                            return row
+                        current = str(row.get("state"))
+        if current not in {
+            "DISPATCHING",
+            "RUNNING",
+            "PAUSING",
+            "PAUSED",
+            "RESUMING",
+        }:
+            return row
+        cancellation = WorkerCancellation(
+            run_id=run_id,
+            reason=reason,
+            requested_by=requested_by,
+            force=force,
         )
+        current_execution_fence = self._claim_fence(row)
+        cancellation._execution_claim_fence = dict(current_execution_fence)
+        runtime_run_id = row.get("runtime_run_id")
+        binding_reader = getattr(self.storage, "get_worker_runtime_binding", None)
+        if callable(binding_reader):
+            try:
+                binding = await binding_reader(
+                    run_id,
+                    attempt_count=int(row.get("attempt_count") or 0),
+                )
+            except TypeError:
+                binding = await binding_reader(run_id)
+            except Exception as exc:
+                logger.warning(
+                    "worker_runtime_binding_read_failed_during_cancel",
+                    extra={"run_id": str(run_id), "error": type(exc).__name__},
+                )
+                binding = None
+            if isinstance(binding, dict) and binding.get("runtime_run_id"):
+                runtime_run_id = binding["runtime_run_id"]
+        if runtime_run_id is not None:
+            cancellation._runtime_run_id = str(runtime_run_id)
+        raw_receipt = await adapter.cancel(cancellation)
         receipt: WorkerCancellationReceipt | None
         if raw_receipt is None:
             # Compatibility path for pre-receipt adapters.  Preserve the
@@ -966,16 +1583,16 @@ class WorkerRunController:
                 # request. Reconciliation/normal result settlement owns the
                 # terminal state in that case.
                 return await self.get_run(run_id)
-        if current in {
-            "RUNNING",
-            "DISPATCHING",
-            "READY",
-            "VALIDATING",
-            "PAUSING",
-            "PAUSED",
-            "RESUMING",
-        }:
-            await self.transition(run_id, "CANCELLED", expected=current, error={"code": "CANCELLED", "message": reason})
+        if current in {"DISPATCHING", "RUNNING", "PAUSING", "PAUSED", "RESUMING"}:
+            await self.transition(
+                run_id,
+                "CANCELLED",
+                expected=current,
+                error={"code": "CANCELLED", "message": reason},
+                actor=requested_by,
+                allow_unfenced_cancel=allow_unfenced_cancel,
+                **claim_fence,
+            )
         return await self.get_run(run_id)
 
     async def pause(self, run_id: UUID, adapter: WorkerAdapter, *, reason: str, requested_by: str) -> dict[str, Any] | None:
@@ -1004,12 +1621,14 @@ class WorkerRunController:
                 f"worker run is {row.get('state')}, not RUNNING",
                 details={"state": row.get("state")},
             )
+        claim_fence = self._claim_fence(row)
         pausing = await self.transition(
             run_id,
             "PAUSING",
             expected="RUNNING",
             actor=requested_by,
             reason=reason,
+            **claim_fence,
         )
         if pausing is None:
             raise WorkerRunError("RUN_STATE_CONFLICT", "worker run state changed before it could be paused")
@@ -1025,6 +1644,7 @@ class WorkerRunController:
                 error={"code": "PAUSE_FAILED", "message": str(exc)},
                 actor=requested_by,
                 reason=reason,
+                **claim_fence,
             )
             raise WorkerRunError("PAUSE_FAILED", str(exc)) from exc
         paused = await self.transition(
@@ -1033,6 +1653,7 @@ class WorkerRunController:
             expected="PAUSING",
             actor=requested_by,
             reason=reason,
+            **claim_fence,
         )
         if paused is None:
             raise WorkerRunError("RUN_STATE_CONFLICT", "worker run state changed while pause was acknowledged")
@@ -1048,6 +1669,7 @@ class WorkerRunController:
                 f"worker run is {row.get('state')}, not PAUSED",
                 details={"state": row.get("state")},
             )
+        claim_fence = self._claim_fence(row)
         resuming = await self.transition(
             run_id,
             "RESUMING",
@@ -1055,6 +1677,7 @@ class WorkerRunController:
             actor=requested_by,
             reason="operator requested resume",
             transition_metadata={"checkpoint_id": str(checkpoint_id) if checkpoint_id else None},
+            **claim_fence,
         )
         if resuming is None:
             raise WorkerRunError("RUN_STATE_CONFLICT", "worker run state changed before it could be resumed")
@@ -1068,6 +1691,7 @@ class WorkerRunController:
                 error={"code": "RESUME_FAILED", "message": str(exc)},
                 actor=requested_by,
                 reason="resume command failed",
+                **claim_fence,
             )
             raise WorkerRunError("RESUME_FAILED", str(exc)) from exc
         resumed = await self.transition(
@@ -1077,6 +1701,7 @@ class WorkerRunController:
             actor=requested_by,
             reason="runtime acknowledged resume",
             transition_metadata={"checkpoint_id": str(checkpoint_id) if checkpoint_id else None},
+            **claim_fence,
         )
         if resumed is None:
             raise WorkerRunError("RUN_STATE_CONFLICT", "worker run state changed while resume was acknowledged")

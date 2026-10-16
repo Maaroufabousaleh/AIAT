@@ -4,7 +4,8 @@ import { mkdirSync, appendFileSync } from 'fs';
 
 const VIDEO_DIR = '/home/maaro/mas-test-videos';
 const BASE_URL = process.env.PLAYWRIGHT_BASE_URL || 'http://host.docker.internal:4000';
-const JWT_SECRET = process.env.JWT_SECRET || 'bX0wVUKd4M214L8laNitaXJWdBgoCavZ9o0Xr/MhLnw=';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) throw new Error('JWT_SECRET must be set explicitly to run this helper');
 
 mkdirSync(VIDEO_DIR, { recursive: true });
 
@@ -221,7 +222,7 @@ const testSuites = [
             await page.waitForTimeout(1000);
             const nameInput = page.getByPlaceholder(/my-project/i);
             if (await nameInput.isVisible()) {
-              await nameInput.fill('Test Project ' + Date.now());
+              await nameInput.fill('aiat_e2e_project_comprehensive_' + Date.now());
               const createBtn = page.getByRole('button', { name: /create/i });
               if (await createBtn.isVisible()) {
                 await createBtn.click();

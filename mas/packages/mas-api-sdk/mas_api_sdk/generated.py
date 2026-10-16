@@ -170,6 +170,11 @@ class CompanyCreateRequest(TypedDict):
     name: Required[str]
     slug: Required[str]
 
+class CompanyManifestApplyRequest(TypedDict):
+    expected_manifest_version: Required[int]
+    manifest: Required[dict[str, Any]]
+    source: NotRequired[str]
+
 class CompanyManifestRequest(TypedDict):
     manifest: Required[dict[str, Any]]
     source: NotRequired[str]
@@ -244,8 +249,10 @@ class CreateProjectRequest(TypedDict):
     description: NotRequired[str | Any]
     flow_id: NotRequired[str | Any]
     human_requester: NotRequired[str | Any]
+    idempotency_key: NotRequired[str | Any]
     initial_context: NotRequired[list[ProjectContextSeedRequest]]
     name: Required[str]
+    start_immediately: NotRequired[bool]
     workspace: NotRequired[ProjectWorkspaceRequest | Any]
 
 class CredentialApprovalDecisionRequest(TypedDict):
@@ -265,8 +272,9 @@ class DashboardSectionACLRequest(TypedDict):
 class DecisionRequest(TypedDict):
     comments: NotRequired[str | Any]
     decided_by: NotRequired[str]
-    decision: Required[str]
+    decision: Required[Literal['APPROVED', 'REJECTED', 'EDITS', 'CANCELLED']]
     edits: NotRequired[dict[str, Any] | Any]
+    gate_id: NotRequired[str | Any]
 
 class DoclingCertificationRequest(TypedDict):
     artifact_path: NotRequired[str | Any]
@@ -294,9 +302,26 @@ class EvidencePolicyRequest(TypedDict):
     requirements: NotRequired[dict[str, Any]]
     scope: NotRequired[Literal['project', 'milestone']]
 
+class ExecutiveActionCatalogueResponse(TypedDict):
+    ceo_privileged_actions: Required[list[ExecutivePrivilegedActionOption]]
+    cfo_model_override_fields: Required[list[ExecutiveActionFormField]]
+    cto_worker_run_fields: Required[list[ExecutiveActionFormField]]
+    schema_version: Required[Literal['aiat.executive-actions.catalogue.v1']]
+
+class ExecutiveActionFormField(TypedDict):
+    control: Required[Literal['select', 'text', 'textarea', 'number']]
+    help_text: NotRequired[str | Any]
+    label: Required[str]
+    max_length: NotRequired[int | Any]
+    maximum: NotRequired[float | Any]
+    minimum: NotRequired[float | Any]
+    name: Required[str]
+    option_source: NotRequired[Literal['projects', 'workers', 'model_profiles'] | Any]
+    required: Required[bool]
+
 class ExecutiveCEOPrivilegedActionRequest(TypedDict):
     action: Required[str]
-    payload: NotRequired[dict[str, Any]]
+    payload: NotRequired[dict[str, str]]
     requested_by: NotRequired[str]
 
 class ExecutiveCFOModelOverrideRequest(TypedDict):
@@ -304,11 +329,26 @@ class ExecutiveCFOModelOverrideRequest(TypedDict):
     reason: Required[str]
     requested_by: NotRequired[str]
     requested_profile_id: Required[str]
-    scope: NotRequired[dict[str, Any]]
+
+class ExecutiveCTOWorkerRunDispatchRequest(TypedDict):
+    budget_usd: NotRequired[float | Any]
+    idempotency_key: Required[str]
+    project_id: NotRequired[str | Any]
+    prompt: Required[str]
+    task_type: Required[str]
+    timeout_seconds: NotRequired[int | Any]
+    worker_id: Required[str]
 
 class ExecutiveCTOWorkerRunRequest(TypedDict):
-    dispatch: Required[WorkerRunDispatchRequest]
+    dispatch: Required[ExecutiveCTOWorkerRunDispatchRequest]
     requested_by: NotRequired[str]
+
+class ExecutivePrivilegedActionOption(TypedDict):
+    action: Required[str]
+    fields: Required[list[ExecutiveActionFormField]]
+    label: Required[str]
+    requires_approval: Required[bool]
+    risk: Required[str]
 
 class FlowDiffRequest(TypedDict):
     from_flow_id: Required[str]
@@ -484,7 +524,10 @@ class ModelProfileCreateRequest(TypedDict):
     profile_id: Required[str]
     purpose: Required[str]
     required_capabilities: NotRequired[list[str]]
-    status: NotRequired[str]
+    status: NotRequired[Literal['draft']]
+
+class ModelProfileVersionActivationRequest(TypedDict):
+    reason: Required[str]
 
 class ModelProfileVersionRequest(TypedDict):
     capabilities: NotRequired[list[str]]
@@ -506,7 +549,7 @@ class ModelProfileVersionRequest(TypedDict):
     provider_settings: NotRequired[dict[str, Any]]
     reasoning: NotRequired[bool]
     regions: NotRequired[list[str]]
-    status: NotRequired[str]
+    status: NotRequired[Literal['draft']]
     streaming: NotRequired[bool]
     structured_output: NotRequired[bool]
     tool_calling: NotRequired[bool]
@@ -537,6 +580,7 @@ class OperatorToCeoRequest(TypedDict):
     context_confirmation_token: NotRequired[str | Any]
     context_worker_id: NotRequired[str | Any]
     message: Required[str]
+    project_start_mode: NotRequired[Literal['start_immediately', 'prepare_only']]
     request_id: NotRequired[str | Any]
 
 class PMApplyRequest(TypedDict):
@@ -681,6 +725,20 @@ class ProjectContextSeedRequest(TypedDict):
     tags: NotRequired[list[str]]
     url: NotRequired[str | Any]
 
+class ProjectDecisionInboxItem(TypedDict):
+    company_id: Required[str]
+    created_at: Required[str]
+    gate_type: Required[str]
+    id: Required[str]
+    project_id: Required[str]
+    project_name: Required[str]
+    project_state: Required[str]
+    status: Required[str]
+
+class ProjectDecisionInboxPage(TypedDict):
+    items: Required[list[ProjectDecisionInboxItem]]
+    next_cursor: NotRequired[str | Any]
+
 class ProjectEvidencePolicyRequest(TypedDict):
     milestone: NotRequired[str | Any]
     policy_id: Required[str]
@@ -718,6 +776,7 @@ class RegisterWorkerRequest(TypedDict):
     adapter_type: Required[str]
     capability_ids: NotRequired[list[str]]
     capability_names: NotRequired[list[str]]
+    execution: NotRequired[WorkloadExecutionPolicy | Any]
     identity_mailbox_class: NotRequired[str]
     model_mode: NotRequired[str]
     model_profile_id: NotRequired[str | Any]
@@ -995,6 +1054,7 @@ class UpdateWorkerRequest(TypedDict):
     adapter_module: NotRequired[str | Any]
     adapter_type: NotRequired[str | Any]
     capability_ids: NotRequired[list[str] | Any]
+    execution: NotRequired[WorkloadExecutionPolicy | Any]
     isolation_mode: NotRequired[str | Any]
     model_mode: NotRequired[str | Any]
     model_profile_id: NotRequired[str | Any]
@@ -1016,6 +1076,10 @@ class ValidationError(TypedDict):
 class WorkerEvaluateRequest(TypedDict):
     checks: NotRequired[list[str] | Any]
     source_repo: NotRequired[str | Any]
+
+class WorkerRunCancelRequest(TypedDict):
+    force: NotRequired[bool]
+    reason: NotRequired[str]
 
 class WorkerRunDispatchRequest(TypedDict):
     adapter_required_model_capabilities: NotRequired[list[str]]
@@ -1053,11 +1117,13 @@ class WorkerRunDispatchRequest(TypedDict):
 
 class WorkerRunPauseRequest(TypedDict):
     reason: NotRequired[str]
-    requested_by: NotRequired[str]
 
 class WorkerRunResumeRequest(TypedDict):
     checkpoint_id: NotRequired[str | Any]
-    requested_by: NotRequired[str]
+
+class WorkerRunRetryRequest(TypedDict):
+    idempotency_key: Required[str]
+    reason: Required[str]
 
 class WorkerStatusTransition(TypedDict):
     action: Required[str]
@@ -1067,6 +1133,17 @@ class WorkerStatusTransition(TypedDict):
 class WorkerUpgradeRequest(TypedDict):
     run_compat_tests: NotRequired[bool]
     source_revision: NotRequired[str | Any]
+
+class WorkloadExecutionPolicy(TypedDict):
+    allowed_runtimes: NotRequired[list[Literal['runc', 'wasmtime', 'runsc', 'kata', 'remote_vm']]]
+    filesystem: NotRequired[dict[str, str]]
+    formats: NotRequired[list[Literal['oci', 'linux', 'wasm']]]
+    gvisor_compatible: NotRequired[bool]
+    minimum_isolation: NotRequired[Literal['trusted', 'sandboxed', 'vm_isolated', 'remote_vm'] | Any]
+    network: NotRequired[Literal['none', 'egress-allowlist', 'egress-deny-all', 'unrestricted']]
+    preferred_runtimes: NotRequired[list[Literal['runc', 'wasmtime', 'runsc', 'kata', 'remote_vm']]]
+    remote_vm_allowed: NotRequired[bool]
+    trust: NotRequired[Literal['trusted', 'untrusted', 'hostile'] | Any]
 
 @dataclass(frozen=True, slots=True)
 class ApiOperation:
@@ -1106,6 +1183,15 @@ OPERATIONS: dict[str, ApiOperation] = {
         query_params=(),
         request_body_type='AgentProfileObservationRequest',
         response_types=('HTTPValidationError',),
+    ),
+    'list_project_decision_inbox_approvals_project_decisions_get': ApiOperation(
+        operation_id='list_project_decision_inbox_approvals_project_decisions_get',
+        method='GET',
+        path='/approvals/project-decisions',
+        path_params=(),
+        query_params=('cursor', 'limit'),
+        request_body_type=None,
+        response_types=('ProjectDecisionInboxPage', 'HTTPValidationError'),
     ),
     'get_artifact_evidence_artifacts__artifact_id__get': ApiOperation(
         operation_id='get_artifact_evidence_artifacts__artifact_id__get',
@@ -1341,6 +1427,15 @@ OPERATIONS: dict[str, ApiOperation] = {
         request_body_type='RollbackRequest',
         response_types=('HTTPValidationError',),
     ),
+    'scan_first_party_worker_security_source_capabilities_workers__worker_id__steward_security_scan_post': ApiOperation(
+        operation_id='scan_first_party_worker_security_source_capabilities_workers__worker_id__steward_security_scan_post',
+        method='POST',
+        path='/capabilities/workers/{worker_id}/steward/security-scan',
+        path_params=('worker_id',),
+        query_params=(),
+        request_body_type=None,
+        response_types=('HTTPValidationError',),
+    ),
     'upgrade_worker_capabilities_workers__worker_id__upgrade_post': ApiOperation(
         operation_id='upgrade_worker_capabilities_workers__worker_id__upgrade_post',
         method='POST',
@@ -1491,7 +1586,7 @@ OPERATIONS: dict[str, ApiOperation] = {
         path='/companies/{company_id}/manifest/apply',
         path_params=('company_id',),
         query_params=(),
-        request_body_type='CompanyManifestRequest',
+        request_body_type='CompanyManifestApplyRequest',
         response_types=('HTTPValidationError',),
     ),
     'company_manifest_history_companies__company_id__manifest_history_get': ApiOperation(
@@ -1718,6 +1813,15 @@ OPERATIONS: dict[str, ApiOperation] = {
         query_params=(),
         request_body_type=None,
         response_types=(),
+    ),
+    'executive_action_catalogue_executive_actions_catalogue_get': ApiOperation(
+        operation_id='executive_action_catalogue_executive_actions_catalogue_get',
+        method='GET',
+        path='/executive/actions/catalogue',
+        path_params=(),
+        query_params=(),
+        request_body_type=None,
+        response_types=('ExecutiveActionCatalogueResponse',),
     ),
     'executive_ceo_privileged_action_executive_actions_ceo_privileged_actions_post': ApiOperation(
         operation_id='executive_ceo_privileged_action_executive_actions_ceo_privileged_actions_post',
@@ -2286,6 +2390,15 @@ OPERATIONS: dict[str, ApiOperation] = {
         request_body_type='GitHubMetadataRequest',
         response_types=('HTTPValidationError',),
     ),
+    'list_inbound_canary_plans_integrations_inbound_canaries_get': ApiOperation(
+        operation_id='list_inbound_canary_plans_integrations_inbound_canaries_get',
+        method='GET',
+        path='/integrations/inbound-canaries',
+        path_params=(),
+        query_params=('connection_id', 'limit'),
+        request_body_type=None,
+        response_types=('HTTPValidationError',),
+    ),
     'get_inbound_canary_plan_integrations_inbound_canaries__plan_id__get': ApiOperation(
         operation_id='get_inbound_canary_plan_integrations_inbound_canaries__plan_id__get',
         method='GET',
@@ -2556,6 +2669,15 @@ OPERATIONS: dict[str, ApiOperation] = {
         request_body_type='ModelProfileVersionRequest',
         response_types=('HTTPValidationError',),
     ),
+    'activate_model_profile_version_model_profiles__profile_id__versions__version_id__activate_post': ApiOperation(
+        operation_id='activate_model_profile_version_model_profiles__profile_id__versions__version_id__activate_post',
+        method='POST',
+        path='/model-profiles/{profile_id}/versions/{version_id}/activate',
+        path_params=('profile_id', 'version_id'),
+        query_params=(),
+        request_body_type='ModelProfileVersionActivationRequest',
+        response_types=('HTTPValidationError',),
+    ),
     'get_capacity_forecast_observability_capacity_forecast_get': ApiOperation(
         operation_id='get_capacity_forecast_observability_capacity_forecast_get',
         method='GET',
@@ -2686,6 +2808,15 @@ OPERATIONS: dict[str, ApiOperation] = {
         operation_id='delete_project_artifact_projects__project_id__artifacts__artifact_id__delete',
         method='DELETE',
         path='/projects/{project_id}/artifacts/{artifact_id}',
+        path_params=('artifact_id', 'project_id'),
+        query_params=(),
+        request_body_type=None,
+        response_types=('HTTPValidationError',),
+    ),
+    'download_project_artifact_projects__project_id__artifacts__artifact_id__download_get': ApiOperation(
+        operation_id='download_project_artifact_projects__project_id__artifacts__artifact_id__download_get',
+        method='GET',
+        path='/projects/{project_id}/artifacts/{artifact_id}/download',
         path_params=('artifact_id', 'project_id'),
         query_params=(),
         request_body_type=None,
@@ -3159,6 +3290,15 @@ OPERATIONS: dict[str, ApiOperation] = {
         request_body_type='CanonicalSprintUpdateRequest',
         response_types=('HTTPValidationError',),
     ),
+    'start_project_projects__project_id__start_post': ApiOperation(
+        operation_id='start_project_projects__project_id__start_post',
+        method='POST',
+        path='/projects/{project_id}/start',
+        path_params=('project_id',),
+        query_params=(),
+        request_body_type=None,
+        response_types=('HTTPValidationError',),
+    ),
     'get_state_history_projects__project_id__state_history_get': ApiOperation(
         operation_id='get_state_history_projects__project_id__state_history_get',
         method='GET',
@@ -3402,6 +3542,15 @@ OPERATIONS: dict[str, ApiOperation] = {
         request_body_type=None,
         response_types=(),
     ),
+    'local_host_queue_health_workers_host_local_health_get': ApiOperation(
+        operation_id='local_host_queue_health_workers_host_local_health_get',
+        method='GET',
+        path='/workers/host/local/health',
+        path_params=(),
+        query_params=(),
+        request_body_type=None,
+        response_types=(),
+    ),
     'list_worker_runs_api_workers_runs_get': ApiOperation(
         operation_id='list_worker_runs_api_workers_runs_get',
         method='GET',
@@ -3453,7 +3602,7 @@ OPERATIONS: dict[str, ApiOperation] = {
         path='/workers/runs/{run_id}/cancel',
         path_params=('run_id',),
         query_params=(),
-        request_body_type=None,
+        request_body_type='WorkerRunCancelRequest',
         response_types=('HTTPValidationError',),
     ),
     'get_worker_run_checkpoints_workers_runs__run_id__checkpoints_get': ApiOperation(
@@ -3483,6 +3632,15 @@ OPERATIONS: dict[str, ApiOperation] = {
         request_body_type=None,
         response_types=('HTTPValidationError',),
     ),
+    'get_worker_run_host_binding_api_workers_runs__run_id__host_binding_get': ApiOperation(
+        operation_id='get_worker_run_host_binding_api_workers_runs__run_id__host_binding_get',
+        method='GET',
+        path='/workers/runs/{run_id}/host-binding',
+        path_params=('run_id',),
+        query_params=(),
+        request_body_type=None,
+        response_types=('HTTPValidationError',),
+    ),
     'pause_worker_run_workers_runs__run_id__pause_post': ApiOperation(
         operation_id='pause_worker_run_workers_runs__run_id__pause_post',
         method='POST',
@@ -3499,6 +3657,24 @@ OPERATIONS: dict[str, ApiOperation] = {
         path_params=('run_id',),
         query_params=(),
         request_body_type='WorkerRunResumeRequest',
+        response_types=('HTTPValidationError',),
+    ),
+    'retry_worker_run_api_workers_runs__run_id__retry_post': ApiOperation(
+        operation_id='retry_worker_run_api_workers_runs__run_id__retry_post',
+        method='POST',
+        path='/workers/runs/{run_id}/retry',
+        path_params=('run_id',),
+        query_params=(),
+        request_body_type='WorkerRunRetryRequest',
+        response_types=('HTTPValidationError',),
+    ),
+    'get_worker_run_tool_effects_api_workers_runs__run_id__tool_effects_get': ApiOperation(
+        operation_id='get_worker_run_tool_effects_api_workers_runs__run_id__tool_effects_get',
+        method='GET',
+        path='/workers/runs/{run_id}/tool-effects',
+        path_params=('run_id',),
+        query_params=('limit',),
+        request_body_type=None,
         response_types=('HTTPValidationError',),
     ),
     'get_worker_run_transitions_workers_runs__run_id__transitions_get': ApiOperation(
@@ -3521,8 +3697,8 @@ OPERATIONS: dict[str, ApiOperation] = {
     ),
 }
 
-MODEL_COUNT = 137
-OPERATION_COUNT = 271
+MODEL_COUNT = 148
+OPERATION_COUNT = 282
 
 __all__ = [
     "ApiOperation",
@@ -3550,6 +3726,7 @@ __all__ = [
     'ChatMessage',
     'ChunkingStrategy',
     'CompanyCreateRequest',
+    'CompanyManifestApplyRequest',
     'CompanyManifestRequest',
     'CompanyManifestRollbackRequest',
     'CreateArtifactRequest',
@@ -3568,9 +3745,13 @@ __all__ = [
     'DocumentStatusRequest',
     'DocumentationSnapshotRequest',
     'EvidencePolicyRequest',
+    'ExecutiveActionCatalogueResponse',
+    'ExecutiveActionFormField',
     'ExecutiveCEOPrivilegedActionRequest',
     'ExecutiveCFOModelOverrideRequest',
+    'ExecutiveCTOWorkerRunDispatchRequest',
     'ExecutiveCTOWorkerRunRequest',
+    'ExecutivePrivilegedActionOption',
     'FlowDiffRequest',
     'FlowDryRunRequest',
     'FlowFromTemplateRequest',
@@ -3597,6 +3778,7 @@ __all__ = [
     'ModelOverrideCreateRequest',
     'ModelOverrideDecisionRequest',
     'ModelProfileCreateRequest',
+    'ModelProfileVersionActivationRequest',
     'ModelProfileVersionRequest',
     'ModelResolutionPreviewRequest',
     'N8nEdgePolicyRequest',
@@ -3625,6 +3807,8 @@ __all__ = [
     'PrivilegedActionRequest',
     'PrivilegedApprovalRequest',
     'ProjectContextSeedRequest',
+    'ProjectDecisionInboxItem',
+    'ProjectDecisionInboxPage',
     'ProjectEvidencePolicyRequest',
     'ProjectProvisioningPlan',
     'ProjectRepositoryActionRequest',
@@ -3661,9 +3845,12 @@ __all__ = [
     'UpdateWorkerRequest',
     'ValidationError',
     'WorkerEvaluateRequest',
+    'WorkerRunCancelRequest',
     'WorkerRunDispatchRequest',
     'WorkerRunPauseRequest',
     'WorkerRunResumeRequest',
+    'WorkerRunRetryRequest',
     'WorkerStatusTransition',
     'WorkerUpgradeRequest',
+    'WorkloadExecutionPolicy',
 ]

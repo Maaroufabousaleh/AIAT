@@ -2,10 +2,12 @@
 
 Fixture mode exercises the same evaluator with a complete bounded control
 plane snapshot.  ``--live`` requires an explicit worker and project UUID and
-reads the worker, project, company, assignment, budget, model-profile, and
-health surfaces from the orchestrator.  It never selects a row automatically,
-activates a worker, provisions identity, reserves a budget, dispatches a run,
-or returns task/provider payloads.
+reads the worker, project, company, assignment, budget, and health surfaces
+from the orchestrator. Model profiles are read for model-backed workers; the
+opt-in ``--evaluate-non-model-worker`` path skips them only when the selected
+worker explicitly declares ``model_mode=none``. It never selects a row
+automatically, activates a worker, provisions identity, reserves a budget,
+dispatches a run, or returns task/provider payloads.
 
 Licence and resource-restriction metadata remain informational and are not a
 readiness or execution gate.
@@ -73,6 +75,14 @@ def _parser() -> argparse.ArgumentParser:
         "--require-sandbox",
         action="store_true",
         help="require a hardened sandboxed (gVisor) or vm_isolated (Kata) worker profile",
+    )
+    parser.add_argument(
+        "--evaluate-non-model-worker",
+        action="store_true",
+        help=(
+            "evaluate a selected worker whose control-plane model_mode is 'none'; "
+            "this is read-only and does not change dispatch policy"
+        ),
     )
     parser.add_argument("--timeout", type=float, default=15.0, help="HTTP read timeout in seconds")
     return parser
@@ -262,11 +272,22 @@ def _live(args: argparse.Namespace) -> dict[str, Any]:
                 fetch_errors["assignments"] = "project company ID is missing"
                 fetch_errors["budgets"] = "project company ID is missing"
 
-            model_profiles, profile_error = _get_json(
-                client, base=base, path="/model-profiles", headers=headers
+            # Non-model workers have no model profile to resolve. Only permit
+            # this path when the caller opts in AND the selected persisted
+            # worker explicitly declares model_mode=none; the flag cannot
+            # suppress model governance for a model-backed worker.
+            require_model_backed = not (
+                args.evaluate_non_model_worker
+                and isinstance(worker, Mapping)
+                and str(worker.get("model_mode") or "").strip().lower() == "none"
             )
-            if profile_error:
-                fetch_errors["model_profiles"] = f"model-profile read returned {profile_error}"
+            model_profiles: Any = []
+            if require_model_backed:
+                model_profiles, profile_error = _get_json(
+                    client, base=base, path="/model-profiles", headers=headers
+                )
+                if profile_error:
+                    fetch_errors["model_profiles"] = f"model-profile read returned {profile_error}"
 
             health, health_error = _get_json(
                 client,
@@ -303,6 +324,7 @@ def _live(args: argparse.Namespace) -> dict[str, Any]:
         project_id=project_id or "",
         requested_model_profile_id=str(args.model_profile_id or "").strip() or None,
         required_budget_usd=args.budget_usd,
+        require_model_backed=require_model_backed,
         require_sandbox=bool(args.require_sandbox),
         health=health,
         fetch_errors=fetch_errors,
@@ -315,7 +337,7 @@ def _live(args: argparse.Namespace) -> dict[str, Any]:
         "licence_metadata_is_gate": False,
         "no_mutation": True,
         "readiness": readiness,
-        "scope": "read-only selected model-backed worker-run readiness; no activation, identity provisioning, budget reservation, dispatch, or payload access",
+        "scope": readiness["scope"],
     }
 
 

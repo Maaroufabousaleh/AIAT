@@ -50,7 +50,7 @@ test.describe("Operational UI smoke flows", () => {
     page,
   }) => {
     const stamp = Date.now();
-    const workerId = `e2e_worker_${stamp}`;
+    const workerId = `aiat_e2e_worker_organization_${stamp}`;
 
     await page.goto("/workers");
     await expect(
@@ -76,7 +76,7 @@ test.describe("Operational UI smoke flows", () => {
       .nth(1)
       .click();
 
-    await page.getByRole("textbox", { name: "Search workers" }).fill(workerId);
+    await page.getByRole("searchbox", { name: "Search workers" }).fill(workerId);
     const row = page.getByRole("row", { name: new RegExp(workerId) });
     await expect(row).toBeVisible();
     await row.click();
@@ -93,7 +93,7 @@ test.describe("Operational UI smoke flows", () => {
   }) => {
     await page.goto("/tools");
     await expect(page.getByRole("heading", { name: "Tools" })).toBeVisible();
-    await page.getByRole("textbox", { name: "Search tools" }).fill("browser");
+    await page.getByRole("searchbox", { name: "Search tools" }).fill("browser");
     await expect(page.getByText(/browser/i).first()).toBeVisible();
     const firstToolRow = page.locator("tbody tr").first();
     await firstToolRow.click();
@@ -590,7 +590,7 @@ test.describe("Operational UI smoke flows", () => {
   test("project workspace exposes next actions, audit timeline, artifacts, and usage", async ({
     page,
   }) => {
-    const name = `gamma-workspace-${Date.now()}`;
+    const name = `aiat_e2e_project_gamma_workspace_${Date.now()}`;
 
     await page.goto("/projects");
     await page.getByRole("button", { name: /new project/i }).click();
@@ -661,7 +661,7 @@ test.describe("Operational UI smoke flows", () => {
     await expect(
       page.getByText("Showing last known project state"),
     ).toBeVisible();
-    await expect(page.getByText(/latest project refresh failed/i)).toBeVisible();
+    await expect(page.getByText(/project fixture unavailable/i)).toBeVisible();
     await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
     await expect(page.getByRole("heading", { name })).toBeVisible();
   });

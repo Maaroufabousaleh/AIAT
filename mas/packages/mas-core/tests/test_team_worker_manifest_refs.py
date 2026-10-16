@@ -13,17 +13,19 @@ from mas_core.worker_registry.team_manifest_refs import (
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 MAS_ROOT = REPO_ROOT
+WORKERS_DIR = MAS_ROOT / "workers"
 
 
 def test_checked_in_team_agents_have_explicit_manifest_references() -> None:
     report = reconcile_team_worker_manifest_refs(
         teams_dir=MAS_ROOT / "teams",
-        workers_dir=MAS_ROOT / "workers",
+        workers_dir=WORKERS_DIR,
     )
     assert report["status"] == "pass", report["errors"]
     assert report["team_count"] == 11
     assert report["agent_count"] == 39
-    assert report["worker_manifest_count"] == 39
+    assert report["worker_manifest_count"] == len(list(WORKERS_DIR.glob("*.yaml")))
+    assert report["agent_count"] < report["worker_manifest_count"]
     assert report["licence_metadata_is_gate"] is False
 
 

@@ -1,5 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
-import { orchestratorFetch } from "@/lib/orchestrator";
+import { orchestratorFetch, OrchestratorError } from "@/lib/orchestrator";
+
+const PUBLIC_ERROR_MESSAGES: Record<number, string> = {
+  400: "Worker request is invalid.",
+  401: "Worker service authentication failed.",
+  403: "You are not authorized to change this worker.",
+  404: "Worker not found.",
+  409: "Worker configuration conflicts with the current worker state. Refresh and try again.",
+  422: "Worker configuration was rejected by validation. Review the fields and try again.",
+  429: "Worker update was rate limited. Try again later.",
+};
+
+function errorResponse(error: unknown) {
+  const upstreamStatus =
+    error instanceof OrchestratorError ? error.status : undefined;
+  const status =
+    Number.isInteger(upstreamStatus) && upstreamStatus! >= 400 && upstreamStatus! < 500
+      ? upstreamStatus!
+      : 502;
+  const message = PUBLIC_ERROR_MESSAGES[status] ?? "Worker request was rejected.";
+  return NextResponse.json({ error: message }, { status });
+}
 
 export async function GET(
   _req: NextRequest,
@@ -12,8 +33,7 @@ export async function GET(
     );
     return NextResponse.json(worker);
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return errorResponse(e);
   }
 }
 
@@ -33,8 +53,7 @@ export async function PUT(
     );
     return NextResponse.json(worker);
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return errorResponse(e);
   }
 }
 
@@ -51,7 +70,6 @@ export async function DELETE(
     });
     return NextResponse.json({ success: true });
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return errorResponse(e);
   }
 }

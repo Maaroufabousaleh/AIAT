@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from uuid import UUID  # noqa: TC003 -- Pydantic resolves this model annotation at runtime.
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -54,7 +55,9 @@ class ToolRunRequest(BaseModel):
         serialization_alias="sender_team",
     )
     project_id: str | None = None
-    worker_run_id: str | None = None
+    worker_run_id: UUID | None = None
+    claim_owner: str | None = Field(default=None, max_length=256)
+    claim_attempt_count: int = Field(default=0, ge=0)
     permission_scope: list[str] = Field(default_factory=list)
     budget_snapshot: dict[str, Any] | None = None
     audit_context: dict[str, Any] = Field(default_factory=dict)
@@ -119,6 +122,38 @@ async def _execute_via_registry(request: Request, body: ToolRequest) -> ToolResp
     return response
 
 
+async def _validate_worker_claim_for_dispatch(
+    request: Request,
+    body: ToolRunRequest,
+    effective_body: ToolRequest,
+) -> ToolResponse | None:
+    """Fail closed when a WorkerRun's current claim does not match the caller."""
+    if effective_body.worker_run_id is None:
+        return None
+    repository = getattr(request.app.state, "worker_tool_effects", None)
+    if repository is None:
+        usage_storage = getattr(request.app.state, "usage_storage", None)
+        repository = getattr(usage_storage, "worker_tool_effects", None)
+    validator = getattr(repository, "validate_worker_run_claim", None)
+    if not callable(validator):
+        raise HTTPException(503, "Durable WorkerRun claim validation is unavailable.")
+    current = await validator(
+        run_id=effective_body.worker_run_id,
+        claim_owner=body.claim_owner,
+        attempt_count=body.claim_attempt_count,
+    )
+    if current:
+        return None
+    return ToolResponse(
+        tool_name=effective_body.tool_name,
+        idempotency_key=effective_body.idempotency_key,
+        worker_run_id=effective_body.worker_run_id,
+        success=False,
+        error="Worker Run claim is no longer current; tool dispatch was denied.",
+        error_code="WORKER_RUN_CLAIM_LOST",
+    )
+
+
 @router.post("/tools/execute", response_model=ToolResponse)
 async def execute_tool(
     request: Request,
@@ -130,6 +165,11 @@ async def execute_tool(
     Pipeline: auth → registry.execute (policy → breaker → rate limit → cache → run).
     """
     _assert_signed_body_caller(request, body.caller_id, request.app.state.settings)
+    if body.worker_run_id is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="WorkerRun tool requests must use the claim-fenced path-driven endpoint.",
+        )
     if body.trace_id is None and current_trace_id() is not None:
         body = body.model_copy(update={"trace_id": current_trace_id()})
     return await _execute_via_registry(request, body)
@@ -162,6 +202,9 @@ async def run_tool(
             "trace_id": body.trace_id or current_trace_id(),
         }
     )
+    denied = await _validate_worker_claim_for_dispatch(request, body, effective_body)
+    if denied is not None:
+        return denied
     return await _execute_via_registry(request, effective_body)
 
 

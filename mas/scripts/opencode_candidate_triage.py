@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import posixpath
 import subprocess
 from collections import Counter
 from pathlib import Path
@@ -119,7 +120,9 @@ def _relative_path(value: Any) -> str:
         return path.rsplit(marker, 1)[1]
     if path.startswith("scan-source/"):
         return path.removeprefix("scan-source/")
-    return path.lstrip("./")
+    while path.startswith("./"):
+        path = path[2:]
+    return path.lstrip("/")
 
 
 def _error_type(value: Any) -> str:
@@ -251,6 +254,30 @@ def _semgrep_error_rows(value: dict[str, Any]) -> tuple[list[dict[str, Any]], Co
     return rows, counts
 
 
+def _semgrep_error_disposition_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
+    """Separate scanner execution errors from documented parser limitations."""
+
+    execution_errors = sum(
+        1 for row in rows if row.get("classification") == SCANNER_EXECUTION_FAILURE
+    )
+    explained_coverage = sum(
+        1
+        for row in rows
+        if row.get("classification")
+        in {
+            "embedded GitHub-expression/YAML parsing limitation",
+            "MDX/generated/documentation parsing limitation",
+            "source syntax genuinely unsupported",
+        }
+    )
+    return {
+        "total": len(rows),
+        "execution_errors": execution_errors,
+        "explained_coverage_gaps": explained_coverage,
+        "unexplained": len(rows) - execution_errors - explained_coverage,
+    }
+
+
 def _semgrep_result_summary(value: dict[str, Any]) -> dict[str, Any]:
     results = value.get("results")
     if not isinstance(results, list):
@@ -314,6 +341,14 @@ def _trufflehog_path(value: dict[str, Any]) -> str:
     return _relative_path(filesystem.get("file") if isinstance(filesystem, dict) else "unknown")
 
 
+def _trufflehog_line(value: dict[str, Any]) -> int | None:
+    metadata = value.get("SourceMetadata")
+    data = metadata.get("Data") if isinstance(metadata, dict) else None
+    filesystem = data.get("Filesystem") if isinstance(data, dict) else None
+    line = filesystem.get("line") if isinstance(filesystem, dict) else None
+    return int(line) if isinstance(line, int) and not isinstance(line, bool) and line > 0 else None
+
+
 def _trufflehog_classification(path: str, detector: str) -> str:
     lower = path.lower()
     if lower.startswith("packages/web/src/content/docs/"):
@@ -333,13 +368,18 @@ def _trufflehog_classification(path: str, detector: str) -> str:
     return "UNVERIFIED_CREDENTIAL_LIKE_VALUE"
 
 
-def _trufflehog_rows(path: Path) -> tuple[list[dict[str, Any]], Counter[str]]:
+def _trufflehog_rows(
+    path: Path,
+) -> tuple[list[dict[str, Any]], Counter[str], int, Counter[str]]:
     rows: list[dict[str, Any]] = []
     counts: Counter[str] = Counter()
+    raw_counts: Counter[str] = Counter()
+    raw_record_count = 0
+    row_by_identity: dict[tuple[Any, ...], dict[str, Any]] = {}
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeDecodeError) as exc:
-        return [
+        failure = [
             {
                 "index": 0,
                 "detector": "unknown",
@@ -355,10 +395,12 @@ def _trufflehog_rows(path: Path) -> tuple[list[dict[str, Any]], Counter[str]]:
                 "raw_secret_material_retained": False,
                 "error_type": type(exc).__name__,
             }
-        ], Counter({SCANNER_EXECUTION_FAILURE: 1})
+        ]
+        return failure, Counter({SCANNER_EXECUTION_FAILURE: 1}), 1, Counter({SCANNER_EXECUTION_FAILURE: 1})
     for index, line in enumerate(lines, 1):
         if not line.strip():
             continue
+        raw_record_count += 1
         try:
             value = json.loads(line)
         except json.JSONDecodeError:
@@ -366,6 +408,7 @@ def _trufflehog_rows(path: Path) -> tuple[list[dict[str, Any]], Counter[str]]:
             # contain a secret-shaped value, so retain only the line number
             # and the parser error class as scanner execution evidence.
             counts[SCANNER_EXECUTION_FAILURE] += 1
+            raw_counts[SCANNER_EXECUTION_FAILURE] += 1
             rows.append(
                 {
                     "index": index,
@@ -386,6 +429,7 @@ def _trufflehog_rows(path: Path) -> tuple[list[dict[str, Any]], Counter[str]]:
             continue
         if not isinstance(value, dict):
             counts[SCANNER_EXECUTION_FAILURE] += 1
+            raw_counts[SCANNER_EXECUTION_FAILURE] += 1
             rows.append(
                 {
                     "index": index,
@@ -408,24 +452,44 @@ def _trufflehog_rows(path: Path) -> tuple[list[dict[str, Any]], Counter[str]]:
         detector = str(value.get("DetectorName") or value.get("DetectorType") or "unknown")
         classification = _trufflehog_classification(relative, detector)
         verified = bool(value.get("Verified"))
-        counts[classification] += 1
-        rows.append(
-            {
-                "index": index,
-                "detector": detector,
-                "path": relative,
-                "verified": verified,
-                "verification_error_present": bool(value.get("VerificationError") or value.get("verification_error")),
-                "area": _path_area(relative),
-                "classification": "VERIFIED_SECRET" if verified else classification,
-                "image_disposition": _image_disposition(relative),
-                "appears_synthetic_or_example": classification in {"DOCUMENTATION_EXAMPLE", "TEST_FIXTURE", "FALSE_POSITIVE"},
-                "remediation_required": verified,
-                "operator_review_required": (not verified and classification == "UNVERIFIED_CREDENTIAL_LIKE_VALUE"),
-                "raw_secret_material_retained": False,
-            }
+        effective_classification = "VERIFIED_SECRET" if verified else classification
+        raw_counts[effective_classification] += 1
+        # SourceID distinguishes separate detections that happen to share a
+        # detector and line. It is used only in memory; it is never copied to
+        # retained review evidence because the raw identity may be derived
+        # from the detected value.
+        source_id = str(value.get("SourceID") or "")
+        identity = (
+            detector,
+            str(value.get("DetectorType") or ""),
+            source_id,
+            relative,
+            _trufflehog_line(value),
         )
-    return rows, counts
+        duplicate = row_by_identity.get(identity)
+        if duplicate is not None:
+            duplicate["duplicate_scanner_records"] += 1
+            continue
+        counts[effective_classification] += 1
+        row = {
+            "index": index,
+            "detector": detector,
+            "path": relative,
+            "line": _trufflehog_line(value),
+            "verified": verified,
+            "verification_error_present": bool(value.get("VerificationError") or value.get("verification_error")),
+            "area": _path_area(relative),
+            "classification": effective_classification,
+            "image_disposition": _image_disposition(relative),
+            "appears_synthetic_or_example": classification in {"DOCUMENTATION_EXAMPLE", "TEST_FIXTURE", "FALSE_POSITIVE"},
+            "remediation_required": verified,
+            "operator_review_required": (not verified and classification == "UNVERIFIED_CREDENTIAL_LIKE_VALUE"),
+            "raw_secret_material_retained": False,
+            "duplicate_scanner_records": 1,
+        }
+        row_by_identity[identity] = row
+        rows.append(row)
+    return rows, counts, raw_record_count, raw_counts
 
 
 def _skillspector_classification(rule_id: str, path: str) -> tuple[str, str]:
@@ -446,20 +510,34 @@ def _skillspector_rows(value: dict[str, Any]) -> tuple[list[dict[str, Any]], Cou
     rows: list[dict[str, Any]] = []
     applicability: Counter[str] = Counter()
     by_rule: Counter[str] = Counter()
+    skill_issues: list[tuple[dict[str, Any], str]] = []
     issues = value.get("issues")
-    if not isinstance(issues, list):
-        return rows, applicability, by_rule
-    for index, issue in enumerate(issues, 1):
+    if isinstance(issues, list):
+        skill_issues.extend((issue, "") for issue in issues if isinstance(issue, dict))
+    skills = value.get("skills")
+    if isinstance(skills, list):
+        for skill in skills:
+            if not isinstance(skill, dict):
+                continue
+            skill_root = _relative_path(skill.get("path"))
+            nested = skill.get("issues")
+            if isinstance(nested, list):
+                skill_issues.extend((issue, skill_root) for issue in nested if isinstance(issue, dict))
+    for index, (issue, skill_root) in enumerate(skill_issues, 1):
         if not isinstance(issue, dict):
             continue
         rule_id = str(issue.get("id") or "unknown")
         location = issue.get("location")
-        path = _relative_path(location.get("file") if isinstance(location, dict) else "unknown")
+        raw_path = location.get("file") if isinstance(location, dict) else "unknown"
+        if skill_root and isinstance(raw_path, str) and not raw_path.startswith(("/", "\\")):
+            raw_path = posixpath.join(".opencode/skills", skill_root, raw_path)
+        path = _relative_path(raw_path)
         severity = str(issue.get("severity") or "UNKNOWN").upper()
         classification, reason = _skillspector_classification(rule_id, path)
         by_rule[rule_id] += 1
         applicability[classification] += 1
         runtime_reachable = _runtime_relevant(path)
+        evidence = issue.get("evidence")
         rows.append(
             {
                 "index": index,
@@ -467,7 +545,7 @@ def _skillspector_rows(value: dict[str, Any]) -> tuple[list[dict[str, Any]], Cou
                 "severity": severity,
                 "path": path,
                 "area": _path_area(path),
-                "local_only": bool((issue.get("evidence") or {}).get("local_only")),
+                "local_only": bool(evidence.get("local_only")) if isinstance(evidence, dict) else False,
                 "applicability": classification,
                 "reason": reason,
                 "image_disposition": _image_disposition(path),
@@ -601,6 +679,161 @@ def _scanner_failure_classes(row: dict[str, Any]) -> set[str]:
     return classes
 
 
+def _excluded_rule_carry_forward(
+    *,
+    report: dict[str, Any],
+    current_report_path: Path,
+    current_artifact_dir: Path,
+    prior_report_path: Path,
+    prior_artifact_dir: Path,
+) -> dict[str, Any]:
+    """Keep prior exact-source findings open when a broken rule is excluded.
+
+    Only stable finding metadata is copied. Scanner messages, source lines,
+    metavariables, and detected values remain in the separately retained,
+    sanitized scanner result and are never added to this review projection.
+    """
+
+    prior_report = _load_json(prior_report_path)
+    if not isinstance(prior_report, dict):
+        raise ValueError("prior candidate report must be an object")
+    prior_artifacts = _validated_scanner_artifacts(prior_report, prior_artifact_dir)
+    current_source = report.get("source") if isinstance(report.get("source"), dict) else {}
+    prior_source = prior_report.get("source") if isinstance(prior_report.get("source"), dict) else {}
+    if (
+        current_source.get("commit") != prior_source.get("commit")
+        or current_source.get("archive_sha256") != prior_source.get("archive_sha256")
+    ):
+        raise ValueError("prior candidate findings must bind to the same upstream source commit and archive")
+
+    scope = report.get("source_scan_scope") if isinstance(report.get("source_scan_scope"), dict) else {}
+    exclusions = scope.get("semgrep_rule_exclusions")
+    if not isinstance(exclusions, list) or not exclusions:
+        raise ValueError("current candidate report has no explicit Semgrep rule exclusions")
+    excluded_rules = {
+        str(row.get("rule_id") or "").strip()
+        for row in exclusions
+        if isinstance(row, dict) and str(row.get("rule_id") or "").strip()
+    }
+    if len(excluded_rules) != len(exclusions):
+        raise ValueError("current candidate report has invalid Semgrep rule exclusion metadata")
+
+    current_semgrep_rows = [
+        row for row in report.get("scanners", [])
+        if isinstance(row, dict) and row.get("name") == "semgrep"
+    ]
+    prior_semgrep_rows = [
+        row for row in prior_report.get("scanners", [])
+        if isinstance(row, dict) and row.get("name") == "semgrep"
+    ]
+    if len(current_semgrep_rows) != 1 or len(prior_semgrep_rows) != 1:
+        raise ValueError("current and prior reports must each contain one Semgrep scan")
+    current_semgrep = current_semgrep_rows[0]
+    prior_semgrep, prior_semgrep_path = prior_artifacts["semgrep"]
+    current_version = (report.get("tool_versions") or {}).get("semgrep", {}).get("version")
+    prior_version = (prior_report.get("tool_versions") or {}).get("semgrep", {}).get("version")
+    if not current_version or current_version != prior_version:
+        raise ValueError("prior and current Semgrep tool versions must match")
+    current_invocation = current_semgrep.get("invocation")
+    if not isinstance(current_invocation, list):
+        raise ValueError("current Semgrep invocation is missing")
+    if any(str(arg) in {"--exclude", "--exclude-dir"} for arg in current_invocation):
+        raise ValueError("Semgrep source-path exclusions cannot be carried forward as rule exclusions")
+    declared_exclusions = {
+        str(current_invocation[index + 1])
+        for index, argument in enumerate(current_invocation[:-1])
+        if argument == "--exclude-rule"
+    }
+    if declared_exclusions != excluded_rules:
+        raise ValueError("Semgrep invocation and exclusion metadata disagree")
+
+    prior_value = _load_json(prior_semgrep_path)
+    current_semgrep_path = _validated_scanner_artifacts(report, current_artifact_dir)["semgrep"][1]
+    current_value = _load_json(current_semgrep_path)
+    prior_results = prior_value.get("results") if isinstance(prior_value, dict) else None
+    current_results = current_value.get("results") if isinstance(current_value, dict) else None
+    if not isinstance(prior_results, list) or not isinstance(current_results, list):
+        raise ValueError("prior and current Semgrep result arrays are required")
+
+    if any(str(row.get("check_id") or "") in excluded_rules for row in current_results if isinstance(row, dict)):
+        raise ValueError("current Semgrep output contains a finding for an excluded rule")
+
+    findings: list[dict[str, Any]] = []
+    rule_counts: Counter[str] = Counter()
+    upstream_commit = str(current_source.get("commit") or "")
+    for item in prior_results:
+        if not isinstance(item, dict):
+            continue
+        rule_id = str(item.get("check_id") or "")
+        if rule_id not in excluded_rules:
+            continue
+        extra = item.get("extra") if isinstance(item.get("extra"), dict) else {}
+        start = item.get("start") if isinstance(item.get("start"), dict) else {}
+        end = item.get("end") if isinstance(item.get("end"), dict) else {}
+        relative_path = _relative_path(item.get("path"))
+        line = start.get("line") if isinstance(start.get("line"), int) else None
+        end_line = end.get("line") if isinstance(end.get("line"), int) else line
+        identity = hashlib.sha256(
+            f"{upstream_commit}\0{rule_id}\0{relative_path}\0{line}\0{end_line}".encode()
+        ).hexdigest()
+        findings.append(
+            {
+                "finding_id": identity,
+                "scanner": "semgrep",
+                "rule_id": rule_id,
+                "severity": str(extra.get("severity") or "UNSPECIFIED_BY_SCANNER").upper(),
+                "path": relative_path,
+                "line": line,
+                "end_line": end_line,
+                "source_commit": upstream_commit,
+                "source_archive_sha256": current_source.get("archive_sha256"),
+                "disposition": "unreviewed",
+                "owner": "personal-operator",
+                "next_action": "Review this retained finding from the unfiltered exact-source scan; the current scanner exclusion is not a disposition or waiver.",
+                "raw_source_context_retained": False,
+            }
+        )
+        rule_counts[rule_id] += 1
+
+    current_report_ref = _repository_reference(current_report_path)
+    prior_result_ref = _repository_reference(prior_semgrep_path)
+    result = {
+        "schema_version": "aiat.opencode-excluded-rule-carry-forward.v1",
+        "candidate_source": {
+            "repository": current_source.get("repository"),
+            "release": current_source.get("release"),
+            "commit": upstream_commit,
+            "archive_sha256": current_source.get("archive_sha256"),
+        },
+        "current_candidate_report_ref": current_report_ref,
+        "current_candidate_aiat_commit": report.get("aiat_candidate_commit"),
+        "current_scanner_invocation": current_invocation,
+        "excluded_rules": exclusions,
+        "prior_unfiltered_candidate_report_ref": _repository_reference(prior_report_path),
+        "prior_unfiltered_result_ref": prior_result_ref,
+        "prior_result_sha256": _sha256(prior_semgrep_path),
+        "prior_scanner_version": current_version,
+        "prior_scan_error_count": int(prior_semgrep.get("scanner_error_count") or 0),
+        "finding_count": len(findings),
+        "rule_counts": dict(sorted(rule_counts.items())),
+        "findings": sorted(findings, key=lambda row: (row["rule_id"], row["path"], row["line"] or 0)),
+        "finding_disposition": "unreviewed",
+        "owner": "personal-operator",
+        "next_action": "Review every carried-forward finding; keep it open until individually dispositioned.",
+        "raw_scanner_values_retained": False,
+        "source_snippets_retained": False,
+    }
+    return result
+
+
+def _repository_reference(path: Path) -> str:
+    repository_root = Path(__file__).resolve().parents[2]
+    try:
+        return path.resolve().relative_to(repository_root).as_posix()
+    except ValueError:
+        return path.name
+
+
 def _certification_decision(
     *,
     coverage_incomplete: bool,
@@ -629,11 +862,30 @@ def _certification_decision(
     return "PASSED"
 
 
-def triage(*, report_path: Path, artifact_dir: Path, source_dir: Path, output_path: Path) -> dict[str, Any]:
+def triage(
+    *,
+    report_path: Path,
+    artifact_dir: Path,
+    source_dir: Path,
+    output_path: Path,
+    prior_unfiltered_report_path: Path | None = None,
+    prior_unfiltered_artifact_dir: Path | None = None,
+) -> dict[str, Any]:
     report = _load_json(report_path)
     if not isinstance(report, dict):
         raise ValueError("candidate report must be an object")
     scanner_artifacts = _validated_scanner_artifacts(report, artifact_dir)
+    carry_forward = None
+    if (prior_unfiltered_report_path is None) != (prior_unfiltered_artifact_dir is None):
+        raise ValueError("prior unfiltered report and artifact directory must be supplied together")
+    if prior_unfiltered_report_path is not None and prior_unfiltered_artifact_dir is not None:
+        carry_forward = _excluded_rule_carry_forward(
+            report=report,
+            current_report_path=report_path,
+            current_artifact_dir=artifact_dir,
+            prior_report_path=prior_unfiltered_report_path,
+            prior_artifact_dir=prior_unfiltered_artifact_dir,
+        )
     semgrep_report, semgrep_path = scanner_artifacts["semgrep"]
     _trufflehog_report, trufflehog_path = scanner_artifacts["trufflehog"]
     skillspector_report, skillspector_path = scanner_artifacts["skillspector"]
@@ -643,7 +895,12 @@ def triage(*, report_path: Path, artifact_dir: Path, source_dir: Path, output_pa
         raise ValueError("structured scanner outputs are invalid")
     semgrep_errors, semgrep_error_counts = _semgrep_error_rows(semgrep)
     semgrep_results = _semgrep_result_summary(semgrep)
-    trufflehog_rows, trufflehog_counts = _trufflehog_rows(trufflehog_path)
+    (
+        trufflehog_rows,
+        trufflehog_counts,
+        trufflehog_raw_record_count,
+        trufflehog_raw_counts,
+    ) = _trufflehog_rows(trufflehog_path)
     skillspector_rows, skillspector_applicability, skillspector_rules = _skillspector_rows(skillspector)
     image = _docker_image_observation(str(report.get("candidate_image_ref") or ""))
 
@@ -671,9 +928,15 @@ def triage(*, report_path: Path, artifact_dir: Path, source_dir: Path, output_pa
             ("skillspector", skillspector_report),
         )
     }
+    semgrep_error_dispositions = _semgrep_error_disposition_counts(semgrep_errors)
+    trufflehog_artifact_error_count = int(trufflehog_counts.get(SCANNER_EXECUTION_FAILURE) or 0)
+    non_semgrep_execution_errors = (
+        max(report_scanner_error_counts["trufflehog"], trufflehog_artifact_error_count)
+        + report_scanner_error_counts["skillspector"]
+    )
     scanner_execution_failure = (
-        SCANNER_EXECUTION_FAILURE in report_failure_classes
-        or any(count > 0 for count in report_scanner_error_counts.values())
+        semgrep_error_dispositions["execution_errors"] > 0
+        or non_semgrep_execution_errors > 0
     )
     scanner_coverage_failure = SCANNER_COVERAGE_INCOMPLETE in report_failure_classes
     scanner_manifest_blocked = any(
@@ -690,11 +953,8 @@ def triage(*, report_path: Path, artifact_dir: Path, source_dir: Path, output_pa
         and not trufflehog_counts.get(SCANNER_EXECUTION_FAILURE)
         else "INCOMPLETE"
     )
-    trufflehog_artifact_error_count = int(trufflehog_counts.get(SCANNER_EXECUTION_FAILURE) or 0)
     scanner_execution_failure_count = (
-        report_scanner_error_counts["semgrep"]
-        + max(report_scanner_error_counts["trufflehog"], trufflehog_artifact_error_count)
-        + report_scanner_error_counts["skillspector"]
+        semgrep_error_dispositions["execution_errors"] + non_semgrep_execution_errors
     )
     runtime_actionable = semgrep_results["runtime_actionable_candidates"]
     skillspector_false = skillspector_applicability["FALSE_POSITIVE_OR_MISAPPLIED"]
@@ -702,11 +962,16 @@ def triage(*, report_path: Path, artifact_dir: Path, source_dir: Path, output_pa
     skillspector_runtime = skillspector_applicability["RUNTIME_APPLICABLE"]
     trufflehog_verified = sum(1 for row in trufflehog_rows if row["verified"])
     trufflehog_actionable = sum(1 for row in trufflehog_rows if row["remediation_required"])
-    derived_raw_findings = int(semgrep_results["total"]) + sum(
-        1
-        for row in trufflehog_rows
-        if row["classification"] != SCANNER_EXECUTION_FAILURE
-    ) + len(skillspector_rows)
+    trufflehog_raw_findings = sum(
+        count
+        for classification, count in trufflehog_raw_counts.items()
+        if classification != SCANNER_EXECUTION_FAILURE
+    )
+    trufflehog_unique_findings = sum(
+        1 for row in trufflehog_rows if row["classification"] != SCANNER_EXECUTION_FAILURE
+    )
+    trufflehog_duplicate_records = max(0, trufflehog_raw_findings - trufflehog_unique_findings)
+    derived_raw_findings = int(semgrep_results["total"]) + trufflehog_raw_findings + len(skillspector_rows)
     skillspector_actionable = [row for row in skillspector_rows if row["actionable"]]
     runtime_review_required = bool(runtime_actionable or skillspector_actionable)
     sbom_status = str((report.get("sbom") or {}).get("status") or "blocked") if isinstance(report.get("sbom"), dict) else "blocked"
@@ -766,9 +1031,17 @@ def triage(*, report_path: Path, artifact_dir: Path, source_dir: Path, output_pa
             },
         },
         "trufflehog": {
-            "total": len(trufflehog_rows),
+            "total": trufflehog_raw_findings,
+            "raw_record_count": trufflehog_raw_record_count,
+            "unique_total": trufflehog_unique_findings,
+            "duplicate_scanner_record_count": trufflehog_duplicate_records,
             "verified": trufflehog_verified,
-            "unverified": len(trufflehog_rows) - trufflehog_verified,
+            "unverified": trufflehog_unique_findings - trufflehog_verified,
+            "raw_classification_counts": dict(sorted(
+                (key, count)
+                for key, count in trufflehog_raw_counts.items()
+                if key != SCANNER_EXECUTION_FAILURE
+            )),
             "actionable": trufflehog_actionable,
             "classification_counts": dict(sorted(trufflehog_counts.items())),
             "detections": trufflehog_rows,
@@ -801,9 +1074,11 @@ def triage(*, report_path: Path, artifact_dir: Path, source_dir: Path, output_pa
             "SEMGREP_RUNTIME_COVERAGE": runtime_coverage,
             "SEMGREP_ERRORS_REMAINING": len(semgrep_errors),
             "SEMGREP_ACTIONABLE_FINDINGS": len(runtime_actionable),
-            "TRUFFLEHOG_TOTAL": len(trufflehog_rows),
+            "TRUFFLEHOG_TOTAL": trufflehog_raw_findings,
+            "TRUFFLEHOG_UNIQUE_TOTAL": trufflehog_unique_findings,
+            "TRUFFLEHOG_DUPLICATE_RECORDS": trufflehog_duplicate_records,
             "TRUFFLEHOG_VERIFIED": trufflehog_verified,
-            "TRUFFLEHOG_UNVERIFIED": len(trufflehog_rows) - trufflehog_verified,
+            "TRUFFLEHOG_UNVERIFIED": trufflehog_unique_findings - trufflehog_verified,
             "TRUFFLEHOG_ACTIONABLE": trufflehog_actionable,
             "SKILLSPECTOR_TOTAL": len(skillspector_rows),
             "SKILLSPECTOR_RUNTIME_APPLICABLE": skillspector_runtime,
@@ -823,10 +1098,13 @@ def triage(*, report_path: Path, artifact_dir: Path, source_dir: Path, output_pa
                 int(report.get("raw_findings_count") or 0) == derived_raw_findings
             ),
             "SCANNER_EXECUTION_FAILURES": scanner_execution_failure_count,
+            "SEMGREP_EXECUTION_ERRORS": semgrep_error_dispositions["execution_errors"],
             "AIAT_WRAPPER_MITIGATED_FINDINGS": 0,
             "UPSTREAM_FIX_REQUIRED": 0,
             "FORK_REQUIRED": False,
             "NEWER_UPSTREAM_RELEASE_SHOULD_BE_TESTED": True,
+            "SEMGREP_EXPLAINED_COVERAGE_GAPS": semgrep_error_dispositions["explained_coverage_gaps"],
+            "UNEXPLAINED_SEMGREP_ERRORS": semgrep_error_dispositions["unexplained"],
             "CERTIFICATION_DECISION": certification_decision,
         },
         "remediation_order": [
@@ -842,6 +1120,13 @@ def triage(*, report_path: Path, artifact_dir: Path, source_dir: Path, output_pa
             "source_payloads_retained": False,
         },
     }
+    if carry_forward is not None:
+        carry_count = int(carry_forward["finding_count"])
+        triage_result["excluded_rule_carry_forward"] = carry_forward
+        triage_result["decision"]["EXCLUDED_RULE_CARRY_FORWARD_FINDINGS"] = carry_count
+        triage_result["decision"]["EFFECTIVE_FINDINGS_INCLUDING_EXCLUDED_RULE_CARRY_FORWARD"] = (
+            derived_raw_findings + carry_count
+        )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(triage_result, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     return triage_result
@@ -853,12 +1138,26 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--artifact-dir", type=Path, required=True)
     parser.add_argument("--source-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--prior-unfiltered-report",
+        type=Path,
+        help="prior same-source candidate report from the unfiltered Semgrep scan",
+    )
+    parser.add_argument(
+        "--prior-unfiltered-artifact-dir",
+        type=Path,
+        help="directory containing the prior report's sanitized scanner artifacts",
+    )
     args = parser.parse_args(argv)
+    if (args.prior_unfiltered_report is None) != (args.prior_unfiltered_artifact_dir is None):
+        parser.error("--prior-unfiltered-report and --prior-unfiltered-artifact-dir must be supplied together")
     result = triage(
         report_path=args.report,
         artifact_dir=args.artifact_dir,
         source_dir=args.source_dir,
         output_path=args.output,
+        prior_unfiltered_report_path=args.prior_unfiltered_report,
+        prior_unfiltered_artifact_dir=args.prior_unfiltered_artifact_dir,
     )
     print(json.dumps(result["decision"], sort_keys=True, indent=2))
     return 0

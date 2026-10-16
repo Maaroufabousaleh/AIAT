@@ -22,6 +22,10 @@ export function IdentityResourcePage({ resource, title, description }: Props) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState("");
+  const [actionNotice, setActionNotice] = useState<{
+    message: string;
+    approvalPending: boolean;
+  } | null>(null);
   const [stale, setStale] = useState(false);
   const [accessDenied, setAccessDenied] = useState(false);
   const itemsRef = useRef<Record<string, unknown>[]>([]);
@@ -88,10 +92,16 @@ export function IdentityResourcePage({ resource, title, description }: Props) {
   }
 
   async function performAction(item: Record<string, unknown>, action: string, label: string) {
-    if (!window.confirm(`${label} this governed identity record?`)) return;
+    const confirmation = action === "external.rotate_credentials"
+      ? "Request credential rotation for this external account? A human approval is required."
+      : action === "external.close"
+        ? "Request closure of this external account? A human approval is required."
+        : `${label} this governed identity record?`;
+    if (!window.confirm(confirmation)) return;
     const actionKey = `${String(item.id)}:${action}`;
     setActing(actionKey);
     setError("");
+    setActionNotice(null);
     try {
       const response = await fetch(`/api/identity/${resource}`, {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -99,6 +109,29 @@ export function IdentityResourcePage({ resource, title, description }: Props) {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error ?? "Identity action failed");
+      if (resource === "external-accounts") {
+        if (action === "external.rotate_credentials" && data.rotation === "PENDING_APPROVAL") {
+          setActionNotice({
+            message: "Credential rotation request is awaiting human approval.",
+            approvalPending: true,
+          });
+        } else if (action === "external.close" && data.state === "PENDING_APPROVAL") {
+          setActionNotice({
+            message: "Account closure request is awaiting human approval.",
+            approvalPending: true,
+          });
+        } else if (action === "external.close" && data.state === "CLOSED") {
+          setActionNotice({
+            message: "This external account is already closed.",
+            approvalPending: false,
+          });
+        } else if (action === "external.suspend" && data.state === "SUSPENDED") {
+          setActionNotice({
+            message: "External account suspended.",
+            approvalPending: false,
+          });
+        }
+      }
       await load();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Identity action failed");
@@ -127,6 +160,24 @@ export function IdentityResourcePage({ resource, title, description }: Props) {
         <ShieldCheck size={17} aria-hidden="true" className="mt-0.5 flex-none" />
         Metadata only: credential values, cookies, tokens, and message bodies are never displayed.
       </section>
+      {actionNotice && (
+        <section
+          role="status"
+          aria-live="polite"
+          aria-label="External account action status"
+          className="rounded-xl border border-blue-500/30 bg-blue-500/5 px-4 py-3 text-sm text-blue-100"
+        >
+          <p>{actionNotice.message}</p>
+          {actionNotice.approvalPending && (
+            <Link
+              href="/identity-approvals"
+              className="mt-2 inline-flex min-h-11 items-center rounded-md border border-blue-400/40 px-3 py-2 text-sm font-medium text-blue-100 transition-colors hover:bg-blue-400/10 focus-visible:ring-2 focus-visible:ring-blue-300/70"
+            >
+              Review identity approvals
+            </Link>
+          )}
+        </section>
+      )}
       {accessDenied && (
         <section
           role="region"

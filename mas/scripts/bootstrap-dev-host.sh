@@ -46,6 +46,7 @@ KATA_RUNTIME_CONFIG="${AIAT_KATA_RUNTIME_CONFIG:-/opt/kata/share/defaults/kata-c
 KATA_QEMU_BINARY="${AIAT_KATA_QEMU_BINARY:-/opt/kata/bin/qemu-system-x86_64}"
 KATA_GUEST_IMAGE="${AIAT_KATA_GUEST_IMAGE:-/opt/kata/share/kata-containers/kata-containers.img}"
 KATA_VMM="qemu"
+WASMTIME_BINARY="${AIAT_WASMTIME_BINARY:-wasmtime}"
 PORT_PROBE_IMAGE="alpine:3.21.3@sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c"
 
 DOCKER_REPO="https://download.docker.com/linux/ubuntu"
@@ -63,6 +64,7 @@ STARTED_AT="$(date --iso-8601=seconds)"
 TEMP_FILES=()
 KATA_INSTALL_READY=0
 KATA_GUEST_KERNEL=""
+ROOT_EXEC_MODE="unavailable"
 
 declare -A STATE=(
   [status]="DEV_BLOCKED"
@@ -80,6 +82,8 @@ declare -A STATE=(
   [kata_guest_kernel]=""
   [kata_vmm]="qemu"
   [kata]="OPTIONAL_UNAVAILABLE"
+  [wasmtime]="OPTIONAL_UNAVAILABLE"
+  [wasmtime_version]=""
   [compose]="not_checked"
   [migration]="not_checked"
   [network_boundary]="not_checked"
@@ -156,24 +160,43 @@ is_wsl2() {
     [ -n "${WSL_INTEROP:-}" ] || [ -n "${WSL_DISTRO_NAME:-}" ]
 }
 
-root_exec() {
+probe_root_exec() {
   if [ "$(id -u)" -eq 0 ]; then
-    "$@"
-  elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
-    sudo -- "$@"
-  elif command -v wsl.exe >/dev/null 2>&1; then
-    # WSL's root entry point does not require the operator to type a second
-    # password and confines elevation to this distro.
-    wsl.exe -d "$DISTRO" -u root -- "$@"
-  else
-    return 127
+    ROOT_EXEC_MODE="direct"
+    return 0
   fi
+  if command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+    ROOT_EXEC_MODE="sudo"
+    return 0
+  fi
+  if command -v wsl.exe >/dev/null 2>&1 &&
+     timeout "${AIAT_WSL_ROOT_PROBE_TIMEOUT_SECONDS:-5}s" \
+       wsl.exe -d "$DISTRO" -u root -- /bin/true >/dev/null 2>&1; then
+    ROOT_EXEC_MODE="wsl"
+    return 0
+  fi
+  ROOT_EXEC_MODE="unavailable"
+  warn "non-interactive root operations are unavailable; existing correct host installations will be reused, but missing host components cannot be provisioned"
+}
+
+root_exec() {
+  case "$ROOT_EXEC_MODE" in
+    direct) "$@" ;;
+    sudo) sudo -- "$@" ;;
+    wsl)
+      timeout "${AIAT_WSL_ROOT_COMMAND_TIMEOUT_SECONDS:-30}s" \
+        wsl.exe -d "$DISTRO" -u root -- "$@"
+      ;;
+    *) return 127 ;;
+  esac
+}
+
+root_available() {
+  [ "$ROOT_EXEC_MODE" != "unavailable" ]
 }
 
 require_root_path() {
-  if ! root_exec true >/dev/null 2>&1; then
-    fail "root operations are unavailable; run from the configured WSL distro with sudo or wsl.exe root access"
-  fi
+  root_available || fail "root operations are unavailable; run from the configured WSL distro with sudo or working WSL root access"
 }
 
 write_root_file_if_changed() {
@@ -181,9 +204,10 @@ write_root_file_if_changed() {
   tmp="$(mktemp)"
   TEMP_FILES+=("$tmp")
   printf '%s\n' "$content" >"$tmp"
-  if root_exec test -f "$target" && root_exec cmp -s "$tmp" "$target"; then
+  if [ -f "$target" ] && cmp -s "$tmp" "$target"; then
     return 1
   fi
+  require_root_path
   root_exec install -D -m "$mode" "$tmp" "$target"
   return 0
 }
@@ -271,11 +295,20 @@ package_installed() {
 
 ensure_packages() {
   local packages=(docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin zstd)
-  local package
-  ensure_docker_repository
-  ensure_gvisor_repository
+  local docker_missing=0 gvisor_missing=0
   if ! package_installed docker-ce || ! package_installed docker-ce-cli || ! package_installed containerd.io ||
      ! package_installed docker-buildx-plugin || ! package_installed docker-compose-plugin || ! package_installed zstd; then
+    docker_missing=1
+  fi
+  if [ "$(dpkg-query -W -f='${Version}' runsc 2>/dev/null || true)" != "$GVISOR_VERSION" ]; then
+    gvisor_missing=1
+  fi
+  if [ "$docker_missing" -eq 1 ] || [ "$gvisor_missing" -eq 1 ] || [ "$FORCE_PACKAGE_REFRESH" -eq 1 ]; then
+    require_root_path
+    ensure_docker_repository
+    ensure_gvisor_repository
+  fi
+  if [ "$docker_missing" -eq 1 ]; then
     log "installing Docker Engine, containerd, Buildx, Compose v2, and archive tooling"
     root_exec env DEBIAN_FRONTEND=noninteractive apt-get install -y "${packages[@]}"
   fi
@@ -288,15 +321,34 @@ ensure_packages() {
   if [ "$(dpkg-query -W -f='${Version}' runsc 2>/dev/null || true)" != "$GVISOR_VERSION" ]; then
     fail "installed runsc version does not match repository pin ${GVISOR_VERSION}"
   fi
-  local deb_dir deb
-  deb_dir="$(mktemp -d)"
-  TEMP_FILES+=("$deb_dir")
-  (cd "$deb_dir" && apt-get download "runsc=${GVISOR_VERSION}" >/dev/null)
-  deb="$(find "$deb_dir" -maxdepth 1 -type f -name 'runsc_*.deb' -print -quit)"
-  [ -n "$deb" ] || fail "apt did not provide the pinned runsc archive"
+  local deb_dir deb package version architecture
+  deb="${AIAT_GVISOR_DEB_PATH:-}"
+  if [ -n "$deb" ]; then
+    [ -f "$deb" ] || fail "AIAT_GVISOR_DEB_PATH does not name a readable package archive"
+  else
+    deb="$(find /var/cache/apt/archives -maxdepth 1 -type f \
+      -name "runsc_${GVISOR_VERSION}_*.deb" -print -quit 2>/dev/null || true)"
+  fi
+  if [ -z "$deb" ]; then
+    deb_dir="$(mktemp -d)"
+    TEMP_FILES+=("$deb_dir")
+    if ! (cd "$deb_dir" && apt-get download "runsc=${GVISOR_VERSION}" >/dev/null 2>&1); then
+      fail "pinned runsc archive is unavailable; provide AIAT_GVISOR_DEB_PATH with the reviewed package"
+    fi
+    deb="$(find "$deb_dir" -maxdepth 1 -type f \
+      -name "runsc_${GVISOR_VERSION}_*.deb" -print -quit)"
+  fi
+  [ -n "$deb" ] || fail "no package archive matches the pinned runsc version"
+  package="$(dpkg-deb -f "$deb" Package 2>/dev/null || true)"
+  version="$(dpkg-deb -f "$deb" Version 2>/dev/null || true)"
+  architecture="$(dpkg-deb -f "$deb" Architecture 2>/dev/null || true)"
+  [ "$package" = "runsc" ] && [ "$version" = "$GVISOR_VERSION" ] && \
+    [ "$architecture" = "$(dpkg --print-architecture)" ] ||
+      fail "runsc package archive identity does not match the pinned version and host architecture"
   if [ "$(sha256sum "$deb" | awk '{print $1}')" != "$GVISOR_DEB_SHA256" ]; then
     fail "pinned runsc archive checksum mismatch"
   fi
+  log "verified the pinned runsc package archive"
 }
 
 kata_install_failure() {
@@ -311,13 +363,19 @@ kata_install_failure() {
 
 kata_install_ready() {
   local installed_version
-  installed_version="$(root_exec cat "$KATA_INSTALL_ROOT/VERSION" 2>/dev/null || true)"
+  # The pinned static archive is intentionally installed world-readable.  A
+  # correct existing installation must be reusable even when this invocation
+  # cannot acquire root; root is needed only when files must be changed.
+  installed_version="$(cat "$KATA_INSTALL_ROOT/VERSION" 2>/dev/null || true)"
   [ "$installed_version" = "$KATA_VERSION" ] || return 1
-  root_exec test -x "$KATA_RUNTIME_SHIM" || return 1
-  root_exec test -x "$KATA_QEMU_BINARY" || return 1
-  root_exec test -x "$KATA_INSTALL_ROOT/libexec/virtiofsd" || return 1
-  root_exec test -f "$KATA_RUNTIME_CONFIG" || return 1
-  root_exec test -f "$KATA_GUEST_IMAGE" || return 1
+  [ -x "$KATA_RUNTIME_SHIM" ] || return 1
+  [ -x "$KATA_QEMU_BINARY" ] || return 1
+  # The archive's virtiofsd is root-owned and may be mode 0744.  The
+  # root-owned Kata shim is the executable readiness input; the guest smoke
+  # below is the authoritative proof that the complete runtime can execute.
+  [ -f "$KATA_INSTALL_ROOT/libexec/virtiofsd" ] || return 1
+  [ -f "$KATA_RUNTIME_CONFIG" ] || return 1
+  [ -f "$KATA_GUEST_IMAGE" ] || return 1
 }
 
 kata_kvm_ready() {
@@ -331,7 +389,11 @@ kata_kvm_ready() {
 ensure_kvm_operator_group() {
   local operator_user
   operator_user="$(id -un)"
-  if ! root_exec test -e /dev/kvm || id -nG "$operator_user" 2>/dev/null | tr ' ' '\n' | grep -qx kvm; then
+  if [ ! -e /dev/kvm ] || id -nG "$operator_user" 2>/dev/null | tr ' ' '\n' | grep -qx kvm; then
+    return 0
+  fi
+  if ! root_available; then
+    warn "${operator_user} is not in the kvm group and root is unavailable; the root-owned Docker daemon will still be tested"
     return 0
   fi
   if root_exec getent group kvm >/dev/null 2>&1; then
@@ -352,6 +414,11 @@ ensure_kata_runtime() {
     KATA_INSTALL_READY=1
     STATE[kata_install]="${KATA_VERSION}"
     log "Kata runtime-rs ${KATA_VERSION} with QEMU is already installed"
+    return 0
+  fi
+
+  if ! root_available; then
+    kata_install_failure "the pinned Kata runtime is missing or incomplete and root operations are unavailable"
     return 0
   fi
 
@@ -395,7 +462,7 @@ ensure_kata_runtime() {
 }
 
 ensure_local_docker_service() {
-  local config service changed=0 kata_runtime_json=""
+  local config service changed=0 kata_runtime_json="" service_active=0
   if [ "$KATA_INSTALL_READY" -eq 1 ]; then
     kata_runtime_json=",
     \"kata\": {
@@ -448,19 +515,35 @@ EOF
   if write_root_file_if_changed "$DOCKER_SERVICE_PATH" 0644 "$service"; then
     changed=1
   fi
-  root_exec systemctl daemon-reload
-  root_exec systemctl enable --now containerd.service
   if [ "$changed" -eq 1 ]; then
+    require_root_path
+    root_exec systemctl daemon-reload
+    root_exec systemctl enable --now containerd.service
     log "starting/restarting the AIAT Docker Engine because configuration changed"
     root_exec systemctl restart aiat-docker.service 2>/dev/null || root_exec systemctl start aiat-docker.service
   else
-    root_exec systemctl enable aiat-docker.service >/dev/null
-    if ! root_exec systemctl is-active --quiet aiat-docker.service; then
+    if root_available; then
+      if root_exec systemctl is-active --quiet aiat-docker.service; then
+        service_active=1
+      fi
+    else
+      if systemctl is-active --quiet aiat-docker.service; then
+        service_active=1
+      fi
+    fi
+    if [ "$service_active" -eq 0 ]; then
+      require_root_path
+      root_exec systemctl daemon-reload
+      root_exec systemctl enable --now containerd.service
       log "starting the AIAT Docker Engine"
       root_exec systemctl start aiat-docker.service
+    elif root_available && ! root_exec systemctl is-enabled --quiet aiat-docker.service; then
+      root_exec systemctl enable aiat-docker.service >/dev/null
     fi
   fi
-  root_exec systemctl enable aiat-docker.service >/dev/null
+  if root_available; then
+    root_exec systemctl enable aiat-docker.service >/dev/null
+  fi
 }
 
 port_available() {
@@ -629,6 +712,29 @@ verify_host_runtime() {
   STATE[runsc_package]="$GVISOR_VERSION"
   STATE[runsc_registered]="pass"
   log "Docker Engine, Compose v2, runsc registration, and pinned runsc version verified"
+}
+
+probe_wasmtime() {
+  local binary version
+  binary="$(command -v "$WASMTIME_BINARY" 2>/dev/null || true)"
+  if [ -z "$binary" ] && [ -x "$WASMTIME_BINARY" ]; then
+    binary="$WASMTIME_BINARY"
+  fi
+  if [ -z "$binary" ]; then
+    STATE[wasmtime]="OPTIONAL_UNAVAILABLE"
+    STATE[wasmtime_version]=""
+    log "Wasmtime is not installed; WASM workloads remain unschedulable on this host"
+    return 0
+  fi
+  if ! version="$($binary --version 2>/dev/null)" || [ -z "$version" ]; then
+    STATE[wasmtime]="FAILED"
+    STATE[wasmtime_version]=""
+    warn "Wasmtime was found at ${binary} but its version probe failed"
+    return 0
+  fi
+  STATE[wasmtime]="AVAILABLE"
+  STATE[wasmtime_version]="${version:0:200}"
+  log "Wasmtime capability detected (${version:0:200})"
 }
 
 run_gvisor_smoke() {
@@ -804,11 +910,13 @@ ensure_compose_port_bindings() {
     "redis 6379 AIAT_DEV_REDIS_PORT"
     "postgres 5432 AIAT_DEV_POSTGRES_PORT"
     "minio 9000 AIAT_DEV_MINIO_API_PORT"
+    "minio 9001 AIAT_DEV_MINIO_CONSOLE_PORT"
     "pgadmin 80 AIAT_DEV_PGADMIN_PORT"
     "redis-insight 5540 REDIS_INSIGHT_PORT"
     "prometheus 9090 AIAT_DEV_PROMETHEUS_PORT"
     "litellm 4000 AIAT_DEV_LITELLM_PORT"
     "omniroute 20128 AIAT_DEV_OMNIROUTE_API_PORT"
+    "omniroute 20129 AIAT_DEV_OMNIROUTE_METRICS_PORT"
     "dashboard 3000 AIAT_DEV_DASHBOARD_PORT"
     "orchestrator-api 8000 AIAT_DEV_ORCHESTRATOR_PORT"
     "message-router 8001 AIAT_DEV_MESSAGE_ROUTER_PORT"
@@ -904,6 +1012,7 @@ state = {key: os.environ.get(f"AIAT_BOOTSTRAP_STATE_{key.upper()}", "") for key 
     "status", "failure_reason", "docker_daemon_before", "docker_engine", "docker_compose",
     "runsc_package", "runsc_registered", "gvisor_smoke", "sandbox_readiness",
     "kata_install", "kata_runtime_registered", "kata_smoke", "kata_guest_kernel", "kata_vmm", "kata",
+    "wasmtime", "wasmtime_version",
     "compose", "migration", "network_boundary", "release_ledger", "tests",
 )}
 def read_json(name):
@@ -953,6 +1062,11 @@ report = {
         "kvm_present": Path("/dev/kvm").exists(),
         "kvm_readable": os.access("/dev/kvm", os.R_OK),
         "kvm_writable": os.access("/dev/kvm", os.W_OK),
+    },
+    "wasmtime": {
+        "status": state["wasmtime"],
+        "version": state["wasmtime_version"] or None,
+        "binary": os.environ.get("AIAT_BOOTSTRAP_WASMTIME_BINARY", "wasmtime"),
     },
     "sandbox_readiness": read_json("AIAT_BOOTSTRAP_SANDBOX_FILE"),
     "development": {
@@ -1012,6 +1126,8 @@ export AIAT_BOOTSTRAP_STATE_KATA_SMOKE="${STATE[kata_smoke]}"
 export AIAT_BOOTSTRAP_STATE_KATA_GUEST_KERNEL="${STATE[kata_guest_kernel]}"
 export AIAT_BOOTSTRAP_STATE_KATA_VMM="${STATE[kata_vmm]}"
 export AIAT_BOOTSTRAP_STATE_KATA="${STATE[kata]}"
+export AIAT_BOOTSTRAP_STATE_WASMTIME="${STATE[wasmtime]}"
+export AIAT_BOOTSTRAP_STATE_WASMTIME_VERSION="${STATE[wasmtime_version]}"
 export AIAT_BOOTSTRAP_STATE_COMPOSE="${STATE[compose]}"
 export AIAT_BOOTSTRAP_STATE_MIGRATION="${STATE[migration]}"
 export AIAT_BOOTSTRAP_STATE_NETWORK_BOUNDARY="${STATE[network_boundary]}"
@@ -1025,17 +1141,19 @@ export AIAT_BOOTSTRAP_KATA_VERSION="$KATA_VERSION"
 export AIAT_BOOTSTRAP_KATA_ARCHIVE_SHA256="$KATA_ARCHIVE_SHA256"
 export AIAT_BOOTSTRAP_KATA_RUNTIME_SHIM="$KATA_RUNTIME_SHIM"
 export AIAT_BOOTSTRAP_KATA_RUNTIME_CONFIG="$KATA_RUNTIME_CONFIG"
+export AIAT_BOOTSTRAP_WASMTIME_BINARY="$WASMTIME_BINARY"
 
 if ! is_wsl2; then
   fail "this bootstrap is only supported inside WSL2"
 fi
-require_root_path
+probe_root_exec
 detect_current_docker
 ensure_packages
 ensure_kata_runtime
 ensure_local_docker_service
 ensure_docker_context
 verify_host_runtime
+probe_wasmtime
 export AIAT_BOOTSTRAP_RUNTIMES="$(docker_cli info --format '{{json .Runtimes}}' | python3 -c 'import json,sys; print(" ".join(sorted(json.load(sys.stdin))))')"
 run_gvisor_smoke
 run_kata_smoke

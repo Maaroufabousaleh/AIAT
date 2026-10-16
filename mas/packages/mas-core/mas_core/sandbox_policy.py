@@ -87,7 +87,9 @@ def runtime_implements_sandbox(runtime: object, value: object) -> bool:
     ``kata-qemu``.  The policy class remains ``vm_isolated`` and the logical
     required runtime remains ``kata``; this predicate keeps those names
     distinct while allowing the discovered runtime to flow through host
-    registration, placement, and OCI dispatch.
+    registration, placement, and OCI dispatch.  Kata also satisfies a
+    ``sandboxed`` minimum because it is stronger than the normal runsc target;
+    a stronger runtime may satisfy a floor, but a weaker runtime may not.
     """
 
     try:
@@ -97,6 +99,14 @@ def runtime_implements_sandbox(runtime: object, value: object) -> bool:
     runtime_name = str(runtime or "").strip().lower()
     if sandbox_class == "vm_isolated":
         return runtime_name == "kata" or (
+            runtime_name.startswith("kata-") and len(runtime_name) > len("kata-")
+        )
+    if sandbox_class == "sandboxed":
+        # Kata is a stronger host implementation than the normal runsc
+        # target.  A workload whose minimum floor is sandboxed may therefore
+        # be placed on Kata when the format-aware host resolver prefers it;
+        # the inverse downgrade (runsc/runc for vm_isolated) is never allowed.
+        return runtime_name == "runsc" or runtime_name == "kata" or (
             runtime_name.startswith("kata-") and len(runtime_name) > len("kata-")
         )
     return runtime_name == SANDBOX_CLASS_RUNTIME[sandbox_class]

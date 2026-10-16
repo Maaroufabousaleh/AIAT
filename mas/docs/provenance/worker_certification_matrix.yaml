@@ -17,6 +17,20 @@ workers:
   security_scan_status: not_recorded
   steward_id: null
   evidence_state: pending_live_certification
+- worker_id: aiat_deterministic_file_worker
+  source_repo: https://github.com/Maaroufabousaleh/AIAT
+  source_revision: 1855a75fb17243d8298b84468372e7a6e496da46
+  version_pin: 0.1.1+sha256.d08a7379f2242a3f7cd9d41ecef2b99c4c381402fd694a0285b8edcdf3c90815
+  runtime_tier: external
+  required_imports: []
+  transport: oci
+  isolation_mode: wrapper
+  adapter_entrypoint: ProcessAdapter
+  adapter_version: null
+  certification_status: pending
+  security_scan_status: pending
+  steward_id: null
+  evidence_state: pending_security_evidence
 - worker_id: budget_evaluator
   source_repo: local
   source_revision: working-tree

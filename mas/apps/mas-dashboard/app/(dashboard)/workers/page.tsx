@@ -37,6 +37,14 @@ const STORAGE_KEYS = {
   status: "mas.workers.statusFilter",
 } as const;
 
+const TEAM_ID_PATTERN = /^[a-z][a-z0-9_-]{0,119}$/;
+
+function teamIdFromLocation(): string {
+  if (typeof window === "undefined") return "";
+  const teamId = new URLSearchParams(window.location.search).get("team_id")?.trim() ?? "";
+  return TEAM_ID_PATTERN.test(teamId) ? teamId : "";
+}
+
 interface WorkerCapability {
   name: string;
   version: string;
@@ -53,6 +61,7 @@ interface Worker {
   team_id?: string;
   transport_mode?: string;
   adapter_entrypoint?: string;
+  adapter_module?: string;
   source_repo?: string;
   source_revision?: string;
   version_pin?: string;
@@ -163,6 +172,135 @@ function apiErrorMessage(payload: unknown, fallback: string): string {
   return blockers.length > 0 ? `${message}: ${blockers.join("; ")}` : message;
 }
 
+function WorkerEditForm({
+  worker,
+  onCancel,
+  onSaved,
+}: {
+  worker: Worker;
+  onCancel: () => void;
+  onSaved: () => void | Promise<void>;
+}) {
+  const [form, setForm] = useState(() => ({
+    team_id: worker.team_id ?? "",
+    adapter_entrypoint: worker.adapter_entrypoint ?? "",
+    adapter_module: worker.adapter_module ?? "",
+  }));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit() {
+    if (!form.adapter_entrypoint.trim()) {
+      setError("Adapter entrypoint is required");
+      return;
+    }
+
+    setSaving(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/workers/${encodeURIComponent(worker.id)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          team_id: form.team_id.trim(),
+          adapter_entrypoint: form.adapter_entrypoint.trim(),
+          adapter_module: form.adapter_module.trim(),
+        }),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        setError(apiErrorMessage(payload, "Worker configuration was not saved"));
+        return;
+      }
+
+      onCancel();
+      await onSaved();
+    } catch {
+      setError("Network error while saving worker configuration");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section
+      className="mb-5 rounded-lg border border-blue-800/70 bg-slate-900/70 p-4"
+      aria-label={`Edit ${worker.worker_id} configuration`}
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+    >
+      <div className="mb-3">
+        <h4 className="text-sm font-semibold text-white">Edit worker configuration</h4>
+        <p className="mt-1 text-xs text-slate-400">
+          Worker identity, provenance, tool grants, isolation policy, and version pins remain governed by their existing workflows.
+        </p>
+      </div>
+      {error && (
+        <div className="mb-3 rounded border border-rose-700 bg-rose-400/10 px-3 py-2 text-sm text-rose-300" role="alert">
+          {error}
+        </div>
+      )}
+      <div className="grid gap-3 md:grid-cols-3">
+        <div>
+          <label htmlFor={`edit-worker-team-${worker.id}`} className="mb-1 block text-xs text-slate-400">
+            Team ID
+          </label>
+          <input
+            id={`edit-worker-team-${worker.id}`}
+            className="min-h-11 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+            value={form.team_id}
+            onChange={(event) => setForm({ ...form, team_id: event.target.value })}
+            autoComplete="off"
+          />
+        </div>
+        <div>
+          <label htmlFor={`edit-worker-entrypoint-${worker.id}`} className="mb-1 block text-xs text-slate-400">
+            Adapter entrypoint
+          </label>
+          <input
+            id={`edit-worker-entrypoint-${worker.id}`}
+            className="min-h-11 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+            value={form.adapter_entrypoint}
+            onChange={(event) => setForm({ ...form, adapter_entrypoint: event.target.value })}
+            autoComplete="off"
+            required
+          />
+        </div>
+        <div>
+          <label htmlFor={`edit-worker-module-${worker.id}`} className="mb-1 block text-xs text-slate-400">
+            Adapter module
+          </label>
+          <input
+            id={`edit-worker-module-${worker.id}`}
+            className="min-h-11 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+            value={form.adapter_module}
+            onChange={(event) => setForm({ ...form, adapter_module: event.target.value })}
+            autoComplete="off"
+          />
+        </div>
+      </div>
+      <div className="mt-4 flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={saving}
+          className="min-h-11 rounded border border-slate-700 px-3 text-sm text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+        >
+          Cancel edit
+        </button>
+        <button
+          type="button"
+          onClick={() => void submit()}
+          disabled={saving}
+          className="min-h-11 rounded bg-blue-600 px-3 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+        >
+          {saving ? "Saving…" : "Save configuration"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function StatusBadge({ status }: { status: string }) {
   const cfg = STATUS_CONFIG[status] ?? STATUS_CONFIG.INACTIVE;
   const Icon = cfg.icon;
@@ -196,7 +334,10 @@ function WorkerRow({
   const [transitioning, setTransitioning] = useState(false);
   const [evaluating, setEvaluating] = useState(false);
   const [evaluations, setEvaluations] = useState<EvaluationReport[]>([]);
+  const [evaluationLoading, setEvaluationLoading] = useState(false);
+  const [evaluationError, setEvaluationError] = useState("");
   const [actionError, setActionError] = useState("");
+  const [editing, setEditing] = useState(false);
   // Track which evaluation check details are expanded (per check name).
   // Default: all collapsed to keep the row dense.
   const [expandedChecks, setExpandedChecks] = useState<Record<string, boolean>>(
@@ -213,19 +354,42 @@ function WorkerRow({
   }
 
   async function loadEvaluations() {
-    const res = await fetch(`/api/workers/${worker.id}/evaluations`);
-    if (res.ok) {
-      const data = await res.json();
-      setEvaluations(Array.isArray(data) ? data : []);
+    setEvaluationLoading(true);
+    setEvaluationError("");
+    try {
+      const res = await fetch(`/api/workers/${encodeURIComponent(worker.id)}/evaluations`);
+      if (!res.ok) {
+        const payload = await res.json().catch(() => null);
+        setEvaluationError(
+          apiErrorMessage(payload, `Evaluation history could not be loaded (HTTP ${res.status}).`),
+        );
+        return;
+      }
+      const data: unknown = await res.json();
+      if (!Array.isArray(data)) {
+        setEvaluationError("Evaluation history returned an invalid response. Retry to load it again.");
+        return;
+      }
+      setEvaluations(data);
+    } catch {
+      setEvaluationError("Network error while loading evaluation history. Retry to try again.");
+    } finally {
+      setEvaluationLoading(false);
     }
   }
 
   async function toggleExpanded() {
     const next = !expanded;
     setExpanded(next);
-    if (next && worker.source_repo) {
+    if (next && worker.source_repo && !accessDenied) {
       await loadEvaluations();
     }
+  }
+
+  function openEditor() {
+    setExpanded(true);
+    setEditing(true);
+    setActionError("");
   }
 
   async function toggleStatus() {
@@ -245,6 +409,8 @@ function WorkerRow({
         return;
       }
       onStatusChange();
+    } catch {
+      setActionError("Network error while changing worker status");
     } finally {
       setTransitioning(false);
     }
@@ -265,6 +431,8 @@ function WorkerRow({
         return;
       }
       onStatusChange();
+    } catch {
+      setActionError("Network error while draining worker");
     } finally {
       setTransitioning(false);
     }
@@ -286,6 +454,8 @@ function WorkerRow({
       }
       await loadEvaluations();
       onStatusChange();
+    } catch {
+      setActionError("Network error while evaluating worker");
     } finally {
       setEvaluating(false);
     }
@@ -303,6 +473,15 @@ function WorkerRow({
         aria-expanded={expanded}
         onClick={() => void toggleExpanded()}
         onKeyDown={(event) => {
+          const target = event.target;
+          if (
+            target instanceof Element &&
+            target.closest(
+              'button, a, input, select, textarea, summary, [role="checkbox"], [contenteditable="true"]',
+            )
+          ) {
+            return;
+          }
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
             void toggleExpanded();
@@ -352,6 +531,17 @@ function WorkerRow({
         </td>
         <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center gap-1">
+            {!accessDenied && (
+              <button
+                type="button"
+                onClick={openEditor}
+                title="Edit worker configuration"
+                aria-label={`Edit ${worker.worker_id}`}
+                className="inline-flex min-h-11 min-w-11 items-center justify-center rounded text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+              >
+                <Settings size={14} />
+              </button>
+            )}
             {!accessDenied && worker.source_repo && (
               <button
                 onClick={evaluateWorker}
@@ -365,8 +555,17 @@ function WorkerRow({
             )}
             {!accessDenied && <button
               onClick={toggleStatus}
-              disabled={transitioning}
-              title={worker.status === "ACTIVE" ? "Deactivate" : "Activate"}
+              disabled={
+                transitioning ||
+                (worker.status !== "ACTIVE" && activationBlocked)
+              }
+              title={
+                worker.status === "ACTIVE"
+                  ? "Deactivate"
+                  : activationBlocked
+                    ? "Activation requires an approved evaluation"
+                    : "Activate"
+              }
               aria-label={
                 worker.status === "ACTIVE"
                   ? `Deactivate ${worker.worker_id}`
@@ -394,9 +593,29 @@ function WorkerRow({
         </td>
       </tr>
 
+      {actionError && !expanded && (
+        <tr className="border-b border-slate-800 bg-rose-950/20">
+          <td colSpan={9} className="px-4 py-3">
+            <p
+              className="rounded border border-rose-700 bg-rose-400/10 px-3 py-2 text-sm text-rose-300"
+              role="alert"
+            >
+              {actionError}
+            </p>
+          </td>
+        </tr>
+      )}
+
       {expanded && (
         <tr className="bg-slate-950/50 border-b border-slate-800">
           <td colSpan={9} className="px-6 py-4">
+            {editing && !accessDenied && (
+              <WorkerEditForm
+                worker={worker}
+                onCancel={() => setEditing(false)}
+                onSaved={onStatusChange}
+              />
+            )}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-sm">
               <div className="space-y-2">
                 <h4 className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-3">
@@ -414,6 +633,14 @@ function WorkerRow({
                     {worker.adapter_entrypoint ?? "—"}
                   </span>
                 </div>
+                {worker.adapter_module && (
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Adapter Module</span>
+                    <span className="text-white font-mono">
+                      {worker.adapter_module}
+                    </span>
+                  </div>
+                )}
                 <div className="flex justify-between">
                   <span className="text-slate-500">Sandbox</span>
                   <span className="text-white font-mono">
@@ -473,7 +700,7 @@ function WorkerRow({
                 )}
               </div>
             </div>
-            {(activationBlocked || actionError || latestEvaluation) && (
+            {(activationBlocked || actionError || latestEvaluation || worker.source_repo) && (
               <div className="mt-4 border-t border-slate-800 pt-4 text-sm">
                 {activationBlocked && (
                   <div
@@ -492,6 +719,41 @@ function WorkerRow({
                     {actionError}
                   </div>
                 )}
+                {worker.source_repo && accessDenied && (
+                  <p role="status" className="mb-3 text-xs text-amber-200/80">
+                    Evaluation history is unavailable while worker access is denied.
+                  </p>
+                )}
+                {worker.source_repo && !accessDenied && evaluationLoading && (
+                  <p role="status" className="mb-3 text-xs text-slate-400">
+                    Loading evaluation history…
+                  </p>
+                )}
+                {worker.source_repo && !accessDenied && evaluationError && (
+                  <div
+                    className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded border border-amber-700/70 bg-amber-950/30 px-3 py-2 text-xs text-amber-100"
+                    role="alert"
+                  >
+                    <span>{evaluationError}</span>
+                    <button
+                      type="button"
+                      onClick={() => void loadEvaluations()}
+                      disabled={evaluationLoading}
+                      className="min-h-11 rounded border border-amber-700 px-3 py-2 font-medium text-amber-100 hover:bg-amber-900/40 disabled:cursor-wait disabled:opacity-50"
+                    >
+                      {evaluationLoading ? "Retrying…" : "Retry evaluation history"}
+                    </button>
+                  </div>
+                )}
+                {worker.source_repo &&
+                  !accessDenied &&
+                  !evaluationLoading &&
+                  !evaluationError &&
+                  !latestEvaluation && (
+                    <p role="status" className="mb-3 text-xs text-slate-400">
+                      No evaluation report is available yet. Run Evaluate to create one.
+                    </p>
+                  )}
                 {latestEvaluation && (
                   <div>
                     <div className="flex items-center justify-between mb-3">
@@ -1016,12 +1278,11 @@ export default function WorkersPage() {
   const [accessDenied, setAccessDenied] = useState(false);
   const [hasReadContext, setHasReadContext] = useState(false);
   const hasLoadedRef = useRef(false);
-  // Filter state — initialized from localStorage so user choices persist
-  // across page reloads. Falls back to empty/ALL on first visit.
-  const [search, setSearch] = useState<string>(() => {
-    if (typeof window === "undefined") return "";
-    return window.localStorage.getItem(STORAGE_KEYS.search) ?? "";
-  });
+  // A team route filter is an exact roster scope. Keep free-text search
+  // separate so a selected team ID cannot match another worker's name/ID.
+  const [teamFilter, setTeamFilter] = useState("");
+  const [search, setSearch] = useState("");
+  const [filtersInitialized, setFiltersInitialized] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>(() => {
     if (typeof window === "undefined") return "ALL";
     return window.localStorage.getItem(STORAGE_KEYS.status) ?? "ALL";
@@ -1034,12 +1295,27 @@ export default function WorkersPage() {
 
   // Persist filter values whenever they change. Safe to run on the client only.
   useEffect(() => {
+    const teamId = teamIdFromLocation();
+    if (teamId) {
+      setTeamFilter(teamId);
+    } else {
+      try {
+        setSearch(window.localStorage.getItem(STORAGE_KEYS.search) ?? "");
+      } catch {
+        // localStorage may be unavailable; keep the default empty search.
+      }
+    }
+    setFiltersInitialized(true);
+  }, []);
+
+  useEffect(() => {
+    if (!filtersInitialized) return;
     try {
       window.localStorage.setItem(STORAGE_KEYS.search, search);
     } catch {
       // localStorage may be unavailable (private mode, quota); silently ignore.
     }
-  }, [search]);
+  }, [filtersInitialized, search]);
   useEffect(() => {
     try {
       window.localStorage.setItem(STORAGE_KEYS.status, statusFilter);
@@ -1129,8 +1405,21 @@ export default function WorkersPage() {
       workerName.toLowerCase().includes(search.toLowerCase()) ||
       teamId.toLowerCase().includes(search.toLowerCase());
     const matchStatus = statusFilter === "ALL" || w.status === statusFilter;
-    return matchSearch && matchStatus;
+    const matchTeam = !teamFilter || w.team_id === teamFilter;
+    return matchTeam && matchSearch && matchStatus;
   });
+
+  const clearTeamFilter = () => {
+    setTeamFilter("");
+    const params = new URLSearchParams(window.location.search);
+    params.delete("team_id");
+    const query = params.toString();
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`,
+    );
+  };
 
   // Per-status counts power the chip badges. Computed from the unfiltered list
   // so the chips always show the full population, not just what passes the
@@ -1375,6 +1664,24 @@ export default function WorkersPage() {
 
       {/* Filters */}
       <section className="dashboard-toolbar flex flex-col sm:flex-row gap-3" aria-label="Hiring board filters">
+        {teamFilter && (
+          <div
+            role="group"
+            aria-label="Active team filter"
+            className="flex min-h-11 items-center gap-2 rounded-lg border border-blue-500/40 bg-blue-500/10 px-3 text-sm text-blue-100"
+          >
+            <span>
+              Team: <code>{teamFilter}</code>
+            </span>
+            <button
+              type="button"
+              onClick={clearTeamFilter}
+              className="min-h-11 rounded px-2 text-xs font-medium underline underline-offset-2 hover:bg-blue-500/20 focus-visible:ring-2 focus-visible:ring-blue-300"
+            >
+              Clear team filter
+            </button>
+          </div>
+        )}
         <div className="relative flex-1 min-w-0">
           <input
             ref={searchRef}

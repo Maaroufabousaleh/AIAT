@@ -463,6 +463,11 @@ class ToolRegistry:
             "caller_team": request.caller_team,
             "project_id": request.project_id,
             "worker_run_id": str(request.worker_run_id) if request.worker_run_id else None,
+            # The protocol envelope is authoritative. Never accept an
+            # idempotency key from tool kwargs or caller-supplied context.
+            "idempotency_key": (
+                str(request.idempotency_key) if request.idempotency_key else None
+            ),
         }
         if request.project_id and "project_id" not in kwargs:
             kwargs["project_id"] = request.project_id

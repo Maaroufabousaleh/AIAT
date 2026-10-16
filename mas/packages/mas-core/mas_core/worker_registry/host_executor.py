@@ -9,11 +9,16 @@ runtime remains behind the normal ``WorkerRunController`` adapter boundary.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from .run_host_binding import WorkerRunHostBindingService
+import anyio
+
+from ..worker_contract.models import WorkerCancellation
+from .run_host_binding import RunHostBindingIdentity, WorkerRunHostBindingService
 
 if TYPE_CHECKING:
     from ..memory.storage import AgentStorage
@@ -23,6 +28,7 @@ if TYPE_CHECKING:
 
 
 HOST_EXECUTION_SCHEMA = "aiat.worker-host-execution.v1"
+logger = logging.getLogger(__name__)
 
 
 class WorkerHostExecutionRejected(RuntimeError):
@@ -77,6 +83,9 @@ class WorkerHostExecutionResult:
 class WorkerHostExecutor:
     """Execute a committed binding through the canonical worker controller."""
 
+    _INTERRUPTED_RUNTIME_CLEANUP_TIMEOUT_SECONDS = 5.0
+    _BINDING_RELEASE_TIMEOUT_SECONDS = 5.0
+
     def __init__(
         self,
         storage: AgentStorage,
@@ -87,13 +96,20 @@ class WorkerHostExecutor:
         self._bindings = binding_service or WorkerRunHostBindingService(storage)
 
     @staticmethod
+    def _heartbeat_interval(lease_seconds: int) -> float:
+        """Renew often enough to leave time for the bounded run lease to expire."""
+
+        return max(0.1, min(5.0, lease_seconds / 3))
+
+    @staticmethod
     def _validate_binding(
         binding: dict[str, Any] | None,
         *,
         run_id: UUID,
         host_id: str,
+        owner: str,
         worker_registry_id: UUID,
-    ) -> None:
+    ) -> dict[str, Any]:
         if binding is None:
             raise WorkerHostExecutionRejected("run_host_binding_not_found")
         if str(binding.get("run_id")) != str(run_id):
@@ -102,6 +118,8 @@ class WorkerHostExecutor:
             raise WorkerHostExecutionRejected("run_host_binding_worker_mismatch")
         if str(binding.get("host_id") or "") != host_id:
             raise WorkerHostExecutionRejected("run_host_binding_host_mismatch")
+        if str(binding.get("owner") or "") != owner:
+            raise WorkerHostExecutionRejected("run_host_binding_owner_mismatch")
         if str(binding.get("state") or "") != "COMMITTED":
             raise WorkerHostExecutionRejected("run_host_binding_not_committed")
         if str(binding.get("reservation_state") or "") != "COMMITTED":
@@ -121,6 +139,7 @@ class WorkerHostExecutor:
             raise WorkerHostExecutionRejected("run_host_not_ready")
         if binding.get("current_host_lease_valid") is not True:
             raise WorkerHostExecutionRejected("run_host_lease_invalid")
+        return binding
 
     async def _validate_model_resolution(
         self,
@@ -196,6 +215,175 @@ class WorkerHostExecutor:
                 raise WorkerHostExecutionRejected("model_resolution_snapshot_requested_profile_mismatch")
         return dict(snapshot)
 
+    async def _binding_is_current(
+        self,
+        *,
+        run_id: UUID,
+        host_id: str,
+        owner: str,
+        worker_registry_id: UUID,
+        identity: RunHostBindingIdentity,
+    ) -> bool:
+        """Check the exact assignment and its live host lease after each renewal."""
+
+        try:
+            binding = self._validate_binding(
+                await self._bindings.get(run_id),
+                run_id=run_id,
+                host_id=host_id,
+                owner=owner,
+                worker_registry_id=worker_registry_id,
+            )
+        except Exception:
+            return False
+        return identity.matches(binding)
+
+    @staticmethod
+    async def _cancel_stale_adapter_run(
+        adapter: WorkerAdapter,
+        *,
+        run_id: UUID,
+        reason: str,
+        owner: str,
+        attempt_count: int,
+    ) -> None:
+        """Stop only this executor's runtime after its durable claim is lost.
+
+        Calling the controller's operator cancellation path after owner/attempt
+        loss could cancel a replacement attempt for the same run ID.  The
+        adapter cancellation is the canonical runtime SPI and does not settle
+        canonical state; the controller's persisted owner/attempt fence rejects
+        any subsequent result from this executor.
+        """
+
+        cancellation = WorkerCancellation(
+            run_id=run_id,
+            reason=reason,
+            requested_by="worker-host-executor",
+            force=True,
+        )
+        cancellation._execution_claim_fence = {
+            "claim_owner": owner,
+            "attempt_count": attempt_count,
+        }
+        await adapter.cancel(cancellation)
+
+    async def _supervise_execution(
+        self,
+        *,
+        controller: Any,
+        adapter: WorkerAdapter,
+        execution_finished: asyncio.Event,
+        run_id: UUID,
+        host_id: str,
+        owner: str,
+        attempt_count: int,
+        lease_seconds: int,
+        worker_registry_id: UUID,
+        binding_identity: RunHostBindingIdentity,
+    ) -> None:
+        heartbeat = getattr(self._storage, "heartbeat_worker_run", None)
+        if not callable(heartbeat):
+            # This is checked before claim in execute(); retain a fail-closed
+            # guard here in case a storage implementation changes at runtime.
+            await self._cancel_stale_adapter_run(
+                adapter,
+                run_id=run_id,
+                reason="worker run heartbeat is unavailable",
+                owner=owner,
+                attempt_count=attempt_count,
+            )
+            return
+
+        interval = self._heartbeat_interval(lease_seconds)
+        while not execution_finished.is_set():
+            try:
+                await asyncio.wait_for(execution_finished.wait(), timeout=interval)
+                return
+            except TimeoutError:
+                pass
+            if execution_finished.is_set():
+                return
+
+            try:
+                renewed = await heartbeat(
+                    run_id,
+                    owner=owner,
+                    attempt_count=attempt_count,
+                    lease_seconds=lease_seconds,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "worker_host_run_heartbeat_failed",
+                    extra={"run_id": str(run_id), "error": type(exc).__name__},
+                )
+                try:
+                    await self._cancel_stale_adapter_run(
+                        adapter,
+                        run_id=run_id,
+                        reason="worker run claim could not be renewed",
+                        owner=owner,
+                        attempt_count=attempt_count,
+                    )
+                except Exception as cancel_exc:
+                    logger.warning(
+                        "worker_host_runtime_cancel_after_heartbeat_failure_failed",
+                        extra={"run_id": str(run_id), "error": type(cancel_exc).__name__},
+                    )
+                return
+
+            try:
+                renewed_attempt_count = int((renewed or {}).get("attempt_count") or 0)
+            except (AttributeError, TypeError, ValueError):
+                renewed_attempt_count = 0
+            if (
+                not isinstance(renewed, dict)
+                or str(renewed.get("claim_owner") or "") != owner
+                or renewed_attempt_count != attempt_count
+            ):
+                try:
+                    await self._cancel_stale_adapter_run(
+                        adapter,
+                        run_id=run_id,
+                        reason="worker run claim is no longer current",
+                        owner=owner,
+                        attempt_count=attempt_count,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "worker_host_runtime_cancel_after_claim_loss_failed",
+                        extra={"run_id": str(run_id), "error": type(exc).__name__},
+                    )
+                return
+
+            if execution_finished.is_set():
+                return
+            if await self._binding_is_current(
+                run_id=run_id,
+                host_id=host_id,
+                owner=owner,
+                worker_registry_id=worker_registry_id,
+                identity=binding_identity,
+            ):
+                continue
+
+            try:
+                await controller.cancel(
+                    run_id,
+                    adapter,
+                    reason="worker host binding or lease is no longer current",
+                    requested_by="worker-host-executor",
+                    force=True,
+                    claim_owner=owner,
+                    attempt_count=attempt_count,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "worker_host_runtime_cancel_after_binding_loss_failed",
+                    extra={"run_id": str(run_id), "error": type(exc).__name__},
+                )
+            return
+
     async def execute(
         self,
         execution_request: HostExecutionRequest,
@@ -230,14 +418,17 @@ class WorkerHostExecutor:
         except (TypeError, ValueError) as exc:
             raise WorkerHostExecutionRejected("worker_registry_id_invalid") from exc
 
-        binding = await self._bindings.get(run_id)
-        self._validate_binding(
-            binding,
+        binding = self._validate_binding(
+            await self._bindings.get(run_id),
             run_id=run_id,
             host_id=host_id,
+            owner=owner,
             worker_registry_id=normalized_worker_registry_id,
         )
+        binding_identity = RunHostBindingIdentity.from_binding(binding)
         await self._validate_model_resolution(worker_request, model_resolution_snapshot_id)
+        if not callable(getattr(self._storage, "heartbeat_worker_run", None)):
+            raise WorkerHostExecutionRejected("worker_run_heartbeat_unavailable")
         # The binding owner is the host's scoped execution identity.  Reusing
         # it for the Worker Run lease keeps claim and release auditable under
         # one actor without exposing host credentials to the worker runtime.
@@ -248,6 +439,14 @@ class WorkerHostExecutor:
         )
         if claimed is None or str(claimed.get("state") or "") != "CLAIMED":
             raise WorkerHostExecutionRejected("worker_run_claim_failed")
+        if str(claimed.get("claim_owner") or "") != owner:
+            raise WorkerHostExecutionRejected("worker_run_claim_owner_mismatch")
+        try:
+            attempt_count = int(claimed.get("attempt_count") or 0)
+        except (TypeError, ValueError) as exc:
+            raise WorkerHostExecutionRejected("worker_run_claim_attempt_invalid") from exc
+        if attempt_count < 1:
+            raise WorkerHostExecutionRejected("worker_run_claim_attempt_invalid")
         if str(claimed.get("worker_id") or "") != str(normalized_worker_registry_id):
             raise WorkerHostExecutionRejected("worker_run_worker_mismatch")
 
@@ -256,6 +455,23 @@ class WorkerHostExecutor:
         controller = WorkerRunController(storage=self._storage)
         binding_after: dict[str, Any] | None = None
         release_error: Exception | None = None
+        execution_finished = asyncio.Event()
+        supervisor_task = asyncio.create_task(
+            self._supervise_execution(
+                controller=controller,
+                adapter=adapter,
+                execution_finished=execution_finished,
+                run_id=run_id,
+                host_id=host_id,
+                owner=owner,
+                attempt_count=attempt_count,
+                lease_seconds=lease_seconds,
+                worker_registry_id=normalized_worker_registry_id,
+                binding_identity=binding_identity,
+            ),
+            name=f"worker-host-run-supervisor-{run_id}",
+        )
+        interrupted_by_host_shutdown = False
         try:
             outcome = await controller.execute(
                 worker_request,
@@ -267,9 +483,61 @@ class WorkerHostExecutor:
                 steward_id=steward_id,
                 model_resolution_snapshot_id=model_resolution_snapshot_id,
             )
+        except asyncio.CancelledError:
+            interrupted_by_host_shutdown = True
+            # API/host shutdown cancels the queue consumer task. Stop the
+            # runtime owned by this exact claim before allowing the durable
+            # WorkerRun lease to expire and be recovered. Do not settle the
+            # run here: the existing lease recovery path remains authoritative
+            # and may requeue it after this process exits.
+            with anyio.CancelScope(shield=True):
+                try:
+                    await asyncio.wait_for(
+                        self._cancel_stale_adapter_run(
+                            adapter,
+                            run_id=run_id,
+                            reason="host executor stopped while worker runtime was active",
+                            owner=owner,
+                            attempt_count=attempt_count,
+                        ),
+                        timeout=self._INTERRUPTED_RUNTIME_CLEANUP_TIMEOUT_SECONDS,
+                    )
+                except TimeoutError:
+                    logger.warning(
+                        "worker_host_runtime_cancel_on_shutdown_timed_out",
+                        extra={"run_id": str(run_id)},
+                    )
+                except Exception as exc:  # noqa: BLE001 - exception text may contain runtime data
+                    logger.warning(
+                        "worker_host_runtime_cancel_on_shutdown_failed",
+                        extra={"run_id": str(run_id), "error": type(exc).__name__},
+                    )
+            raise
         finally:
+            execution_finished.set()
+            supervisor_task.cancel()
+            await asyncio.gather(supervisor_task, return_exceptions=True)
             try:
-                binding_after = await self._bindings.release(run_id, owner=owner)
+                # A cancelled ASGI task still needs to release this exact
+                # reservation. Bound and shield the write so shutdown cannot
+                # interrupt it halfway through. If storage is unavailable,
+                # host-lease recovery remains the fallback.
+                with anyio.CancelScope(shield=True):
+                    release_kwargs: dict[str, Any] = {
+                        "owner": owner,
+                        "expected_identity": binding_identity,
+                    }
+                    if interrupted_by_host_shutdown:
+                        release_kwargs.update(
+                            expected_claim_owner=owner,
+                            expected_attempt_count=attempt_count,
+                        )
+                    binding_after = await asyncio.wait_for(
+                        self._bindings.release(run_id, **release_kwargs),
+                        timeout=self._BINDING_RELEASE_TIMEOUT_SECONDS,
+                    )
+            except TimeoutError as exc:  # pragma: no cover - live storage timeout
+                release_error = exc
             except Exception as exc:  # pragma: no cover - live failure path
                 release_error = exc
         if release_error is not None:

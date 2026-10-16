@@ -23,17 +23,17 @@
     "flows": 2,
     "projects": 3
   },
-  "contract_commit": "1f20132a4d6445f49484d84a7c592eff26a4c2ec",
-  "expected_migration": "0042_worker_run_host_binding",
+  "contract_commit": null,
+  "expected_migration": "0045_worker_tool_effects",
   "external_network_access_performed": false,
   "external_provider_mutation_performed": false,
   "failed_checks": [],
   "licence_metadata_is_gate": false,
   "local_database_access_performed": true,
-  "migration_version": "0042_worker_run_host_binding",
+  "migration_version": "0045_worker_tool_effects",
   "mode": "local-postgres-flow-instance-recovery",
   "mutation_performed": true,
-  "observed_at": "2026-08-18T10:07:33Z",
+  "observed_at": "2026-10-02T00:25:38Z",
   "remaining": {
     "companies": 0,
     "executions": 0,
@@ -42,6 +42,13 @@
     "projects": 0
   },
   "reopened_connection": true,
+  "run_provenance": {
+    "aiat_source_revision": "bc0d1a8bb7a2d3f8b647dcac3e13876a4bd5195f",
+    "changed_path_count": 6,
+    "environment": "WSL local AIAT Compose",
+    "external_provider_dispatch_authorized": false,
+    "worktree_dirty": true
+  },
   "schema_version": "aiat.flow-instance-recovery-postgres-certification.v1",
   "scope": "reserved local Postgres flow-instance recovery; payload-free status and counts only",
   "status": "pass",

@@ -1,0 +1,151 @@
+{
+  "report_id": "opencode-adapter-conformance-1.17.13-vs-1.18.21-2026-10-12",
+  "created_at": "2026-10-12",
+  "purpose": "Non-model adapter API conformance experiment against the exact retained OpenCode 1.18.21 image. This report does not approve or activate the candidate.",
+  "environment": {
+    "docker_context": "aiat-wsl",
+    "sandbox_runtime": "runsc",
+    "network_policy": {
+      "docker_network_mode": "dedicated_internal_network",
+      "docker_internal": true,
+      "outbound_connectivity": "disabled by Docker internal network policy",
+      "host_published_ports": [],
+      "only_peer": "disposable OpenCode candidate container"
+    },
+    "filesystem": {
+      "container_root_read_only": true,
+      "writable_paths": ["/tmp (tmpfs)", "/root (tmpfs)", "/workspace (tmpfs)"],
+      "host_workspace_mounts": ["read-only AIAT mas_core source for adapter client"],
+      "persistent_volume_attached": false
+    },
+    "container_hardening": {
+      "capabilities_dropped": "ALL",
+      "no_new_privileges": true,
+      "pids_limit": 128,
+      "memory_limit": "1g",
+      "cpu_limit": 1
+    },
+    "credentials": {
+      "env_files_read": false,
+      "real_credentials_used": false,
+      "authentication": "synthetic Basic Auth values supplied only to the disposable candidate and test adapter; values intentionally not retained"
+    },
+    "external_requests": {
+      "internet_requests": 0,
+      "provider_requests": 0,
+      "prompt_async_requests": 0,
+      "model_profile_supplied": false
+    }
+  },
+  "candidate": {
+    "expected_reference": "ghcr.io/anomalyco/opencode:1.18.21@sha256:56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb",
+    "local_repo_digest": "ghcr.io/anomalyco/opencode@sha256:56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb",
+    "image_id": "sha256:56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb",
+    "runtime_version_command_output": "1.18.21",
+    "image_created_at": "2026-08-21T14:49:26.226351854Z",
+    "retained_candidate_report": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/candidate-certification.json",
+    "candidate_source": {
+      "repository": "https://github.com/anomalyco/opencode.git",
+      "release_tag": "v1.18.21",
+      "source_commit": "826d9ad46a22bef0294998e08daa3c4904fea28f",
+      "retained_snapshot": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/source-snapshot.tar.xz",
+      "snapshot_sha256": "e338f0fc18145f7fc0ac848da5593ae77ea63adbd5f1d386ca8d82151a280370"
+    }
+  },
+  "adapter_contract": {
+    "report_id": "opencode-phase0b-1.17.13",
+    "approved_release": "1.17.13",
+    "approved_commit_sha": "F8C45BAE73A8F1E2088023FDD34DC2FE0A7F93F505F073E0703E4E1A19AFE8FF",
+    "approved_openapi_sha256": "03d773f1ff66b1c2dc0b000fc541fb6955a8cb924cc5816dc6d0e67c31974a78",
+    "fixture_path": "mas/packages/mas-core/mas_core/worker_registry/fixtures/opencode-phase0b-1.17.13.json",
+    "fixture_sha256": "4c53c7b28d10aa684d0e8b5a421abf8e4c228a2c9da011237c953c443a6e0ee3",
+    "adapter_source_path": "mas/packages/mas-core/mas_core/worker_registry/runtime_adapters.py",
+    "adapter_source_sha256": "3880555ea2918b05903658b6f85b4ba998c8531bfcb2c120f8450749fc638f98",
+    "adapter_api_version": "aiat.adapter.v1",
+    "adapter_runtime_version_configured": "1.17.13",
+    "client_image": "mas/orchestrator-api:dev@sha256:93ba715c097fc49228502a0d4c3be0b1dd67a18c20a1e998cb38e3b2f35df837",
+    "live_openapi_sha256": "25c2d05b2d598898c8ca818253ad821dda574aebc507dea77ead15e695891683",
+    "live_schema_matches_approved_contract": false
+  },
+  "operations": {
+    "authenticated_health": {
+      "status": "PASS",
+      "http_status": 200,
+      "runtime_health": "healthy"
+    },
+    "adapter_readiness": {
+      "status": "BLOCKED",
+      "ready": false,
+      "checks": {
+        "adapter_open": true,
+        "authenticated_health": true,
+        "schema_pinned": false
+      },
+      "blockers": [
+        "OpenCode live OpenAPI schema does not match the certified digest",
+        "OpenCode requires an AIAT-resolved ModelProfile"
+      ]
+    },
+    "session_create": {
+      "status": "PASS",
+      "http_status": 200,
+      "path": "/session",
+      "adapter_method": "OpenCodeAdapter._create_session"
+    },
+    "session_read": {
+      "status": "PASS",
+      "http_status": 200,
+      "path": "/session/{sessionID}",
+      "returned_session_id_matched": true
+    },
+    "event_stream": {
+      "status": "PASS",
+      "http_status": 200,
+      "content_type": "text/event-stream",
+      "path": "/global/event",
+      "event_payload_received": false,
+      "note": "No prompt or runtime work was submitted, so no session event payload was expected; adapter event consumer connected and was cancelled within the bounded test."
+    },
+    "session_abort": {
+      "status": "PASS",
+      "http_status": 200,
+      "path": "/session/{sessionID}/abort",
+      "adapter_method": "OpenCodeAdapter._abort_cancelled_session"
+    },
+    "session_cleanup": {
+      "status": "PASS",
+      "delete_http_status": 200,
+      "post_delete_read_http_status": 404,
+      "absence_confirmed": true,
+      "adapter_method": "OpenCodeAdapter._cleanup_session"
+    },
+    "prompt_async": {
+      "status": "NOT_RUN_BY_DESIGN",
+      "call_count": 0
+    },
+    "tool_mediation": {
+      "status": "NOT_RUN_BY_DESIGN",
+      "reason": "OpenCode session setup normally requires AIAT Tool Service MCP configuration. For this API-only check, _configure_tool_bridge was replaced in-process with a fixed local bridge name; no MCP request or tool invocation occurred."
+    }
+  },
+  "compatibility_assessment": {
+    "non_model_session_api_operations_observed": true,
+    "approved_adapter_contract_matches_candidate": false,
+    "activation_or_worker_admission_conclusion": "No admission or activation conclusion. The adapter correctly blocks readiness because the live 1.18.21 OpenAPI digest differs from its approved 1.17.13 contract; a model profile is also intentionally absent.",
+    "scope_limitations": [
+      "No 1.18.21 adapter verification report or schema approval was created.",
+      "Tool Service/MCP setup was not exercised.",
+      "No model profile, prompt, tool call, provider request, artifact, or worker run was created.",
+      "This isolated API exercise is not worker certification, security approval, or production evidence."
+    ]
+  },
+  "cleanup": {
+    "disposable_candidate_container_removed": true,
+    "disposable_internal_network_removed": true,
+    "temporary_test_script_removed": true,
+    "candidate_persistent_data_created": false,
+    "worker_manifest_or_approval_mutated": false,
+    "canonical_gate_mutated": false
+  },
+  "decision": "The exact 1.18.21 binary and several non-model session operations interoperate with the current adapter implementation, but 1.18.21 remains unapproved and not ready for admission. Continue through the existing candidate interface-verification and governance process; do not infer compatibility approval from this bounded experiment."
+}

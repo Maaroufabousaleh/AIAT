@@ -21,10 +21,28 @@ runner:
   forbidden_mounts:
     - /var/run/docker.sock
 
+# Positive control-plane connectivity is checked independently of whether
+# team-runner containers are started. This detects a broken internal bridge
+# without requiring a governance worker to resume durable work.
+control_plane:
+  service: orchestrator-api
+  network: internal
+  required_tcp:
+    - service: redis
+      port: 6379
+    - service: postgres
+      port: 5432
+    - service: pgbouncer
+      port: 5432
+    - service: tool-service
+      port: 8002
+
 networks:
   internal:
     internal: true
   workers:
+    internal: true
+  sandbox_gateway:
     internal: true
 
 protected_services:
@@ -41,7 +59,7 @@ protected_services:
     network: internal
     port: 9000
   - service: opencode-runtime
-    network: internal
+    network: sandbox_gateway
     port: 4096
 
 allowed_gateways:

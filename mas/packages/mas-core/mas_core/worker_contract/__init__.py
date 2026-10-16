@@ -6,14 +6,28 @@ flow controller, and tool service remain the authoritative control-plane
 components.
 """
 
+from .adapters import (
+    AdapterContext,
+    BaseWorkerAdapter,
+    NativeWorkerAdapter,
+    WorkerAdapter,
+    WorkerStartCancelled,
+)
+from .conformance import ConformanceReport, ConformanceRunner, ConformanceTestResult
+from .controller import (
+    RUN_TRANSITIONS,
+    TERMINAL_RUN_STATES,
+    WorkerRunController,
+    WorkerRunError,
+    WorkerRunOutcome,
+)
 from .models import (
-    CONTRACT_VERSION,
     ADAPTER_API_VERSION,
+    CONTRACT_VERSION,
     ArtifactKind,
-    CapabilityRequirement,
-    WorkerCapabilityRequirement,
-    CheckpointMode,
     CancellationMode,
+    CapabilityRequirement,
+    CheckpointMode,
     ContractError,
     EventType,
     MemoryMode,
@@ -25,9 +39,10 @@ from .models import (
     ToolMode,
     WorkerArtifact,
     WorkerAuditEvent,
-    WorkerCapabilities,
     WorkerCancellation,
     WorkerCancellationReceipt,
+    WorkerCapabilities,
+    WorkerCapabilityRequirement,
     WorkerCheckpoint,
     WorkerError,
     WorkerEvent,
@@ -38,14 +53,20 @@ from .models import (
     WorkerProgress,
     WorkerReadiness,
     WorkerResult,
-    WorkerRuntimeStatus,
     WorkerResume,
     WorkerRunAccepted,
     WorkerRunRequest,
+    WorkerRuntimeStatus,
     WorkerToolRequest,
     WorkerToolResponse,
     WorkerUsage,
     WorkspaceMode,
+)
+from .opencode_bridge import (
+    OpenCodeToolGrant,
+    OpenCodeToolGrantError,
+    issue_opencode_tool_grant,
+    verify_opencode_tool_grant,
 )
 from .protocol import (
     CURRENT_MAJOR,
@@ -53,26 +74,6 @@ from .protocol import (
     ProtocolNegotiationError,
     ProtocolNegotiationResult,
     negotiate_protocol,
-)
-from .adapters import (
-    AdapterContext,
-    BaseWorkerAdapter,
-    NativeWorkerAdapter,
-    WorkerAdapter,
-)
-from .conformance import ConformanceReport, ConformanceRunner, ConformanceTestResult
-from .controller import (
-    RUN_TRANSITIONS,
-    TERMINAL_RUN_STATES,
-    WorkerRunController,
-    WorkerRunError,
-    WorkerRunOutcome,
-)
-from .opencode_bridge import (
-    OpenCodeToolGrant,
-    OpenCodeToolGrantError,
-    issue_opencode_tool_grant,
-    verify_opencode_tool_grant,
 )
 
 __all__ = [
@@ -127,6 +128,7 @@ __all__ = [
     "WorkerRunError",
     "WorkerRunRequest",
     "WorkerRunOutcome",
+    "WorkerStartCancelled",
     "OpenCodeToolGrant",
     "OpenCodeToolGrantError",
     "WorkerToolRequest",

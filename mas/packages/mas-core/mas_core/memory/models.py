@@ -198,6 +198,14 @@ approval_gates = sa.Table(
     ),
     sa.Column("gate_type", sa.Text(), nullable=False),
     sa.Column("status", sa.Text(), nullable=False, server_default="PENDING"),
+    # Set only for an approval node created by the flow runtime. Project and
+    # other approval gates remain unbound and continue to use their existing
+    # decision lifecycle.
+    sa.Column(
+        "flow_node_execution_id",
+        sa.BigInteger(),
+        sa.ForeignKey("flow_node_executions.id", ondelete="SET NULL"),
+    ),
     sa.Column("decided_by", sa.Text()),
     sa.Column("justification", sa.Text()),
     sa.Column("human_input", JSONB()),
@@ -205,6 +213,18 @@ approval_gates = sa.Table(
         "created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False
     ),
     sa.Column("decided_at", sa.TIMESTAMP(timezone=True)),
+)
+
+sa.Index(
+    "ix_approval_gates_status_created_id",
+    approval_gates.c.status,
+    approval_gates.c.created_at,
+    approval_gates.c.id,
+)
+sa.Index(
+    "uq_approval_gates_flow_node_execution_id",
+    approval_gates.c.flow_node_execution_id,
+    unique=True,
 )
 
 # ── 7. sprints ────────────────────────────────────────────────────────────────
@@ -1589,6 +1609,8 @@ worker_runs = sa.Table(
     sa.Column("skill_bundle_id", sa.UUID(), sa.ForeignKey("skill_bundles.id", ondelete="RESTRICT")),
     sa.Column("steward_id", sa.UUID(), sa.ForeignKey("steward_agents.id", ondelete="SET NULL")),
     sa.Column("model_resolution_snapshot_id", sa.UUID(), sa.ForeignKey("model_resolution_snapshots.id", ondelete="SET NULL")),
+    sa.Column("retry_of_run_id", sa.UUID(), sa.ForeignKey("worker_runs.id", ondelete="RESTRICT")),
+    sa.Column("retry_context_json", JSONB(), nullable=False, server_default="{}"),
     sa.Column("task_type", sa.Text(), nullable=False),
     sa.Column("state", sa.Text(), nullable=False, server_default="CREATED"),
     sa.Column("queue_priority", sa.Integer(), nullable=False, server_default="0"),

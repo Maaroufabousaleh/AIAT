@@ -3,6 +3,8 @@ import type { Flow, FlowDefinition, FlowInstance, FlowNodeExecution, FlowTemplat
 
 type FlowError = Error & { status?: number };
 
+let flowFetchGeneration = 0;
+
 interface FlowState {
   flows: Flow[];
   currentFlow: Flow | null;
@@ -94,6 +96,7 @@ export const useFlowStore = create<FlowState>((set, get) => ({
   },
 
   fetchFlow: async (id) => {
+    const generation = ++flowFetchGeneration;
     set({ loading: true, error: null, errorStatus: null });
     try {
       const res = await fetch(`/api/flows/${id}`);
@@ -105,14 +108,18 @@ export const useFlowStore = create<FlowState>((set, get) => ({
         throw error;
       }
       const data = payload;
-      set({ currentFlow: data, loading: false, errorStatus: null });
+      if (generation === flowFetchGeneration) {
+        set({ currentFlow: data, loading: false, errorStatus: null });
+      }
       return data;
     } catch (e) {
-      set({
-        error: (e as Error).message,
-        errorStatus: (e as FlowError).status ?? null,
-        loading: false,
-      });
+      if (generation === flowFetchGeneration) {
+        set({
+          error: (e as Error).message,
+          errorStatus: (e as FlowError).status ?? null,
+          loading: false,
+        });
+      }
       return null;
     }
   },

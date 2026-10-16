@@ -1,0 +1,46 @@
+{
+  "task_id": "ALPHA-ISOLATED-UI-E2E-11",
+  "dashboard_source": "current shared source copied to an isolated /tmp directory",
+  "source_git_head": "1a73df5d527aa99c4313f94ef196b3b837fef9b9",
+  "source_worktree_code_changes_included": true,
+  "implementation_commits": [
+    "a1ced1297d3b942fa682ec17484caf955d7dea15",
+    "33ae700669ae6f332f5001865f1faddf473e2bbf"
+  ],
+  "build": {
+    "command": "npm run build -- --webpack",
+    "result": "PASS",
+    "framework": "Next.js 16.2.10 (webpack)",
+    "typescript": "PASS",
+    "routes_generated": 81
+  },
+  "server": {
+    "url": "http://127.0.0.1:4011",
+    "login_http_status": 200,
+    "orchestrator_url": "http://127.0.0.1:9",
+    "external_provider_dispatch": false,
+    "stopped": true
+  },
+  "playwright": {
+    "specs": [
+      "e2e/model-profile-activation.spec.ts",
+      "e2e/worker-run-operations.spec.ts",
+      "e2e/pm-integration-setup.spec.ts"
+    ],
+    "passed": 8,
+    "failed": 0,
+    "skipped": 0,
+    "flaky": 0,
+    "duration_ms": 25400.611,
+    "machine_readable_result": "this retained summary"
+  },
+  "network_scope": {
+    "global_setup_or_teardown": false,
+    "web_server_hook": false,
+    "model_profile_external_origin_assertion": "passed",
+    "pm_external_origin_assertion": "passed",
+    "worker_unexpected_api_request_assertion": "passed",
+    "live_orchestrator_or_provider_calls": false
+  },
+  "test_harness_changed_source_repository": false
+}

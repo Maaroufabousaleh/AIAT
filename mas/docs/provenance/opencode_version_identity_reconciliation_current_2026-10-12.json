@@ -1,0 +1,265 @@
+{
+  "activation_changed": false,
+  "adapter": {
+    "approved_openapi_sha256": "03d773f1ff66b1c2dc0b000fc541fb6955a8cb924cc5816dc6d0e67c31974a78",
+    "approved_release": "1.17.13",
+    "approved_report_id": "opencode-phase0b-1.17.13",
+    "approved_report_ref": "mas/packages/mas-core/mas_core/worker_registry/fixtures/opencode-phase0b-1.17.13.json",
+    "candidate_compatibility": "not_proven_blocked",
+    "candidate_compatibility_reason": "The pinned 1.18.21 image passed runtime-version, authenticated health, and required operation-ID coverage checks. Its sanitized OpenAPI digest differs from the adapter's approved 1.17.13 digest, and no 1.18.21 committed adapter-verification report, session/event fixtures, or canonical adapter execution evidence exists.",
+    "candidate_probe": {
+      "approved_1_17_13_openapi_sha256": "03d773f1ff66b1c2dc0b000fc541fb6955a8cb924cc5816dc6d0e67c31974a78",
+      "authenticated_health_http": 200,
+      "container_configuration": [
+        "fresh disposable container",
+        "OPENCODE_DISABLE_PROJECT_CONFIG=true",
+        "--pure",
+        "no provider credentials supplied",
+        "temporary workspace"
+      ],
+      "image_digest": "sha256:56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb",
+      "invalid_auth_health_http": 401,
+      "missing_required_operations": [],
+      "openapi_path_count": 162,
+      "prompt_submitted": false,
+      "provider_request_made": false,
+      "required_adapter_operation_count": 20,
+      "runtime_version": "1.18.21",
+      "sanitized_openapi_sha256": "25c2d05b2d598898c8ca818253ad821dda574aebc507dea77ead15e695891683",
+      "schema_matches_approved_1_17_13_report": false,
+      "scope": "read-only live interface probe; not adapter certification or activation evidence",
+      "session_created": false,
+      "status": "required_operation_coverage_pass_schema_digest_mismatch",
+      "unauthenticated_health_http": 401
+    },
+    "candidate_report_present": false,
+    "compatible_for_promotion": false,
+    "entrypoint": "OpenCodeAdapter",
+    "retained_candidate_conformance": {
+      "approved_openapi_sha256": "03d773f1ff66b1c2dc0b000fc541fb6955a8cb924cc5816dc6d0e67c31974a78",
+      "candidate_identity_matches_retained_source_and_image": true,
+      "candidate_openapi_sha256": "25c2d05b2d598898c8ca818253ad821dda574aebc507dea77ead15e695891683",
+      "decision": "The exact 1.18.21 binary and several non-model session operations interoperate with the current adapter implementation, but 1.18.21 remains unapproved and not ready for admission. Continue through the existing candidate interface-verification and governance process; do not infer compatibility approval from this bounded experiment.",
+      "non_model_lifecycle_operations_passed": true,
+      "promotion_compatible": false,
+      "prompt_async_status": "NOT_RUN_BY_DESIGN",
+      "provider_request_count": 0,
+      "report_id": "opencode-adapter-conformance-1.17.13-vs-1.18.21-2026-10-12",
+      "report_ref": "mas/docs/provenance/opencode_adapter_conformance_1.17.13_vs_1.18.21_2026-10-12.json",
+      "report_sha256": "53d23d1b7d4df17c7040b9805f075a2cbfcdcf36a29686770fd51addb3fbea34",
+      "schema_matches_approved_contract": false,
+      "tool_mediation_status": "NOT_RUN_BY_DESIGN"
+    },
+    "source_ref": "mas/packages/mas-core/mas_core/worker_registry/runtime_adapters.py:OpenCodeAdapter",
+    "version": "1.0.0"
+  },
+  "candidate": {
+    "certification": {
+      "blockers": [
+        "scanner_coverage_incomplete"
+      ],
+      "report_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/candidate-certification.json",
+      "scanner_errors": 6,
+      "scanner_results": [
+        {
+          "finding_count": 328,
+          "name": "semgrep",
+          "raw_json_path": "semgrep.json",
+          "raw_json_sha256": "bcc70a2a32f1330179ce5d63f24e8a9582b8f89b98637a69ce1c469c6ac0a235",
+          "scanner_error_count": 6,
+          "status": "blocked"
+        },
+        {
+          "finding_count": 55,
+          "name": "trufflehog",
+          "raw_json_path": "trufflehog.json",
+          "raw_json_sha256": "0604397980b46a27f7482a83c83fbd8cd8c84f494455cb1196b52ef18e50dfe5",
+          "scanner_error_count": 0,
+          "status": "pass"
+        },
+        {
+          "finding_count": 0,
+          "name": "skillspector",
+          "raw_json_path": "skillspector.json",
+          "raw_json_sha256": "c48b883245390ef54595ad4cc5eefbcc42503f95808cccaace7a5eaa94153740",
+          "scanner_error_count": 0,
+          "status": "pass"
+        }
+      ],
+      "security_disposition_complete": false,
+      "status": "blocked"
+    },
+    "oci_image": {
+      "digest": "sha256:56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb",
+      "digest_matches_reference": true,
+      "local_image_version_crosscheck": {
+        "binary_version_command": "docker run --rm --network none --entrypoint opencode <pinned-image> --version",
+        "binary_version_output": "1.18.21",
+        "docker_context": "aiat-wsl",
+        "image_id": "sha256:56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb",
+        "repo_digest_matches": true,
+        "scope": "local immutable image identity/version observation; not a production image attestation"
+      },
+      "reference": "ghcr.io/anomalyco/opencode:1.18.21@sha256:56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb"
+    },
+    "source": {
+      "archive_sha256": "77b8cee43c3f74d94ad4651c375ec02bcd55a20aff06f9aac8e7be59c70811a0",
+      "archive_sha256_verified": true,
+      "commit": "826d9ad46a22bef0294998e08daa3c4904fea28f",
+      "release": "1.18.21",
+      "repository": "https://github.com/anomalyco/opencode.git",
+      "snapshot_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/source-snapshot.tar.xz",
+      "snapshot_sha256": "e338f0fc18145f7fc0ac848da5593ae77ea63adbd5f1d386ca8d82151a280370",
+      "snapshot_sha256_verified": true,
+      "tag": "v1.18.21"
+    },
+    "tag": "v1.18.21",
+    "version": "1.18.21"
+  },
+  "checks": {
+    "active_manifest_candidate_alignment": "BLOCKED",
+    "active_runtime_candidate_alignment": "BLOCKED",
+    "candidate_adapter_compatibility": "BLOCKED",
+    "candidate_immutable_image_identity": "PASS",
+    "candidate_non_model_adapter_lifecycle": "PASS",
+    "candidate_security_and_steward_governance": "BLOCKED",
+    "candidate_source_and_archive_identity": "PASS",
+    "persisted_candidate_registration": "BLOCKED"
+  },
+  "decision": "BLOCKED_IDENTITY_COMPATIBILITY_AND_GOVERNANCE",
+  "external_provider_called": false,
+  "persisted_candidate": {
+    "coding_worker_manifest_pins_candidate": false,
+    "identity_observed": false,
+    "observation_date": "2026-10-12",
+    "observation_ref": "mas/docs/provenance/opencode_version_reconciliation_2026-10-12.json",
+    "retained_live_worker": {
+      "active_adapter_id_present": false,
+      "active_shell_version_id_present": false,
+      "active_skill_bundle_id_present": false,
+      "evaluation_status": "compatibility_pending_governance",
+      "status": "INACTIVE",
+      "version_pin": "1.17.13",
+      "worker_id": "coding_worker"
+    },
+    "steward_candidate_status": "not_observed_persisted",
+    "tester_manifest_pins_candidate": false
+  },
+  "runtime": {
+    "active_compose_runtime_version_matches_candidate": false,
+    "build_version": "1.17.13",
+    "compose_ref": "mas/infra/compose/docker-compose.yml:services.opencode-runtime",
+    "dockerfile_default_version": "1.17.13",
+    "dockerfile_package": "opencode-ai",
+    "dockerfile_ref": "mas/infra/docker/Dockerfile.opencode",
+    "dockerfile_tarball_sha512_base64": "qUb9m6X6f9/imuDxc2tUcN+E1vx1XWjmQWJo2Pk/t+cNxqt5KGkaMF89CvJK6QQP7gx1E82gKpV7n1QiI5spxQ==",
+    "image_reference": "${AIAT_OPENCODE_RUNTIME_IMAGE_REF:?AIAT_OPENCODE_RUNTIME_IMAGE_REF must be an immutable OCI image reference}",
+    "local_container_observation": {
+      "application_version": "1.17.13",
+      "configured_image": "mas/opencode-runtime:dev-project-config-disabled",
+      "container": "mas-opencode-runtime-1",
+      "health": "healthy",
+      "local_image_id": "sha256:1a6c7b1d6ec65563dc9ae752eac7657a2d5f062d9d51e906d2f9208326032542",
+      "observation_method": [
+        "docker context show",
+        "docker inspect selected container/image identity and health fields",
+        "docker exec selected container opencode --version",
+        "docker exec selected container read OPENCODE_DISABLE_PROJECT_CONFIG"
+      ],
+      "project_config_disabled": true,
+      "registry_release_digest": null,
+      "scope": "local WSL development stack after security hardening; not a production image attestation or worker admission",
+      "state": "running"
+    },
+    "network_names": [
+      "sandbox_gateway"
+    ],
+    "project_config_disabled": true,
+    "read_only_root": true,
+    "runtime_catalog": {
+      "catalogue_ref": "mas/packages/mas-core/mas_core/worker_registry/runtime_catalog.py:RUNTIME_CATALOG.external",
+      "runtime_id": "external",
+      "supported_isolation_modes": [
+        "wrapper",
+        "fork",
+        "opencode"
+      ],
+      "supported_transports": [
+        "process",
+        "http",
+        "oci",
+        "mcp",
+        "opencode",
+        "wasmtime"
+      ],
+      "version_pin_policy": "catalogue declares no runtime version; worker manifest and immutable image provenance carry exact version"
+    },
+    "runtime_catalog_opencode_transport_supported": true,
+    "sandbox_runtime": "runsc"
+  },
+  "schema_version": "aiat.opencode-version-reconciliation.v1",
+  "security_evidence": {
+    "candidate_gate": "blocked",
+    "candidate_report_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/candidate-certification.json",
+    "current_manifest_refs": [
+      "mas/docs/provenance/security_scan_evidence.yaml#opencode-1.17.13-semgrep-2026-08-10",
+      "mas/docs/provenance/security_scan_evidence.yaml#opencode-1.17.13-semgrep-2026-08-10"
+    ],
+    "human_or_security_disposition_required": true
+  },
+  "worker_identity_mutated": false,
+  "workers": [
+    {
+      "governance": {
+        "certification_status": "pending",
+        "evaluation_status": "pending",
+        "security_scan_evidence_ref": "mas/docs/provenance/security_scan_evidence.yaml#opencode-1.17.13-semgrep-2026-08-10",
+        "security_scan_status": "findings_review_required"
+      },
+      "manifest_ref": "mas/workers/coding_worker.yaml",
+      "runtime": {
+        "adapter_entrypoint": "OpenCodeAdapter",
+        "adapter_version": "1.0.0",
+        "interface_report_id": "opencode-phase0b-1.17.13",
+        "isolation_mode": "opencode",
+        "model_mode": "aiat_gateway",
+        "runtime_tier": "external",
+        "sandbox_profile": "sandboxed",
+        "transport": "opencode"
+      },
+      "source": {
+        "exact_release": "1.17.13",
+        "repository": "https://github.com/anomalyco/opencode",
+        "revision": "v1.17.13",
+        "version_pin": "1.17.13"
+      },
+      "worker_id": "coding_worker"
+    },
+    {
+      "governance": {
+        "certification_status": "pending",
+        "evaluation_status": "pending",
+        "security_scan_evidence_ref": "mas/docs/provenance/security_scan_evidence.yaml#opencode-1.17.13-semgrep-2026-08-10",
+        "security_scan_status": "findings_review_required"
+      },
+      "manifest_ref": "mas/workers/tester.yaml",
+      "runtime": {
+        "adapter_entrypoint": "OpenCodeAdapter",
+        "adapter_version": "1.0.0",
+        "interface_report_id": "opencode-phase0b-1.17.13",
+        "isolation_mode": "opencode",
+        "model_mode": "aiat_gateway",
+        "runtime_tier": "external",
+        "sandbox_profile": "sandboxed",
+        "transport": "opencode"
+      },
+      "source": {
+        "exact_release": "1.17.13",
+        "repository": "https://github.com/anomalyco/opencode",
+        "revision": "v1.17.13",
+        "version_pin": "1.17.13"
+      },
+      "worker_id": "tester"
+    }
+  ]
+}

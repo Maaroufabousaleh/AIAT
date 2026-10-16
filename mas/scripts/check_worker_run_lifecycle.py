@@ -86,12 +86,29 @@ class _FixtureStorage:
         reason: str | None = None,
         correlation_id: str | None = None,
         transition_metadata: dict[str, Any] | None = None,
+        claim_owner: str | None = None,
+        attempt_count: int | None = None,
+        allow_unfenced_cancel: bool = False,
     ) -> dict[str, Any] | None:
         row = self.runs.get(run_id)
         if row is None:
             return None
         current = str(row["state"])
         if expected_state is not None and current != expected_state:
+            return None
+        current_owner = row.get("claim_owner")
+        current_attempt = int(row.get("attempt_count") or 0)
+        control_cancel = new_state == "CANCELLED" and allow_unfenced_cancel
+        if not control_cancel and (current_owner is not None or current_attempt > 0):
+            lease_expires_at = row.get("lease_expires_at")
+            if (
+                claim_owner != current_owner
+                or attempt_count != current_attempt
+                or lease_expires_at is None
+                or lease_expires_at <= datetime.now(tz=UTC)
+            ):
+                return None
+        elif not control_cancel and (claim_owner is not None or attempt_count is not None):
             return None
         if new_state not in RUN_TRANSITIONS.get(current, frozenset()):
             raise ValueError(f"invalid worker run transition {current} -> {new_state}")

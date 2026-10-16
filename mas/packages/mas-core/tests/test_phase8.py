@@ -13,6 +13,7 @@ TestCSuiteAgent         — review handling, CSO veto, CTO sprint planning,
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -1430,6 +1431,72 @@ class TestCSuiteAgent:
         assert llm.calls[0]["kwargs"]["tools"] == []
         assert "chat runtime will deliver" in llm.calls[0]["messages"][1]["content"]
         assert "Use available tools" not in llm.calls[0]["messages"][1]["content"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("budget_kind", ["zero_cost", "expired_deadline"])
+    async def test_ceo_human_directive_enforces_budget_before_model_call(self, budget_kind: str):
+        config = _make_config(
+            agent_id="ceo", team_id="exec_ceo", agent_role=AgentRole.ORCHESTRATOR
+        )
+        llm = _FakeLLMClient("must not be called")
+        agent = CSuiteAgent(config, specialization="CEO", llm_client=llm)
+        router = _patch_router(agent)
+        env = _make_envelope(
+            msg_type=MessageType.TASK,
+            sender_id="human_operator",
+            sender_team="orchestrator",
+            sender_role=AgentRole.ORCHESTRATOR,
+            recipient_team="exec_ceo",
+            project_id="operator-direct",
+            payload={
+                "action": "HUMAN_DIRECTIVE",
+                "instruction": "Can you summarize current priorities?",
+            },
+        )
+        agent._current_envelope = env
+        if budget_kind == "zero_cost":
+            agent._budget = BudgetTracker(max_cost_usd=0.0)
+        else:
+            agent._budget = BudgetTracker(deadline=datetime.now(UTC) - timedelta(seconds=1))
+
+        await agent.handle_message(env)
+
+        assert llm.calls == []
+        reply = router.publish.call_args.args[0]
+        assert reply.msg_type == MessageType.RESPONSE
+        assert "task budget" in reply.payload["response"]
+
+    @pytest.mark.asyncio
+    async def test_ceo_human_directive_accounts_successful_model_call(self):
+        config = _make_config(
+            agent_id="ceo", team_id="exec_ceo", agent_role=AgentRole.ORCHESTRATOR
+        )
+        llm = _FakeLLMClient("I will handle this request.")
+        agent = CSuiteAgent(config, specialization="CEO", llm_client=llm)
+        _patch_router(agent)
+        env = _make_envelope(
+            msg_type=MessageType.TASK,
+            sender_id="human_operator",
+            sender_team="orchestrator",
+            sender_role=AgentRole.ORCHESTRATOR,
+            recipient_team="exec_ceo",
+            project_id="operator-direct",
+            payload={
+                "action": "HUMAN_DIRECTIVE",
+                "instruction": "Can you summarize current priorities?",
+            },
+        )
+        budget = BudgetTracker(max_llm_calls=1, max_cost_usd=1.0)
+        agent._current_envelope = env
+        agent._budget = budget
+
+        await agent.handle_message(env)
+
+        assert len(llm.calls) == 1
+        assert budget.llm_calls_used == 1
+        assert budget.tokens_in_used == 10
+        assert budget.tokens_out_used == 5
+        assert budget.cost_usd_used == pytest.approx(0.000125)
 
     @pytest.mark.asyncio
     async def test_ceo_skips_api_owned_human_directive(self):

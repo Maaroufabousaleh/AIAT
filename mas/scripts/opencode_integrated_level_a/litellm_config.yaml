@@ -1,0 +1,15 @@
+# One local route only. This prevents the disposable integrated run from
+# resolving any public provider, even if an application request is malformed.
+model_list:
+  - model_name: omniroute-coding
+    litellm_params:
+      model: openai/fixture-model
+      api_base: http://provider-fixture:8000/v1
+      api_key: aiat-level-a-provider-dummy
+
+litellm_settings:
+  drop_params: true
+  request_timeout: 30
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY

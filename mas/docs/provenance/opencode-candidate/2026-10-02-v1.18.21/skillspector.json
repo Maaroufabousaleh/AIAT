@@ -1,0 +1,1082 @@
+{
+  "analysis_completeness": {
+    "coverage_percent": 0.0,
+    "entirely_uninspected_files": 0,
+    "execution_successful": true,
+    "fully_inspected_files": 0,
+    "is_complete": false,
+    "limitations": [],
+    "partially_inspected_files": 2,
+    "scope": "recursive_skills",
+    "status": "partial",
+    "total_files": 2
+  },
+  "execution_successful": true,
+  "max_risk_score": 0,
+  "multi_skill": true,
+  "public_finding_records": 0,
+  "report_characters": 30354,
+  "risk_recommendation": "CAUTION",
+  "skill_count": 2,
+  "skills": [
+    {
+      "analysis_completeness": {
+        "analyzer_statuses": [
+          {
+            "analyzer_id": "artifact_integrity",
+            "completed": 1,
+            "failed": 0,
+            "partial": 0,
+            "planned_work": 1,
+            "skipped": 0,
+            "status": "completed",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "behavioral_ast",
+            "completed": 0,
+            "failed": 0,
+            "message": "[REDACTED]",
+            "partial": 0,
+            "planned_work": 0,
+            "reason_code": "no_applicable_files",
+            "skipped": 0,
+            "status": "not_applicable",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "behavioral_taint_tracking",
+            "completed": 0,
+            "failed": 0,
+            "message": "[REDACTED]",
+            "partial": 0,
+            "planned_work": 0,
+            "reason_code": "no_applicable_files",
+            "skipped": 0,
+            "status": "not_applicable",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "mcp_least_privilege",
+            "completed": 0,
+            "failed": 0,
+            "message": "[REDACTED]",
+            "partial": 0,
+            "planned_work": 0,
+            "reason_code": "no_applicable_files",
+            "skipped": 0,
+            "status": "not_applicable",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "mcp_rug_pull",
+            "completed": 1,
+            "failed": 0,
+            "partial": 0,
+            "planned_work": 1,
+            "skipped": 0,
+            "status": "completed",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "mcp_tool_poisoning",
+            "completed": 1,
+            "failed": 0,
+            "partial": 0,
+            "planned_work": 1,
+            "skipped": 0,
+            "status": "completed",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "meta_analyzer",
+            "completed": 0,
+            "failed": 0,
+            "message": "[REDACTED]",
+            "partial": 0,
+            "planned_work": 0,
+            "reason_code": "no_applicable_files",
+            "skipped": 0,
+            "status": "not_applicable",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "semantic_developer_intent",
+            "completed": 0,
+            "failed": 0,
+            "message": "[REDACTED]",
+            "partial": 0,
+            "planned_work": 0,
+            "reason_code": "disabled_by_configuration",
+            "skipped": 0,
+            "status": "disabled",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "semantic_quality_policy",
+            "completed": 0,
+            "failed": 0,
+            "message": "[REDACTED]",
+            "partial": 0,
+            "planned_work": 0,
+            "reason_code": "disabled_by_configuration",
+            "skipped": 0,
+            "status": "disabled",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "semantic_security_discovery",
+            "completed": 0,
+            "failed": 0,
+            "message": "[REDACTED]",
+            "partial": 0,
+            "planned_work": 0,
+            "reason_code": "disabled_by_configuration",
+            "skipped": 0,
+            "status": "disabled",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "static_patterns_agent_snooping",
+            "completed": 1,
+            "failed": 0,
+            "partial": 0,
+            "planned_work": 1,
+            "skipped": 0,
+            "status": "completed",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "static_patterns_anti_refusal",
+            "completed": 1,
+            "failed": 0,
+            "partial": 0,
+            "planned_work": 1,
+            "skipped": 0,
+            "status": "completed",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "static_patterns_data_exfiltration",
+            "completed": 1,
+            "failed": 0,
+            "partial": 0,
+            "planned_work": 1,
+            "skipped": 0,
+            "status": "completed",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "static_patterns_deserialization",
+            "completed": 1,
+            "failed": 0,
+            "partial": 0,
+            "planned_work": 1,
+            "skipped": 0,
+            "status": "completed",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "static_patterns_excessive_agency",
+            "completed": 1,
+            "failed": 0,
+            "partial": 0,
+            "planned_work": 1,
+            "skipped": 0,
+            "status": "completed",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "static_patterns_harmful_content",
+            "completed": 1,
+            "failed": 0,
+            "partial": 0,
+            "planned_work": 1,
+            "skipped": 0,
+            "status": "completed",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "static_patterns_memory_poisoning",
+            "completed": 1,
+            "failed": 0,
+            "partial": 0,
+            "planned_work": 1,
+            "skipped": 0,
+            "status": "completed",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "static_patterns_output_handling",
+            "completed": 1,
+            "failed": 0,
+            "partial": 0,
+            "planned_work": 1,
+            "skipped": 0,
+            "status": "completed",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "static_patterns_privilege_escalation",
+            "completed": 1,
+            "failed": 0,
+            "partial": 0,
+            "planned_work": 1,
+            "skipped": 0,
+            "status": "completed",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "static_patterns_prompt_injection",
+            "completed": 1,
+            "failed": 0,
+            "partial": 0,
+            "planned_work": 1,
+            "skipped": 0,
+            "status": "completed",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "static_patterns_rogue_agent",
+            "completed": 1,
+            "failed": 0,
+            "partial": 0,
+            "planned_work": 1,
+            "skipped": 0,
+            "status": "completed",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "static_patterns_ssrf",
+            "completed": 1,
+            "failed": 0,
+            "partial": 0,
+            "planned_work": 1,
+            "skipped": 0,
+            "status": "completed",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "static_patterns_supply_chain",
+            "completed": 1,
+            "failed": 0,
+            "partial": 0,
+            "planned_work": 1,
+            "skipped": 0,
+            "status": "completed",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "static_patterns_system_prompt_leakage",
+            "completed": 1,
+            "failed": 0,
+            "partial": 0,
+            "planned_work": 1,
+            "skipped": 0,
+            "status": "completed",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "static_patterns_tool_misuse",
+            "completed": 1,
+            "failed": 0,
+            "partial": 0,
+            "planned_work": 1,
+            "skipped": 0,
+            "status": "completed",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "static_yara",
+            "completed": 1,
+            "failed": 0,
+            "partial": 0,
+            "planned_work": 1,
+            "skipped": 0,
+            "status": "completed",
+            "unaccounted": 0
+          }
+        ],
+        "coverage_percent": 100.0,
+        "entirely_uninspected_files": 0,
+        "execution_successful": true,
+        "findings_after_filtering": 0,
+        "findings_before_filtering": 0,
+        "fully_inspected_files": 1,
+        "is_complete": false,
+        "ledger_exceptions": [
+          {
+            "end_line": 12,
+            "fatal": false,
+            "message": "[REDACTED]",
+            "outcome": "partial",
+            "path": "SKILL.md",
+            "phase": "reference_resolution",
+            "reason_code": "reference_unresolved",
+            "start_line": 12
+          },
+          {
+            "end_line": 14,
+            "fatal": false,
+            "message": "[REDACTED]",
+            "outcome": "partial",
+            "path": "SKILL.md",
+            "phase": "reference_resolution",
+            "reason_code": "reference_unresolved",
+            "start_line": 14
+          },
+          {
+            "end_line": 15,
+            "fatal": false,
+            "message": "[REDACTED]",
+            "outcome": "partial",
+            "path": "SKILL.md",
+            "phase": "reference_resolution",
+            "reason_code": "reference_unresolved",
+            "start_line": 15
+          },
+          {
+            "end_line": 30,
+            "fatal": false,
+            "message": "[REDACTED]",
+            "outcome": "partial",
+            "path": "SKILL.md",
+            "phase": "reference_resolution",
+            "reason_code": "reference_unresolved",
+            "start_line": 30
+          },
+          {
+            "end_line": 34,
+            "fatal": false,
+            "message": "[REDACTED]",
+            "outcome": "partial",
+            "path": "SKILL.md",
+            "phase": "reference_resolution",
+            "reason_code": "reference_unresolved",
+            "start_line": 34
+          },
+          {
+            "end_line": 36,
+            "fatal": false,
+            "message": "[REDACTED]",
+            "outcome": "partial",
+            "path": "SKILL.md",
+            "phase": "reference_resolution",
+            "reason_code": "reference_unresolved",
+            "start_line": 36
+          }
+        ],
+        "limitations": [],
+        "partially_inspected_files": 0,
+        "references": [
+          {
+            "column": 76,
+            "disposition": "partial",
+            "evidence": "[REDACTED]",
+            "line": 12,
+            "source_path": "SKILL.md",
+            "status": "missing",
+            "target_path": null
+          },
+          {
+            "column": 8,
+            "disposition": "partial",
+            "evidence": "[REDACTED]",
+            "line": 14,
+            "source_path": "SKILL.md",
+            "status": "missing",
+            "target_path": null
+          },
+          {
+            "column": 12,
+            "disposition": "partial",
+            "evidence": "[REDACTED]",
+            "line": 15,
+            "source_path": "SKILL.md",
+            "status": "missing",
+            "target_path": null
+          },
+          {
+            "column": 46,
+            "disposition": "partial",
+            "evidence": "[REDACTED]",
+            "line": 30,
+            "source_path": "SKILL.md",
+            "status": "missing",
+            "target_path": null
+          },
+          {
+            "column": 31,
+            "disposition": "partial",
+            "evidence": "[REDACTED]",
+            "line": 34,
+            "source_path": "SKILL.md",
+            "status": "missing",
+            "target_path": null
+          },
+          {
+            "column": 47,
+            "disposition": "partial",
+            "evidence": "[REDACTED]",
+            "line": 36,
+            "source_path": "SKILL.md",
+            "status": "missing",
+            "target_path": null
+          }
+        ],
+        "scanned_components": 1,
+        "scope_exclusions": [],
+        "status": "partial",
+        "total_components": 1
+      },
+      "components": [
+        {
+          "executable": false,
+          "lines": 38,
+          "path": "SKILL.md",
+          "size_bytes": 2794,
+          "source_digest": null,
+          "source_identity": null,
+          "source_url": null,
+          "type": "markdown"
+        }
+      ],
+      "execution_successful": true,
+      "finding_count": 0,
+      "issues": [],
+      "metadata": {
+        "filtering_mode": "heuristic",
+        "has_executable_scripts": false,
+        "inference_usage": [],
+        "llm_available": false,
+        "llm_requested": false,
+        "meta_analysis_applied": false,
+        "skillspector_version": "2.9.6"
+      },
+      "name": "effect",
+      "path": "effect",
+      "risk_assessment": {
+        "max_issue_severity": "NONE",
+        "recommendation": "CAUTION",
+        "score": 0,
+        "severity": "LOW"
+      },
+      "risk_score": 0,
+      "risk_severity": "LOW",
+      "skill": {
+        "name": "effect",
+        "scanned_at": "2026-10-02T01:04:27.040063+00:00",
+        "source": ".opencode/skills/effect"
+      },
+      "structured_summaries": "[REDACTED]",
+      "suppressed": [],
+      "suppressed_count": 0,
+      "transitive_finding_count": 0,
+      "transitive_sources": []
+    },
+    {
+      "analysis_completeness": {
+        "analyzer_statuses": [
+          {
+            "analyzer_id": "artifact_integrity",
+            "completed": 1,
+            "failed": 0,
+            "partial": 0,
+            "planned_work": 1,
+            "skipped": 0,
+            "status": "completed",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "behavioral_ast",
+            "completed": 0,
+            "failed": 0,
+            "message": "[REDACTED]",
+            "partial": 0,
+            "planned_work": 0,
+            "reason_code": "no_applicable_files",
+            "skipped": 0,
+            "status": "not_applicable",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "behavioral_taint_tracking",
+            "completed": 0,
+            "failed": 0,
+            "message": "[REDACTED]",
+            "partial": 0,
+            "planned_work": 0,
+            "reason_code": "no_applicable_files",
+            "skipped": 0,
+            "status": "not_applicable",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "mcp_least_privilege",
+            "completed": 0,
+            "failed": 0,
+            "message": "[REDACTED]",
+            "partial": 0,
+            "planned_work": 0,
+            "reason_code": "no_applicable_files",
+            "skipped": 0,
+            "status": "not_applicable",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "mcp_rug_pull",
+            "completed": 1,
+            "failed": 0,
+            "partial": 0,
+            "planned_work": 1,
+            "skipped": 0,
+            "status": "completed",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "mcp_tool_poisoning",
+            "completed": 1,
+            "failed": 0,
+            "partial": 0,
+            "planned_work": 1,
+            "skipped": 0,
+            "status": "completed",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "meta_analyzer",
+            "completed": 0,
+            "failed": 0,
+            "message": "[REDACTED]",
+            "partial": 0,
+            "planned_work": 0,
+            "reason_code": "no_applicable_files",
+            "skipped": 0,
+            "status": "not_applicable",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "semantic_developer_intent",
+            "completed": 0,
+            "failed": 0,
+            "message": "[REDACTED]",
+            "partial": 0,
+            "planned_work": 0,
+            "reason_code": "disabled_by_configuration",
+            "skipped": 0,
+            "status": "disabled",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "semantic_quality_policy",
+            "completed": 0,
+            "failed": 0,
+            "message": "[REDACTED]",
+            "partial": 0,
+            "planned_work": 0,
+            "reason_code": "disabled_by_configuration",
+            "skipped": 0,
+            "status": "disabled",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "semantic_security_discovery",
+            "completed": 0,
+            "failed": 0,
+            "message": "[REDACTED]",
+            "partial": 0,
+            "planned_work": 0,
+            "reason_code": "disabled_by_configuration",
+            "skipped": 0,
+            "status": "disabled",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "static_patterns_agent_snooping",
+            "completed": 1,
+            "failed": 0,
+            "partial": 0,
+            "planned_work": 1,
+            "skipped": 0,
+            "status": "completed",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "static_patterns_anti_refusal",
+            "completed": 1,
+            "failed": 0,
+            "partial": 0,
+            "planned_work": 1,
+            "skipped": 0,
+            "status": "completed",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "static_patterns_data_exfiltration",
+            "completed": 1,
+            "failed": 0,
+            "partial": 0,
+            "planned_work": 1,
+            "skipped": 0,
+            "status": "completed",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "static_patterns_deserialization",
+            "completed": 1,
+            "failed": 0,
+            "partial": 0,
+            "planned_work": 1,
+            "skipped": 0,
+            "status": "completed",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "static_patterns_excessive_agency",
+            "completed": 1,
+            "failed": 0,
+            "partial": 0,
+            "planned_work": 1,
+            "skipped": 0,
+            "status": "completed",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "static_patterns_harmful_content",
+            "completed": 1,
+            "failed": 0,
+            "partial": 0,
+            "planned_work": 1,
+            "skipped": 0,
+            "status": "completed",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "static_patterns_memory_poisoning",
+            "completed": 1,
+            "failed": 0,
+            "partial": 0,
+            "planned_work": 1,
+            "skipped": 0,
+            "status": "completed",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "static_patterns_output_handling",
+            "completed": 1,
+            "failed": 0,
+            "partial": 0,
+            "planned_work": 1,
+            "skipped": 0,
+            "status": "completed",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "static_patterns_privilege_escalation",
+            "completed": 1,
+            "failed": 0,
+            "partial": 0,
+            "planned_work": 1,
+            "skipped": 0,
+            "status": "completed",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "static_patterns_prompt_injection",
+            "completed": 1,
+            "failed": 0,
+            "partial": 0,
+            "planned_work": 1,
+            "skipped": 0,
+            "status": "completed",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "static_patterns_rogue_agent",
+            "completed": 1,
+            "failed": 0,
+            "partial": 0,
+            "planned_work": 1,
+            "skipped": 0,
+            "status": "completed",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "static_patterns_ssrf",
+            "completed": 1,
+            "failed": 0,
+            "partial": 0,
+            "planned_work": 1,
+            "skipped": 0,
+            "status": "completed",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "static_patterns_supply_chain",
+            "completed": 1,
+            "failed": 0,
+            "partial": 0,
+            "planned_work": 1,
+            "skipped": 0,
+            "status": "completed",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "static_patterns_system_prompt_leakage",
+            "completed": 1,
+            "failed": 0,
+            "partial": 0,
+            "planned_work": 1,
+            "skipped": 0,
+            "status": "completed",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "static_patterns_tool_misuse",
+            "completed": 1,
+            "failed": 0,
+            "partial": 0,
+            "planned_work": 1,
+            "skipped": 0,
+            "status": "completed",
+            "unaccounted": 0
+          },
+          {
+            "analyzer_id": "static_yara",
+            "completed": 1,
+            "failed": 0,
+            "partial": 0,
+            "planned_work": 1,
+            "skipped": 0,
+            "status": "completed",
+            "unaccounted": 0
+          }
+        ],
+        "coverage_percent": 100.0,
+        "entirely_uninspected_files": 0,
+        "execution_successful": true,
+        "findings_after_filtering": 0,
+        "findings_before_filtering": 0,
+        "fully_inspected_files": 1,
+        "is_complete": false,
+        "ledger_exceptions": [
+          {
+            "end_line": 3,
+            "fatal": false,
+            "message": "[REDACTED]",
+            "outcome": "partial",
+            "path": "SKILL.md",
+            "phase": "reference_resolution",
+            "reason_code": "reference_unresolved",
+            "start_line": 3
+          },
+          {
+            "end_line": 36,
+            "fatal": false,
+            "message": "[REDACTED]",
+            "outcome": "partial",
+            "path": "SKILL.md",
+            "phase": "reference_resolution",
+            "reason_code": "reference_unresolved",
+            "start_line": 36
+          },
+          {
+            "end_line": 37,
+            "fatal": false,
+            "message": "[REDACTED]",
+            "outcome": "partial",
+            "path": "SKILL.md",
+            "phase": "reference_resolution",
+            "reason_code": "reference_unresolved",
+            "start_line": 37
+          },
+          {
+            "end_line": 39,
+            "fatal": false,
+            "message": "[REDACTED]",
+            "outcome": "partial",
+            "path": "SKILL.md",
+            "phase": "reference_resolution",
+            "reason_code": "reference_unresolved",
+            "start_line": 39
+          },
+          {
+            "end_line": 40,
+            "fatal": false,
+            "message": "[REDACTED]",
+            "outcome": "partial",
+            "path": "SKILL.md",
+            "phase": "reference_resolution",
+            "reason_code": "reference_unresolved",
+            "start_line": 40
+          },
+          {
+            "end_line": 47,
+            "fatal": false,
+            "message": "[REDACTED]",
+            "outcome": "partial",
+            "path": "SKILL.md",
+            "phase": "reference_resolution",
+            "reason_code": "reference_unresolved",
+            "start_line": 47
+          },
+          {
+            "end_line": 48,
+            "fatal": false,
+            "message": "[REDACTED]",
+            "outcome": "partial",
+            "path": "SKILL.md",
+            "phase": "reference_resolution",
+            "reason_code": "reference_unresolved",
+            "start_line": 48
+          }
+        ],
+        "limitations": [],
+        "partially_inspected_files": 0,
+        "references": [
+          {
+            "column": 87,
+            "disposition": "partial",
+            "evidence": "[REDACTED]",
+            "line": 3,
+            "source_path": "SKILL.md",
+            "status": "missing",
+            "target_path": null
+          },
+          {
+            "column": 48,
+            "disposition": "partial",
+            "evidence": "[REDACTED]",
+            "line": 36,
+            "source_path": "SKILL.md",
+            "status": "missing",
+            "target_path": null
+          },
+          {
+            "column": 62,
+            "disposition": "partial",
+            "evidence": "[REDACTED]",
+            "line": 36,
+            "source_path": "SKILL.md",
+            "status": "missing",
+            "target_path": null
+          },
+          {
+            "column": 125,
+            "disposition": "partial",
+            "evidence": "[REDACTED]",
+            "line": 37,
+            "source_path": "SKILL.md",
+            "status": "missing",
+            "target_path": null
+          },
+          {
+            "column": 166,
+            "disposition": "partial",
+            "evidence": "[REDACTED]",
+            "line": 37,
+            "source_path": "SKILL.md",
+            "status": "missing",
+            "target_path": null
+          },
+          {
+            "column": 150,
+            "disposition": "partial",
+            "evidence": "[REDACTED]",
+            "line": 39,
+            "source_path": "SKILL.md",
+            "status": "missing",
+            "target_path": null
+          },
+          {
+            "column": 153,
+            "disposition": "partial",
+            "evidence": "[REDACTED]",
+            "line": 40,
+            "source_path": "SKILL.md",
+            "status": "missing",
+            "target_path": null
+          },
+          {
+            "column": 9,
+            "disposition": "partial",
+            "evidence": "[REDACTED]",
+            "line": 47,
+            "source_path": "SKILL.md",
+            "status": "missing",
+            "target_path": null
+          },
+          {
+            "column": 40,
+            "disposition": "partial",
+            "evidence": "[REDACTED]",
+            "line": 48,
+            "source_path": "SKILL.md",
+            "status": "missing",
+            "target_path": null
+          },
+          {
+            "column": 36,
+            "disposition": "out_of_scope",
+            "evidence": "[REDACTED]",
+            "line": 52,
+            "source_path": "SKILL.md",
+            "status": "rejected",
+            "target_path": null
+          },
+          {
+            "column": 33,
+            "disposition": "out_of_scope",
+            "evidence": "[REDACTED]",
+            "line": 53,
+            "source_path": "SKILL.md",
+            "status": "rejected",
+            "target_path": null
+          },
+          {
+            "column": 51,
+            "disposition": "out_of_scope",
+            "evidence": "[REDACTED]",
+            "line": 54,
+            "source_path": "SKILL.md",
+            "status": "rejected",
+            "target_path": null
+          },
+          {
+            "column": 51,
+            "disposition": "out_of_scope",
+            "evidence": "[REDACTED]",
+            "line": 55,
+            "source_path": "SKILL.md",
+            "status": "rejected",
+            "target_path": null
+          },
+          {
+            "column": 38,
+            "disposition": "out_of_scope",
+            "evidence": "[REDACTED]",
+            "line": 56,
+            "source_path": "SKILL.md",
+            "status": "rejected",
+            "target_path": null
+          },
+          {
+            "column": 44,
+            "disposition": "out_of_scope",
+            "evidence": "[REDACTED]",
+            "line": 57,
+            "source_path": "SKILL.md",
+            "status": "rejected",
+            "target_path": null
+          },
+          {
+            "column": 16,
+            "disposition": "out_of_scope",
+            "evidence": "[REDACTED]",
+            "line": 58,
+            "source_path": "SKILL.md",
+            "status": "rejected",
+            "target_path": null
+          },
+          {
+            "column": 23,
+            "disposition": "out_of_scope",
+            "evidence": "[REDACTED]",
+            "line": 59,
+            "source_path": "SKILL.md",
+            "status": "rejected",
+            "target_path": null
+          },
+          {
+            "column": 33,
+            "disposition": "out_of_scope",
+            "evidence": "[REDACTED]",
+            "line": 60,
+            "source_path": "SKILL.md",
+            "status": "rejected",
+            "target_path": null
+          },
+          {
+            "column": 32,
+            "disposition": "out_of_scope",
+            "evidence": "[REDACTED]",
+            "line": 61,
+            "source_path": "SKILL.md",
+            "status": "rejected",
+            "target_path": null
+          },
+          {
+            "column": 39,
+            "disposition": "out_of_scope",
+            "evidence": "[REDACTED]",
+            "line": 62,
+            "source_path": "SKILL.md",
+            "status": "rejected",
+            "target_path": null
+          },
+          {
+            "column": 28,
+            "disposition": "out_of_scope",
+            "evidence": "[REDACTED]",
+            "line": 63,
+            "source_path": "SKILL.md",
+            "status": "rejected",
+            "target_path": null
+          }
+        ],
+        "scanned_components": 1,
+        "scope_exclusions": [],
+        "status": "partial",
+        "total_components": 1
+      },
+      "components": [
+        {
+          "executable": false,
+          "lines": 63,
+          "path": "SKILL.md",
+          "size_bytes": 4097,
+          "source_digest": null,
+          "source_identity": null,
+          "source_url": null,
+          "type": "markdown"
+        }
+      ],
+      "execution_successful": true,
+      "finding_count": 0,
+      "issues": [],
+      "metadata": {
+        "filtering_mode": "heuristic",
+        "has_executable_scripts": false,
+        "inference_usage": [],
+        "llm_available": false,
+        "llm_requested": false,
+        "meta_analysis_applied": false,
+        "skillspector_version": "2.9.6"
+      },
+      "name": "rtl-aware-development",
+      "path": "rtl-aware-development",
+      "risk_assessment": {
+        "max_issue_severity": "NONE",
+        "recommendation": "CAUTION",
+        "score": 0,
+        "severity": "LOW"
+      },
+      "risk_score": 0,
+      "risk_severity": "LOW",
+      "skill": {
+        "name": "rtl-aware-development",
+        "scanned_at": "2026-10-02T01:04:27.087373+00:00",
+        "source": ".opencode/skills/rtl-aware-development"
+      },
+      "structured_summaries": "[REDACTED]",
+      "suppressed": [],
+      "suppressed_count": 0,
+      "transitive_finding_count": 0,
+      "transitive_sources": []
+    }
+  ],
+  "skills_omitted": 0,
+  "skills_scanned": 2,
+  "transitive_finding_count": 0,
+  "transitive_sources": []
+}

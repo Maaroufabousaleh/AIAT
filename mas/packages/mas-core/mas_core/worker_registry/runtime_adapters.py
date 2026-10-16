@@ -16,8 +16,10 @@ import logging
 import math
 import os
 import re
+import shutil
 import time
 from collections.abc import Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
@@ -50,6 +52,7 @@ from mas_core.worker_contract import (
     WorkerResult,
     WorkerRunRequest,
     WorkerRuntimeStatus,
+    WorkerStartCancelled,
     WorkerToolRequest,
     WorkerToolResponse,
     WorkerUsage,
@@ -151,6 +154,7 @@ _PROCESS_SECRET_KEY_RE = re.compile(
     re.IGNORECASE,
 )
 _REDACTED_PROCESS_VALUE = "[REDACTED]"
+_PROCESS_TOOL_PROTOCOL_MAX_MESSAGE_BYTES = 1_048_576
 
 
 def _copy_explicit_process_environment(
@@ -224,6 +228,12 @@ class ProcessAdapter(BaseWorkerAdapter):
     The command is a list of arguments and is never passed through a shell.
     A runtime must emit JSON lines for normalized events or a final JSON result;
     non-JSON stdout is retained as output text and does not become authority.
+    The opt-in bidirectional tool protocol keeps stdin open after the initial
+    request. A child emits a normal ``WorkerEvent`` with ``event_type`` set to
+    ``tool_request`` and waits for a line shaped as
+    ``{"message_type":"WorkerToolResponse","payload":...}``. Only the
+    controller can deliver that response after normal grant checks and tool
+    mediation. The default remains the legacy one-request/one-result mode.
     ``environment`` is an explicit child-environment allowlist.  It is never
     merged with the parent environment or ``AdapterContext.secrets``.
     """
@@ -241,6 +251,8 @@ class ProcessAdapter(BaseWorkerAdapter):
         context: AdapterContext | None = None,
         runner: Callable[..., Awaitable[Any]] | None = None,
         runtime_version: str | None = None,
+        bidirectional_tool_protocol: bool = False,
+        tool_response_timeout_seconds: float = 30.0,
     ) -> None:
         if not command or any(not isinstance(part, str) or not part for part in command):
             raise ValueError("process adapter command must be a non-empty argument list")
@@ -256,6 +268,84 @@ class ProcessAdapter(BaseWorkerAdapter):
         self._runner = runner
         self._processes: dict[UUID, asyncio.subprocess.Process] = {}
         self._force_cancel_requested: set[UUID] = set()
+        if not isinstance(bidirectional_tool_protocol, bool):
+            raise ValueError("bidirectional_tool_protocol must be a boolean opt-in")
+        if isinstance(tool_response_timeout_seconds, bool) or not (
+            0 < float(tool_response_timeout_seconds) <= 120
+        ):
+            raise ValueError("process tool response timeout must be greater than zero and at most 120 seconds")
+        self.bidirectional_tool_protocol = bidirectional_tool_protocol
+        self.tool_response_timeout_seconds = float(tool_response_timeout_seconds)
+        self._pending_process_tool_requests: dict[tuple[UUID, UUID], str] = {}
+        self._process_tool_timeout_tasks: dict[tuple[UUID, UUID], asyncio.Task[None]] = {}
+        self._process_tool_timed_out_runs: set[UUID] = set()
+        self._process_tool_protocol_errors: dict[UUID, tuple[str, str]] = {}
+        if self.bidirectional_tool_protocol and self._runner is not None:
+            raise ValueError("bidirectional tool protocol requires a real child process")
+
+    def _track_process_tool_request(
+        self,
+        request: WorkerRunRequest,
+        tool_request: WorkerToolRequest | None,
+        process: asyncio.subprocess.Process,
+    ) -> None:
+        if not self.bidirectional_tool_protocol:
+            return
+        if tool_request is None or tool_request.run_id != request.run_id:
+            raise ValueError("process tool request must be scoped to the active WorkerRun")
+        key = (request.run_id, tool_request.request_id)
+        if key in self._pending_process_tool_requests:
+            raise ValueError("process tool request ID is already pending")
+        self._pending_process_tool_requests[key] = tool_request.tool_name
+        self._process_tool_timeout_tasks[key] = asyncio.create_task(
+            self._expire_process_tool_request(key, process)
+        )
+
+    async def _expire_process_tool_request(
+        self,
+        key: tuple[UUID, UUID],
+        process: asyncio.subprocess.Process,
+    ) -> None:
+        try:
+            await asyncio.sleep(self.tool_response_timeout_seconds)
+            if key not in self._pending_process_tool_requests:
+                return
+            self._pending_process_tool_requests.pop(key, None)
+            self._process_tool_timed_out_runs.add(key[0])
+            if process.returncode is None:
+                with suppress(ProcessLookupError):
+                    process.kill()
+        except asyncio.CancelledError:
+            raise
+        finally:
+            if self._process_tool_timeout_tasks.get(key) is asyncio.current_task():
+                self._process_tool_timeout_tasks.pop(key, None)
+
+    async def _clear_process_tool_requests(self, run_id: UUID) -> None:
+        tasks: list[asyncio.Task[None]] = []
+        for key in [key for key in self._pending_process_tool_requests if key[0] == run_id]:
+            self._pending_process_tool_requests.pop(key, None)
+        for key in [key for key in self._process_tool_timeout_tasks if key[0] == run_id]:
+            task = self._process_tool_timeout_tasks.pop(key, None)
+            if task is not None and task is not asyncio.current_task():
+                task.cancel()
+                tasks.append(task)
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _abort_process_tool_protocol(
+        self,
+        run_id: UUID,
+        process: asyncio.subprocess.Process,
+        *,
+        code: str,
+        message: str,
+    ) -> None:
+        self._process_tool_protocol_errors[run_id] = (code, message)
+        await self._clear_process_tool_requests(run_id)
+        if process.returncode is None:
+            with suppress(ProcessLookupError):
+                process.kill()
 
     async def _execute(self, request: WorkerRunRequest) -> Any:
         if self._runner is not None:
@@ -290,7 +380,8 @@ class ProcessAdapter(BaseWorkerAdapter):
                 if request.run_id not in self._cancel_requested:
                     raise
             finally:
-                process.stdin.close()
+                if not self.bidirectional_tool_protocol:
+                    process.stdin.close()
         outputs: list[str] = []
         final: WorkerResult | None = None
         assert process.stdout is not None
@@ -300,6 +391,17 @@ class ProcessAdapter(BaseWorkerAdapter):
         stderr_task = asyncio.create_task(process.stderr.read())
         try:
             async for raw_line in process.stdout:
+                if (
+                    self.bidirectional_tool_protocol
+                    and len(raw_line) > _PROCESS_TOOL_PROTOCOL_MAX_MESSAGE_BYTES
+                ):
+                    await self._abort_process_tool_protocol(
+                        request.run_id,
+                        process,
+                        code="PROCESS_PROTOCOL_MESSAGE_TOO_LARGE",
+                        message="process worker emitted a JSON line larger than the 1 MiB protocol limit",
+                    )
+                    break
                 line = raw_line.decode(errors="replace").rstrip("\n")
                 if not line:
                     continue
@@ -315,6 +417,8 @@ class ProcessAdapter(BaseWorkerAdapter):
                         "worker_id": self.worker_id,
                         **data,
                     })
+                    if event.event_type == EventType.TOOL_REQUEST:
+                        self._track_process_tool_request(request, event.tool_request, process)
                     await self._emit(event)
                     if event.result is not None:
                         final = event.result
@@ -349,6 +453,46 @@ class ProcessAdapter(BaseWorkerAdapter):
                         category="cancellation",
                     ),
                 )
+            if request.run_id in self._process_tool_timed_out_runs:
+                return WorkerResult(
+                    run_id=request.run_id,
+                    worker_id=self.worker_id,
+                    success=False,
+                    error=WorkerError(
+                        code="TOOL_RESPONSE_TIMEOUT",
+                        message="process worker did not complete the bounded tool response protocol",
+                        retryable=False,
+                        terminal=True,
+                        category="tool_mediation",
+                    ),
+                )
+            protocol_error = self._process_tool_protocol_errors.get(request.run_id)
+            if protocol_error is not None:
+                return WorkerResult(
+                    run_id=request.run_id,
+                    worker_id=self.worker_id,
+                    success=False,
+                    error=WorkerError(
+                        code=protocol_error[0],
+                        message=protocol_error[1],
+                        retryable=False,
+                        terminal=True,
+                        category="transport",
+                    ),
+                )
+            if any(key[0] == request.run_id for key in self._pending_process_tool_requests):
+                return WorkerResult(
+                    run_id=request.run_id,
+                    worker_id=self.worker_id,
+                    success=False,
+                    error=WorkerError(
+                        code="TOOL_RESPONSE_UNDELIVERED",
+                        message="process worker exited with an unresolved mediated tool request",
+                        retryable=False,
+                        terminal=True,
+                        category="tool_mediation",
+                    ),
+                )
             if final is not None:
                 return final
             if process.returncode:
@@ -369,11 +513,92 @@ class ProcessAdapter(BaseWorkerAdapter):
             if not stderr_task.done():
                 stderr_task.cancel()
                 await asyncio.gather(stderr_task, return_exceptions=True)
+            if process.returncode is None:
+                with suppress(ProcessLookupError):
+                    process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=0.5)
+                except TimeoutError:
+                    with suppress(ProcessLookupError):
+                        process.kill()
+                    await process.wait()
+            await self._clear_process_tool_requests(request.run_id)
             self._processes.pop(request.run_id, None)
             self._cancel_requested.discard(request.run_id)
             self._force_cancel_requested.discard(request.run_id)
+            self._process_tool_timed_out_runs.discard(request.run_id)
+            self._process_tool_protocol_errors.pop(request.run_id, None)
+
+    async def deliver_tool_response(self, response: WorkerToolResponse) -> None:
+        """Return a controller-mediated tool result to an opted-in child."""
+
+        if not self.bidirectional_tool_protocol:
+            await super().deliver_tool_response(response)
+            return
+        key = (response.run_id, response.request_id)
+        expected_tool = self._pending_process_tool_requests.get(key)
+        process = self._processes.get(response.run_id)
+        if expected_tool is None or expected_tool != response.tool_name:
+            if process is not None and any(
+                pending_run_id == response.run_id
+                for pending_run_id, _request_id in self._pending_process_tool_requests
+            ):
+                await self._abort_process_tool_protocol(
+                    response.run_id,
+                    process,
+                    code="PROCESS_TOOL_RESPONSE_CORRELATION_MISMATCH",
+                    message="controller tool response did not match the pending child request",
+                )
+            raise RuntimeError("process tool response does not match a pending request")
+        if process is None or process.returncode is not None or process.stdin is None or process.stdin.is_closing():
+            raise RuntimeError("process worker is no longer available for the tool response")
+        payload = json.dumps(
+            {
+                "message_type": "WorkerToolResponse",
+                "payload": response.model_dump(mode="json"),
+            },
+            separators=(",", ":"),
+        ).encode("utf-8") + b"\n"
+        if len(payload) > _PROCESS_TOOL_PROTOCOL_MAX_MESSAGE_BYTES:
+            await self._abort_process_tool_protocol(
+                response.run_id,
+                process,
+                code="PROCESS_TOOL_RESPONSE_TOO_LARGE",
+                message="mediated tool response exceeds the 1 MiB protocol limit",
+            )
+            raise ValueError("process tool response exceeds the 1 MiB protocol limit")
+        try:
+            process.stdin.write(payload)
+            await asyncio.wait_for(
+                process.stdin.drain(),
+                timeout=self.tool_response_timeout_seconds,
+            )
+        except (BrokenPipeError, ConnectionResetError, TimeoutError) as exc:
+            await self._abort_process_tool_protocol(
+                response.run_id,
+                process,
+                code="PROCESS_TOOL_RESPONSE_DELIVERY_FAILED",
+                message="process worker did not accept the mediated tool response",
+            )
+            raise RuntimeError("process worker did not accept the mediated tool response") from exc
+        if self._pending_process_tool_requests.get(key) != expected_tool:
+            raise RuntimeError("process tool response timed out before delivery completed")
+        self._pending_process_tool_requests.pop(key, None)
+        timeout_task = self._process_tool_timeout_tasks.pop(key, None)
+        if timeout_task is not None:
+            timeout_task.cancel()
+            await asyncio.gather(timeout_task, return_exceptions=True)
+        await super().deliver_tool_response(response)
 
     async def cancel(self, request: WorkerCancellation) -> WorkerCancellationReceipt:
+        if not self._cancellation_matches_active_attempt(request):
+            return WorkerCancellationReceipt(
+                run_id=request.run_id,
+                accepted=False,
+                terminal=False,
+                runtime_status="RUNNING",
+                details={"reason": "stale attempt cancellation ignored"},
+            )
         # Record intent before looking up the process.  This closes the
         # start/cancel race where the adapter has accepted a run but the
         # subprocess has not yet been created.
@@ -381,6 +606,7 @@ class ProcessAdapter(BaseWorkerAdapter):
         if request.force:
             self._force_cancel_requested.add(request.run_id)
         process = self._processes.get(request.run_id)
+        await self._clear_process_tool_requests(request.run_id)
         if process is not None:
             # Record the intent before signalling the child so an expected
             # non-zero process exit is normalized as cancellation below.
@@ -408,6 +634,81 @@ class ProcessAdapter(BaseWorkerAdapter):
                 details={"signal": "TERM", "process_returncode": process.returncode},
             )
         return receipt
+
+
+class WasmtimeAdapter(ProcessAdapter):
+    """Run an immutable WASM module through a host-certified Wasmtime binary.
+
+    WASM is a format-specific execution path, not a universal replacement for
+    OCI/Linux workers.  The module is digest-pinned at construction and the
+    command exposes no WASI directory or inherited environment by default.
+    Host certification remains responsible for pinning and validating the
+    Wasmtime binary itself.
+    """
+
+    runtime_type = "wasmtime"
+
+    def __init__(
+        self,
+        module_path: str,
+        *,
+        module_sha256: str,
+        worker_id: str,
+        wasmtime_binary: str = "wasmtime",
+        arguments: list[str] | tuple[str, ...] = (),
+        cwd: str | None = None,
+        environment: dict[str, str] | None = None,
+        context: AdapterContext | None = None,
+        runtime_version: str | None = None,
+    ) -> None:
+        path = Path(module_path).expanduser().resolve()
+        digest = str(module_sha256 or "").strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise ValueError("WASM workers require a 64-character module SHA-256 digest")
+        if not path.is_file():
+            raise ValueError("WASM module path must point to a regular file")
+        actual = hashlib.sha256(path.read_bytes()).hexdigest()
+        if actual != digest:
+            raise ValueError("WASM module digest does not match the declared immutable digest")
+        if not wasmtime_binary or any(not isinstance(value, str) or not value for value in arguments):
+            raise ValueError("Wasmtime command configuration is invalid")
+        command = [wasmtime_binary, "run", *arguments, str(path)]
+        super().__init__(
+            command,
+            worker_id=worker_id,
+            cwd=cwd,
+            environment=environment,
+            context=context,
+            capabilities=_external_capabilities(),
+            runtime_version=runtime_version,
+        )
+        self.module_path = path
+        self.module_sha256 = digest
+        self.wasmtime_binary = wasmtime_binary
+
+    async def readiness(self, request: WorkerRunRequest | None = None) -> WorkerReadiness:
+        readiness = await super().readiness(request)
+        blockers = list(readiness.blockers)
+        binary_available = bool(
+            shutil.which(self.wasmtime_binary) or Path(self.wasmtime_binary).is_file()
+        )
+        try:
+            module_digest_valid = (
+                hashlib.sha256(self.module_path.read_bytes()).hexdigest()
+                == self.module_sha256
+            )
+        except OSError:
+            module_digest_valid = False
+        if not binary_available:
+            blockers.append("wasmtime binary is unavailable")
+        if not module_digest_valid:
+            blockers.append("WASM module digest changed after adapter construction")
+        return WorkerReadiness(
+            worker_id=self.worker_id,
+            ready=not blockers,
+            checks={**readiness.checks, "wasmtime_binary": binary_available, "module_digest": module_digest_valid},
+            blockers=blockers,
+        )
 
 
 class HTTPAdapter(BaseWorkerAdapter):
@@ -533,6 +834,14 @@ class HTTPAdapter(BaseWorkerAdapter):
         return {"success": True, "output": data}
 
     async def cancel(self, request: WorkerCancellation) -> WorkerCancellationReceipt:
+        if not self._cancellation_matches_active_attempt(request):
+            return WorkerCancellationReceipt(
+                run_id=request.run_id,
+                accepted=False,
+                terminal=False,
+                runtime_status="RUNNING",
+                details={"reason": "stale attempt cancellation ignored"},
+            )
         client = await self._get_client()
         endpoint = self.endpoints["cancel"].format(run_id=request.run_id)
         try:
@@ -608,6 +917,14 @@ class MCPAdapter(BaseWorkerAdapter):
         return result
 
     async def cancel(self, request: WorkerCancellation) -> WorkerCancellationReceipt:
+        if not self._cancellation_matches_active_attempt(request):
+            return WorkerCancellationReceipt(
+                run_id=request.run_id,
+                accepted=False,
+                terminal=False,
+                runtime_status="RUNNING",
+                details={"reason": "stale attempt cancellation ignored"},
+            )
         await self.client.cancel(request.model_dump(mode="json"))
         return await super().cancel(request)
 
@@ -1359,10 +1676,11 @@ def _framework_runner(callable_worker: Callable[..., Any], *, call_style: str) -
 class OCIAdapter(ProcessAdapter):
     """OCI adapter using a pinned image digest and a certified runtime.
 
-    ``sandboxed`` maps to Docker's gVisor ``runsc`` runtime.  ``vm_isolated``
-    maps to a Kata runtime registered on the worker host.  The adapter never
-    selects runc and never treats the direct Firecracker launcher as a
-    substitute for Kata.
+    ``trusted`` maps to Docker's ``runc`` runtime only when the caller
+    explicitly attests that this is a trusted worker. ``sandboxed`` maps to
+    gVisor ``runsc`` and ``vm_isolated`` maps to a Kata runtime registered on
+    the worker host. The adapter never weakens a hardened profile to runc and
+    never treats the direct Firecracker launcher as a substitute for Kata.
     """
 
     runtime_type = "oci"
@@ -1375,6 +1693,7 @@ class OCIAdapter(ProcessAdapter):
         launcher: str = "docker",
         sandbox_profile: str | None = None,
         sandbox_runtime: str | None = None,
+        trusted_worker: bool = False,
         memory_limit: str = "512m",
         cpu_limit: str = "1.0",
         pids_limit: int = 256,
@@ -1387,22 +1706,23 @@ class OCIAdapter(ProcessAdapter):
             sandbox_class = canonical_sandbox_class(raw_profile)
         except ValueError as exc:
             raise ValueError(
-                "OCI workers require a hardened sandbox profile (sandboxed or vm_isolated)"
+                "OCI workers require an explicit sandbox profile: trusted, sandboxed, or vm_isolated"
             ) from exc
-        if sandbox_class not in {"sandboxed", "vm_isolated"}:
-            raise ValueError(
-                "OCI workers require a hardened sandbox profile (sandboxed or vm_isolated)"
-            )
+        if sandbox_class == "trusted" and trusted_worker is not True:
+            raise ValueError("trusted OCI execution requires an explicit trusted worker policy")
+        if sandbox_class != "trusted" and trusted_worker is not False:
+            raise ValueError("trusted_worker may only be set for the trusted OCI profile")
+        if not isinstance(trusted_worker, bool):
+            raise ValueError("trusted_worker must be a boolean")
         if launcher != "docker":
-            raise ValueError("AIAT OCI sandbox execution currently requires the certified Docker launcher")
+            raise ValueError("AIAT OCI execution currently requires the certified Docker launcher")
         sandbox_runtime = str(
-            sandbox_runtime
-            or ("runsc" if sandbox_class == "sandboxed" else "kata")
+            sandbox_runtime or required_runtime_for_sandbox(sandbox_class)
         ).strip().lower()
         required_runtime = required_runtime_for_sandbox(sandbox_class)
         if not runtime_implements_sandbox(sandbox_runtime, sandbox_class):
             raise ValueError(
-                f"{sandbox_class} OCI execution requires the {required_runtime} sandbox runtime"
+                f"{sandbox_class} OCI execution requires the {required_runtime} runtime"
             )
         if pids_limit <= 0:
             raise ValueError("OCI pids_limit must be positive")
@@ -1430,11 +1750,41 @@ class OCIAdapter(ProcessAdapter):
             cpu_limit,
             image,
         ]
-        super().__init__(command, worker_id=worker_id, **kwargs)
+        super().__init__(
+            command,
+            worker_id=worker_id,
+            bidirectional_tool_protocol=kwargs.pop("bidirectional_tool_protocol", False),
+            tool_response_timeout_seconds=float(kwargs.pop("tool_response_timeout_seconds", 30.0)),
+            **kwargs,
+        )
         self.image = image
         self.sandbox_profile = sandbox_class
         self.sandbox_class = sandbox_class
         self.sandbox_runtime = sandbox_runtime
+        self._launcher_name = launcher
+        self._launcher_resolved = False
+
+    async def _execute(self, request: WorkerRunRequest) -> Any:
+        """Resolve the fixed Docker executable immediately before execution.
+
+        Adapter hydration and readiness inspection must not depend on a local
+        Docker CLI being installed. Actual execution still fails closed before
+        process creation when the certified launcher is unavailable.
+        """
+
+        if not self._launcher_resolved:
+            resolved_launcher = shutil.which(self._launcher_name)
+            if not resolved_launcher:
+                raise RuntimeError("certified Docker launcher is unavailable on this host")
+            try:
+                launcher_path = Path(resolved_launcher).resolve(strict=True)
+            except (OSError, RuntimeError) as exc:
+                raise RuntimeError("certified Docker launcher path is unavailable on this host") from exc
+            if not launcher_path.is_file() or not os.access(launcher_path, os.X_OK):
+                raise RuntimeError("certified Docker launcher is not an executable file")
+            self.command[0] = str(launcher_path)
+            self._launcher_resolved = True
+        return await super()._execute(request)
 
 
 class FirecrackerAdapter(ProcessAdapter):
@@ -1640,6 +1990,9 @@ class OpenCodeAdapter(HTTPAdapter):
     _MCP_GRANT_TTL_SECONDS = 300
     _MCP_GRANT_REFRESH_LEEWAY_SECONDS = 30
     _MCP_GRANT_REFRESH_RETRY_SECONDS = 5
+    _MAX_ARTIFACT_COUNT = 1_000
+    _MAX_ARTIFACT_BYTES = 10 * 1024 * 1024
+    _MAX_TOTAL_ARTIFACT_BYTES = 100 * 1024 * 1024
 
     def __init__(
         self,
@@ -1663,6 +2016,13 @@ class OpenCodeAdapter(HTTPAdapter):
             capability_names=["opencode.session", "opencode.events", "opencode.artifacts"],
         )
         context = kwargs.pop("context", None) or AdapterContext()
+        if not context.workspace_path:
+            # Compose mounts the shared volume at /workspace in both the
+            # orchestrator and OpenCode runtime. Tool Service exposes that
+            # volume as /opencode-workspace, but its MCP grant maps run UUIDs
+            # there independently.
+            context.workspace_path = "/workspace"
+        context.metadata.setdefault("opencode_runtime_workspace_root", "/workspace")
         # A literal password in adapter configuration is never accepted.  A
         # deployment injects this value through the secret boundary into the
         # AdapterContext; tests may use the same explicit secret mapping.
@@ -1724,17 +2084,49 @@ class OpenCodeAdapter(HTTPAdapter):
         return await super()._get_client()
 
     def _query(self, request: WorkerRunRequest) -> dict[str, str]:
-        # Workspace scope is injected by the governed adapter context.  A task
-        # payload must never be able to redirect an OpenCode session to an
-        # arbitrary host path.
-        directory = self.context.workspace_path
-        return {"directory": str(directory)} if directory else {}
+        # The orchestrator and OpenCode runtime see the shared volume under
+        # /workspace; Tool Service uses /opencode-workspace for the same
+        # volume. OpenCode sessions use the existing runtime root, while the
+        # signed tool grant confines file effects to the run UUID directory.
+        # A task payload can never redirect the runtime.
+        if not self.context.workspace_path:
+            return {}
+        runtime_root = str(
+            self.context.metadata.get("opencode_runtime_workspace_root") or "/workspace"
+        ).rstrip("/")
+        return {"directory": runtime_root}
 
     def _endpoint(self, key: str) -> str:
         try:
             return self.verification.endpoints[key]
         except KeyError as exc:
             raise RuntimeError(f"OpenCode certified manifest has no {key!r} endpoint") from exc
+
+    def _resolved_runtime_model_id(self, exact_model_id: str) -> str | None:
+        """Map one governed model identity to OpenCode's provider/model form.
+
+        The AIAT Model Profile may name a gateway alias without a provider
+        prefix (for example, a LiteLLM deployment alias).  OpenCode requires
+        a provider-qualified runtime ID.  Only the explicit mapper supplied
+        by the control plane may translate between those namespaces; an
+        unmapped alias must remain unavailable rather than guessing a
+        provider from the current runtime configuration.
+        """
+        try:
+            mapped = self.model_mapper(exact_model_id)
+        except Exception:
+            return None
+        if not isinstance(mapped, str):
+            return None
+        provider, separator, model = mapped.partition("/")
+        if (
+            not separator
+            or not provider.strip()
+            or not model.strip()
+            or not self.verification.validate_model_id(mapped)
+        ):
+            return None
+        return mapped
 
     def _acceptance_runtime_run_id(self, request: WorkerRunRequest) -> str | None:
         return self._session_by_run.get(request.run_id)
@@ -1801,8 +2193,10 @@ class OpenCodeAdapter(HTTPAdapter):
                 model_id = request.resolved_model_profile.exact_model_id
                 if not model_id:
                     blockers.append("OpenCode requires an exact provider-qualified model ID")
-                elif not self.verification.validate_model_id(model_id):
-                    blockers.append("OpenCode model ID must be provider/model qualified")
+                elif self._resolved_runtime_model_id(model_id) is None:
+                    blockers.append(
+                        "OpenCode requires a control-plane-resolved provider/model mapping"
+                    )
         return WorkerReadiness(
             worker_id=self.worker_id,
             ready=not blockers,
@@ -1811,11 +2205,15 @@ class OpenCodeAdapter(HTTPAdapter):
         )
 
     async def _create_session(self, request: WorkerRunRequest) -> str:
+        if request.run_id in self._cancel_requested:
+            raise WorkerStartCancelled("OpenCode run was cancelled before session creation")
         existing = self._session_by_key.get(request.idempotency_key)
         if existing:
             return existing
         bridge_name = await self._configure_tool_bridge(request)
         client = await self._get_client()
+        if request.run_id in self._cancel_requested:
+            raise WorkerStartCancelled("OpenCode run was cancelled before session creation")
         # A persisted session ID may only come from the control-plane adapter
         # context (for restart reconciliation), never from task JSON or user
         # supplied runtime extensions.
@@ -1829,6 +2227,7 @@ class OpenCodeAdapter(HTTPAdapter):
             if response.status_code == 200:
                 self._session_by_key[request.idempotency_key] = persisted
                 self._session_by_run[request.run_id] = persisted
+                self._runtime_run_id_by_run[request.run_id] = persisted
                 return persisted
         title = f"AIAT {request.task_type} {request.run_id} [{request.idempotency_key}]"
         # Reconcile a timed-out create response before issuing another POST.
@@ -1842,9 +2241,12 @@ class OpenCodeAdapter(HTTPAdapter):
                         session_id = str(candidate["id"])
                         self._session_by_key[request.idempotency_key] = session_id
                         self._session_by_run[request.run_id] = session_id
+                        self._runtime_run_id_by_run[request.run_id] = session_id
                         return session_id
         except (httpx.HTTPError, ValueError):
             pass
+        if request.run_id in self._cancel_requested:
+            raise WorkerStartCancelled("OpenCode run was cancelled before session creation")
         payload: dict[str, Any] = {
             "title": title,
             "metadata": {
@@ -1870,10 +2272,12 @@ class OpenCodeAdapter(HTTPAdapter):
         }
         model_id = request.resolved_model_profile.exact_model_id if request.resolved_model_profile else None
         if model_id:
-            mapped = self.model_mapper(model_id)
+            mapped = self._resolved_runtime_model_id(model_id)
+            if mapped is None:
+                raise ValueError(
+                    "OpenCode requires a control-plane-resolved provider/model mapping"
+                )
             provider, separator, model = mapped.partition("/")
-            if not separator or not provider or not model:
-                raise ValueError("OpenCode requires provider/model")
             payload["model"] = {"providerID": provider, "id": model, "variant": request.resolved_model_profile.version or ""}
         response = await client.post(self._endpoint("session_create"), params=self._query(request), json=payload)
         response.raise_for_status()
@@ -1883,6 +2287,7 @@ class OpenCodeAdapter(HTTPAdapter):
             raise RuntimeError("OpenCode session.create returned no valid session ID")
         self._session_by_key[request.idempotency_key] = session_id
         self._session_by_run[request.run_id] = session_id
+        self._runtime_run_id_by_run[request.run_id] = session_id
         return session_id
 
     async def _configure_tool_bridge(
@@ -1913,12 +2318,15 @@ class OpenCodeAdapter(HTTPAdapter):
             # without changing the permission name pinned into the session.
             issued_at = int(time.time())
             signing_secret = str(self.context.secrets.get("tool_secret") or "")
+            execution_claim_fence = request.execution_claim_fence
             grant = issue_opencode_tool_grant(
                 signing_secret,
                 worker_id=self.worker_id,
                 run_id=request.run_id,
                 project_id=request.project_id,
                 tool_names=request.tool_grants,
+                claim_owner=execution_claim_fence.get("claim_owner"),
+                attempt_count=int(execution_claim_fence.get("attempt_count") or 0),
                 ttl_seconds=self._MCP_GRANT_TTL_SECONDS,
                 now=issued_at,
             )
@@ -2006,22 +2414,38 @@ class OpenCodeAdapter(HTTPAdapter):
         self._mcp_locks.pop(run_id, None)
 
     async def start(self, request: WorkerRunRequest) -> Any:
+        if request.run_id in self._cancel_requested or request.run_id in self._cancelled:
+            raise WorkerStartCancelled("OpenCode run was cancelled before startup")
         existing = self._accepted_by_key.get(request.idempotency_key)
         if existing is not None:
-            return existing
+            # Reuse the base acceptance path so the stored attempt fence is
+            # checked before returning an earlier session for this run key.
+            return await BaseWorkerAdapter.start(self, request)
         readiness = await self.readiness(request)
         if not readiness.ready:
             raise RuntimeError("; ".join(readiness.blockers))
         try:
-            await self._create_session(request)
+            session_id = await self._create_session(request)
         except Exception:
             await self._stop_mcp_grant_refresher(request.run_id)
             raise
+        if request.run_id in self._cancel_requested or request.run_id in self._cancelled:
+            try:
+                await self._discard_unaccepted_session(request, session_id)
+            finally:
+                await self._stop_mcp_grant_refresher(request.run_id)
+            raise WorkerStartCancelled("OpenCode run was cancelled while creating its session")
         # BaseWorkerAdapter.start creates the task after emitting ACCEPTED;
         # the session map above lets the base hook include the runtime ID in
         # that first authoritative acceptance event.
         try:
             result = await BaseWorkerAdapter.start(self, request)
+        except WorkerStartCancelled:
+            try:
+                await self._discard_unaccepted_session(request, session_id)
+            finally:
+                await self._stop_mcp_grant_refresher(request.run_id)
+            raise
         except Exception:
             await self._stop_mcp_grant_refresher(request.run_id)
             raise
@@ -2046,13 +2470,20 @@ class OpenCodeAdapter(HTTPAdapter):
 
         return json.dumps(safe(request.task_input), sort_keys=True)
 
-    async def _submit(self, request: WorkerRunRequest, session_id: str) -> None:
+    async def _submit(self, request: WorkerRunRequest, session_id: str) -> bool:
+        if request.run_id in self._cancel_requested or request.run_id in self._cancelled:
+            return False
         if request.run_id in self._submitted:
-            return
+            return True
         model_id = request.resolved_model_profile.exact_model_id if request.resolved_model_profile else ""
-        provider, separator, model = self.model_mapper(model_id).partition("/")
-        if not separator:
-            raise WorkerError(code="INVALID_MODEL_ID", message="OpenCode requires provider/model", category="policy")
+        mapped = self._resolved_runtime_model_id(model_id)
+        if mapped is None:
+            raise WorkerError(
+                code="INVALID_MODEL_ID",
+                message="OpenCode requires a control-plane-resolved provider/model mapping",
+                category="policy",
+            )
+        provider, _, model = mapped.partition("/")
         body: dict[str, Any] = {
             "parts": [{"type": "text", "text": self._prompt_text(request)}],
             "model": {"providerID": provider, "modelID": model},
@@ -2064,6 +2495,10 @@ class OpenCodeAdapter(HTTPAdapter):
         if isinstance(agent, str) and agent.strip():
             body["agent"] = agent.strip()
         client = await self._get_client()
+        # Keep the cancellation check after all setup awaits and immediately
+        # before the only operation that can trigger model/provider work.
+        if request.run_id in self._cancel_requested or request.run_id in self._cancelled:
+            return False
         # Path parameters are immutable manifest paths; the only substitution
         # permitted is the server-issued session ID.
         path = self._endpoint("prompt_async").replace("{sessionID}", session_id)
@@ -2071,6 +2506,7 @@ class OpenCodeAdapter(HTTPAdapter):
         if response.status_code not in {200, 204}:
             response.raise_for_status()
         self._submitted.add(request.run_id)
+        return True
 
     @staticmethod
     def _event_key(raw: dict[str, Any]) -> str:
@@ -2224,6 +2660,7 @@ class OpenCodeAdapter(HTTPAdapter):
 
         session_id = str(session_id)
         self._session_by_run[run_id] = session_id
+        self._runtime_run_id_by_run[run_id] = session_id
         request = WorkerRunRequest(
             run_id=run_id,
             idempotency_key=f"aiat-reconcile:{run_id}",
@@ -2305,33 +2742,73 @@ class OpenCodeAdapter(HTTPAdapter):
             )
 
     async def _artifacts(self, request: WorkerRunRequest, session_id: str) -> list[Any]:
-        client = await self._get_client()
-        path = self._endpoint("diff").replace("{sessionID}", session_id)
-        response = await client.get(path, params=self._query(request))
-        if response.status_code >= 400:
-            return []
-        diffs = response.json() if response.content else []
         artifacts = []
-        workspace = self.context.workspace_path
-        if not workspace or not isinstance(diffs, list):
+        workspace_root = self.context.workspace_path
+        if not workspace_root:
             return artifacts
-        root = Path(str(workspace)).resolve()
+        root = Path(str(workspace_root)).resolve()
+        run_root = (root / str(request.run_id)).resolve()
+        try:
+            run_root.relative_to(root)
+        except ValueError:
+            return artifacts
         from mas_core.worker_contract import ArtifactKind, WorkerArtifact
-        for item in diffs:
-            rel = str(item.get("file") or item.get("path") or "") if isinstance(item, dict) else ""
-            if not rel:
-                continue
-            candidate = (root / rel).resolve()
-            try:
-                candidate.relative_to(root)
-            except ValueError:
-                continue
-            if candidate.is_file():
-                digest = hashlib.sha256(candidate.read_bytes()).hexdigest()
-                artifact = WorkerArtifact(kind=ArtifactKind.FILE, name=rel, uri=rel, sha256=digest, size_bytes=candidate.stat().st_size, metadata={"opencode_session_id": session_id})
-                artifacts.append(artifact)
-                if self.context.artifact_registrar is not None:
-                    await self.context.artifact_registrar(artifact)
+        if not run_root.is_dir():
+            return artifacts
+
+        # The run-scoped MCP tool writes through tool-service, outside
+        # OpenCode's own process.  Its VCS diff can therefore omit those
+        # files (and may report paths relative to /workspace), so enumerate
+        # only this run's shared-volume directory.  Keep collection bounded
+        # and reject symlinks/escapes before reading file contents.
+        candidates: list[Path] = []
+        for directory, child_directories, files in os.walk(run_root, followlinks=False):
+            current = Path(directory)
+            child_directories[:] = sorted(
+                name for name in child_directories if not (current / name).is_symlink()
+            )
+            for name in sorted(files):
+                candidate = current / name
+                if candidate.is_symlink():
+                    continue
+                try:
+                    resolved = candidate.resolve()
+                    resolved.relative_to(run_root)
+                except (OSError, ValueError):
+                    continue
+                if resolved.is_file():
+                    candidates.append(resolved)
+                    if len(candidates) > self._MAX_ARTIFACT_COUNT:
+                        raise RuntimeError("OpenCode run exceeded the artifact count limit")
+
+        total_bytes = 0
+        for candidate in candidates:
+            size_bytes = candidate.stat().st_size
+            if size_bytes > self._MAX_ARTIFACT_BYTES:
+                raise RuntimeError("OpenCode run produced an artifact over the size limit")
+            total_bytes += size_bytes
+            if total_bytes > self._MAX_TOTAL_ARTIFACT_BYTES:
+                raise RuntimeError("OpenCode run exceeded the total artifact size limit")
+            relative_path = candidate.relative_to(run_root)
+            content = candidate.read_bytes()
+            normalized_rel = relative_path.as_posix()
+            artifact = WorkerArtifact(
+                kind=ArtifactKind.FILE,
+                name=normalized_rel,
+                uri=normalized_rel,
+                sha256=hashlib.sha256(content).hexdigest(),
+                size_bytes=size_bytes,
+                metadata={
+                    "opencode_session_id": session_id,
+                    "worker_run_id": str(request.run_id),
+                },
+            )
+            artifacts.append(artifact)
+            if self.context.artifact_registrar is not None:
+                await self.context.artifact_registrar(
+                    artifact,
+                    claim_fence=request.execution_claim_fence,
+                )
         return artifacts
 
     async def _cleanup_session(self, request: WorkerRunRequest, session_id: str) -> None:
@@ -2343,8 +2820,46 @@ class OpenCodeAdapter(HTTPAdapter):
         if response.status_code not in {200, 404}:
             response.raise_for_status()
 
+    async def _discard_unaccepted_session(
+        self,
+        request: WorkerRunRequest,
+        session_id: str,
+    ) -> None:
+        """Stop and remove a session that never crossed adapter acceptance."""
+        abort_error: Exception | None = None
+        try:
+            await self._abort_cancelled_session(request, session_id)
+        except Exception as exc:
+            abort_error = exc
+        try:
+            client = await self._get_client()
+            path = self._endpoint("session_delete").replace("{sessionID}", session_id)
+            response = await client.delete(path, params=self._query(request))
+            if response.status_code not in {200, 204, 404}:
+                response.raise_for_status()
+        except Exception as exc:
+            if abort_error is not None:
+                raise exc from abort_error
+            raise
+        if self._session_by_run.get(request.run_id) == session_id:
+            self._session_by_run.pop(request.run_id, None)
+        if self._session_by_key.get(request.idempotency_key) == session_id:
+            self._session_by_key.pop(request.idempotency_key, None)
+        self._session_announced.discard(request.run_id)
+        self._permission_by_run.pop(request.run_id, None)
+
     async def _execute(self, request: WorkerRunRequest) -> Any:
-        session_id = self._session_by_run.get(request.run_id) or await self._create_session(request)
+        if request.run_id in self._cancel_requested or request.run_id in self._cancelled:
+            return self._cancelled_result(request)
+        try:
+            session_id = self._session_by_run.get(request.run_id) or await self._create_session(request)
+        except WorkerStartCancelled:
+            return self._cancelled_result(request)
+        if request.run_id in self._cancel_requested or request.run_id in self._cancelled:
+            await self._abort_cancelled_session(request, session_id)
+            await self._stop_mcp_grant_refresher(request.run_id)
+            await self._cleanup_session(request, session_id)
+            return self._cancelled_result(request, session_id)
         # A restart/retry may reuse a known session.  Ensure that path also
         # recreates the refresher if the previous task was interrupted.
         try:
@@ -2352,6 +2867,11 @@ class OpenCodeAdapter(HTTPAdapter):
         except Exception:
             await self._stop_mcp_grant_refresher(request.run_id)
             raise
+        if request.run_id in self._cancel_requested or request.run_id in self._cancelled:
+            await self._abort_cancelled_session(request, session_id)
+            await self._stop_mcp_grant_refresher(request.run_id)
+            await self._cleanup_session(request, session_id)
+            return self._cancelled_result(request, session_id)
         self._ensure_mcp_grant_refresher(request)
         self._idle[request.run_id] = False
         self._terminal_error[request.run_id] = False
@@ -2364,7 +2884,10 @@ class OpenCodeAdapter(HTTPAdapter):
         self._event_tasks[request.run_id] = asyncio.create_task(self._consume_events(request), name=f"opencode-events-{request.run_id}")
         started = time.monotonic()
         try:
-            await self._submit(request, session_id)
+            submitted = await self._submit(request, session_id)
+            if not submitted:
+                await self._abort_cancelled_session(request, session_id)
+                return self._cancelled_result(request, session_id)
             while True:
                 if request.run_id in self._cancelled or request.run_id in self._cancel_requested:
                     return WorkerResult(run_id=request.run_id, worker_id=self.worker_id, success=False, error=WorkerError(code="CANCELLED", message="OpenCode session aborted by AIAT", retryable=False, terminal=True, category="cancellation"), replay_metadata={"opencode_session_id": session_id, "checkpoint_mode": self.verification.checkpoint_mode.value})
@@ -2404,9 +2927,69 @@ class OpenCodeAdapter(HTTPAdapter):
             await self._stop_mcp_grant_refresher(request.run_id)
             await self._cleanup_session(request, session_id)
 
-    async def cancel(self, request: WorkerCancellation) -> WorkerCancellationReceipt:
-        session_id = self._session_by_run.get(request.run_id)
+    def _cancelled_result(
+        self,
+        request: WorkerRunRequest,
+        session_id: str | None = None,
+    ) -> WorkerResult:
+        replay_metadata: dict[str, Any] = {
+            "checkpoint_mode": self.verification.checkpoint_mode.value,
+        }
         if session_id:
+            replay_metadata["opencode_session_id"] = session_id
+        return WorkerResult(
+            run_id=request.run_id,
+            worker_id=self.worker_id,
+            success=False,
+            error=WorkerError(
+                code="CANCELLED",
+                message="OpenCode session aborted by AIAT",
+                retryable=False,
+                terminal=True,
+                category="cancellation",
+            ),
+            replay_metadata=replay_metadata,
+        )
+
+    async def _abort_cancelled_session(
+        self,
+        request: WorkerRunRequest,
+        session_id: str,
+    ) -> None:
+        client = await self._get_client()
+        path = self._endpoint("abort").replace("{sessionID}", session_id)
+        response = await client.post(path, params=self._query(request))
+        if response.status_code not in {200, 204, 404}:
+            response.raise_for_status()
+
+    async def cancel(self, request: WorkerCancellation) -> WorkerCancellationReceipt:
+        if not self._cancellation_matches_active_attempt(request):
+            return WorkerCancellationReceipt(
+                run_id=request.run_id,
+                accepted=False,
+                terminal=False,
+                runtime_status="RUNNING",
+                details={"reason": "stale attempt cancellation ignored"},
+            )
+        if self._terminal_status.get(request.run_id) is not None:
+            return await BaseWorkerAdapter.cancel(self, request)
+        # Publish cancellation intent before any network await so session
+        # creation/bridge setup cannot race ahead into prompt submission.
+        self._cancel_requested.add(request.run_id)
+        self._cancelled.add(request.run_id)
+        session_id = self._session_by_run.get(request.run_id) or request.runtime_run_id
+        if session_id is not None and not re.fullmatch(r"ses[a-zA-Z0-9_-]+", session_id):
+            return WorkerCancellationReceipt(
+                run_id=request.run_id,
+                accepted=False,
+                terminal=False,
+                runtime_status="UNKNOWN",
+                details={"reason": "invalid OpenCode runtime binding for cancellation"},
+            )
+        if session_id:
+            request._runtime_run_id = session_id
+            self._session_by_run[request.run_id] = session_id
+            self._runtime_run_id_by_run[request.run_id] = session_id
             client = await self._get_client()
             path = self._endpoint("abort").replace("{sessionID}", session_id)
             try:
@@ -2415,9 +2998,8 @@ class OpenCodeAdapter(HTTPAdapter):
             except httpx.HTTPError:
                 if not request.force:
                     raise
-            self._cancelled.add(request.run_id)
             await self._stop_mcp_grant_refresher(request.run_id)
-        return await super().cancel(request)
+        return await BaseWorkerAdapter.cancel(self, request)
 
     async def deliver_tool_response(self, response: Any) -> None:
         await super().deliver_tool_response(response)
@@ -2455,6 +3037,18 @@ def adapter_for_transport(
     normalized = transport.lower()
     if normalized == "process":
         return ProcessAdapter(config.get("command") or [config.get("entrypoint", "worker")], worker_id=worker_id, context=context, cwd=config.get("cwd"), environment=config.get("environment"))
+    if normalized in {"wasmtime", "wasm"}:
+        return WasmtimeAdapter(
+            str(config["module_path"]),
+            module_sha256=str(config["module_sha256"]),
+            worker_id=worker_id,
+            wasmtime_binary=str(config.get("wasmtime_binary") or "wasmtime"),
+            arguments=tuple(config.get("arguments") or ()),
+            cwd=config.get("cwd"),
+            environment=config.get("environment"),
+            context=context,
+            runtime_version=config.get("runtime_version"),
+        )
     if normalized == "http":
         return HTTPAdapter(config["base_url"], worker_id=worker_id, context=context, endpoints=config.get("endpoints"), headers=config.get("headers"))
     if normalized == "mcp":
@@ -2492,9 +3086,19 @@ def adapter_for_transport(
         # canonical vm_isolated policy class.  Direct launcher execution is
         # available only through the explicit legacy compatibility switch.
         canonical_profile = "vm_isolated" if raw_profile == "firecracker" else sandbox_class
+        execution_policy = config.get("execution_policy")
+        trusted_worker = (
+            isinstance(execution_policy, Mapping)
+            and execution_policy.get("trust") == "trusted"
+            and execution_policy.get("minimum_isolation") in {None, "trusted"}
+        )
+        if canonical_profile == "trusted" and not trusted_worker:
+            raise ValueError(
+                "trusted OCI execution requires an immutable trusted execution policy"
+            )
         sandbox_runtime = str(
             config.get("sandbox_runtime")
-            or ("runsc" if sandbox_class == "sandboxed" else "kata")
+            or required_runtime_for_sandbox(canonical_profile)
         )
         return OCIAdapter(
             config["image"],
@@ -2503,9 +3107,15 @@ def adapter_for_transport(
             launcher=config.get("launcher", "docker"),
             sandbox_profile=canonical_profile,
             sandbox_runtime=sandbox_runtime,
+            trusted_worker=trusted_worker,
             memory_limit=config.get("memory_limit", "512m"),
             cpu_limit=config.get("cpu_limit", "1.0"),
             pids_limit=int(config.get("pids_limit", 256)),
+            cwd=config.get("cwd"),
+            environment=config.get("environment"),
+            bidirectional_tool_protocol=config.get("bidirectional_tool_protocol", False),
+            tool_response_timeout_seconds=float(config.get("tool_response_timeout_seconds", 30.0)),
+            runtime_version=config.get("runtime_version"),
         )
     if normalized in {"aiat_gateway", "gateway"}:
         from mas_core.llm_gateway.models import LLMConfig

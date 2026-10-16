@@ -1,0 +1,136 @@
+{
+  "binding_schema": "aiat.worker-run-host-binding.v1",
+  "certification_boundary": {
+    "durable_worker_host_bindings": "checked",
+    "external_provider_dispatch": "not_checked",
+    "host_loss_or_split_brain": "not_checked",
+    "independent_deployed_hosts": "not_checked",
+    "independent_python_processes": "checked",
+    "payload_free_trace_projection": "checked",
+    "production_worker_host_executor": "checked",
+    "production_worker_run_controller": "checked",
+    "provider_outage_recovery": "not_checked",
+    "sandbox_runtime_sandboxed_or_vm_isolated": "not_checked",
+    "scoped_cleanup": "checked",
+    "worker_postgres_connection_reopen": "checked"
+  },
+  "child_process_count": 2,
+  "child_process_ids": [
+    57914,
+    57916
+  ],
+  "child_reports": [
+    {
+      "host_id": "aiat-cert-independent-process-worker-v1-a",
+      "return_code": 0,
+      "run_id": "00000000-0000-4000-a000-000000000d34",
+      "status": "pass",
+      "terminal_state": "SUCCEEDED"
+    },
+    {
+      "host_id": "aiat-cert-independent-process-worker-v1-b",
+      "return_code": 0,
+      "run_id": "00000000-0000-4000-a000-000000000d35",
+      "status": "pass",
+      "terminal_state": "SUCCEEDED"
+    }
+  ],
+  "cleanup_deleted_counts": {
+    "artifacts": 2,
+    "bindings": 2,
+    "hosts": 0,
+    "reservations": 2,
+    "spans": 6,
+    "worker_artifacts": 2,
+    "worker_runs": 2,
+    "workers": 1
+  },
+  "controller_terminal_states": [
+    "SUCCEEDED",
+    "SUCCEEDED"
+  ],
+  "coverage_schema": "aiat.worker-trace-coverage.v1",
+  "durable_reopen": {
+    "artifact_count": 2,
+    "healthy": true,
+    "run_count": 2,
+    "trace_counts": {
+      "aiat-cert-independent-process-execution-v1-trace-a": 3,
+      "aiat-cert-independent-process-execution-v1-trace-b": 3
+    },
+    "usage_count": 2
+  },
+  "execution_schema": "aiat.worker-host-execution.v1",
+  "external_network_access_performed": false,
+  "external_provider_mutation_performed": false,
+  "licence_metadata_is_gate": false,
+  "local_database_access_performed": true,
+  "migration_version": "0045_worker_tool_effects",
+  "mode": "local-postgres-independent-worker-processes",
+  "mutation_performed": true,
+  "native_span_counts": {
+    "aiat-cert-independent-process-execution-v1-trace-a": 3,
+    "aiat-cert-independent-process-execution-v1-trace-b": 3
+  },
+  "observed_at": "2026-10-02T02:59:07.979587Z",
+  "payload_free": true,
+  "process_dispatch_performed": true,
+  "remaining_fixture_counts": {
+    "artifacts": 0,
+    "bindings": 0,
+    "hosts": 0,
+    "reservations": 0,
+    "runs": 0,
+    "spans": 0,
+    "usage": 0,
+    "workers": 0
+  },
+  "schema_version": "aiat.worker-independent-process-execution-postgres-certification.v1",
+  "status": "pass",
+  "trace_coverage": {
+    "aiat-cert-independent-process-execution-v1-trace-a": {
+      "licence_metadata_is_gate": false,
+      "missing_required_sources": [],
+      "optional_sources": {
+        "integration_evidence": "empty",
+        "native_audit_spans": "observed",
+        "native_integration_spans": "empty",
+        "native_mail_spans": "empty"
+      },
+      "require_integration": false,
+      "required_sources": {
+        "native_model_spans": "observed",
+        "native_worker_spans": "observed",
+        "worker_artifacts": "observed",
+        "worker_usage_records": "observed"
+      },
+      "schema_version": "aiat.worker-trace-coverage.v1",
+      "status": "pass",
+      "trace_status": "observed",
+      "worker_run_scope": "model-backed worker source coverage; integration/mail-edge and live retention are separate gates"
+    },
+    "aiat-cert-independent-process-execution-v1-trace-b": {
+      "licence_metadata_is_gate": false,
+      "missing_required_sources": [],
+      "optional_sources": {
+        "integration_evidence": "empty",
+        "native_audit_spans": "observed",
+        "native_integration_spans": "empty",
+        "native_mail_spans": "empty"
+      },
+      "require_integration": false,
+      "required_sources": {
+        "native_model_spans": "observed",
+        "native_worker_spans": "observed",
+        "worker_artifacts": "observed",
+        "worker_usage_records": "observed"
+      },
+      "schema_version": "aiat.worker-trace-coverage.v1",
+      "status": "pass",
+      "trace_status": "observed",
+      "worker_run_scope": "model-backed worker source coverage; integration/mail-edge and live retention are separate gates"
+    }
+  },
+  "worker_artifact_count": 2,
+  "worker_usage_count": 2
+}

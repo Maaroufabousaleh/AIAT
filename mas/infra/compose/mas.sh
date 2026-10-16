@@ -29,6 +29,12 @@ load_env_file() {
         elif [[ "$value" == \'*\' && "$value" == *\' ]]; then
             value="${value:1:${#value}-2}"
         fi
+        # Preserve caller values over dotenv defaults. Host bootstrap supplies
+        # selected ports this way, and operators use it to disable optional
+        # integration setup without editing their local .env file.
+        if [[ -v "$key" ]]; then
+            continue
+        fi
         export "$key=$value"
     done < "$file"
 }
@@ -304,8 +310,9 @@ case "$CMD" in
         # of a possibly stale PgBouncer pool after a database restart. This
         # remains an operator command; it does not weaken the normal migrate
         # command used against an already-running stack.
+        PGBOUNCER_DSN="postgresql://mas_user:${POSTGRES_PASSWORD}@postgres:5432/mas" \
         docker compose $COMPOSE_FILES run --rm --no-deps \
-            -e "PGBOUNCER_DSN=postgresql://mas_user:${POSTGRES_PASSWORD}@postgres:5432/mas" \
+            -e PGBOUNCER_DSN \
             orchestrator-api python -m alembic -c /app/alembic.ini upgrade heads
         success "Migrations applied without starting application dependencies."
         ;;

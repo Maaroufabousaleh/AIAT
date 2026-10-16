@@ -145,7 +145,11 @@ async def test_create_project(client):
     with patch("httpx.AsyncClient") as mock_hx:
         mock_hx.return_value.__aenter__ = AsyncMock(return_value=MagicMock(post=AsyncMock()))
         mock_hx.return_value.__aexit__ = AsyncMock(return_value=False)
-        r = await client.post("/projects", json={"name": "Proj Alpha", "description": "test"})
+        r = await client.post(
+            "/projects",
+            headers={"X-API-Key": "test-operator-key"},
+            json={"name": "Proj Alpha", "description": "test"},
+        )
     assert r.status_code == 201
     assert r.json()["state"] == "INIT"
 
@@ -153,7 +157,11 @@ async def test_create_project(client):
 @pytest.mark.anyio
 async def test_create_project_no_storage(client):
     _patch(None)
-    r = await client.post("/projects", json={"name": "X"})
+    r = await client.post(
+        "/projects",
+        headers={"X-API-Key": "test-operator-key"},
+        json={"name": "X"},
+    )
     assert r.status_code == 503
 
 
@@ -337,6 +345,7 @@ async def test_worker_status_transition(client):
     _patch(storage)
     r = await client.patch(
         f"/capabilities/workers/{WORKER_ID}/status",
+        headers={"X-API-Key": "test-operator-key"},
         json={
             "action": "DEACTIVATE",
             "new_status": "INACTIVE",
@@ -467,12 +476,15 @@ async def test_flow_instance_action_cancel(client):
     cancelled = _instance_row(status="CANCELLED")
     storage.get_flow_instance = AsyncMock(side_effect=[instance, cancelled])
     storage.get_flow = AsyncMock(return_value=_flow_row())
-    storage.update_flow_instance = AsyncMock(return_value=cancelled)
+    storage.cancel_flow_instance = AsyncMock(
+        return_value={"outcome": "applied", "instance": cancelled}
+    )
+    storage.update_flow_instance = AsyncMock()
     _patch(storage)
     r = await client.post(f"/flows/instances/{INSTANCE_ID}/action", json={"action": "cancel"})
     assert r.status_code == 200
-    assert storage.update_flow_instance.await_args.kwargs["status"] == "CANCELLED"
-    assert storage.update_flow_instance.await_args.kwargs["active_node_ids"] == []
+    storage.cancel_flow_instance.assert_awaited_once()
+    assert storage.update_flow_instance.await_count == 0
 
 
 @pytest.mark.anyio
@@ -847,7 +859,11 @@ async def test_project_lifecycle_integration(client):
     with patch("httpx.AsyncClient") as mock_hx:
         mock_hx.return_value.__aenter__ = AsyncMock(return_value=MagicMock(post=AsyncMock()))
         mock_hx.return_value.__aexit__ = AsyncMock(return_value=False)
-        create_r = await client.post("/projects", json={"name": "Alpha Project"})
+        create_r = await client.post(
+            "/projects",
+            headers={"X-API-Key": "test-operator-key"},
+            json={"name": "Alpha Project"},
+        )
     assert create_r.status_code == 201
 
     list_r = await client.get("/projects")

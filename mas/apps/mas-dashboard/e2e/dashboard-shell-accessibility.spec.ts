@@ -32,4 +32,23 @@ test.describe("Dashboard shell accessibility and mobile navigation", () => {
     await page.keyboard.press("Escape");
     await expect(page.getByRole("button", { name: "Open navigation" })).toBeFocused();
   });
+
+  test("primary navigation exposes company, approval, and model profile workspaces", async ({ page }) => {
+    await page.route("**/api/ceo/privileged-actions/pending", async (route) => {
+      await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+    });
+    await page.route("**/api/ceo/privileged-actions/audit", async (route) => {
+      await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+    });
+    await page.route((url) => url.pathname === "/api/approvals/project-decisions", async (route) => {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [], next_cursor: null }) });
+    });
+    await authenticate(page, "/approvals");
+
+    const navigation = page.getByRole("navigation", { name: "Primary" });
+    await expect(navigation.getByRole("link", { name: "Companies" })).toHaveAttribute("href", "/companies");
+    await expect(navigation.getByRole("link", { name: "Approvals", exact: true })).toHaveAttribute("aria-current", "page");
+    await expect(navigation.getByRole("link", { name: "Model Resolution Preview" })).toHaveAttribute("href", "/models");
+    await expect(navigation.getByRole("link", { name: "Model Profiles" })).toHaveAttribute("href", "/models/profiles");
+  });
 });

@@ -7,6 +7,7 @@ import { clsx } from "clsx";
 import {
   LayoutDashboard,
   FolderKanban,
+  Building2,
   Radio,
   BarChart3,
   Inbox,
@@ -20,6 +21,7 @@ import {
   Users,
   Send,
   ShieldCheck,
+  BrainCircuit,
   type LucideIcon,
 } from "lucide-react";
 import ThemeToggle from "@/components/ThemeToggle";
@@ -37,6 +39,8 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
       { href: "/ceo/chat",    label: "CEO Command",  icon: Send },
       { href: "/",            label: "Overview",     icon: LayoutDashboard },
       { href: "/projects",    label: "Projects",     icon: FolderKanban },
+      { href: "/companies",   label: "Companies",    icon: Building2 },
+      { href: "/approvals",   label: "Approvals",    icon: ShieldCheck },
       { href: "/workers",     label: "Workers",      icon: Users },
       { href: "/credentials", label: "Credentials",  icon: Lock },
     ],
@@ -79,6 +83,8 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
       { href: "/system", label: "System", icon: Settings },
       { href: "/tools",  label: "Tools",  icon: Wrench },
       { href: "/governance", label: "Governance", icon: ShieldCheck },
+      { href: "/models", label: "Model Resolution Preview", icon: BrainCircuit },
+      { href: "/models/profiles", label: "Model Profiles", icon: BrainCircuit },
       { href: "/integrations", label: "PM Integrations", icon: Network },
     ],
   },
@@ -145,7 +151,9 @@ export default function Sidebar({
             </div>
             <div className="space-y-0.5">
               {group.items.map(({ href, label, icon: Icon }) => {
-                const active = href.startsWith("/analytics/") || href === "/ceo/chat"
+                const active = href === "/models" || href === "/models/profiles"
+                  ? pathname === href
+                  : href.startsWith("/analytics/") || href === "/ceo/chat"
                   ? pathname === href
                   : href === "/"
                     ? pathname === "/"
@@ -154,6 +162,7 @@ export default function Sidebar({
                   <Link
                     key={href}
                     href={href}
+                    aria-current={active ? "page" : undefined}
                     prefetch={false}
                     onClick={onNavigate}
                     className={clsx(

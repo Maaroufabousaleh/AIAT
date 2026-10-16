@@ -37,11 +37,17 @@ DEFAULT_COMPOSE = MAS_ROOT / "infra" / "compose" / "docker-compose.yml"
 DEFAULT_SECURITY_EVIDENCE = MAS_ROOT / "docs" / "provenance" / "security_scan_evidence.yaml"
 DEFAULT_NOTICES = PROGRAMME_ROOT / "THIRD_PARTY_NOTICES.md"
 CHECK_SCHEMA = "aiat.worker-reconciliation.v1"
+AIAT_FIRST_PARTY_SOURCE_PROVIDER = "aiat"
+AIAT_CANONICAL_SOURCE_REPOSITORY = "https://github.com/Maaroufabousaleh/AIAT"
 
 SUPPORTED_TRANSPORTS = frozenset(
-    {"native", "process", "http", "oci", "mcp", "opencode", "aiat_gateway", "human"}
+    {"native", "process", "http", "oci", "mcp", "opencode", "aiat_gateway", "wasmtime", "human"}
 )
 CONCRETE_VERSION_RE = re.compile(r"^(?:v)?\d+(?:\.\d+){0,3}(?:[-+][0-9A-Za-z.-]+)?$")
+PINNED_VERSION_WITH_IMAGE_DIGEST_RE = re.compile(
+    r"^(?P<version>(?:v)?\d+(?:\.\d+){0,3})\+sha256\.[0-9a-f]{64}$",
+    re.IGNORECASE,
+)
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -64,6 +70,13 @@ def _normalise_source(value: Any) -> str:
 
 def _normalise_version(value: Any) -> str:
     return str(value or "").strip().removeprefix("v").lower()
+
+
+def _release_version_from_pin(value: Any) -> str:
+    """Return the release portion of a plain or OCI-digest-suffixed pin."""
+    raw = str(value or "").strip()
+    match = PINNED_VERSION_WITH_IMAGE_DIGEST_RE.fullmatch(raw)
+    return match.group("version") if match else raw
 
 
 def _is_concrete_version(value: Any) -> bool:
@@ -196,12 +209,70 @@ def _security_evidence_index(path: Path, errors: list[str]) -> dict[str, dict[st
             errors.append(f"{scan_id}: source_repo and source_revision are required")
         if not isinstance(row.get("target_workers"), list) or not row.get("target_workers"):
             errors.append(f"{scan_id}: target_workers must be a non-empty list")
-        for field in ("scanned_file_count", "finding_count", "engine_warning_count"):
+        findings_retained = (
+            row.get("raw_findings_retained") is True
+            or row.get("normalized_result_retained") is True
+        )
+        retained_findings = findings_retained and row.get("source_snapshot_retained") is True
+        historical_unavailable = (
+            row.get("remediation_input") is False
+            and not findings_retained
+            and row.get("source_snapshot_retained") is False
+        )
+        if not retained_findings and not historical_unavailable:
+            errors.append(
+                f"{scan_id}: scan evidence without retained findings and source must be marked "
+                "historical with remediation_input false"
+            )
+        if historical_unavailable:
+            for field in ("finding_count", "engine_warning_count", "scanned_file_count"):
+                if row.get(field) is not None:
+                    errors.append(
+                        f"{scan_id}: unreproducible historical evidence must not supply {field}"
+                    )
+            if row.get("rule_counts") not in (None, {}):
+                errors.append(
+                    f"{scan_id}: unreproducible historical evidence must not supply rule_counts"
+                )
+        scanned_file_count = row.get("scanned_file_count")
+        if historical_unavailable:
+            pass
+        elif scanned_file_count is None:
+            count_not_repeated = (
+                row.get("scanned_file_count_status") == "not_repeated_in_current_scan"
+                and row.get("scanner_status") == "prior_exact_source_scan_findings_carried_forward"
+            )
+            if (
+                row.get("scanned_file_count_status") != "not_reported_by_scanner"
+                and not count_not_repeated
+            ):
+                errors.append(
+                    f"{scan_id}: scanned_file_count must be a non-negative integer or explicitly not reported"
+                )
             try:
-                if int(row.get(field)) < 0:
+                if int(row.get("source_snapshot_file_count")) < 0:
                     raise ValueError
             except (TypeError, ValueError):
-                errors.append(f"{scan_id}: {field} must be a non-negative integer")
+                errors.append(
+                    f"{scan_id}: source_snapshot_file_count must be a non-negative integer when scanner count is unavailable"
+                )
+            if row.get("source_snapshot_retained") is not True:
+                errors.append(
+                    f"{scan_id}: source_snapshot_retained must be true when scanner count is unavailable"
+                )
+        else:
+            try:
+                if int(scanned_file_count) < 0:
+                    raise ValueError
+            except (TypeError, ValueError):
+                errors.append(f"{scan_id}: scanned_file_count must be a non-negative integer")
+        if retained_findings:
+            for field in ("finding_count", "engine_warning_count"):
+                try:
+                    if int(row.get(field)) < 0:
+                        raise ValueError
+                except (TypeError, ValueError):
+                    errors.append(f"{scan_id}: {field} must be a non-negative integer")
         result[scan_id] = row
     if not result:
         errors.append("security scan evidence must contain at least one scan")
@@ -238,6 +309,15 @@ def _check_compose_links(
         config = manifest.runtime.adapter_config
         if transport == "process" and not str(config.get("entrypoint") or "").strip():
             errors.append(f"{path.name}: process transport requires runtime.adapter_config.entrypoint")
+        if transport == "wasmtime":
+            module_path = str(config.get("module_path") or "").strip()
+            module_digest = str(config.get("module_sha256") or "").strip().lower()
+            if not module_path:
+                errors.append(f"{path.name}: wasmtime transport requires runtime.adapter_config.module_path")
+            if not re.fullmatch(r"[0-9a-f]{64}", module_digest):
+                errors.append(
+                    f"{path.name}: wasmtime transport requires a 64-character module_sha256"
+                )
         if transport == "opencode":
             base_url = str(config.get("base_url") or "").strip()
             host = urlparse(base_url).hostname
@@ -284,7 +364,11 @@ def _binding_mismatches(manifest: WorkerManifest, row: dict[str, Any]) -> list[s
         "adapter_type": manifest.runtime.transport,
         "adapter_entrypoint": manifest.integration.adapter_entrypoint,
         "isolation_mode": manifest.integration.isolation_mode,
-        "sandbox_profile": manifest.sandbox.profile,
+        # The database stores the canonical policy class.  Historical
+        # manifests may still carry aliases such as ``gvisor`` or
+        # ``firecracker`` and must remain readable without producing a
+        # false live-reconciliation mismatch.
+        "sandbox_profile": manifest.sandbox.sandbox_class,
         "team_id": _manifest_team_id(manifest),
         "version_pin": manifest.metadata.version_pin,
         "source_revision": manifest.metadata.source_revision,
@@ -493,6 +577,21 @@ def reconcile(
         worker_ids.add(worker_id)
         manifests.append((path, manifest))
 
+        execution_policy = manifest.effective_execution_policy
+        is_external = manifest.runtime_tier == "external" or (
+            manifest.metadata.source_repo is not None
+            and manifest.metadata.source_repo != "local"
+        )
+        if is_external and execution_policy.effective_trust(external=True) == "trusted":
+            errors.append(f"{path.name}: external worker execution policy cannot select trusted/runc")
+        if is_external and execution_policy.effective_minimum_isolation(external=True) not in {
+            "sandboxed",
+            "vm_isolated",
+        }:
+            errors.append(f"{path.name}: external worker execution policy has no hardened isolation floor")
+        if manifest.runtime.transport == "wasmtime" and "wasm" not in execution_policy.formats:
+            errors.append(f"{path.name}: wasmtime transport requires the wasm execution format")
+
         definition = RUNTIME_CATALOG.get(manifest.runtime_tier)
         if definition is None:
             errors.append(f"{path.name}: runtime tier {manifest.runtime_tier!r} is not in the runtime catalogue")
@@ -539,14 +638,15 @@ def reconcile(
                 if "security_scan_status" not in source_provenance:
                     errors.append(f"{path.name}: source_provenance.security_scan_status is required")
                 exact_release = source_provenance.get("exact_release")
+                pinned_release = _release_version_from_pin(manifest.metadata.version_pin)
                 if (
                     _is_concrete_version(exact_release)
-                    and _is_concrete_version(manifest.metadata.version_pin)
-                    and _normalise_version(exact_release) != _normalise_version(manifest.metadata.version_pin)
+                    and _is_concrete_version(pinned_release)
+                    and _normalise_version(exact_release) != _normalise_version(pinned_release)
                 ):
                     errors.append(
                         f"{path.name}: source_provenance.exact_release {exact_release!r} disagrees with "
-                        f"metadata.version_pin {manifest.metadata.version_pin!r}"
+                        f"metadata.version_pin release {pinned_release!r}"
                     )
                 transport_type = source_provenance.get("transport_type")
                 if transport_type and transport_type != manifest.runtime.transport:
@@ -554,29 +654,64 @@ def reconcile(
                         f"{path.name}: source_provenance.transport_type {transport_type!r} disagrees with "
                         f"runtime.transport {manifest.runtime.transport!r}"
                     )
-            matching_component = next(
-                (
-                    item
-                    for item in provenance.get("components") or []
-                    if isinstance(item, dict)
-                    and _normalise_source(item.get("source")) == _normalise_source(source_repo)
-                ),
-                None,
-            )
-            if matching_component is None:
-                errors.append(f"{path.name}: source_repo is absent from third-party provenance inventory")
-            else:
-                inventory_version = matching_component.get("version")
-                manifest_version = manifest.metadata.version_pin
+            source_provenance = manifest.source_provenance or {}
+            if str(source_provenance.get("source_provider") or "").strip().lower() == AIAT_FIRST_PARTY_SOURCE_PROVIDER:
+                repository = urlparse(source_repo)
+                canonical_repository = urlparse(AIAT_CANONICAL_SOURCE_REPOSITORY)
+                repository_path = repository.path.strip("/").removesuffix(".git").lower()
                 if (
-                    _is_concrete_version(inventory_version)
-                    and _is_concrete_version(manifest_version)
-                    and _normalise_version(inventory_version) != _normalise_version(manifest_version)
+                    repository.scheme.lower() != "https"
+                    or repository.hostname is None
+                    or repository.hostname.lower() != canonical_repository.hostname
+                    or repository_path != canonical_repository.path.strip("/").lower()
+                    or repository.username is not None
+                    or repository.password is not None
+                    or repository.query
+                    or repository.fragment
                 ):
                     errors.append(
-                        f"{path.name}: manifest version_pin {manifest_version!r} disagrees with "
-                        f"inventory version {inventory_version!r}"
+                        f"{path.name}: AIAT first-party source_repo must be the canonical HTTPS AIAT repository"
                     )
+                commit_sha = str(source_provenance.get("commit_sha") or "")
+                source_revision = str(manifest.metadata.source_revision or "")
+                if not re.fullmatch(r"(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})", commit_sha):
+                    errors.append(f"{path.name}: AIAT first-party provenance requires an exact Git commit SHA")
+                elif commit_sha != source_revision:
+                    errors.append(
+                        f"{path.name}: first-party provenance commit_sha disagrees with metadata.source_revision"
+                    )
+                image_digest = str(source_provenance.get("oci_image_digest") or "")
+                image_reference = str(manifest.runtime.adapter_config.get("image") or "")
+                if manifest.runtime.transport != "oci" or not re.fullmatch(r"sha256:[0-9a-f]{64}", image_digest):
+                    errors.append(f"{path.name}: AIAT first-party candidates require an OCI sha256 image digest")
+                elif image_reference.rsplit("@", 1)[-1] != image_digest or "@" not in image_reference:
+                    errors.append(
+                        f"{path.name}: first-party OCI image reference disagrees with source_provenance.oci_image_digest"
+                    )
+            else:
+                matching_component = next(
+                    (
+                        item
+                        for item in provenance.get("components") or []
+                        if isinstance(item, dict)
+                        and _normalise_source(item.get("source")) == _normalise_source(source_repo)
+                    ),
+                    None,
+                )
+                if matching_component is None:
+                    errors.append(f"{path.name}: source_repo is absent from third-party provenance inventory")
+                else:
+                    inventory_version = matching_component.get("version")
+                    manifest_version = _release_version_from_pin(manifest.metadata.version_pin)
+                    if (
+                        _is_concrete_version(inventory_version)
+                        and _is_concrete_version(manifest_version)
+                        and _normalise_version(inventory_version) != _normalise_version(manifest_version)
+                    ):
+                        errors.append(
+                            f"{path.name}: manifest version {manifest_version!r} disagrees with "
+                            f"inventory version {inventory_version!r}"
+                        )
             scan_status = str((manifest.source_provenance or {}).get("security_scan_status") or "pending")
             if scan_status.lower() != "passed":
                 pending_row: dict[str, Any] = {
@@ -616,8 +751,17 @@ def reconcile(
                                     f"{path.name}: security scan evidence {scan_id!r} source_revision disagrees"
                                 )
                             pending_row["security_scan_evidence_ref"] = evidence_ref
-                            pending_row["finding_count"] = int(scan.get("finding_count") or 0)
-                            pending_row["evidence_status"] = str(scan.get("status") or "")
+                            retained_findings = (
+                                scan.get("raw_findings_retained") is True
+                                and scan.get("source_snapshot_retained") is True
+                            )
+                            if retained_findings:
+                                pending_row["finding_count"] = int(scan["finding_count"])
+                                pending_row["evidence_status"] = str(scan.get("status") or "")
+                            else:
+                                pending_row["evidence_status"] = "historical_unreproducible"
+                                pending_row["finding_count_status"] = "unavailable_no_retained_raw_evidence"
+                                pending_row["scan_classification"] = str(scan.get("classification") or "")
                 pending.append(pending_row)
         else:
             errors.append(f"{path.name}: metadata.source_repo is required")

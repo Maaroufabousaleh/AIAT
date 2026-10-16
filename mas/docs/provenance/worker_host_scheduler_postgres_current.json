@@ -1,0 +1,75 @@
+{
+  "blocked_boundary": {
+    "attempts": [
+      {
+        "host_id": "aiat-cert-worker-host-scheduler-v1-a",
+        "reason_code": "capacity_slots_exhausted"
+      },
+      {
+        "host_id": "aiat-cert-worker-host-scheduler-v1-b",
+        "reason_code": "capacity_slots_exhausted"
+      }
+    ],
+    "draining_and_unleased_hosts_filtered": true,
+    "status": "BLOCKED"
+  },
+  "boundary": {
+    "draining_or_unleased_filter": "checked",
+    "host_loss_or_split_brain": "not_checked",
+    "idempotent_schedule_key": "checked",
+    "live_worker_dispatch": "not_checked",
+    "multi_host_selection": "checked",
+    "reservation_fallback": "checked",
+    "sandboxed_or_vm_isolated": "not_checked"
+  },
+  "cleanup_after": {
+    "hosts": 4,
+    "reservations": 2
+  },
+  "cleanup_before": {
+    "hosts": 0,
+    "reservations": 0
+  },
+  "expected_migration": "0045_worker_tool_effects",
+  "external_network_access_performed": false,
+  "external_provider_mutation_performed": false,
+  "first_counts": {
+    "hosts": 0,
+    "reservations": 0
+  },
+  "idempotency": {
+    "reopen_replay_status": "REPLAYED",
+    "replay_same_host": true,
+    "replay_status": "REPLAYED"
+  },
+  "licence_metadata_is_gate": false,
+  "migration_version": "0045_worker_tool_effects",
+  "mode": "local-postgres-worker-host-scheduler",
+  "mutation_performed": true,
+  "remaining": {
+    "hosts": 0,
+    "reservations": 0
+  },
+  "reopen_readback": {
+    "reservation_present": true,
+    "scheduled_host": "aiat-cert-worker-host-scheduler-v1-b"
+  },
+  "scheduler_schema": "aiat.worker-host-scheduler.v1",
+  "schema_version": "aiat.worker-host-scheduler-postgres-certification.v1",
+  "scope": "deterministic multi-host selection, row-locked fallback, idempotent replay, blocked capacity outcome, connection-reopen read-back, and scoped cleanup",
+  "selection": {
+    "attempts": [
+      {
+        "host_id": "aiat-cert-worker-host-scheduler-v1-a",
+        "reason_code": "capacity_slots_exhausted"
+      }
+    ],
+    "candidate_count": 6,
+    "eligible_host_count": 2,
+    "fallback_used": true,
+    "preferred_host": "aiat-cert-worker-host-scheduler-v1-a",
+    "scheduled_host": "aiat-cert-worker-host-scheduler-v1-b"
+  },
+  "status": "pass",
+  "worker_dispatch_performed": false
+}

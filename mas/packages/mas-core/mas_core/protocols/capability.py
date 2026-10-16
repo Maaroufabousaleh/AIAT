@@ -33,7 +33,7 @@ class WorkerCapabilityRecord(BaseModel):
     worker_id: str
     name: str
     role: AgentRole | None = None
-    adapter_type: Literal["process", "http", "oci", "mcp", "human"] = "process"
+    adapter_type: Literal["process", "http", "oci", "mcp", "wasmtime", "human"] = "process"
     sandbox_profile: SandboxProfileName = "trusted"
     capabilities: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)

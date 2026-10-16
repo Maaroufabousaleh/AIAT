@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
@@ -12,6 +13,157 @@ import pytest
 WORKER_ID = UUID("00000000-0000-4000-a000-000000000701")
 PROJECT_ID = UUID("00000000-0000-4000-a000-000000000702")
 COMPANY_ID = UUID("00000000-0000-4000-a000-000000000703")
+
+
+@pytest.mark.anyio
+async def test_worker_heartbeat_requires_and_forwards_attempt_fence(monkeypatch) -> None:
+    import orchestrator_api.main as main
+
+    run_id = uuid4()
+    storage = SimpleNamespace(
+        heartbeat_worker_run=AsyncMock(return_value={"id": run_id, "state": "RUNNING"})
+    )
+    monkeypatch.setattr(main, "_storage", lambda: storage)
+    service_request = SimpleNamespace(state=SimpleNamespace(aiat_auth_principal="service"))
+
+    result = await main.heartbeat_worker_run(
+        run_id,
+        {"owner": "executor-a", "attempt_count": 3, "lease_seconds": 45},
+        service_request,
+    )
+
+    assert result["state"] == "RUNNING"
+    storage.heartbeat_worker_run.assert_awaited_once_with(
+        run_id,
+        owner="executor-a",
+        attempt_count=3,
+        lease_seconds=45,
+    )
+
+    with pytest.raises(main.HTTPException) as missing_fence:
+        await main.heartbeat_worker_run(
+            run_id,
+            {"owner": "executor-a"},
+            service_request,
+        )
+    assert missing_fence.value.status_code == 422
+
+    with pytest.raises(main.HTTPException) as denied_worker:
+        await main.heartbeat_worker_run(
+            run_id,
+            {"owner": "executor-a", "attempt_count": 3},
+            SimpleNamespace(state=SimpleNamespace(aiat_auth_principal="worker")),
+        )
+    assert denied_worker.value.status_code == 403
+    storage.heartbeat_worker_run.assert_awaited_once()
+
+
+@pytest.mark.anyio
+async def test_worker_tool_dispatch_forwards_only_controller_owned_claim_fence(monkeypatch) -> None:
+    import orchestrator_api.main as main
+
+    from mas_core.worker_contract import WorkerToolRequest
+
+    run_id = uuid4()
+    worker_id = uuid4()
+    storage = SimpleNamespace(
+        get_worker_run=AsyncMock(
+            return_value={
+                "id": run_id,
+                "project_id": PROJECT_ID,
+                "request_json": {"budget": {"max_cost_usd": 0.25}},
+            }
+        )
+    )
+    captured: dict[str, object] = {}
+
+    class ToolService:
+        async def request(self, method, path, body, *, timeout):
+            captured.update({"method": method, "path": path, "body": body, "timeout": timeout})
+            return {"success": True, "result": {"ok": True}}
+
+    monkeypatch.setattr(main, "_tool_service_client", lambda: ToolService())
+    tool_request = WorkerToolRequest(
+        run_id=run_id,
+        tool_name="workspace.read_file",
+        arguments={"path": "README.md"},
+        permission_scope=["workspace.read"],
+        idempotency_key="read-readme",
+    )
+    tool_request._execution_claim_fence = {
+        "claim_owner": "host-a",
+        "attempt_count": 5,
+    }
+
+    response = await main._worker_tool_dispatcher(
+        storage,
+        {"id": worker_id, "team_id": "engineering"},
+    )(tool_request)
+
+    body = captured["body"]
+    assert response.success is True
+    assert isinstance(body, dict)
+    assert body["claim_owner"] == "host-a"
+    assert body["claim_attempt_count"] == 5
+    assert "execution_claim_fence" not in body
+
+
+@pytest.mark.asyncio
+async def test_queued_run_stops_adapter_when_attempt_heartbeat_is_lost(monkeypatch) -> None:
+    import asyncio
+
+    import orchestrator_api.main as main
+
+    run_id = uuid4()
+    cancelled = asyncio.Event()
+    cancellation_requests = []
+
+    async def mark_cancelled(request):
+        cancellation_requests.append(request)
+        cancelled.set()
+
+    adapter = SimpleNamespace(cancel=AsyncMock(side_effect=mark_cancelled))
+
+    class Controller:
+        async def execute(self, *_args, **_kwargs):
+            await asyncio.wait_for(cancelled.wait(), timeout=1)
+            return SimpleNamespace(state="CANCELLED", result=None)
+
+    storage = SimpleNamespace(
+        heartbeat_worker_run=AsyncMock(return_value=None),
+        get_worker_run=AsyncMock(return_value={"id": run_id, "state": "RUNNING"}),
+    )
+    original_sleep = asyncio.sleep
+
+    async def immediate_sleep(_delay):
+        await original_sleep(0)
+
+    monkeypatch.setattr(main.asyncio, "sleep", immediate_sleep)
+    monkeypatch.setattr(main.app.state, "worker_run_tasks", set(), raising=False)
+
+    await main._execute_queued_worker_run(
+        controller=Controller(),
+        request=SimpleNamespace(),
+        adapter=adapter,
+        worker={"id": uuid4()},
+        storage=storage,
+        model_resolution_snapshot_id=None,
+        lease_seconds=30,
+        canonical_run_id=run_id,
+        attempt_count=4,
+    )
+
+    adapter.cancel.assert_awaited_once()
+    assert cancellation_requests[0].execution_claim_fence == {
+        "claim_owner": f"orchestrator-background:{run_id}",
+        "attempt_count": 4,
+    }
+    storage.heartbeat_worker_run.assert_awaited_once_with(
+        run_id,
+        owner=f"orchestrator-background:{run_id}",
+        attempt_count=4,
+        lease_seconds=30,
+    )
 
 
 def test_model_override_expiry_normalizes_serialized_values_and_fails_closed() -> None:
@@ -24,6 +176,66 @@ def test_model_override_expiry_normalizes_serialized_values_and_fails_closed() -
     assert main._model_override_is_expired("2026-01-01T00:00:01+00:00", now=reference) is False
     assert main._model_override_is_expired("not-a-timestamp", now=reference) is True
     assert main._model_override_is_expired(object(), now=reference) is True
+
+
+def test_opencode_model_identity_uses_only_catalogued_gateway_aliases() -> None:
+    import orchestrator_api.main as main
+
+    assert main._governed_opencode_model_mapper("omniroute-coding") == "aiat/omniroute-coding"
+    assert main._governed_opencode_model_mapper("unknown-unqualified-alias") is None
+
+
+@pytest.mark.anyio
+async def test_certified_opencode_adapter_receives_catalogue_model_mapper(monkeypatch) -> None:
+    import orchestrator_api.main as main
+
+    from mas_core.worker_registry import runtime_adapters
+
+    worker_id = uuid4()
+    adapter_id = uuid4()
+
+    class Storage:
+        async def get_runtime_adapter(self, requested_id):
+            assert requested_id == adapter_id
+            return {
+                "id": adapter_id,
+                "worker_id": worker_id,
+                "status": "active",
+                "conformance_status": "passed",
+                "transport_type": "opencode",
+                "capabilities_json": {},
+            }
+
+    class CapturingOpenCodeAdapter:
+        def __init__(self, _verification, *, model_mapper, **_kwargs):
+            self.model_mapper = model_mapper
+
+    monkeypatch.setattr(
+        runtime_adapters.OpenCodeInterfaceVerification,
+        "from_report",
+        staticmethod(lambda _configured: object()),
+    )
+    monkeypatch.setattr(runtime_adapters, "OpenCodeAdapter", CapturingOpenCodeAdapter)
+    monkeypatch.setattr(main, "_worker_adapter_runtimes", {})
+    monkeypatch.setenv("AIAT_TEST_OPENCODE_PASSWORD", "test-runtime-password")
+    monkeypatch.setenv("TOOL_SECRET", "test-tool-secret")
+
+    adapter = await main._certified_worker_adapter(
+        Storage(),
+        {
+            "id": worker_id,
+            "active_adapter_id": adapter_id,
+            "adapter_config": {
+                "base_url": "http://opencode-runtime:4096",
+                "interface_verification": {"report_id": "test"},
+                "auth_password_env": "AIAT_TEST_OPENCODE_PASSWORD",
+            },
+        },
+    )
+
+    assert adapter is not None
+    assert adapter.model_mapper("omniroute-coding") == "aiat/omniroute-coding"
+    assert adapter.model_mapper("unknown-unqualified-alias") is None
 
 
 class _Adapter:
@@ -82,6 +294,41 @@ class _DispatchStorage:
         return None
 
 
+@pytest.mark.anyio
+async def test_cost_reservation_requires_positive_per_run_budget() -> None:
+    import orchestrator_api.main as main
+
+    async def reserve_for(budget_usd):
+        storage = _DispatchStorage()
+        request = SimpleNamespace(
+            budget_usd=budget_usd,
+            budget={},
+            idempotency_key="per-run-budget-boundary",
+            run_id=uuid4(),
+            task_type="test.run",
+        )
+        await main._reserve_worker_run_budgets(
+            storage=storage,
+            request=request,
+            worker_id=WORKER_ID,
+            project_id=None,
+            company_id=COMPANY_ID,
+        )
+        return [(row["budget_key"], row["amount"]) for row in storage.reservations]
+
+    omitted_budget = await reserve_for(None)
+    zero_budget = await reserve_for(Decimal("0"))
+    positive_budget = await reserve_for(Decimal("1.25"))
+
+    assert omitted_budget == zero_budget == [
+        ("max_concurrent_runs", Decimal("1")),
+    ]
+    assert positive_budget == [
+        ("max_cost_usd", Decimal("1.25")),
+        ("max_concurrent_runs", Decimal("1")),
+    ]
+
+
 def _patch_storage(storage) -> None:
     from orchestrator_api.main import app
 
@@ -92,8 +339,9 @@ def _patch_storage(storage) -> None:
 async def test_non_llm_dispatch_keeps_policy_snapshot_out_of_model_attribution(
     monkeypatch,
 ) -> None:
-    import mas_core.worker_contract as worker_contract
     import orchestrator_api.main as main
+
+    import mas_core.worker_contract as worker_contract
 
     class ProjectDispatchStorage(_DispatchStorage):
         async def get_project(self, project_id):
@@ -190,6 +438,116 @@ async def test_company_dispatch_rejects_grants_outside_active_assignment(
         "unapproved_permission_requirements": ["artifact.delete"],
     }
     assert storage.reservations == []
+
+
+@pytest.mark.anyio
+async def test_company_dispatch_rejects_assignment_pending_approval(client, monkeypatch) -> None:
+    import orchestrator_api.main as main
+
+    class CompanyStorage(_DispatchStorage):
+        def __init__(self):
+            super().__init__()
+            self.created_runs: list[dict[str, object]] = []
+
+        async def get_project(self, project_id):
+            assert project_id == PROJECT_ID
+            return {"id": project_id, "company_id": COMPANY_ID}
+
+        async def list_company_worker_assignments(self, company_id):
+            assert company_id == COMPANY_ID
+            return [
+                {
+                    "worker_id": WORKER_ID,
+                    "status": "ACTIVE",
+                    "approval_required": True,
+                    "tool_grants": [],
+                    "permission_grants": [],
+                }
+            ]
+
+        async def create_worker_run(self, **kwargs):
+            self.created_runs.append(kwargs)
+            return {"id": kwargs["run_id"], "state": "QUEUED"}
+
+    storage = CompanyStorage()
+    _patch_storage(storage)
+    adapter_factory = AsyncMock(return_value=_Adapter())
+    monkeypatch.setattr(main, "_certified_worker_adapter", adapter_factory)
+
+    response = await client.post(
+        "/workers/runs",
+        json={
+            "worker_id": str(WORKER_ID),
+            "idempotency_key": "company-assignment-approval-required",
+            "task_type": "test.run",
+            "project_id": str(PROJECT_ID),
+            "dispatch_mode": "queued",
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == {
+        "code": "COMPANY_ASSIGNMENT_APPROVAL_REQUIRED",
+        "message": "Worker assignment requires approval before dispatch",
+    }
+    assert storage.created_runs == []
+    assert storage.reservations == []
+    assert storage.snapshots == []
+    adapter_factory.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_company_dispatch_accepts_active_assignment_without_pending_approval(
+    client, monkeypatch
+) -> None:
+    import orchestrator_api.main as main
+
+    class CompanyStorage(_DispatchStorage):
+        def __init__(self):
+            super().__init__()
+            self.created_runs: list[dict[str, object]] = []
+
+        async def get_project(self, project_id):
+            assert project_id == PROJECT_ID
+            return {"id": project_id, "company_id": COMPANY_ID}
+
+        async def list_company_worker_assignments(self, company_id):
+            assert company_id == COMPANY_ID
+            return [
+                {
+                    "worker_id": WORKER_ID,
+                    "status": "ACTIVE",
+                    "approval_required": False,
+                    "tool_grants": [],
+                    "permission_grants": [],
+                }
+            ]
+
+        async def create_worker_run(self, **kwargs):
+            self.created_runs.append(kwargs)
+            return {"id": kwargs["run_id"], "state": "QUEUED"}
+
+    storage = CompanyStorage()
+    _patch_storage(storage)
+    adapter_factory = AsyncMock(return_value=_Adapter())
+    monkeypatch.setattr(main, "_certified_worker_adapter", adapter_factory)
+
+    response = await client.post(
+        "/workers/runs",
+        json={
+            "worker_id": str(WORKER_ID),
+            "idempotency_key": "company-assignment-approved",
+            "task_type": "test.run",
+            "project_id": str(PROJECT_ID),
+            "dispatch_mode": "queued",
+        },
+    )
+
+    assert response.status_code == 202
+    assert response.json()["state"] == "QUEUED"
+    assert response.json()["dispatch_mode"] == "queued"
+    assert len(storage.created_runs) == 1
+    adapter_factory.assert_awaited_once()
 
 
 @pytest.mark.anyio

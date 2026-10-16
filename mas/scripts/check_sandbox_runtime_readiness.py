@@ -47,7 +47,7 @@ CANONICAL_PROFILES = CANONICAL_SANDBOX_CLASSES
 ALLOWED_NETWORK_MODES = frozenset({"unrestricted", "egress-allowlist", "egress-deny-all"})
 HARDENED_PROFILES = HARDENED_SANDBOX_CLASSES
 OPENCODE_SERVICE = "opencode-runtime"
-OPENCODE_NETWORK = "internal"
+OPENCODE_NETWORK = "sandbox_gateway"
 OPENCODE_MAX_MEMORY_BYTES = 1024 * 1024 * 1024
 OPENCODE_MAX_CPUS = 1.0
 OPENCODE_MAX_PIDS = 256
@@ -124,6 +124,41 @@ def _inspect_opencode_runtime(compose_path: Path) -> dict[str, Any]:
 
     if _service_networks(service) != {OPENCODE_NETWORK}:
         errors.append(f"{OPENCODE_SERVICE}: networks must be exactly [{OPENCODE_NETWORK!r}]")
+    networks = compose.get("networks") or {}
+    opencode_network = networks.get(OPENCODE_NETWORK) if isinstance(networks, dict) else None
+    network_internal = (
+        isinstance(opencode_network, dict) and opencode_network.get("internal") is True
+    )
+    if not network_internal:
+        errors.append(f"network {OPENCODE_NETWORK!r} must be declared internal")
+    if str(service.get("runtime") or "").strip() != "runsc":
+        errors.append(f"{OPENCODE_SERVICE}: runtime must be explicitly set to runsc")
+    if service.get("env_file"):
+        errors.append(f"{OPENCODE_SERVICE}: broad env_file injection is forbidden")
+    environment = service.get("environment")
+    allowed_environment = {
+        "OPENCODE_SERVER_USERNAME",
+        "OPENCODE_SERVER_PASSWORD",
+        "AIAT_GATEWAY_URL",
+        "AIAT_GATEWAY_API_KEY",
+    }
+    if not isinstance(environment, dict):
+        errors.append(f"{OPENCODE_SERVICE}: environment must be an explicit allowlist mapping")
+        environment_names: set[str] = set()
+    else:
+        environment_names = {str(name) for name in environment}
+        unexpected_environment = sorted(environment_names - allowed_environment)
+        missing_environment = sorted(allowed_environment - environment_names)
+        if unexpected_environment:
+            errors.append(
+                f"{OPENCODE_SERVICE}: environment contains non-allowlisted names: "
+                + ", ".join(unexpected_environment)
+            )
+        if missing_environment:
+            errors.append(
+                f"{OPENCODE_SERVICE}: environment is missing required names: "
+                + ", ".join(missing_environment)
+            )
     if service.get("ports"):
         errors.append(f"{OPENCODE_SERVICE}: host ports must not be published")
     if service.get("read_only") is not True:
@@ -171,7 +206,10 @@ def _inspect_opencode_runtime(compose_path: Path) -> dict[str, Any]:
         "status": "fail" if errors else "pass",
         "errors": errors,
         "service": OPENCODE_SERVICE,
+        "runtime": str(service.get("runtime") or ""),
         "network": sorted(_service_networks(service)),
+        "network_internal": network_internal,
+        "environment_names": sorted(environment_names),
         "user": user,
         "read_only": service.get("read_only") is True,
         "cap_drop_all": "ALL" in cap_drop,
@@ -206,11 +244,27 @@ def inspect_static(
             sandbox_class = "invalid"
         network_mode = str(_sandbox_value(manifest, "network_mode", ""))
         runtime_tier = str(getattr(manifest, "runtime_tier", ""))
+        try:
+            execution_policy = manifest.effective_execution_policy
+            execution_trust = execution_policy.effective_trust(external=runtime_tier == "external")
+            execution_minimum = execution_policy.effective_minimum_isolation(
+                external=runtime_tier == "external"
+            )
+        except (TypeError, ValueError) as exc:
+            execution_policy = None
+            execution_trust = "invalid"
+            execution_minimum = "invalid"
+            errors.append(f"{path.name}: execution policy is invalid ({type(exc).__name__})")
         row: dict[str, Any] = {
             "worker": path.stem,
             "runtime_tier": runtime_tier,
             "sandbox_profile": profile,
             "sandbox_class": sandbox_class,
+            "execution_policy": (
+                execution_policy.model_dump(mode="json") if execution_policy is not None else None
+            ),
+            "execution_trust": execution_trust,
+            "execution_minimum_isolation": execution_minimum,
             "network_mode": network_mode,
             "status": "pass",
         }
@@ -226,6 +280,19 @@ def inspect_static(
         if runtime_tier == "external" and sandbox_class not in HARDENED_PROFILES:
             row["status"] = "fail"
             errors.append(f"{path.name}: external worker requires sandboxed (gVisor) or vm_isolated (Kata)")
+        if runtime_tier == "external" and execution_trust == "trusted":
+            row["status"] = "fail"
+            errors.append(f"{path.name}: external worker execution policy cannot be trusted/runc")
+        if runtime_tier == "external" and execution_minimum not in HARDENED_PROFILES:
+            row["status"] = "fail"
+            errors.append(f"{path.name}: external execution policy must require sandboxed or vm_isolated")
+        if (
+            manifest.runtime.transport == "wasmtime"
+            and execution_policy is not None
+            and "wasm" not in execution_policy.formats
+        ):
+            row["status"] = "fail"
+            errors.append(f"{path.name}: wasmtime transport requires the wasm execution format")
         rows.append(row)
     if not rows:
         errors.append("no worker manifests found")
@@ -247,6 +314,47 @@ def inspect_static(
 
 def _run(command: list[str], *, timeout: float = 10.0) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, check=False, capture_output=True, text=True, timeout=timeout)
+
+
+def _wasmtime_host_capability() -> dict[str, Any]:
+    """Report optional host Wasmtime availability without installing anything.
+
+    Wasmtime is a format-specific runtime.  Its absence must not block OCI/
+    Linux development, so this probe is informational unless a future
+    workload explicitly requests a Wasmtime target.
+    """
+
+    configured = str(os.environ.get("AIAT_WASMTIME_BINARY") or "wasmtime").strip()
+    binary = shutil.which(configured) or (configured if Path(configured).is_file() else None)
+    if not binary:
+        return {
+            "status": "OPTIONAL_UNAVAILABLE",
+            "available": False,
+            "binary": None,
+            "reason": "Wasmtime binary is not installed on this host",
+        }
+    try:
+        result = _run([binary, "--version"], timeout=10.0)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {
+            "status": "FAILED",
+            "available": False,
+            "binary": binary,
+            "reason": f"Wasmtime version probe failed ({type(exc).__name__})",
+        }
+    if result.returncode != 0:
+        return {
+            "status": "FAILED",
+            "available": False,
+            "binary": binary,
+            "reason": "Wasmtime version probe returned a non-zero exit code",
+        }
+    return {
+        "status": "AVAILABLE",
+        "available": True,
+        "binary": binary,
+        "version": result.stdout.strip()[:200] or None,
+    }
 
 
 def _docker_command(*args: str) -> list[str]:
@@ -304,8 +412,8 @@ def _run_smoke(image: str, *, runtime: str) -> tuple[bool, str]:
         "--pids-limit=64",
         "--memory=128m",
         "--cpus=0.25",
+        "--entrypoint=/bin/true",
         image,
-        "/bin/true",
     ]
     try:
         result = _run(command, timeout=60.0)
@@ -394,8 +502,8 @@ def _run_kata_smoke(image: str, *, runtime: str = KATA_RUNTIME_NAME) -> tuple[bo
         "--pids-limit=64",
         "--memory=128m",
         "--cpus=0.25",
+        "--entrypoint=/bin/sh",
         image,
-        "/bin/sh",
         "-c",
         "sleep 10",
     ]
@@ -462,6 +570,7 @@ def inspect_live(
         "kata_smoke": "not_checked",
         "firecracker": "superseded",
     }
+    report["wasmtime"] = _wasmtime_host_capability()
     runtimes, error = _docker_runtimes()
     report["registered_runtimes"] = sorted(runtimes)
     if error:

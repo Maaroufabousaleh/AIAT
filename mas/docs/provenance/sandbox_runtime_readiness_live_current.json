@@ -1,0 +1,991 @@
+{
+  "compose": "/mnt/c/projects/aiat/mas/infra/compose/docker-compose.yml",
+  "errors": [],
+  "hardened_worker_count": 10,
+  "live": {
+    "errors": [],
+    "firecracker": "superseded",
+    "kata": "available",
+    "kata_guest_kernel": "6.18.35",
+    "kata_prerequisites": {
+      "guest_image": "/opt/kata/share/kata-containers/kata-containers.img",
+      "kvm_access": "direct",
+      "kvm_present": true,
+      "kvm_readable": true,
+      "kvm_writable": true,
+      "missing_inputs": [],
+      "qemu_binary": "/opt/kata/bin/qemu-system-x86_64",
+      "reason": "Kata runtime-rs/QEMU inputs and /dev/kvm are ready for guest smoke",
+      "runtime_config": "/opt/kata/share/defaults/kata-containers/runtime-rs/configuration-qemu-runtime-rs.toml",
+      "runtime_shim": "/opt/kata/runtime-rs/bin/containerd-shim-kata-v2",
+      "runtime_version": "4.2.0",
+      "status": "READY",
+      "vmm": "qemu"
+    },
+    "kata_runtimes": [
+      "kata"
+    ],
+    "kata_smoke": "pass",
+    "kata_smoke_evidence": {
+      "guest_kernel": "6.18.35",
+      "host_kernel": "6.6.87.2-microsoft-standard-WSL2",
+      "image": "mas/opencode-runtime@sha256:c5311121a53e8534f28ff34b930b9e6a9f345f7b829a125998335501872b55a7",
+      "runtime": "kata",
+      "runtime_seen": "kata"
+    },
+    "kata_status": "AVAILABLE",
+    "kata_vmm": "qemu",
+    "mode": "live",
+    "reason": "gVisor (runsc) digest-pinned smoke completed",
+    "registered_runtimes": [
+      "io.containerd.runc.v2",
+      "kata",
+      "runc",
+      "runsc"
+    ],
+    "sandbox_class": "sandboxed",
+    "sandbox_profile": "sandboxed",
+    "sandbox_runtime": "runsc",
+    "schema_version": "aiat.sandbox-runtime-readiness.v1",
+    "scope": "Docker runtime registration and selected sandbox smoke",
+    "smoke": "pass",
+    "status": "pass",
+    "vm_isolated": "available",
+    "vm_isolated_status": "AVAILABLE",
+    "warnings": [],
+    "wasmtime": {
+      "available": false,
+      "binary": null,
+      "reason": "Wasmtime binary is not installed on this host",
+      "status": "OPTIONAL_UNAVAILABLE"
+    }
+  },
+  "live_scope": "Docker runtime registration; gVisor smoke, optional Kata probe, canary, and network evidence are separate",
+  "mode": "static",
+  "opencode_runtime": {
+    "cap_drop_all": true,
+    "cpus": 1.0,
+    "errors": [],
+    "memory_bytes": 1073741824,
+    "network": [
+      "internal"
+    ],
+    "no_new_privileges": true,
+    "pids_limit": 256,
+    "read_only": true,
+    "scope": "Compose boundary only; gVisor/Kata smoke, canary, and network evidence remain separate",
+    "service": "opencode-runtime",
+    "status": "pass",
+    "tmpfs_paths": [
+      "/runtime",
+      "/tmp"
+    ],
+    "user": "10001:10001"
+  },
+  "schema_version": "aiat.sandbox-runtime-readiness.v1",
+  "status": "pass",
+  "worker_count": 39,
+  "workers": [
+    {
+      "execution_minimum_isolation": "trusted",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "trusted",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [],
+        "remote_vm_allowed": true,
+        "trust": "trusted"
+      },
+      "execution_trust": "trusted",
+      "network_mode": "egress-allowlist",
+      "runtime_tier": "langgraph",
+      "sandbox_class": "trusted",
+      "sandbox_profile": "trusted",
+      "status": "pass",
+      "worker": "adapter_certifier"
+    },
+    {
+      "execution_minimum_isolation": "trusted",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "trusted",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [],
+        "remote_vm_allowed": true,
+        "trust": "trusted"
+      },
+      "execution_trust": "trusted",
+      "network_mode": "egress-allowlist",
+      "runtime_tier": "langgraph",
+      "sandbox_class": "trusted",
+      "sandbox_profile": "trusted",
+      "status": "pass",
+      "worker": "budget_evaluator"
+    },
+    {
+      "execution_minimum_isolation": "trusted",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "trusted",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [],
+        "remote_vm_allowed": true,
+        "trust": "trusted"
+      },
+      "execution_trust": "trusted",
+      "network_mode": "egress-allowlist",
+      "runtime_tier": "builtin",
+      "sandbox_class": "trusted",
+      "sandbox_profile": "trusted",
+      "status": "pass",
+      "worker": "ceo"
+    },
+    {
+      "execution_minimum_isolation": "trusted",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "trusted",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [],
+        "remote_vm_allowed": true,
+        "trust": "trusted"
+      },
+      "execution_trust": "trusted",
+      "network_mode": "egress-allowlist",
+      "runtime_tier": "builtin",
+      "sandbox_class": "trusted",
+      "sandbox_profile": "trusted",
+      "status": "pass",
+      "worker": "cfo"
+    },
+    {
+      "execution_minimum_isolation": "trusted",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "trusted",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [],
+        "remote_vm_allowed": true,
+        "trust": "trusted"
+      },
+      "execution_trust": "trusted",
+      "network_mode": "egress-allowlist",
+      "runtime_tier": "builtin",
+      "sandbox_class": "trusted",
+      "sandbox_profile": "trusted",
+      "status": "pass",
+      "worker": "chrm"
+    },
+    {
+      "execution_minimum_isolation": "trusted",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "trusted",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [],
+        "remote_vm_allowed": true,
+        "trust": "trusted"
+      },
+      "execution_trust": "trusted",
+      "network_mode": "egress-allowlist",
+      "runtime_tier": "builtin",
+      "sandbox_class": "trusted",
+      "sandbox_profile": "trusted",
+      "status": "pass",
+      "worker": "cio"
+    },
+    {
+      "execution_minimum_isolation": "sandboxed",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "sandboxed",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [],
+        "remote_vm_allowed": true,
+        "trust": "untrusted"
+      },
+      "execution_trust": "untrusted",
+      "network_mode": "egress-allowlist",
+      "runtime_tier": "external",
+      "sandbox_class": "sandboxed",
+      "sandbox_profile": "sandboxed",
+      "status": "pass",
+      "worker": "code_review_worker"
+    },
+    {
+      "execution_minimum_isolation": "sandboxed",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "sandboxed",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [],
+        "remote_vm_allowed": true,
+        "trust": "untrusted"
+      },
+      "execution_trust": "untrusted",
+      "network_mode": "egress-allowlist",
+      "runtime_tier": "external",
+      "sandbox_class": "sandboxed",
+      "sandbox_profile": "sandboxed",
+      "status": "pass",
+      "worker": "coding_worker"
+    },
+    {
+      "execution_minimum_isolation": "trusted",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "trusted",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [],
+        "remote_vm_allowed": true,
+        "trust": "trusted"
+      },
+      "execution_trust": "trusted",
+      "network_mode": "egress-allowlist",
+      "runtime_tier": "builtin",
+      "sandbox_class": "trusted",
+      "sandbox_profile": "trusted",
+      "status": "pass",
+      "worker": "coo"
+    },
+    {
+      "execution_minimum_isolation": "trusted",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "trusted",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [],
+        "remote_vm_allowed": true,
+        "trust": "trusted"
+      },
+      "execution_trust": "trusted",
+      "network_mode": "egress-allowlist",
+      "runtime_tier": "langgraph",
+      "sandbox_class": "trusted",
+      "sandbox_profile": "trusted",
+      "status": "pass",
+      "worker": "cost_estimator"
+    },
+    {
+      "execution_minimum_isolation": "trusted",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "trusted",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [],
+        "remote_vm_allowed": true,
+        "trust": "trusted"
+      },
+      "execution_trust": "trusted",
+      "network_mode": "egress-allowlist",
+      "runtime_tier": "builtin",
+      "sandbox_class": "trusted",
+      "sandbox_profile": "trusted",
+      "status": "pass",
+      "worker": "cso"
+    },
+    {
+      "execution_minimum_isolation": "trusted",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "trusted",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [],
+        "remote_vm_allowed": true,
+        "trust": "trusted"
+      },
+      "execution_trust": "trusted",
+      "network_mode": "egress-allowlist",
+      "runtime_tier": "builtin",
+      "sandbox_class": "trusted",
+      "sandbox_profile": "trusted",
+      "status": "pass",
+      "worker": "cto"
+    },
+    {
+      "execution_minimum_isolation": "sandboxed",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "sandboxed",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [],
+        "remote_vm_allowed": true,
+        "trust": "untrusted"
+      },
+      "execution_trust": "untrusted",
+      "network_mode": "egress-allowlist",
+      "runtime_tier": "external",
+      "sandbox_class": "sandboxed",
+      "sandbox_profile": "sandboxed",
+      "status": "pass",
+      "worker": "devops_eng"
+    },
+    {
+      "execution_minimum_isolation": "trusted",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "trusted",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [],
+        "remote_vm_allowed": true,
+        "trust": "trusted"
+      },
+      "execution_trust": "trusted",
+      "network_mode": "egress-allowlist",
+      "runtime_tier": "builtin",
+      "sandbox_class": "trusted",
+      "sandbox_profile": "trusted",
+      "status": "pass",
+      "worker": "devops_pm"
+    },
+    {
+      "execution_minimum_isolation": "trusted",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "trusted",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [],
+        "remote_vm_allowed": true,
+        "trust": "trusted"
+      },
+      "execution_trust": "trusted",
+      "network_mode": "egress-allowlist",
+      "runtime_tier": "langgraph",
+      "sandbox_class": "trusted",
+      "sandbox_profile": "trusted",
+      "status": "pass",
+      "worker": "financial_analyst"
+    },
+    {
+      "execution_minimum_isolation": "trusted",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "trusted",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [],
+        "remote_vm_allowed": true,
+        "trust": "trusted"
+      },
+      "execution_trust": "trusted",
+      "network_mode": "egress-allowlist",
+      "runtime_tier": "builtin",
+      "sandbox_class": "trusted",
+      "sandbox_profile": "trusted",
+      "status": "pass",
+      "worker": "hiring_agent"
+    },
+    {
+      "execution_minimum_isolation": "trusted",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "trusted",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [],
+        "remote_vm_allowed": true,
+        "trust": "trusted"
+      },
+      "execution_trust": "trusted",
+      "network_mode": "egress-allowlist",
+      "runtime_tier": "langgraph",
+      "sandbox_class": "trusted",
+      "sandbox_profile": "trusted",
+      "status": "pass",
+      "worker": "hr_analyst"
+    },
+    {
+      "execution_minimum_isolation": "trusted",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "trusted",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [],
+        "remote_vm_allowed": true,
+        "trust": "trusted"
+      },
+      "execution_trust": "trusted",
+      "network_mode": "egress-deny-all",
+      "runtime_tier": "builtin",
+      "sandbox_class": "trusted",
+      "sandbox_profile": "trusted",
+      "status": "pass",
+      "worker": "human_approval_gate"
+    },
+    {
+      "execution_minimum_isolation": "trusted",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "trusted",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [],
+        "remote_vm_allowed": true,
+        "trust": "trusted"
+      },
+      "execution_trust": "trusted",
+      "network_mode": "egress-allowlist",
+      "runtime_tier": "langgraph",
+      "sandbox_class": "trusted",
+      "sandbox_profile": "trusted",
+      "status": "pass",
+      "worker": "kpi_analyst"
+    },
+    {
+      "execution_minimum_isolation": "trusted",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "trusted",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [],
+        "remote_vm_allowed": true,
+        "trust": "trusted"
+      },
+      "execution_trust": "trusted",
+      "network_mode": "egress-allowlist",
+      "runtime_tier": "builtin",
+      "sandbox_class": "trusted",
+      "sandbox_profile": "trusted",
+      "status": "pass",
+      "worker": "license_provenance_evaluator"
+    },
+    {
+      "execution_minimum_isolation": "trusted",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "trusted",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [],
+        "remote_vm_allowed": true,
+        "trust": "trusted"
+      },
+      "execution_trust": "trusted",
+      "network_mode": "egress-allowlist",
+      "runtime_tier": "langgraph",
+      "sandbox_class": "trusted",
+      "sandbox_profile": "trusted",
+      "status": "pass",
+      "worker": "planner"
+    },
+    {
+      "execution_minimum_isolation": "trusted",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "trusted",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [],
+        "remote_vm_allowed": true,
+        "trust": "trusted"
+      },
+      "execution_trust": "trusted",
+      "network_mode": "egress-allowlist",
+      "runtime_tier": "builtin",
+      "sandbox_class": "trusted",
+      "sandbox_profile": "trusted",
+      "status": "pass",
+      "worker": "policy_grant_reviewer"
+    },
+    {
+      "execution_minimum_isolation": "trusted",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "trusted",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [],
+        "remote_vm_allowed": true,
+        "trust": "trusted"
+      },
+      "execution_trust": "trusted",
+      "network_mode": "egress-allowlist",
+      "runtime_tier": "builtin",
+      "sandbox_class": "trusted",
+      "sandbox_profile": "trusted",
+      "status": "pass",
+      "worker": "production_pm"
+    },
+    {
+      "execution_minimum_isolation": "trusted",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "trusted",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [],
+        "remote_vm_allowed": true,
+        "trust": "trusted"
+      },
+      "execution_trust": "trusted",
+      "network_mode": "egress-allowlist",
+      "runtime_tier": "builtin",
+      "sandbox_class": "trusted",
+      "sandbox_profile": "trusted",
+      "status": "pass",
+      "worker": "qa_lead"
+    },
+    {
+      "execution_minimum_isolation": "trusted",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "trusted",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [],
+        "remote_vm_allowed": true,
+        "trust": "trusted"
+      },
+      "execution_trust": "trusted",
+      "network_mode": "egress-allowlist",
+      "runtime_tier": "langgraph",
+      "sandbox_class": "trusted",
+      "sandbox_profile": "trusted",
+      "status": "pass",
+      "worker": "requirements_writer"
+    },
+    {
+      "execution_minimum_isolation": "sandboxed",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "sandboxed",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [],
+        "remote_vm_allowed": true,
+        "trust": "untrusted"
+      },
+      "execution_trust": "untrusted",
+      "network_mode": "egress-allowlist",
+      "runtime_tier": "external",
+      "sandbox_class": "sandboxed",
+      "sandbox_profile": "sandboxed",
+      "status": "pass",
+      "worker": "research_worker"
+    },
+    {
+      "execution_minimum_isolation": "sandboxed",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci",
+          "linux"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "sandboxed",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [
+          "kata",
+          "runsc"
+        ],
+        "remote_vm_allowed": true,
+        "trust": "untrusted"
+      },
+      "execution_trust": "untrusted",
+      "network_mode": "egress-allowlist",
+      "runtime_tier": "external",
+      "sandbox_class": "sandboxed",
+      "sandbox_profile": "sandboxed",
+      "status": "pass",
+      "worker": "sandbox_evaluator"
+    },
+    {
+      "execution_minimum_isolation": "sandboxed",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "sandboxed",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [],
+        "remote_vm_allowed": true,
+        "trust": "untrusted"
+      },
+      "execution_trust": "untrusted",
+      "network_mode": "egress-allowlist",
+      "runtime_tier": "external",
+      "sandbox_class": "sandboxed",
+      "sandbox_profile": "sandboxed",
+      "status": "pass",
+      "worker": "security_analyst"
+    },
+    {
+      "execution_minimum_isolation": "sandboxed",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "sandboxed",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [],
+        "remote_vm_allowed": true,
+        "trust": "untrusted"
+      },
+      "execution_trust": "untrusted",
+      "network_mode": "egress-allowlist",
+      "runtime_tier": "external",
+      "sandbox_class": "sandboxed",
+      "sandbox_profile": "sandboxed",
+      "status": "pass",
+      "worker": "security_evaluator"
+    },
+    {
+      "execution_minimum_isolation": "trusted",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "trusted",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [],
+        "remote_vm_allowed": true,
+        "trust": "trusted"
+      },
+      "execution_trust": "trusted",
+      "network_mode": "egress-allowlist",
+      "runtime_tier": "langgraph",
+      "sandbox_class": "trusted",
+      "sandbox_profile": "trusted",
+      "status": "pass",
+      "worker": "solution_designer"
+    },
+    {
+      "execution_minimum_isolation": "trusted",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "trusted",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [],
+        "remote_vm_allowed": true,
+        "trust": "trusted"
+      },
+      "execution_trust": "trusted",
+      "network_mode": "egress-allowlist",
+      "runtime_tier": "langgraph",
+      "sandbox_class": "trusted",
+      "sandbox_profile": "trusted",
+      "status": "pass",
+      "worker": "sprint_planner"
+    },
+    {
+      "execution_minimum_isolation": "sandboxed",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "sandboxed",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [],
+        "remote_vm_allowed": true,
+        "trust": "untrusted"
+      },
+      "execution_trust": "untrusted",
+      "network_mode": "egress-allowlist",
+      "runtime_tier": "external",
+      "sandbox_class": "sandboxed",
+      "sandbox_profile": "sandboxed",
+      "status": "pass",
+      "worker": "sre_agent"
+    },
+    {
+      "execution_minimum_isolation": "trusted",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "trusted",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [],
+        "remote_vm_allowed": true,
+        "trust": "trusted"
+      },
+      "execution_trust": "trusted",
+      "network_mode": "egress-allowlist",
+      "runtime_tier": "crewai",
+      "sandbox_class": "trusted",
+      "sandbox_profile": "trusted",
+      "status": "pass",
+      "worker": "system_architect"
+    },
+    {
+      "execution_minimum_isolation": "trusted",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "trusted",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [],
+        "remote_vm_allowed": true,
+        "trust": "trusted"
+      },
+      "execution_trust": "trusted",
+      "network_mode": "egress-allowlist",
+      "runtime_tier": "builtin",
+      "sandbox_class": "trusted",
+      "sandbox_profile": "trusted",
+      "status": "pass",
+      "worker": "system_pm"
+    },
+    {
+      "execution_minimum_isolation": "trusted",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "trusted",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [],
+        "remote_vm_allowed": true,
+        "trust": "trusted"
+      },
+      "execution_trust": "trusted",
+      "network_mode": "egress-allowlist",
+      "runtime_tier": "langgraph",
+      "sandbox_class": "trusted",
+      "sandbox_profile": "trusted",
+      "status": "pass",
+      "worker": "tech_analyst"
+    },
+    {
+      "execution_minimum_isolation": "trusted",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "trusted",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [],
+        "remote_vm_allowed": true,
+        "trust": "trusted"
+      },
+      "execution_trust": "trusted",
+      "network_mode": "egress-allowlist",
+      "runtime_tier": "langgraph",
+      "sandbox_class": "trusted",
+      "sandbox_profile": "trusted",
+      "status": "pass",
+      "worker": "tech_writer"
+    },
+    {
+      "execution_minimum_isolation": "sandboxed",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "sandboxed",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [],
+        "remote_vm_allowed": true,
+        "trust": "untrusted"
+      },
+      "execution_trust": "untrusted",
+      "network_mode": "egress-allowlist",
+      "runtime_tier": "external",
+      "sandbox_class": "sandboxed",
+      "sandbox_profile": "sandboxed",
+      "status": "pass",
+      "worker": "test_evaluation_worker"
+    },
+    {
+      "execution_minimum_isolation": "sandboxed",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "sandboxed",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [],
+        "remote_vm_allowed": true,
+        "trust": "untrusted"
+      },
+      "execution_trust": "untrusted",
+      "network_mode": "egress-allowlist",
+      "runtime_tier": "external",
+      "sandbox_class": "sandboxed",
+      "sandbox_profile": "sandboxed",
+      "status": "pass",
+      "worker": "tester"
+    },
+    {
+      "execution_minimum_isolation": "trusted",
+      "execution_policy": {
+        "allowed_runtimes": [],
+        "filesystem": {},
+        "formats": [
+          "oci"
+        ],
+        "gvisor_compatible": true,
+        "minimum_isolation": "trusted",
+        "network": "egress-allowlist",
+        "preferred_runtimes": [],
+        "remote_vm_allowed": true,
+        "trust": "trusted"
+      },
+      "execution_trust": "trusted",
+      "network_mode": "egress-allowlist",
+      "runtime_tier": "langgraph",
+      "sandbox_class": "trusted",
+      "sandbox_profile": "trusted",
+      "status": "pass",
+      "worker": "tool_interface_auditor"
+    }
+  ]
+}

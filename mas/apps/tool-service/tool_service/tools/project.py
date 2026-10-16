@@ -27,7 +27,7 @@ from mas_tools_sdk.groups import ToolGroup
 
 from ._orch_client import orch_get, orch_post
 from .adapters import _run_process
-from .file import _workspace_root
+from .file import _resolve_project_id, _workspace_root
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -360,7 +360,7 @@ class ProjectRepositoryTool(BaseTool):
         project_id, branch, remote_name = _validate_git_options(
             branch=requested_branch or "main",
             remote_name=str(kwargs.get("remote_name") or "origin"),
-            project_id=str(kwargs.get("project_id") or ""),
+            project_id=_resolve_project_id(kwargs),
         )
         repository_url = _validate_git_url(kwargs.get("repository_url"))
         root = _workspace_root()
@@ -498,9 +498,24 @@ class ProjectCreateTool(BaseTool):
         body = {
             "name": name,
             "description": kwargs.get("description"),
-            "human_requester": kwargs.get("human_requester"),
             "config": kwargs.get("config"),
+            # Service-originated project creation is prepared for operator
+            # review; only the operator API identity may start CEO work.
+            "start_immediately": False,
         }
+        context = kwargs.get("_aiat_context")
+        raw_idempotency_key = (
+            context.get("idempotency_key") if isinstance(context, dict) else None
+        )
+        if raw_idempotency_key is not None:
+            try:
+                # ToolRequest constrains this value to UUID at the boundary.
+                # Canonicalizing again here keeps direct/internal invocations
+                # bounded and prevents arbitrary model strings from reaching
+                # the API idempotency field.
+                body["idempotency_key"] = str(UUID(str(raw_idempotency_key)))
+            except (TypeError, ValueError, AttributeError) as exc:
+                raise ValueError("trusted project idempotency key must be a UUID") from exc
         if kwargs.get("flow_id"):
             body["flow_id"] = kwargs["flow_id"]
         if kwargs.get("workspace"):
@@ -541,12 +556,18 @@ class ProjectTransitionTool(BaseTool):
 
     async def execute(self, **kwargs: Any) -> Any:
         project_id = kwargs.get("project_id", "")
+        context = kwargs.get("_aiat_context")
         body = {
             "event": kwargs.get("event", ""),
             "actor_id": kwargs.get("actor_id", "unknown"),
             "context": kwargs.get("context"),
         }
-        return await orch_post(f"/projects/{project_id}/transition", body)
+        return await orch_post(
+            f"/projects/{project_id}/transition",
+            body,
+            context=context,
+            principal="operator",
+        )
 
 
 class ProjectListTool(BaseTool):
@@ -666,6 +687,7 @@ class DocumentSubmitTool(BaseTool):
     async def execute(self, **kwargs: Any) -> Any:
         project_id = kwargs.get("project_id", "")
         doc_type = kwargs.get("doc_type", "PDR")
+        context = kwargs.get("_aiat_context")
         event_map = {
             "PDR": "pdr_submitted",
             "CDR": "cdr_submitted",
@@ -684,6 +706,8 @@ class DocumentSubmitTool(BaseTool):
                     "doc_type": doc_type,
                 },
             },
+            context=context,
+            principal="operator",
         )
 
 
@@ -974,6 +998,7 @@ class ReviewAggregateTool(BaseTool):
 
     async def execute(self, **kwargs: Any) -> Any:
         project_id = kwargs.get("project_id", "")
+        context = kwargs.get("_aiat_context")
         return await orch_post(
             f"/projects/{project_id}/transition",
             {
@@ -984,6 +1009,8 @@ class ReviewAggregateTool(BaseTool):
                     "aggregate_verdict": kwargs.get("verdict", "APPROVED"),
                 },
             },
+            context=context,
+            principal="operator",
         )
 
 
@@ -1001,6 +1028,7 @@ class ApprovalOverrideCSOTool(BaseTool):
     async def execute(self, **kwargs: Any) -> Any:
         project_id = kwargs.get("project_id", "")
         action = kwargs.get("action", "approve")
+        context = kwargs.get("_aiat_context")
         if action == "block":
             return await orch_post(
                 f"/projects/{project_id}/transition",
@@ -1009,6 +1037,8 @@ class ApprovalOverrideCSOTool(BaseTool):
                     "actor_id": kwargs.get("actor_id", "cso"),
                     "context": {"reason": kwargs.get("reason", "CSO override")},
                 },
+                context=context,
+                principal="operator",
             )
         else:
             return await orch_post(
@@ -1018,6 +1048,8 @@ class ApprovalOverrideCSOTool(BaseTool):
                     "actor_id": kwargs.get("actor_id", "ceo"),
                     "context": {"reason": kwargs.get("reason", "CEO override")},
                 },
+                context=context,
+                principal="operator",
             )
 
 

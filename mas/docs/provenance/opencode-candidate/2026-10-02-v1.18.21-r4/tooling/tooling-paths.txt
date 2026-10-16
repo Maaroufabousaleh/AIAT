@@ -1,0 +1,2 @@
+/tmp/aiat-opencode-scan-tools-r4/install/venv/bin
+/tmp/aiat-opencode-scan-tools-r4/install/bin

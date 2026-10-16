@@ -47,7 +47,7 @@ from mas_core.worker_registry.placement import (  # noqa: E402
 )
 
 CHECK_SCHEMA = "aiat.worker-host-recovery-postgres-certification.v1"
-EXPECTED_MIGRATION = "0045_worker_tool_effects"
+EXPECTED_MIGRATION = "0046_project_approval_inbox_index"
 HOST_ID = "aiat-cert-worker-host-recovery-v1"
 HOST_PREFIX = f"{HOST_ID}%"
 HOST_UUID = UUID("00000000-0000-4000-a000-0000000009c1")
@@ -159,6 +159,12 @@ async def _expire_fixture_lease(storage: AgentStorage) -> None:
         raise RuntimeError("recovery fixture was not READY before lease expiry")
 
 
+async def _recover_fixture_host(recovery: HostLeaseRecovery) -> dict[str, Any]:
+    """Recover only this checker's reserved host, never unrelated expired hosts."""
+
+    return await recovery.reconcile_expired_hosts(host_ids=[HOST_ID])
+
+
 async def _run(dsn: str | None) -> dict[str, Any]:
     normalized_dsn = _normalize_dsn(dsn)
     if normalized_dsn is None:
@@ -259,7 +265,7 @@ async def _run(dsn: str | None) -> dict[str, Any]:
             lease_seconds=120,
         )
         await _expire_fixture_lease(storage)
-        recovery_report = await recovery.reconcile_expired_hosts()
+        recovery_report = await _recover_fixture_host(recovery)
         recovered = await registry.get_host(HOST_ID)
         lost_readback = await ledger.get(RESERVATION_LOST)
         stale_after_recovery = False

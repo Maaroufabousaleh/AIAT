@@ -54,6 +54,20 @@ Run the commands below from the `mas/` workspace unless a path says otherwise.
    is an explicit prerequisite block; it never substitutes WSL/Docker Desktop
    observations for native release evidence.
 
+   After the service and recovery checks, run the live ledger as the final
+   aggregation step:
+
+   ```bash
+   uv run python scripts/check_release_ledger.py --live --json \
+     > /secure/aiat-release-ledger-live.json
+   ```
+
+   Exit `0` means the configured required checks passed; exit `1` means at
+   least one technical check failed; exit `2` means a required live
+   prerequisite or evidence source is blocked. Preserve the JSON for all
+   three outcomes. A blocked result is not a release pass, and the ledger's
+   derived decision is authoritative over any individual check output.
+
 ## 2. Build/pull and reconcile images
 
 Build the AIAT images from the frozen source and pull the selected LiteLLM and

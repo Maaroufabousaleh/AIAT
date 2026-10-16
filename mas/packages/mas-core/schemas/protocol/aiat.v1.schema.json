@@ -2584,6 +2584,7 @@
                 "mcp",
                 "opencode",
                 "aiat_gateway",
+                "wasmtime",
                 "human"
               ],
               "title": "Transport",
@@ -2638,6 +2639,122 @@
             }
           },
           "title": "WorkerSandbox",
+          "type": "object"
+        },
+        "WorkloadExecutionPolicy": {
+          "additionalProperties": false,
+          "description": "Declarative workload requirements carried by a worker manifest.",
+          "properties": {
+            "allowed_runtimes": {
+              "default": [],
+              "items": {
+                "enum": [
+                  "runc",
+                  "wasmtime",
+                  "runsc",
+                  "kata",
+                  "remote_vm"
+                ],
+                "type": "string"
+              },
+              "title": "Allowed Runtimes",
+              "type": "array"
+            },
+            "filesystem": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "title": "Filesystem",
+              "type": "object"
+            },
+            "formats": {
+              "default": [
+                "oci"
+              ],
+              "items": {
+                "enum": [
+                  "oci",
+                  "linux",
+                  "wasm"
+                ],
+                "type": "string"
+              },
+              "title": "Formats",
+              "type": "array"
+            },
+            "gvisor_compatible": {
+              "default": true,
+              "title": "Gvisor Compatible",
+              "type": "boolean"
+            },
+            "minimum_isolation": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "trusted",
+                    "sandboxed",
+                    "vm_isolated",
+                    "remote_vm"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Minimum Isolation"
+            },
+            "network": {
+              "default": "egress-allowlist",
+              "enum": [
+                "none",
+                "egress-allowlist",
+                "egress-deny-all",
+                "unrestricted"
+              ],
+              "title": "Network",
+              "type": "string"
+            },
+            "preferred_runtimes": {
+              "default": [],
+              "items": {
+                "enum": [
+                  "runc",
+                  "wasmtime",
+                  "runsc",
+                  "kata",
+                  "remote_vm"
+                ],
+                "type": "string"
+              },
+              "title": "Preferred Runtimes",
+              "type": "array"
+            },
+            "remote_vm_allowed": {
+              "default": true,
+              "title": "Remote Vm Allowed",
+              "type": "boolean"
+            },
+            "trust": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "trusted",
+                    "untrusted",
+                    "hostile"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Trust"
+            }
+          },
+          "title": "WorkloadExecutionPolicy",
           "type": "object"
         }
       },
@@ -2704,6 +2821,17 @@
         },
         "checkpointing": {
           "$ref": "#/$defs/WorkerCheckpointing"
+        },
+        "execution": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkloadExecutionPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "inner_runtime": {
           "default": false,

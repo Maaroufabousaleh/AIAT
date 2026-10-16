@@ -31,6 +31,7 @@ function dashboardSectionForPath(path: string): string | undefined {
   }
   if (pathname.startsWith("/observability")) return "operations";
   if (pathname.startsWith("/system/permissions")) return "governance";
+  if (pathname.startsWith("/approvals/project-decisions")) return "projects";
   if (pathname.startsWith("/system/") || pathname.startsWith("/companies") || pathname.startsWith("/teams")) return "system";
   if (pathname.startsWith("/projects")) return "projects";
   if (pathname.startsWith("/capabilities/workers") || pathname.startsWith("/workers")) return "workers";

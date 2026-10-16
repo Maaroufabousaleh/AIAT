@@ -12,6 +12,28 @@ The control plane turns AIAT from a collection of agents into one governed compa
 
 - FastAPI control-plane routes for projects, documents, reviews, decisions, context, tasks, DLQ, system state, companies, runtimes, workers, stewards, model profiles, worker runs, flows, credentials, integrations, PM/SCM operations, and CEO actions.
 - Versioned company manifests with validation, stable digest, apply, history, and rollback.
+- The Companies page now provides guided drafts for departments/chiefs,
+  registered-worker assignments, supported company budget keys, and CEO
+  handoff. CEO-only grants move in the draft; changes still require canonical
+  manifest validation and apply. Its focused source-backed Playwright checks
+  pass 3/3: guided editing, create/review/apply/history, and a delayed detail
+  response proving that switching companies cannot restore the old manifest
+  over the new selection. These use mocked API responses and do not establish
+  provider-backed execution.
+- The company editor's registered-worker choices now have an in-place retry
+  after a transient registry read failure. It refreshes only the worker list,
+  ignores late responses, and leaves manifest validation/apply as the only path
+  for saving assignments. The focused mocked company group passes 4/4.
+- Manifest validation returns the active version, and apply requires that
+  expected version. The storage writer checks it while holding the company
+  row lock and returns a stable conflict when another edit landed after
+  validation. The Companies editor invalidates stale validation, refreshes
+  detail/history after a conflict while preserving the operator's draft, and
+  shows the current server manifest read-only for review before revalidation.
+  Late detail responses are ignored when the selected company changes.
+  Focused API/storage regressions and the source-backed conflict/review/
+  revalidation Playwright path cover this behavior; production-provider
+  execution is separate.
 - Explicit manifest policy fields for timezone, retention, privacy classes,
   evidence requirements, model constraints, and deployment/sandbox defaults;
   typed validation and legacy compatibility are covered by `e0f0aee`, and

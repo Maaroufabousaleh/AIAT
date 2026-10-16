@@ -73,6 +73,7 @@ export default function ProjectsPage() {
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
   const [newDesc, setNewDesc] = useState("");
+  const [startImmediately, setStartImmediately] = useState(true);
   const [newInitialContext, setNewInitialContext] = useState("");
   const [newRepositoryUrl, setNewRepositoryUrl] = useState("");
   const [newGitMode, setNewGitMode] = useState<"clone" | "init">("clone");
@@ -165,6 +166,7 @@ export default function ProjectsPage() {
   function resetCreateForm() {
     setNewName("");
     setNewDesc("");
+    setStartImmediately(true);
     setNewInitialContext("");
     setNewRepositoryUrl("");
     setNewGitMode("clone");
@@ -221,6 +223,7 @@ export default function ProjectsPage() {
         body: JSON.stringify({
           name: newName.trim(),
           description: newDesc.trim() || null,
+          start_immediately: startImmediately,
           config: Object.keys(config).length > 0 ? config : undefined,
           workspace: {
             mode: workspaceMode,
@@ -687,6 +690,21 @@ export default function ProjectsPage() {
                   Saved as project context immediately, so feasibility and future workers can use it.
                 </p>
               </div>
+              <label className="flex items-start gap-3 rounded-lg border border-slate-700 bg-slate-900/50 p-3 text-sm">
+                <input
+                  type="checkbox"
+                  aria-label="Start CEO feasibility after creation"
+                  checked={startImmediately}
+                  onChange={(event) => setStartImmediately(event.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-blue-500"
+                />
+                <span>
+                  <span className="block font-medium text-slate-200">Start CEO feasibility after creation</span>
+                  <span className="mt-1 block text-xs text-slate-400">
+                    Clear this to prepare the project first. Starting work may use the approved model profile and project budget.
+                  </span>
+                </span>
+              </label>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm text-slate-300 mb-1.5">

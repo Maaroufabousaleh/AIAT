@@ -7,11 +7,11 @@ exact release tag, cloning that commit into a disposable directory, hashing a
 source archive, generating an SBOM, and running the configured scanners.
 
 Scanner output is retained in the requested evidence directory only after
-secret-shaped fields and values are redacted.  The source clone is temporary;
-the immutable repository/commit/archive hash is the retained provenance
-reference.  A non-zero scanner exit caused by findings is not itself a scanner
-execution error when structured findings were emitted.  Missing tools,
-malformed output, and infrastructure errors remain separate blockers.
+secret-shaped fields and source snippets are redacted. The exact source archive
+is retained beside its repository, commit, and hash manifest. A non-zero
+scanner exit caused by findings is not itself a scanner execution error when
+structured findings were emitted. Missing tools, malformed output, and
+infrastructure errors remain separate blockers.
 """
 
 from __future__ import annotations
@@ -20,7 +20,9 @@ import argparse
 import hashlib
 import io
 import json
+import lzma
 import os
+import posixpath
 import re
 import shlex
 import shutil
@@ -28,18 +30,33 @@ import subprocess
 import tarfile
 import tempfile
 from collections import Counter
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 SCHEMA = "aiat.opencode-candidate-certification.v1"
 DEFAULT_REPOSITORY = "https://github.com/anomalyco/opencode.git"
 DEFAULT_VERSION = "1.18.21"
 DEFAULT_IMAGE = "ghcr.io/anomalyco/opencode:1.18.21@sha256:56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb"
+SEMGREP_RULES_WITH_INTERNAL_MATCHER_FAILURES = (
+    "yaml.github-actions.security.curl-eval.curl-eval",
+    "yaml.github-actions.security.gha-curl-pipe-shell.gha-curl-pipe-shell",
+)
 SENSITIVE_KEY = re.compile(
     r"(?i)(?:password|secret|token|authorization|cookie|private[_-]?key|api[_-]?key|credential|raw[_-]?secret)"
 )
 SENSITIVE_VALUE = re.compile(
-    r"(?i)(?:bearer\s+[a-z0-9._~+/=-]{12,}|gh[pousr]_[a-z0-9]{20,}|sk-[a-z0-9]{20,})"
+    r"(?i)(?:bearer\s+[a-z0-9._~+/=-]{12,}|gh[pousr]_[a-z0-9]{20,}|"
+    r"github_pat_[a-z0-9_]{20,}|sk-(?:live_|test_)?[a-z0-9]{20,}|"
+    r"(?:AKIA|ASIA)[A-Z0-9]{16}|AIza[0-9A-Za-z_-]{35}|"
+    r"xox[baprs]-[a-z0-9-]{10,}|glpat-[a-z0-9_-]{16,}|"
+    r"npm_[a-z0-9]{20,}|(?:pk|rk)_live_[a-z0-9]{16,})"
+)
+SCANNER_SECRET_FIELD = re.compile(
+    r"(?i)^(?:raw(?:v2|result|secret)?|rawbytes|matched|matchedtext|match|matchtext|"
+    r"secretvalue|secrettext|credentialvalue|tokenvalue|passwordvalue|apikeyvalue|"
+    r"privatekeymaterial|extradata|structureddata|payload|snippet|codesnippet|"
+    r"sourcecode|sourcecontext|linecontent|message|detail|details|finding|evidence|"
+    r"explanation|structuredsummaries|verificationerror|redacted)$"
 )
 SEVERITIES = ("CRITICAL", "HIGH", "MEDIUM", "LOW", "WARNING", "INFO", "ERROR")
 TOOL_INSTALLATION_FAILURE = "TOOL_INSTALLATION_FAILURE"
@@ -77,10 +94,24 @@ def _extract_source_archive(archive_bytes: bytes, destination: Path) -> None:
     with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:") as archive:
         members = archive.getmembers()
         for member in members:
-            target = (destination / member.name).resolve()
+            relative_path = PurePosixPath(member.name)
+            target = (destination / Path(*relative_path.parts)).resolve()
             if target != root and root not in target.parents:
                 raise RuntimeError("source archive contains an unsafe path")
-        archive.extractall(destination)
+            if member.issym() or member.islnk():
+                link_path = PurePosixPath(member.linkname)
+                if link_path.is_absolute():
+                    raise RuntimeError("source archive contains an unsafe link")
+                link_base = relative_path.parent if member.issym() else PurePosixPath()
+                resolved_link = posixpath.normpath(str(link_base / link_path))
+                if resolved_link == ".." or resolved_link.startswith("../"):
+                    raise RuntimeError("source archive contains an unsafe link")
+            elif not (member.isfile() or member.isdir()):
+                raise RuntimeError("source archive contains an unsupported entry")
+        if hasattr(tarfile, "data_filter"):
+            archive.extractall(destination, filter="data")
+        else:
+            archive.extractall(destination)
 
 
 def _redact(value: Any, *, key: str = "") -> Any:
@@ -101,6 +132,60 @@ def _redact(value: Any, *, key: str = "") -> Any:
 
 def _redacted_text(value: str) -> str:
     return SENSITIVE_VALUE.sub("[REDACTED]", value)
+
+
+def _sanitize_scanner_value(value: Any, *, scanner: str, key: str = "") -> Any:
+    key_lower = key.lower().replace("_", "").replace("-", "")
+    if SENSITIVE_KEY.search(key) or SCANNER_SECRET_FIELD.fullmatch(key_lower):
+        return "[REDACTED]"
+    if scanner == "semgrep" and key_lower in {"lines", "metavars"}:
+        return "[REDACTED_SOURCE_CONTEXT]"
+    if isinstance(value, dict):
+        return {
+            str(child_key): _sanitize_scanner_value(child, scanner=scanner, key=str(child_key))
+            for child_key, child in value.items()
+        }
+    if isinstance(value, list):
+        return [_sanitize_scanner_value(child, scanner=scanner, key=key) for child in value]
+    if isinstance(value, str):
+        sanitized = _redacted_text(value)
+        # Scanner output often records the temporary checkout path. Retaining
+        # that random prefix makes otherwise identical candidate evidence
+        # differ across runs and leaks host filesystem layout. Keep the exact
+        # candidate-relative path so findings remain reviewable.
+        for marker in ("/scan-source/", "\\scan-source\\"):
+            if marker in sanitized:
+                return sanitized.rsplit(marker, 1)[-1]
+        return sanitized
+    return value
+
+
+def _sanitize_scanner_output(scanner: str, value: str) -> tuple[str, bool]:
+    """Retain scanner structure while removing fields that can contain secrets."""
+
+    if scanner == "trufflehog":
+        sanitized_lines: list[str] = []
+        complete = True
+        for line in value.splitlines():
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                sanitized_lines.append("<redacted invalid JSONL scanner record>")
+                complete = False
+                continue
+            sanitized_lines.append(
+                json.dumps(_sanitize_scanner_value(record, scanner=scanner), sort_keys=True)
+            )
+        return "\n".join(sanitized_lines) + ("\n" if sanitized_lines else ""), complete
+
+    try:
+        record = json.loads(value)
+    except json.JSONDecodeError:
+        return json.dumps({"aiat_sanitization": "invalid scanner output omitted"}) + "\n", False
+    sanitized = _sanitize_scanner_value(record, scanner=scanner)
+    return json.dumps(sanitized, sort_keys=True, indent=2) + "\n", True
 
 
 def _write_json(path: Path, value: Any) -> None:
@@ -140,7 +225,12 @@ def _resolve_tag(repository: str, version: str) -> str:
     raise RuntimeError(f"release tag {tag!r} was not found")
 
 
-def _prepare_source(repository: str, version: str, root: Path) -> dict[str, Any]:
+def _prepare_source(
+    repository: str,
+    version: str,
+    root: Path,
+    snapshot_path: Path | None = None,
+) -> tuple[dict[str, Any], Path]:
     commit = _resolve_tag(repository, version)
     source = root / "source"
     clone = _run(["git", "clone", "--filter=blob:none", "--no-checkout", repository, str(source)], timeout=900.0)
@@ -166,6 +256,13 @@ def _prepare_source(repository: str, version: str, root: Path) -> dict[str, Any]
     if archive.returncode != 0:
         raise RuntimeError("source archive hash failed")
     archive_bytes = archive.stdout or b""
+    archive_sha256 = _sha256_bytes(archive_bytes)
+    snapshot_sha256: str | None = None
+    if snapshot_path is not None:
+        snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+        compressed_snapshot = lzma.compress(archive_bytes, format=lzma.FORMAT_XZ, preset=3)
+        snapshot_path.write_bytes(compressed_snapshot)
+        snapshot_sha256 = _sha256_bytes(compressed_snapshot)
     scan_source = root / "scan-source"
     _extract_source_archive(archive_bytes, scan_source)
     files = _run(["git", "ls-files", "-z"], cwd=source, timeout=60.0)
@@ -176,12 +273,46 @@ def _prepare_source(repository: str, version: str, root: Path) -> dict[str, Any]
         "tag": version if version.startswith("v") else f"v{version}",
         "commit": commit,
         "commit_url": f"{repository.removesuffix('.git')}/commit/{commit}",
-        "archive_sha256": _sha256_bytes(archive_bytes),
+        "archive_sha256": archive_sha256,
+        "snapshot_path": snapshot_path.name if snapshot_path is not None else None,
+        "snapshot_retained": snapshot_path is not None,
+        "snapshot_encoding": "xz" if snapshot_path is not None else None,
+        "snapshot_sha256": snapshot_sha256,
         "file_count": file_count,
         "clone_retained": False,
         "scan_tree_git_metadata_excluded": True,
         "immutable_provenance_ref": True,
     }, scan_source
+
+
+def _has_bundled_skill_resources(source: Path) -> bool:
+    """Only scan the candidate's bundled skill collection, never its whole tree."""
+
+    skill_root = source / ".opencode" / "skills"
+    return skill_root.is_dir() and any(path.is_file() for path in skill_root.rglob("SKILL.md"))
+
+
+def _semgrep_invocation(source: Path) -> list[str]:
+    """Run the full source scan while excluding only broken CI rules.
+
+    These two Semgrep rules fail internally on valid GitHub workflow syntax.
+    Their exact-source findings from the unfiltered run remain open in the
+    review register; the exclusion does not waive those findings or clear the
+    coverage gate. Actionlint and Zizmor also scan the workflow tree, but do
+    not claim equivalent rule coverage. No source paths are excluded.
+    """
+
+    command = [
+        "semgrep",
+        "--config",
+        "auto",
+        "--json",
+        "--no-git-ignore",
+    ]
+    for rule_id in SEMGREP_RULES_WITH_INTERNAL_MATCHER_FAILURES:
+        command.extend(("--exclude-rule", rule_id))
+    command.append(str(source))
+    return command
 
 
 def _tool_version(name: str, output_dir: Path) -> dict[str, Any]:
@@ -226,6 +357,20 @@ def _semgrep_summary(value: Any) -> tuple[int, Counter[str], int, str | None]:
     errors = value.get("errors")
     error_count = len(errors) if isinstance(errors, list) else 0
     return len(results), severities, error_count, None
+
+
+def _normalized_rule_key(value: Any) -> str:
+    text = str(value or "unclassified").strip()
+    if not text or len(text) > 160 or not re.fullmatch(r"[A-Za-z0-9._:/ -]+", text):
+        return "unclassified"
+    return text
+
+
+def _semgrep_rule_counts(value: Any) -> Counter[str]:
+    results = value.get("results") if isinstance(value, dict) else None
+    if not isinstance(results, list):
+        return Counter()
+    return Counter(_normalized_rule_key(row.get("check_id")) for row in results if isinstance(row, dict))
 
 
 def _semgrep_error_classes(value: Any) -> tuple[list[str], list[dict[str, Any]]]:
@@ -283,6 +428,25 @@ def _trufflehog_summary(path: Path) -> tuple[int, Counter[str], int, str | None]
     return findings, severities, malformed, "trufflehog_json_line_invalid" if malformed else None
 
 
+def _trufflehog_rule_counts(path: Path) -> Counter[str]:
+    counts: Counter[str] = Counter()
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return counts
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            counts["invalid_jsonl_record"] += 1
+            continue
+        if isinstance(record, dict):
+            counts[_normalized_rule_key(record.get("DetectorName"))] += 1
+    return counts
+
+
 def _generic_summary(path: Path, scanner: str) -> tuple[int, Counter[str], int, str | None]:
     value, error = _parse_json_output(path)
     if error:
@@ -295,11 +459,53 @@ def _generic_summary(path: Path, scanner: str) -> tuple[int, Counter[str], int, 
         issue_rows = [item for item in value["issues"] if isinstance(item, dict)]
         severities = Counter(str(item.get("severity") or "HIGH").upper() for item in issue_rows)
         return len(issue_rows), severities, 0, None
+    elif isinstance(value, dict) and isinstance(value.get("skills"), list):
+        # Recursive SkillSpector output wraps one report per skill.  The
+        # top-level summary is not a findings array, so flatten only the
+        # exact nested issue rows while keeping each raw report intact.
+        issue_rows = [
+            issue
+            for skill in value["skills"]
+            if isinstance(skill, dict)
+            for issue in (skill.get("issues") or [])
+            if isinstance(issue, dict)
+        ]
+        if value.get("execution_successful") is False or any(
+            isinstance(skill, dict) and skill.get("execution_successful") is False
+            for skill in value["skills"]
+        ):
+            return len(issue_rows), Counter(), 1, "skillspector_recursive_execution_incomplete"
+        severities = Counter(str(item.get("severity") or "HIGH").upper() for item in issue_rows)
+        return len(issue_rows), severities, 0, None
     elif isinstance(value, dict) and value.get("status") in {"ok", "pass", "passed"}:
         findings = 0
     else:
         return 0, Counter(), 1, f"{scanner}_output_shape_invalid"
     return findings, Counter(), 0, None
+
+
+def _generic_rule_counts(path: Path) -> Counter[str]:
+    value, error = _parse_json_output(path)
+    if error or not isinstance(value, dict):
+        return Counter()
+    issues = value.get("issues")
+    if not isinstance(issues, list):
+        issues = value.get("findings")
+    if not isinstance(issues, list) and isinstance(value.get("skills"), list):
+        issues = [
+            issue
+            for skill in value["skills"]
+            if isinstance(skill, dict)
+            for issue in (skill.get("issues") or [])
+            if isinstance(issue, dict)
+        ]
+    if not isinstance(issues, list):
+        return Counter()
+    return Counter(
+        _normalized_rule_key(row.get("id") or row.get("rule_id") or row.get("finding_id") or row.get("category"))
+        for row in issues
+        if isinstance(row, dict)
+    )
 
 
 def _run_scanner(
@@ -311,18 +517,49 @@ def _run_scanner(
 ) -> dict[str, Any]:
     stdout_path = output_dir / f"{scanner}.json"
     stderr_path = output_dir / f"{scanner}.stderr.log"
+    scanner_output_path: Path | None = None
+    if scanner == "skillspector" and "--output" in command:
+        output_index = command.index("--output")
+        if output_index + 1 < len(command):
+            # Scanners execute with ``cwd=source`` while ``output_dir`` is
+            # commonly supplied relative to the AIAT repository. Resolve the
+            # CLI output path from the caller's working directory before the
+            # subprocess changes directories, otherwise SkillSpector writes
+            # into the disposable source tree and its result is lost.
+            scanner_output_path = Path(command[output_index + 1]).resolve()
+            command = list(command)
+            command[output_index + 1] = str(scanner_output_path)
+
+    def safe_invocation(arguments: list[str]) -> list[str]:
+        safe: list[str] = []
+        for argument in arguments:
+            if argument == str(source):
+                safe.append("<source>")
+            elif argument == ".opencode/skills":
+                safe.append("<bundled-skill-resources>")
+            elif scanner_output_path is not None and argument == str(scanner_output_path):
+                safe.append("<skillspector-output>")
+            else:
+                safe.append(argument)
+        return safe
+
+    requested_invocation = safe_invocation(command)
     executable = shutil.which(command[0])
     if executable is None:
         return {
             "name": scanner,
             "status": "blocked",
             "available": False,
+            "invocation": requested_invocation,
+            "working_directory": "<source>",
             "finding_count": 0,
+            "rule_counts": {},
             "scanner_error_count": 1,
             "scanner_errors": ["executable_unavailable"],
             "failure_class": TOOL_INSTALLATION_FAILURE,
             "failure_classes": [TOOL_INSTALLATION_FAILURE],
             "raw_output_retained": False,
+            "raw_output_sanitized": False,
         }
     actual_command = [executable, *command[1:]]
     try:
@@ -339,22 +576,39 @@ def _run_scanner(
             "name": scanner,
             "status": "blocked",
             "available": True,
+            "invocation": safe_invocation(actual_command),
+            "working_directory": "<source>",
             "finding_count": 0,
+            "rule_counts": {},
             "scanner_error_count": 1,
             "scanner_errors": [type(exc).__name__],
             "failure_class": SCANNER_EXECUTION_FAILURE,
             "failure_classes": [SCANNER_EXECUTION_FAILURE],
             "raw_output_retained": False,
+            "raw_output_sanitized": False,
         }
     stdout_text = result.stdout or ""
+    if scanner_output_path is not None:
+        try:
+            stdout_text = scanner_output_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            stdout_text = ""
+        finally:
+            scanner_output_path.unlink(missing_ok=True)
     stderr_text = result.stderr or ""
-    # Scanner output is evidence, but TruffleHog and source snippets can carry
-    # secret-shaped values.  Persist the structured output only after redaction.
-    stdout_path.write_text(_redacted_text(stdout_text), encoding="utf-8")
-    stderr_path.write_text(_redacted_text(stderr_text), encoding="utf-8")
+    # Scanner output is evidence, but raw detections and source snippets can
+    # carry credentials that do not match common token prefixes. Preserve the
+    # structured result only after field-aware redaction; omit stderr content.
+    sanitized_stdout, complete_output = _sanitize_scanner_output(scanner, stdout_text)
+    stdout_path.write_text(sanitized_stdout, encoding="utf-8")
+    stderr_path.write_text(
+        f"stderr omitted for secret safety; line_count={len(stderr_text.splitlines())}\n",
+        encoding="utf-8",
+    )
     value, parse_error = _parse_json_output(stdout_path) if scanner != "trufflehog" else (None, None)
     if scanner == "semgrep":
         finding_count, severities, scanner_error_count, shape_error = _semgrep_summary(value)
+        rule_counts = _semgrep_rule_counts(value)
         scanner_failure_classes, scanner_error_details = _semgrep_error_classes(value)
         scanner_errors = scanner_error_details
         if shape_error:
@@ -362,9 +616,11 @@ def _run_scanner(
             scanner_failure_classes.append(SCANNER_EXECUTION_FAILURE)
     elif scanner == "trufflehog":
         finding_count, severities, scanner_error_count, shape_error = _trufflehog_summary(stdout_path)
+        rule_counts = _trufflehog_rule_counts(stdout_path)
         scanner_errors = ([shape_error] if shape_error else [])
     else:
         finding_count, severities, scanner_error_count, shape_error = _generic_summary(stdout_path, scanner)
+        rule_counts = _generic_rule_counts(stdout_path)
         scanner_errors = ([shape_error] if shape_error else [])
     if parse_error and scanner != "trufflehog":
         scanner_error_count += 1
@@ -394,9 +650,11 @@ def _run_scanner(
         "name": scanner,
         "status": "pass" if scanner_error_count == 0 else "blocked",
         "available": True,
-        "invocation": ["<source>" if argument == str(source) else argument for argument in actual_command],
+        "invocation": safe_invocation(actual_command),
+        "working_directory": "<source>",
         "exit_status": result.returncode,
         "finding_count": finding_count,
+        "rule_counts": dict(sorted(rule_counts.items())),
         "severity_counts": dict(sorted(severities.items())),
         "scanner_error_count": scanner_error_count,
         "scanner_errors": scanner_errors,
@@ -404,7 +662,7 @@ def _run_scanner(
         "failure_classes": failure_classes,
         "raw_json_path": str(stdout_path.name),
         "stderr_log_path": str(stderr_path.name),
-        "raw_output_retained": True,
+        "raw_output_retained": complete_output,
         "raw_output_sanitized": True,
         "raw_json_sha256": _sha256_file(stdout_path),
     }
@@ -415,7 +673,7 @@ def _run_sbom(source: Path, output_dir: Path) -> dict[str, Any]:
     path = (output_dir / "sbom.cdx.json").resolve()
     stdout_path = output_dir / "syft.stdout.log"
     stderr_path = output_dir / "syft.stderr.log"
-    invocation = [executable or "syft", f"dir:{source}", f"cyclonedx-json={path}"]
+    invocation = [executable or "syft", "dir:<source>", "-o", "cyclonedx-json=<sbom>"]
     if executable is None:
         return {
             "status": "blocked",
@@ -423,7 +681,8 @@ def _run_sbom(source: Path, output_dir: Path) -> dict[str, Any]:
             "failure_class": SBOM_FAILURE,
             "scanner_error": "syft_unavailable",
             "invocation": invocation,
-            "path": path.name,
+            "working_directory": "<source>",
+            "path": "sbom.cdx.json",
         }
     try:
         result = subprocess.run(
@@ -441,7 +700,8 @@ def _run_sbom(source: Path, output_dir: Path) -> dict[str, Any]:
             "failure_class": SBOM_FAILURE,
             "scanner_error": type(exc).__name__,
             "invocation": invocation,
-            "path": path.name,
+            "working_directory": "<source>",
+            "path": "sbom.cdx.json",
         }
     stdout_path.write_text(_redacted_text(result.stdout or ""), encoding="utf-8")
     stderr_path.write_text(_redacted_text(result.stderr or ""), encoding="utf-8")
@@ -453,9 +713,10 @@ def _run_sbom(source: Path, output_dir: Path) -> dict[str, Any]:
             "failure_class": SBOM_FAILURE,
             "scanner_error": "syft_failed_or_missing_output",
             "invocation": invocation,
+            "working_directory": "<source>",
             "stdout_path": stdout_path.name,
             "stderr_path": stderr_path.name,
-            "path": path.name,
+            "path": "sbom.cdx.json",
         }
     value, error = _parse_json_output(path)
     if error or not isinstance(value, dict):
@@ -465,9 +726,10 @@ def _run_sbom(source: Path, output_dir: Path) -> dict[str, Any]:
             "failure_class": SBOM_FAILURE,
             "scanner_error": "sbom_shape_invalid",
             "invocation": invocation,
+            "working_directory": "<source>",
             "stdout_path": stdout_path.name,
             "stderr_path": stderr_path.name,
-            "path": path.name,
+            "path": "sbom.cdx.json",
         }
     return {
         "status": "pass",
@@ -475,9 +737,10 @@ def _run_sbom(source: Path, output_dir: Path) -> dict[str, Any]:
         "exit_status": result.returncode,
         "version": _tool_version("syft", output_dir).get("version"),
         "invocation": invocation,
+        "working_directory": "<source>",
         "stdout_path": stdout_path.name,
         "stderr_path": stderr_path.name,
-        "path": path.name,
+        "path": "sbom.cdx.json",
         "sha256": _sha256_file(path),
         "component_count": len(value.get("components") or []) if isinstance(value.get("components"), list) else 0,
         "credentials_persisted": False,
@@ -529,7 +792,12 @@ def certify(
         blockers.append("aiat_candidate_commit_mismatch")
     with tempfile.TemporaryDirectory(prefix="aiat-opencode-candidate-") as temporary:
         try:
-            source_metadata, source = _prepare_source(repository, version, Path(temporary))
+            source_metadata, source = _prepare_source(
+                repository,
+                version,
+                Path(temporary),
+                output_dir / "source-snapshot.tar.xz",
+            )
         except Exception as exc:
             blockers.append(f"source_preparation:{type(exc).__name__}")
             source = None
@@ -539,11 +807,55 @@ def certify(
                 tool_versions[name] = _tool_version(name, output_dir)
             scanner_rows.extend(
                 [
-                    _run_scanner("semgrep", ["semgrep", "--config", "auto", "--json", "--no-git-ignore", str(source)], source=source, output_dir=output_dir),
+                    _run_scanner("semgrep", _semgrep_invocation(source), source=source, output_dir=output_dir),
                     _run_scanner("trufflehog", ["trufflehog", "filesystem", "--json", "--no-update", str(source)], source=source, output_dir=output_dir),
-                    _run_scanner("skillspector", ["skillspector", "scan", str(source), "--no-llm", "--format", "json"], source=source, output_dir=output_dir),
                 ]
             )
+            if _has_bundled_skill_resources(source):
+                scanner_rows.append(
+                    _run_scanner(
+                        "skillspector",
+                        [
+                            "skillspector",
+                            "scan",
+                            ".opencode/skills",
+                            "--recursive",
+                            "--no-llm",
+                            "--format",
+                            "json",
+                            "--output",
+                            str(output_dir / "skillspector-cli-output.json"),
+                        ],
+                        source=source,
+                        output_dir=output_dir,
+                    )
+                )
+            else:
+                scanner_rows.append(
+                    {
+                        "name": "skillspector",
+                        "status": "blocked",
+                        "available": shutil.which("skillspector") is not None,
+                        "invocation": [
+                            "skillspector",
+                            "scan",
+                            "<bundled-skill-resources>",
+                            "--recursive",
+                            "--no-llm",
+                            "--format",
+                            "json",
+                        ],
+                        "working_directory": "<source>",
+                        "finding_count": 0,
+                        "rule_counts": {},
+                        "scanner_error_count": 1,
+                        "scanner_errors": ["bundled_skill_resources_not_found"],
+                        "failure_class": SCANNER_COVERAGE_INCOMPLETE,
+                        "failure_classes": [SCANNER_COVERAGE_INCOMPLETE],
+                        "raw_output_retained": False,
+                        "raw_output_sanitized": False,
+                    }
+                )
             sbom = _run_sbom(source, output_dir)
             boundary = _run_boundary(boundary_command, output_dir)
         else:
@@ -606,6 +918,20 @@ def certify(
         "candidate_image_ref": image_ref,
         "candidate_image_digest": image_digest,
         "source": source_metadata or {"status": "not_prepared", "clone_retained": False},
+        "source_scan_scope": {
+            "source_tree": "complete exact-source git archive; repository metadata omitted",
+            "semgrep_path_exclusions": [],
+            "semgrep_rule_exclusions": [
+                {
+                    "rule_id": rule_id,
+                    "reason": "Semgrep 1.168.0 internal matching error on valid GitHub workflow syntax",
+                    "scope": "GitHub workflow YAML; no runtime source paths excluded",
+                    "compensating_scanners": ["actionlint", "zizmor"],
+                    "disposition": "review_required; does not imply equivalent rule coverage",
+                }
+                for rule_id in SEMGREP_RULES_WITH_INTERNAL_MATCHER_FAILURES
+            ],
+        },
         "scanners": scanner_rows,
         "tool_versions": tool_versions,
         "tooling_provisioning": tooling,
@@ -624,6 +950,7 @@ def certify(
         "blockers": sorted(set(blockers)),
         "evidence_policy": {
             "source_clone_retained": False,
+            "source_snapshot_retained": bool((source_metadata or {}).get("snapshot_retained")),
             "immutable_provenance_retained": bool(source_metadata),
             "raw_scanner_outputs_retained_sanitized": bool(scanner_rows)
             and all(row.get("raw_output_retained") is True for row in scanner_rows),

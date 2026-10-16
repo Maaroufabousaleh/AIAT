@@ -1,18 +1,24 @@
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncIterator
-from uuid import UUID
+from typing import TYPE_CHECKING
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
 import sqlalchemy as sa
+from orchestrator_api.main import app, publish_system_event
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from mas_core.memory import models as tables
 from mas_core.memory.storage import AgentStorage
 from mas_core.workflow import WorkflowController
-from orchestrator_api.main import app, publish_system_event
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+OPERATOR_HEADERS = {"X-API-Key": "test-operator-key"}
 
 
 def _simple_product_build_flow(*, include_qa_review: bool) -> dict[str, object]:
@@ -233,6 +239,177 @@ async def _create_project_with_instance(
 
 def _uuid(value: object) -> UUID:
     return UUID(str(value))
+
+
+def _approval_to_end_flow() -> dict[str, object]:
+    """Worker-free path proving one operator decision resolves a whole flow."""
+    return {
+        "nodes": [
+            {"id": "start", "type": "start", "label": "Start", "config": {}},
+            {
+                "id": "operator_approval",
+                "type": "approval",
+                "label": "Operator Approval",
+                "config": {"approver_user": "operator"},
+            },
+            {"id": "done", "type": "end", "label": "Done", "config": {}},
+        ],
+        "edges": [
+            {"id": "e1", "source": "start", "target": "operator_approval"},
+            {"id": "e2", "source": "operator_approval", "target": "done"},
+        ],
+    }
+
+
+@pytest.mark.anyio
+async def test_one_project_decision_closes_bound_gate_and_completes_approval_only_flow(
+    live_client: tuple[httpx.AsyncClient, AgentStorage],
+) -> None:
+    """Approval uses one canonical project decision and needs no worker/provider."""
+    client, storage = live_client
+    created_flow = await client.post(
+        "/flows",
+        json={
+            "name": "Approval to End",
+            "description": "Worker-free approval lifecycle integration",
+            "is_active": True,
+            "definition_json": _approval_to_end_flow(),
+        },
+    )
+    assert created_flow.status_code == 201, created_flow.text
+    project, instance = await _create_project_with_instance(
+        client,
+        name="approval-only-project",
+        flow_id=created_flow.json()["id"],
+    )
+
+    started = await client.post(
+        f"/flows/instances/{instance['id']}/action", json={"action": "start"}
+    )
+    assert started.status_code == 200, started.text
+    advanced = await client.post(
+        f"/flows/instances/{instance['id']}/node-action",
+        json={"node_id": "start", "action": "complete"},
+    )
+    assert advanced.status_code == 200, advanced.text
+    assert advanced.json()["active_node_ids"] == ["operator_approval"]
+
+    executions_before = await storage.list_flow_node_executions(
+        instance_id=_uuid(instance["id"]), node_id="operator_approval"
+    )
+    assert len(executions_before) == 1
+    approval_execution = executions_before[0]
+    pending = await client.get(f"/projects/{project['id']}/pending-decisions")
+    assert pending.status_code == 200, pending.text
+    assert len(pending.json()) == 1
+    gate = pending.json()[0]
+    assert gate["flow_node_execution_id"] == approval_execution["id"]
+
+    decision = await client.post(
+        f"/projects/{project['id']}/decisions",
+        headers=OPERATOR_HEADERS,
+        json={"gate_id": gate["id"], "decision": "APPROVED"},
+    )
+    assert decision.status_code == 200, decision.text
+    assert decision.json()["flow_instance_id"] == instance["id"]
+
+    resolved_instance_response = await client.get(f"/flows/instances/{instance['id']}")
+    assert resolved_instance_response.status_code == 200
+    resolved_instance = resolved_instance_response.json()
+    assert resolved_instance["status"] == "COMPLETED"
+    assert resolved_instance["active_node_ids"] == []
+    assert resolved_instance["context_json"]["approval"] == "approved"
+
+    resolved_gate = await storage.get_approval_gate_for_flow_execution(
+        int(approval_execution["id"])
+    )
+    assert resolved_gate is not None
+    assert str(resolved_gate["id"]) == str(gate["id"])
+    assert str(resolved_gate["flow_node_execution_id"]) == str(approval_execution["id"])
+    assert resolved_gate["status"] == "APPROVED"
+
+    executions_after = await storage.list_flow_node_executions(
+        instance_id=_uuid(instance["id"])
+    )
+    resolved_approval = next(
+        item for item in executions_after if item["id"] == approval_execution["id"]
+    )
+    assert resolved_approval["status"] == "COMPLETED"
+    assert resolved_approval["output_json"]["approval_gate_id"] == str(gate["id"])
+    assert next(item for item in executions_after if item["node_id"] == "done")["status"] == "COMPLETED"
+    assert all(item["node_type"] != "task" for item in executions_after)
+    assert await storage.list_worker_runs(project_id=_uuid(project["id"])) == []
+
+    replay = await client.post(
+        f"/projects/{project['id']}/decisions",
+        headers=OPERATOR_HEADERS,
+        json={"gate_id": gate["id"], "decision": "APPROVED"},
+    )
+    assert replay.status_code == 200, replay.text
+    assert (await storage.list_flow_node_executions(instance_id=_uuid(instance["id"]))) == executions_after
+
+    conflicting_replay = await client.post(
+        f"/projects/{project['id']}/decisions",
+        headers=OPERATOR_HEADERS,
+        json={"gate_id": gate["id"], "decision": "REJECTED"},
+    )
+    assert conflicting_replay.status_code == 409
+
+
+@pytest.mark.anyio
+async def test_approval_activation_conflict_rolls_back_instance_execution_and_gate(
+    live_client: tuple[httpx.AsyncClient, AgentStorage],
+) -> None:
+    """A failed approval activation cannot commit a half-active flow node."""
+    client, storage = live_client
+    created_flow = await client.post(
+        "/flows",
+        json={
+            "name": "Approval Activation Rollback",
+            "is_active": True,
+            "definition_json": _approval_to_end_flow(),
+        },
+    )
+    assert created_flow.status_code == 201, created_flow.text
+    project, instance = await _create_project_with_instance(
+        client,
+        name="approval-activation-rollback",
+        flow_id=created_flow.json()["id"],
+    )
+    duplicate_gate_id = uuid4()
+    approval_activation = {
+        "node_id": "operator_approval",
+        "node_type": "approval",
+        "node_label": "Operator Approval",
+        "status": "RUNNING",
+        "input_json": {},
+        "gate_type": "operator",
+        "gate_id": duplicate_gate_id,
+    }
+
+    with pytest.raises(IntegrityError):
+        await storage.activate_flow_nodes(
+            _uuid(instance["id"]),
+            expected_statuses={"NOT_STARTED"},
+            expected_active_node_ids=[],
+            instance_updates={
+                "status": "RUNNING",
+                "active_node_ids": ["operator_approval"],
+            },
+            # The duplicate gate identity fails after execution and instance
+            # writes have been issued. PostgreSQL must roll back the whole
+            # transaction, including both executions and the active state.
+            activations=[approval_activation, dict(approval_activation)],
+        )
+
+    reloaded = await client.get(f"/flows/instances/{instance['id']}")
+    assert reloaded.status_code == 200
+    assert reloaded.json()["status"] == "NOT_STARTED"
+    assert reloaded.json()["active_node_ids"] == []
+    assert await storage.list_flow_node_executions(instance_id=_uuid(instance["id"])) == []
+    pending = await client.get(f"/projects/{project['id']}/pending-decisions")
+    assert pending.status_code == 200
+    assert pending.json() == []
 
 
 @pytest.mark.anyio
@@ -488,6 +665,7 @@ async def test_operator_runtime_matrix_covers_invalid_input_denial_retry_timeout
 
     wait_for_approval = await client.post(
         f"/flows/instances/{instance['id']}/node-action",
+        headers=OPERATOR_HEADERS,
         json={"node_id": "human_approval", "action": "complete"},
     )
     assert wait_for_approval.status_code == 200
@@ -500,10 +678,17 @@ async def test_operator_runtime_matrix_covers_invalid_input_denial_retry_timeout
 
     edit_requested = await client.post(
         f"/flows/instances/{instance['id']}/node-action",
+        headers=OPERATOR_HEADERS,
         json={"node_id": "human_approval", "action": "complete", "decision": "edit_requested"},
     )
     assert edit_requested.status_code == 200, edit_requested.text
-    assert edit_requested.json()["active_node_ids"] == ["qa_review"]
+    assert edit_requested.json()["active_node_ids"] == ["decision_switch"]
+    edit_switch = await client.post(
+        f"/flows/instances/{instance['id']}/node-action",
+        json={"node_id": "decision_switch", "action": "complete"},
+    )
+    assert edit_switch.status_code == 200, edit_switch.text
+    assert edit_switch.json()["active_node_ids"] == ["qa_review"]
 
     switch_response = await client.post(
         f"/flows/instances/{instance['id']}/switch",
@@ -536,10 +721,17 @@ async def test_operator_runtime_matrix_covers_invalid_input_denial_retry_timeout
         assert response.status_code == 200, response.text
     approved_branch = await client.post(
         f"/flows/instances/{approved_instance['id']}/node-action",
+        headers=OPERATOR_HEADERS,
         json={"node_id": "human_approval", "action": "complete", "decision": "approved"},
     )
     assert approved_branch.status_code == 200, approved_branch.text
-    assert approved_branch.json()["active_node_ids"] == ["implementation"]
+    assert approved_branch.json()["active_node_ids"] == ["decision_switch"]
+    approved_switch = await client.post(
+        f"/flows/instances/{approved_instance['id']}/node-action",
+        json={"node_id": "decision_switch", "action": "complete"},
+    )
+    assert approved_switch.status_code == 200, approved_switch.text
+    assert approved_switch.json()["active_node_ids"] == ["implementation"]
 
     rejected_project, rejected_instance = await _create_project_with_instance(
         client,
@@ -557,10 +749,17 @@ async def test_operator_runtime_matrix_covers_invalid_input_denial_retry_timeout
         assert response.status_code == 200, response.text
     rejected_branch = await client.post(
         f"/flows/instances/{rejected_instance['id']}/node-action",
+        headers=OPERATOR_HEADERS,
         json={"node_id": "human_approval", "action": "complete", "decision": "rejected"},
     )
     assert rejected_branch.status_code == 200, rejected_branch.text
-    assert rejected_branch.json()["status"] == "FAILED"
+    assert rejected_branch.json()["active_node_ids"] == ["decision_switch"]
+    rejected_switch = await client.post(
+        f"/flows/instances/{rejected_instance['id']}/node-action",
+        json={"node_id": "decision_switch", "action": "complete"},
+    )
+    assert rejected_switch.status_code == 200, rejected_switch.text
+    assert rejected_switch.json()["status"] == "FAILED"
 
     denied_history = await client.get(f"/projects/{project['id']}/state-history")
     denied_events = [entry["event"] for entry in denied_history.json()]
@@ -663,8 +862,8 @@ def _test2_branching_flow() -> dict[str, object]:
     }
 
 
-async def _advance_to_approval(client: "httpx.AsyncClient", instance_id: object) -> None:
-    """Drive start → analysis → approval_gate through the node-action API."""
+async def _advance_to_approval(client: "httpx.AsyncClient", instance_id: object) -> str:
+    """Drive to approval and return the gate bound to the active node execution."""
     await client.post(f"/flows/instances/{instance_id}/action", json={"action": "start"})
     for node_id in ("start", "analysis"):
         r = await client.post(
@@ -672,6 +871,26 @@ async def _advance_to_approval(client: "httpx.AsyncClient", instance_id: object)
             json={"node_id": node_id, "action": "complete"},
         )
         assert r.status_code == 200, f"Failed to complete {node_id}: {r.text}"
+    instance_response = await client.get(f"/flows/instances/{instance_id}")
+    assert instance_response.status_code == 200, instance_response.text
+    instance = instance_response.json()
+    executions_response = await client.get(f"/flows/instances/{instance_id}/executions")
+    assert executions_response.status_code == 200, executions_response.text
+    approval_execution = next(
+        execution
+        for execution in reversed(executions_response.json())
+        if execution["node_id"] == "approval_gate" and execution["status"] == "RUNNING"
+    )
+    gates_response = await client.get(
+        f"/projects/{instance['project_id']}/pending-decisions"
+    )
+    assert gates_response.status_code == 200, gates_response.text
+    gate = next(
+        gate
+        for gate in gates_response.json()
+        if gate.get("flow_node_execution_id") == approval_execution["id"]
+    )
+    return str(gate["id"])
 
 
 @pytest.mark.anyio
@@ -726,13 +945,20 @@ async def test_operator_test2_flow_create_serialization_and_approval_routing(
     proj_a, inst_a = await _create_project_with_instance(
         client, name="test2-approved", flow_id=flow_id
     )
-    await _advance_to_approval(client, inst_a["id"])
+    approved_gate_id = await _advance_to_approval(client, inst_a["id"])
     approved_r = await client.post(
-        f"/flows/instances/{inst_a['id']}/node-action",
-        json={"node_id": "approval_gate", "action": "complete", "decision": "approved"},
+        f"/projects/{proj_a['id']}/decisions",
+        headers=OPERATOR_HEADERS,
+        json={"gate_id": approved_gate_id, "decision": "APPROVED"},
     )
     assert approved_r.status_code == 200, approved_r.text
-    assert approved_r.json()["active_node_ids"] == ["branch_a"]
+    assert approved_r.json()["flow_instance_id"] == inst_a["id"]
+    switch_r = await client.post(
+        f"/flows/instances/{inst_a['id']}/node-action",
+        json={"node_id": "decision_switch", "action": "complete"},
+    )
+    assert switch_r.status_code == 200, switch_r.text
+    assert switch_r.json()["active_node_ids"] == ["branch_a"]
 
     # Read back from separate GET route
     inst_a_reload = await client.get(f"/flows/instances/{inst_a['id']}")
@@ -744,25 +970,37 @@ async def test_operator_test2_flow_create_serialization_and_approval_routing(
     proj_b, inst_b = await _create_project_with_instance(
         client, name="test2-edit-req", flow_id=flow_id
     )
-    await _advance_to_approval(client, inst_b["id"])
+    edit_gate_id = await _advance_to_approval(client, inst_b["id"])
     edit_r = await client.post(
-        f"/flows/instances/{inst_b['id']}/node-action",
-        json={"node_id": "approval_gate", "action": "complete", "decision": "edit_requested"},
+        f"/projects/{proj_b['id']}/decisions",
+        headers=OPERATOR_HEADERS,
+        json={"gate_id": edit_gate_id, "decision": "EDITS"},
     )
     assert edit_r.status_code == 200, edit_r.text
-    assert edit_r.json()["active_node_ids"] == ["branch_b"]
+    switch_b = await client.post(
+        f"/flows/instances/{inst_b['id']}/node-action",
+        json={"node_id": "decision_switch", "action": "complete"},
+    )
+    assert switch_b.status_code == 200, switch_b.text
+    assert switch_b.json()["active_node_ids"] == ["branch_b"]
 
     # ── Step 5: rejected → FAILED ─────────────────────────────────────────────
     proj_c, inst_c = await _create_project_with_instance(
         client, name="test2-rejected", flow_id=flow_id
     )
-    await _advance_to_approval(client, inst_c["id"])
+    rejected_gate_id = await _advance_to_approval(client, inst_c["id"])
     rejected_r = await client.post(
-        f"/flows/instances/{inst_c['id']}/node-action",
-        json={"node_id": "approval_gate", "action": "complete", "decision": "rejected"},
+        f"/projects/{proj_c['id']}/decisions",
+        headers=OPERATOR_HEADERS,
+        json={"gate_id": rejected_gate_id, "decision": "REJECTED"},
     )
     assert rejected_r.status_code == 200, rejected_r.text
-    assert rejected_r.json()["status"] == "FAILED"
+    switch_c = await client.post(
+        f"/flows/instances/{inst_c['id']}/node-action",
+        json={"node_id": "decision_switch", "action": "complete"},
+    )
+    assert switch_c.status_code == 200, switch_c.text
+    assert switch_c.json()["status"] == "FAILED"
 
     # ── Step 6: retry from FAILED → restores last safe node ──────────────────
     retry_r = await client.post(f"/flows/instances/{inst_c['id']}/retry")

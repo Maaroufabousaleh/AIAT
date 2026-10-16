@@ -9,8 +9,10 @@ from pathlib import Path
 
 import yaml
 
-SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "check_sandbox_runtime_readiness.py"
-COMPOSE = Path(__file__).resolve().parents[3] / "infra" / "compose" / "docker-compose.yml"
+REPO_ROOT = Path(__file__).resolve().parents[3]
+SCRIPT = REPO_ROOT / "scripts" / "check_sandbox_runtime_readiness.py"
+WORKERS = REPO_ROOT / "workers"
+COMPOSE = REPO_ROOT / "infra" / "compose" / "docker-compose.yml"
 
 
 def test_static_sandbox_declarations_pass() -> None:
@@ -25,10 +27,18 @@ def test_static_sandbox_declarations_pass() -> None:
     report = json.loads(result.stdout)
     assert report["schema_version"] == "aiat.sandbox-runtime-readiness.v1"
     assert report["status"] == "pass"
-    assert report["worker_count"] == 39
+    assert report["worker_count"] == len(list(WORKERS.glob("*.yaml")))
     assert report["hardened_worker_count"] > 0
     assert report["opencode_runtime"]["status"] == "pass"
-    assert report["opencode_runtime"]["network"] == ["internal"]
+    assert report["opencode_runtime"]["runtime"] == "runsc"
+    assert report["opencode_runtime"]["network"] == ["sandbox_gateway"]
+    assert report["opencode_runtime"]["network_internal"] is True
+    assert report["opencode_runtime"]["environment_names"] == [
+        "AIAT_GATEWAY_API_KEY",
+        "AIAT_GATEWAY_URL",
+        "OPENCODE_SERVER_PASSWORD",
+        "OPENCODE_SERVER_USERNAME",
+    ]
     assert report["opencode_runtime"]["read_only"] is True
     assert report["opencode_runtime"]["cap_drop_all"] is True
     assert report["opencode_runtime"]["no_new_privileges"] is True
@@ -38,9 +48,12 @@ def test_static_sandbox_declarations_pass() -> None:
 def test_static_sandbox_contract_rejects_unsafe_opencode_runtime(tmp_path: Path) -> None:
     compose = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
     service = compose["services"]["opencode-runtime"]
+    service["runtime"] = "runc"
     service["read_only"] = False
     service["networks"] = ["internal", "workers"]
     service["cap_drop"] = []
+    service["env_file"] = ["../../../.env"]
+    service["environment"]["POSTGRES_PASSWORD"] = "${POSTGRES_PASSWORD}"
     path = tmp_path / "compose.yml"
     path.write_text(yaml.safe_dump(compose, sort_keys=False), encoding="utf-8")
 
@@ -57,6 +70,29 @@ def test_static_sandbox_contract_rejects_unsafe_opencode_runtime(tmp_path: Path)
     assert "networks must be exactly" in errors
     assert "read_only must be true" in errors
     assert "cap_drop must include ALL" in errors
+    assert "runtime must be explicitly set to runsc" in errors
+    assert "broad env_file injection is forbidden" in errors
+    assert "POSTGRES_PASSWORD" in errors
+
+
+def test_static_sandbox_contract_requires_internal_sandbox_gateway(tmp_path: Path) -> None:
+    compose = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
+    compose["networks"]["sandbox_gateway"]["internal"] = False
+    path = tmp_path / "compose.yml"
+    path.write_text(yaml.safe_dump(compose, sort_keys=False), encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--compose", str(path), "--json"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1
+    report = json.loads(result.stdout)
+    assert report["status"] == "fail"
+    assert "network 'sandbox_gateway' must be declared internal" in " ".join(
+        report["errors"]
+    )
 
 
 def test_live_sandbox_readiness_is_blocked_without_docker_engine(monkeypatch) -> None:
@@ -160,6 +196,36 @@ def test_kata_smoke_uses_the_discovered_runtime_name(monkeypatch) -> None:
     assert reason == "Kata (kata-qemu) QEMU guest smoke completed"
     assert evidence["guest_kernel"] == "kata-guest-kernel"
     assert "--runtime=kata-qemu" in commands[0]
+    assert "--entrypoint=/bin/sh" in commands[0]
+    assert commands[0][-2:] == ["-c", "sleep 10"]
+
+
+def test_gvisor_smoke_bypasses_the_image_entrypoint(monkeypatch) -> None:
+    import importlib.util
+    import subprocess
+
+    spec = importlib.util.spec_from_file_location("check_sandbox_runtime_readiness", SCRIPT)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], *, timeout: float):
+        del timeout
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(module, "_run", fake_run)
+
+    passed, reason = module._run_smoke(
+        "example/smoke@sha256:" + "a" * 64,
+        runtime="runsc",
+    )
+
+    assert passed is True
+    assert reason == "gVisor (runsc) digest-pinned smoke completed"
+    assert "--entrypoint=/bin/true" in commands[0]
+    assert commands[0][-1] == "example/smoke@sha256:" + "a" * 64
 
 
 def test_optional_kata_unavailable_does_not_block_runsc(monkeypatch) -> None:

@@ -4,16 +4,85 @@
 **Status:** strong implementation foundation; request-level propagation, durable payload-free API observations, bounded trace evidence, native core spans, descriptive SLO/capacity projections, the typed read-only retention-plan API/live checker (`f8829d6`, `b3fca97`, `9a80c6c`), the hardened team-runner control-plane storage boundary (`22fc21a`), the policy-driven deny/allow matrix (`96fb71f`), sender role/team communication-policy enforcement (`fb39128`), the source-built hierarchy communication-policy overlay (`8b7d9f1`), secret-safe control-plane dependency diagnostics (`2860838`), the API-facing `mas-ctl` operator wrapper (`380daf5`), local API/transport read-back, and dashboard metrics partial/stale/retry recovery (`85596b0`, source-built `metrics-states.spec.ts` 1/1) are verified. The current dashboard image and focused hierarchy E2E now pass locally (`d5f596e`); broader release-image, native-Linux, sandbox, metrics, recovery, model/tool worker, mail-edge, live retention enforcement, and full cross-service span gates remain
 **Authority:** [AIAT Target Programme](../../AIAT_TARGET_PROGRAMME.md)
 
-**Current WSL2 development result (2026-09-19):** `DEV_READY`. The
-dedicated `aiat-wsl` Docker Engine has Compose v2 and registered `runsc`; the
-digest-pinned gVisor smoke, local Compose health, migration head `0045`, and
-live network-boundary check pass. The secret-safe host record is
+**Historical WSL2 development result (2026-10-02; network result superseded):** `DEV_READY`. AIAT uses the
+dedicated `aiat-wsl` Docker Engine, separate from Docker Desktop's `default`
+context. The local Compose stack is healthy; authenticated `/health`,
+`/projects`, and `/capabilities/workers` return HTTP 200, with 0 projects and
+39 worker manifests. From the orchestrator, DNS/TCP checks pass to Redis,
+Postgres, PgBouncer, and tool-service on `mas_internal`. The original TCP
+timeouts occurred on the correct daemon: the bridge had valid endpoints, DNS,
+routes, and ARP, but east-west forwarding was broken. Recreating only the AIAT
+Compose bridge through `mas.sh down` (without `-v`) and normal startup restored
+connectivity; all nine persistent volumes remained. Docker Desktop's separate
+`default` daemon caused host-port collisions with its published-port profile,
+not the original bridge outage. The privileged forwarding rule could not be
+inspected. The refreshed checker independently confirms orchestrator TCP
+reachability to Redis, Postgres, PgBouncer, and tool-service (4/4). It still
+reports all 11 team-runner containers missing, so no per-runner probes ran.
+The initial degraded snapshot recorded
+protected/external denials but also failed approved-gateway and storage-health
+checks. The retained 2026-10-01 11-runner certificate remains separate.
+Current observations are in
+[`local_compose_connectivity_evidence.json`](../../mas/docs/provenance/local_compose_connectivity_evidence.json)
+and the current matrix in
+[`network_boundary_live_current.json`](../../mas/docs/provenance/network_boundary_live_current.json), plus the retained prior matrix at
+[`network_boundary_live.json`](../../mas/docs/provenance/network_boundary_live.json).
+The secret-safe host record is
 [`dev_host_readiness.json`](../../mas/docs/provenance/dev_host_readiness.json).
 This does not change the native-Linux release boundary: the release result is
 `RELEASE_CERTIFICATION_PENDING`, Kata is `AVAILABLE` for the current WSL2
 development host but remains outside native release certification, and direct
 Firecracker is compatibility/superseded evidence rather than an active policy
 tier.
+
+**Retained candidate scan refresh (2026-10-02):** the exact OpenCode v1.18.21
+candidate retains the source snapshot, pinned image digest, sanitized scanner
+results, exact tool versions/invocations, result hashes, and CycloneDX SBOM
+under
+[`opencode-candidate/2026-10-02-v1.18.21-r4`](../../mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/).
+Primary results contain 383 current records (328 Semgrep, 55 TruffleHog, 0
+`SkillSpector`); seven findings from an unfiltered same-source Semgrep run are
+carried forward because two failing workflow matchers were excluded from the
+current invocation. Normalized Actionlint/Zizmor supplements add 119, and the
+Bun-transpiled Semgrep supplement adds four records, for 513 active review
+records after carry-forward, not 513 unique vulnerabilities. The primary
+Semgrep run has 328 findings and zero execution failures, with six explained
+TypeScript parser gaps. Semgrep 1.168.0 then scanned Bun 1.3.14 output from all
+six exact TypeScript paths: all three AIAT-serving paths completed without a
+parser error, producing four path-join findings at three source locations.
+Those findings remain open for operator review. One parser error remains on
+non-AIAT-serving LSP source, and total unexplained scanner errors remain zero.
+TruffleHog produced 55 unverified
+records, including two duplicate URI records; the normalized set has 53
+locations (42 documentation examples, 8 test fixtures, and 3 false positives),
+with zero verified secrets. Two runtime process-launch findings and three
+path-join source locations still need review; no confirmed AIAT-owned defect is
+recorded. Six review rows remain
+open and the technical gate remains blocked. The older v1.17.13 record has no
+retained raw results or exact source snapshot; its scalar counts remain
+excluded from active findings. The local live ledger records 80 pass, 1 fail,
+3 blocked, and 5 not-in-scope checks; the failure is the runner network matrix,
+which could not probe stopped team-runner containers. That network result is
+superseded by the separate refresh below; the retained ledger file itself has
+not yet aggregated it.
+
+**Current local network refresh (2026-10-10):** the live network-boundary
+checker now reports PASS from the `aiat-wsl` daemon. The retained
+[`network_boundary_live_current.json`](../../mas/docs/provenance/network_boundary_live_current.json)
+is scoped to source revision `8146ea10e136047c0069c68f3af014cf6fb653b0` and
+records 4/4 orchestrator connections, 2/2 runsc gateway probes, 4/4 runsc
+protected-service denials, 11/11 TeamRunner containers, 44/44 TeamRunner
+gateway probes, 66/66 TeamRunner protected/external denials, 11/11 storage
+health probes, no Docker socket or forbidden environment names in the TeamRunner
+containers, and no checker errors. Authenticated `/health`, `/projects`, and
+`/capabilities/workers` returned HTTP 200; the worker catalogue returned 39
+manifests. The source and live development database both report migration head
+`0048_worker_run_retry_lineage`. No OpenCode project task or external model
+request is represented by this evidence. The WSL2 matrix does not establish
+native-Linux release certification, clear the retained OpenCode human review
+items, or change the canonical `NO-RELEASE / RELEASE_CERTIFICATION_PENDING`
+decision. The 2026-10-02 release-ledger artifact still contains the earlier
+runner-matrix failure and must be rerun to aggregate this newer network result.
 
 ## Purpose
 
@@ -32,10 +101,13 @@ AIAT must make dangerous automation bounded, attributable, observable, and recov
   longer a separate AIAT policy tier.
 - `check_sandbox_runtime_readiness.py` validates the 39 worker sandbox
   declarations, the 10 hardened external workers, and the AIAT-owned
-  `opencode-runtime` Compose boundary: internal-only networking, no host
+  `opencode-runtime` Compose boundary: exclusive attachment to the dedicated
+  `sandbox_gateway` network, with the network itself required to be declared
+  internal; no host
   publication, non-root/read-only execution, dropped capabilities,
   `no-new-privileges`, bounded CPU/memory/PIDs, and noexec/nosuid tmpfs
-  paths (`2c098f5`). It also provides a fail-closed Docker `runsc`
+  paths (`2c098f5`, checker regression `8f8bebfe`; focused checker suite
+  passes 10/10). It also provides a fail-closed Docker `runsc`
   registration probe; optional digest-pinned smoke, network-denial, canary,
   and Kata `vm_isolated` checks remain explicit evidence stages. Direct
   Firecracker checks are compatibility/benchmark evidence only.
@@ -136,6 +208,26 @@ AIAT must make dangerous automation bounded, attributable, observable, and recov
   `semgrep`, `skillspector`, and `trufflehog` names as aliases of the canonical
   `security.scan` contract (`965ba38`). Scanner execution remains sandboxed and
   governed by the existing grants, audit, rate, and approval controls.
+- The OpenCode candidate-certification harness provisions SkillSpector under an
+  explicit Python 3.12 runtime, retains the exact compressed source archive,
+  redacts scanner secret fields/source context before storing raw JSON, records
+  per-rule counts and sanitized-result hashes, and validates those artifacts
+  against the candidate package. The 2026-10-02 local v1.18.21 package has
+  passing tool provisioning, SBOM generation, and AIAT boundary regression.
+  The r4 package retains 383 current primary scanner findings, seven same-source
+  Semgrep carry-forward findings, 119 normalized Actionlint/Zizmor records, and
+  four Bun-transpiled Semgrep findings (513 active review records; not a
+  unique-vulnerability count). All three AIAT-serving TypeScript paths were
+  scanned without parser errors; their four path-join findings remain open.
+  One parser error remains on non-AIAT-serving LSP source. The technical gate
+  remains blocked with six open review rows. See the [retained candidate
+  report](../../mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/candidate-certification.json)
+  and [review register](../../mas/docs/provenance/security_scan_review.yaml);
+  no worker activation is inferred.
+- Worker reconciliation uses a scanner-reported file count when the tool
+  provides one. If it does not, the record marks that metric unreported and
+  retains the source-snapshot inventory count separately; the inventory total
+  is not presented as a scanner measurement.
 - The deployment image lock template, provenance inventory, and image budgets
   are checked in under `mas/infra/compose/production-image-lock.example.env`
   (template coverage regression committed as `1d373ee`),

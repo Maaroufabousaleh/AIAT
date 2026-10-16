@@ -7,6 +7,7 @@ import hashlib
 import json
 import re
 import sys
+from typing import Any
 from uuid import uuid4
 
 import httpx
@@ -28,6 +29,8 @@ from mas_core.worker_contract import (
     ConformanceRunner,
     EventType,
     NativeWorkerAdapter,
+    WorkerCancellation,
+    WorkerCapabilities,
     WorkerEvent,
     WorkerProgress,
     WorkerResult,
@@ -81,6 +84,263 @@ def _profile(*, profile_id: str = "coding", model_id: str = "openai/gpt-test", l
         versions=(version,),
         status=ModelProfileStatus.APPROVED,
     )
+
+
+def _opencode_adapter_for_test(
+    handler,
+    *,
+    worker_id: str = "opencode-cancellation-test",
+) -> tuple[OpenCodeAdapter, httpx.AsyncClient]:
+    endpoints = {
+        "health": "/global/health",
+        "openapi": "/doc",
+        "project_current": "/project/current",
+        "session_list": "/session",
+        "session_create": "/session",
+        "session_get": "/session/{sessionID}",
+        "session_delete": "/session/{sessionID}",
+        "session_status": "/session/status",
+        "messages": "/session/{sessionID}/message",
+        "prompt_async": "/session/{sessionID}/prompt_async",
+        "events": "/global/event",
+        "abort": "/session/{sessionID}/abort",
+        "diff": "/session/{sessionID}/diff",
+        "permission_reply": "/session/{sessionID}/permissions/{permissionID}",
+        "mcp_add": "/mcp",
+        "mcp_status": "/mcp",
+    }
+    schema = {"openapi": "3.1.0", "paths": {"/global/health": {"get": {"operationId": "global.health"}}}}
+    schema_hash = hashlib.sha256(
+        json.dumps(schema, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    verification = OpenCodeInterfaceVerification(
+        release="1.17.13",
+        commit_sha="F8C45BAE73A8F1E2088023FDD34DC2FE0A7F93F505F073E0703E4E1A19AFE8FF",
+        report_version="2",
+        approved=True,
+        openapi_sha256=schema_hash,
+        config_schema_sha256="b" * 64,
+        endpoints=endpoints,
+        evidence={"approval_record_id": "test", "fixture_refs": ["test"]},
+    )
+    client = httpx.AsyncClient(
+        base_url="http://opencode.test",
+        transport=httpx.MockTransport(handler),
+    )
+    adapter = OpenCodeAdapter(
+        verification,
+        base_url="http://opencode.test",
+        worker_id=worker_id,
+        client=client,
+        context=AdapterContext(
+            secrets={
+                "opencode_password": "test-password",
+                "tool_secret": "test-tool-secret",
+            }
+        ),
+    )
+    return adapter, client
+
+
+@pytest.mark.asyncio
+async def test_opencode_stale_attempt_cancellation_leaves_replacement_runtime_running() -> None:
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json=True, request=request)
+
+    adapter, client = _opencode_adapter_for_test(handler)
+    run_id = uuid4()
+    adapter._execution_claim_fence_by_run[run_id] = {
+        "claim_owner": "replacement-host",
+        "attempt_count": 2,
+    }
+    adapter._runtime_run_id_by_run[run_id] = "ses_replacement"
+    adapter._session_by_run[run_id] = "ses_replacement"
+    replacement_work = asyncio.Event()
+    replacement_task = asyncio.create_task(replacement_work.wait())
+    adapter._active_tasks[run_id] = replacement_task
+
+    stale_cancel = WorkerCancellation(
+        run_id=run_id,
+        reason="old host lost its lease",
+        requested_by="worker-host-executor",
+        force=True,
+    )
+    stale_cancel._execution_claim_fence = {
+        "claim_owner": "expired-host",
+        "attempt_count": 1,
+    }
+    stale_cancel._runtime_run_id = "ses_expired"
+
+    try:
+        receipt = await adapter.cancel(stale_cancel)
+        assert receipt.accepted is False
+        assert receipt.details["reason"] == "stale attempt cancellation ignored"
+        assert not replacement_task.done()
+        assert adapter._session_by_run[run_id] == "ses_replacement"
+        assert requests == []
+    finally:
+        replacement_task.cancel()
+        await asyncio.gather(replacement_task, return_exceptions=True)
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_opencode_idempotent_acceptance_rejects_reclaimed_attempt() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError(f"unexpected OpenCode request: {request.method} {request.url.path}")
+
+    adapter, client = _opencode_adapter_for_test(handler)
+    run_id = uuid4()
+    request = WorkerRunRequest(
+        run_id=run_id,
+        idempotency_key="same-run-reclaimed-attempt",
+        worker_id=adapter.worker_id,
+        task_type="coding",
+        task_input={"prompt": "must not attach to prior session"},
+    )
+    request._execution_claim_fence = {"claim_owner": "executor-new", "attempt_count": 2}
+    adapter._execution_claim_fence_by_run[run_id] = {
+        "claim_owner": "executor-old",
+        "attempt_count": 1,
+    }
+    adapter._accepted_by_key[request.idempotency_key] = object()
+
+    try:
+        with pytest.raises(RuntimeError, match="different claim attempt"):
+            await adapter.start(request)
+    finally:
+        await adapter.close()
+        await client.aclose()
+
+
+def test_worker_cancellation_claim_fence_is_private_and_untrusted_input_is_dropped() -> None:
+    run_id = uuid4()
+    cancellation = WorkerCancellation.model_validate(
+        {
+            "run_id": str(run_id),
+            "reason": "cancel",
+            "requested_by": "operator",
+            "claim_owner": "caller-controlled",
+            "attempt_count": 99,
+            "runtime_run_id": "ses_fake",
+            "execution_claim_fence": {"claim_owner": "caller-controlled", "attempt_count": 99},
+        }
+    )
+
+    assert cancellation.execution_claim_fence == {}
+    assert cancellation.runtime_run_id is None
+    dumped = cancellation.model_dump(mode="json")
+    assert "claim_owner" not in dumped
+    assert "attempt_count" not in dumped
+    assert "runtime_run_id" not in dumped
+    assert "execution_claim_fence" not in dumped
+
+
+@pytest.mark.asyncio
+async def test_opencode_rejects_unmapped_gateway_alias_during_readiness() -> None:
+    requests: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        if request.method == "GET" and request.url.path == "/global/health":
+            return httpx.Response(200, json={"healthy": True}, request=request)
+        if request.method == "GET" and request.url.path == "/doc":
+            return httpx.Response(
+                200,
+                json={"openapi": "3.1.0", "paths": {"/global/health": {"get": {"operationId": "global.health"}}}},
+                request=request,
+            )
+        raise AssertionError(f"unexpected OpenCode request: {request.method} {request.url.path}")
+
+    adapter, client = _opencode_adapter_for_test(handler)
+    request = WorkerRunRequest(
+        idempotency_key="opencode-unmapped-gateway-alias",
+        worker_id=adapter.worker_id,
+        task_type="coding",
+        resolved_model_profile={"profile_id": "coding", "exact_model_id": "omniroute-coding"},
+    )
+    try:
+        readiness = await adapter.readiness(request)
+    finally:
+        await adapter.close()
+        await client.aclose()
+
+    assert not readiness.ready
+    assert any(
+        "control-plane-resolved provider/model mapping" in blocker
+        for blocker in readiness.blockers
+    )
+    assert requests == ["/global/health", "/doc"]
+
+
+@pytest.mark.asyncio
+async def test_opencode_uses_explicit_mapping_for_session_and_prompt_requests() -> None:
+    session_models: list[dict[str, str]] = []
+    prompt_models: list[dict[str, str]] = []
+    mcp_names: list[str] = []
+    mapped_inputs: list[str] = []
+    schema = {"openapi": "3.1.0", "paths": {"/global/health": {"get": {"operationId": "global.health"}}}}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == "/global/health":
+            return httpx.Response(200, json={"healthy": True}, request=request)
+        if request.method == "GET" and request.url.path == "/doc":
+            return httpx.Response(200, json=schema, request=request)
+        if request.method == "POST" and request.url.path == "/mcp":
+            body = json.loads(request.content)
+            mcp_names.append(str(body["name"]))
+            return httpx.Response(200, json={body["name"]: {"status": "connected"}}, request=request)
+        if request.method == "GET" and request.url.path == "/mcp":
+            # The adapter polls the name returned by POST /mcp.
+            name = mcp_names[-1] if mcp_names else None
+            return httpx.Response(200, json={name: {"status": "connected"}}, request=request)
+        if request.method == "GET" and request.url.path == "/session":
+            return httpx.Response(200, json=[], request=request)
+        if request.method == "POST" and request.url.path == "/session":
+            body = json.loads(request.content)
+            session_models.append(body["model"])
+            return httpx.Response(200, json={"id": "ses_mapped_model"}, request=request)
+        if request.method == "POST" and request.url.path == "/session/ses_mapped_model/prompt_async":
+            body = json.loads(request.content)
+            prompt_models.append(body["model"])
+            return httpx.Response(204, request=request)
+        raise AssertionError(f"unexpected OpenCode request: {request.method} {request.url.path}")
+
+    adapter, client = _opencode_adapter_for_test(handler)
+
+    def map_governed_alias(exact_model_id: str) -> str:
+        mapped_inputs.append(exact_model_id)
+        if exact_model_id != "omniroute-coding":
+            return exact_model_id
+        return "aiat/omniroute-coding"
+
+    adapter.model_mapper = map_governed_alias
+    request = WorkerRunRequest(
+        idempotency_key="opencode-explicit-gateway-alias-mapping",
+        worker_id=adapter.worker_id,
+        task_type="coding",
+        task_input={"prompt": "mapping request fixture"},
+        resolved_model_profile={
+            "profile_id": "opencode-phase0b-coding",
+            "version": "1",
+            "exact_model_id": "omniroute-coding",
+        },
+    )
+    try:
+        readiness = await adapter.readiness(request)
+        assert readiness.ready
+        session_id = await adapter._create_session(request)
+        assert await adapter._submit(request, session_id)
+    finally:
+        await adapter.close()
+        await client.aclose()
+
+    assert session_models == [{"providerID": "aiat", "id": "omniroute-coding", "variant": "1"}]
+    assert prompt_models == [{"providerID": "aiat", "modelID": "omniroute-coding"}]
+    assert mapped_inputs == ["omniroute-coding"] * 3
 
 
 def test_worker_run_request_carries_bounded_trace_context_outside_task_input() -> None:
@@ -329,6 +589,465 @@ async def test_opencode_session_adapter_maps_live_lifecycle_and_basic_auth() -> 
 
 
 @pytest.mark.asyncio
+async def test_controller_cancel_wins_between_dispatch_transition_and_opencode_start() -> None:
+    requests: list[tuple[str, str]] = []
+    schema = {"openapi": "3.1.0", "paths": {"/global/health": {"get": {"operationId": "global.health"}}}}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append((request.method, request.url.path))
+        if request.method == "GET" and request.url.path == "/global/health":
+            return httpx.Response(200, json={"healthy": True}, request=request)
+        if request.method == "GET" and request.url.path == "/doc":
+            return httpx.Response(200, json=schema, request=request)
+        raise AssertionError(f"unexpected OpenCode request: {request.method} {request.url.path}")
+
+    adapter, client = _opencode_adapter_for_test(handler)
+    controller = WorkerRunController()
+    request = WorkerRunRequest(
+        idempotency_key="cancel-at-dispatch-boundary",
+        worker_id="opencode-cancellation-test",
+        task_type="coding",
+        task_input={"prompt": "must not be submitted"},
+        resolved_model_profile={"profile_id": "coding", "exact_model_id": "aiat/gpt-test"},
+        timeout_seconds=5,
+    )
+    dispatching = asyncio.Event()
+    release_transition = asyncio.Event()
+    original_transition = controller.transition
+
+    async def gated_transition(run_id, target, **kwargs):
+        result = await original_transition(run_id, target, **kwargs)
+        if target == "DISPATCHING":
+            dispatching.set()
+            await release_transition.wait()
+        return result
+
+    controller.transition = gated_transition  # type: ignore[method-assign]
+    original_start = adapter.start
+    start_calls = 0
+
+    async def counted_start(start_request):
+        nonlocal start_calls
+        start_calls += 1
+        return await original_start(start_request)
+
+    adapter.start = counted_start  # type: ignore[method-assign]
+    execution = asyncio.create_task(controller.execute(request, adapter))
+    try:
+        await asyncio.wait_for(dispatching.wait(), timeout=5)
+        cancelled = await asyncio.wait_for(
+            controller.cancel(
+                request.run_id,
+                adapter,
+                reason="operator cancelled before OpenCode startup",
+                requested_by="operator",
+            ),
+            timeout=5,
+        )
+        assert cancelled is not None and cancelled["state"] == "CANCELLED"
+        release_transition.set()
+        outcome = await asyncio.wait_for(execution, timeout=5)
+        duplicate = await controller.cancel(
+            request.run_id,
+            adapter,
+            reason="duplicate cancellation",
+            requested_by="operator",
+        )
+    finally:
+        release_transition.set()
+        if not execution.done():
+            await asyncio.wait_for(execution, timeout=5)
+        await adapter.close()
+        await client.aclose()
+
+    assert outcome.state == "CANCELLED"
+    assert duplicate is not None and duplicate["state"] == "CANCELLED"
+    assert (await controller.get_run(request.run_id))["state"] == "CANCELLED"
+    assert start_calls == 0
+    assert not adapter._active_tasks
+    assert request.run_id not in adapter._session_by_run
+    assert ("POST", "/session") not in requests
+    assert not any(path.endswith("/prompt_async") for _, path in requests)
+
+
+@pytest.mark.asyncio
+async def test_opencode_cancel_during_session_creation_aborts_without_prompt_submit() -> None:
+    session_create_entered = asyncio.Event()
+    release_session_create = asyncio.Event()
+    mcp_name: str | None = None
+    request_paths: list[tuple[str, str]] = []
+    abort_paths: list[str] = []
+    deleted_paths: list[str] = []
+    prompt_calls = 0
+    schema = {"openapi": "3.1.0", "paths": {"/global/health": {"get": {"operationId": "global.health"}}}}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal mcp_name, prompt_calls
+        request_paths.append((request.method, request.url.path))
+        if request.method == "GET" and request.url.path == "/global/health":
+            return httpx.Response(200, json={"healthy": True}, request=request)
+        if request.method == "GET" and request.url.path == "/doc":
+            return httpx.Response(200, json=schema, request=request)
+        if request.method == "POST" and request.url.path == "/mcp":
+            config = json.loads(request.content)
+            mcp_name = str(config["name"])
+            return httpx.Response(200, json={mcp_name: {"status": "connected"}}, request=request)
+        if request.method == "GET" and request.url.path == "/mcp":
+            return httpx.Response(200, json={str(mcp_name): {"status": "connected"}}, request=request)
+        if request.method == "GET" and request.url.path == "/session":
+            return httpx.Response(200, json=[], request=request)
+        if request.method == "POST" and request.url.path == "/session":
+            session_create_entered.set()
+            await release_session_create.wait()
+            return httpx.Response(200, json={"id": "ses_cancel_boundary"}, request=request)
+        if request.method == "POST" and request.url.path == "/session/ses_cancel_boundary/abort":
+            abort_paths.append(request.url.path)
+            return httpx.Response(200, json=True, request=request)
+        if request.method == "DELETE" and request.url.path == "/session/ses_cancel_boundary":
+            deleted_paths.append(request.url.path)
+            return httpx.Response(204, request=request)
+        if request.method == "POST" and request.url.path == "/session/ses_cancel_boundary/prompt_async":
+            prompt_calls += 1
+            return httpx.Response(204, request=request)
+        raise AssertionError(f"unexpected OpenCode request: {request.method} {request.url.path}")
+
+    adapter, client = _opencode_adapter_for_test(handler)
+    controller = WorkerRunController()
+    request = WorkerRunRequest(
+        idempotency_key="cancel-during-session-create",
+        worker_id="opencode-cancellation-test",
+        task_type="coding",
+        task_input={"prompt": "must not be submitted"},
+        resolved_model_profile={"profile_id": "coding", "exact_model_id": "aiat/gpt-test"},
+        timeout_seconds=5,
+    )
+    execution = asyncio.create_task(controller.execute(request, adapter))
+    try:
+        await asyncio.wait_for(session_create_entered.wait(), timeout=5)
+        cancelled = await asyncio.wait_for(
+            controller.cancel(
+                request.run_id,
+                adapter,
+                reason="operator cancelled before prompt submission",
+                requested_by="operator",
+            ),
+            timeout=5,
+        )
+        assert cancelled is not None
+        assert cancelled["state"] in {"DISPATCHING", "RUNNING"}
+        release_session_create.set()
+        outcome = await asyncio.wait_for(execution, timeout=5)
+        duplicate = await controller.cancel(
+            request.run_id,
+            adapter,
+            reason="duplicate cancellation",
+            requested_by="operator",
+        )
+    finally:
+        release_session_create.set()
+        if not execution.done():
+            await asyncio.wait_for(execution, timeout=5)
+        await adapter.close()
+        await client.aclose()
+
+    assert outcome.state == "CANCELLED"
+    assert duplicate is not None and duplicate["state"] == "CANCELLED"
+    assert (await controller.get_run(request.run_id))["state"] == "CANCELLED"
+    assert abort_paths == ["/session/ses_cancel_boundary/abort"], request_paths[-5:]
+    assert deleted_paths == ["/session/ses_cancel_boundary"], request_paths[-5:]
+    assert prompt_calls == 0
+    assert not adapter._active_tasks
+    assert request.idempotency_key not in adapter._accepted_by_key
+    assert request.run_id not in adapter._session_by_run
+
+
+@pytest.mark.asyncio
+async def test_opencode_run_workspace_maps_runtime_directory_and_artifacts(tmp_path, monkeypatch) -> None:
+    project_id = uuid4()
+    request = WorkerRunRequest(
+        idempotency_key=f"opencode-workspace-map:{project_id}",
+        worker_id="opencode-workspace-map-test",
+        project_id=project_id,
+        task_type="coding",
+        task_input={"prompt": "Create the deterministic fixture artifact."},
+        resolved_model_profile={
+            "profile_id": "coding",
+            "version": "1",
+            "exact_model_id": "aiat/local-fixture",
+            "resolution_snapshot_id": uuid4(),
+        },
+    )
+    workspace_root = tmp_path / "opencode-workspace"
+    run_root = workspace_root / str(request.run_id)
+    run_root.mkdir(parents=True)
+    content = "def total(values):\n    return sum(values)\n"
+    (run_root / "solution.py").write_text(content, encoding="utf-8")
+    (workspace_root / "outside.py").write_text("must not be an artifact\n", encoding="utf-8")
+    (run_root / "outside-link.py").symlink_to(workspace_root / "outside.py")
+
+    adapter, client = _opencode_adapter_for_test(
+        lambda http_request: httpx.Response(500, request=http_request),
+        worker_id=request.worker_id,
+    )
+    adapter.context.workspace_path = str(workspace_root)
+    try:
+        assert adapter.context.workspace_path == str(workspace_root)
+        assert adapter._query(request) == {"directory": "/workspace"}
+        artifacts = await adapter._artifacts(request, "ses_workspace_map")
+    finally:
+        await adapter.close()
+        await client.aclose()
+
+    assert len(artifacts) == 1
+    assert artifacts[0].name == "solution.py"
+    assert artifacts[0].uri == "solution.py"
+    assert artifacts[0].sha256 == hashlib.sha256(content.encode()).hexdigest()
+    assert artifacts[0].size_bytes == len(content.encode())
+    assert artifacts[0].metadata["worker_run_id"] == str(request.run_id)
+
+
+@pytest.mark.asyncio
+async def test_opencode_adapter_defaults_to_orchestrator_workspace_mount(monkeypatch) -> None:
+    monkeypatch.delenv("OPENCODE_WORKSPACE_ROOT", raising=False)
+    project_id = uuid4()
+    request = WorkerRunRequest(
+        idempotency_key=f"opencode-default-workspace:{project_id}",
+        worker_id="opencode-default-workspace-test",
+        project_id=project_id,
+        task_type="coding",
+        task_input={"prompt": "Use the configured workspace."},
+        resolved_model_profile={
+            "profile_id": "coding",
+            "version": "1",
+            "exact_model_id": "aiat/local-fixture",
+            "resolution_snapshot_id": uuid4(),
+        },
+    )
+    adapter, client = _opencode_adapter_for_test(
+        lambda http_request: httpx.Response(500, request=http_request),
+        worker_id=request.worker_id,
+    )
+    try:
+        assert adapter.context.workspace_path == "/workspace"
+        assert adapter._query(request) == {"directory": "/workspace"}
+    finally:
+        await adapter.close()
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_project_scoped_opencode_run_cancels_at_provider_boundary_without_dispatch() -> None:
+    """Exercise the real adapter/controller up to, but not through, model dispatch.
+
+    The HTTP transport is a local OpenCode protocol fixture. The OpenCodeAdapter
+    and WorkerRunController are the production implementations. Holding the
+    adapter at its final submit boundary lets canonical cancellation win before
+    the only operation that can ask OpenCode to call its configured model.
+    """
+    project_id = uuid4()
+    snapshot_id = uuid4()
+    mcp_name: str | None = None
+    prompt_calls = 0
+    session_payloads: list[dict[str, Any]] = []
+    session_created = asyncio.Event()
+    abort_paths: list[str] = []
+    deleted_paths: list[str] = []
+    schema = {"openapi": "3.1.0", "paths": {"/global/health": {"get": {"operationId": "global.health"}}}}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal mcp_name, prompt_calls
+        path = request.url.path
+        if request.method == "GET" and path == "/global/health":
+            return httpx.Response(200, json={"healthy": True}, request=request)
+        if request.method == "GET" and path == "/doc":
+            return httpx.Response(200, json=schema, request=request)
+        if request.method == "POST" and path == "/mcp":
+            mcp_name = str(json.loads(request.content)["name"])
+            return httpx.Response(200, json={mcp_name: {"status": "connected"}}, request=request)
+        if request.method == "GET" and path == "/mcp":
+            return httpx.Response(200, json={str(mcp_name): {"status": "connected"}}, request=request)
+        if request.method == "GET" and path == "/session":
+            return httpx.Response(200, json=[], request=request)
+        if request.method == "POST" and path == "/session":
+            session_payloads.append(json.loads(request.content))
+            session_created.set()
+            return httpx.Response(200, json={"id": "ses_pre_provider_boundary"}, request=request)
+        if request.method == "GET" and path == "/global/event":
+            return httpx.Response(200, text="", headers={"content-type": "text/event-stream"}, request=request)
+        if request.method == "POST" and path == "/session/ses_pre_provider_boundary/abort":
+            abort_paths.append(path)
+            return httpx.Response(200, json=True, request=request)
+        if request.method == "DELETE" and path == "/session/ses_pre_provider_boundary":
+            deleted_paths.append(path)
+            return httpx.Response(204, request=request)
+        if request.method == "POST" and path == "/session/ses_pre_provider_boundary/prompt_async":
+            prompt_calls += 1
+            return httpx.Response(204, request=request)
+        raise AssertionError(f"unexpected OpenCode request: {request.method} {path}")
+
+    adapter, client = _opencode_adapter_for_test(handler)
+    adapter.context.metadata["opencode_cleanup_sessions"] = True
+    controller = WorkerRunController()
+    request = WorkerRunRequest(
+        idempotency_key=f"project-opencode-pre-provider:{project_id}",
+        worker_id=adapter.worker_id,
+        project_id=project_id,
+        task_type="coding",
+        task_input={"prompt": "Do not submit this task to a model."},
+        tool_grants=["opencode.workspace_read"],
+        resolved_model_profile={
+            "profile_id": "coding",
+            "version": "1",
+            "exact_model_id": "aiat/gpt-test",
+            "resolution_snapshot_id": snapshot_id,
+        },
+        timeout_seconds=5,
+    )
+
+    submit_boundary = asyncio.Event()
+    release_submit = asyncio.Event()
+    original_submit = adapter._submit
+
+    async def pause_before_provider_submit(submit_request, session_id: str) -> bool:
+        submit_boundary.set()
+        await release_submit.wait()
+        # The real adapter's cancellation guard must return before issuing the
+        # prompt_async request after canonical cancellation has been recorded.
+        return await original_submit(submit_request, session_id)
+
+    adapter._submit = pause_before_provider_submit  # type: ignore[method-assign]
+    execution = asyncio.create_task(
+        controller.execute(request, adapter, model_resolution_snapshot_id=snapshot_id)
+    )
+    try:
+        await asyncio.wait_for(session_created.wait(), timeout=5)
+        await asyncio.wait_for(submit_boundary.wait(), timeout=5)
+        for _ in range(100):
+            row = await controller.get_run(request.run_id)
+            if row is not None and row["state"] == "RUNNING":
+                break
+            await asyncio.sleep(0.01)
+        assert row is not None
+        assert row["state"] == "RUNNING"
+        assert row["project_id"] == project_id
+        assert row["runtime_binding"]["runtime_type"] == "opencode"
+        assert row["runtime_binding"]["runtime_run_id"] == "ses_pre_provider_boundary"
+
+        cancellation = await asyncio.wait_for(
+            controller.cancel(
+                request.run_id,
+                adapter,
+                reason="operator stopped at the pre-provider boundary",
+                requested_by="operator",
+            ),
+            timeout=5,
+        )
+        assert cancellation is not None
+        release_submit.set()
+        outcome = await asyncio.wait_for(execution, timeout=5)
+        duplicate = await controller.cancel(
+            request.run_id,
+            adapter,
+            reason="idempotent duplicate cancellation",
+            requested_by="operator",
+        )
+    finally:
+        release_submit.set()
+        if not execution.done():
+            await asyncio.wait_for(execution, timeout=5)
+        await adapter.close()
+        await client.aclose()
+
+    final_row = await controller.get_run(request.run_id)
+    assert outcome.state == "CANCELLED"
+    assert final_row is not None and final_row["state"] == "CANCELLED"
+    assert duplicate is not None and duplicate["state"] == "CANCELLED"
+    assert len(abort_paths) >= 1
+    assert deleted_paths == ["/session/ses_pre_provider_boundary"]
+    assert prompt_calls == 0
+    assert len(session_payloads) == 1
+    session_permissions = session_payloads[0]["permission"]
+    assert {"permission": "*", "pattern": "*", "action": "deny"} in session_permissions
+    assert {
+        "permission": f"{mcp_name}_aiat_tool",
+        "pattern": "*",
+        "action": "allow",
+    } in session_permissions
+    assert request.project_id == project_id
+    assert request.resolved_model_profile.resolution_snapshot_id == snapshot_id
+    assert controller._memory_tool_effects == {}
+    assert not adapter._active_tasks
+    # The adapter retains the last runtime reference for reconciliation even
+    # after the server-side session has been deleted.
+    assert adapter._session_by_run[request.run_id] == "ses_pre_provider_boundary"
+
+
+@pytest.mark.asyncio
+async def test_opencode_cancel_with_known_session_uses_local_abort_route() -> None:
+    requests: list[tuple[str, str]] = []
+    session_id = "ses_known_cancel"
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append((request.method, request.url.path))
+        if request.method == "POST" and request.url.path == f"/session/{session_id}/abort":
+            return httpx.Response(200, json=True, request=request)
+        raise AssertionError(f"unexpected OpenCode request: {request.method} {request.url.path}")
+
+    adapter, client = _opencode_adapter_for_test(handler)
+    run_id = uuid4()
+    adapter._session_by_run[run_id] = session_id
+    cancellation = WorkerCancellation(
+        run_id=run_id,
+        reason="operator cancelled the active OpenCode session",
+        requested_by="operator",
+    )
+    cancellation._runtime_run_id = session_id
+    try:
+        receipt = await adapter.cancel(cancellation)
+    finally:
+        await adapter.close()
+        await client.aclose()
+
+    assert receipt.run_id == run_id
+    assert receipt.runtime_status == "UNKNOWN"
+    assert requests == [("POST", f"/session/{session_id}/abort")]
+
+
+@pytest.mark.asyncio
+async def test_opencode_cancel_uses_current_attempt_session_without_runtime_id() -> None:
+    requests: list[tuple[str, str]] = []
+    session_id = "ses_claimed_attempt"
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append((request.method, request.url.path))
+        if request.method == "POST" and request.url.path == f"/session/{session_id}/abort":
+            return httpx.Response(200, json=True, request=request)
+        raise AssertionError(f"unexpected OpenCode request: {request.method} {request.url.path}")
+
+    adapter, client = _opencode_adapter_for_test(handler)
+    run_id = uuid4()
+    claim_fence = {"claim_owner": "host-current", "attempt_count": 3}
+    adapter._execution_claim_fence_by_run[run_id] = claim_fence
+    adapter._runtime_run_id_by_run[run_id] = session_id
+    adapter._session_by_run[run_id] = session_id
+    cancellation = WorkerCancellation(
+        run_id=run_id,
+        reason="current host lost its lease",
+        requested_by="worker-host-executor",
+        force=True,
+    )
+    cancellation._execution_claim_fence = claim_fence
+    try:
+        receipt = await adapter.cancel(cancellation)
+    finally:
+        await adapter.close()
+        await client.aclose()
+
+    assert receipt.run_id == run_id
+    assert requests == [("POST", f"/session/{session_id}/abort")]
+
+
+@pytest.mark.asyncio
 async def test_opencode_reconcile_uses_durable_session_after_adapter_restart() -> None:
     session_id = "ses_restartable"
     run_id = uuid4()
@@ -534,6 +1253,169 @@ async def test_framework_transport_adapters_share_the_universal_conformance_suit
         )
         assert report.passed is True
         assert report.adapter_type == adapter_type.runtime_type
+        await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_versioned_deterministic_file_conformance_case_supplies_bounded_input_and_tool_fixture() -> None:
+    captured: dict[str, Any] = {}
+
+    async def worker(request: WorkerRunRequest, adapter: NativeWorkerAdapter) -> WorkerResult:
+        captured["request"] = request
+        response = await adapter.request_tool(
+            WorkerToolRequest(
+                run_id=request.run_id,
+                tool_name="file_write",
+                arguments=dict(request.task_input),
+                permission_scope=["file_write"],
+                approval_required=False,
+                idempotency_key="deterministic-file-conformance-write",
+            )
+        )
+        captured["response"] = response
+        return WorkerResult(
+            run_id=request.run_id,
+            worker_id=request.worker_id,
+            success=response.success,
+            output={"file_write_confirmed": response.success},
+        )
+
+    adapter = NativeWorkerAdapter(
+        worker,
+        worker_id="aiat_deterministic_file_worker",
+        capabilities=WorkerCapabilities(
+            capability_names=["deterministic.file_generate"],
+            extensions={
+                "aiat.conformance": {
+                    "schema_version": "aiat.conformance.v1",
+                    "case_id": "aiat.deterministic_file_generation.v1",
+                }
+            },
+        ),
+    )
+    try:
+        report = await ConformanceRunner().run(adapter, worker_id=adapter.worker_id)
+
+        request = captured["request"]
+        assert request.task_type == "deterministic_file_generation"
+        assert request.task_input == {
+            "path": "conformance/aiat-worker-check.txt",
+            "content": "AIAT worker conformance fixture v1\n",
+        }
+        assert request.project_id is not None
+        assert request.tool_grants == ["file_write"]
+        assert captured["response"].success is True
+        assert captured["response"].result["conformance_fixture"] is True
+        assert report.passed is True
+        tool_protocol = next(test for test in report.tests if test.name == "conformance_tool_protocol")
+        assert tool_protocol.passed is True
+        assert tool_protocol.evidence["response_source"] == "local_conformance_fixture_not_tool_service"
+    finally:
+        await adapter.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("declaration", "capability_names", "task_input"),
+    [
+        (
+            {"schema_version": "aiat.conformance.v1", "case_id": "not-a-supported-case"},
+            ["deterministic.file_generate"],
+            None,
+        ),
+        (
+            {
+                "schema_version": "aiat.conformance.v1",
+                "case_id": "aiat.deterministic_file_generation.v1",
+                "task_type": "shell.execute",
+            },
+            ["deterministic.file_generate"],
+            None,
+        ),
+        (
+            {"schema_version": "aiat.conformance.v1", "case_id": "aiat.deterministic_file_generation.v1"},
+            [],
+            None,
+        ),
+        (
+            {"schema_version": "aiat.conformance.v1", "case_id": "aiat.deterministic_file_generation.v1"},
+            ["deterministic.file_generate"],
+            {"path": "outside.txt", "content": "caller override"},
+        ),
+    ],
+)
+async def test_declared_conformance_case_rejects_unsupported_or_overridden_inputs(
+    declaration: dict[str, Any],
+    capability_names: list[str],
+    task_input: dict[str, Any] | None,
+) -> None:
+    started = False
+
+    async def worker(request: WorkerRunRequest, _adapter: NativeWorkerAdapter) -> WorkerResult:
+        nonlocal started
+        started = True
+        return WorkerResult(run_id=request.run_id, worker_id=request.worker_id, success=True)
+
+    adapter = NativeWorkerAdapter(
+        worker,
+        worker_id="candidate",
+        capabilities=WorkerCapabilities(
+            capability_names=capability_names,
+            extensions={"aiat.conformance": declaration},
+        ),
+    )
+    try:
+        with pytest.raises(ValueError):
+            await ConformanceRunner().run(adapter, task_input=task_input)
+        assert started is False
+    finally:
+        await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_deterministic_conformance_denies_unexpected_tool_request() -> None:
+    captured: dict[str, Any] = {}
+
+    async def worker(request: WorkerRunRequest, adapter: NativeWorkerAdapter) -> WorkerResult:
+        response = await adapter.request_tool(
+            WorkerToolRequest(
+                run_id=request.run_id,
+                tool_name="shell.execute",
+                arguments={"command": "unsafe"},
+                permission_scope=["shell.execute"],
+                idempotency_key="unexpected-conformance-tool",
+            )
+        )
+        captured["response"] = response
+        return WorkerResult(
+            run_id=request.run_id,
+            worker_id=request.worker_id,
+            success=response.success,
+            output={"unexpected_tool_succeeded": response.success},
+        )
+
+    adapter = NativeWorkerAdapter(
+        worker,
+        worker_id="candidate",
+        capabilities=WorkerCapabilities(
+            capability_names=["deterministic.file_generate"],
+            extensions={
+                "aiat.conformance": {
+                    "schema_version": "aiat.conformance.v1",
+                    "case_id": "aiat.deterministic_file_generation.v1",
+                }
+            },
+        ),
+    )
+    try:
+        report = await ConformanceRunner().run(adapter)
+
+        assert report.passed is False
+        assert captured["response"].success is False
+        assert captured["response"].error.code == "CONFORMANCE_TOOL_DENIED"
+        tool_protocol = next(test for test in report.tests if test.name == "conformance_tool_protocol")
+        assert tool_protocol.passed is False
+    finally:
         await adapter.close()
 
 

@@ -8,6 +8,7 @@ from conftest import PROJECT_ID
 
 FLOW_ID = UUID("00000000-0000-4000-a000-0000000000f1")
 FLOW_INSTANCE_ID = UUID("00000000-0000-4000-a000-0000000000f2")
+OPERATOR_HEADERS = {"X-API-Key": "test-operator-key"}
 
 
 def _patch_state(storage) -> None:
@@ -633,9 +634,9 @@ async def test_complete_analysis_activates_approval_gate_and_audit_record(client
         ]
     )
     storage.update_flow_node_execution = AsyncMock(return_value={"id": 10})
-    storage.create_flow_node_execution = AsyncMock(return_value={"id": 11})
-    storage.create_approval_gate = AsyncMock(return_value={"id": uuid4()})
-    storage.update_flow_instance = AsyncMock(return_value=updated_instance)
+    storage.activate_flow_nodes = AsyncMock(
+        return_value={"outcome": "applied", "instance": updated_instance, "executions": []}
+    )
     _patch_state(storage)
 
     response = await client.post(
@@ -645,9 +646,13 @@ async def test_complete_analysis_activates_approval_gate_and_audit_record(client
 
     assert response.status_code == 200
     assert response.json()["active_node_ids"] == ["approval_gate"]
-    storage.create_approval_gate.assert_awaited_once()
-    _, kwargs = storage.create_flow_node_execution.await_args
-    assert kwargs["node_id"] == "approval_gate"
+    storage.activate_flow_nodes.assert_awaited_once()
+    kwargs = storage.activate_flow_nodes.await_args.kwargs
+    assert kwargs["expected_statuses"] == {"RUNNING", "WAITING_APPROVAL"}
+    assert kwargs["expected_active_node_ids"] == ["analysis"]
+    assert kwargs["instance_updates"]["active_node_ids"] == ["approval_gate"]
+    assert kwargs["activations"][0]["node_id"] == "approval_gate"
+    assert kwargs["activations"][0]["gate_type"] == "human"
 
 
 @pytest.mark.anyio
@@ -736,7 +741,7 @@ async def test_queued_governed_task_remains_active_until_worker_run_is_terminal(
 @pytest.mark.anyio
 @pytest.mark.parametrize(
     ("decision", "expected_node"),
-    [("approved", "branch_a"), ("edit_requested", "branch_b")],
+    [("approved", "decision_switch"), ("edit_requested", "decision_switch")],
 )
 async def test_approval_decision_routes_to_expected_branch(client, decision, expected_node):
     runtime_flow = {
@@ -755,79 +760,313 @@ async def test_approval_decision_routes_to_expected_branch(client, decision, exp
             "last_approval_decision": decision,
         },
     }
+    gate_id = uuid4()
+    execution_id = 20
 
     storage = MagicMock()
-    storage.get_flow_instance = AsyncMock(side_effect=[initial_instance, updated_instance])
+    storage.get_flow_instance = AsyncMock(return_value=initial_instance)
     storage.get_flow = AsyncMock(return_value=runtime_flow)
     storage.list_flow_node_executions = AsyncMock(
-        side_effect=[
-            [{"id": 20, "node_id": "approval_gate", "status": "RUNNING"}],
-            [
-                {"node_id": "analysis", "status": "COMPLETED"},
-                {"node_id": "approval_gate", "status": "COMPLETED"},
-            ],
+        return_value=[
+            {"id": execution_id, "node_id": "approval_gate", "node_type": "approval", "status": "RUNNING"}
         ]
     )
-    storage.update_flow_node_execution = AsyncMock(return_value={"id": 20})
-    storage.create_flow_node_execution = AsyncMock(return_value={"id": 21})
-    storage.update_flow_instance = AsyncMock(return_value=updated_instance)
+    storage.get_approval_gate_for_flow_execution = AsyncMock(
+        return_value={
+            "id": gate_id,
+            "project_id": PROJECT_ID,
+            "flow_node_execution_id": execution_id,
+            "status": "PENDING",
+        }
+    )
+    storage.get_flow_node_execution = AsyncMock(
+        return_value={
+            "id": execution_id,
+            "instance_id": FLOW_INSTANCE_ID,
+            "node_id": "approval_gate",
+            "node_type": "approval",
+            "status": "RUNNING",
+        }
+    )
+    storage.resolve_flow_approval_gate = AsyncMock(
+        return_value={
+            "outcome": "applied",
+            "instance": updated_instance,
+            "activated_node_ids": [expected_node],
+        }
+    )
     _patch_state(storage)
+
+    unauthorized = await client.post(
+        f"/flows/instances/{FLOW_INSTANCE_ID}/node-action",
+        json={"node_id": "approval_gate", "action": "complete", "decision": decision},
+    )
+    assert unauthorized.status_code == 403
+    storage.get_approval_gate_for_flow_execution.assert_not_awaited()
 
     response = await client.post(
         f"/flows/instances/{FLOW_INSTANCE_ID}/node-action",
+        headers=OPERATOR_HEADERS,
         json={"node_id": "approval_gate", "action": "complete", "decision": decision},
     )
 
     assert response.status_code == 200
     assert response.json()["active_node_ids"] == [expected_node]
-    _, kwargs = storage.update_flow_instance.await_args
-    assert kwargs["context_json"]["approval"] == decision
+    storage.resolve_flow_approval_gate.assert_awaited_once()
+    kwargs = storage.resolve_flow_approval_gate.await_args.kwargs
+    assert kwargs["status"] == ("EDITS" if decision == "edit_requested" else "APPROVED")
+    assert kwargs["instance_updates"]["context_json"]["approval"] == decision
 
 
 @pytest.mark.anyio
-async def test_approval_rejection_routes_to_failed_terminal(client):
+async def test_approval_rejection_routes_through_decision_switch(client):
     runtime_flow = {
         **_flow(),
         "definition_json": _runtime_flow_definition(),
     }
-    failed_instance = {
-        **_instance(active_node_ids=[], status="FAILED"),
+    routed_instance = {
+        **_instance(active_node_ids=["decision_switch"], status="RUNNING"),
         "context_json": {"last_safe_node_id": "approval_gate", "approval": "rejected"},
     }
+    gate_id = uuid4()
+    execution_id = 30
 
     storage = MagicMock()
     storage.get_flow_instance = AsyncMock(
-        side_effect=[
-            {
-                **_instance(active_node_ids=["approval_gate"], status="RUNNING"),
-                "context_json": {"last_safe_node_id": "analysis"},
-            },
-            failed_instance,
-        ]
+        return_value={
+            **_instance(active_node_ids=["approval_gate"], status="RUNNING"),
+            "context_json": {"last_safe_node_id": "analysis"},
+        }
     )
     storage.get_flow = AsyncMock(return_value=runtime_flow)
     storage.list_flow_node_executions = AsyncMock(
-        side_effect=[
-            [{"id": 30, "node_id": "approval_gate", "status": "RUNNING"}],
-            [
-                {"node_id": "analysis", "status": "COMPLETED"},
-                {"node_id": "approval_gate", "status": "COMPLETED"},
-            ],
-            [{"id": 31, "node_id": "failed_terminal", "status": "RUNNING"}],
+        return_value=[
+            {"id": execution_id, "node_id": "approval_gate", "node_type": "approval", "status": "RUNNING"}
         ]
     )
-    storage.update_flow_node_execution = AsyncMock(return_value={"id": 30})
-    storage.create_flow_node_execution = AsyncMock(return_value={"id": 31})
-    storage.update_flow_instance = AsyncMock(return_value=failed_instance)
+    storage.get_approval_gate_for_flow_execution = AsyncMock(
+        return_value={
+            "id": gate_id,
+            "project_id": PROJECT_ID,
+            "flow_node_execution_id": execution_id,
+            "status": "PENDING",
+        }
+    )
+    storage.get_flow_node_execution = AsyncMock(
+        return_value={
+            "id": execution_id,
+            "instance_id": FLOW_INSTANCE_ID,
+            "node_id": "approval_gate",
+            "node_type": "approval",
+            "status": "RUNNING",
+        }
+    )
+    storage.resolve_flow_approval_gate = AsyncMock(
+        return_value={
+            "outcome": "applied",
+            "instance": routed_instance,
+            "activated_node_ids": ["decision_switch"],
+        }
+    )
     _patch_state(storage)
 
     response = await client.post(
         f"/flows/instances/{FLOW_INSTANCE_ID}/node-action",
+        headers=OPERATOR_HEADERS,
         json={"node_id": "approval_gate", "action": "complete", "decision": "rejected"},
     )
 
     assert response.status_code == 200
-    assert response.json()["status"] == "FAILED"
+    assert response.json()["active_node_ids"] == ["decision_switch"]
+    assert storage.resolve_flow_approval_gate.await_args.kwargs["status"] == "REJECTED"
+
+
+@pytest.mark.anyio
+async def test_cancelled_flow_approval_resolves_gate_and_terminally_cancels_instance(client):
+    runtime_flow = {**_flow(), "definition_json": _runtime_flow_definition()}
+    initial_instance = {
+        **_instance(active_node_ids=["approval_gate"], status="RUNNING"),
+        "context_json": {"last_safe_node_id": "analysis"},
+    }
+    cancelled_instance = {
+        **_instance(active_node_ids=["approval_gate"], status="CANCELLED"),
+        "active_node_ids": [],
+        "context_json": {
+            "last_safe_node_id": "approval_gate",
+            "approval": "cancelled",
+            "last_approval_decision": "cancelled",
+        },
+    }
+    storage = MagicMock()
+    gate_id = uuid4()
+    execution_id = 31
+    storage.get_flow_instance = AsyncMock(return_value=initial_instance)
+    storage.get_flow = AsyncMock(return_value=runtime_flow)
+    storage.list_flow_node_executions = AsyncMock(
+        return_value=[
+            {
+                "id": execution_id,
+                "node_id": "approval_gate",
+                "node_type": "approval",
+                "status": "RUNNING",
+            }
+        ]
+    )
+    storage.get_flow_node_execution = AsyncMock(
+        return_value={
+            "id": execution_id,
+            "instance_id": FLOW_INSTANCE_ID,
+            "node_id": "approval_gate",
+            "node_type": "approval",
+            "status": "RUNNING",
+        }
+    )
+    storage.get_approval_gate_for_flow_execution = AsyncMock(
+        return_value={
+            "id": gate_id,
+            "project_id": PROJECT_ID,
+            "flow_node_execution_id": execution_id,
+            "status": "PENDING",
+        }
+    )
+    storage.resolve_flow_approval_gate = AsyncMock(
+        return_value={
+            "outcome": "applied",
+            "instance": cancelled_instance,
+            "activated_node_ids": [],
+        }
+    )
+    _patch_state(storage)
+
+    response = await client.post(
+        f"/flows/instances/{FLOW_INSTANCE_ID}/node-action",
+        headers=OPERATOR_HEADERS,
+        json={"node_id": "approval_gate", "action": "complete", "decision": "cancelled"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "CANCELLED"
+    assert response.json()["active_node_ids"] == []
+    resolver_kwargs = storage.resolve_flow_approval_gate.await_args.kwargs
+    assert resolver_kwargs["status"] == "CANCELLED"
+    assert resolver_kwargs["instance_updates"]["status"] == "CANCELLED"
+    assert resolver_kwargs["instance_updates"]["active_node_ids"] == []
+
+
+@pytest.mark.anyio
+async def test_approval_resolution_reports_stale_sibling_snapshot_as_conflict(client):
+    runtime_flow = {**_flow(), "definition_json": _runtime_flow_definition()}
+    storage = MagicMock()
+    gate_id = uuid4()
+    execution_id = 32
+    storage.get_flow_instance = AsyncMock(
+        return_value={
+            **_instance(active_node_ids=["approval_gate"], status="RUNNING"),
+            "context_json": {"last_safe_node_id": "analysis"},
+        }
+    )
+    storage.get_flow = AsyncMock(return_value=runtime_flow)
+    storage.list_flow_node_executions = AsyncMock(
+        return_value=[
+            {
+                "id": execution_id,
+                "node_id": "approval_gate",
+                "node_type": "approval",
+                "status": "RUNNING",
+            }
+        ]
+    )
+    storage.get_flow_node_execution = AsyncMock(
+        return_value={
+            "id": execution_id,
+            "instance_id": FLOW_INSTANCE_ID,
+            "node_id": "approval_gate",
+            "node_type": "approval",
+            "status": "RUNNING",
+        }
+    )
+    storage.get_approval_gate_for_flow_execution = AsyncMock(
+        return_value={
+            "id": gate_id,
+            "project_id": PROJECT_ID,
+            "flow_node_execution_id": execution_id,
+            "status": "PENDING",
+        }
+    )
+    storage.resolve_flow_approval_gate = AsyncMock(
+        return_value={"outcome": "stale_instance"}
+    )
+    _patch_state(storage)
+
+    response = await client.post(
+        f"/flows/instances/{FLOW_INSTANCE_ID}/node-action",
+        headers=OPERATOR_HEADERS,
+        json={"node_id": "approval_gate", "action": "complete", "decision": "approved"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "FLOW_INSTANCE_CHANGED"
+    assert storage.resolve_flow_approval_gate.await_args.kwargs[
+        "expected_instance_snapshot"
+    ]["active_node_ids"] == ["approval_gate"]
+
+
+@pytest.mark.anyio
+async def test_cancel_flow_instance_closes_bound_approval_gates_atomically(client):
+    from orchestrator_api import main
+
+    active_instance = {
+        **_instance(active_node_ids=["approval_gate"], status="RUNNING"),
+        "context_json": {"last_safe_node_id": "analysis"},
+    }
+    cancelled_instance = {
+        **active_instance,
+        "status": "CANCELLED",
+        "active_node_ids": [],
+    }
+    storage = MagicMock()
+    storage.get_flow_instance = AsyncMock(return_value=active_instance)
+    storage.get_flow = AsyncMock(return_value=_flow())
+    storage.cancel_flow_instance = AsyncMock(
+        return_value={"outcome": "applied", "instance": cancelled_instance}
+    )
+    _patch_state(storage)
+
+    response = await client.post(
+        f"/flows/instances/{FLOW_INSTANCE_ID}/action", json={"action": "cancel"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "CANCELLED"
+    storage.cancel_flow_instance.assert_awaited_once_with(
+        FLOW_INSTANCE_ID,
+        expected_instance_snapshot=main._flow_instance_snapshot(active_instance),
+        decided_by="system:flow_instance_cancel",
+    )
+
+
+@pytest.mark.anyio
+async def test_cancel_flow_reports_legacy_unbound_gate_without_terminalizing_instance(client):
+    active_instance = {
+        **_instance(active_node_ids=["approval_gate"], status="RUNNING"),
+        "context_json": {"last_safe_node_id": "analysis"},
+    }
+    storage = MagicMock()
+    storage.get_flow_instance = AsyncMock(return_value=active_instance)
+    storage.get_flow = AsyncMock(return_value=_flow())
+    storage.cancel_flow_instance = AsyncMock(
+        return_value={"outcome": "legacy_gate_unresolved", "pending_legacy_gate_count": 1}
+    )
+    storage.update_flow_instance = AsyncMock()
+    _patch_state(storage)
+
+    response = await client.post(
+        f"/flows/instances/{FLOW_INSTANCE_ID}/action", json={"action": "cancel"}
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "LEGACY_FLOW_APPROVAL_GATE_UNRESOLVED"
+    storage.update_flow_instance.assert_not_awaited()
 
 
 @pytest.mark.anyio
@@ -857,6 +1096,7 @@ async def test_approval_complete_without_decision_waits_for_approval(client):
 
     response = await client.post(
         f"/flows/instances/{FLOW_INSTANCE_ID}/node-action",
+        headers=OPERATOR_HEADERS,
         json={"node_id": "approval_gate", "action": "complete"},
     )
 
@@ -884,19 +1124,51 @@ async def test_retry_failed_flow_restores_last_safe_node(client):
     storage = MagicMock()
     storage.get_flow_instance = AsyncMock(side_effect=[failed_instance, restored_instance])
     storage.get_flow = AsyncMock(return_value=runtime_flow)
-    storage.supersede_flow_node_executions = AsyncMock(return_value=1)
-    storage.update_flow_instance = AsyncMock(return_value=restored_instance)
-    storage.create_flow_node_execution = AsyncMock(return_value={"id": 40})
-    storage.create_approval_gate = AsyncMock(return_value={"id": uuid4()})
+    storage.activate_flow_nodes = AsyncMock(
+        return_value={"outcome": "applied", "instance": restored_instance}
+    )
     _patch_state(storage)
 
     response = await client.post(f"/flows/instances/{FLOW_INSTANCE_ID}/retry")
 
     assert response.status_code == 200
     assert response.json()["active_node_ids"] == ["analysis"]
-    _, kwargs = storage.update_flow_instance.await_args
-    assert kwargs["status"] == "RUNNING"
-    assert kwargs["active_node_ids"] == ["analysis"]
+    activation = storage.activate_flow_nodes.await_args.kwargs
+    assert activation["supersede_existing"] is True
+    assert activation["expected_statuses"] == {"FAILED", "CANCELLED"}
+    assert activation["activations"][0]["node_id"] == "analysis"
+
+
+@pytest.mark.anyio
+async def test_retry_approval_node_replaces_old_gate_with_atomic_activation(client):
+    runtime_flow = {**_flow(), "definition_json": _runtime_flow_definition()}
+    failed_instance = {
+        **_instance(active_node_ids=[], status="FAILED"),
+        "retry_count": 0,
+        "context_json": {"last_safe_node_id": "approval_gate"},
+    }
+    restored_instance = {
+        **failed_instance,
+        "status": "RUNNING",
+        "active_node_ids": ["approval_gate"],
+        "retry_count": 1,
+    }
+    storage = MagicMock()
+    storage.get_flow_instance = AsyncMock(side_effect=[failed_instance, restored_instance])
+    storage.get_flow = AsyncMock(return_value=runtime_flow)
+    storage.activate_flow_nodes = AsyncMock(
+        return_value={"outcome": "applied", "instance": restored_instance}
+    )
+    _patch_state(storage)
+
+    response = await client.post(f"/flows/instances/{FLOW_INSTANCE_ID}/retry")
+
+    assert response.status_code == 200
+    activation = storage.activate_flow_nodes.await_args.kwargs
+    assert activation["supersede_existing"] is True
+    assert activation["activations"][0]["node_type"] == "approval"
+    assert activation["activations"][0]["gate_type"] == "human"
+    assert activation["instance_updates"]["retry_count"] == 1
 
 
 @pytest.mark.anyio
@@ -956,7 +1228,9 @@ async def test_retry_failed_governed_task_reenters_worker_run_dispatch(client, m
         side_effect=[failed_instance, restarted_instance, refreshed_instance]
     )
     storage.get_flow = AsyncMock(return_value=runtime_flow)
-    storage.supersede_flow_node_executions = AsyncMock(return_value=1)
+    storage.activate_flow_nodes = AsyncMock(
+        return_value={"outcome": "applied", "instance": restarted_instance}
+    )
     storage.update_flow_instance = AsyncMock(
         side_effect=[restarted_instance, refreshed_instance]
     )
@@ -983,7 +1257,9 @@ async def test_retry_failed_governed_task_reenters_worker_run_dispatch(client, m
     assert response.json()["active_node_ids"] == ["governed_task"]
     assert response.json()["context_json"]["active_worker_runs"]["governed_task"]["run_id"] == str(run_id)
     dispatch.assert_awaited_once()
-    storage.supersede_flow_node_executions.assert_awaited_once_with(FLOW_INSTANCE_ID)
+    activation = storage.activate_flow_nodes.await_args.kwargs
+    assert activation["supersede_existing"] is True
+    assert activation["activations"][0]["node_id"] == "governed_task"
 
 
 @pytest.mark.anyio

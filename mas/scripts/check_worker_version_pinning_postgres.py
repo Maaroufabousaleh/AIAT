@@ -35,7 +35,7 @@ if CORE_ROOT.exists() and str(CORE_ROOT) not in sys.path:
 from mas_core.memory.storage import AgentStorage  # noqa: E402
 
 CHECK_SCHEMA = "aiat.worker-version-pinning-postgres-certification.v1"
-EXPECTED_MIGRATION = "0045_worker_tool_effects"
+EXPECTED_MIGRATION = "0048_worker_run_retry_lineage"
 WORKER_NAME = "aiat-cert-worker-version-pinning-v1"
 WORKER_PREFIX = f"{WORKER_NAME}%"
 WORKER_ID = UUID("00000000-0000-4000-a000-000000000971")
@@ -494,6 +494,7 @@ async def _run(dsn: str | None) -> dict[str, Any]:
         claimed = await storage.claim_worker_run(owner=PIN_OWNER, run_id=RUN_V1_ID)
         if claimed is None:
             raise RuntimeError("version-one fixture run was not claimable")
+        attempt_count_v1 = int(claimed.get("attempt_count") or 0)
         current_state = "CLAIMED"
         for next_state in ("VALIDATING", "READY", "DISPATCHING", "RUNNING"):
             transitioned = await storage.transition_worker_run(
@@ -502,6 +503,8 @@ async def _run(dsn: str | None) -> dict[str, Any]:
                 expected_state=current_state,
                 actor=PIN_OWNER,
                 reason="version pin fixture progression",
+                claim_owner=PIN_OWNER,
+                attempt_count=attempt_count_v1,
             )
             if transitioned is None:
                 raise RuntimeError(f"version-one fixture transition lost CAS: {next_state}")

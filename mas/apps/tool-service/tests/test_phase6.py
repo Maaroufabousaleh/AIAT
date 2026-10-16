@@ -664,6 +664,7 @@ class TestHTTPIntegration:
         assert data["success"] is True
         assert data["result"]["name"] == "CEO-created regression project"
         assert calls[0]["name"] == "CEO-created regression project"
+        assert calls[0]["start_immediately"] is False
 
     @pytest.mark.anyio
     async def test_project_status_invalid_id_returns_tool_error_without_orchestrator_call(

@@ -75,7 +75,18 @@ explicit operator workflows. A fixture pass does not establish live readiness.
 ## Commit and review notes
 
 Use a concise imperative subject and explain the boundary affected. Before
-integrating a change, record:
+every commit, including commits prepared by an AI agent, review the complete
+staged diff (including new files) for secrets and sensitive data. Run the
+repository's configured secret scanner when available, and inspect its results
+without printing or copying matched values. Check for keys, tokens, passwords,
+private keys, cookies, credential-bearing URLs, connection strings, and
+secret-bearing logs or generated artifacts. Never stage `.env` files,
+credentials, private keys, or unredacted secret-bearing evidence. If a possible
+secret is found, stop the commit, remove it safely from the staged change
+without disturbing unrelated work, and notify the operator; treat any exposed
+credential as requiring rotation.
+
+Before integrating a change, record:
 
 - what changed and why;
 - which authority, state, or evidence boundary is affected;

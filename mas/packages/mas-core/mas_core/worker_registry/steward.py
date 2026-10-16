@@ -13,6 +13,7 @@ import re
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -20,7 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from mas_core.worker_contract import ConformanceReport, WorkerCapabilities
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping
 
 
 class StewardStatus(StrEnum):
@@ -70,6 +71,13 @@ class StewardTransitionError(ValueError):
     """Raised when a governance transition would bypass a gate."""
 
 
+AIAT_FIRST_PARTY_SOURCE_PROVIDER = "aiat"
+_AIAT_FIRST_PARTY_REPOSITORY_HOST = "github.com"
+_AIAT_FIRST_PARTY_REPOSITORY_PATH = "maaroufabousaleh/aiat"
+_GIT_COMMIT_SHA = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$", re.IGNORECASE)
+_OCI_SHA256_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+
 def _is_license_metadata_check(name: str) -> bool:
     """Return whether a caller-supplied check is licence metadata only."""
     normalized = str(name).strip().lower().replace("-", "_")
@@ -83,7 +91,14 @@ def _is_license_metadata_check(name: str) -> bool:
 
 
 class ExternalProvenance(BaseModel):
-    """Pinned identity and supply-chain evidence for an external runtime."""
+    """Pinned identity and supply-chain evidence for an external runtime.
+
+    ``source_provider="aiat"`` is the explicit identity for an AIAT-owned
+    first-party worker.  That identity is deliberately stricter than generic
+    upstream provenance: it requires a canonical HTTPS repository, an exact
+    Git commit SHA, and a digest-addressed OCI image.  It does not imply that
+    security review, conformance, human approval, or rollout has passed.
+    """
 
     model_config = ConfigDict(extra="allow", frozen=True)
 
@@ -110,12 +125,46 @@ class ExternalProvenance(BaseModel):
             raise ValueError("external provenance requires an exact release, commit, package, or OCI digest")
         if self.transport_type == "oci" and not self.oci_image_digest:
             raise ValueError("OCI provenance requires an image digest")
+        if self.source_provider.strip().lower() == AIAT_FIRST_PARTY_SOURCE_PROVIDER:
+            repository = urlsplit(self.canonical_source_repository.strip())
+            repository_path = repository.path.strip("/").lower()
+            if repository_path.endswith(".git"):
+                repository_path = repository_path[:-4]
+            if (
+                repository.scheme.lower() != "https"
+                or repository.hostname is None
+                or repository.hostname.lower() != _AIAT_FIRST_PARTY_REPOSITORY_HOST
+                or repository_path != _AIAT_FIRST_PARTY_REPOSITORY_PATH
+                or repository.username is not None
+                or repository.password is not None
+                or repository.query
+                or repository.fragment
+            ):
+                raise ValueError(
+                    "AIAT first-party provenance requires the canonical AIAT HTTPS source repository"
+                )
+            if not self.commit_sha or not _GIT_COMMIT_SHA.fullmatch(self.commit_sha):
+                raise ValueError(
+                    "AIAT first-party provenance requires an exact 40- or 64-character Git commit SHA"
+                )
+            if not self.oci_image_digest or not _OCI_SHA256_DIGEST.fullmatch(
+                self.oci_image_digest
+            ):
+                raise ValueError(
+                    "AIAT first-party OCI provenance requires a sha256 image digest, not a mutable tag"
+                )
+            if self.transport_type.strip().lower() != "oci":
+                raise ValueError(
+                    "AIAT first-party provenance requires the OCI worker transport"
+                )
         return self
 
 
 def operational_promotion_checks(
     provenance: ExternalProvenance,
     *,
+    worker_id: str | None = None,
+    current_worker: Mapping[str, Any] | None = None,
     documentation: bool | None = None,
     capability_snapshot: bool | None = None,
 ) -> dict[str, bool]:
@@ -126,6 +175,12 @@ def operational_promotion_checks(
     the API add its persisted documentation/capability requirements without
     making licence metadata part of the predicate.
     """
+    from mas_core.worker_registry.source_bound_security_scan import (
+        source_bound_security_scan_is_valid,
+        source_bound_security_scan_required,
+    )
+
+    source_scan_required = source_bound_security_scan_required(provenance)
     checks = {
         "provenance_pin": bool(
             provenance.exact_release
@@ -133,7 +188,16 @@ def operational_promotion_checks(
             or provenance.package_version
             or provenance.oci_image_digest
         ),
-        "security": provenance.security_scan_status == "passed",
+        "security": provenance.security_scan_status == "passed"
+        and (
+            not source_scan_required
+            or source_bound_security_scan_is_valid(
+                getattr(provenance, "source_bound_security_scan", None),
+                expected_worker_id=worker_id,
+                provenance=provenance,
+                current_worker=current_worker,
+            )
+        ),
     }
     if documentation is not None:
         checks["documentation"] = documentation
@@ -498,7 +562,10 @@ class ExternalWorkerSteward:
         # trusted from caller-selected check names.  Licence fields remain in
         # ``source_provenance`` as metadata only and are intentionally absent
         # from this predicate.
-        mandatory_checks = operational_promotion_checks(self.provenance)
+        mandatory_checks = operational_promotion_checks(
+            self.provenance,
+            worker_id=self.worker_id,
+        )
         supplemental_checks = {
             name: bool(value)
             for name, value in dict(checks).items()
@@ -521,6 +588,17 @@ class ExternalWorkerSteward:
         )
         self.certifications[certification.certification_id] = certification
         candidate.certification_id = certification.certification_id
+        if mandatory_checks.get("security"):
+            # A scan is additional evidence for this immutable source identity.
+            # Refresh candidate snapshots so later rollout checks use the same
+            # server-validated report instead of a pre-scan scalar snapshot.
+            candidate.source_provenance = self.provenance
+            candidate.bundle = candidate.bundle.model_copy(
+                update={"source_provenance": self.provenance}
+            )
+            candidate.adapter = candidate.adapter.model_copy(
+                update={"source_provenance": self.provenance}
+            )
         candidate.evidence["certification"] = certification.model_dump(mode="json")
         if passed:
             # A passed certification records evidence but deliberately leaves

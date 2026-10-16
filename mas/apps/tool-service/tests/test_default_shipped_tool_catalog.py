@@ -164,11 +164,13 @@ async def test_command_run_safe_rejects_unallowlisted_commands(
 async def test_command_run_safe_fails_closed_without_sandbox(make_registry, tmp_path, monkeypatch):
     monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.delenv("TOOL_SANDBOX_COMMAND", raising=False)
+    (tmp_path / "project-1").mkdir()
     response = await make_registry().execute(
         ToolRequest(
             caller_id="worker-alpha",
             caller_role=AgentRole.WORKER,
             caller_team="dept_qa",
+            project_id="project-1",
             tool_name="command.run_safe",
             kwargs={"command": "pytest"},
         )
@@ -202,6 +204,7 @@ async def test_command_run_safe_delegates_worker_command_to_gvisor_adapter(
         }
 
     monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(tmp_path))
+    (tmp_path / "project-1").mkdir()
     monkeypatch.setenv("TOOL_SANDBOX_COMMAND", "sandbox-runner --json-stdin")
     monkeypatch.setattr("tool_service.tools.adapters._run_process", fake_run_process)
     response = await make_registry().execute(
@@ -209,6 +212,7 @@ async def test_command_run_safe_delegates_worker_command_to_gvisor_adapter(
             caller_id="worker-alpha",
             caller_role=AgentRole.WORKER,
             caller_team="dept_qa",
+            project_id="project-1",
             tool_name="command.run_safe",
             kwargs={"command": ["pytest", "tests"]},
         )
@@ -243,6 +247,7 @@ async def test_command_run_safe_reports_degraded_sandbox_output(
         }
 
     monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(tmp_path))
+    (tmp_path / "project-1").mkdir()
     monkeypatch.setenv("TOOL_SANDBOX_COMMAND", "sandbox-runner --json-stdin")
     monkeypatch.setattr("tool_service.tools.adapters._run_process", fake_run_process)
     response = await make_registry().execute(
@@ -250,6 +255,7 @@ async def test_command_run_safe_reports_degraded_sandbox_output(
             caller_id="worker-alpha",
             caller_role=AgentRole.WORKER,
             caller_team="dept_qa",
+            project_id="project-1",
             tool_name="command.run_safe",
             kwargs={"command": ["pytest", "tests"]},
         )
@@ -289,7 +295,9 @@ async def test_python_repo_search_skips_symlink_outside_workspace(
 ):
     outside = tmp_path.parent / "outside-search.txt"
     outside.write_text("private needle", encoding="utf-8")
-    link = tmp_path / "linked.txt"
+    project_workspace = tmp_path / "project-1"
+    project_workspace.mkdir()
+    link = project_workspace / "linked.txt"
     try:
         link.symlink_to(outside)
     except OSError:
@@ -302,6 +310,7 @@ async def test_python_repo_search_skips_symlink_outside_workspace(
             caller_id="worker-alpha",
             caller_role=AgentRole.WORKER,
             caller_team="dept_qa",
+            project_id="project-1",
             tool_name="repo.search",
             kwargs={"query": "needle"},
         )
@@ -319,6 +328,7 @@ async def test_repo_read_rejects_path_traversal(make_registry, tmp_path, monkeyp
         caller_id="worker-alpha",
         caller_role=AgentRole.WORKER,
         caller_team="dept_qa",
+        project_id="project-1",
         tool_name="repo.read",
         kwargs={"path": "../outside.txt"},
     )
@@ -333,7 +343,8 @@ async def test_repo_read_rejects_path_traversal(make_registry, tmp_path, monkeyp
 @pytest.mark.anyio
 async def test_file_patch_replaces_exact_text(make_registry, tmp_path, monkeypatch):
     monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(tmp_path))
-    target = tmp_path / "app.txt"
+    target = tmp_path / "project-1" / "app.txt"
+    target.parent.mkdir(parents=True)
     target.write_text("alpha\nbeta\n", encoding="utf-8")
     registry = make_registry()
 
@@ -342,6 +353,7 @@ async def test_file_patch_replaces_exact_text(make_registry, tmp_path, monkeypat
             caller_id="worker-alpha",
             caller_role=AgentRole.WORKER,
             caller_team="dept_qa",
+            project_id="project-1",
             tool_name="file.patch",
             kwargs={"path": "app.txt", "find": "beta", "replace": "gamma"},
         )
@@ -364,6 +376,7 @@ async def test_security_scan_fails_closed_without_sandbox_adapter(
             caller_id="worker-alpha",
             caller_role=AgentRole.WORKER,
             caller_team="dept_qa",
+            project_id="project-1",
             tool_name="security.scan",
             kwargs={"path": "."},
         )
@@ -395,6 +408,7 @@ async def test_security_scan_delegates_semgrep_to_gvisor_adapter(
             caller_id="worker-alpha",
             caller_role=AgentRole.WORKER,
             caller_team="office_cso",
+            project_id="project-1",
             tool_name="security.scan",
             kwargs={"path": ".", "config": "auto"},
         )
@@ -406,7 +420,7 @@ async def test_security_scan_delegates_semgrep_to_gvisor_adapter(
     assert "semgrep scan --json --metrics=off --disable-version-check" in captured["argv"][2]
     assert "--no-git-ignore --include=*.py --exclude=.git" in captured["argv"][2]
     assert "/workspace/mas/apps/tool-service/tool_service/semgrep-default.yml" in captured["argv"][2]
-    assert captured["cwd"] == tmp_path
+    assert captured["cwd"] == tmp_path / "project-1"
     assert response.result["findings_count"] == 0
 
 
@@ -434,6 +448,7 @@ async def test_security_scan_reports_invalid_semgrep_shape_without_raising(
             caller_id="worker-alpha",
             caller_role=AgentRole.WORKER,
             caller_team="office_cso",
+            project_id="project-1",
             tool_name="security.scan",
             kwargs={"path": ".", "scanner": "semgrep"},
         )
@@ -468,6 +483,7 @@ async def test_security_scan_reports_degraded_skillspector_output(
             caller_id="worker-alpha",
             caller_role=AgentRole.WORKER,
             caller_team="office_cso",
+            project_id="project-1",
             tool_name="security.scan",
             kwargs={"path": ".", "scanner": "skillspector"},
         )
@@ -501,6 +517,7 @@ async def test_trufflehog_alias_delegates_to_the_shared_bounded_adapter(
             caller_id="worker-alpha",
             caller_role=AgentRole.WORKER,
             caller_team="office_cso",
+            project_id="project-1",
             tool_name="trufflehog",
             kwargs={"path": "."},
         )
@@ -534,6 +551,7 @@ async def test_skillspector_alias_delegates_to_the_shared_bounded_adapter(
             caller_id="worker-alpha",
             caller_role=AgentRole.WORKER,
             caller_team="office_cso",
+            project_id="project-1",
             tool_name="skillspector",
             kwargs={"path": "."},
         )
@@ -569,7 +587,9 @@ async def test_document_ingest_falls_back_to_text_when_docling_missing(
 ):
     monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setattr("tool_service.tools.adapters.shutil.which", lambda _name: None)
-    source = Path(tmp_path / "notes.md")
+    project_workspace = tmp_path / "project-1"
+    project_workspace.mkdir()
+    source = project_workspace / "notes.md"
     source.write_text("# Notes\n\nBody", encoding="utf-8")
     registry = make_registry()
 
@@ -578,6 +598,7 @@ async def test_document_ingest_falls_back_to_text_when_docling_missing(
             caller_id="worker-alpha",
             caller_role=AgentRole.WORKER,
             caller_team="dept_qa",
+            project_id="project-1",
             tool_name="document.ingest",
             kwargs={"path": "notes.md"},
         )
@@ -596,7 +617,9 @@ async def test_document_ingest_falls_back_to_text_when_docling_missing(
 async def test_document_ingest_uses_docling_runner_when_installed(
     make_registry, tmp_path, monkeypatch
 ):
-    source = tmp_path / "notes.md"
+    project_workspace = tmp_path / "project-1"
+    project_workspace.mkdir()
+    source = project_workspace / "notes.md"
     source.write_text("# Notes", encoding="utf-8")
     monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setattr(
@@ -619,6 +642,7 @@ async def test_document_ingest_uses_docling_runner_when_installed(
             caller_id="writer",
             caller_role=AgentRole.WORKER,
             caller_team="dept_system",
+            project_id="project-1",
             tool_name="document.ingest",
             kwargs={"path": "notes.md"},
         )
@@ -641,7 +665,9 @@ async def test_document_ingest_uses_docling_runner_when_installed(
 async def test_document_ingest_reports_invalid_docling_output_without_raising(
     make_registry, tmp_path, monkeypatch, stdout, reason
 ):
-    source = tmp_path / "notes.md"
+    project_workspace = tmp_path / "project-1"
+    project_workspace.mkdir()
+    source = project_workspace / "notes.md"
     source.write_text("# Notes", encoding="utf-8")
     monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setattr(
@@ -663,6 +689,7 @@ async def test_document_ingest_reports_invalid_docling_output_without_raising(
             caller_id="writer",
             caller_role=AgentRole.WORKER,
             caller_team="dept_system",
+            project_id="project-1",
             tool_name="document.ingest",
             kwargs={"path": "notes.md"},
         )
@@ -682,6 +709,7 @@ async def test_diagram_render_reports_successful_artifact_metadata(
     make_registry, tmp_path, monkeypatch
 ):
     monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(tmp_path))
+    (tmp_path / "project-1").mkdir()
     monkeypatch.setattr(
         "tool_service.tools.adapters.shutil.which",
         lambda name: "/usr/local/bin/mmdc" if name == "mmdc" else None,
@@ -698,6 +726,7 @@ async def test_diagram_render_reports_successful_artifact_metadata(
             caller_id="diagram-worker",
             caller_role=AgentRole.WORKER,
             caller_team="dept_system",
+            project_id="project-1",
             tool_name="diagram.render",
             kwargs={"source": "flowchart TD\n  A --> B", "output": "diagram.svg"},
         )
@@ -716,6 +745,7 @@ async def test_diagram_render_does_not_report_success_without_artifact(
     make_registry, tmp_path, monkeypatch
 ):
     monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(tmp_path))
+    (tmp_path / "project-1").mkdir()
     monkeypatch.setattr(
         "tool_service.tools.adapters.shutil.which",
         lambda name: "/usr/local/bin/mmdc" if name == "mmdc" else None,
@@ -730,6 +760,7 @@ async def test_diagram_render_does_not_report_success_without_artifact(
             caller_id="diagram-worker",
             caller_role=AgentRole.WORKER,
             caller_team="dept_system",
+            project_id="project-1",
             tool_name="diagram.render",
             kwargs={"source": "flowchart TD\n  A --> B", "output": "missing.svg"},
         )
@@ -749,6 +780,7 @@ async def test_external_code_review_reports_invalid_output_without_raising(
     make_registry, tmp_path, monkeypatch
 ):
     monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(tmp_path))
+    (tmp_path / "project-1").mkdir()
     monkeypatch.setenv("TOOL_CODE_REVIEW_COMMAND", "review-adapter")
 
     async def fake_run_process(argv, **kwargs):
@@ -765,6 +797,7 @@ async def test_external_code_review_reports_invalid_output_without_raising(
             caller_id="review-worker",
             caller_role=AgentRole.WORKER,
             caller_team="dept_qa",
+            project_id="project-1",
             tool_name="code.review",
             kwargs={"mode": "diff"},
         )
@@ -855,8 +888,8 @@ async def test_secrets_manage_uses_encrypted_credentials_boundary(make_registry,
 async def test_infra_ready_signal_transitions_real_project(make_registry, monkeypatch):
     captured = {}
 
-    async def fake_post(path, body=None):
-        captured.update(path=path, body=body)
+    async def fake_post(path, body=None, *, context=None, principal="service"):
+        captured.update(path=path, body=body, context=context, principal=principal)
         return {"next_state": "IN_PROGRESS"}
 
     monkeypatch.setattr("tool_service.tools.infra.orch_post", fake_post)
@@ -873,6 +906,8 @@ async def test_infra_ready_signal_transitions_real_project(make_registry, monkey
     assert response.success is True
     assert captured["path"] == "/projects/project-1/transition"
     assert captured["body"]["event"] == "infra_ready"
+    assert captured["principal"] == "operator"
+    assert captured["context"]["caller_id"] == "devops-pm"
 
 
 @pytest.mark.anyio

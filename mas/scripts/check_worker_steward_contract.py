@@ -44,8 +44,11 @@ _STAGES = (
 )
 
 
-def _external_manifests(workers_dir: Path) -> tuple[list[WorkerManifest], list[str]]:
+def _external_manifests(
+    workers_dir: Path,
+) -> tuple[list[WorkerManifest], list[WorkerManifest], list[str]]:
     manifests: list[WorkerManifest] = []
+    candidates: list[WorkerManifest] = []
     errors: list[str] = []
     for path in sorted(workers_dir.glob("*.yaml")):
         try:
@@ -56,8 +59,11 @@ def _external_manifests(workers_dir: Path) -> tuple[list[WorkerManifest], list[s
             continue
         source_repo = str(manifest.metadata.source_repo or "").strip().lower()
         if source_repo not in {"", "local"}:
-            manifests.append(manifest)
-    return manifests, errors
+            if "integration_candidate" in manifest.metadata.tags:
+                candidates.append(manifest)
+            else:
+                manifests.append(manifest)
+    return manifests, candidates, errors
 
 
 def _provenance(manifest: WorkerManifest) -> ExternalProvenance:
@@ -195,7 +201,7 @@ def _exercise_worker(manifest: WorkerManifest) -> dict[str, Any]:
 
 
 def build_report(*, workers_dir: Path = DEFAULT_WORKERS_DIR) -> dict[str, Any]:
-    manifests, errors = _external_manifests(workers_dir)
+    manifests, candidates, errors = _external_manifests(workers_dir)
     rows: list[dict[str, Any]] = []
     for manifest in manifests:
         try:
@@ -203,7 +209,7 @@ def build_report(*, workers_dir: Path = DEFAULT_WORKERS_DIR) -> dict[str, Any]:
         except (ValueError, TypeError, ValidationError) as exc:
             errors.append(f"{manifest.metadata.id}: {type(exc).__name__}")
     if not manifests:
-        errors.append("no externally sourced worker manifests found")
+        errors.append("no externally sourced default-worker manifests found")
     failed_rows = [row["worker_id"] for row in rows if row["status"] != "pass"]
     if failed_rows:
         errors.extend(f"{worker_id}: lifecycle contract failed" for worker_id in failed_rows)
@@ -211,6 +217,19 @@ def build_report(*, workers_dir: Path = DEFAULT_WORKERS_DIR) -> dict[str, Any]:
         "schema_version": CHECK_SCHEMA,
         "status": "fail" if errors else "pass",
         "external_worker_count": len(manifests),
+        "integration_candidate_count": len(candidates),
+        "integration_candidates": [
+            {
+                "worker_id": manifest.metadata.id,
+                "source_revision": manifest.metadata.source_revision,
+                "certification_status": manifest.certification_status,
+                "security_scan_status": str(
+                    (manifest.source_provenance or {}).get("security_scan_status") or "not_recorded"
+                ),
+                "status": "pending_governance",
+            }
+            for manifest in candidates
+        ],
         "rows": rows,
         "errors": sorted(errors),
         "boundary": {

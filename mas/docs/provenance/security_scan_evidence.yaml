@@ -1,53 +1,679 @@
+# Historical findings remain retained; superseded rows are audit history only.
 schema_version: aiat.security-scan-evidence.v1
 programme_scope: personal-internal-only
 policy:
   security_scan_is_technical_gate: true
   licence_metadata_is_gate: false
   findings_require_review: true
-
-# This is a historical, secret-safe summary of the exact-source scan. The full
-# temporary scanner output and source clone were not retained, so this row is
-# not remediation input and cannot be treated as a reproducible certification.
 scans:
-  - id: opencode-1.17.13-semgrep-2026-08-10
-    scanner: semgrep
-    scanner_version: 1.168.0
-    mode: auto-ruleset
-    source_repo: https://github.com/anomalyco/opencode
-    source_revision: v1.17.13
-    source_commit: 10c894bdeef3618f5666fb506ef7f9491bb964d8
-    target_workers: [coding_worker, tester]
-    captured_at: 2026-08-10
-    status: findings_review_required
-    classification: FAILED_UNREPRODUCIBLE
-    raw_findings_retained: false
-    source_snapshot_retained: false
-    remediation_input: false
-    replacement_candidate_ref: mas/docs/provenance/opencode-candidate/2026-08-21-v1.18.21/candidate-certification.json
-    scanned_file_count: 5062
-    finding_count: 316
-    engine_warning_count: 54
-    severity_counts:
-      error: 19
-      medium: 1
-      warning: 279
-      info: 17
-    highest_severity: error
-    result_sha256: e960a57d7b397d8af9271025b2025b0f46567967b4c684eaab8652a75d47d3b5
-    rule_counts:
-      javascript.lang.security.audit.path-join-resolve-traversal: 261
-      javascript.lang.security.audit.detect-non-literal-regexp: 13
-      javascript.audit.detect-replaceall-sanitization: 11
-      yaml.github-actions.security.gha-curl-pipe-shell: 7
-      javascript.lang.security.audit.unsafe-formatstring: 6
-      yaml.github-actions.security.run-shell-injection: 5
-      javascript.lang.security.audit.spawn-shell-true: 3
-      javascript.lang.security.detect-child-process: 2
-      problem-based-packs.insecure-transport.js-node.bypass-tls-verification: 2
-      package_managers.bun.bun-missing-minimum-release-age: 1
-      yaml.github-actions.security.github-actions-mutable-action-tag: 1
-      javascript.lang.security.audit.prototype-pollution: 1
-      dockerfile.security.missing-user-entrypoint: 1
-      dockerfile.security.missing-user: 1
-      javascript.express.security.cors-misconfiguration: 1
-    review_action: "Triage findings and Semgrep engine warnings in an isolated review run before activation; neither worker may use this evidence as a passed security gate."
+- id: opencode-1.17.13-semgrep-2026-08-10
+  scanner: semgrep
+  scanner_version: 1.168.0
+  mode: auto-ruleset
+  source_repo: https://github.com/anomalyco/opencode
+  source_revision: v1.17.13
+  source_commit: 10c894bdeef3618f5666fb506ef7f9491bb964d8
+  target_workers:
+  - coding_worker
+  - tester
+  captured_at: 2026-08-10
+  status: findings_review_required
+  classification: FAILED_UNREPRODUCIBLE
+  raw_findings_retained: false
+  source_snapshot_retained: false
+  remediation_input: false
+  replacement_candidate_ref:
+    mas/docs/provenance/opencode-candidate/2026-09-30-v1.18.21/candidate-certification.json
+  finding_evidence_status: unavailable_no_retained_raw_evidence
+  review_action: Historical source and raw result artifacts are unavailable. Do not use unverified scalar
+    counts; rerun against the exact pinned source if this worker pin must be reconsidered.
+  historical_only: true
+- id: opencode-1.18.21-semgrep-2026-09-30
+  scanner: semgrep
+  scanner_version: 1.168.0
+  source_repo: https://github.com/anomalyco/opencode.git
+  source_revision: v1.18.21
+  source_commit: 826d9ad46a22bef0294998e08daa3c4904fea28f
+  captured_at: '2026-09-30'
+  candidate_ref: mas/docs/provenance/opencode-candidate/2026-09-30-v1.18.21/candidate-certification.json
+  candidate_image_ref:
+    ghcr.io/anomalyco/opencode:1.18.21@sha256:56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb
+  candidate_image_digest: 56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb
+  target_workers:
+  - coding_worker
+  - tester
+  invocation:
+  - /tmp/aiat-opencode-tools-312-571a6a4/install/venv/bin/semgrep
+  - --config
+  - auto
+  - --json
+  - --no-git-ignore
+  - <source>
+  working_directory: <source>
+  status: blocked
+  scanner_status: blocked
+  classification: SUPERSEDED_BY_EXACT_SCOPE_2026_10_02_SCAN
+  scanned_file_count: 5508
+  scanned_file_count_status: reported_by_scanner
+  source_snapshot_file_count: 6520
+  finding_count: 335
+  rule_counts:
+    dockerfile.security.missing-user-entrypoint.missing-user-entrypoint: 1
+    dockerfile.security.missing-user.missing-user: 1
+    javascript.audit.detect-replaceall-sanitization.detect-replaceall-sanitization: 16
+    javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp: 22
+    javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal: 265
+    javascript.lang.security.audit.prototype-pollution.prototype-pollution-loop.prototype-pollution-loop: 3
+    javascript.lang.security.audit.spawn-shell-true.spawn-shell-true: 3
+    javascript.lang.security.audit.unsafe-formatstring.unsafe-formatstring: 6
+    javascript.lang.security.detect-child-process.detect-child-process: 2
+    package_managers.bun.bun-missing-minimum-release-age.bun-missing-minimum-release-age: 1
+    problem-based-packs.insecure-transport.js-node.bypass-tls-verification.bypass-tls-verification: 2
+    yaml.github-actions.security.gha-curl-pipe-shell.gha-curl-pipe-shell: 7
+    yaml.github-actions.security.github-actions-mutable-action-tag.github-actions-mutable-action-tag: 1
+    yaml.github-actions.security.run-shell-injection.run-shell-injection: 5
+  severity_counts:
+    ERROR: 19
+    INFO: 22
+    MEDIUM: 1
+    WARNING: 293
+  scanner_error_count: 54
+  engine_warning_count: 54
+  result_path: mas/docs/provenance/opencode-candidate/2026-09-30-v1.18.21/semgrep.json
+  result_sha256: 97cd09a156cd5352ae01d030b1118001947a9af43e54a49cd13895a32f455188
+  result_bytes: 1336384
+  raw_findings_retained: true
+  raw_output_sanitized: true
+  source_snapshot_retained: true
+  source_snapshot_ref: mas/docs/provenance/opencode-candidate/2026-09-30-v1.18.21/source-snapshot.tar.xz
+  source_archive_sha256: 77b8cee43c3f74d94ad4651c375ec02bcd55a20aff06f9aac8e7be59c70811a0
+  source_snapshot_sha256: e338f0fc18145f7fc0ac848da5593ae77ea63adbd5f1d386ca8d82151a280370
+  finding_disposition: unreviewed
+  owner: personal-operator
+  next_action: Review each of the 335 semgrep findings against the retained exact-source snapshot; record
+    confirmed, false-positive, or remediated dispositions before OpenCode activation.
+  remediation_input: false
+  historical_only: true
+  superseded_by: mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21/candidate-certification.json
+  superseded_reason: Retained as audit history. The 2026-10-02 candidate refresh binds every active scanner
+    result to the corrected exact-source scope; SkillSpector now scans only bundled .opencode/skills
+    resources.
+  replacement_candidate_ref:
+    mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21/candidate-certification.json
+- id: opencode-1.18.21-trufflehog-2026-09-30
+  scanner: trufflehog
+  scanner_version: trufflehog 3.97.0
+  source_repo: https://github.com/anomalyco/opencode.git
+  source_revision: v1.18.21
+  source_commit: 826d9ad46a22bef0294998e08daa3c4904fea28f
+  captured_at: '2026-09-30'
+  candidate_ref: mas/docs/provenance/opencode-candidate/2026-09-30-v1.18.21/candidate-certification.json
+  candidate_image_ref:
+    ghcr.io/anomalyco/opencode:1.18.21@sha256:56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb
+  candidate_image_digest: 56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb
+  target_workers:
+  - coding_worker
+  - tester
+  invocation:
+  - /tmp/aiat-opencode-tools-312-571a6a4/install/bin/trufflehog
+  - filesystem
+  - --json
+  - --no-update
+  - <source>
+  working_directory: <source>
+  status: findings_review_required
+  scanner_status: pass
+  classification: SUPERSEDED_BY_EXACT_SCOPE_2026_10_02_SCAN
+  scanned_file_count:
+  scanned_file_count_status: not_reported_by_scanner
+  source_snapshot_file_count: 6520
+  finding_count: 53
+  rule_counts:
+    Box: 3
+    DigitalOceanToken: 1
+    Gitlab: 24
+    GoogleGeminiAPIKey: 1
+    Honeycomb: 2
+    Postgres: 1
+    URI: 21
+  severity_counts:
+    HIGH: 53
+  scanner_error_count: 0
+  engine_warning_count: 0
+  result_path: mas/docs/provenance/opencode-candidate/2026-09-30-v1.18.21/trufflehog.json
+  result_sha256: ffe31f6d232a5aea85330aeacdb21b263c7694c8878a5f2bf519d509542f32f4
+  result_bytes: 39469
+  raw_findings_retained: true
+  raw_output_sanitized: true
+  source_snapshot_retained: true
+  source_snapshot_ref: mas/docs/provenance/opencode-candidate/2026-09-30-v1.18.21/source-snapshot.tar.xz
+  source_archive_sha256: 77b8cee43c3f74d94ad4651c375ec02bcd55a20aff06f9aac8e7be59c70811a0
+  source_snapshot_sha256: e338f0fc18145f7fc0ac848da5593ae77ea63adbd5f1d386ca8d82151a280370
+  finding_disposition: unreviewed
+  owner: personal-operator
+  next_action: Review each of the 53 trufflehog findings against the retained exact-source snapshot; record
+    confirmed, false-positive, or remediated dispositions before OpenCode activation.
+  remediation_input: false
+  historical_only: true
+  superseded_by: mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21/candidate-certification.json
+  superseded_reason: Retained as audit history. The 2026-10-02 candidate refresh binds every active scanner
+    result to the corrected exact-source scope; SkillSpector now scans only bundled .opencode/skills
+    resources.
+  replacement_candidate_ref:
+    mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21/candidate-certification.json
+- id: opencode-1.18.21-skillspector-2026-09-30
+  scanner: skillspector
+  scanner_version: SkillSpector v2.9.6
+  source_repo: https://github.com/anomalyco/opencode.git
+  source_revision: v1.18.21
+  source_commit: 826d9ad46a22bef0294998e08daa3c4904fea28f
+  captured_at: '2026-09-30'
+  candidate_ref: mas/docs/provenance/opencode-candidate/2026-09-30-v1.18.21/candidate-certification.json
+  candidate_image_ref:
+    ghcr.io/anomalyco/opencode:1.18.21@sha256:56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb
+  candidate_image_digest: 56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb
+  target_workers:
+  - coding_worker
+  - tester
+  invocation:
+  - /tmp/aiat-opencode-tools-312-571a6a4/install/venv/bin/skillspector
+  - scan
+  - <source>
+  - --no-llm
+  - --format
+  - json
+  working_directory: <source>
+  status: findings_review_required
+  scanner_status: pass
+  classification: SUPERSEDED_BY_EXACT_SCOPE_2026_10_02_SCAN
+  scanned_file_count:
+  scanned_file_count_status: not_reported_by_scanner
+  source_snapshot_file_count: 6520
+  finding_count: 374
+  rule_counts:
+    AE3: 14
+    AE4: 18
+    E1: 63
+    E2: 2
+    EA1: 2
+    EA2: 5
+    OH3: 2
+    P6: 14
+    PE2: 30
+    PE3: 13
+    RA2: 16
+    RP1: 4
+    SC1: 9
+    SC2: 76
+    SC9: 23
+    SSRF2: 1
+    TM1: 4
+    TM2: 78
+  severity_counts:
+    HIGH: 223
+    LOW: 10
+    MEDIUM: 141
+  scanner_error_count: 0
+  engine_warning_count: 0
+  result_path: mas/docs/provenance/opencode-candidate/2026-09-30-v1.18.21/skillspector.json
+  result_sha256: 6a733ff2669dc9325abad8b970a6ddbd7570adffc7cb8fc178f9b4a7f5a49862
+  result_bytes: 2586976
+  raw_findings_retained: true
+  raw_output_sanitized: true
+  source_snapshot_retained: true
+  source_snapshot_ref: mas/docs/provenance/opencode-candidate/2026-09-30-v1.18.21/source-snapshot.tar.xz
+  source_archive_sha256: 77b8cee43c3f74d94ad4651c375ec02bcd55a20aff06f9aac8e7be59c70811a0
+  source_snapshot_sha256: e338f0fc18145f7fc0ac848da5593ae77ea63adbd5f1d386ca8d82151a280370
+  finding_disposition: unreviewed
+  owner: personal-operator
+  next_action: Review each of the 374 skillspector findings against the retained exact-source snapshot; record
+    confirmed, false-positive, or remediated dispositions before OpenCode activation.
+  remediation_input: false
+  historical_only: true
+  superseded_by: mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21/candidate-certification.json
+  superseded_reason: Retained as audit history. The 2026-10-02 candidate refresh binds every active scanner
+    result to the corrected exact-source scope; SkillSpector now scans only bundled .opencode/skills
+    resources.
+  replacement_candidate_ref:
+    mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21/candidate-certification.json
+- source_repo: https://github.com/anomalyco/opencode.git
+  source_revision: v1.18.21
+  source_commit: 826d9ad46a22bef0294998e08daa3c4904fea28f
+  candidate_ref: mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/candidate-certification.json
+  candidate_image_ref:
+    ghcr.io/anomalyco/opencode:1.18.21@sha256:56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb
+  candidate_image_digest: 56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb
+  target_workers: &id001
+  - coding_worker
+  - tester
+  captured_at: '2026-10-02'
+  source_snapshot_file_count: 6520
+  source_snapshot_retained: true
+  source_snapshot_ref: mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/source-snapshot.tar.xz
+  source_snapshot_sha256: e338f0fc18145f7fc0ac848da5593ae77ea63adbd5f1d386ca8d82151a280370
+  source_archive_sha256: 77b8cee43c3f74d94ad4651c375ec02bcd55a20aff06f9aac8e7be59c70811a0
+  owner: personal-operator
+  id: opencode-1.18.21-semgrep-2026-10-02
+  scanner: semgrep
+  scanner_version: 1.168.0
+  mode: auto-ruleset-with-explicit-rule-exclusions
+  invocation:
+  - /tmp/aiat-opencode-scan-tools-r4/install/venv/bin/semgrep
+  - --config
+  - auto
+  - --json
+  - --no-git-ignore
+  - --exclude-rule
+  - yaml.github-actions.security.curl-eval.curl-eval
+  - --exclude-rule
+  - yaml.github-actions.security.gha-curl-pipe-shell.gha-curl-pipe-shell
+  - <source>
+  working_directory: <exact-source-snapshot-root>
+  status: blocked
+  scanner_status: completed_with_coverage_errors
+  classification: BLOCKED_SCANNER_COVERAGE_INCOMPLETE
+  scanned_file_count: 5508
+  scanned_file_count_status: reported_by_scanner
+  finding_count: 328
+  rule_counts:
+    dockerfile.security.missing-user-entrypoint.missing-user-entrypoint: 1
+    dockerfile.security.missing-user.missing-user: 1
+    javascript.audit.detect-replaceall-sanitization.detect-replaceall-sanitization: 16
+    javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp: 22
+    javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal: 265
+    javascript.lang.security.audit.prototype-pollution.prototype-pollution-loop.prototype-pollution-loop: 3
+    javascript.lang.security.audit.spawn-shell-true.spawn-shell-true: 3
+    javascript.lang.security.audit.unsafe-formatstring.unsafe-formatstring: 6
+    javascript.lang.security.detect-child-process.detect-child-process: 2
+    package_managers.bun.bun-missing-minimum-release-age.bun-missing-minimum-release-age: 1
+    problem-based-packs.insecure-transport.js-node.bypass-tls-verification.bypass-tls-verification: 2
+    yaml.github-actions.security.github-actions-mutable-action-tag.github-actions-mutable-action-tag: 1
+    yaml.github-actions.security.run-shell-injection.run-shell-injection: 5
+  severity_counts:
+    ERROR: 12
+    INFO: 22
+    MEDIUM: 1
+    WARNING: 293
+  scanner_error_count: 6
+  engine_warning_count: 6
+  result_path: mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/semgrep.json
+  result_sha256: bcc70a2a32f1330179ce5d63f24e8a9582b8f89b98637a69ce1c469c6ac0a235
+  result_bytes: 935562
+  raw_findings_retained: true
+  normalized_result_retained: false
+  raw_output_sanitized: true
+  finding_disposition: unreviewed
+  next_action: Review all 328 current Semgrep findings, including the two runtime process-launch candidates.
+    Investigate the six exact TypeScript parser gaps; the Bun parser check is not equivalent security
+    coverage. Seven findings from the excluded workflow rule are tracked in a separate carried-forward review.
+- source_repo: https://github.com/anomalyco/opencode.git
+  source_revision: v1.18.21
+  source_commit: 826d9ad46a22bef0294998e08daa3c4904fea28f
+  candidate_ref: mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/candidate-certification.json
+  candidate_image_ref:
+    ghcr.io/anomalyco/opencode:1.18.21@sha256:56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb
+  candidate_image_digest: 56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb
+  target_workers:
+  - coding_worker
+  - tester
+  captured_at: '2026-10-02'
+  source_snapshot_file_count: 6520
+  source_snapshot_retained: true
+  source_snapshot_ref: mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/source-snapshot.tar.xz
+  source_snapshot_sha256: e338f0fc18145f7fc0ac848da5593ae77ea63adbd5f1d386ca8d82151a280370
+  source_archive_sha256: 77b8cee43c3f74d94ad4651c375ec02bcd55a20aff06f9aac8e7be59c70811a0
+  owner: personal-operator
+  id: opencode-1.18.21-semgrep-excluded-rule-carry-forward-2026-10-02
+  scanner: semgrep
+  scanner_version: 1.168.0
+  mode: same-source-unfiltered-excluded-rule-carry-forward
+  invocation:
+  - /tmp/aiat-opencode-scan-tools/install/venv/bin/semgrep
+  - --config
+  - auto
+  - --json
+  - --no-git-ignore
+  - <source>
+  working_directory: <exact-source-snapshot-root>
+  status: findings_review_required
+  scanner_status: prior_exact_source_scan_findings_carried_forward
+  classification: SECURITY_FINDING_CARRIED_FORWARD
+  scanned_file_count:
+  scanned_file_count_status: not_repeated_in_current_scan
+  finding_count: 7
+  rule_counts:
+    yaml.github-actions.security.gha-curl-pipe-shell.gha-curl-pipe-shell: 7
+  severity_counts:
+    ERROR: 7
+  scanner_error_count: 0
+  engine_warning_count: 0
+  result_path: mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/candidate-triage.json
+  result_sha256: 8fd18e2b86110a31520bf9d8d28002fe19ed18485675b05e3c46d8de07c30d28
+  result_bytes: 48885
+  raw_findings_retained: false
+  normalized_result_retained: true
+  raw_output_sanitized: true
+  finding_disposition: unreviewed
+  next_action: Review all seven individual carried-forward workflow findings in candidate-triage.json. The
+    rule exclusion addresses Semgrep parser/rule execution failure and is not a finding disposition or waiver.
+  prior_scan_error_count: 54
+  prior_unfiltered_result_path: mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21/semgrep.json
+  prior_unfiltered_result_sha256: bc7f3a8ff0b93943fd4864e8d010648087891190c28dbadddede9b3d6781d5ba
+- source_repo: https://github.com/anomalyco/opencode.git
+  source_revision: v1.18.21
+  source_commit: 826d9ad46a22bef0294998e08daa3c4904fea28f
+  candidate_ref: mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/candidate-certification.json
+  candidate_image_ref:
+    ghcr.io/anomalyco/opencode:1.18.21@sha256:56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb
+  candidate_image_digest: 56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb
+  target_workers: *id001
+  captured_at: '2026-10-02'
+  source_snapshot_file_count: 6520
+  source_snapshot_retained: true
+  source_snapshot_ref: mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/source-snapshot.tar.xz
+  source_snapshot_sha256: e338f0fc18145f7fc0ac848da5593ae77ea63adbd5f1d386ca8d82151a280370
+  source_archive_sha256: 77b8cee43c3f74d94ad4651c375ec02bcd55a20aff06f9aac8e7be59c70811a0
+  owner: personal-operator
+  id: opencode-1.18.21-trufflehog-2026-10-02
+  scanner: trufflehog
+  scanner_version: trufflehog 3.97.0
+  mode: filesystem-exact-source-pinned
+  invocation:
+  - /tmp/aiat-opencode-scan-tools-r4/install/bin/trufflehog
+  - filesystem
+  - --json
+  - --no-update
+  - <source>
+  working_directory: <exact-source-snapshot-root>
+  status: findings_review_required
+  scanner_status: pass
+  classification: SECURITY_FINDING
+  scanned_file_count:
+  scanned_file_count_status: not_reported_by_scanner
+  finding_count: 55
+  rule_counts:
+    Box: 3
+    DigitalOceanToken: 1
+    Gitlab: 24
+    GoogleGeminiAPIKey: 1
+    Honeycomb: 2
+    Postgres: 1
+    URI: 23
+  severity_counts:
+    HIGH: 55
+  scanner_error_count: 0
+  engine_warning_count: 0
+  result_path: mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/trufflehog.json
+  result_sha256: 0604397980b46a27f7482a83c83fbd8cd8c84f494455cb1196b52ef18e50dfe5
+  result_bytes: 38126
+  raw_findings_retained: true
+  normalized_result_retained: false
+  raw_output_sanitized: true
+  finding_disposition: unreviewed
+  next_action: Review the 53 unique unverified detections; the 55 raw records include two duplicate URI
+    records. Current normalized locations classify as 42 documentation examples, 8 test fixtures, and 3 false
+    positives; no detection verified a credential and no values are retained.
+- source_repo: https://github.com/anomalyco/opencode.git
+  source_revision: v1.18.21
+  source_commit: 826d9ad46a22bef0294998e08daa3c4904fea28f
+  candidate_ref: mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/candidate-certification.json
+  candidate_image_ref:
+    ghcr.io/anomalyco/opencode:1.18.21@sha256:56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb
+  candidate_image_digest: 56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb
+  target_workers: *id001
+  captured_at: '2026-10-02'
+  source_snapshot_file_count: 6520
+  source_snapshot_retained: true
+  source_snapshot_ref: mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/source-snapshot.tar.xz
+  source_snapshot_sha256: e338f0fc18145f7fc0ac848da5593ae77ea63adbd5f1d386ca8d82151a280370
+  source_archive_sha256: 77b8cee43c3f74d94ad4651c375ec02bcd55a20aff06f9aac8e7be59c70811a0
+  owner: personal-operator
+  id: opencode-1.18.21-skillspector-2026-10-02
+  scanner: skillspector
+  scanner_version: SkillSpector v2.9.6
+  mode: recursive-bundled-skills-no-llm
+  invocation:
+  - /tmp/aiat-opencode-scan-tools-r4/install/venv/bin/skillspector
+  - scan
+  - <bundled-skill-resources>
+  - --recursive
+  - --no-llm
+  - --format
+  - json
+  - --output
+  - <skillspector-output>
+  working_directory: <exact-source-snapshot-root>
+  status: passed
+  scanner_status: pass
+  classification: NO_FINDINGS
+  scanned_file_count: 2
+  scanned_file_count_status: reported_by_scanner
+  finding_count: 0
+  rule_counts: {}
+  severity_counts: {}
+  scanner_error_count: 0
+  engine_warning_count: 0
+  result_path: mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/skillspector.json
+  result_sha256: c48b883245390ef54595ad4cc5eefbcc42503f95808cccaace7a5eaa94153740
+  result_bytes: 31318
+  raw_findings_retained: true
+  normalized_result_retained: false
+  raw_output_sanitized: true
+  finding_disposition: no_findings
+  next_action: Repeat the recursive no-LLM scan when the source candidate or bundled skills change; both
+    bundled skills were scanned with zero findings.
+- source_repo: https://github.com/anomalyco/opencode.git
+  source_revision: v1.18.21
+  source_commit: 826d9ad46a22bef0294998e08daa3c4904fea28f
+  candidate_ref: mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21/candidate-certification.json
+  candidate_image_ref:
+    ghcr.io/anomalyco/opencode:1.18.21@sha256:56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb
+  candidate_image_digest: 56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb
+  target_workers: *id001
+  captured_at: '2026-10-02'
+  source_snapshot_file_count: 6520
+  source_snapshot_retained: true
+  source_snapshot_ref: mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21/source-snapshot.tar.xz
+  source_snapshot_sha256: e338f0fc18145f7fc0ac848da5593ae77ea63adbd5f1d386ca8d82151a280370
+  source_archive_sha256: 77b8cee43c3f74d94ad4651c375ec02bcd55a20aff06f9aac8e7be59c70811a0
+  owner: personal-operator
+  id: opencode-1.18.21-actionlint-2026-10-02
+  scanner: actionlint
+  scanner_version: 1.7.12
+  mode: github-workflow-ci-check
+  invocation:
+  - /tmp/aiat-opencode-scan-tools/bin/actionlint
+  - -format
+  - '{{json .}}'
+  - .github/workflows/close-issues.yml
+  - .github/workflows/close-prs.yml
+  - .github/workflows/compliance-close.yml
+  - .github/workflows/containers.yml
+  - .github/workflows/deploy.yml
+  - .github/workflows/docs-locale-sync.yml
+  - .github/workflows/docs-update.yml
+  - .github/workflows/duplicate-issues.yml
+  - .github/workflows/generate.yml
+  - .github/workflows/nix-eval.yml
+  - .github/workflows/nix-hashes.yml
+  - .github/workflows/notify-discord.yml
+  - .github/workflows/opencode.yml
+  - .github/workflows/pr-management.yml
+  - .github/workflows/pr-standards.yml
+  - .github/workflows/publish-github-action.yml
+  - .github/workflows/publish-vscode.yml
+  - .github/workflows/publish.yml
+  - .github/workflows/release-github-action.yml
+  - .github/workflows/review.yml
+  - .github/workflows/stats.yml
+  - .github/workflows/storybook.yml
+  - .github/workflows/test.yml
+  - .github/workflows/triage.yml
+  - .github/workflows/typecheck.yml
+  working_directory: <exact-source-snapshot-root>
+  status: findings_review_required
+  scanner_status: completed_with_diagnostics
+  classification: SUPPLEMENTAL_CI_DIAGNOSTICS
+  scanned_file_count: 25
+  scanned_file_count_status: reported_by_scanner
+  finding_count: 27
+  rule_counts:
+    runner-label: 25
+    if-cond: 1
+    expression: 1
+  severity_counts:
+    UNSPECIFIED_BY_SCANNER: 27
+  scanner_error_count: 0
+  engine_warning_count: 0
+  result_path: mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21/actionlint-normalized.json
+  result_sha256: c298db9440cce8a9983968314e91dadf6406cacdf1d32d9fb4fc5d25e638ce1e
+  result_bytes: 10122
+  raw_findings_retained: false
+  normalized_result_retained: true
+  raw_output_sanitized: true
+  finding_disposition: unreviewed
+  next_action: Review all 27 normalized diagnostics. Confirm the 25 custom runner labels and the
+    expression/condition diagnostics against the configured workflow provider before candidate activation.
+  raw_finding_record_count: 27
+  raw_scanner_output_sha256: dcb6106df04e121639ac5496de934cf1785079b30ddbb85499e773512e058a33
+  scanner_exit_status: 1
+- source_repo: https://github.com/anomalyco/opencode.git
+  source_revision: v1.18.21
+  source_commit: 826d9ad46a22bef0294998e08daa3c4904fea28f
+  candidate_ref: mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21/candidate-certification.json
+  candidate_image_ref:
+    ghcr.io/anomalyco/opencode:1.18.21@sha256:56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb
+  candidate_image_digest: 56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb
+  target_workers: *id001
+  captured_at: '2026-10-02'
+  source_snapshot_file_count: 6520
+  source_snapshot_retained: true
+  source_snapshot_ref: mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21/source-snapshot.tar.xz
+  source_snapshot_sha256: e338f0fc18145f7fc0ac848da5593ae77ea63adbd5f1d386ca8d82151a280370
+  source_archive_sha256: 77b8cee43c3f74d94ad4651c375ec02bcd55a20aff06f9aac8e7be59c70811a0
+  owner: personal-operator
+  id: opencode-1.18.21-zizmor-2026-10-02
+  scanner: zizmor
+  scanner_version: 1.30.1
+  mode: github-actions-and-action-metadata
+  invocation:
+  - /tmp/aiat-opencode-scan-tools/bin/zizmor
+  - --collect
+  - all
+  - --format
+  - json
+  - --no-progress
+  - .github
+  - github/action.yml
+  working_directory: <exact-source-snapshot-root>
+  status: findings_review_required
+  scanner_status: completed_with_findings
+  classification: SUPPLEMENTAL_CI_SUPPLY_CHAIN_FINDINGS
+  scanned_file_count:
+  scanned_file_count_status: not_reported_by_scanner
+  finding_count: 92
+  rule_counts:
+    artipacked: 27
+    dangerous-triggers: 2
+    excessive-permissions: 8
+    github-app: 2
+    github-env: 1
+    self-repository: 27
+    template-injection: 24
+    unpinned-uses: 1
+  severity_counts:
+    HIGH: 25
+    INFORMATIONAL: 9
+    LOW: 27
+    MEDIUM: 31
+  scanner_error_count: 0
+  engine_warning_count: 0
+  result_path: mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21/zizmor-normalized.json
+  result_sha256: 05c91f1b72e05e61303b38173ab207b6a6c893f7d1be9f4ce315da126443f23f
+  result_bytes: 57162
+  raw_findings_retained: false
+  normalized_result_retained: true
+  raw_output_sanitized: true
+  finding_disposition: unreviewed
+  next_action: Review all 92 normalized supply-chain findings and record their dispositions. The raw scanner
+    report contained source snippets and was not retained; deterministic locations, rule IDs, severities, and
+    exact result hash are retained.
+  raw_finding_record_count: 94
+  raw_scanner_output_sha256: 34482f7367f9f550832e464ed73a6d1801101c9df93519c559cc533df833afb6
+  scanner_exit_status: 14
+- source_repo: https://github.com/anomalyco/opencode.git
+  source_revision: v1.18.21
+  source_commit: 826d9ad46a22bef0294998e08daa3c4904fea28f
+  candidate_ref: mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/candidate-certification.json
+  candidate_image_ref:
+    ghcr.io/anomalyco/opencode:1.18.21@sha256:56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb
+  candidate_image_digest: 56c82ee8b5ead35406a83102ad1960030b7ab58dcd591e3ab5f44c2b5e0170cb
+  target_workers: *id001
+  captured_at: '2026-10-03'
+  source_snapshot_file_count: 6520
+  source_snapshot_retained: true
+  source_snapshot_ref: mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/source-snapshot.tar.xz
+  source_snapshot_sha256: e338f0fc18145f7fc0ac848da5593ae77ea63adbd5f1d386ca8d82151a280370
+  source_archive_sha256: 77b8cee43c3f74d94ad4651c375ec02bcd55a20aff06f9aac8e7be59c70811a0
+  owner: personal-operator
+  id: opencode-1.18.21-semgrep-transpiled-typescript-2026-10-03
+  scanner: semgrep
+  scanner_version: 1.168.0
+  mode: pinned-bun-transpiled-typescript-auto-ruleset-supplement
+  invocation:
+  - semgrep
+  - --config
+  - auto
+  - --json
+  - --no-git-ignore
+  - <transpiled-source>/keyed-mutex.js
+  - <transpiled-source>/effect-flock.js
+  - <transpiled-source>/server.js
+  - <transpiled-source>/public.js
+  - <transpiled-source>/tui.js
+  - <transpiled-source>/slots.js
+  working_directory: <transpiled-source-root>
+  status: blocked
+  scanner_status: completed_with_findings_and_one_non_runtime_parser_error
+  classification: OPEN_TRANSPILED_TYPESCRIPT_FINDINGS_AND_NON_RUNTIME_COVERAGE_LIMITATION
+  scanned_file_count: 6
+  scanned_file_count_status: harness_verified
+  finding_count: 4
+  rule_counts:
+    javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal: 4
+  severity_counts:
+    WARNING: 4
+  scanner_error_count: 1
+  engine_warning_count: 1
+  result_path: mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/semgrep-transpiled-typescript.json
+  result_sha256: a85aa8ad0c72b25ac01056569a3018692080f4b1d2671e9d884e506df16b94f8
+  result_bytes: 10133
+  raw_findings_retained: true
+  raw_output_sanitized: true
+  normalized_result_retained: true
+  finding_disposition: unreviewed
+  next_action: Review all four raw findings at the three source locations using the mapped-source review record;
+    inspect optional lock-directory callers and the trust boundary before any disposition. The one parser
+    error is on non-AIAT-serving LSP source and remains an explained, non-runtime coverage limitation.
+latest_candidate:
+  path: mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/candidate-certification.json
+  schema_version: aiat.opencode-candidate-certification.v1
+  status: blocked
+  remediation_input: true
+scope_notes:
+  active_candidate_scan_ref:
+    mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/candidate-certification.json
+  scanner_coverage_review_ref:
+    mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/scanner-coverage-review.json
+  primary_candidate_raw_record_count: 390
+  supplemental_normalized_record_count: 123
+  aggregate_counts_are_scanner_records_not_unique_vulnerabilities: true
+  unexplained_semgrep_errors: 0
+  semgrep_security_coverage_complete: false
+  runtime_transpiled_semgrep_coverage_complete: true
+  runtime_transpiled_semgrep_open_findings: 4
+  residual_non_runtime_parser_errors: 1
+  skillspector_scope: recursive bundled .opencode/skills resources only; --no-llm
+  licence_metadata_is_gate: false
+  current_primary_scan_record_count: 383
+  excluded_rule_carry_forward_record_count: 7

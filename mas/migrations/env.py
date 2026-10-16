@@ -32,7 +32,7 @@ if config.config_file_name is not None:
 # Target metadata                                                               #
 # SQLAlchemy MetaData with all table definitions from Phase 7.                #
 # --------------------------------------------------------------------------- #
-from mas_core.memory.models import metadata as target_metadata
+from mas_core.memory.models import metadata as target_metadata  # noqa: E402
 
 # --------------------------------------------------------------------------- #
 # Connection URL                                                                #
@@ -43,14 +43,18 @@ _url = (
     or "postgresql://mas_user:change_me@localhost:5432/mas"
 )
 
-# Alembic uses synchronous SQLAlchemy; strip async driver specs so that
-# postgresql+asyncpg:// → postgresql+psycopg2:// (or plain postgresql://).
-# This lets the same PGBOUNCER_DSN env var work for both the app (asyncpg)
-# and for migration runs (psycopg2).
+# Alembic uses synchronous SQLAlchemy. Select the synchronous driver that is
+# installed in the orchestrator image explicitly: SQLAlchemy's default
+# PostgreSQL driver may be psycopg, which is not part of the runtime image.
+# This lets async app DSNs and plain PostgreSQL DSNs work for migrations.
 if "+asyncpg" in _url:
     _url = _url.replace("+asyncpg", "+psycopg2", 1)
-elif _url.startswith("postgresql://") or _url.startswith("postgres://"):
-    pass  # already a sync-compatible URL
+elif _url.startswith("postgresql+psycopg://"):
+    _url = _url.replace("postgresql+psycopg://", "postgresql+psycopg2://", 1)
+elif _url.startswith("postgresql://"):
+    _url = _url.replace("postgresql://", "postgresql+psycopg2://", 1)
+elif _url.startswith("postgres://"):
+    _url = _url.replace("postgres://", "postgresql+psycopg2://", 1)
 
 # statement_cache_size=0 is an asyncpg-only option; not needed for psycopg2.
 _connect_args: dict = {}

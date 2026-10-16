@@ -1,0 +1,332 @@
+{
+  "engine_requested": "OSS",
+  "errors": [
+    {
+      "code": 3,
+      "level": "warn",
+      "message": "[REDACTED]",
+      "path": "<transpiled-source>/opencode/src/lsp/server.js",
+      "type": "Syntax error"
+    }
+  ],
+  "paths": {
+    "scanned": [
+      "<transpiled-source>/core/src/effect/keyed-mutex.js",
+      "<transpiled-source>/core/src/util/effect-flock.js",
+      "<transpiled-source>/opencode/src/lsp/server.js",
+      "<transpiled-source>/opencode/src/server/routes/instance/httpapi/public.js",
+      "<transpiled-source>/plugin/src/tui.js",
+      "<transpiled-source>/tui/src/plugin/slots.js"
+    ]
+  },
+  "profiling_results": [],
+  "results": [
+    {
+      "check_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "end": {
+        "col": 41,
+        "line": 100,
+        "offset": 4085
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "requires login",
+        "lines": "[REDACTED_SOURCE_CONTEXT]",
+        "message": "[REDACTED]",
+        "metadata": {
+          "category": "security",
+          "confidence": "LOW",
+          "cwe": [
+            "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+          ],
+          "cwe2021-top25": true,
+          "cwe2022-top25": true,
+          "impact": "MEDIUM",
+          "license": "Semgrep Rules License v1.0. For more details, visit semgrep.dev/legal/rules-license",
+          "likelihood": "HIGH",
+          "owasp": [
+            "A05:2017 - Broken Access Control",
+            "A01:2021 - Broken Access Control",
+            "A01:2025 - Broken Access Control"
+          ],
+          "references": [
+            "https://owasp.org/www-community/attacks/Path_Traversal"
+          ],
+          "shortlink": "https://sg.run/OPqk",
+          "source": "https://semgrep.dev/r/javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+          "subcategory": [
+            "vuln"
+          ],
+          "technology": [
+            "javascript",
+            "node.js"
+          ],
+          "vulnerability_class": [
+            "Path Traversal"
+          ]
+        },
+        "severity": "WARNING",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "<transpiled-source>/core/src/util/effect-flock.js",
+      "start": {
+        "col": 34,
+        "line": 100,
+        "offset": 4078
+      }
+    },
+    {
+      "check_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "end": {
+        "col": 46,
+        "line": 101,
+        "offset": 4146
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "requires login",
+        "lines": "[REDACTED_SOURCE_CONTEXT]",
+        "message": "[REDACTED]",
+        "metadata": {
+          "category": "security",
+          "confidence": "LOW",
+          "cwe": [
+            "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+          ],
+          "cwe2021-top25": true,
+          "cwe2022-top25": true,
+          "impact": "MEDIUM",
+          "license": "Semgrep Rules License v1.0. For more details, visit semgrep.dev/legal/rules-license",
+          "likelihood": "HIGH",
+          "owasp": [
+            "A05:2017 - Broken Access Control",
+            "A01:2021 - Broken Access Control",
+            "A01:2025 - Broken Access Control"
+          ],
+          "references": [
+            "https://owasp.org/www-community/attacks/Path_Traversal"
+          ],
+          "shortlink": "https://sg.run/OPqk",
+          "source": "https://semgrep.dev/r/javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+          "subcategory": [
+            "vuln"
+          ],
+          "technology": [
+            "javascript",
+            "node.js"
+          ],
+          "vulnerability_class": [
+            "Path Traversal"
+          ]
+        },
+        "severity": "WARNING",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "<transpiled-source>/core/src/util/effect-flock.js",
+      "start": {
+        "col": 39,
+        "line": 101,
+        "offset": 4139
+      }
+    },
+    {
+      "check_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "end": {
+        "col": 41,
+        "line": 147,
+        "offset": 6639
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "requires login",
+        "lines": "[REDACTED_SOURCE_CONTEXT]",
+        "message": "[REDACTED]",
+        "metadata": {
+          "category": "security",
+          "confidence": "LOW",
+          "cwe": [
+            "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+          ],
+          "cwe2021-top25": true,
+          "cwe2022-top25": true,
+          "impact": "MEDIUM",
+          "license": "Semgrep Rules License v1.0. For more details, visit semgrep.dev/legal/rules-license",
+          "likelihood": "HIGH",
+          "owasp": [
+            "A05:2017 - Broken Access Control",
+            "A01:2021 - Broken Access Control",
+            "A01:2025 - Broken Access Control"
+          ],
+          "references": [
+            "https://owasp.org/www-community/attacks/Path_Traversal"
+          ],
+          "shortlink": "https://sg.run/OPqk",
+          "source": "https://semgrep.dev/r/javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+          "subcategory": [
+            "vuln"
+          ],
+          "technology": [
+            "javascript",
+            "node.js"
+          ],
+          "vulnerability_class": [
+            "Path Traversal"
+          ]
+        },
+        "severity": "WARNING",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "<transpiled-source>/core/src/util/effect-flock.js",
+      "start": {
+        "col": 34,
+        "line": 147,
+        "offset": 6632
+      }
+    },
+    {
+      "check_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "end": {
+        "col": 67,
+        "line": 147,
+        "offset": 6665
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "requires login",
+        "lines": "[REDACTED_SOURCE_CONTEXT]",
+        "message": "[REDACTED]",
+        "metadata": {
+          "category": "security",
+          "confidence": "LOW",
+          "cwe": [
+            "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+          ],
+          "cwe2021-top25": true,
+          "cwe2022-top25": true,
+          "impact": "MEDIUM",
+          "license": "Semgrep Rules License v1.0. For more details, visit semgrep.dev/legal/rules-license",
+          "likelihood": "HIGH",
+          "owasp": [
+            "A05:2017 - Broken Access Control",
+            "A01:2021 - Broken Access Control",
+            "A01:2025 - Broken Access Control"
+          ],
+          "references": [
+            "https://owasp.org/www-community/attacks/Path_Traversal"
+          ],
+          "shortlink": "https://sg.run/OPqk",
+          "source": "https://semgrep.dev/r/javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+          "subcategory": [
+            "vuln"
+          ],
+          "technology": [
+            "javascript",
+            "node.js"
+          ],
+          "vulnerability_class": [
+            "Path Traversal"
+          ]
+        },
+        "severity": "WARNING",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "<transpiled-source>/core/src/util/effect-flock.js",
+      "start": {
+        "col": 43,
+        "line": 147,
+        "offset": 6641
+      }
+    }
+  ],
+  "skipped_rules": [],
+  "time": {
+    "fixpoint_timeouts": [
+      {
+        "error_type": "Fixpoint timeout",
+        "location": {
+          "end": {
+            "col": 28,
+            "line": 28,
+            "offset": 1365
+          },
+          "path": "<transpiled-source>/opencode/src/server/routes/instance/httpapi/public.js",
+          "start": {
+            "col": 10,
+            "line": 28,
+            "offset": 1347
+          }
+        },
+        "message": "[REDACTED]",
+        "severity": "warn"
+      }
+    ],
+    "matching_time": {
+      "per_file_and_rule_time": {
+        "mean": 0.0,
+        "std_dev": 0.0
+      },
+      "total_time": 0.0,
+      "very_slow_rules_on_files": [],
+      "very_slow_stats": {
+        "count_ratio": 0.0,
+        "time_ratio": 0.0
+      }
+    },
+    "max_memory_bytes": 1035537856,
+    "parsing_time": {
+      "per_file_time": {
+        "mean": 0.0,
+        "std_dev": 0.0
+      },
+      "total_time": 0.0,
+      "very_slow_files": [],
+      "very_slow_stats": {
+        "count_ratio": 0.0,
+        "time_ratio": 0.0
+      }
+    },
+    "prefiltering": {
+      "file_level_time": 0.0,
+      "project_level_time": 0.0,
+      "rules_matched_ratio": 0.029608404966571154,
+      "rules_selected_ratio": 0.029608404966571154,
+      "rules_with_file_prefilters_ratio": 0.9904489016236867,
+      "rules_with_project_prefilters_ratio": 0.0
+    },
+    "profiling_times": {
+      "config_time": 0.9851779937744141,
+      "core_time": 0.853992223739624,
+      "ignores_time": 0.0007908344268798828,
+      "total_time": 1.8882005214691162
+    },
+    "rules": [],
+    "rules_parse_time": 0.26587891578674316,
+    "scanning_time": {
+      "per_file_time": {
+        "mean": 0.051738606558905706,
+        "std_dev": 0.013093462939582563
+      },
+      "total_time": 0.9312949180603027,
+      "very_slow_files": [],
+      "very_slow_stats": {
+        "count_ratio": 0.0,
+        "time_ratio": 0.0
+      }
+    },
+    "tainting_time": {
+      "per_def_and_rule_time": {
+        "mean": 0.0,
+        "std_dev": 0.0
+      },
+      "total_time": 0.0,
+      "very_slow_rules_on_defs": [],
+      "very_slow_stats": {
+        "count_ratio": 0.0,
+        "time_ratio": 0.0
+      }
+    },
+    "targets": [],
+    "total_bytes": 0
+  },
+  "version": "1.168.0"
+}
