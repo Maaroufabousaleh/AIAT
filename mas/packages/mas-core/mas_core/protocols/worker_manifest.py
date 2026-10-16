@@ -152,7 +152,20 @@ class WorkerManifest(BaseModel):
 
     @property
     def is_legacy_external_wrapper(self) -> bool:
-        return self.runtime_tier == "external" and self.integration.isolation_mode == "wrapper" and not self.integration.certified_adapter_version
+        # OCI workers using the canonical ProcessAdapter are mediated by the
+        # runtime-specific OCIAdapter selected from ``runtime.transport``.
+        # They do not execute through the legacy arbitrary process wrapper,
+        # even before a candidate has completed governance certification.
+        adapter_backed_oci = (
+            self.runtime.transport == "oci"
+            and self.integration.adapter_entrypoint == "ProcessAdapter"
+        )
+        return (
+            self.runtime_tier == "external"
+            and self.integration.isolation_mode == "wrapper"
+            and not self.integration.certified_adapter_version
+            and not adapter_backed_oci
+        )
 
     @property
     def effective_execution_policy(self) -> WorkloadExecutionPolicy:

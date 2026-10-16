@@ -15,6 +15,12 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from mas_core.worker_registry.source_bound_security_scan import (
+    source_bound_security_scan_is_valid,
+    source_bound_security_scan_required,
+    source_bound_security_scan_result_is_valid,
+)
+
 WORKER_STEWARD_READINESS_SCHEMA = "aiat.worker-steward-readiness.v1"
 READY_STEWARD_STATUS = "READY"
 CERTIFIABLE_STEWARD_STATUSES = frozenset({"PROVISIONING", READY_STEWARD_STATUS})
@@ -117,6 +123,8 @@ def evaluate_worker_steward_readiness(
     worker_seen = worker is not None
     steward_seen = steward is not None
     candidate_seen = candidate is not None
+    source_scan_status = "not_checked"
+    image_source_binding_status = "not_required"
     if worker is None:
         blockers.append(_blocker("worker_not_found", "the selected worker was not returned by the control plane"))
     else:
@@ -154,8 +162,54 @@ def evaluate_worker_steward_readiness(
             )
             if not pinned:
                 blockers.append(_blocker("provenance_pin_missing", "external provenance has no exact release, commit, package, or OCI digest"))
-            if _text(provenance.get("security_scan_status")).lower() != "passed":
-                blockers.append(_blocker("security_scan_not_passed", "technical security evidence must be passed before certification"))
+            scan_report = provenance.get("source_bound_security_scan")
+            scan_status = _text(provenance.get("security_scan_status")).lower()
+            report_status = (
+                scan_report.get("status")
+                if isinstance(scan_report, Mapping)
+                else None
+            )
+            source_scan_status = _text(
+                provenance.get("source_bound_security_scan_status")
+                or report_status
+            ).lower() or "missing"
+            scan_required = source_bound_security_scan_required(
+                provenance,
+                worker=worker,
+            )
+            source_scan_result_valid = scan_required and source_bound_security_scan_result_is_valid(
+                scan_report,
+                expected_worker_id=selected_worker_id,
+                provenance=provenance,
+                current_worker=worker,
+            )
+            image_source_binding_status = "not_verified" if scan_required else "not_required"
+            if scan_status != "passed" or (
+                scan_required
+                and not source_bound_security_scan_is_valid(
+                    scan_report,
+                    expected_worker_id=selected_worker_id,
+                    provenance=provenance,
+                    current_worker=worker,
+                )
+            ):
+                blockers.append(
+                    _blocker(
+                        "security_scan_not_passed",
+                        (
+                            "the source scan passed, but independent OCI image/source binding is required before certification"
+                            if source_scan_result_valid
+                            else "a server-generated source-bound scan report with zero findings and scanner errors is required before certification"
+                        ),
+                    )
+                )
+            if scan_required and source_scan_result_valid:
+                blockers.append(
+                    _blocker(
+                        "image_source_binding_not_verified",
+                        "the clean source scan does not independently verify that the pinned OCI image was built from that source",
+                    )
+                )
 
     if not selected_candidate_id:
         blockers.append(_blocker("candidate_selection_required", "a candidate ID must be explicitly selected; no candidate is auto-selected"))
@@ -224,6 +278,12 @@ def evaluate_worker_steward_readiness(
                 "ready": steward_status == READY_STEWARD_STATUS,
                 "certifiable": steward_status in CERTIFIABLE_STEWARD_STATUSES,
                 "security_scan": _text((_nested_mapping(steward, "provenance") or {}).get("security_scan_status")) if steward else "missing",
+            },
+            "source_bound_security_scan": {
+                "status": source_scan_status,
+            },
+            "oci_image_source_binding": {
+                "status": image_source_binding_status,
             },
             "candidate": {
                 "present": candidate_seen,

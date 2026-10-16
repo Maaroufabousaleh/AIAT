@@ -1840,6 +1840,19 @@ export type OrchestratorApiOperations = {
       "422": HTTPValidationError;
     };
   };
+  "scan_first_party_worker_security_source_capabilities_workers__worker_id__steward_security_scan_post": {
+    method: "POST";
+    path: "/capabilities/workers/{worker_id}/steward/security-scan";
+    parameters: {
+      "path:worker_id": string;
+    };
+    responses: {
+      "200": {
+  [key: string]: unknown;
+};
+      "422": HTTPValidationError;
+    };
+  };
   "upgrade_worker_capabilities_workers__worker_id__upgrade_post": {
     method: "POST";
     path: "/capabilities/workers/{worker_id}/upgrade";

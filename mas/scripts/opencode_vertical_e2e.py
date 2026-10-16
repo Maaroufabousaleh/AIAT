@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""Drive the disposable Level A project-to-OpenCode API journey.
+"""Drive the disposable Level A project-to-worker API journey.
 
-The caller must provision an isolated development/test stack whose only model
-endpoint is a deterministic local fixture. This driver uses the public AIAT
-HTTP APIs; it never reads or writes the database directly and never prints
-credentials, prompts, model responses, tool arguments, or tool responses.
+The caller must provision an isolated development/test stack. OpenCode runs
+against a deterministic local model fixture; the first-party deterministic
+file worker does not use a model. This driver uses the public AIAT HTTP APIs;
+it never reads or writes the database directly and never prints credentials,
+prompts, model responses, tool arguments, or tool responses.
 
 Required environment:
   AIAT_LEVEL_A_API_URL              loopback URL for the isolated API
   AIAT_LEVEL_A_OPERATOR_API_KEY      disposable operator credential
-  AIAT_LEVEL_A_WORKER_ID            UUID of the normally governed worker
+  AIAT_LEVEL_A_WORKER_NAME          canonical name of the normally governed worker
   AIAT_LEVEL_A_PROVIDER_BOUNDARY    exactly ``local_fixture``
 
-It exits 0 only when every required execution stage (including project
-completion when requested) passes, 2 when a stage is honestly blocked or not
-run, and 1 on a product/integration failure.
+It exits 0 only when every applicable execution stage passes, 2 when a stage
+is honestly blocked or not run, and 1 on a product/integration failure.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-EXPECTED_FILES = {
+OPENCODE_EXPECTED_FILES = {
     "expenses.py": ("category", "total"),
     "sample_expenses.csv": ("category", "amount"),
     "test_expenses.py": ("test_",),
@@ -67,6 +67,33 @@ TOOL_GRANTS = [
 ]
 PERMISSION_REQUIREMENTS = ["repository.read", "repository.write", "tests.execute"]
 LOCAL_FIXTURE_PROMPT = "AIAT_LEVEL_A_WORKSPACE_TOOL_LOOP"
+DETERMINISTIC_WORKER_NAME = "aiat_deterministic_file_worker"
+SUPPORTED_WORKER_NAMES = {"coding_worker", DETERMINISTIC_WORKER_NAME}
+DETERMINISTIC_FILE_PATH = "expenses.py"
+DETERMINISTIC_FILE_CONTENT = '''"""Calculate expense totals grouped by category from a CSV file."""
+
+import csv
+from collections import defaultdict
+from decimal import Decimal
+from pathlib import Path
+from typing import Iterable, Mapping
+
+
+def category_totals(rows: Iterable[Mapping[str, str]]) -> dict[str, Decimal]:
+    totals: dict[str, Decimal] = defaultdict(Decimal)
+    for row in rows:
+        category = (row.get("category") or "").strip()
+        amount = Decimal(row.get("amount") or "0")
+        totals[category] += amount
+    return dict(sorted(totals.items()))
+
+
+def summarize_csv(path: str | Path) -> dict[str, Decimal]:
+    with Path(path).open(newline="", encoding="utf-8") as source:
+        return category_totals(csv.DictReader(source))
+'''
+DETERMINISTIC_TOOL_GRANTS = ["file_write"]
+DETERMINISTIC_PERMISSION_REQUIREMENTS = ["project.workspace.write"]
 TERMINAL_RUN_STATES = {"SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT"}
 MAX_RUN_BUDGET_USD = Decimal("0.25")
 
@@ -292,10 +319,50 @@ def _project_evidence_readiness(
     return True, "", summary
 
 
+def _project_evidence_links_artifacts(
+    evidence: Any,
+    *,
+    project_id: str,
+    artifact_ids: set[str],
+) -> tuple[bool, str, dict[str, Any]]:
+    """Check canonical evidence readback and artifact linkage, not completion policy."""
+
+    if not isinstance(evidence, dict):
+        return False, "PROJECT_EVIDENCE_INVALID", {}
+    refs = evidence.get("evidence_refs")
+    artifact_refs = refs.get("artifacts") if isinstance(refs, dict) else None
+    normalized_refs = (
+        {str(value) for value in artifact_refs if value is not None}
+        if isinstance(artifact_refs, list)
+        else set()
+    )
+    summary = {
+        "schema_version": evidence.get("schema_version"),
+        "policy_id": evidence.get("policy_id"),
+        "status": evidence.get("status"),
+        "artifact_ref_count": len(normalized_refs),
+        "artifact_ids": sorted(artifact_ids & normalized_refs),
+        "required_checks_pass": False,
+    }
+    _, policy_reason, policy_summary = _project_evidence_readiness(
+        evidence, project_id=project_id, artifact_ids=artifact_ids
+    )
+    summary["required_checks_pass"] = bool(policy_summary.get("required_checks_pass"))
+    summary["completion_policy_reason"] = policy_reason or None
+    if evidence.get("schema_version") != "aiat.project-evidence-package.v1":
+        return False, "PROJECT_EVIDENCE_SCHEMA_INVALID", summary
+    if str(evidence.get("project_id") or "") != project_id:
+        return False, "PROJECT_EVIDENCE_SCOPE_MISMATCH", summary
+    if not artifact_ids or not artifact_ids.issubset(normalized_refs):
+        return False, "PROJECT_ARTIFACTS_NOT_LINKED_IN_EVIDENCE", summary
+    return True, "", summary
+
+
 def _canonical_worker_readiness(
     api: API,
     *,
     worker_id: str,
+    worker_name: str,
     project_id: str,
 ) -> dict[str, Any]:
     """Read public control-plane projections through AIAT's readiness evaluator.
@@ -357,7 +424,12 @@ def _canonical_worker_readiness(
         fetch_errors["assignments"] = "project_company_id_missing"
         fetch_errors["budgets"] = "project_company_id_missing"
 
-    model_profiles = read("/model-profiles", "model_profiles")
+    model_free_worker = (
+        worker_name == DETERMINISTIC_WORKER_NAME
+        and isinstance(worker, dict)
+        and str(worker.get("model_mode") or "").lower() == "none"
+    )
+    model_profiles = [] if model_free_worker else read("/model-profiles", "model_profiles")
     worker_health = read(
         f"/capabilities/workers/{urllib.parse.quote(worker_id)}/health",
         "worker_health",
@@ -368,6 +440,15 @@ def _canonical_worker_readiness(
         fetch_errors["budgets"] = "invalid_collection"
     if not isinstance(model_profiles, list) and "model_profiles" not in fetch_errors:
         fetch_errors["model_profiles"] = "invalid_collection"
+    selected_assignment = next(
+        (
+            item
+            for item in assignments
+            if isinstance(item, dict)
+            and str(item.get("worker_id") or "") == worker_id
+        ),
+        None,
+    ) if isinstance(assignments, list) else None
     readiness = evaluate_worker_run_readiness(
         worker=worker,
         project=project,
@@ -379,6 +460,7 @@ def _canonical_worker_readiness(
         project_id=project_id,
         required_budget_usd=MAX_RUN_BUDGET_USD,
         require_sandbox=True,
+        require_model_backed=not model_free_worker,
         health=worker_health if isinstance(worker_health, dict) else None,
         fetch_errors=fetch_errors,
     )
@@ -392,12 +474,29 @@ def _canonical_worker_readiness(
     ] if isinstance(blockers, list) else ["readiness_result_invalid"]
     checks = readiness.get("checks") if isinstance(readiness.get("checks"), dict) else {}
     worker_checks = checks.get("worker") if isinstance(checks.get("worker"), dict) else {}
+    assignment_summary = {"company_id": company_id or None}
+    if selected_assignment is not None:
+        assignment_summary.update(
+            {
+                key: selected_assignment.get(key)
+                for key in (
+                    "id",
+                    "worker_id",
+                    "company_id",
+                    "status",
+                    "approval_required",
+                    "model_profile_id",
+                )
+                if key in selected_assignment
+            }
+        )
     return {
         "schema_version": readiness.get("schema_version"),
         "status": readiness.get("status"),
         "blocker_codes": blocker_codes[:64],
         "worker_status": worker_checks.get("status"),
         "worker_evaluation_status": worker_checks.get("evaluation_status"),
+        "model_mode": worker_checks.get("model_mode"),
         "immutable_pointers": worker_checks.get("immutable_pointers"),
         "project_state": (checks.get("project") or {}).get("state")
         if isinstance(checks.get("project"), dict)
@@ -405,6 +504,15 @@ def _canonical_worker_readiness(
         "assignment_status": (checks.get("assignment") or {}).get("status")
         if isinstance(checks.get("assignment"), dict)
         else None,
+        "assignment": assignment_summary,
+        "assignment_prerequisites": {
+            "worker_id_matches_selected": selected_assignment is not None,
+            "status_active": str((selected_assignment or {}).get("status") or "").upper()
+            == "ACTIVE",
+            "approval_satisfied": not bool(
+                (selected_assignment or {}).get("approval_required")
+            ),
+        },
         "sandbox": checks.get("sandbox"),
         "budget_status": checks.get("budgets"),
         "fetch_status": readiness.get("fetch_status"),
@@ -502,17 +610,19 @@ class API:
 def _verify_local_fixture_environment() -> tuple[API, str]:
     base_url = os.getenv("AIAT_LEVEL_A_API_URL", "").strip()
     api_key = os.getenv("AIAT_LEVEL_A_OPERATOR_API_KEY", "").strip()
-    worker_id = os.getenv("AIAT_LEVEL_A_WORKER_ID", "").strip()
+    worker_name = os.getenv("AIAT_LEVEL_A_WORKER_NAME", "").strip()
     boundary = os.getenv("AIAT_LEVEL_A_PROVIDER_BOUNDARY", "").strip()
-    if not base_url or not api_key or not worker_id:
+    if not base_url or not api_key or not worker_name:
         raise ValueError(
-            "AIAT_LEVEL_A_API_URL, AIAT_LEVEL_A_OPERATOR_API_KEY, and AIAT_LEVEL_A_WORKER_ID are required"
+            "AIAT_LEVEL_A_API_URL, AIAT_LEVEL_A_OPERATOR_API_KEY, and AIAT_LEVEL_A_WORKER_NAME are required"
         )
+    if worker_name not in SUPPORTED_WORKER_NAMES:
+        raise ValueError("AIAT_LEVEL_A_WORKER_NAME is unsupported")
     if boundary != "local_fixture":
         raise ValueError("provider boundary must be explicitly marked local_fixture")
     _require_loopback(base_url)
     timeout = max(1.0, min(float(os.getenv("AIAT_LEVEL_A_HTTP_TIMEOUT_SECONDS", "15")), 60.0))
-    return API(base_url, api_key, timeout), worker_id
+    return API(base_url, api_key, timeout), worker_name
 
 
 def _artifact_uri(row: dict[str, Any]) -> str:
@@ -522,19 +632,29 @@ def _artifact_uri(row: dict[str, Any]) -> str:
 def _run_project_journey(
     *,
     api: API,
-    worker_id: str,
+    worker_name: str,
     timeout_seconds: int,
     stages: dict[str, dict[str, Any]],
 ) -> tuple[str | None, str | None]:
     project_id: str | None = None
     run_id: str | None = None
-    project_key = f"level-a-opencode-{uuid4()}"
+    project_key = f"level-a-worker-{uuid4()}"
+    deterministic = worker_name == DETERMINISTIC_WORKER_NAME
     project_payload = {
-        "name": f"AIAT Level A disposable expense app {project_key[-8:]}",
-        "description": "Disposable local integration task: create a CSV expense category-total module, test, sample, and README.",
+        "name": f"AIAT Level A disposable expense module {project_key[-8:]}",
+        "description": (
+            "Disposable local integration task: generate one Python CSV expense-category summarizer."
+            if deterministic
+            else "Disposable local integration task: create a CSV expense category-total module, test, sample, and README."
+        ),
         "start_immediately": False,
         "idempotency_key": project_key,
-        "config": {"integration_profile": "opencode-level-a", "non_promotable": True},
+        "config": {
+            "integration_profile": "deterministic-file-worker-level-a"
+            if deterministic
+            else "opencode-level-a",
+            "non_promotable": True,
+        },
     }
     try:
         status, _, project, _ = api.request("POST", "/projects", project_payload)
@@ -553,42 +673,66 @@ def _run_project_journey(
 
     try:
         _, _, workers, _ = api.request("GET", "/capabilities/workers")
-        worker = (
-            next(
-                (
-                    item
-                    for item in workers
-                    if isinstance(item, dict)
-                    and str(item.get("id") or item.get("worker_id") or "") == worker_id
-                ),
-                None,
-            )
+        matching_workers = (
+            [
+                item
+                for item in workers
+                if isinstance(item, dict) and str(item.get("name") or "") == worker_name
+            ]
             if isinstance(workers, list)
-            else None
+            else []
         )
-        if worker is None:
+        if not matching_workers:
             _stage(stages, "WORKER_SELECTED", "BLOCKED", reason="WORKER_NOT_REGISTERED")
             return project_id, run_id
-        worker_summary = {
-            "worker_id": worker_id,
-            "status": str(worker.get("status") or "UNKNOWN"),
-            "adapter_type": str(
-                worker.get("adapter_type") or worker.get("runtime_type") or "UNKNOWN"
-            ),
-            "evaluation_status": str(worker.get("evaluation_status") or "UNKNOWN"),
-        }
-        if worker_summary["adapter_type"].lower() != "opencode":
+        if len(matching_workers) != 1:
+            _stage(stages, "WORKER_SELECTED", "BLOCKED", reason="WORKER_NAME_AMBIGUOUS")
+            return project_id, run_id
+        worker = matching_workers[0]
+        worker_id = str(worker.get("id") or worker.get("worker_id") or "")
+        if not worker_id:
+            _stage(stages, "WORKER_SELECTED", "BLOCKED", reason="WORKER_ID_MISSING")
+            return project_id, run_id
+        adapter_type = str(
+            worker.get("adapter_type") or worker.get("runtime_type") or "UNKNOWN"
+        ).lower()
+        model_mode = str(worker.get("model_mode") or "UNKNOWN").lower()
+        expected_adapter = "oci" if deterministic else "opencode"
+        if adapter_type != expected_adapter or (deterministic and model_mode != "none"):
             _stage(
                 stages,
                 "WORKER_SELECTED",
                 "BLOCKED",
-                reason="WORKER_RUNTIME_IS_NOT_OPENCODE",
-                evidence=worker_summary,
+                reason="WORKER_PROFILE_MISMATCH",
+                evidence={
+                    "worker_name": worker_name,
+                    "adapter_type": adapter_type,
+                    "model_mode": model_mode,
+                    "expected_adapter_type": expected_adapter,
+                    "expected_model_mode": "none" if deterministic else None,
+                },
             )
             return project_id, run_id
+        worker_summary = {
+            "worker_id": worker_id,
+            "worker_name": worker_name,
+            "status": str(worker.get("status") or "UNKNOWN"),
+            "adapter_type": adapter_type,
+            "model_mode": model_mode,
+            "sandbox_profile": str(worker.get("sandbox_profile") or "UNKNOWN"),
+            "version_pin_present": bool(worker.get("version_pin")),
+            "requested_tool_grants": DETERMINISTIC_TOOL_GRANTS
+            if deterministic
+            else TOOL_GRANTS,
+            "requested_permission_requirements": DETERMINISTIC_PERMISSION_REQUIREMENTS
+            if deterministic
+            else PERMISSION_REQUIREMENTS,
+            "evaluation_status": str(worker.get("evaluation_status") or "UNKNOWN"),
+        }
         readiness = _canonical_worker_readiness(
             api,
             worker_id=worker_id,
+            worker_name=worker_name,
             project_id=project_id,
         )
         worker_summary["readiness"] = readiness
@@ -606,26 +750,44 @@ def _run_project_journey(
         _stage(stages, "WORKER_SELECTED", "FAIL", reason=exc.code)
         return project_id, run_id
 
-    request_key = f"level-a-opencode-run-{uuid4()}"
-    # The only configured model route is a local deterministic endpoint. Its
-    # fixed scenario returns the bounded OpenAI-compatible tool calls for the
-    # expense application; OpenCode still performs the real tool loop.
-    prompt = LOCAL_FIXTURE_PROMPT
-    dispatch = {
-        "worker_id": worker_id,
-        "idempotency_key": request_key,
-        "task_type": "code_implementation",
-        "task_input": {"prompt": prompt},
-        "project_id": project_id,
-        "tool_grants": TOOL_GRANTS,
-        "permission_requirements": PERMISSION_REQUIREMENTS,
-        "workspace_mode": "isolated",
-        "timeout_seconds": timeout_seconds,
-        "budget_usd": float(MAX_RUN_BUDGET_USD),
-        "dispatch_mode": "queued",
-        "queue_priority": 10,
-        "lease_seconds": 300,
-    }
+    request_key = f"level-a-worker-run-{uuid4()}"
+    if deterministic:
+        dispatch = {
+            "worker_id": worker_id,
+            "idempotency_key": request_key,
+            "task_type": "deterministic_file_generation",
+            "task_input": {
+                "path": DETERMINISTIC_FILE_PATH,
+                "content": DETERMINISTIC_FILE_CONTENT,
+            },
+            "project_id": project_id,
+            "tool_grants": DETERMINISTIC_TOOL_GRANTS,
+            "permission_requirements": DETERMINISTIC_PERMISSION_REQUIREMENTS,
+            "workspace_mode": "isolated",
+            "timeout_seconds": min(timeout_seconds, 30),
+            "budget_usd": float(MAX_RUN_BUDGET_USD),
+            "dispatch_mode": "queued",
+            "queue_priority": 10,
+            "lease_seconds": 300,
+        }
+    else:
+        # The fixed local fixture returns bounded OpenAI-compatible tool calls;
+        # OpenCode still performs the real tool loop.
+        dispatch = {
+            "worker_id": worker_id,
+            "idempotency_key": request_key,
+            "task_type": "code_implementation",
+            "task_input": {"prompt": LOCAL_FIXTURE_PROMPT},
+            "project_id": project_id,
+            "tool_grants": TOOL_GRANTS,
+            "permission_requirements": PERMISSION_REQUIREMENTS,
+            "workspace_mode": "isolated",
+            "timeout_seconds": timeout_seconds,
+            "budget_usd": float(MAX_RUN_BUDGET_USD),
+            "dispatch_mode": "queued",
+            "queue_priority": 10,
+            "lease_seconds": 300,
+        }
     try:
         _, _, accepted, _ = api.request("POST", "/workers/runs", dispatch)
         if not isinstance(accepted, dict) or not accepted.get("run_id"):
@@ -668,13 +830,24 @@ def _run_project_journey(
 
     run_state = str(current.get("state") or "UNKNOWN").upper()
     model_snapshot = current.get("model_resolution_snapshot_id")
-    _stage(
-        stages,
-        "MODEL_REQUEST_RESOLVED",
-        "PASS" if model_snapshot else "BLOCKED",
-        reason=None if model_snapshot else "MODEL_RESOLUTION_SNAPSHOT_MISSING",
-        evidence={"snapshot_id": str(model_snapshot)} if model_snapshot else None,
-    )
+    if deterministic:
+        if model_snapshot:
+            _stage(
+                stages,
+                "MODEL_REQUEST_RESOLVED",
+                "FAIL",
+                reason="UNEXPECTED_MODEL_RESOLUTION_FOR_NON_MODEL_WORKER",
+            )
+        else:
+            _stage(stages, "MODEL_REQUEST_RESOLVED", "N/A", reason="NON_MODEL_WORKER")
+    else:
+        _stage(
+            stages,
+            "MODEL_REQUEST_RESOLVED",
+            "PASS" if model_snapshot else "BLOCKED",
+            reason=None if model_snapshot else "MODEL_RESOLUTION_SNAPSHOT_MISSING",
+            evidence={"snapshot_id": str(model_snapshot)} if model_snapshot else None,
+        )
     if run_poll_timed_out:
         _stage(
             stages,
@@ -810,16 +983,22 @@ def _run_project_journey(
             reason=None if runtime_started else "RUNTIME_ACCEPTANCE_EVENT_NOT_FOUND",
             evidence={"event_count": len(event_rows), "accepted_event_observed": runtime_started},
         )
-        _stage(
-            stages,
-            "LOCAL_MODEL_RESPONSE_RECEIVED",
-            "PASS" if messages_seen else "BLOCKED",
-            reason=None if messages_seen else "NO_OPEN_CODE_MESSAGE_EVENT",
-            evidence={"message_events_observed": messages_seen},
-        )
+        if deterministic:
+            _stage(stages, "LOCAL_MODEL_RESPONSE_RECEIVED", "N/A", reason="NON_MODEL_WORKER")
+        else:
+            _stage(
+                stages,
+                "LOCAL_MODEL_RESPONSE_RECEIVED",
+                "PASS" if messages_seen else "BLOCKED",
+                reason=None if messages_seen else "NO_OPEN_CODE_MESSAGE_EVENT",
+                evidence={"message_events_observed": messages_seen},
+            )
     except APIError as exc:
         _stage(stages, "RUNTIME_STARTED", "FAIL", reason=exc.code)
-        _stage(stages, "LOCAL_MODEL_RESPONSE_RECEIVED", "FAIL", reason=exc.code)
+        if deterministic:
+            _stage(stages, "LOCAL_MODEL_RESPONSE_RECEIVED", "N/A", reason="NON_MODEL_WORKER")
+        else:
+            _stage(stages, "LOCAL_MODEL_RESPONSE_RECEIVED", "FAIL", reason=exc.code)
 
     try:
         _, _, effects_response, _ = api.request(
@@ -848,15 +1027,28 @@ def _run_project_journey(
             reason=None if effect_rows else "NO_DURABLE_TOOL_EFFECTS",
             evidence={"effect_count": len(effect_rows), "tool_names": names},
         )
-        effects_ok = bool(completed_effects) and bool(pytest_effects)
+        deterministic_file_effects = [
+            row
+            for row in effect_rows
+            if isinstance(row, dict)
+            and row.get("tool_name") == "file_write"
+            and row.get("state") == "COMPLETED"
+            and row.get("response_success") is True
+        ]
+        expected_effects = deterministic_file_effects if deterministic else pytest_effects
+        effects_ok = bool(completed_effects) and bool(expected_effects)
         _stage(
             stages,
             "TOOL_EFFECT_PERSISTED",
             "PASS" if effects_ok else "FAIL",
-            reason=None if effects_ok else "PYTEST_EFFECT_NOT_COMPLETED",
+            reason=None
+            if effects_ok
+            else "FILE_WRITE_EFFECT_NOT_COMPLETED"
+            if deterministic
+            else "PYTEST_EFFECT_NOT_COMPLETED",
             evidence={
                 "completed_effect_count": len(completed_effects),
-                "pytest_effect_count": len(pytest_effects),
+                "expected_effect_count": len(expected_effects),
             },
         )
     except APIError as exc:
@@ -889,7 +1081,7 @@ def _run_project_journey(
             expected_digest = str(
                 headers.get("X-AIAT-Artifact-SHA256") or artifact.get("sha256") or ""
             ).lower()
-            if expected_digest and digest != expected_digest:
+            if not expected_digest or digest != expected_digest:
                 continue
             name = Path(uri).name
             artifact_content[name] = data
@@ -897,21 +1089,43 @@ def _run_project_journey(
             artifact_summary.append(
                 {"artifact_id": artifact_id, "uri": uri, "sha256": digest, "size_bytes": len(data)}
             )
-        required_names = set(EXPECTED_FILES)
-        valid_files = required_names.issubset(artifact_content)
-        content_valid = valid_files and all(
-            all(
-                marker.lower() in artifact_content[name].decode("utf-8", errors="replace").lower()
-                for marker in markers
-            )
-            for name, markers in EXPECTED_FILES.items()
+        expected_files = (
+            {DETERMINISTIC_FILE_PATH: DETERMINISTIC_FILE_CONTENT.encode("utf-8")}
+            if deterministic
+            else None
         )
+        required_names = (
+            {DETERMINISTIC_FILE_PATH}
+            if deterministic
+            else set(OPENCODE_EXPECTED_FILES)
+        )
+        valid_files = required_names.issubset(artifact_content)
+        if deterministic:
+            content_valid = valid_files and all(
+                artifact_content.get(name) == content for name, content in (expected_files or {}).items()
+            )
+        else:
+            content_valid = valid_files and all(
+                all(
+                    marker.lower()
+                    in artifact_content[name].decode("utf-8", errors="replace").lower()
+                    for marker in markers
+                )
+                for name, markers in OPENCODE_EXPECTED_FILES.items()
+            )
         _stage(
             stages,
             "FILE_GENERATED",
             "PASS" if content_valid else "FAIL",
             reason=None if content_valid else "EXPECTED_ARTIFACT_CONTENT_MISSING",
-            evidence={"files": sorted(artifact_content), "required_files": sorted(required_names)},
+            evidence={
+                "files": sorted(artifact_content),
+                "required_files": sorted(required_names),
+                "sha256": {
+                    name: hashlib.sha256(artifact_content[name]).hexdigest()
+                    for name in sorted(required_names & set(artifact_content))
+                },
+            },
         )
         _stage(
             stages,
@@ -925,11 +1139,20 @@ def _run_project_journey(
         _stage(stages, "FILE_GENERATED", "FAIL", reason=exc.code)
         _stage(stages, "ARTIFACT_REGISTERED", "FAIL", reason=exc.code)
 
+    evidence_package: Any = None
+    evidence_policy_reason: str | None = None
+    evidence_policy_summary: dict[str, Any] = {}
     try:
         _, _, evidence, _ = api.request(
             "GET", f"/projects/{urllib.parse.quote(project_id)}/evidence/package"
         )
-        evidence_ok, evidence_reason, evidence_summary = _project_evidence_readiness(
+        evidence_package = evidence
+        evidence_ok, evidence_reason, evidence_summary = _project_evidence_links_artifacts(
+            evidence,
+            project_id=project_id,
+            artifact_ids=verified_artifact_ids,
+        )
+        _, evidence_policy_reason, evidence_policy_summary = _project_evidence_readiness(
             evidence,
             project_id=project_id,
             artifact_ids=verified_artifact_ids,
@@ -962,17 +1185,49 @@ def _run_project_journey(
             stages.get(name, {}).get("status") == "PASS"
             for name in completion_dependencies
         )
-        completed = final_state == "COMPLETED" and evidence_chain_passed
+        policy_ready, _, _ = _project_evidence_readiness(
+            evidence_package,
+            project_id=project_id,
+            artifact_ids=verified_artifact_ids,
+        )
+        completed = final_state == "COMPLETED" and evidence_chain_passed and policy_ready
+        if completed:
+            completion_block_reason = None
+            required_next_action = None
+        elif final_state == "COMPLETED" and not evidence_chain_passed:
+            completion_block_reason = "PROJECT_COMPLETION_EVIDENCE_CHAIN_INCOMPLETE"
+            required_next_action = "repair_missing_evidence_stage"
+        elif final_state == "COMPLETED" and not policy_ready:
+            completion_block_reason = (
+                evidence_policy_reason or "PROJECT_COMPLETION_EVIDENCE_POLICY_INCOMPLETE"
+            )
+            required_next_action = "complete_required_project_evidence"
+        elif final_state == "KPI_PERSISTENCE" and not policy_ready:
+            completion_block_reason = (
+                evidence_policy_reason or "PROJECT_EVIDENCE_POLICY_INCOMPLETE"
+            )
+            required_next_action = "complete_required_project_evidence"
+        elif final_state == "KPI_PERSISTENCE":
+            completion_block_reason = "PROJECT_KPI_COMPUTATION_REQUIRED"
+            required_next_action = "executive.kpi.compute_project"
+        else:
+            completion_block_reason = "PROJECT_WORKFLOW_COMPLETION_REQUIRES_ITS_GOVERNED_MILESTONES"
+            required_next_action = "project.workflow_milestones"
         _stage(
             stages,
             "PROJECT_COMPLETED",
             "PASS" if completed else "BLOCKED",
             reason=None
             if completed
-            else "PROJECT_WORKFLOW_COMPLETION_REQUIRES_ITS_GOVERNED_MILESTONES"
-            if final_state != "COMPLETED"
-            else "PROJECT_COMPLETION_EVIDENCE_CHAIN_INCOMPLETE",
-            evidence={"state": final_state, "evidence_chain_passed": evidence_chain_passed},
+            else completion_block_reason,
+            evidence={
+                "state": final_state,
+                "evidence_chain_passed": evidence_chain_passed,
+                "completion_policy_ready": policy_ready,
+                "completion_policy_reason": evidence_policy_reason,
+                "completion_policy_status": evidence_policy_summary.get("status"),
+                "required_next_action": required_next_action,
+            },
         )
     except APIError as exc:
         _stage(stages, "PROJECT_COMPLETED", "FAIL", reason=exc.code)
@@ -997,8 +1252,9 @@ def main(argv: list[str] | None = None) -> int:
     }
     project_id: str | None = None
     run_id: str | None = None
+    worker_name: str | None = None
     try:
-        api, worker_id = _verify_local_fixture_environment()
+        api, worker_name = _verify_local_fixture_environment()
     except (ValueError, OSError):
         for stage_name in REQUIRED_STAGES:
             _stage(
@@ -1007,13 +1263,17 @@ def main(argv: list[str] | None = None) -> int:
                 "BLOCKED" if stage_name == "WORKER_SELECTED" else "NOT_RUN",
                 reason="LOCAL_PROFILE_NOT_CONFIGURED",
             )
-        report = _report(stages, project_id, run_id)
+        report = _report(stages, project_id, run_id, worker_name=worker_name)
         _write_report(report, args.evidence)
         return 2
+    assert worker_name is not None
 
     try:
         _run_project_journey(
-            api=api, worker_id=worker_id, timeout_seconds=args.timeout_seconds, stages=stages
+            api=api,
+            worker_name=worker_name,
+            timeout_seconds=args.timeout_seconds,
+            stages=stages,
         )
     except APIError as exc:
         stages.setdefault("PROJECT_CREATED", {"status": "FAIL", "reason": exc.code})
@@ -1105,25 +1365,38 @@ def main(argv: list[str] | None = None) -> int:
         _stage(stages, "CLEANUP_VERIFIED", "NOT_RUN", reason="PROJECT_NOT_CREATED")
 
     report = _report(
-        stages, str(project_id) if project_id else None, str(run_id) if run_id else None
+        stages,
+        str(project_id) if project_id else None,
+        str(run_id) if run_id else None,
+        worker_name=worker_name,
     )
     _write_report(report, args.evidence)
     states = [stages.get(name, {}).get("status", "NOT_RUN") for name in REQUIRED_STAGES]
     if any(value == "FAIL" for value in states):
         return 1
-    if any(value != "PASS" for value in states):
+    if any(value not in {"PASS", "N/A"} for value in states):
         return 2
     return 0
 
 
 def _report(
-    stages: dict[str, dict[str, Any]], project_id: str | None, run_id: str | None
+    stages: dict[str, dict[str, Any]],
+    project_id: str | None,
+    run_id: str | None,
+    *,
+    worker_name: str | None = None,
 ) -> dict[str, Any]:
     statuses = [item.get("status") for item in stages.values()]
+    deterministic = worker_name == DETERMINISTIC_WORKER_NAME
     return {
         "schema_version": "aiat.opencode-vertical-level-a.v1",
-        "profile": "isolated-non-promotable-local-fixture",
-        "provider_dispatch": "local_fixture_only",
+        "profile": "isolated-non-promotable-deterministic-worker"
+        if deterministic
+        else "isolated-non-promotable-local-fixture",
+        "worker_name": worker_name,
+        "provider_dispatch": "not_applicable_non_model"
+        if deterministic
+        else "local_fixture_only",
         "project_id": project_id,
         "worker_run_id": run_id,
         "stages": stages,
@@ -1131,6 +1404,7 @@ def _report(
             "pass": statuses.count("PASS"),
             "fail": statuses.count("FAIL"),
             "blocked": statuses.count("BLOCKED"),
+            "not_applicable": statuses.count("N/A"),
             "not_run": statuses.count("NOT_RUN"),
         },
     }

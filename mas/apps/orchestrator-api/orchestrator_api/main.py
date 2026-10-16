@@ -90,6 +90,7 @@ from mas_core.memory.storage import (
     TERMINAL_WORKER_RUN_STATES,
     AgentStorage,
     document_to_context_item,
+    worker_identity_snapshot_for_rollout,
 )
 from mas_core.observability import configure_logging
 from mas_core.observability.metrics import (
@@ -9769,20 +9770,51 @@ async def _worker_activation_blockers(
             inspect.iscoroutinefunction(getattr(storage, name, None))
             for name in required_external_methods
         ):
-            if await storage.get_steward_by_worker(worker["id"]) is None:
+            persisted_steward = await storage.get_steward_by_worker(worker["id"])
+            if persisted_steward is None:
                 blockers.append("external worker requires a dedicated Steward Agent")
             external_provenance = await storage.get_external_provenance_by_worker(worker["id"])
             if external_provenance is None:
                 blockers.append("external worker requires immutable provenance")
-            elif str(external_provenance.get("security_scan_status") or "").lower() != "passed":
-                blockers.append("external worker requires a passed security scan")
             else:
-                # The persisted status column has no evidence-bound update
-                # path.  A legacy/caller-supplied scalar PASS is not scanner
-                # evidence and cannot satisfy the activation predicate.
-                blockers.append(
-                    "external worker security scan PASS requires retained, source-bound evidence"
+                steward_metadata = (persisted_steward or {}).get("metadata") or {}
+                source_provenance_extra = (
+                    steward_metadata.get("source_provenance_extra")
+                    if isinstance(steward_metadata, dict)
+                    else {}
                 )
+                scan_report = (
+                    source_provenance_extra.get("source_bound_security_scan")
+                    if isinstance(source_provenance_extra, dict)
+                    else None
+                )
+                from mas_core.worker_registry.source_bound_security_scan import (
+                    source_bound_security_scan_is_valid,
+                    source_bound_security_scan_required,
+                )
+
+                bound_provenance = {
+                    **external_provenance,
+                    "source_bound_security_scan": scan_report,
+                }
+                scan_required = source_bound_security_scan_required(
+                    bound_provenance,
+                    worker=worker,
+                )
+                scan_valid = str(external_provenance.get("security_scan_status") or "").lower() == "passed"
+                if scan_required:
+                    scan_valid = scan_valid and source_bound_security_scan_is_valid(
+                        scan_report,
+                        expected_worker_id=str(worker["id"]),
+                        provenance=bound_provenance,
+                        current_worker=worker,
+                    )
+                if not scan_valid:
+                    # A scalar PASS, a caller report, or a report for a
+                    # different source/runtime is never activation evidence.
+                    blockers.append(
+                        "external worker security scan is missing required governed evidence"
+                    )
 
     return blockers
 
@@ -9912,6 +9944,14 @@ async def _transition_worker_status_for_principal(
     elif req.action == "RECLASSIFY":
         updates: dict[str, Any] = {}
         if req.new_status:
+            if req.new_status.strip().upper() == "ACTIVE":
+                raise HTTPException(
+                    409,
+                    {
+                        "code": "WORKER_ACTIVATION_REQUIRES_ACTIVATE_ACTION",
+                        "message": "worker activation must use the governed ACTIVATE action",
+                    },
+                )
             await storage.update_worker_status(worker_id, status=req.new_status)
         if req.new_role:
             updates["adapter_entrypoint"] = req.new_role
@@ -10049,12 +10089,14 @@ async def get_worker_health(worker_id: UUID) -> dict[str, Any]:
 async def evaluate_worker(
     worker_id: UUID,
     req: WorkerEvaluateRequest,
+    request: Request,
 ) -> dict[str, Any]:
     """Trigger a repository evaluation for a worker.
 
     Evaluates the worker's source repo for architectural fit,
     maintenance quality, licensing, security, and compatibility.
     """
+    _require_operator_identity(request)
     storage = _storage()
     worker = await storage.get_worker(worker_id)
     if worker is None:
@@ -10199,6 +10241,16 @@ async def _steward_runtime(storage: AgentStorage, worker_id: UUID) -> Any | None
     provenance_row = await storage.get_external_provenance_by_worker(worker_id)
     if persisted is None or provenance_row is None:
         return None
+    steward_metadata = persisted.get("metadata")
+    if not isinstance(steward_metadata, dict):
+        steward_metadata = {}
+    source_provenance_extra = steward_metadata.get("source_provenance_extra")
+    if not isinstance(source_provenance_extra, dict):
+        source_provenance_extra = {}
+    source_bound_scan = source_provenance_extra.get("source_bound_security_scan")
+    provenance_payload = dict(provenance_row)
+    if isinstance(source_bound_scan, dict):
+        provenance_payload["source_bound_security_scan"] = source_bound_scan
     try:
         status = StewardStatus(str(persisted.get("status", StewardStatus.PROVISIONING)))
     except ValueError:
@@ -10206,7 +10258,7 @@ async def _steward_runtime(storage: AgentStorage, worker_id: UUID) -> Any | None
     steward = ExternalWorkerSteward(
         worker_id=key,
         steward_id=UUID(str(persisted["id"])),
-        provenance=ExternalProvenance.model_validate(provenance_row),
+        provenance=ExternalProvenance.model_validate(provenance_payload),
         status=status,
     )
     if inspect.iscoroutinefunction(getattr(storage, "list_documentation_snapshots", None)):
@@ -10340,6 +10392,429 @@ async def _steward_runtime(storage: AgentStorage, worker_id: UUID) -> Any | None
         )
     _worker_steward_runtimes[key] = steward
     return steward
+
+
+def _governance_dict(value: Any) -> dict[str, Any]:
+    """Return a bounded object projection from a persisted/model value."""
+    if isinstance(value, dict):
+        return value
+    dump = getattr(value, "model_dump", None)
+    if callable(dump):
+        result = dump(mode="json")
+        return result if isinstance(result, dict) else {}
+    return {}
+
+
+def _candidate_record_source(candidate_record: Any) -> list[dict[str, Any]] | None:
+    """Collect the three immutable provenance snapshots in a candidate."""
+    record = _governance_dict(candidate_record)
+    bundle = _governance_dict(record.get("bundle"))
+    adapter = _governance_dict(record.get("adapter"))
+    snapshots = [
+        _governance_dict(record.get("source_provenance")),
+        _governance_dict(bundle.get("source_provenance")),
+        _governance_dict(adapter.get("source_provenance")),
+    ]
+    if any(not snapshot for snapshot in snapshots):
+        return None
+    return snapshots
+
+
+def _candidate_record_from_row(row: Any) -> dict[str, Any] | None:
+    persisted = _governance_dict(row)
+    evidence = _governance_dict(persisted.get("evidence_json"))
+    candidate = evidence.get("candidate_record")
+    return candidate if isinstance(candidate, dict) else None
+
+
+def _candidate_lifecycle_snapshot(
+    persisted_candidate: Any,
+    candidate_record: Any,
+    runtime_candidate: Any,
+) -> dict[str, Any]:
+    """Require the persisted and hydrated candidate lifecycle to agree."""
+
+    persisted = _governance_dict(persisted_candidate)
+    record = _governance_dict(candidate_record)
+    runtime = _governance_dict(runtime_candidate)
+
+    def _value(value: Any) -> str | None:
+        value = getattr(value, "value", value)
+        return str(value) if value not in (None, "") else None
+
+    persisted_status = _value(persisted.get("intake_status"))
+    record_status = _value(record.get("intake_status"))
+    runtime_status = _value(runtime.get("intake_status"))
+    persisted_certification = _value(persisted.get("certification_run_id"))
+    record_certification = _value(record.get("certification_id"))
+    runtime_certification = _value(runtime.get("certification_id"))
+    persisted_approval = _value(persisted.get("approval_record_id"))
+    record_approval = _value(record.get("approval_record_id"))
+    runtime_approval = _value(runtime.get("approval_record_id"))
+
+    if (
+        not persisted_status
+        or persisted_status != record_status
+        or persisted_status != runtime_status
+        or persisted_certification != record_certification
+        or persisted_certification != runtime_certification
+        or persisted_approval != record_approval
+        or persisted_approval != runtime_approval
+    ):
+        raise HTTPException(
+            409,
+            {
+                "code": "CANDIDATE_LIFECYCLE_STALE",
+                "message": "persisted, hydrated, and candidate evidence lifecycle state do not match",
+            },
+        )
+    return {
+        "intake_status": persisted_status,
+        "certification_run_id": persisted_certification,
+        "approval_record_id": persisted_approval,
+    }
+
+
+def _is_first_party_candidate(worker: Any, candidate: Any) -> bool:
+    from mas_core.worker_registry.source_bound_security_scan import (
+        FIRST_PARTY_SOURCE_REPOSITORY,
+        FIRST_PARTY_WORKER_ID,
+    )
+
+    worker_payload = _governance_dict(worker)
+    if str(worker_payload.get("name") or "") == FIRST_PARTY_WORKER_ID:
+        return True
+    candidate_payload = _governance_dict(candidate)
+    provenance = _governance_dict(candidate_payload.get("source_provenance"))
+    return (
+        str(provenance.get("source_provider") or "").lower() == "aiat"
+        and str(provenance.get("canonical_source_repository") or "")
+        == FIRST_PARTY_SOURCE_REPOSITORY
+    )
+
+
+async def _first_party_candidate_source_state(
+    storage: AgentStorage,
+    *,
+    worker_id: UUID,
+    candidate_id: UUID,
+    candidate_row: Any,
+    runtime_candidate: Any = None,
+) -> dict[str, Any]:
+    """Load and bind source-scan evidence to current worker/candidate state.
+
+    This is deliberately limited to the pinned first-party deterministic
+    worker. The report is read from the persisted Steward metadata and checked
+    against the current worker and provenance immediately before governance
+    writes. The returned fingerprint contains only bounded identity metadata.
+    """
+    from mas_core.worker_registry.source_bound_security_scan import (
+        FIRST_PARTY_WORKER_ID,
+        canonical_sha256,
+        source_bound_security_scan_is_valid,
+    )
+
+    worker = await storage.get_worker(worker_id)
+    if not isinstance(worker, dict) or str(worker.get("name") or "") != FIRST_PARTY_WORKER_ID:
+        raise HTTPException(
+            409,
+            {
+                "code": "CANDIDATE_SOURCE_IDENTITY_STALE",
+                "message": "the deterministic worker identity changed during candidate governance",
+            },
+        )
+    get_provenance = getattr(storage, "get_external_provenance_by_worker", None)
+    get_steward = getattr(storage, "get_steward_by_worker", None)
+    if not inspect.iscoroutinefunction(get_provenance) or not inspect.iscoroutinefunction(get_steward):
+        raise HTTPException(
+            409,
+            {
+                "code": "SECURITY_SCAN_EVIDENCE_REQUIRED",
+                "message": "current persisted worker provenance and Steward scan evidence are unavailable",
+            },
+        )
+    provenance_row = await get_provenance(worker_id)
+    steward_row = await get_steward(worker_id)
+    if not isinstance(provenance_row, dict) or not isinstance(steward_row, dict):
+        raise HTTPException(
+            409,
+            {
+                "code": "SECURITY_SCAN_EVIDENCE_REQUIRED",
+                "message": "current persisted worker provenance and Steward scan evidence are unavailable",
+            },
+        )
+    steward_metadata = _governance_dict(steward_row.get("metadata"))
+    provenance_extra = _governance_dict(steward_metadata.get("source_provenance_extra"))
+    report = provenance_extra.get("source_bound_security_scan")
+    if not isinstance(report, dict) or str(provenance_row.get("security_scan_status") or "").lower() != "passed":
+        raise HTTPException(
+            409,
+            {
+                "code": "SECURITY_SCAN_EVIDENCE_REQUIRED",
+                "message": "a current persisted source-bound security scan is required for this candidate",
+            },
+        )
+    bound_provenance = {**provenance_row, "source_bound_security_scan": report}
+    if not source_bound_security_scan_is_valid(
+        report,
+        expected_worker_id=str(worker_id),
+        provenance=bound_provenance,
+        current_worker=worker,
+    ):
+        raise HTTPException(
+            409,
+            {
+                "code": "SECURITY_SCAN_EVIDENCE_STALE",
+                "message": "the persisted source-bound security report does not match the current worker and provenance",
+            },
+        )
+
+    persisted_candidate = _governance_dict(candidate_row)
+    candidate_record = _candidate_record_from_row(candidate_row)
+    if (
+        not persisted_candidate
+        or str(persisted_candidate.get("id") or "") != str(candidate_id)
+        or str(persisted_candidate.get("worker_id") or "") != str(worker_id)
+        or not candidate_record
+    ):
+        raise HTTPException(
+            409,
+            {
+                "code": "CANDIDATE_SOURCE_SNAPSHOT_UNAVAILABLE",
+                "message": "the persisted candidate source snapshot is unavailable or belongs to a different worker",
+            },
+        )
+    if str(candidate_record.get("candidate_id") or "") != str(candidate_id) or str(
+        candidate_record.get("worker_id") or ""
+    ) != str(worker_id):
+        raise HTTPException(
+            409,
+            {
+                "code": "CANDIDATE_SOURCE_SNAPSHOT_STALE",
+                "message": "the persisted candidate record no longer matches the selected worker and candidate",
+            },
+        )
+
+    candidate_lifecycle = _candidate_lifecycle_snapshot(
+        persisted_candidate,
+        candidate_record,
+        runtime_candidate,
+    )
+    candidate_snapshot = json.loads(
+        json.dumps(
+            {
+                "id": persisted_candidate.get("id"),
+                "worker_id": persisted_candidate.get("worker_id"),
+                "skill_bundle_id": persisted_candidate.get("skill_bundle_id"),
+                "adapter_id": persisted_candidate.get("adapter_id"),
+                "intake_status": persisted_candidate.get("intake_status"),
+                "certification_run_id": persisted_candidate.get(
+                    "certification_run_id"
+                ),
+                "approval_record_id": persisted_candidate.get("approval_record_id"),
+                "evidence_json": _governance_dict(
+                    persisted_candidate.get("evidence_json")
+                ),
+                "candidate_record": candidate_record,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+    )
+
+    source_fields = (
+        "canonical_source_repository",
+        "source_provider",
+        "exact_release",
+        "commit_sha",
+        "package_version",
+        "oci_image_digest",
+        "dependency_lock_hash",
+        "protocol_api_version",
+        "adapter_version",
+        "transport_type",
+        "runtime_fingerprint",
+        "implementation_ref",
+        "content_hash",
+    )
+    current_source_identity = {key: provenance_row.get(key) for key in source_fields}
+    for record in (candidate_record, _governance_dict(runtime_candidate)):
+        if not record:
+            continue
+        if str(record.get("candidate_id") or "") != str(candidate_id) or str(
+            record.get("worker_id") or ""
+        ) != str(worker_id):
+            raise HTTPException(
+                409,
+                {
+                    "code": "CANDIDATE_SOURCE_SNAPSHOT_STALE",
+                    "message": "the in-memory candidate no longer matches its persisted identity",
+                },
+            )
+        snapshots = _candidate_record_source(record)
+        if snapshots is None:
+            raise HTTPException(
+                409,
+                {
+                    "code": "CANDIDATE_SOURCE_SNAPSHOT_UNAVAILABLE",
+                    "message": "the candidate does not retain all immutable source snapshots",
+                },
+            )
+        for snapshot in snapshots:
+            if any(snapshot.get(key) != current_source_identity[key] for key in source_fields):
+                raise HTTPException(
+                    409,
+                    {
+                        "code": "CANDIDATE_SOURCE_SNAPSHOT_STALE",
+                        "message": "the candidate source snapshot differs from current persisted provenance",
+                    },
+                )
+            embedded_report = snapshot.get("source_bound_security_scan")
+            if embedded_report is not None and embedded_report != report:
+                raise HTTPException(
+                    409,
+                    {
+                        "code": "SECURITY_SCAN_EVIDENCE_STALE",
+                        "message": "the candidate snapshot refers to a different source-bound scan report",
+                    },
+                )
+
+    worker_config = _governance_dict(worker.get("adapter_config"))
+    worker_identity = {
+        key: worker.get(key)
+        for key in (
+            "id",
+            "name",
+            "version",
+            "version_pin",
+            "source_repo",
+            "source_revision",
+            "adapter_type",
+            "adapter_entrypoint",
+            "sandbox_profile",
+        )
+    }
+    worker_identity["image"] = worker_config.get("image")
+    worker_identity["capabilities_sha256"] = canonical_sha256(
+        worker_config.get("capabilities") or {}
+    )
+    candidate_payload = _governance_dict(candidate_record)
+    bundle_payload = _governance_dict(candidate_payload.get("bundle"))
+    adapter_payload = _governance_dict(candidate_payload.get("adapter"))
+    def _id_value(value: Any) -> str | None:
+        return str(value) if value not in (None, "") else None
+
+    persisted_bundle_id = _id_value(persisted_candidate.get("skill_bundle_id"))
+    persisted_adapter_id = _id_value(persisted_candidate.get("adapter_id"))
+    if (
+        persisted_bundle_id != _id_value(bundle_payload.get("bundle_id"))
+        or persisted_adapter_id != _id_value(adapter_payload.get("adapter_id"))
+    ):
+        raise HTTPException(
+            409,
+            {
+                "code": "CANDIDATE_SOURCE_SNAPSHOT_STALE",
+                "message": "persisted candidate bundle or adapter references do not match its immutable candidate record",
+            },
+        )
+    candidate_identity = {
+        "candidate_id": str(candidate_id),
+        "worker_id": str(worker_id),
+        "persisted_skill_bundle_id": persisted_bundle_id,
+        "persisted_adapter_id": persisted_adapter_id,
+        "steward_id": str(candidate_payload.get("steward_id") or ""),
+        "source": current_source_identity,
+        "bundle": {
+            "semantic_version": bundle_payload.get("semantic_version"),
+            "upstream_compatibility_range": bundle_payload.get("upstream_compatibility_range"),
+            "verified_capabilities": bundle_payload.get("verified_capabilities"),
+            "permission_mappings": bundle_payload.get("permission_mappings"),
+        },
+        "adapter": {
+            "version": adapter_payload.get("version"),
+            "transport_type": adapter_payload.get("transport_type"),
+            "entrypoint": adapter_payload.get("entrypoint"),
+            "implementation_ref": adapter_payload.get("implementation_ref"),
+            "content_hash": adapter_payload.get("content_hash"),
+        },
+    }
+    provenance_identity = {
+        **current_source_identity,
+        "security_scan_status": str(provenance_row.get("security_scan_status") or "").lower(),
+        "provenance_hash": provenance_row.get("provenance_hash"),
+    }
+    fingerprint = canonical_sha256(
+        {
+            "worker": worker_identity,
+            "provenance": provenance_identity,
+            "candidate": candidate_identity,
+            "security_scan_report_sha256": report.get("report_sha256"),
+        }
+    )
+    from mas_core.worker_registry.steward import ExternalProvenance
+
+    provenance_model = ExternalProvenance.model_validate(bound_provenance)
+    return {
+        "worker": worker,
+        "provenance": provenance_model,
+        "provenance_hash": str(provenance_row.get("provenance_hash") or ""),
+        "report_sha256": str(report["report_sha256"]),
+        "identity_fingerprint": fingerprint,
+        "candidate_lifecycle": candidate_lifecycle,
+        "candidate_lifecycle_fingerprint": canonical_sha256(candidate_lifecycle),
+        "worker_identity_snapshot": worker_identity_snapshot_for_rollout(worker),
+        "candidate_snapshot": candidate_snapshot,
+    }
+
+
+async def _revalidate_first_party_candidate_source_state(
+    storage: AgentStorage,
+    *,
+    worker_id: UUID,
+    candidate_id: UUID,
+    expected_state: dict[str, Any],
+    runtime_candidate: Any,
+    error_code: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Re-read first-party candidate authority immediately before a write."""
+    latest_candidate = await storage.get_skill_bundle_candidate(candidate_id)
+    latest_state = await _first_party_candidate_source_state(
+        storage,
+        worker_id=worker_id,
+        candidate_id=candidate_id,
+        candidate_row=latest_candidate,
+        runtime_candidate=runtime_candidate,
+    )
+    if (
+        latest_state["identity_fingerprint"] != expected_state["identity_fingerprint"]
+        or latest_state["report_sha256"] != expected_state["report_sha256"]
+        or latest_state["candidate_lifecycle_fingerprint"]
+        != expected_state["candidate_lifecycle_fingerprint"]
+    ):
+        raise HTTPException(
+            409,
+            {
+                "code": error_code,
+                "message": "worker, candidate lifecycle, provenance, or source-scan evidence changed before governance could be persisted",
+            },
+        )
+    return latest_candidate, latest_state
+
+
+def _first_party_certification_row_matches(
+    certification_row: Any,
+    *,
+    identity_fingerprint: str,
+    report_sha256: str,
+) -> bool:
+    row = _governance_dict(certification_row)
+    evidence = _governance_dict(row.get("evidence_json"))
+    return (
+        str(row.get("status") or "").lower() == "passed"
+        and evidence.get("source_identity_fingerprint") == identity_fingerprint
+        and evidence.get("source_bound_security_scan_report_sha256") == report_sha256
+    )
 
 
 def _worker_tool_dispatcher(storage: AgentStorage, worker: dict[str, Any]):
@@ -10654,6 +11129,80 @@ async def get_worker_steward(worker_id: UUID) -> dict[str, Any]:
     return response
 
 
+@app.post("/capabilities/workers/{worker_id}/steward/security-scan")
+async def scan_first_party_worker_security_source(
+    worker_id: UUID,
+    request: Request,
+) -> dict[str, Any]:
+    """Run the fixed, local source-bound scan for the first-party OCI worker.
+
+    This action accepts no report, source path, command, or candidate override.
+    It scans only the checked-in source and Dockerfile after matching them to
+    the immutable manifest and persisted worker/provenance records.
+    """
+    _require_operator_identity(request)
+    storage = _storage()
+    worker = await storage.get_worker(worker_id)
+    if worker is None:
+        raise HTTPException(404, "Worker not found")
+    get_provenance = getattr(storage, "get_external_provenance_by_worker", None)
+    get_steward = getattr(storage, "get_steward_by_worker", None)
+    persist_scan = getattr(storage, "persist_source_bound_worker_security_scan", None)
+    if not all(inspect.iscoroutinefunction(method) for method in (get_provenance, get_steward, persist_scan)):
+        raise HTTPException(503, "source-bound security scan persistence is unavailable")
+    provenance = await get_provenance(worker_id)
+    steward_row = await get_steward(worker_id)
+    if provenance is None or steward_row is None:
+        raise HTTPException(409, "worker requires persisted external provenance and a dedicated Steward Agent")
+
+    from mas_core.worker_registry.source_bound_security_scan import (
+        SourceBoundSecurityScanPersistenceError,
+    )
+    from orchestrator_api.worker_security_scan import (
+        WorkerSecurityScanError,
+        run_first_party_worker_source_scan,
+    )
+
+    try:
+        report = await run_first_party_worker_source_scan(
+            worker=worker,
+            provenance=provenance,
+        )
+    except WorkerSecurityScanError as exc:
+        raise HTTPException(
+            409,
+            {"code": exc.code, "message": "candidate identity or bounded scan inputs are not eligible"},
+        ) from exc
+    try:
+        persisted = await persist_scan(
+            worker_id=worker_id,
+            report=report,
+            expected_provenance_hash=str(provenance.get("provenance_hash") or ""),
+        )
+    except SourceBoundSecurityScanPersistenceError as exc:
+        stale = exc.code == "SECURITY_SCAN_PROVENANCE_CHANGED"
+        raise HTTPException(
+            409 if stale else 422,
+            {
+                "code": exc.code,
+                "message": (
+                    "worker provenance changed while the scan was running"
+                    if stale
+                    else "source-bound security scan evidence failed persistence validation"
+                ),
+            },
+        ) from exc
+    if persisted is None:
+        raise HTTPException(409, "worker provenance or steward record disappeared during scan")
+    _worker_steward_runtimes.pop(str(worker_id), None)
+    return {
+        "worker_id": str(worker_id),
+        "scan": report,
+        "security_scan_status": persisted.get("security_scan_status"),
+        "persisted": True,
+    }
+
+
 @app.get("/stewards")
 async def list_stewards(
     status: str | None = None,
@@ -10781,17 +11330,17 @@ def _candidate_response(candidate: Any) -> dict[str, Any]:
     return candidate.model_dump(mode="json") if hasattr(candidate, "model_dump") else _serialize(candidate)
 
 
-async def _materialize_candidate_worker_shell(
+async def _candidate_worker_shell_values(
     storage: AgentStorage,
     *,
     worker: dict[str, Any],
     candidate: dict[str, Any],
 ) -> dict[str, Any]:
-    """Snapshot a certified candidate into the immutable WorkerShell record.
+    """Build the immutable WorkerShell row for a certified candidate.
 
     The shell binds the worker declaration, permissions, capabilities and
-    provenance reviewed with this particular candidate.  It is created during
-    certification but selected for dispatch only after rollout promotion.
+    provenance reviewed with this particular candidate. Callers may persist
+    the returned row directly or include it in a larger atomic governance write.
     """
     worker_id = UUID(str(worker["id"]))
     adapter_id = candidate.get("adapter_id")
@@ -10805,10 +11354,6 @@ async def _materialize_candidate_worker_shell(
         raise HTTPException(409, "Candidate Skill Bundle does not belong to this worker")
 
     shell_version = f"governed-{candidate['id']}"
-    existing = await storage.get_worker_shell_version_by_version(worker_id, shell_version)
-    if existing is not None:
-        return existing
-
     config = dict(worker.get("adapter_config") or {})
     provenance: dict[str, Any] = {
         "source_repo": worker.get("source_repo"),
@@ -10846,17 +11391,54 @@ async def _materialize_candidate_worker_shell(
     content_hash = hashlib.sha256(
         json.dumps(shell_payload, sort_keys=True, separators=(",", ":"), default=str).encode()
     ).hexdigest()
+    return {
+        "id": uuid4(),
+        "worker_id": worker_id,
+        "version": shell_version,
+        "contract_version": str(config.get("contract_version") or "aiat.worker.v1"),
+        "schema_version": "1.0",
+        "identity_json": identity,
+        "capabilities_json": capabilities,
+        "permissions_json": permissions,
+        "model_mode": shell_payload["model_mode"],
+        "provenance_json": provenance,
+        "content_hash": content_hash,
+        "status": "active",
+    }
+
+
+async def _materialize_candidate_worker_shell(
+    storage: AgentStorage,
+    *,
+    worker: dict[str, Any],
+    candidate: dict[str, Any],
+) -> dict[str, Any]:
+    """Persist a prepared shell for legacy/non-atomic certification callers."""
+    values = await _candidate_worker_shell_values(
+        storage,
+        worker=worker,
+        candidate=candidate,
+    )
+    existing = await storage.get_worker_shell_version_by_version(
+        UUID(str(values["worker_id"])),
+        str(values["version"]),
+    )
+    if existing is not None:
+        if str(existing.get("content_hash") or "") != str(values["content_hash"]):
+            raise HTTPException(409, "Candidate WorkerShell identity changed after certification")
+        return existing
     return await storage.create_worker_shell_version(
-        worker_id=worker_id,
-        version=shell_version,
-        contract_version=str(config.get("contract_version") or "aiat.worker.v1"),
-        schema_version="1.0",
-        identity=identity,
-        capabilities=capabilities,
-        permissions=permissions,
-        model_mode=shell_payload["model_mode"],
-        provenance=provenance,
-        content_hash=content_hash,
+        worker_id=values["worker_id"],
+        version=values["version"],
+        contract_version=values["contract_version"],
+        schema_version=values["schema_version"],
+        identity=values["identity_json"],
+        capabilities=values["capabilities_json"],
+        permissions=values["permissions_json"],
+        model_mode=values["model_mode"],
+        provenance=values["provenance_json"],
+        content_hash=values["content_hash"],
+        shell_version_id=values["id"],
     )
 
 
@@ -10889,6 +11471,14 @@ async def generate_steward_candidate(
         provenance=candidate.bundle.source_provenance.model_dump(mode="json"),
         bundle=candidate.bundle.model_dump(mode="json"),
         content_hash=candidate.bundle.content_hash,
+        bundle_id=candidate.bundle.bundle_id,
+    )
+    # Candidate model IDs are the immutable identities stored inside its JSON
+    # snapshots. Keep those aligned with the canonical row IDs before saving
+    # candidate_record, so later source-bound governance checks can compare the
+    # embedded candidate with the persisted bundle and adapter rows.
+    candidate.bundle = candidate.bundle.model_copy(
+        update={"bundle_id": UUID(str(bundle_row["id"]))}
     )
     adapter_row = await storage.create_runtime_adapter(
         worker_id=worker_id,
@@ -10899,6 +11489,10 @@ async def generate_steward_candidate(
         content_hash=candidate.adapter.content_hash,
         conformance_status="pending",
         status="candidate",
+        adapter_id=candidate.adapter.adapter_id,
+    )
+    candidate.adapter = candidate.adapter.model_copy(
+        update={"adapter_id": UUID(str(adapter_row["id"]))}
     )
     await storage.create_skill_bundle_candidate(
         candidate_id=candidate.candidate_id,
@@ -10930,6 +11524,7 @@ async def advance_steward_candidate_stage(
 ) -> dict[str, Any]:
     """Record exactly one reviewed intake transition and its evidence."""
     _require_operator_identity(request)
+    actor = _authenticated_principal(request)
     storage = _storage()
     steward = await _steward_runtime(storage, worker_id)
     if steward is None:
@@ -10949,7 +11544,9 @@ async def advance_steward_candidate_stage(
         {
             "from": previous_status.value,
             "to": target.value,
-            "actor": req.actor,
+            # Keep the request field for wire compatibility, but the durable
+            # audit actor must come from the authenticated principal.
+            "actor": actor,
             "evidence": req.evidence,
             "recorded_at": datetime.now(UTC).isoformat(),
         }
@@ -10958,11 +11555,21 @@ async def advance_steward_candidate_stage(
     if persisted is not None:
         evidence = dict(persisted.get("evidence_json") or {})
         evidence["candidate_record"] = candidate.model_dump(mode="json")
-        await storage.update_skill_bundle_candidate(
+        updated_candidate = await storage.update_skill_bundle_candidate(
             candidate_id,
             intake_status=candidate.intake_status.value,
             evidence=evidence,
+            expected_intake_status=previous_status.value,
         )
+        if updated_candidate is None:
+            _worker_steward_runtimes.pop(str(worker_id), None)
+            raise HTTPException(
+                409,
+                {
+                    "code": "CANDIDATE_LIFECYCLE_CHANGED_DURING_STAGE",
+                    "message": "candidate lifecycle changed before this stage transition could be persisted",
+                },
+            )
     return _candidate_response(candidate)
 
 
@@ -10989,19 +11596,65 @@ async def certify_steward_candidate(
     worker = await storage.get_worker(worker_id)
     if worker is None:
         raise HTTPException(404, "Worker not found")
-    provenance = steward.provenance
-    # Protect against legacy persisted scalar claims as well as the current
-    # ingress guards.  No API currently binds this field to retained scan
-    # inputs/results, so it cannot authorize candidate certification.
-    _reject_unverified_security_scan_pass(
-        provenance.security_scan_status,
-        status_code=409,
+    first_party_candidate = _is_first_party_candidate(worker, candidate)
+    first_party_source_state: dict[str, Any] | None = None
+    persisted_candidate_for_source: dict[str, Any] | None = None
+    if first_party_candidate:
+        persisted_candidate_for_source = await storage.get_skill_bundle_candidate(candidate_id)
+        first_party_source_state = await _first_party_candidate_source_state(
+            storage,
+            worker_id=worker_id,
+            candidate_id=candidate_id,
+            candidate_row=persisted_candidate_for_source,
+            runtime_candidate=candidate,
+        )
+        worker = first_party_source_state["worker"]
+        provenance = first_party_source_state["provenance"]
+        # Keep the lifecycle evidence as it existed before conformance mutates
+        # the in-memory candidate to CERTIFIED. It is the baseline for the
+        # final persisted-state checks immediately before durable writes.
+        first_party_candidate_lifecycle_record = candidate.model_dump(mode="json")
+        first_party_candidate_before_certification = candidate.model_copy(deep=True)
+    else:
+        provenance = steward.provenance
+        first_party_candidate_lifecycle_record = None
+        first_party_candidate_before_certification = None
+    from mas_core.worker_registry.source_bound_security_scan import (
+        source_bound_security_scan_is_valid,
+        source_bound_security_scan_required,
     )
+
+    scan_required = source_bound_security_scan_required(provenance, worker=worker)
+    scan_valid = provenance.security_scan_status == "passed"
+    if scan_required:
+        scan_valid = scan_valid and source_bound_security_scan_is_valid(
+            getattr(provenance, "source_bound_security_scan", None),
+            expected_worker_id=str(worker_id),
+            provenance=provenance,
+            current_worker=worker,
+        )
+    if not scan_valid:
+        code = (
+            "SECURITY_SCAN_FINDINGS_REVIEW_REQUIRED"
+            if isinstance(getattr(provenance, "source_bound_security_scan", None), dict)
+            and getattr(provenance, "source_bound_security_scan", {}).get("status")
+            == "findings_review_required"
+            else "SECURITY_SCAN_EVIDENCE_REQUIRED"
+        )
+        raise HTTPException(
+            409,
+            {
+                "code": code,
+                "message": "candidate certification requires a valid server-generated source-bound scan report with zero findings and scanner errors",
+            },
+        )
     # Licence/redistribution fields are retained on provenance for metadata
     # and operator notices, but personal internal-use policy never makes them
     # a certification predicate.
     server_checks = operational_promotion_checks(
         provenance,
+        worker_id=str(worker_id),
+        current_worker=worker,
         documentation=bool(steward.documentation_snapshots),
         capability_snapshot=bool(steward.capability_snapshots),
     )
@@ -11095,15 +11748,56 @@ async def certify_steward_candidate(
     except (KeyError, TypeError, ValueError) as exc:
         raise HTTPException(409, f"Candidate adapter cannot be certified: {exc}") from exc
 
+    # Conformance can take seconds or minutes. Re-read the authoritative rows
+    # after it finishes and immediately before the in-memory certification and
+    # durable PASS path. A report that was current at start cannot authorize a
+    # changed worker, candidate snapshot, or provenance row.
+    if first_party_source_state is not None:
+        _, latest_source_state = await _revalidate_first_party_candidate_source_state(
+            storage,
+            worker_id=worker_id,
+            candidate_id=candidate_id,
+            expected_state=first_party_source_state,
+            runtime_candidate=candidate,
+            error_code="CANDIDATE_SOURCE_OR_LIFECYCLE_CHANGED_DURING_CONFORMANCE",
+        )
+        worker = latest_source_state["worker"]
+        provenance = latest_source_state["provenance"]
+        steward.provenance = provenance
+        first_party_source_state = latest_source_state
+
     certification = steward.certify_candidate(
         candidate_id,
         conformance=conformance,
         checks=checks,
         approved_by=None,
     )
+
+    def discard_unpersisted_first_party_certification() -> None:
+        if first_party_candidate_before_certification is None:
+            return
+        steward.candidates[candidate_id] = first_party_candidate_before_certification
+        steward.certifications.pop(certification.certification_id, None)
+
     compatibility_matrix_row: dict[str, Any] | None = None
     create_matrix = getattr(storage, "create_compatibility_matrix", None)
     if inspect.iscoroutinefunction(create_matrix):
+        if first_party_source_state is not None:
+            try:
+                _, latest_source_state = await _revalidate_first_party_candidate_source_state(
+                    storage,
+                    worker_id=worker_id,
+                    candidate_id=candidate_id,
+                    expected_state=first_party_source_state,
+                    runtime_candidate=first_party_candidate_lifecycle_record,
+                    error_code="CANDIDATE_SOURCE_OR_LIFECYCLE_CHANGED_BEFORE_CERTIFICATION_WRITE",
+                )
+            except HTTPException:
+                discard_unpersisted_first_party_certification()
+                raise
+            worker = latest_source_state["worker"]
+            provenance = latest_source_state["provenance"]
+            first_party_source_state = latest_source_state
         provenance_version = (
             provenance.exact_release
             or provenance.package_version
@@ -11113,82 +11807,204 @@ async def certify_steward_candidate(
             or "unknown"
         )
         verified_capabilities = candidate.bundle.verified_capabilities
-        compatibility_matrix_row = await create_matrix(
-            worker_id=worker_id,
-            runtime_version=str(provenance_version),
-            adapter_version=str(candidate.adapter.version),
-            contract_version=str(
+        matrix_values = {
+            "id": uuid4(),
+            "worker_id": worker_id,
+            "runtime_version": str(provenance_version),
+            "adapter_version": str(candidate.adapter.version),
+            "contract_version": str(
                 provenance.protocol_api_version
                 or config.get("contract_version")
                 or "aiat.adapter.v1"
             ),
-            model_profiles=(
+            "model_profiles_json": (
                 {"worker": str(worker.get("model_profile_id"))}
                 if worker.get("model_profile_id")
                 else {}
             ),
-            capabilities=(
+            "capabilities_json": (
                 verified_capabilities.capabilities.model_dump(mode="json")
                 if verified_capabilities is not None
                 else {}
             ),
-            fixtures=[
+            "fixtures": [
                 str(test.get("name"))
                 for test in (certification.conformance.get("tests") or [])
                 if isinstance(test, dict) and test.get("name")
             ],
-            passed=certification.passed,
-        )
-        # Keep the process-local steward evidence graph in lockstep with the
-        # canonical storage write.  Restart rehydration covers the durable
-        # boundary, but a same-process status/rollout must not temporarily
-        # report an empty compatibility history.
-        steward.record_compatibility_matrix(
-            CompatibilityMatrix(
-                matrix_id=UUID(str(compatibility_matrix_row["id"])),
-                runtime_version=str(compatibility_matrix_row["runtime_version"]),
-                adapter_version=str(compatibility_matrix_row["adapter_version"]),
-                contract_version=str(compatibility_matrix_row["contract_version"]),
-                model_profiles=compatibility_matrix_row.get("model_profiles_json") or {},
-                capabilities=compatibility_matrix_row.get("capabilities_json") or {},
-                fixtures=tuple(compatibility_matrix_row.get("fixtures") or []),
-                passed=bool(compatibility_matrix_row.get("passed", False)),
-                generated_at=compatibility_matrix_row.get("created_at") or datetime.now(UTC),
+            "passed": certification.passed,
+        }
+        if first_party_source_state is not None:
+            # Defer persistence until the candidate/source CAS transaction.
+            compatibility_matrix_row = matrix_values
+        else:
+            compatibility_matrix_row = await create_matrix(
+                worker_id=worker_id,
+                runtime_version=matrix_values["runtime_version"],
+                adapter_version=matrix_values["adapter_version"],
+                contract_version=matrix_values["contract_version"],
+                model_profiles=matrix_values["model_profiles_json"],
+                capabilities=matrix_values["capabilities_json"],
+                fixtures=matrix_values["fixtures"],
+                passed=matrix_values["passed"],
+                matrix_id=matrix_values["id"],
             )
-        )
+            # Keep the process-local steward evidence graph in lockstep with
+            # the canonical storage write.
+            steward.record_compatibility_matrix(
+                CompatibilityMatrix(
+                    matrix_id=UUID(str(compatibility_matrix_row["id"])),
+                    runtime_version=str(compatibility_matrix_row["runtime_version"]),
+                    adapter_version=str(compatibility_matrix_row["adapter_version"]),
+                    contract_version=str(compatibility_matrix_row["contract_version"]),
+                    model_profiles=compatibility_matrix_row.get("model_profiles_json") or {},
+                    capabilities=compatibility_matrix_row.get("capabilities_json") or {},
+                    fixtures=tuple(compatibility_matrix_row.get("fixtures") or []),
+                    passed=bool(compatibility_matrix_row.get("passed", False)),
+                    generated_at=compatibility_matrix_row.get("created_at") or datetime.now(UTC),
+                )
+            )
     certification_evidence = {
         "operator_conformance_submission": req.conformance,
         "server_derived_checks": server_checks,
     }
+    if first_party_source_state is not None:
+        certification_evidence["source_identity_fingerprint"] = first_party_source_state[
+            "identity_fingerprint"
+        ]
+        certification_evidence["source_bound_security_scan_report_sha256"] = first_party_source_state[
+            "report_sha256"
+        ]
+
+    # A candidate may be rejected or superseded while the conformance result
+    # is being materialized. Re-read the canonical row at the durable
+    # certification boundary; the earlier check protects the in-memory
+    # steward mutation, while this one protects the persisted PASS record.
+    if first_party_source_state is not None:
+        try:
+            latest_candidate, latest_source_state = await _revalidate_first_party_candidate_source_state(
+                storage,
+                worker_id=worker_id,
+                candidate_id=candidate_id,
+                expected_state=first_party_source_state,
+                runtime_candidate=first_party_candidate_lifecycle_record,
+                error_code="CANDIDATE_SOURCE_OR_LIFECYCLE_CHANGED_BEFORE_CERTIFICATION_WRITE",
+            )
+        except HTTPException:
+            discard_unpersisted_first_party_certification()
+            raise
+        worker = latest_source_state["worker"]
+        provenance = latest_source_state["provenance"]
+        first_party_source_state = latest_source_state
+
     if compatibility_matrix_row is not None:
         certification_evidence["compatibility_matrix_id"] = str(compatibility_matrix_row["id"])
-    await storage.create_certification_run(
-        certification_id=certification.certification_id,
-        worker_id=worker_id,
-        candidate_id=candidate_id,
-        steward_id=steward.steward_id,
-        status="passed" if certification.passed else "rejected",
-        conformance=certification.conformance,
-        checks=certification.checks,
-        evidence=certification_evidence,
-        failure_reasons=list(certification.failures),
-        completed_at=certification.completed_at,
-    )
-    persisted_candidate = await storage.get_skill_bundle_candidate(candidate_id)
-    if persisted_candidate is not None:
-        evidence = dict(persisted_candidate.get("evidence_json") or {})
+    if first_party_source_state is not None:
+        if latest_candidate is None:
+            discard_unpersisted_first_party_certification()
+            raise HTTPException(409, "Candidate disappeared before certification could be persisted")
+        shell_values = None
         if certification.passed:
-            shell = await _materialize_candidate_worker_shell(
-                storage,
-                worker=worker,
-                candidate=persisted_candidate,
+            try:
+                shell_values = await _candidate_worker_shell_values(
+                    storage,
+                    worker=worker,
+                    candidate=latest_candidate,
+                )
+            except HTTPException:
+                discard_unpersisted_first_party_certification()
+                raise
+        certification_values = {
+            "id": certification.certification_id,
+            "worker_id": worker_id,
+            "steward_id": steward.steward_id,
+            "candidate_id": candidate_id,
+            "status": "passed" if certification.passed else "rejected",
+            "conformance_json": certification.conformance,
+            "checks_json": certification.checks,
+            "evidence_json": certification_evidence,
+            "failure_reasons": list(certification.failures),
+            "completed_at": certification.completed_at,
+        }
+        try:
+            persisted_governance = await storage.persist_first_party_candidate_certification_atomically(
+                worker_id=worker_id,
+                candidate_id=candidate_id,
+                expected_worker_identity=first_party_source_state[
+                    "worker_identity_snapshot"
+                ],
+                expected_provenance_hash=first_party_source_state["provenance_hash"],
+                expected_scan_report_sha256=first_party_source_state["report_sha256"],
+                expected_source_identity_fingerprint=first_party_source_state[
+                    "identity_fingerprint"
+                ],
+                expected_candidate_snapshot=first_party_source_state[
+                    "candidate_snapshot"
+                ],
+                certification=certification_values,
+                candidate_record_after=steward.candidates[candidate_id].model_dump(
+                    mode="json"
+                ),
+                shell_values=shell_values,
+                compatibility_matrix=compatibility_matrix_row,
             )
-            evidence["worker_shell_version_id"] = str(shell["id"])
+        except Exception:
+            discard_unpersisted_first_party_certification()
+            _worker_steward_runtimes.pop(str(worker_id), None)
+            raise
+        if persisted_governance is None:
+            discard_unpersisted_first_party_certification()
+            _worker_steward_runtimes.pop(str(worker_id), None)
+            raise HTTPException(
+                409,
+                {
+                    "code": "CANDIDATE_SOURCE_OR_LIFECYCLE_CHANGED_BEFORE_CERTIFICATION_WRITE",
+                    "message": "locked worker, source, scan, or candidate lifecycle no longer matches the certification precheck",
+                },
+            )
+        compatibility_matrix_row = persisted_governance.get("compatibility_matrix")
         if compatibility_matrix_row is not None:
-            evidence["compatibility_matrix_id"] = str(compatibility_matrix_row["id"])
-        evidence["candidate_record"] = steward.candidates[candidate_id].model_dump(mode="json")
-        await storage.update_skill_bundle_candidate(candidate_id, intake_status=steward.candidates[candidate_id].intake_status.value, evidence=evidence, certification_run_id=certification.certification_id)
-    await storage.update_runtime_adapter((persisted_candidate or {}).get("adapter_id"), conformance_status="passed" if certification.passed else "failed", conformance=certification.conformance) if persisted_candidate and persisted_candidate.get("adapter_id") else None
+            steward.record_compatibility_matrix(
+                CompatibilityMatrix(
+                    matrix_id=UUID(str(compatibility_matrix_row["id"])),
+                    runtime_version=str(compatibility_matrix_row["runtime_version"]),
+                    adapter_version=str(compatibility_matrix_row["adapter_version"]),
+                    contract_version=str(compatibility_matrix_row["contract_version"]),
+                    model_profiles=compatibility_matrix_row.get("model_profiles_json") or {},
+                    capabilities=compatibility_matrix_row.get("capabilities_json") or {},
+                    fixtures=tuple(compatibility_matrix_row.get("fixtures") or []),
+                    passed=bool(compatibility_matrix_row.get("passed", False)),
+                    generated_at=compatibility_matrix_row.get("created_at") or datetime.now(UTC),
+                )
+            )
+    else:
+        await storage.create_certification_run(
+            certification_id=certification.certification_id,
+            worker_id=worker_id,
+            candidate_id=candidate_id,
+            steward_id=steward.steward_id,
+            status="passed" if certification.passed else "rejected",
+            conformance=certification.conformance,
+            checks=certification.checks,
+            evidence=certification_evidence,
+            failure_reasons=list(certification.failures),
+            completed_at=certification.completed_at,
+        )
+        persisted_candidate = await storage.get_skill_bundle_candidate(candidate_id)
+        if persisted_candidate is not None:
+            evidence = dict(persisted_candidate.get("evidence_json") or {})
+            if certification.passed:
+                shell = await _materialize_candidate_worker_shell(
+                    storage,
+                    worker=worker,
+                    candidate=persisted_candidate,
+                )
+                evidence["worker_shell_version_id"] = str(shell["id"])
+            if compatibility_matrix_row is not None:
+                evidence["compatibility_matrix_id"] = str(compatibility_matrix_row["id"])
+            evidence["candidate_record"] = steward.candidates[candidate_id].model_dump(mode="json")
+            await storage.update_skill_bundle_candidate(candidate_id, intake_status=steward.candidates[candidate_id].intake_status.value, evidence=evidence, certification_run_id=certification.certification_id)
+        await storage.update_runtime_adapter((persisted_candidate or {}).get("adapter_id"), conformance_status="passed" if certification.passed else "failed", conformance=certification.conformance) if persisted_candidate and persisted_candidate.get("adapter_id") else None
     return certification.model_dump(mode="json")
 
 
@@ -11200,6 +12016,7 @@ async def approve_steward_candidate(
     request: Request,
 ) -> dict[str, Any]:
     _require_operator_identity(request)
+    decided_by = _authenticated_principal(request)
     storage = _storage()
     steward = await _steward_runtime(storage, worker_id)
     if steward is None:
@@ -11217,11 +12034,167 @@ async def approve_steward_candidate(
     )
     if certification is None or not certification.passed:
         raise HTTPException(409, "Candidate approval requires a passed server-run certification")
+    current_worker = await storage.get_worker(worker_id)
+    if _is_first_party_candidate(current_worker, candidate):
+        source_state = await _first_party_candidate_source_state(
+            storage,
+            worker_id=worker_id,
+            candidate_id=candidate_id,
+            candidate_row=persisted_candidate,
+            runtime_candidate=candidate,
+        )
+        if source_state["candidate_lifecycle"]["intake_status"] not in {
+            "CERTIFYING",
+            "APPROVED",
+        }:
+            raise HTTPException(
+                409,
+                {
+                    "code": "CANDIDATE_NOT_APPROVABLE",
+                    "message": "a rejected or blocked candidate cannot be approved",
+                },
+            )
+        list_certifications = getattr(storage, "list_certification_runs", None)
+        if not inspect.iscoroutinefunction(list_certifications):
+            raise HTTPException(
+                409,
+                {
+                    "code": "CANDIDATE_CERTIFICATION_SOURCE_BINDING_UNAVAILABLE",
+                    "message": "persisted source-bound certification evidence is unavailable for approval",
+                },
+            )
+        certification_rows = await list_certifications(worker_id)
+        persisted_certification = next(
+            (
+                row
+                for row in certification_rows
+                if str(_governance_dict(row).get("id") or "")
+                == str(certification.certification_id)
+                and str(_governance_dict(row).get("candidate_id") or "")
+                == str(candidate_id)
+            ),
+            None,
+        )
+        if not _first_party_certification_row_matches(
+            persisted_certification,
+            identity_fingerprint=source_state["identity_fingerprint"],
+            report_sha256=source_state["report_sha256"],
+        ):
+            raise HTTPException(
+                409,
+                {
+                    "code": "CANDIDATE_CERTIFICATION_SOURCE_IDENTITY_STALE",
+                    "message": "candidate approval requires a passing certification bound to the current worker and source-scan report; rerun certification",
+                },
+            )
+        # Certification reads and rehydration may yield. Recheck the candidate
+        # immediately before creating the durable human approval so an intervening
+        # rejection or lifecycle transition cannot leave an orphan APPROVED row.
+        latest_candidate = await storage.get_skill_bundle_candidate(candidate_id)
+        latest_source_state = await _first_party_candidate_source_state(
+            storage,
+            worker_id=worker_id,
+            candidate_id=candidate_id,
+            candidate_row=latest_candidate,
+            runtime_candidate=candidate,
+        )
+        if (
+            latest_source_state["identity_fingerprint"]
+            != source_state["identity_fingerprint"]
+            or latest_source_state["report_sha256"] != source_state["report_sha256"]
+            or latest_source_state["candidate_lifecycle_fingerprint"]
+            != source_state["candidate_lifecycle_fingerprint"]
+            or latest_source_state["candidate_lifecycle"]["intake_status"]
+            not in {"CERTIFYING", "APPROVED"}
+            or str(candidate.certification_id or "")
+            != str(certification.certification_id)
+        ):
+            raise HTTPException(
+                409,
+                {
+                    "code": "CANDIDATE_LIFECYCLE_CHANGED_DURING_APPROVAL",
+                    "message": "candidate identity or lifecycle changed before approval could be recorded",
+                },
+            )
+        source_state = latest_source_state
+        persisted_candidate = latest_candidate
+        candidate_before_approval = candidate.model_copy(deep=True)
+        if source_state["candidate_lifecycle"]["intake_status"] == "APPROVED":
+            approval_result = await storage.approve_first_party_candidate_atomically(
+                worker_id=worker_id,
+                candidate_id=candidate_id,
+                expected_worker_identity=source_state["worker_identity_snapshot"],
+                expected_provenance_hash=source_state["provenance_hash"],
+                expected_scan_report_sha256=source_state["report_sha256"],
+                expected_source_identity_fingerprint=source_state[
+                    "identity_fingerprint"
+                ],
+                expected_candidate_snapshot=source_state["candidate_snapshot"],
+            )
+            if approval_result is None:
+                _worker_steward_runtimes.pop(str(worker_id), None)
+                raise HTTPException(
+                    409,
+                    {
+                        "code": "CANDIDATE_LIFECYCLE_CHANGED_DURING_APPROVAL",
+                        "message": "locked candidate state no longer matches the completed approval",
+                    },
+                )
+            return _candidate_response(candidate)
+
+        approval_id = uuid4()
+        try:
+            candidate = steward.approve_candidate(
+                candidate_id,
+                approval_record_id=approval_id,
+            )
+        except Exception as exc:
+            raise HTTPException(409, str(exc)) from exc
+        approval_values = {
+            "id": approval_id,
+            "scope_type": "worker_skill_bundle_candidate",
+            "scope_id": candidate_id,
+            "decision": "APPROVED",
+            "decided_by": decided_by,
+            "reason": req.reason,
+            "evidence": req.evidence,
+            "expires_at": None,
+        }
+        try:
+            approval_result = await storage.approve_first_party_candidate_atomically(
+                worker_id=worker_id,
+                candidate_id=candidate_id,
+                expected_worker_identity=source_state["worker_identity_snapshot"],
+                expected_provenance_hash=source_state["provenance_hash"],
+                expected_scan_report_sha256=source_state["report_sha256"],
+                expected_source_identity_fingerprint=source_state[
+                    "identity_fingerprint"
+                ],
+                expected_candidate_snapshot=source_state["candidate_snapshot"],
+                candidate_record_after=candidate.model_dump(mode="json"),
+                approval=approval_values,
+            )
+        except Exception:
+            steward.candidates[candidate_id] = candidate_before_approval
+            _worker_steward_runtimes.pop(str(worker_id), None)
+            raise
+        if approval_result is None:
+            steward.candidates[candidate_id] = candidate_before_approval
+            _worker_steward_runtimes.pop(str(worker_id), None)
+            raise HTTPException(
+                409,
+                {
+                    "code": "CANDIDATE_LIFECYCLE_CHANGED_DURING_APPROVAL",
+                    "message": "locked candidate state no longer matches the approval precheck",
+                },
+            )
+        return _candidate_response(candidate)
+
     approval = await storage.create_approval_record(
         scope_type="worker_skill_bundle_candidate",
         scope_id=candidate_id,
         decision="APPROVED",
-        decided_by=req.decided_by,
+        decided_by=decided_by,
         reason=req.reason,
         evidence=req.evidence,
     )
@@ -11243,10 +12216,6 @@ async def approve_steward_candidate(
             status=adapter_status,
             conformance_status="passed",
         )
-    # The server-run conformance result plus this independent approval are
-    # the authoritative external-worker evaluation.  Activation consumes the
-    # worker-level projection, so update it here rather than requiring a
-    # weaker legacy evaluation workflow after steward approval.
     await storage.update_worker_config(worker_id, evaluation_status="approved")
     return _candidate_response(candidate)
 
@@ -11258,6 +12227,7 @@ async def start_steward_rollout(
     request: Request,
 ) -> dict[str, Any]:
     _require_operator_identity(request)
+    actor = _authenticated_principal(request)
     storage = _storage()
     steward = await _steward_runtime(storage, worker_id)
     if steward is None:
@@ -11281,7 +12251,9 @@ async def start_steward_rollout(
             "No approved candidate without immutable rollout history is available for rollout",
         )
     try:
-        rollout = steward.start_rollout(candidate_id, actor=req.actor, eligible_task_classes=req.eligible_task_classes)
+        # ``actor`` remains accepted for wire compatibility. Do not let the
+        # request body select the durable rollout promotion actor.
+        rollout = steward.start_rollout(candidate_id, actor=actor, eligible_task_classes=req.eligible_task_classes)
     except Exception as exc:
         raise HTTPException(409, str(exc)) from exc
     await storage.create_rollout_record(
@@ -11322,11 +12294,71 @@ async def advance_steward_rollout(
         candidate = steward.candidates.get(UUID(str(persisted_before["candidate_id"])))
         if candidate is None:
             raise HTTPException(409, "Rollout candidate is not present in the governed steward runtime")
-        _reject_unverified_security_scan_pass(
-            candidate.source_provenance.security_scan_status,
-            status_code=409,
+        worker = await storage.get_worker(worker_id)
+        if worker is None:
+            raise HTTPException(404, "Worker not found")
+        get_provenance = getattr(storage, "get_external_provenance_by_worker", None)
+        if not inspect.iscoroutinefunction(get_provenance):
+            raise HTTPException(409, "Persisted worker provenance is required for rollout promotion")
+        provenance_row = await get_provenance(worker_id)
+        if not isinstance(provenance_row, dict):
+            raise HTTPException(409, "Persisted worker provenance is required for rollout promotion")
+        expected_provenance_hash = str(provenance_row.get("provenance_hash") or "")
+        from mas_core.memory.storage import worker_identity_snapshot_for_rollout
+
+        expected_worker_identity = worker_identity_snapshot_for_rollout(worker)
+        first_party_source_state: dict[str, Any] | None = None
+        if _is_first_party_candidate(worker, candidate):
+            persisted_candidate = await storage.get_skill_bundle_candidate(candidate.candidate_id)
+            first_party_source_state = await _first_party_candidate_source_state(
+                storage,
+                worker_id=worker_id,
+                candidate_id=candidate.candidate_id,
+                candidate_row=persisted_candidate,
+                runtime_candidate=candidate,
+            )
+            worker = first_party_source_state["worker"]
+            if (
+                worker_identity_snapshot_for_rollout(worker) != expected_worker_identity
+                or first_party_source_state["provenance_hash"] != expected_provenance_hash
+            ):
+                raise HTTPException(
+                    409,
+                    {
+                        "code": "ROLLOUT_SOURCE_IDENTITY_CHANGED_DURING_PRECHECK",
+                        "message": "worker identity or persisted provenance changed during rollout precheck",
+                    },
+                )
+            rollout_provenance = first_party_source_state["provenance"]
+        else:
+            rollout_provenance = candidate.source_provenance
+        from mas_core.worker_registry.source_bound_security_scan import (
+            source_bound_security_scan_is_valid,
+            source_bound_security_scan_required,
         )
-        promotion_checks = operational_promotion_checks(candidate.source_provenance)
+
+        scan_required = source_bound_security_scan_required(rollout_provenance, worker=worker)
+        scan_valid = rollout_provenance.security_scan_status == "passed"
+        if scan_required and first_party_source_state is None:
+            scan_valid = scan_valid and source_bound_security_scan_is_valid(
+                getattr(rollout_provenance, "source_bound_security_scan", None),
+                expected_worker_id=str(worker_id),
+                provenance=rollout_provenance,
+                current_worker=worker,
+            )
+        if not scan_valid:
+            raise HTTPException(
+                409,
+                {
+                    "code": "SECURITY_SCAN_EVIDENCE_REQUIRED",
+                    "message": "rollout promotion requires the persisted source-bound scan for this exact candidate",
+                },
+            )
+        promotion_checks = operational_promotion_checks(
+            rollout_provenance,
+            worker_id=str(worker_id),
+            current_worker=worker,
+        )
         failed_checks = [name for name, passed in promotion_checks.items() if not passed]
         if failed_checks:
             raise HTTPException(
@@ -11348,6 +12380,8 @@ async def advance_steward_rollout(
             steward_id=steward.steward_id,
             candidate_id=rollout.candidate_id,
             completed_at=rollout.completed_at,
+            expected_worker_identity=expected_worker_identity,
+            expected_provenance_hash=expected_provenance_hash,
         )
         if activated is None:
             _worker_steward_runtimes.pop(str(worker_id), None)

@@ -777,6 +777,54 @@ async def test_reclassify_worker_updates_entrypoint(client):
     assert kwargs.get("adapter_entrypoint") == "ToolAgent"
 
 
+@pytest.mark.anyio
+@pytest.mark.parametrize("status", ["ACTIVE", "active", " ACTIVE "])
+async def test_reclassify_cannot_bypass_governed_worker_activation(client, status):
+    """RECLASSIFY must not write ACTIVE around the governed activation checks."""
+    row = _worker_row(status="INACTIVE", evaluation_status=None)
+    storage = MagicMock()
+    storage.get_worker = AsyncMock(return_value=row)
+    storage.update_worker_status = AsyncMock(return_value=None)
+    storage.update_worker_config = AsyncMock(return_value=None)
+    _patch(storage)
+
+    response = await client.patch(
+        f"/capabilities/workers/{WORKER_ID}/status",
+        headers=OPERATOR_HEADERS,
+        json={"action": "RECLASSIFY", "new_status": status, "new_role": "ToolAgent"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "WORKER_ACTIVATION_REQUIRES_ACTIVATE_ACTION"
+    storage.update_worker_status.assert_not_awaited()
+    storage.update_worker_config.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_reclassify_preserves_non_active_status_updates(client):
+    """A non-ACTIVE reclassification can still update status and worker role."""
+    row = _worker_row(status="ACTIVE")
+    updated_row = _worker_row(status="INACTIVE", adapter_entrypoint="ToolAgent")
+    storage = MagicMock()
+    storage.get_worker = AsyncMock(side_effect=[row, updated_row])
+    storage.update_worker_status = AsyncMock(return_value=None)
+    storage.update_worker_config = AsyncMock(return_value=None)
+    _patch(storage)
+
+    response = await client.patch(
+        f"/capabilities/workers/{WORKER_ID}/status",
+        headers=OPERATOR_HEADERS,
+        json={"action": "RECLASSIFY", "new_status": "INACTIVE", "new_role": "ToolAgent"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "INACTIVE"
+    storage.update_worker_status.assert_awaited_once_with(WORKER_ID, status="INACTIVE")
+    storage.update_worker_config.assert_awaited_once_with(
+        WORKER_ID, adapter_entrypoint="ToolAgent"
+    )
+
+
 # ── 13. Integration: full lifecycle register → update → deactivate → reactivate
 
 

@@ -32,13 +32,10 @@ Audit       evaluation_status set to "approved" after approve verdict,
 from __future__ import annotations
 
 import json
-import textwrap
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
-
 from conftest import NOW_ISO
 
 # ── constants ─────────────────────────────────────────────────────────────────
@@ -187,6 +184,7 @@ async def test_evaluate_worker_runs_all_checks_and_returns_verdict(client, tmp_p
     ):
         resp = await client.post(
             f"/capabilities/workers/{WORKER_ID}/evaluate",
+            headers=OPERATOR_HEADERS,
             json={"source_repo": SOURCE_REPO, "checks": ["architecture", "licensing", "security"]},
         )
 
@@ -204,6 +202,28 @@ async def test_evaluate_worker_runs_all_checks_and_returns_verdict(client, tmp_p
 
 
 @pytest.mark.anyio
+async def test_evaluate_worker_requires_operator_before_repository_or_status_changes(client):
+    storage = MagicMock()
+    storage.get_worker = AsyncMock(return_value=_worker_row())
+    storage.update_worker_config = AsyncMock(return_value=None)
+    _patch(storage)
+
+    with patch(
+        "mas_core.worker_registry.evaluator.evaluate_repository",
+        new_callable=AsyncMock,
+    ) as evaluate_repository:
+        response = await client.post(
+            f"/capabilities/workers/{WORKER_ID}/evaluate",
+            json={"source_repo": SOURCE_REPO},
+        )
+
+    assert response.status_code == 403
+    storage.get_worker.assert_not_awaited()
+    storage.update_worker_config.assert_not_awaited()
+    evaluate_repository.assert_not_awaited()
+
+
+@pytest.mark.anyio
 async def test_evaluate_worker_with_no_source_repo_returns_400(client):
     """POST /capabilities/workers/{id}/evaluate with no source_repo → 400."""
     worker = _worker_row(source_repo=None)  # type: ignore[arg-type]
@@ -216,6 +236,7 @@ async def test_evaluate_worker_with_no_source_repo_returns_400(client):
 
     resp = await client.post(
         f"/capabilities/workers/{WORKER_ID}/evaluate",
+        headers=OPERATOR_HEADERS,
         json={},  # no source_repo, worker has none either
     )
     assert resp.status_code == 400
@@ -231,6 +252,7 @@ async def test_evaluate_unknown_worker_returns_404(client):
 
     resp = await client.post(
         f"/capabilities/workers/{uuid4()}/evaluate",
+        headers=OPERATOR_HEADERS,
         json={"source_repo": SOURCE_REPO},
     )
     assert resp.status_code == 404
@@ -269,6 +291,7 @@ async def test_evaluate_worker_with_restricted_license_metadata_remains_usable(c
     ):
         resp = await client.post(
             f"/capabilities/workers/{WORKER_ID}/evaluate",
+            headers=OPERATOR_HEADERS,
             json={"source_repo": SOURCE_REPO},
         )
 
@@ -515,7 +538,7 @@ async def test_upgrade_without_compat_tests_skips_testing(client):
             "mas_core.worker_registry.ingestion.pull_upstream",
             new_callable=AsyncMock,
             return_value=COMMIT_SHA_NEW,
-        ) as mock_pull,
+        ),
         patch("mas_core.worker_registry.compat_tests.run_compatibility_tests") as mock_compat,
     ):
         resp = await client.post(
@@ -920,6 +943,7 @@ async def test_compat_capability_contract_passes_when_all_caps_valid():
 @pytest.mark.anyio
 async def test_repository_evaluator_accepts_aiat_owned_wrapper_manifest(tmp_path):
     from orchestrator_api.main import _wrapper_manifest_for_hiring
+
     from mas_core.worker_registry.evaluator import _check_manifest_validation
 
     manifest = _wrapper_manifest_for_hiring(
@@ -947,6 +971,7 @@ async def test_repository_evaluator_accepts_aiat_owned_wrapper_manifest(tmp_path
 @pytest.mark.anyio
 async def test_repository_evaluator_rejects_wrapper_manifest_for_other_source(tmp_path):
     from orchestrator_api.main import _wrapper_manifest_for_hiring
+
     from mas_core.worker_registry.evaluator import _check_manifest_validation
 
     manifest = _wrapper_manifest_for_hiring(
@@ -1115,6 +1140,7 @@ async def test_github_worker_full_lifecycle(client):
     ):
         resp2 = await client.post(
             f"/capabilities/workers/{WORKER_ID}/evaluate",
+            headers=OPERATOR_HEADERS,
             json={"source_repo": SOURCE_REPO},
         )
     assert resp2.status_code == 200
@@ -1329,7 +1355,7 @@ async def test_external_activation_requires_passed_security_provenance():
 
     blockers = await _worker_activation_blockers(storage, worker)
 
-    assert "external worker requires a passed security scan" in blockers
+    assert "external worker security scan is missing required governed evidence" in blockers
 
 
 @pytest.mark.anyio

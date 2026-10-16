@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 
 from mas_core.worker_registry.steward import (
     CandidateIntakeStatus,
@@ -144,7 +144,7 @@ async def test_steward_runtime_fails_closed_on_unknown_active_pointer() -> None:
 
 
 @pytest.mark.anyio
-async def test_steward_certification_records_compatibility_matrix_without_provider_dispatch(
+async def test_steward_certification_blocks_before_unreviewed_candidate_execution(
     monkeypatch,
 ) -> None:
     from orchestrator_api import main
@@ -179,7 +179,6 @@ async def test_steward_certification_records_compatibility_matrix_without_provid
     ):
         steward.advance_candidate(candidate.candidate_id, status)
 
-    matrix_id = uuid4()
     storage = MagicMock()
     storage.get_worker = AsyncMock(
         return_value={
@@ -188,58 +187,40 @@ async def test_steward_certification_records_compatibility_matrix_without_provid
             "version_pin": "1.0.0",
         }
     )
-    storage.create_compatibility_matrix = AsyncMock(
-        return_value={
-            "id": matrix_id,
-            "runtime_version": "1.0.0",
-            "adapter_version": "1.0.0",
-            "contract_version": "aiat.adapter.v1",
-            "model_profiles_json": {},
-            "capabilities_json": {},
-            "fixtures": ["local-contract"],
-            "passed": False,
-            "created_at": datetime.now(UTC),
-        }
-    )
+    storage.create_compatibility_matrix = AsyncMock()
     storage.create_certification_run = AsyncMock()
     storage.get_skill_bundle_candidate = AsyncMock(return_value=None)
     monkeypatch.setattr(main, "_storage", lambda: storage)
     monkeypatch.setattr(main, "_steward_runtime", AsyncMock(return_value=steward))
 
-    class LocalAdapter:
-        async def close(self):
-            return None
-
+    adapter_for_transport = MagicMock(side_effect=AssertionError("unreviewed candidate must not execute"))
     monkeypatch.setattr(
         runtime_adapters,
         "adapter_for_transport",
-        lambda *_args, **_kwargs: LocalAdapter(),
+        adapter_for_transport,
     )
 
-    class LocalConformanceRunner:
-        def __init__(self, *, timeout_seconds):
-            self.timeout_seconds = timeout_seconds
-
-        async def run(self, *_args, **_kwargs):
-            return {"passed": True, "tests": [{"name": "local-contract"}]}
-
+    conformance_runner = MagicMock(side_effect=AssertionError("unreviewed candidate must not execute"))
     monkeypatch.setattr(
         conformance_module,
         "ConformanceRunner",
-        LocalConformanceRunner,
+        conformance_runner,
     )
 
     operator_request = Request({"type": "http", "headers": []})
     operator_request.state.aiat_auth_principal = "operator"
-    result = await main.certify_steward_candidate(
-        worker_id,
-        candidate.candidate_id,
-        main.CandidateCertificationRequest(),
-        operator_request,
-    )
+    with pytest.raises(HTTPException) as exc_info:
+        await main.certify_steward_candidate(
+            worker_id,
+            candidate.candidate_id,
+            main.CandidateCertificationRequest(),
+            operator_request,
+        )
 
-    storage.create_compatibility_matrix.assert_awaited_once()
-    assert result["passed"] is False  # Missing documentation/capability evidence still gates.
-    assert len(steward.compatibility_matrices) == 1
-    assert steward.compatibility_matrices[0].matrix_id == matrix_id
-    assert steward.compatibility_matrices[0].fixtures == ("local-contract",)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail["code"] == "SECURITY_SCAN_EVIDENCE_REQUIRED"
+    storage.create_compatibility_matrix.assert_not_awaited()
+    storage.create_certification_run.assert_not_awaited()
+    adapter_for_transport.assert_not_called()
+    conformance_runner.assert_not_called()
+    assert steward.compatibility_matrices == []

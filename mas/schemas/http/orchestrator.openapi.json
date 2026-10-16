@@ -9933,6 +9933,49 @@
         "summary": "Rollback Steward Rollout"
       }
     },
+    "/capabilities/workers/{worker_id}/steward/security-scan": {
+      "post": {
+        "description": "Run the fixed, local source-bound scan for the first-party OCI worker.\n\nThis action accepts no report, source path, command, or candidate override.\nIt scans only the checked-in source and Dockerfile after matching them to\nthe immutable manifest and persisted worker/provenance records.",
+        "operationId": "scan_first_party_worker_security_source_capabilities_workers__worker_id__steward_security_scan_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "worker_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Worker Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Scan First Party Worker Security Source Capabilities Workers  Worker Id  Steward Security Scan Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Scan First Party Worker Security Source"
+      }
+    },
     "/capabilities/workers/{worker_id}/upgrade": {
       "post": {
         "description": "Trigger an upgrade for a worker from its upstream source.\n\nPulls latest from the upstream repo, runs compatibility tests,\nand updates the worker if successful.",

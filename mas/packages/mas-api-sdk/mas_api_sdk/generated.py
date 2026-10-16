@@ -1427,6 +1427,15 @@ OPERATIONS: dict[str, ApiOperation] = {
         request_body_type='RollbackRequest',
         response_types=('HTTPValidationError',),
     ),
+    'scan_first_party_worker_security_source_capabilities_workers__worker_id__steward_security_scan_post': ApiOperation(
+        operation_id='scan_first_party_worker_security_source_capabilities_workers__worker_id__steward_security_scan_post',
+        method='POST',
+        path='/capabilities/workers/{worker_id}/steward/security-scan',
+        path_params=('worker_id',),
+        query_params=(),
+        request_body_type=None,
+        response_types=('HTTPValidationError',),
+    ),
     'upgrade_worker_capabilities_workers__worker_id__upgrade_post': ApiOperation(
         operation_id='upgrade_worker_capabilities_workers__worker_id__upgrade_post',
         method='POST',
@@ -3689,7 +3698,7 @@ OPERATIONS: dict[str, ApiOperation] = {
 }
 
 MODEL_COUNT = 148
-OPERATION_COUNT = 281
+OPERATION_COUNT = 282
 
 __all__ = [
     "ApiOperation",

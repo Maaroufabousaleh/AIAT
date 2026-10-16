@@ -351,13 +351,23 @@ class IntegratedLevelAProfileTests(unittest.TestCase):
         }
         calls: list[list[str]] = []
         original_run = MODULE._run
+        source_bytes = MODULE.DETERMINISTIC_WORKER_SOURCE.read_bytes()
 
         def inspect(argv: list[str], **_kwargs: Any) -> SimpleNamespace:
             calls.append(argv)
-            if "RepoDigests" in argv[-2]:
+            if argv[:3] == ["docker", "image", "inspect"] and "RepoDigests" in argv[-2]:
                 stdout = MODULE.json.dumps([identity["image_reference"]])
-            else:
+            elif argv[:3] == ["docker", "image", "inspect"]:
                 stdout = MODULE.json.dumps(labels)
+            elif argv[:2] == ["docker", "create"]:
+                stdout = "container-id"
+            elif argv[:2] == ["docker", "cp"]:
+                Path(argv[-1]).write_bytes(source_bytes)
+                stdout = ""
+            elif argv[:3] == ["docker", "rm", "--force"]:
+                stdout = "removed"
+            else:
+                raise AssertionError(f"unexpected image verification command: {argv[:3]}")
             return SimpleNamespace(returncode=0, stdout=stdout)
 
         MODULE._run = inspect
@@ -367,10 +377,54 @@ class IntegratedLevelAProfileTests(unittest.TestCase):
             MODULE._run = original_run
         self.assertTrue(verified["local_digest_verified"])
         self.assertTrue(verified["source_labels_verified"])
-        self.assertEqual(len(calls), 2)
-        self.assertTrue(all(identity["image_reference"] in call for call in calls))
+        self.assertTrue(verified["embedded_source_sha256_verified"])
+        self.assertEqual(len(calls), 5)
+        self.assertTrue(all(identity["image_reference"] in call for call in calls[:3]))
+        self.assertIn("--network", calls[2])
+        self.assertIn("none", calls[2])
+        self.assertEqual(calls[3][0:2], ["docker", "cp"])
+        self.assertEqual(calls[4][0:3], ["docker", "rm", "--force"])
         self.assertFalse(any("pull" in call or "build" in call for call in calls))
         self.assertFalse(any(":local" in " ".join(call) for call in calls))
+        self.assertFalse(any(call[1] == "start" for call in calls))
+
+    def test_deterministic_worker_image_embedded_source_mismatch_fails_and_cleans_up(self) -> None:
+        identity = MODULE._deterministic_worker_image_identity()
+        labels = {
+            "org.opencontainers.image.version": identity["version"],
+            "org.opencontainers.image.revision": identity["source_revision"],
+            "com.aiat.worker.source-sha256": identity["source_sha256"],
+        }
+        calls: list[list[str]] = []
+        original_run = MODULE._run
+
+        def inspect(argv: list[str], **_kwargs: Any) -> SimpleNamespace:
+            calls.append(argv)
+            if argv[:3] == ["docker", "image", "inspect"] and "RepoDigests" in argv[-2]:
+                output: Any = [identity["image_reference"]]
+            elif argv[:3] == ["docker", "image", "inspect"]:
+                output = labels
+            elif argv[:2] == ["docker", "create"]:
+                output = "container-id"
+            elif argv[:2] == ["docker", "cp"]:
+                Path(argv[-1]).write_bytes(b"different source bytes")
+                output = ""
+            elif argv[:3] == ["docker", "rm", "--force"]:
+                output = "removed"
+            else:
+                raise AssertionError(f"unexpected image verification command: {argv[:3]}")
+            return SimpleNamespace(returncode=0, stdout=MODULE.json.dumps(output) if isinstance(output, (dict, list)) else output)
+
+        MODULE._run = inspect
+        try:
+            with self.assertRaisesRegex(
+                MODULE.HarnessError,
+                "deterministic_worker_image_embedded_source_mismatch",
+            ):
+                MODULE._verify_local_deterministic_worker_image({})
+        finally:
+            MODULE._run = original_run
+        self.assertEqual(calls[-1][:3], ["docker", "rm", "--force"])
 
     def test_deterministic_worker_image_missing_or_mismatched_fails_closed(self) -> None:
         original_run = MODULE._run
@@ -563,7 +617,12 @@ class IntegratedLevelAProfileTests(unittest.TestCase):
                 "PROJECT_COMPLETED": {
                     "status": "BLOCKED",
                     "reason": "PROJECT_WORKFLOW_COMPLETION_REQUIRES_ITS_GOVERNED_MILESTONES",
-                    "evidence": {"state": "INIT", "evidence_chain_passed": True},
+                    "evidence": {
+                        "state": "INIT",
+                        "evidence_chain_passed": True,
+                        "completion_policy_ready": True,
+                        "completion_policy_reason": None,
+                    },
                 },
                 "CLEANUP_VERIFIED": {
                     "status": "PASS",
@@ -615,6 +674,31 @@ class IntegratedLevelAProfileTests(unittest.TestCase):
             self.assertFalse(
                 MODULE._worker_artifact_completion_blocked_verified(
                     unlinked, worker_id=worker_id, provider_fixture_calls=0
+                )
+            )
+        with self.subTest("evidence linked while completion policy remains blocked"):
+            policy_blocked = copy.deepcopy(driver_result)
+            policy_blocked["result"]["stages"]["EVIDENCE_AVAILABLE"]["evidence"][
+                "required_checks_pass"
+            ] = False
+            completion_evidence = policy_blocked["result"]["stages"]["PROJECT_COMPLETED"][
+                "evidence"
+            ]
+            completion_evidence["completion_policy_ready"] = False
+            completion_evidence["completion_policy_reason"] = "PROJECT_EVIDENCE_POLICY_INCOMPLETE"
+            self.assertTrue(
+                MODULE._worker_artifact_completion_blocked_verified(
+                    policy_blocked, worker_id=worker_id, provider_fixture_calls=0
+                )
+            )
+        with self.subTest("policy blocked without policy reason"):
+            policy_unknown = copy.deepcopy(driver_result)
+            policy_unknown["result"]["stages"]["PROJECT_COMPLETED"]["evidence"][
+                "completion_policy_ready"
+            ] = False
+            self.assertFalse(
+                MODULE._worker_artifact_completion_blocked_verified(
+                    policy_unknown, worker_id=worker_id, provider_fixture_calls=0
                 )
             )
         with self.subTest("cleanup absent"):
@@ -696,6 +780,45 @@ class IntegratedLevelAProfileTests(unittest.TestCase):
                 }
             )
         )
+
+    def test_source_scan_and_image_binding_failures_remain_blocked(self) -> None:
+        for blocker_code in (
+            "security_scan_not_passed",
+            "image_source_binding_not_verified",
+        ):
+            with self.subTest(blocker_code=blocker_code):
+                driver_result = {
+                    "exit_code": 2,
+                    "result": {
+                        "worker_run_id": None,
+                        "stages": {
+                            "WORKER_SELECTED": {
+                                "status": "BLOCKED",
+                                "reason": "CANONICAL_WORKER_READINESS_BLOCKED",
+                                "evidence": {
+                                    "readiness": {
+                                        "status": "blocked",
+                                        "blocker_codes": [blocker_code],
+                                    }
+                                },
+                            },
+                            "WORKER_RUN_SUBMITTED": {
+                                "status": "NOT_RUN",
+                                "reason": "STAGE_NOT_REACHED",
+                            },
+                        }
+                    },
+                }
+                self.assertTrue(MODULE._pending_worker_gate_verified(driver_result))
+                self.assertEqual(
+                    MODULE._classify_driver_result(
+                        driver_result,
+                        worker_name="aiat_deterministic_file_worker",
+                        worker_id=None,
+                        provider_fixture_calls=0,
+                    ),
+                    ("DRIVER_BLOCKED", None, False),
+                )
 
     def test_driver_does_not_treat_project_only_readiness_block_as_worker_gate(self) -> None:
         self.assertFalse(

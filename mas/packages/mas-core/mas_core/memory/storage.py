@@ -81,6 +81,194 @@ def _flow_instance_matches_snapshot(
     return True
 
 
+_ROLLOUT_WORKER_IDENTITY_FIELDS = (
+    "id",
+    "name",
+    "adapter_type",
+    "adapter_config",
+    "sandbox_profile",
+    "capability_ids",
+    "team_id",
+    "status",
+    "version",
+    "source_repo",
+    "source_revision",
+    "version_pin",
+    "update_policy",
+    "evaluation_status",
+    "adapter_entrypoint",
+    "adapter_module",
+    "wrapper_config",
+    "isolation_mode",
+    "active_shell_version_id",
+    "active_adapter_id",
+    "active_skill_bundle_id",
+    "model_profile_id",
+    "model_mode",
+    "upstream_commit_sha",
+)
+
+
+def worker_identity_snapshot_for_rollout(worker: Mapping[str, Any]) -> dict[str, Any]:
+    """Capture the worker fields that must remain unchanged during promotion.
+
+    Health counters and timestamps are intentionally omitted: routine health
+    probes must not invalidate a rollout. The adapter configuration and
+    immutable-version pointers are compared in full so sandbox, image,
+    capability, or provenance-relevant changes fail closed.
+    """
+
+    snapshot = {
+        field: worker.get(field) for field in _ROLLOUT_WORKER_IDENTITY_FIELDS
+    }
+    return json.loads(
+        json.dumps(snapshot, sort_keys=True, separators=(",", ":"), default=str)
+    )
+
+
+_ROLLOUT_PROVENANCE_IDENTITY_FIELDS = (
+    "canonical_source_repository",
+    "source_provider",
+    "exact_release",
+    "commit_sha",
+    "package_version",
+    "oci_image_digest",
+    "dependency_lock_hash",
+    "protocol_api_version",
+    "adapter_version",
+    "transport_type",
+    "runtime_fingerprint",
+)
+
+
+def _rollout_provenance_identity_matches(
+    provenance: Mapping[str, Any],
+    candidate_record: Mapping[str, Any],
+    worker: Mapping[str, Any],
+) -> bool:
+    """Ensure the locked provenance, reviewed candidate, and worker still bind."""
+
+    candidate_provenance = candidate_record.get("source_provenance")
+    if not isinstance(candidate_provenance, Mapping):
+        return False
+    if any(
+        candidate_provenance.get(field) != provenance.get(field)
+        for field in _ROLLOUT_PROVENANCE_IDENTITY_FIELDS
+    ):
+        return False
+
+    repository = str(provenance.get("canonical_source_repository") or "")
+    worker_repository = str(worker.get("source_repo") or "")
+    if not repository or repository != worker_repository:
+        return False
+    transport = str(provenance.get("transport_type") or "").strip().lower()
+    if not transport or transport != str(worker.get("adapter_type") or "").strip().lower():
+        return False
+    commit_sha = str(provenance.get("commit_sha") or "")
+    worker_revision = str(worker.get("source_revision") or "")
+    if commit_sha and worker_revision and commit_sha != worker_revision:
+        return False
+    exact_release = str(provenance.get("exact_release") or "")
+    worker_version = str(worker.get("version") or "")
+    if exact_release and worker_version and exact_release != worker_version:
+        return False
+
+    image_digest = str(provenance.get("oci_image_digest") or "")
+    if transport == "oci":
+        config = worker.get("adapter_config")
+        image = str(config.get("image") or "") if isinstance(config, Mapping) else ""
+        if not image_digest or not image.endswith(f"@{image_digest}"):
+            return False
+    return True
+
+
+def _governance_json_snapshot(value: Any) -> Any:
+    """Normalize governance snapshots the same way JSONB persists them."""
+
+    return json.loads(
+        json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+    )
+
+
+def _candidate_governance_snapshot_matches(
+    *,
+    worker: Mapping[str, Any],
+    provenance: Mapping[str, Any],
+    steward: Mapping[str, Any],
+    candidate: Mapping[str, Any],
+    expected_worker_identity: Mapping[str, Any],
+    expected_provenance_hash: str,
+    expected_scan_report_sha256: str,
+    expected_candidate_snapshot: Mapping[str, Any],
+) -> bool:
+    """Check locked first-party governance rows against the API precheck."""
+
+    from mas_core.worker_registry.source_bound_security_scan import (
+        FIRST_PARTY_SOURCE_REPOSITORY,
+        FIRST_PARTY_WORKER_ID,
+    )
+
+    if worker_identity_snapshot_for_rollout(worker) != _governance_json_snapshot(
+        expected_worker_identity
+    ):
+        return False
+    if (
+        str(worker.get("name") or "") != FIRST_PARTY_WORKER_ID
+        or str(provenance.get("source_provider") or "").lower() != "aiat"
+        or str(provenance.get("canonical_source_repository") or "")
+        != FIRST_PARTY_SOURCE_REPOSITORY
+        or str(provenance.get("security_scan_status") or "").lower() != "passed"
+        or str(provenance.get("provenance_hash") or "")
+        != expected_provenance_hash
+    ):
+        return False
+
+    metadata = steward.get("metadata")
+    metadata = metadata if isinstance(metadata, Mapping) else {}
+    provenance_extra = metadata.get("source_provenance_extra")
+    provenance_extra = provenance_extra if isinstance(provenance_extra, Mapping) else {}
+    scan_report = provenance_extra.get("source_bound_security_scan")
+    if (
+        not isinstance(scan_report, Mapping)
+        or str(scan_report.get("status") or "").lower() != "passed"
+        or str(scan_report.get("report_sha256") or "")
+        != expected_scan_report_sha256
+    ):
+        return False
+
+    expected = _governance_json_snapshot(expected_candidate_snapshot)
+    evidence = candidate.get("evidence_json")
+    evidence = evidence if isinstance(evidence, Mapping) else {}
+    candidate_record = evidence.get("candidate_record")
+    return (
+        str(candidate.get("id") or "") == str(expected.get("id") or "")
+        and str(candidate.get("worker_id") or "")
+        == str(expected.get("worker_id") or "")
+        and str(candidate.get("skill_bundle_id") or "")
+        == str(expected.get("skill_bundle_id") or "")
+        and (
+            str(candidate.get("adapter_id") or "") or None
+        )
+        == (str(expected.get("adapter_id") or "") or None)
+        and str(candidate.get("intake_status") or "")
+        == str(expected.get("intake_status") or "")
+        and str(candidate.get("certification_run_id") or "")
+        == str(expected.get("certification_run_id") or "")
+        and str(candidate.get("approval_record_id") or "")
+        == str(expected.get("approval_record_id") or "")
+        and _governance_json_snapshot(dict(evidence))
+        == expected.get("evidence_json")
+        and isinstance(candidate_record, Mapping)
+        and _governance_json_snapshot(dict(candidate_record))
+        == expected.get("candidate_record")
+        and _rollout_provenance_identity_matches(
+            provenance,
+            candidate_record,
+            worker,
+        )
+    )
+
+
 def document_to_context_item(document: dict[str, Any]) -> dict[str, Any]:
     """Project a canonical document row into the project-context shape.
 
@@ -9006,9 +9194,9 @@ class AgentStorage:
             row = (await conn.execute(table.select().where(key_column == key))).mappings().first()
         return dict(row) if row else None
 
-    async def create_worker_shell_version(self, *, worker_id: UUID, version: str, contract_version: str, schema_version: str, identity: dict[str, Any], capabilities: dict[str, Any], permissions: dict[str, Any] | None = None, model_mode: str = "none", provenance: dict[str, Any] | None = None, content_hash: str) -> dict[str, Any]:
+    async def create_worker_shell_version(self, *, worker_id: UUID, version: str, contract_version: str, schema_version: str, identity: dict[str, Any], capabilities: dict[str, Any], permissions: dict[str, Any] | None = None, model_mode: str = "none", provenance: dict[str, Any] | None = None, content_hash: str, shell_version_id: UUID | None = None) -> dict[str, Any]:
         values = {
-            "id": uuid4(),
+            "id": shell_version_id or uuid4(),
             "worker_id": worker_id,
             "version": version,
             "contract_version": contract_version,
@@ -9052,9 +9240,9 @@ class AgentStorage:
             ).mappings().first()
         return dict(row) if row else None
 
-    async def create_runtime_adapter(self, *, worker_id: UUID, version: str, adapter_type: str, transport_type: str, content_hash: str, runtime_api_version: str | None = None, implementation_ref: str | None = None, capabilities: dict[str, Any] | None = None, conformance_status: str = "pending", conformance: dict[str, Any] | None = None, status: str = "candidate") -> dict[str, Any]:
+    async def create_runtime_adapter(self, *, worker_id: UUID, version: str, adapter_type: str, transport_type: str, content_hash: str, runtime_api_version: str | None = None, implementation_ref: str | None = None, capabilities: dict[str, Any] | None = None, conformance_status: str = "pending", conformance: dict[str, Any] | None = None, status: str = "candidate", adapter_id: UUID | None = None) -> dict[str, Any]:
         values = {
-            "id": uuid4(),
+            "id": adapter_id or uuid4(),
             "worker_id": worker_id,
             "version": version,
             "adapter_type": adapter_type,
@@ -9116,6 +9304,205 @@ class AgentStorage:
 
     async def get_external_provenance_by_worker(self, worker_id: UUID) -> dict[str, Any] | None:
         return await self._get_table_row(t.external_runtime_provenance, t.external_runtime_provenance.c.worker_id, worker_id)
+
+    async def persist_source_bound_worker_security_scan(
+        self,
+        *,
+        worker_id: UUID,
+        report: dict[str, Any],
+        expected_provenance_hash: str,
+    ) -> dict[str, Any] | None:
+        """Persist a server-generated candidate scan beside steward provenance.
+
+        The external provenance table predates a JSONB evidence column. Its
+        related Steward row already carries the JSONB ``source_provenance_extra``
+        read model, so the source-bound report is stored there while the
+        normalized provenance status/hash are updated in the same transaction.
+        The caller must provide the row hash observed before scanning; a
+        concurrent provenance change prevents stale evidence from being saved.
+        """
+        serialized = json.dumps(
+            report,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            default=str,
+        )
+        if len(serialized.encode("utf-8")) > 1 * 1024 * 1024:
+            from ..worker_registry.source_bound_security_scan import (
+                SourceBoundSecurityScanPersistenceError,
+            )
+
+            raise SourceBoundSecurityScanPersistenceError(
+                "SECURITY_SCAN_REPORT_TOO_LARGE"
+            )
+
+        from mas_core.worker_registry.source_bound_security_scan import (
+            FIRST_PARTY_DOCKERFILE_SHA256,
+            FIRST_PARTY_IMAGE_DIGEST,
+            FIRST_PARTY_IMAGE_SOURCE_BINDING_REQUIRED,
+            FIRST_PARTY_RUNTIME_SHA256,
+            FIRST_PARTY_SOURCE_REPOSITORY,
+            FIRST_PARTY_SOURCE_REVISION,
+            FIRST_PARTY_WORKER_ID,
+            FIRST_PARTY_WORKER_VERSION,
+            SourceBoundSecurityScanPersistenceError,
+            source_bound_security_scan_report_integrity_is_valid,
+        )
+
+        async with self.engine.begin() as conn:
+            worker_row = (
+                await conn.execute(
+                    t.worker_registry.select()
+                    .where(t.worker_registry.c.id == worker_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            provenance_row = (
+                await conn.execute(
+                    t.external_runtime_provenance.select()
+                    .where(t.external_runtime_provenance.c.worker_id == worker_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            steward_row = (
+                await conn.execute(
+                    t.steward_agents.select()
+                    .where(t.steward_agents.c.worker_id == worker_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if worker_row is None or provenance_row is None or steward_row is None:
+                return None
+            if str(provenance_row.get("provenance_hash") or "") != expected_provenance_hash:
+                raise SourceBoundSecurityScanPersistenceError(
+                    "SECURITY_SCAN_PROVENANCE_CHANGED"
+                )
+
+            worker = dict(worker_row)
+            provenance = dict(provenance_row)
+            candidate = report.get("candidate") if isinstance(report, dict) else None
+            candidate = candidate if isinstance(candidate, dict) else {}
+            worker_config = worker.get("adapter_config") or {}
+            if not isinstance(worker_config, dict):
+                worker_config = {}
+            expected_version_pin = (
+                f"{FIRST_PARTY_WORKER_VERSION}+"
+                f"{FIRST_PARTY_IMAGE_DIGEST.replace(':', '.')}"
+            )
+            identity_matches = (
+                str(candidate.get("worker_registry_id") or "") == str(worker_id)
+                and str(worker.get("name") or "") == FIRST_PARTY_WORKER_ID
+                and str(worker.get("version") or "") == FIRST_PARTY_WORKER_VERSION
+                and str(worker.get("version_pin") or "") == expected_version_pin
+                and str(worker.get("source_revision") or "") == FIRST_PARTY_SOURCE_REVISION
+                and str(worker.get("source_repo") or "") == FIRST_PARTY_SOURCE_REPOSITORY
+                and str(worker.get("adapter_type") or "").lower() == "oci"
+                and str(worker.get("sandbox_profile") or "") == "sandboxed"
+                and str(worker.get("adapter_entrypoint") or "") == "ProcessAdapter"
+                and str(worker_config.get("image") or "")
+                == f"aiat-deterministic-file-worker@{FIRST_PARTY_IMAGE_DIGEST}"
+                and str(provenance.get("canonical_source_repository") or "")
+                == FIRST_PARTY_SOURCE_REPOSITORY
+                and str(provenance.get("source_provider") or "").lower() == "aiat"
+                and str(provenance.get("exact_release") or "") == FIRST_PARTY_WORKER_VERSION
+                and str(provenance.get("transport_type") or "").lower() == "oci"
+                and str(provenance.get("commit_sha") or "") == FIRST_PARTY_SOURCE_REVISION
+                and str(provenance.get("oci_image_digest") or "") == FIRST_PARTY_IMAGE_DIGEST
+                and str(provenance.get("runtime_fingerprint") or "")
+                == f"sha256:{FIRST_PARTY_RUNTIME_SHA256}"
+                and candidate.get("dockerfile_sha256") == FIRST_PARTY_DOCKERFILE_SHA256
+                and candidate.get("runtime_sha256") == FIRST_PARTY_RUNTIME_SHA256
+            )
+            if not identity_matches:
+                raise SourceBoundSecurityScanPersistenceError(
+                    "SECURITY_SCAN_IDENTITY_INVALID"
+                )
+            if not source_bound_security_scan_report_integrity_is_valid(
+                report,
+                expected_worker_id=str(worker_id),
+                provenance={**provenance, "source_bound_security_scan": report},
+                current_worker=worker,
+            ):
+                raise SourceBoundSecurityScanPersistenceError(
+                    "SECURITY_SCAN_REPORT_INVALID"
+                )
+
+            steward = dict(steward_row)
+            metadata = dict(steward.get("metadata") or {})
+            provenance_extra = dict(metadata.get("source_provenance_extra") or {})
+            provenance_extra["source_bound_security_scan"] = report
+            provenance_extra["source_bound_security_scan_status"] = report.get("status")
+            prior_history = provenance_extra.get("source_bound_security_scan_history")
+            history = list(prior_history) if isinstance(prior_history, list) else []
+            history.append(
+                {
+                    "report_sha256": report.get("report_sha256"),
+                    "status": report.get("status"),
+                    "source_scan_status": report.get("status"),
+                    "finding_count": report.get("finding_count"),
+                    "scanner_error_count": report.get("scanner_error_count"),
+                    "scan_completed_at": report.get("scan_completed_at"),
+                }
+            )
+            provenance_extra["source_bound_security_scan_history"] = history[-20:]
+            metadata["source_provenance_extra"] = provenance_extra
+
+            current_status = str(provenance.get("security_scan_status") or "pending").lower()
+            if report.get("status") == "findings_review_required":
+                new_status = "findings_review_required"
+            elif report.get("status") == "blocked":
+                new_status = "blocked"
+            elif current_status in {"findings_review_required", "requires_human_review"}:
+                # A clean source-only scan cannot erase a human review decision.
+                new_status = current_status
+            elif current_status == "blocked":
+                new_status = "blocked"
+            else:
+                # This report scans the pinned source tree.  No independently
+                # verified OCI source/image attestation is available here, so
+                # it must not set or preserve the overall security gate PASS.
+                new_status = FIRST_PARTY_IMAGE_SOURCE_BINDING_REQUIRED
+
+            provenance_for_hash = {
+                key: value
+                for key, value in provenance.items()
+                if key not in {"id", "worker_id", "created_at", "provenance_hash"}
+            }
+            provenance_for_hash["security_scan_status"] = new_status
+            provenance_hash = hashlib.sha256(
+                json.dumps(
+                    {
+                        "provenance": provenance_for_hash,
+                        "source_bound_security_scan": report,
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                    default=str,
+                ).encode("utf-8")
+            ).hexdigest()
+            await conn.execute(
+                t.steward_agents.update()
+                .where(t.steward_agents.c.id == steward["id"])
+                .values(metadata=metadata, updated_at=datetime.now(tz=UTC))
+            )
+            await conn.execute(
+                t.external_runtime_provenance.update()
+                .where(t.external_runtime_provenance.c.worker_id == worker_id)
+                .values(
+                    security_scan_status=new_status,
+                    provenance_hash=provenance_hash,
+                )
+            )
+            result = {
+                **provenance,
+                "security_scan_status": new_status,
+                "source_bound_security_scan_status": report.get("status"),
+                "provenance_hash": provenance_hash,
+                "source_bound_security_scan": report,
+            }
+            return result
 
     async def create_steward(self, *, worker_id: UUID, provenance_id: UUID | None = None, steward_id: UUID | None = None, status: str = "PROVISIONING", steward_version: str = "1.0.0", monitoring_cadence: str = "daily", metadata: dict[str, Any] | None = None) -> dict[str, Any]:
         values = {"id": steward_id or uuid4(), "worker_id": worker_id, "status": status, "steward_version": steward_version, "provenance_id": provenance_id, "monitoring_cadence": monitoring_cadence, "metadata": metadata or {}}
@@ -9310,8 +9697,8 @@ class AgentStorage:
             rows = (await conn.execute(query)).mappings().all()
         return [dict(row) for row in rows]
 
-    async def create_skill_bundle(self, *, worker_id: UUID, steward_id: UUID, semantic_version: str, format_version: str, upstream_compatibility_range: str, provenance: dict[str, Any], bundle: dict[str, Any], content_hash: str, status: str = "DRAFT") -> dict[str, Any]:
-        values = {"id": uuid4(), "worker_id": worker_id, "steward_id": steward_id, "semantic_version": semantic_version, "format_version": format_version, "upstream_compatibility_range": upstream_compatibility_range, "provenance_json": provenance, "bundle_json": bundle, "content_hash": content_hash, "status": status}
+    async def create_skill_bundle(self, *, worker_id: UUID, steward_id: UUID, semantic_version: str, format_version: str, upstream_compatibility_range: str, provenance: dict[str, Any], bundle: dict[str, Any], content_hash: str, status: str = "DRAFT", bundle_id: UUID | None = None) -> dict[str, Any]:
+        values = {"id": bundle_id or uuid4(), "worker_id": worker_id, "steward_id": steward_id, "semantic_version": semantic_version, "format_version": format_version, "upstream_compatibility_range": upstream_compatibility_range, "provenance_json": provenance, "bundle_json": bundle, "content_hash": content_hash, "status": status}
         async with self.engine.begin() as conn:
             await conn.execute(t.skill_bundles.insert().values(**values))
         return values
@@ -9362,7 +9749,16 @@ class AgentStorage:
             rows = (await conn.execute(query)).mappings().all()
         return [dict(row) for row in rows]
 
-    async def update_skill_bundle_candidate(self, candidate_id: UUID, *, intake_status: str | None = None, evidence: dict[str, Any] | None = None, certification_run_id: UUID | None = None, approval_record_id: UUID | None = None) -> dict[str, Any] | None:
+    async def update_skill_bundle_candidate(
+        self,
+        candidate_id: UUID,
+        *,
+        intake_status: str | None = None,
+        evidence: dict[str, Any] | None = None,
+        certification_run_id: UUID | None = None,
+        approval_record_id: UUID | None = None,
+        expected_intake_status: str | None = None,
+    ) -> dict[str, Any] | None:
         values: dict[str, Any] = {}
         if intake_status is not None:
             values["intake_status"] = intake_status
@@ -9375,10 +9771,570 @@ class AgentStorage:
         if not values:
             return await self.get_skill_bundle_candidate(candidate_id)
         async with self.engine.begin() as conn:
-            result = await conn.execute(t.skill_bundle_candidates.update().where(t.skill_bundle_candidates.c.id == candidate_id).values(**values))
+            predicate = t.skill_bundle_candidates.c.id == candidate_id
+            if expected_intake_status is not None:
+                predicate = sa.and_(
+                    predicate,
+                    t.skill_bundle_candidates.c.intake_status == expected_intake_status,
+                )
+            result = await conn.execute(
+                t.skill_bundle_candidates.update()
+                .where(predicate)
+                .values(**values)
+            )
             if result.rowcount == 0:
                 return None
         return await self.get_skill_bundle_candidate(candidate_id)
+
+    async def _lock_first_party_candidate_governance_rows(
+        self,
+        conn: Any,
+        *,
+        worker_id: UUID,
+        candidate_id: UUID,
+        expected_worker_identity: Mapping[str, Any],
+        expected_provenance_hash: str,
+        expected_scan_report_sha256: str,
+        expected_candidate_snapshot: Mapping[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]] | None:
+        """Lock and compare first-party governance state before any writes."""
+        worker = (
+            await conn.execute(
+                t.worker_registry.select()
+                .where(t.worker_registry.c.id == worker_id)
+                .with_for_update()
+            )
+        ).mappings().first()
+        provenance = (
+            await conn.execute(
+                t.external_runtime_provenance.select()
+                .where(t.external_runtime_provenance.c.worker_id == worker_id)
+                .with_for_update()
+            )
+        ).mappings().first()
+        steward = (
+            await conn.execute(
+                t.steward_agents.select()
+                .where(t.steward_agents.c.worker_id == worker_id)
+                .with_for_update()
+            )
+        ).mappings().first()
+        candidate = (
+            await conn.execute(
+                t.skill_bundle_candidates.select()
+                .where(t.skill_bundle_candidates.c.id == candidate_id)
+                .with_for_update()
+            )
+        ).mappings().first()
+        if (
+            worker is None
+            or provenance is None
+            or steward is None
+            or candidate is None
+            or provenance.get("worker_id") != worker_id
+            or steward.get("worker_id") != worker_id
+            or not _candidate_governance_snapshot_matches(
+                worker=worker,
+                provenance=provenance,
+                steward=steward,
+                candidate=candidate,
+                expected_worker_identity=expected_worker_identity,
+                expected_provenance_hash=expected_provenance_hash,
+                expected_scan_report_sha256=expected_scan_report_sha256,
+                expected_candidate_snapshot=expected_candidate_snapshot,
+            )
+        ):
+            return None
+        return dict(worker), dict(provenance), dict(steward), dict(candidate)
+
+    async def persist_first_party_candidate_certification_atomically(
+        self,
+        *,
+        worker_id: UUID,
+        candidate_id: UUID,
+        expected_worker_identity: Mapping[str, Any],
+        expected_provenance_hash: str,
+        expected_scan_report_sha256: str,
+        expected_source_identity_fingerprint: str,
+        expected_candidate_snapshot: Mapping[str, Any],
+        certification: Mapping[str, Any],
+        candidate_record_after: Mapping[str, Any],
+        shell_values: Mapping[str, Any] | None = None,
+        compatibility_matrix: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Persist a first-party certification only against its locked precheck.
+
+        Certification, candidate lifecycle/evidence, adapter conformance, and
+        optional shell/matrix records commit together. A concurrent reject or
+        source change returns ``None`` without leaving partial certification
+        evidence.
+        """
+        required = (
+            "id",
+            "worker_id",
+            "candidate_id",
+            "steward_id",
+            "status",
+            "conformance_json",
+            "checks_json",
+            "evidence_json",
+            "failure_reasons",
+            "completed_at",
+        )
+        if (
+            not isinstance(expected_worker_identity, Mapping)
+            or not isinstance(expected_candidate_snapshot, Mapping)
+            or not isinstance(candidate_record_after, Mapping)
+            or not all(key in certification for key in required)
+            or str(certification.get("worker_id")) != str(worker_id)
+            or str(certification.get("candidate_id")) != str(candidate_id)
+            or not expected_source_identity_fingerprint
+            or not expected_scan_report_sha256
+        ):
+            return None
+        certification_values = dict(certification)
+        certification_snapshot = _governance_json_snapshot(certification_values)
+        candidate_after = _governance_json_snapshot(dict(candidate_record_after))
+        status = str(certification_snapshot.get("status") or "").lower()
+        target_candidate_status = (
+            "CERTIFYING" if status == "passed" else "REJECTED"
+        )
+        certification_id = UUID(str(certification_values["id"]))
+        if (
+            status not in {"passed", "rejected"}
+            or str(candidate_after.get("candidate_id") or "") != str(candidate_id)
+            or str(candidate_after.get("worker_id") or "") != str(worker_id)
+            or str(candidate_after.get("intake_status") or "")
+            != target_candidate_status
+            or str(candidate_after.get("certification_id") or "")
+            != str(certification_id)
+            or candidate_after.get("approval_record_id")
+            != _governance_json_snapshot(expected_candidate_snapshot).get(
+                "approval_record_id"
+            )
+        ):
+            return None
+        certification_evidence = certification_values.get("evidence_json")
+        certification_evidence = (
+            certification_evidence
+            if isinstance(certification_evidence, Mapping)
+            else {}
+        )
+        if (
+            certification_evidence.get("source_identity_fingerprint")
+            != expected_source_identity_fingerprint
+            or certification_evidence.get("source_bound_security_scan_report_sha256")
+            != expected_scan_report_sha256
+        ):
+            return None
+        if compatibility_matrix is not None and str(
+            compatibility_matrix.get("worker_id")
+        ) != str(worker_id):
+            return None
+        if status == "passed" and shell_values is None:
+            return None
+        if shell_values is not None and str(shell_values.get("worker_id")) != str(
+            worker_id
+        ):
+            return None
+
+        async with self.engine.begin() as conn:
+            locked = await self._lock_first_party_candidate_governance_rows(
+                conn,
+                worker_id=worker_id,
+                candidate_id=candidate_id,
+                expected_worker_identity=expected_worker_identity,
+                expected_provenance_hash=expected_provenance_hash,
+                expected_scan_report_sha256=expected_scan_report_sha256,
+                expected_candidate_snapshot=expected_candidate_snapshot,
+            )
+            if locked is None:
+                return None
+            worker, provenance, _steward, candidate = locked
+            if (
+                candidate["intake_status"] != "CERTIFYING"
+                or candidate.get("approval_record_id") is not None
+                or candidate.get("worker_id") != worker_id
+            ):
+                return None
+
+            candidate_record_before = (
+                candidate.get("evidence_json") or {}
+            ).get("candidate_record")
+            candidate_record_before = (
+                candidate_record_before
+                if isinstance(candidate_record_before, Mapping)
+                else {}
+            )
+            adapter_record = candidate_record_before.get("adapter")
+            bundle_record = candidate_record_before.get("bundle")
+            adapter_record = adapter_record if isinstance(adapter_record, Mapping) else {}
+            bundle_record = bundle_record if isinstance(bundle_record, Mapping) else {}
+            bundle_id = candidate.get("skill_bundle_id")
+            adapter_id = candidate.get("adapter_id")
+            if (
+                not adapter_id
+                or str(bundle_record.get("bundle_id") or "") != str(bundle_id)
+                or str(adapter_record.get("adapter_id") or "") != str(adapter_id)
+                or str(candidate_record_before.get("steward_id") or "")
+                != str(certification_snapshot.get("steward_id") or "")
+            ):
+                return None
+
+            bundle = (
+                await conn.execute(
+                    t.skill_bundles.select()
+                    .where(t.skill_bundles.c.id == bundle_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            adapter = (
+                await conn.execute(
+                    t.runtime_adapters.select()
+                    .where(t.runtime_adapters.c.id == adapter_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if (
+                bundle is None
+                or adapter is None
+                or bundle.get("worker_id") != worker_id
+                or str(bundle.get("steward_id"))
+                != str(certification_snapshot.get("steward_id") or "")
+                or adapter.get("worker_id") != worker_id
+                or str(adapter.get("version") or "")
+                != str(adapter_record.get("version") or "")
+                or str(adapter.get("transport_type") or "").lower()
+                != str(adapter_record.get("transport_type") or "").lower()
+                or str(adapter.get("implementation_ref") or "")
+                != str(adapter_record.get("implementation_ref") or "")
+                or str(adapter.get("content_hash") or "")
+                != str(adapter_record.get("content_hash") or "")
+            ):
+                return None
+
+            effective_shell: dict[str, Any] | None = None
+            if shell_values is not None:
+                shell = _governance_json_snapshot(dict(shell_values))
+                shell["id"] = UUID(str(shell["id"]))
+                shell["worker_id"] = worker_id
+                shell_row = (
+                    await conn.execute(
+                        t.worker_shell_versions.select()
+                        .where(
+                            sa.and_(
+                                t.worker_shell_versions.c.worker_id == worker_id,
+                                t.worker_shell_versions.c.version == shell["version"],
+                            )
+                        )
+                        .with_for_update()
+                    )
+                ).mappings().first()
+                if shell_row is not None:
+                    if str(shell_row.get("content_hash") or "") != str(
+                        shell.get("content_hash") or ""
+                    ):
+                        return None
+                    effective_shell = dict(shell_row)
+                else:
+                    await conn.execute(t.worker_shell_versions.insert().values(**shell))
+                    effective_shell = shell
+
+            effective_matrix: dict[str, Any] | None = None
+            if compatibility_matrix is not None:
+                matrix = _governance_json_snapshot(dict(compatibility_matrix))
+                matrix["id"] = UUID(str(matrix["id"]))
+                matrix["worker_id"] = worker_id
+                await conn.execute(
+                    t.compatibility_matrices.insert().values(**matrix)
+                )
+                effective_matrix = matrix
+
+            await conn.execute(
+                t.certification_runs.insert().values(**certification_values)
+            )
+            evidence = dict(candidate.get("evidence_json") or {})
+            evidence["candidate_record"] = candidate_after
+            if effective_shell is not None:
+                evidence["worker_shell_version_id"] = str(effective_shell["id"])
+            if effective_matrix is not None:
+                evidence["compatibility_matrix_id"] = str(effective_matrix["id"])
+            update = (
+                t.skill_bundle_candidates.update()
+                .where(
+                    sa.and_(
+                        t.skill_bundle_candidates.c.id == candidate_id,
+                        t.skill_bundle_candidates.c.worker_id == worker_id,
+                        t.skill_bundle_candidates.c.intake_status == "CERTIFYING",
+                        t.skill_bundle_candidates.c.certification_run_id
+                        == candidate.get("certification_run_id"),
+                        t.skill_bundle_candidates.c.approval_record_id.is_(None),
+                    )
+                )
+                .values(
+                    intake_status=target_candidate_status,
+                    evidence_json=evidence,
+                    certification_run_id=certification_id,
+                )
+            )
+            result = await conn.execute(update)
+            if result.rowcount != 1:
+                raise RuntimeError("first-party candidate certification CAS failed")
+            await conn.execute(
+                t.runtime_adapters.update()
+                .where(t.runtime_adapters.c.id == adapter_id)
+                .values(
+                    conformance_status=("passed" if status == "passed" else "failed"),
+                    conformance_json=certification_values["conformance_json"],
+                )
+            )
+            persisted_certification = {
+                **certification_values,
+                "evidence_json": certification_values["evidence_json"],
+            }
+            persisted_candidate = {
+                **candidate,
+                "intake_status": target_candidate_status,
+                "evidence_json": evidence,
+                "certification_run_id": certification_id,
+            }
+            return {
+                "certification": persisted_certification,
+                "candidate": persisted_candidate,
+                "worker_shell_version": effective_shell,
+                "compatibility_matrix": effective_matrix,
+            }
+
+    async def approve_first_party_candidate_atomically(
+        self,
+        *,
+        worker_id: UUID,
+        candidate_id: UUID,
+        expected_worker_identity: Mapping[str, Any],
+        expected_provenance_hash: str,
+        expected_scan_report_sha256: str,
+        expected_source_identity_fingerprint: str,
+        expected_candidate_snapshot: Mapping[str, Any],
+        candidate_record_after: Mapping[str, Any] | None = None,
+        approval: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Approve a first-party candidate and its worker projection atomically."""
+        if (
+            not isinstance(expected_worker_identity, Mapping)
+            or not isinstance(expected_candidate_snapshot, Mapping)
+            or not expected_source_identity_fingerprint
+            or not expected_scan_report_sha256
+        ):
+            return None
+        expected = _governance_json_snapshot(dict(expected_candidate_snapshot))
+        expected_status = str(expected.get("intake_status") or "")
+        if expected_status not in {"CERTIFYING", "APPROVED"}:
+            return None
+        if expected_status == "CERTIFYING" and (
+            not isinstance(candidate_record_after, Mapping)
+            or not isinstance(approval, Mapping)
+        ):
+            return None
+
+        async with self.engine.begin() as conn:
+            locked = await self._lock_first_party_candidate_governance_rows(
+                conn,
+                worker_id=worker_id,
+                candidate_id=candidate_id,
+                expected_worker_identity=expected_worker_identity,
+                expected_provenance_hash=expected_provenance_hash,
+                expected_scan_report_sha256=expected_scan_report_sha256,
+                expected_candidate_snapshot=expected_candidate_snapshot,
+            )
+            if locked is None:
+                return None
+            _worker, _provenance, steward, candidate = locked
+            if (
+                candidate.get("intake_status") != expected_status
+                or candidate.get("worker_id") != worker_id
+                or candidate.get("certification_run_id") is None
+            ):
+                return None
+            candidate_record = (
+                candidate.get("evidence_json") or {}
+            ).get("candidate_record")
+            candidate_record = (
+                candidate_record if isinstance(candidate_record, Mapping) else {}
+            )
+            if (
+                str(candidate_record.get("steward_id") or "")
+                != str(steward.get("id") or "")
+                or str(candidate_record.get("certification_id") or "")
+                != str(candidate.get("certification_run_id") or "")
+            ):
+                return None
+            certification = (
+                await conn.execute(
+                    t.certification_runs.select()
+                    .where(
+                        t.certification_runs.c.id
+                        == candidate.get("certification_run_id")
+                    )
+                    .with_for_update()
+                )
+            ).mappings().first()
+            cert_evidence = (
+                certification.get("evidence_json") or {}
+                if certification is not None
+                else {}
+            )
+            if (
+                certification is None
+                or certification.get("worker_id") != worker_id
+                or certification.get("candidate_id") != candidate_id
+                or str(certification.get("status") or "").lower() != "passed"
+                or cert_evidence.get("source_identity_fingerprint")
+                != expected_source_identity_fingerprint
+                or cert_evidence.get("source_bound_security_scan_report_sha256")
+                != expected_scan_report_sha256
+            ):
+                return None
+
+            bundle_id = candidate.get("skill_bundle_id")
+            adapter_id = candidate.get("adapter_id")
+            bundle = (
+                await conn.execute(
+                    t.skill_bundles.select()
+                    .where(t.skill_bundles.c.id == bundle_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            adapter = (
+                await conn.execute(
+                    t.runtime_adapters.select()
+                    .where(t.runtime_adapters.c.id == adapter_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            adapter_record = candidate_record.get("adapter")
+            bundle_record = candidate_record.get("bundle")
+            adapter_record = adapter_record if isinstance(adapter_record, Mapping) else {}
+            bundle_record = bundle_record if isinstance(bundle_record, Mapping) else {}
+            if (
+                bundle is None
+                or adapter is None
+                or bundle.get("worker_id") != worker_id
+                or bundle.get("steward_id") != steward.get("id")
+                or str(bundle_record.get("bundle_id") or "") != str(bundle_id)
+                or adapter.get("worker_id") != worker_id
+                or str(adapter_record.get("adapter_id") or "") != str(adapter_id)
+                or str(adapter.get("conformance_status") or "").lower() != "passed"
+                or str(adapter.get("content_hash") or "")
+                != str(adapter_record.get("content_hash") or "")
+            ):
+                return None
+
+            if expected_status == "APPROVED":
+                approval_id = candidate.get("approval_record_id")
+                if approval_id is None:
+                    return None
+                approval_row = (
+                    await conn.execute(
+                        t.approval_records.select()
+                        .where(t.approval_records.c.id == approval_id)
+                        .with_for_update()
+                    )
+                ).mappings().first()
+                if (
+                    approval_row is None
+                    or approval_row.get("scope_type")
+                    != "worker_skill_bundle_candidate"
+                    or approval_row.get("scope_id") != candidate_id
+                    or approval_row.get("decision") != "APPROVED"
+                ):
+                    return None
+                return {
+                    "candidate": dict(candidate),
+                    "approval": dict(approval_row),
+                    "idempotent": True,
+                }
+
+            approval_values = dict(approval or {})
+            candidate_after = _governance_json_snapshot(
+                dict(candidate_record_after or {})
+            )
+            approval_id = UUID(str(approval_values.get("id") or ""))
+            if (
+                candidate.get("approval_record_id") is not None
+                or str(approval_values.get("scope_type") or "")
+                != "worker_skill_bundle_candidate"
+                or str(approval_values.get("scope_id") or "")
+                != str(candidate_id)
+                or str(approval_values.get("decision") or "") != "APPROVED"
+                or str(candidate_after.get("candidate_id") or "")
+                != str(candidate_id)
+                or str(candidate_after.get("worker_id") or "")
+                != str(worker_id)
+                or str(candidate_after.get("intake_status") or "") != "APPROVED"
+                or str(candidate_after.get("certification_id") or "")
+                != str(candidate.get("certification_run_id") or "")
+                or str(candidate_after.get("approval_record_id") or "")
+                != str(approval_id)
+            ):
+                return None
+            approval_values["id"] = approval_id
+            approval_values["scope_id"] = candidate_id
+
+            evidence = dict(candidate.get("evidence_json") or {})
+            evidence["candidate_record"] = candidate_after
+            await conn.execute(t.approval_records.insert().values(**approval_values))
+            candidate_update = await conn.execute(
+                t.skill_bundle_candidates.update()
+                .where(
+                    sa.and_(
+                        t.skill_bundle_candidates.c.id == candidate_id,
+                        t.skill_bundle_candidates.c.worker_id == worker_id,
+                        t.skill_bundle_candidates.c.intake_status == "CERTIFYING",
+                        t.skill_bundle_candidates.c.certification_run_id
+                        == candidate.get("certification_run_id"),
+                        t.skill_bundle_candidates.c.approval_record_id.is_(None),
+                    )
+                )
+                .values(
+                    intake_status="APPROVED",
+                    evidence_json=evidence,
+                    approval_record_id=approval_id,
+                )
+            )
+            if candidate_update.rowcount != 1:
+                raise RuntimeError("first-party candidate approval CAS failed")
+            await conn.execute(
+                t.skill_bundles.update()
+                .where(t.skill_bundles.c.id == bundle_id)
+                .values(status="APPROVED")
+            )
+            await conn.execute(
+                t.runtime_adapters.update()
+                .where(t.runtime_adapters.c.id == adapter_id)
+                .values(
+                    status=(
+                        "active"
+                        if str(adapter.get("status") or "").lower() == "active"
+                        else "approved"
+                    ),
+                    conformance_status="passed",
+                )
+            )
+            await conn.execute(
+                t.worker_registry.update()
+                .where(t.worker_registry.c.id == worker_id)
+                .values(evaluation_status="approved", updated_at=datetime.now(tz=UTC))
+            )
+            return {
+                "candidate": {
+                    **candidate,
+                    "intake_status": "APPROVED",
+                    "evidence_json": evidence,
+                    "approval_record_id": approval_id,
+                },
+                "approval": approval_values,
+                "idempotent": False,
+            }
 
     async def update_skill_bundle(self, bundle_id: UUID, *, status: str | None = None) -> dict[str, Any] | None:
         if status is None:
@@ -9818,13 +10774,34 @@ class AgentStorage:
         steward_id: UUID,
         candidate_id: UUID,
         completed_at: datetime | None,
+        expected_worker_identity: Mapping[str, Any] | None = None,
+        expected_provenance_hash: str | None = None,
     ) -> dict[str, Any] | None:
         """Promote one candidate with a worker-row lock and compare-and-set.
 
         The Worker Run keeps immutable version references, so this method only
         moves pointers for *new* dispatches after the rollout state is still
-        PROMOTING and no other candidate owns an in-flight rollout.
+        PROMOTING and no other candidate owns an in-flight rollout. The
+        expected worker identity and provenance hash come from the API's
+        promotion precheck. Missing or stale snapshots fail closed before any
+        active pointer or rollout status is updated.
         """
+        if (
+            not isinstance(expected_worker_identity, Mapping)
+            or set(expected_worker_identity) != set(_ROLLOUT_WORKER_IDENTITY_FIELDS)
+            or not isinstance(expected_provenance_hash, str)
+            or len(expected_provenance_hash) != 64
+            or any(char not in "0123456789abcdef" for char in expected_provenance_hash)
+        ):
+            return None
+        expected_identity = json.loads(
+            json.dumps(
+                dict(expected_worker_identity),
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            )
+        )
         active_states = {"PENDING", "SHADOW", "CANARY", "PROMOTING"}
         async with self.engine.begin() as conn:
             worker = (
@@ -9834,6 +10811,25 @@ class AgentStorage:
                     .with_for_update()
                 )
             ).mappings().first()
+            if (
+                worker is None
+                or worker_identity_snapshot_for_rollout(worker) != expected_identity
+            ):
+                return None
+            provenance = (
+                await conn.execute(
+                    t.external_runtime_provenance.select()
+                    .where(t.external_runtime_provenance.c.worker_id == worker_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if (
+                provenance is None
+                or provenance.get("worker_id") != worker_id
+                or str(provenance.get("provenance_hash") or "")
+                != expected_provenance_hash
+            ):
+                return None
             rollout = (
                 await conn.execute(
                     t.rollout_records.select()
@@ -9841,7 +10837,7 @@ class AgentStorage:
                     .with_for_update()
                 )
             ).mappings().first()
-            if worker is None or rollout is None:
+            if rollout is None:
                 return None
             if (
                 rollout["worker_id"] != worker_id
@@ -9875,6 +10871,16 @@ class AgentStorage:
             if candidate is None or candidate["approval_record_id"] is None:
                 return None
             candidate_evidence = dict(candidate.get("evidence_json") or {})
+            candidate_record = candidate_evidence.get("candidate_record")
+            if (
+                not isinstance(candidate_record, Mapping)
+                or not _rollout_provenance_identity_matches(
+                    provenance,
+                    candidate_record,
+                    worker,
+                )
+            ):
+                return None
             shell_version_raw = candidate_evidence.get("worker_shell_version_id")
             try:
                 shell_version_id = UUID(str(shell_version_raw))

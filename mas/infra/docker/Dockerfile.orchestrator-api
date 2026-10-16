@@ -46,6 +46,18 @@ RUN python -m venv /opt/semgrep \
     && /opt/semgrep/bin/pip install --no-cache-dir "semgrep==1.168.0" \
     && ln -s /opt/semgrep/bin/semgrep /usr/local/bin/semgrep
 
+# The operator-triggered first-party worker scan runs only the locally pinned
+# binary. Verify the release archive before installation; scan-time flags
+# disable update checks and secret verification.
+RUN curl -fsSL \
+        "https://github.com/trufflesecurity/trufflehog/releases/download/v3.97.0/trufflehog_3.97.0_linux_amd64.tar.gz" \
+        -o /tmp/trufflehog_3.97.0_linux_amd64.tar.gz \
+    && echo "62224de2f9dd7cd418800feb953760a302ed2f82a7c547fe1146a4874fb179e4  /tmp/trufflehog_3.97.0_linux_amd64.tar.gz" | sha256sum -c - \
+    && mkdir -p /tmp/trufflehog-release \
+    && tar --no-same-owner -xzf /tmp/trufflehog_3.97.0_linux_amd64.tar.gz -C /tmp/trufflehog-release trufflehog \
+    && install -m 0755 /tmp/trufflehog-release/trufflehog /usr/local/bin/trufflehog \
+    && rm -rf /tmp/trufflehog_3.97.0_linux_amd64.tar.gz /tmp/trufflehog-release
+
 COPY apps/orchestrator-api/orchestrator_api/ /app/orchestrator_api/
 COPY migrations/ /app/migrations/
 COPY alembic.ini /app/alembic.ini

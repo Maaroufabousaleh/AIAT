@@ -212,3 +212,117 @@ async def test_operator_can_create_candidate_through_steward_api(client, monkeyp
     storage.create_runtime_adapter.assert_awaited_once()
     storage.create_skill_bundle_candidate.assert_awaited_once()
 
+
+@pytest.mark.anyio
+async def test_candidate_stage_audit_actor_uses_authenticated_principal(client, monkeypatch) -> None:
+    """A request body cannot assign a false actor to an intake transition."""
+    from orchestrator_api import main
+
+    from mas_core.worker_registry.steward import ExternalProvenance, ExternalWorkerSteward
+
+    steward = ExternalWorkerSteward(
+        worker_id=str(WORKER_ID),
+        provenance=ExternalProvenance(
+            canonical_source_repository="https://github.com/example/opencode",
+            exact_release="1.18.21",
+            transport_type="process",
+        ),
+    )
+    candidate = steward.generate_candidate(
+        semantic_version="1.0.0",
+        adapter_version="1.0.0",
+        upstream_compatibility_range="==1.18.21",
+    )
+    storage = MagicMock()
+    storage.get_skill_bundle_candidate = AsyncMock(
+        return_value={"id": candidate.candidate_id, "evidence_json": {}}
+    )
+    storage.update_skill_bundle_candidate = AsyncMock(
+        return_value={"id": candidate.candidate_id}
+    )
+    monkeypatch.setattr(main, "_storage", lambda: storage)
+    monkeypatch.setattr(main, "_steward_runtime", AsyncMock(return_value=steward))
+
+    response = await client.post(
+        f"/capabilities/workers/{WORKER_ID}/steward/candidates/{candidate.candidate_id}/stage",
+        headers={"X-API-Key": "test-operator-key"},
+        json={
+            "target_status": "SOURCE_REVIEW",
+            "actor": "forged-security-reviewer",
+            "evidence": {"review": "source identified"},
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    persisted_candidate = storage.update_skill_bundle_candidate.await_args.kwargs[
+        "evidence"
+    ]["candidate_record"]
+    transition = persisted_candidate["evidence"]["intake_transitions"][-1]
+    assert transition["actor"] == "operator"
+    assert transition["actor"] != "forged-security-reviewer"
+
+
+@pytest.mark.anyio
+async def test_rollout_creation_audit_actor_uses_authenticated_principal(client, monkeypatch) -> None:
+    """A request body cannot assign a false promotion actor to a rollout."""
+    from orchestrator_api import main
+
+    from mas_core.worker_registry.steward import (
+        CandidateIntakeStatus,
+        ExternalProvenance,
+        ExternalWorkerSteward,
+        StewardStatus,
+    )
+
+    steward = ExternalWorkerSteward(
+        worker_id=str(WORKER_ID),
+        provenance=ExternalProvenance(
+            canonical_source_repository="https://github.com/example/opencode",
+            source_provider="github",
+            exact_release="1.18.21",
+            transport_type="process",
+            security_scan_status="passed",
+        ),
+    )
+    steward.transition(StewardStatus.READY, actor="operator")
+    candidate = steward.generate_candidate(
+        semantic_version="1.0.0",
+        adapter_version="1.0.0",
+        upstream_compatibility_range="==1.18.21",
+    )
+    for stage in (
+        CandidateIntakeStatus.SOURCE_REVIEW,
+        CandidateIntakeStatus.SECURITY_REVIEW,
+        CandidateIntakeStatus.INTERFACE_RESEARCH,
+        CandidateIntakeStatus.GENERATED,
+        CandidateIntakeStatus.CERTIFYING,
+    ):
+        steward.advance_candidate(candidate.candidate_id, stage)
+    certification = steward.certify_candidate(
+        candidate.candidate_id,
+        conformance={"passed": True},
+        checks={},
+    )
+    assert certification.passed
+    steward.approve_candidate(candidate.candidate_id)
+    assert candidate.intake_status is CandidateIntakeStatus.APPROVED
+
+    storage = MagicMock()
+    storage.list_rollout_records = AsyncMock(return_value=[])
+    storage.create_rollout_record = AsyncMock(return_value={})
+    monkeypatch.setattr(main, "_storage", lambda: storage)
+    monkeypatch.setattr(main, "_steward_runtime", AsyncMock(return_value=steward))
+
+    response = await client.post(
+        f"/capabilities/workers/{WORKER_ID}/steward/rollouts",
+        headers={"X-API-Key": "test-operator-key"},
+        json={
+            "actor": "forged-rollout-approver",
+            "eligible_task_classes": ["read_only"],
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["promotion_actor"] == "operator"
+    assert storage.create_rollout_record.await_args.kwargs["promotion_actor"] == "operator"
+

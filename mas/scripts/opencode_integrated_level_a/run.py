@@ -834,7 +834,59 @@ def _verify_local_deterministic_worker_image(env: dict[str, str]) -> dict[str, A
     }
     if any(labels.get(key) != value for key, value in expected_labels.items()):
         raise HarnessError("deterministic_worker_image_source_labels_mismatch")
-    return {**identity, "local_digest_verified": True, "source_labels_verified": True}
+
+    # Labels are claims made by the image builder. Confirm the executable file
+    # inside the content-addressed image matches the checked-in source as well.
+    # Create a stopped, networkless container only to copy its rootfs file; no
+    # process is started and no host path or credential is mounted into it.
+    container_name = f"aiat-worker-image-check-{secrets.token_hex(6)}"
+    created = _run(
+        ["docker", "create", "--network", "none", "--name", container_name, reference],
+        env=env,
+        timeout=20,
+        check=False,
+    )
+    if created.returncode:
+        raise HarnessError("deterministic_worker_image_inspection_container_failed")
+    embedded_source_sha256 = ""
+    try:
+        with tempfile.TemporaryDirectory(prefix="aiat-worker-image-source-") as temporary:
+            source_copy = Path(temporary) / "worker.py"
+            copied = _run(
+                [
+                    "docker",
+                    "cp",
+                    f"{container_name}:/opt/aiat-worker/worker.py",
+                    str(source_copy),
+                ],
+                env=env,
+                timeout=20,
+                check=False,
+            )
+            if (
+                copied.returncode
+                or source_copy.is_symlink()
+                or not source_copy.is_file()
+            ):
+                raise HarnessError("deterministic_worker_image_source_copy_failed")
+            embedded_source_sha256 = hashlib.sha256(source_copy.read_bytes()).hexdigest()
+    finally:
+        removed = _run(
+            ["docker", "rm", "--force", container_name],
+            env=env,
+            timeout=20,
+            check=False,
+        )
+        if removed.returncode:
+            raise HarnessError("deterministic_worker_image_inspection_cleanup_failed")
+    if embedded_source_sha256 != identity["source_sha256"]:
+        raise HarnessError("deterministic_worker_image_embedded_source_mismatch")
+    return {
+        **identity,
+        "local_digest_verified": True,
+        "source_labels_verified": True,
+        "embedded_source_sha256_verified": True,
+    }
 
 
 def _fixture_request_count(base: list[str], env: dict[str, str]) -> int:
@@ -891,6 +943,8 @@ def _pending_worker_gate_verified(driver_result: dict[str, Any]) -> bool:
         "sandbox_profile_invalid",
         "sandbox_profile_not_hardened",
         "worker_health_not_ready",
+        "security_scan_not_passed",
+        "image_source_binding_not_verified",
     }
     worker_gate_blocked = (
         isinstance(worker, dict)
@@ -1020,7 +1074,7 @@ def _worker_artifact_completion_blocked_verified(
         or not isinstance(artifacts.get("artifacts"), list)
         or not artifacts["artifacts"]
         or not isinstance(evidence, dict)
-        or evidence.get("required_checks_pass") is not True
+        or not isinstance(evidence.get("required_checks_pass"), bool)
         or not isinstance(evidence.get("artifact_ref_count"), int)
         or isinstance(evidence.get("artifact_ref_count"), bool)
         or evidence["artifact_ref_count"] < 1
@@ -1055,17 +1109,30 @@ def _worker_artifact_completion_blocked_verified(
             return False
     completion = stages.get("PROJECT_COMPLETED")
     completion_evidence = completion.get("evidence") if isinstance(completion, dict) else None
-    if (
+    completion_policy_ready = (
+        completion_evidence.get("completion_policy_ready")
+        if isinstance(completion_evidence, dict)
+        else None
+    )
+    completion_policy_reason = (
+        completion_evidence.get("completion_policy_reason")
+        if isinstance(completion_evidence, dict)
+        else None
+    )
+    return not (
         not isinstance(completion, dict)
         or completion.get("status") != "BLOCKED"
         or completion.get("reason") != "PROJECT_WORKFLOW_COMPLETION_REQUIRES_ITS_GOVERNED_MILESTONES"
         or not isinstance(completion_evidence, dict)
         or str(completion_evidence.get("state") or "").upper() == "COMPLETED"
         or completion_evidence.get("evidence_chain_passed") is not True
+        or not isinstance(completion_policy_ready, bool)
+        or (
+            completion_policy_ready is False
+            and completion_policy_reason != "PROJECT_EVIDENCE_POLICY_INCOMPLETE"
+        )
         or not _api_project_cleanup_verified(driver_result)
-    ):
-        return False
-    return True
+    )
 
 
 def _classify_driver_result(

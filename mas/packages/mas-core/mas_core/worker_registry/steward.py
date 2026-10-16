@@ -21,7 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from mas_core.worker_contract import ConformanceReport, WorkerCapabilities
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping
 
 
 class StewardStatus(StrEnum):
@@ -163,6 +163,8 @@ class ExternalProvenance(BaseModel):
 def operational_promotion_checks(
     provenance: ExternalProvenance,
     *,
+    worker_id: str | None = None,
+    current_worker: Mapping[str, Any] | None = None,
     documentation: bool | None = None,
     capability_snapshot: bool | None = None,
 ) -> dict[str, bool]:
@@ -173,6 +175,12 @@ def operational_promotion_checks(
     the API add its persisted documentation/capability requirements without
     making licence metadata part of the predicate.
     """
+    from mas_core.worker_registry.source_bound_security_scan import (
+        source_bound_security_scan_is_valid,
+        source_bound_security_scan_required,
+    )
+
+    source_scan_required = source_bound_security_scan_required(provenance)
     checks = {
         "provenance_pin": bool(
             provenance.exact_release
@@ -180,7 +188,16 @@ def operational_promotion_checks(
             or provenance.package_version
             or provenance.oci_image_digest
         ),
-        "security": provenance.security_scan_status == "passed",
+        "security": provenance.security_scan_status == "passed"
+        and (
+            not source_scan_required
+            or source_bound_security_scan_is_valid(
+                getattr(provenance, "source_bound_security_scan", None),
+                expected_worker_id=worker_id,
+                provenance=provenance,
+                current_worker=current_worker,
+            )
+        ),
     }
     if documentation is not None:
         checks["documentation"] = documentation
@@ -545,7 +562,10 @@ class ExternalWorkerSteward:
         # trusted from caller-selected check names.  Licence fields remain in
         # ``source_provenance`` as metadata only and are intentionally absent
         # from this predicate.
-        mandatory_checks = operational_promotion_checks(self.provenance)
+        mandatory_checks = operational_promotion_checks(
+            self.provenance,
+            worker_id=self.worker_id,
+        )
         supplemental_checks = {
             name: bool(value)
             for name, value in dict(checks).items()
@@ -568,6 +588,17 @@ class ExternalWorkerSteward:
         )
         self.certifications[certification.certification_id] = certification
         candidate.certification_id = certification.certification_id
+        if mandatory_checks.get("security"):
+            # A scan is additional evidence for this immutable source identity.
+            # Refresh candidate snapshots so later rollout checks use the same
+            # server-validated report instead of a pre-scan scalar snapshot.
+            candidate.source_provenance = self.provenance
+            candidate.bundle = candidate.bundle.model_copy(
+                update={"source_provenance": self.provenance}
+            )
+            candidate.adapter = candidate.adapter.model_copy(
+                update={"source_provenance": self.provenance}
+            )
         candidate.evidence["certification"] = certification.model_dump(mode="json")
         if passed:
             # A passed certification records evidence but deliberately leaves

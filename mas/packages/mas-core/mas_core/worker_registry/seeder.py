@@ -277,6 +277,11 @@ async def _bootstrap_external_steward(
     from mas_core.worker_registry.steward import ExternalProvenance
 
     raw_provenance = dict(manifest.source_provenance)
+    # This field is a server-generated attestation stored only by the bounded
+    # source-scan endpoint. A worker manifest is untrusted declaration data and
+    # must never seed it (or its audit history) into the steward read model.
+    raw_provenance.pop("source_bound_security_scan", None)
+    raw_provenance.pop("source_bound_security_scan_history", None)
     raw_provenance.setdefault("canonical_source_repository", manifest.metadata.source_repo)
     raw_provenance.setdefault("source_provider", "github" if "github.com" in str(manifest.metadata.source_repo) else "external")
     raw_provenance.setdefault("exact_release", manifest.metadata.version_pin)
