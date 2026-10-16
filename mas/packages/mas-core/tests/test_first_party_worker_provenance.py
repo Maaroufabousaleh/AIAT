@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from mas_core.protocols.worker_manifest import WorkerManifest
 from mas_core.worker_registry.source_bound_security_scan import (
+    FIRST_PARTY_BUILD_PROVENANCE_SUMMARY,
     FIRST_PARTY_DOCKERFILE_SHA256,
     FIRST_PARTY_IMAGE_DIGEST,
     FIRST_PARTY_MANIFEST_SHA256,
@@ -216,7 +217,8 @@ def _valid_source_scan_report(worker_id: str = WORKER_ID) -> dict:
     ]
     return finalize_source_bound_scan_report(
         {
-            "schema_version": "aiat.first-party-worker-source-security-scan.v1",
+            "schema_version": "aiat.first-party-worker-source-security-scan.v2",
+            "image_build_provenance": dict(FIRST_PARTY_BUILD_PROVENANCE_SUMMARY),
             "status": "passed",
             "finding_review_status": "not_required",
             "worker_registry_id": worker_id,
@@ -385,7 +387,7 @@ def test_source_bound_scan_is_required_and_rejects_report_tampering_and_identity
         report,
         expected_worker_id=WORKER_ID,
         provenance=provenance,
-    ) is False
+    ) is True
     assert source_bound_security_scan_result_is_valid(
         report,
         expected_worker_id="00000000-0000-4000-8000-000000000999",
@@ -420,7 +422,7 @@ def test_source_bound_scan_is_required_and_rejects_report_tampering_and_identity
     )
 
 
-def test_source_scan_pass_does_not_clear_image_source_binding_gate() -> None:
+def test_source_scan_pass_requires_pinned_image_source_build_binding() -> None:
     report = _valid_source_scan_report()
     provenance = _pinned_scan_provenance(report)
     current_worker = _valid_first_party_registry_worker()
@@ -430,7 +432,7 @@ def test_source_scan_pass_does_not_clear_image_source_binding_gate() -> None:
         provenance=provenance,
         current_worker=current_worker,
     )
-    assert not source_bound_security_scan_is_valid(
+    assert source_bound_security_scan_is_valid(
         report,
         expected_worker_id=WORKER_ID,
         provenance=provenance,
@@ -440,17 +442,39 @@ def test_source_scan_pass_does_not_clear_image_source_binding_gate() -> None:
         provenance,
         worker_id=WORKER_ID,
         current_worker=current_worker,
-    )["security"] is False
+    )["security"] is True
 
     inputs = _readiness_snapshot(provenance)
     inputs["worker"] = current_worker
     readiness = evaluate_worker_steward_readiness(**inputs)
     codes = {item["code"] for item in readiness["blockers"]}
-    assert readiness["status"] == "blocked"
-    assert "security_scan_not_passed" in codes
-    assert "image_source_binding_not_verified" in codes
+    assert "security_scan_not_passed" not in codes
+    assert "image_source_binding_not_verified" not in codes
     assert readiness["checks"]["source_bound_security_scan"]["status"] == "passed"
-    assert readiness["checks"]["oci_image_source_binding"]["status"] == "not_verified"
+    assert readiness["checks"]["oci_image_source_binding"]["status"] == "verified_local_unsigned"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("evidence_sha256", "0" * 64),
+        ("oci_index_digest", "sha256:" + "0" * 64),
+        ("builder_authenticated", True),
+        ("signed", True),
+    ],
+)
+def test_source_scan_rejects_modified_build_binding_summary(field: str, value: object) -> None:
+    report = _valid_source_scan_report()
+    report["image_build_provenance"] = {
+        **report["image_build_provenance"],
+        field: value,
+    }
+    report = finalize_source_bound_scan_report(report)
+    assert not source_bound_security_scan_report_integrity_is_valid(
+        report,
+        expected_worker_id=WORKER_ID,
+        provenance=_pinned_scan_provenance(report),
+    )
 
 
 def test_passed_source_scan_rejects_trufflehog_findings_exit_without_findings() -> None:
@@ -694,38 +718,30 @@ def test_first_party_candidate_keeps_certification_and_approval_stages() -> None
     assert blocked.intake_status == CandidateIntakeStatus.REJECTED
     assert blocked.approval_record_id is None
 
-    source_only_security = ExternalWorkerSteward(
+    build_bound_candidate = ExternalWorkerSteward(
         worker_id=WORKER_ID,
         provenance=_pinned_scan_provenance(_valid_source_scan_report()),
     )
-    source_only_security.transition(StewardStatus.READY, actor="test-fixture")
-    candidate = source_only_security.generate_candidate(
+    build_bound_candidate.transition(StewardStatus.READY, actor="test-fixture")
+    candidate = build_bound_candidate.generate_candidate(
         semantic_version="0.1.0",
         adapter_version="0.1.0",
         upstream_compatibility_range="==0.1.0",
         implementation_ref="mas_core.worker_registry.deterministic_file_worker:generate_project_file",
     )
-    with pytest.raises(StewardTransitionError, match="in CERTIFYING"):
-        source_only_security.certify_candidate(
-            candidate.candidate_id,
-            conformance={"passed": True},
-            checks={},
-        )
-
-    _advance_to_certifying(source_only_security, candidate.candidate_id)
-    certification = source_only_security.certify_candidate(
+    _advance_to_certifying(build_bound_candidate, candidate.candidate_id)
+    certification = build_bound_candidate.certify_candidate(
         candidate.candidate_id,
         conformance={"passed": True},
         checks={},
     )
-    assert certification.passed is False
-    assert certification.checks["security"] is False
-    assert "security" in certification.failures
-    assert candidate.intake_status == CandidateIntakeStatus.REJECTED
-    assert candidate.bundle.status == BundleStatus.DRAFT
+    assert certification.passed is True
+    assert certification.checks["security"] is True
+    assert candidate.intake_status == CandidateIntakeStatus.CERTIFYING
+    assert candidate.bundle.status == BundleStatus.CERTIFIED
     assert candidate.approval_record_id is None
     with pytest.raises(StewardTransitionError, match="only approved candidates"):
-        source_only_security.start_rollout(
+        build_bound_candidate.start_rollout(
             candidate.candidate_id,
             actor="test-fixture",
             eligible_task_classes=["read_only"],

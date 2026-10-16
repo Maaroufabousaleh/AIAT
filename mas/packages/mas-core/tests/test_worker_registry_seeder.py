@@ -151,7 +151,7 @@ async def test_manifest_scan_report_extra_is_never_seeded_as_server_attestation(
         metadata=SimpleNamespace(
             id="aiat_deterministic_file_worker",
             source_repo="https://github.com/Maaroufabousaleh/AIAT",
-            version_pin="0.1.1+sha256.fb1a347b40350519451872e6d4d818da757355d0bc3c7314f74563bed42407cc",
+            version_pin="0.1.1+sha256.d08a7379f2242a3f7cd9d41ecef2b99c4c381402fd694a0285b8edcdf3c90815",
             version="0.1.1",
         ),
         source_provenance={
@@ -159,7 +159,7 @@ async def test_manifest_scan_report_extra_is_never_seeded_as_server_attestation(
             "source_provider": "aiat",
             "exact_release": "0.1.1",
             "commit_sha": "1855a75fb17243d8298b84468372e7a6e496da46",
-            "oci_image_digest": "sha256:fb1a347b40350519451872e6d4d818da757355d0bc3c7314f74563bed42407cc",
+            "oci_image_digest": "sha256:d08a7379f2242a3f7cd9d41ecef2b99c4c381402fd694a0285b8edcdf3c90815",
             "runtime_fingerprint": "sha256:3b75bea1aa232ac5362d46b448cdc789a55f6e87e955ce4053a7d849ac858784",
             "transport_type": "oci",
             "security_scan_status": "pending",

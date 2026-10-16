@@ -458,7 +458,7 @@ def test_manifest_is_pending_and_pins_exact_sandboxed_worker_image() -> None:
     assert manifest.metadata.source_repo == "https://github.com/Maaroufabousaleh/AIAT"
     assert manifest.metadata.source_revision == "1855a75fb17243d8298b84468372e7a6e496da46"
     assert manifest.metadata.version_pin == (
-        "0.1.1+sha256.fb1a347b40350519451872e6d4d818da757355d0bc3c7314f74563bed42407cc"
+        "0.1.1+sha256.d08a7379f2242a3f7cd9d41ecef2b99c4c381402fd694a0285b8edcdf3c90815"
     )
     assert manifest.source_provenance["source_provider"] == "aiat"
     assert manifest.source_provenance["commit_sha"] == manifest.metadata.source_revision
@@ -466,7 +466,7 @@ def test_manifest_is_pending_and_pins_exact_sandboxed_worker_image() -> None:
     assert manifest.runtime.transport == "oci"
     assert manifest.runtime.adapter_config["image"] == (
         "aiat-deterministic-file-worker@sha256:"
-        "fb1a347b40350519451872e6d4d818da757355d0bc3c7314f74563bed42407cc"
+        "d08a7379f2242a3f7cd9d41ecef2b99c4c381402fd694a0285b8edcdf3c90815"
     )
     assert manifest.runtime.adapter_config["sandbox_runtime"] == "runsc"
     assert manifest.runtime.adapter_config["bidirectional_tool_protocol"] is True
@@ -478,7 +478,7 @@ def test_manifest_is_pending_and_pins_exact_sandboxed_worker_image() -> None:
     assert manifest.sandbox.network_mode == "egress-deny-all"
     assert manifest.sandbox.egress_allowlist == []
     assert any(
-        "Local development image identity only" in note
+        "Local unsigned BuildKit source-to-image binding is recorded" in note
         for note in manifest.source_provenance["notes"]
     )
     assert manifest.model_mode == "none"

@@ -67,6 +67,7 @@ COPY companies/ /app/companies/
 # fail-closed runtime factory. The API image does not include the repository
 # checkout, so source-relative worker manifest refs are normalized to /app/docs.
 COPY docs/provenance/openhands-candidate/ /app/docs/provenance/openhands-candidate/
+COPY docs/provenance/deterministic_file_worker_build_provenance.json /app/docs/provenance/deterministic_file_worker_build_provenance.json
 COPY scripts/check_runtime_adapter_conformance.py /app/scripts/check_runtime_adapter_conformance.py
 COPY apps/tool-service/tool_service/semgrep-default.yml /app/semgrep-default.yml
 

@@ -183,31 +183,35 @@ def evaluate_worker_steward_readiness(
                 provenance=provenance,
                 current_worker=worker,
             )
-            image_source_binding_status = "not_verified" if scan_required else "not_required"
+            source_image_binding_valid = scan_required and source_bound_security_scan_is_valid(
+                scan_report,
+                expected_worker_id=selected_worker_id,
+                provenance=provenance,
+                current_worker=worker,
+            )
+            image_source_binding_status = (
+                "verified_local_unsigned"
+                if source_image_binding_valid
+                else "not_verified" if scan_required else "not_required"
+            )
             if scan_status != "passed" or (
-                scan_required
-                and not source_bound_security_scan_is_valid(
-                    scan_report,
-                    expected_worker_id=selected_worker_id,
-                    provenance=provenance,
-                    current_worker=worker,
-                )
+                scan_required and not source_image_binding_valid
             ):
                 blockers.append(
                     _blocker(
                         "security_scan_not_passed",
                         (
-                            "the source scan passed, but independent OCI image/source binding is required before certification"
+                            "a server-generated source-bound scan report with verified candidate build evidence is required before certification"
                             if source_scan_result_valid
                             else "a server-generated source-bound scan report with zero findings and scanner errors is required before certification"
                         ),
                     )
                 )
-            if scan_required and source_scan_result_valid:
+            if scan_required and source_scan_result_valid and not source_image_binding_valid:
                 blockers.append(
                     _blocker(
                         "image_source_binding_not_verified",
-                        "the clean source scan does not independently verify that the pinned OCI image was built from that source",
+                        "the clean source scan does not carry the pinned build record binding the OCI image to this source",
                     )
                 )
 

@@ -8,14 +8,14 @@ metadata:
     model dispatch, workspace mount, network access, or direct file-write path.
   source_repo: https://github.com/Maaroufabousaleh/AIAT
   source_revision: 1855a75fb17243d8298b84468372e7a6e496da46
-  version_pin: "0.1.1+sha256.fb1a347b40350519451872e6d4d818da757355d0bc3c7314f74563bed42407cc"
+  version_pin: "0.1.1+sha256.d08a7379f2242a3f7cd9d41ecef2b99c4c381402fd694a0285b8edcdf3c90815"
   tags: [worker, integration_candidate, first_party]
   update_policy: manual
   evaluation_status: pending
 runtime:
   transport: oci
   adapter_config:
-    image: aiat-deterministic-file-worker@sha256:fb1a347b40350519451872e6d4d818da757355d0bc3c7314f74563bed42407cc
+    image: aiat-deterministic-file-worker@sha256:d08a7379f2242a3f7cd9d41ecef2b99c4c381402fd694a0285b8edcdf3c90815
     sandbox_profile: sandboxed
     sandbox_runtime: runsc
     bidirectional_tool_protocol: true
@@ -58,12 +58,12 @@ source_provenance:
   exact_release: "0.1.1"
   commit_sha: 1855a75fb17243d8298b84468372e7a6e496da46
   transport_type: oci
-  oci_image_digest: sha256:fb1a347b40350519451872e6d4d818da757355d0bc3c7314f74563bed42407cc
+  oci_image_digest: sha256:d08a7379f2242a3f7cd9d41ecef2b99c4c381402fd694a0285b8edcdf3c90815
   runtime_fingerprint: sha256:3b75bea1aa232ac5362d46b448cdc789a55f6e87e955ce4053a7d849ac858784
   security_scan_status: pending
   lifecycle_status: candidate_pending
   notes:
-    - Local development image identity only; no registry promotion or release attestation is claimed.
+    - Local unsigned BuildKit source-to-image binding is recorded; builder identity is unauthenticated and no registry promotion is claimed.
     - Version 0.1.1 binds the canonical registry worker UUID in emitted protocol events; no admission or activation is implied.
     - Candidate remains pending security scan, conformance, server certification, human approval, rollout, and activation.
     - OCIAdapter applies runsc, no network, no mounts, no secrets, read-only root, dropped capabilities, no-new-privileges, and bounded resources.

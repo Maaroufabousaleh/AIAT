@@ -1,11 +1,11 @@
-"""Validation for the server-generated deterministic-worker security scan.
+"""Validation for the pinned deterministic-worker source and image evidence.
 
 The report is deliberately narrow: it recognizes only the checked-in
-``aiat_deterministic_file_worker`` candidate and the scanner toolchain pinned
-for that candidate.  The scanner route is the only normal writer.  This
-module validates source-only scan evidence; the report does not establish
-that the OCI image was built from the scanned source, and cannot alone satisfy
-the candidate security gate.
+``aiat_deterministic_file_worker`` candidate and its pinned scanner/build
+evidence. The operator-only scanner route is the normal writer. Its local
+BuildKit record binds source, recipe, platform image, and OCI digest, but does
+not authenticate the builder or grant human approval, stewardship, or
+activation.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
-SOURCE_BOUND_SCAN_SCHEMA = "aiat.first-party-worker-source-security-scan.v1"
+SOURCE_BOUND_SCAN_SCHEMA = "aiat.first-party-worker-source-security-scan.v2"
 
 
 class SourceBoundSecurityScanPersistenceError(ValueError):
@@ -32,7 +32,7 @@ FIRST_PARTY_IMAGE_SOURCE_BINDING_REQUIRED = "image_source_binding_required"
 FIRST_PARTY_SOURCE_REPOSITORY = "https://github.com/Maaroufabousaleh/AIAT"
 FIRST_PARTY_SOURCE_REVISION = "1855a75fb17243d8298b84468372e7a6e496da46"
 FIRST_PARTY_IMAGE_DIGEST = (
-    "sha256:fb1a347b40350519451872e6d4d818da757355d0bc3c7314f74563bed42407cc"
+    "sha256:d08a7379f2242a3f7cd9d41ecef2b99c4c381402fd694a0285b8edcdf3c90815"
 )
 FIRST_PARTY_RUNTIME_SHA256 = (
     "3b75bea1aa232ac5362d46b448cdc789a55f6e87e955ce4053a7d849ac858784"
@@ -41,8 +41,53 @@ FIRST_PARTY_DOCKERFILE_SHA256 = (
     "8928573b6889adcbee09ec7cd527d919682254ed725dabc7919a04ef6ccc6d26"
 )
 FIRST_PARTY_MANIFEST_SHA256 = (
-    "a62f4d8d5e91df650957f60cf121ba141b79fdb6206354ebfe25fb00e5455eca"
+    "cd14bb42250e973e652dbe857ea0c3d92c4357e0712fc99161f7421a333695dc"
 )
+FIRST_PARTY_BUILD_PROVENANCE_PATH = (
+    "docs/provenance/deterministic_file_worker_build_provenance.json"
+)
+FIRST_PARTY_BUILD_PROVENANCE_SHA256 = (
+    "b623e42b235c4fad1b34c548bb8e319e7a7cba257c492e26529580641760c27e"
+)
+FIRST_PARTY_BUILD_CONTEXT_SHA256 = (
+    "b1f0396c30999948ea3c7a4c91aecab9620f29f329f8e3a7fbacd2e7ad1bf377"
+)
+FIRST_PARTY_BASE_IMAGE = "python:3.11-slim"
+FIRST_PARTY_BASE_IMAGE_DIGEST = (
+    "sha256:90744cff8f32887f075c47d747a173ff333e9e98801667af93c357fa9f5e28ff"
+)
+FIRST_PARTY_PLATFORM_MANIFEST_DIGEST = (
+    "sha256:919a7cbcfe18728afed03fd5e9aa1dcd4d1158a803cc315be220ad4867798a94"
+)
+FIRST_PARTY_ATTESTATION_MANIFEST_DIGEST = (
+    "sha256:0310de9806cb1b3a875257a0c41c9cb88af648e770becd9663736572a89c32c5"
+)
+FIRST_PARTY_ATTESTATION_STATEMENT_SHA256 = (
+    "9b000bf4120475d796620159bceaedd4353cce0f6d276b0e703ba1e63e420738"
+)
+FIRST_PARTY_BUILD_PROVENANCE_SUMMARY = {
+    "status": "local_build_binding_observed",
+    "evidence_path": FIRST_PARTY_BUILD_PROVENANCE_PATH,
+    "evidence_sha256": FIRST_PARTY_BUILD_PROVENANCE_SHA256,
+    "source_revision": FIRST_PARTY_SOURCE_REVISION,
+    "source_sha256": FIRST_PARTY_RUNTIME_SHA256,
+    "context_sha256": FIRST_PARTY_BUILD_CONTEXT_SHA256,
+    "recipe_sha256": FIRST_PARTY_DOCKERFILE_SHA256,
+    "base_image": FIRST_PARTY_BASE_IMAGE,
+    "base_digest": FIRST_PARTY_BASE_IMAGE_DIGEST,
+    "oci_index_digest": FIRST_PARTY_IMAGE_DIGEST,
+    "platform": "linux/amd64",
+    "platform_manifest_digest": FIRST_PARTY_PLATFORM_MANIFEST_DIGEST,
+    "attestation_manifest_digest": FIRST_PARTY_ATTESTATION_MANIFEST_DIGEST,
+    "attestation_subject_digest": FIRST_PARTY_PLATFORM_MANIFEST_DIGEST,
+    "predicate_type": "https://slsa.dev/provenance/v1",
+    "statement_sha256": FIRST_PARTY_ATTESTATION_STATEMENT_SHA256,
+    "builder_name": "aiat-wsl",
+    "builder_id": "",
+    "builder_authenticated": False,
+    "signed": False,
+    "trusted_builder_claimed": False,
+}
 FIRST_PARTY_SEMGREP_CONFIG_SHA256 = (
     "f19daaaf7ab49feeb366b87cf0e31b33c009f98c9c3c6f1fd836c286b594417a"
 )
@@ -152,10 +197,11 @@ def source_bound_security_scan_is_valid(
 ) -> bool:
     """Return whether source scan evidence satisfies the full security gate.
 
-    A clean scan of the source checkout does not establish that the OCI image
-    digest is built from that source.  AIAT does not currently have a trusted
-    OCI provenance verifier for this candidate, so this gate deliberately
-    remains closed even when the source-only report is valid.
+    A source-only scan does not bind the OCI image digest to its source. The
+    server-generated report must also carry the exact, retained local BuildKit
+    evidence summary for this candidate. This establishes the recorded local
+    build relationship only; it does not authenticate the builder or grant
+    human approval, stewardship, or activation.
     """
     if not source_bound_security_scan_result_is_valid(
         report,
@@ -164,9 +210,15 @@ def source_bound_security_scan_is_valid(
         current_worker=current_worker,
     ):
         return False
-    # The report's declared digest is not independent evidence of a
-    # source-to-image build relationship.
-    return False
+    assert isinstance(report, Mapping)
+    return first_party_build_provenance_summary_is_valid(
+        report.get("image_build_provenance")
+    )
+
+
+def first_party_build_provenance_summary_is_valid(value: Any) -> bool:
+    """Match the report summary to the reviewed, content-pinned build record."""
+    return isinstance(value, Mapping) and dict(value) == FIRST_PARTY_BUILD_PROVENANCE_SUMMARY
 
 
 def source_bound_security_scan_result_is_valid(
@@ -176,7 +228,7 @@ def source_bound_security_scan_result_is_valid(
     provenance: Mapping[str, Any] | Any | None = None,
     current_worker: Mapping[str, Any] | None = None,
 ) -> bool:
-    """Validate the source-only scan result, without asserting image binding."""
+    """Validate the normalized scan and retained local image-build summary."""
     if not source_bound_security_scan_report_integrity_is_valid(
         report,
         expected_worker_id=expected_worker_id,
@@ -220,6 +272,9 @@ def source_bound_security_scan_report_integrity_is_valid(
         return False
     if report.get("schema_version") != SOURCE_BOUND_SCAN_SCHEMA:
         return False
+    image_build_provenance = report.get("image_build_provenance")
+    if not first_party_build_provenance_summary_is_valid(image_build_provenance):
+        return False
     if report.get("status") not in {"passed", "findings_review_required", "blocked"}:
         return False
     if report.get("finding_review_status") not in {
@@ -250,6 +305,13 @@ def source_bound_security_scan_report_integrity_is_valid(
         "dockerfile_sha256": FIRST_PARTY_DOCKERFILE_SHA256,
     }
     if any(candidate.get(key) != value for key, value in expected_candidate.items()):
+        return False
+    if (
+        image_build_provenance.get("source_revision") != candidate.get("source_revision")
+        or image_build_provenance.get("source_sha256") != candidate.get("runtime_sha256")
+        or image_build_provenance.get("recipe_sha256") != candidate.get("dockerfile_sha256")
+        or image_build_provenance.get("oci_index_digest") != candidate.get("oci_image_digest")
+    ):
         return False
     if report.get("manifest_sha256") != FIRST_PARTY_MANIFEST_SHA256:
         return False

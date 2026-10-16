@@ -11,7 +11,6 @@ from mas_core.memory.storage import AgentStorage
 from mas_core.worker_registry import source_bound_security_scan as source_scan
 from mas_core.worker_registry.source_bound_security_scan import (
     FIRST_PARTY_IMAGE_DIGEST,
-    FIRST_PARTY_IMAGE_SOURCE_BINDING_REQUIRED,
     FIRST_PARTY_RUNTIME_SHA256,
     FIRST_PARTY_SOURCE_REPOSITORY,
     FIRST_PARTY_SOURCE_REVISION,
@@ -135,14 +134,14 @@ async def test_scan_persistence_rejects_suffix_only_image_or_runtime_match(
 @pytest.mark.parametrize(
     ("initial_status", "expected_status"),
     [
-        ("pending", FIRST_PARTY_IMAGE_SOURCE_BINDING_REQUIRED),
-        ("passed", FIRST_PARTY_IMAGE_SOURCE_BINDING_REQUIRED),
+        ("pending", "passed"),
+        ("passed", "passed"),
         ("findings_review_required", "findings_review_required"),
         ("requires_human_review", "requires_human_review"),
         ("blocked", "blocked"),
     ],
 )
-async def test_clean_source_scan_does_not_promote_overall_security_gate(
+async def test_clean_scan_with_verified_build_binding_promotes_overall_security_gate(
     monkeypatch: pytest.MonkeyPatch,
     initial_status: str,
     expected_status: str,
@@ -162,6 +161,11 @@ async def test_clean_source_scan_does_not_promote_overall_security_gate(
     monkeypatch.setattr(
         source_scan,
         "source_bound_security_scan_report_integrity_is_valid",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        source_scan,
+        "source_bound_security_scan_is_valid",
         lambda *_args, **_kwargs: True,
     )
     result = await storage.persist_source_bound_worker_security_scan(

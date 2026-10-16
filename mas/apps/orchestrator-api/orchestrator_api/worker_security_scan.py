@@ -1,13 +1,14 @@
 """Server-side static scan for the pinned first-party deterministic worker.
 
-Only two checked-in files are copied into a private temporary directory and
-read by fixed, digest/version-pinned local scanners. No source checkout,
-worker process, shell, or caller-provided path is involved. Scanner invocations
-disable their expected telemetry/update paths, but the subprocesses inherit the
-orchestrator's network namespace; filtering environment variables does not
-enforce network isolation. Raw scanner output is kept only in bounded process
-memory and is never logged or persisted; stored findings contain identifiers
-and locations only.
+Only the fixed worker source and Dockerfile are copied into a private temporary
+directory and read by fixed, digest/version-pinned local scanners. A separately
+content-pinned BuildKit record binds that source and recipe to the OCI image.
+No source checkout, worker process, shell, or caller-provided path is involved.
+Scanner invocations disable their expected telemetry/update paths, but the
+subprocesses inherit the orchestrator's network namespace; filtering
+environment variables does not enforce network isolation. Raw scanner output
+is kept only in bounded process memory and is never logged or persisted;
+stored findings contain identifiers and locations only.
 """
 
 from __future__ import annotations
@@ -30,6 +31,9 @@ from typing import Any
 import yaml
 
 from mas_core.worker_registry.source_bound_security_scan import (
+    FIRST_PARTY_BUILD_PROVENANCE_PATH,
+    FIRST_PARTY_BUILD_PROVENANCE_SHA256,
+    FIRST_PARTY_BUILD_PROVENANCE_SUMMARY,
     FIRST_PARTY_DOCKERFILE_SHA256,
     FIRST_PARTY_IMAGE_DIGEST,
     FIRST_PARTY_MANIFEST_SHA256,
@@ -42,6 +46,7 @@ from mas_core.worker_registry.source_bound_security_scan import (
     PINNED_SCANNERS,
     SOURCE_BOUND_SCAN_SCHEMA,
     finalize_source_bound_scan_report,
+    first_party_build_provenance_summary_is_valid,
 )
 
 MAX_INPUT_FILE_BYTES = 1024 * 1024
@@ -197,6 +202,86 @@ def _validate_manifest_and_registered_identity(
         "dockerfile_sha256": expected_dockerfile_sha,
         "semgrep_config_sha256": expected_config_sha,
     }
+
+
+def _load_first_party_image_build_provenance(root: Path) -> dict[str, Any]:
+    """Read the one reviewed build record and bind its exact facts to the scan.
+
+    The evidence file hash is pinned in the candidate validator. This check
+    does not claim an authenticated builder: the retained local BuildKit record
+    is explicitly unsigned and remains subject to human candidate approval.
+    """
+    evidence_path = root / FIRST_PARTY_BUILD_PROVENANCE_PATH
+    evidence_bytes = _read_regular_file(evidence_path)
+    if _sha256_bytes(evidence_bytes) != FIRST_PARTY_BUILD_PROVENANCE_SHA256:
+        raise WorkerSecurityScanError("candidate_build_provenance_mismatch")
+    try:
+        evidence = json.loads(evidence_bytes)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise WorkerSecurityScanError("candidate_build_provenance_invalid") from exc
+    if not isinstance(evidence, dict):
+        raise WorkerSecurityScanError("candidate_build_provenance_invalid")
+
+    candidate = _mapping(evidence.get("candidate"))
+    source = _mapping(evidence.get("source"))
+    recipe = _mapping(evidence.get("recipe"))
+    builder = _mapping(evidence.get("builder"))
+    build = _mapping(evidence.get("build"))
+    image = _mapping(evidence.get("image"))
+    attestation = _mapping(evidence.get("attestation"))
+    qualification = _mapping(evidence.get("qualification"))
+    statement = _mapping(attestation.get("statement"))
+    facts_valid = (
+        evidence.get("schema_version") == "aiat.deterministic-worker.build-provenance.v1"
+        and candidate == {"worker_id": FIRST_PARTY_WORKER_ID, "version": FIRST_PARTY_WORKER_VERSION}
+        and source.get("repository") == FIRST_PARTY_SOURCE_REPOSITORY
+        and source.get("revision") == FIRST_PARTY_BUILD_PROVENANCE_SUMMARY["source_revision"]
+        and source.get("sha256") == FIRST_PARTY_BUILD_PROVENANCE_SUMMARY["source_sha256"]
+        and source.get("context_sha256") == FIRST_PARTY_BUILD_PROVENANCE_SUMMARY["context_sha256"]
+        and source.get("context_entries") == ["aiat_deterministic_file_worker_process.py"]
+        and recipe.get("path") == "mas/workers/Dockerfile.aiat_deterministic_file_worker"
+        and recipe.get("sha256") == FIRST_PARTY_BUILD_PROVENANCE_SUMMARY["recipe_sha256"]
+        and builder.get("builder_name") == FIRST_PARTY_BUILD_PROVENANCE_SUMMARY["builder_name"]
+        and builder.get("authenticated") == "false"
+        and builder.get("trust") == "unauthenticated-local-builder"
+        and build.get("source_revision") == FIRST_PARTY_BUILD_PROVENANCE_SUMMARY["source_revision"]
+        and build.get("builder_id") == ""
+        and build.get("source_sha256") == FIRST_PARTY_BUILD_PROVENANCE_SUMMARY["source_sha256"]
+        and build.get("context_sha256") == FIRST_PARTY_BUILD_PROVENANCE_SUMMARY["context_sha256"]
+        and build.get("recipe_sha256") == FIRST_PARTY_BUILD_PROVENANCE_SUMMARY["recipe_sha256"]
+        and build.get("base_image") == FIRST_PARTY_BUILD_PROVENANCE_SUMMARY["base_image"]
+        and build.get("base_digest") == FIRST_PARTY_BUILD_PROVENANCE_SUMMARY["base_digest"]
+        and build.get("oci_index_digest") == FIRST_PARTY_IMAGE_DIGEST
+        and build.get("platform_manifest_digest")
+        == FIRST_PARTY_BUILD_PROVENANCE_SUMMARY["platform_manifest_digest"]
+        and build.get("attestation_subject_digest")
+        == FIRST_PARTY_BUILD_PROVENANCE_SUMMARY["platform_manifest_digest"]
+        and image.get("oci_index_digest") == FIRST_PARTY_IMAGE_DIGEST
+        and image.get("runtime_reference") == _IMAGE_REF
+        and image.get("platform") == "linux/amd64"
+        and image.get("platform_manifest_digest")
+        == FIRST_PARTY_BUILD_PROVENANCE_SUMMARY["platform_manifest_digest"]
+        and attestation.get("manifest_digest")
+        == FIRST_PARTY_BUILD_PROVENANCE_SUMMARY["attestation_manifest_digest"]
+        and attestation.get("subject_digest")
+        == FIRST_PARTY_BUILD_PROVENANCE_SUMMARY["attestation_subject_digest"]
+        and attestation.get("predicate_type")
+        == FIRST_PARTY_BUILD_PROVENANCE_SUMMARY["predicate_type"]
+        and build.get("statement_sha256")
+        == FIRST_PARTY_BUILD_PROVENANCE_SUMMARY["statement_sha256"]
+        and statement.get("_type") == "https://in-toto.io/Statement/v1"
+        and statement.get("predicateType")
+        == FIRST_PARTY_BUILD_PROVENANCE_SUMMARY["predicate_type"]
+        and qualification.get("status") == "local_build_binding_observed"
+        and qualification.get("signed") is False
+        and qualification.get("builder_authenticated") is False
+        and qualification.get("trusted_builder_claimed") is False
+        and qualification.get("admission_granted") is False
+    )
+    summary = dict(FIRST_PARTY_BUILD_PROVENANCE_SUMMARY)
+    if not facts_valid or not first_party_build_provenance_summary_is_valid(summary):
+        raise WorkerSecurityScanError("candidate_build_provenance_mismatch")
+    return summary
 
 
 async def _capture_bounded(reader: asyncio.StreamReader, limit: int) -> bytes:
@@ -576,6 +661,7 @@ async def run_first_party_worker_source_scan(
 ) -> dict[str, Any]:
     """Scan the fixed local candidate source; never executes worker code."""
     _root, paths, config_path, _ = _repo_root_and_inputs()
+    image_build_provenance = _load_first_party_image_build_provenance(_root)
     file_bytes = {
         name: _read_regular_file(path)
         for name, path in paths.items()
@@ -606,6 +692,7 @@ async def run_first_party_worker_source_scan(
             "dockerfile_sha256": identity["dockerfile_sha256"],
         },
         "manifest_sha256": identity["manifest_sha256"],
+        "image_build_provenance": image_build_provenance,
         "source_files": [
             {"path": _SOURCE_RELATIVE_PATH, "sha256": identity["runtime_sha256"]},
             {"path": _DOCKERFILE_RELATIVE_PATH, "sha256": identity["dockerfile_sha256"]},

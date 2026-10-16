@@ -9347,6 +9347,7 @@ class AgentStorage:
             FIRST_PARTY_WORKER_ID,
             FIRST_PARTY_WORKER_VERSION,
             SourceBoundSecurityScanPersistenceError,
+            source_bound_security_scan_is_valid,
             source_bound_security_scan_report_integrity_is_valid,
         )
 
@@ -9458,10 +9459,16 @@ class AgentStorage:
                 new_status = current_status
             elif current_status == "blocked":
                 new_status = "blocked"
+            elif source_bound_security_scan_is_valid(
+                report,
+                expected_worker_id=str(worker_id),
+                provenance={**provenance, "source_bound_security_scan": report},
+                current_worker=worker,
+            ):
+                new_status = "passed"
             else:
-                # This report scans the pinned source tree.  No independently
-                # verified OCI source/image attestation is available here, so
-                # it must not set or preserve the overall security gate PASS.
+                # A source-only scan without the exact retained BuildKit record
+                # is not sufficient to set the overall security gate PASS.
                 new_status = FIRST_PARTY_IMAGE_SOURCE_BINDING_REQUIRED
 
             provenance_for_hash = {

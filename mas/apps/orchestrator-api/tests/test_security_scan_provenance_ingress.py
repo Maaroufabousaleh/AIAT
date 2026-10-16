@@ -396,6 +396,7 @@ async def test_server_scan_uses_read_only_hashed_semgrep_config_snapshot(monkeyp
     from orchestrator_api import worker_security_scan
 
     from mas_core.worker_registry.source_bound_security_scan import (
+        FIRST_PARTY_BUILD_PROVENANCE_SUMMARY,
         FIRST_PARTY_IMAGE_DIGEST,
         FIRST_PARTY_MANIFEST_SHA256,
         FIRST_PARTY_PERMISSION_GRANTS,
@@ -497,6 +498,7 @@ async def test_server_scan_uses_read_only_hashed_semgrep_config_snapshot(monkeyp
 
     assert report["status"] == "passed"
     assert report["manifest_sha256"] == FIRST_PARTY_MANIFEST_SHA256
+    assert report["image_build_provenance"] == FIRST_PARTY_BUILD_PROVENANCE_SUMMARY
     assert report["semgrep_config_sha256"] == FIRST_PARTY_SEMGREP_CONFIG_SHA256
     assert observed_snapshot["path"] == report["semgrep_config_path"]
     assert observed_snapshot["sha256"] == FIRST_PARTY_SEMGREP_CONFIG_SHA256
@@ -516,6 +518,31 @@ async def test_server_scan_uses_read_only_hashed_semgrep_config_snapshot(monkeyp
         provenance={**provenance, "security_scan_status": "passed"},
         current_worker=worker,
     )
+
+
+def test_image_build_provenance_requires_the_exact_retained_record(tmp_path: Path) -> None:
+    from orchestrator_api.worker_security_scan import (
+        WorkerSecurityScanError,
+        _load_first_party_image_build_provenance,
+    )
+
+    repository_root = Path(__file__).resolve().parents[3]
+    source_record = (
+        repository_root / "docs/provenance/deterministic_file_worker_build_provenance.json"
+    )
+    target_record = (
+        tmp_path / "docs/provenance/deterministic_file_worker_build_provenance.json"
+    )
+    target_record.parent.mkdir(parents=True)
+    target_record.write_bytes(source_record.read_bytes())
+
+    assert _load_first_party_image_build_provenance(tmp_path)["status"] == (
+        "local_build_binding_observed"
+    )
+
+    target_record.write_bytes(target_record.read_bytes() + b" ")
+    with pytest.raises(WorkerSecurityScanError, match="candidate_build_provenance_mismatch"):
+        _load_first_party_image_build_provenance(tmp_path)
 
 
 @pytest.mark.anyio
