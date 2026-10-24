@@ -190,6 +190,26 @@ def _governance_json_snapshot(value: Any) -> Any:
     )
 
 
+def _skill_bundle_snapshot_content_hash(
+    bundle_snapshot: Mapping[str, Any],
+) -> str | None:
+    """Recompute SkillBundle.content_hash from its serialized model snapshot.
+
+    ``content_hash`` is a computed property, not a serialized field. The model
+    hashes its JSON dump with the bundle ID and lifecycle status excluded.
+    """
+    payload = {
+        key: value
+        for key, value in bundle_snapshot.items()
+        if key not in {"bundle_id", "status"}
+    }
+    try:
+        serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    except (TypeError, ValueError):
+        return None
+    return hashlib.sha256(serialized.encode()).hexdigest()
+
+
 def _candidate_governance_snapshot_matches(
     *,
     worker: Mapping[str, Any],
@@ -10606,15 +10626,15 @@ class AgentStorage:
             adapter_record = candidate_record.get("adapter")
             bundle_record = bundle_record if isinstance(bundle_record, Mapping) else {}
             adapter_record = adapter_record if isinstance(adapter_record, Mapping) else {}
+            bundle_snapshot_hash = _skill_bundle_snapshot_content_hash(bundle_record)
             if (
                 bundle is None
                 or str(bundle.get("id") or "") != str(bundle_id)
                 or bundle.get("worker_id") != worker_id
                 or bundle.get("steward_id") != steward.get("id")
                 or str(bundle_record.get("bundle_id") or "") != str(bundle_id)
-                or not str(bundle_record.get("content_hash") or "").strip()
-                or str(bundle.get("content_hash") or "")
-                != str(bundle_record.get("content_hash") or "")
+                or bundle_snapshot_hash is None
+                or str(bundle.get("content_hash") or "") != bundle_snapshot_hash
                 or adapter is None
                 or str(adapter.get("id") or "") != str(adapter_id)
                 or adapter.get("worker_id") != worker_id

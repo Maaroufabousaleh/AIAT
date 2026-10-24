@@ -23,39 +23,65 @@ class _Result:
 
 
 def _state(*, status: str = "CERTIFYING", approval_id=None):
+    from mas_core.worker_registry.steward import (
+        CandidateIntakeStatus,
+        ExternalProvenance,
+        ExternalWorkerSteward,
+        StewardStatus,
+    )
+
     worker_id = uuid4()
-    steward_id = uuid4()
-    candidate_id = uuid4()
-    bundle_id = uuid4()
-    adapter_id = uuid4()
-    certification_id = uuid4()
-    approval_id = approval_id or (uuid4() if status == "APPROVED" else None)
-    candidate_record = {
-        "candidate_id": str(candidate_id),
-        "worker_id": str(worker_id),
-        "steward_id": str(steward_id),
-        "intake_status": status,
-        "certification_id": str(certification_id),
-        "approval_record_id": str(approval_id) if approval_id else None,
-        "bundle": {
-            "bundle_id": str(bundle_id),
-            "status": "APPROVED" if status == "APPROVED" else "CERTIFIED",
-            "content_hash": "a" * 64,
-        },
-        "adapter": {
-            "adapter_id": str(adapter_id),
-            "status": "APPROVED" if status == "APPROVED" else "CERTIFIED",
-            "content_hash": "b" * 64,
-        },
-        "source_provenance": {"exact_release": "1.0.0"},
-    }
-    candidate = {
+    provenance = ExternalProvenance(
+        canonical_source_repository="https://github.com/example/worker",
+        source_provider="github",
+        exact_release="1.0.0",
+        transport_type="process",
+        security_scan_status="passed",
+    )
+    steward = ExternalWorkerSteward(worker_id=str(worker_id), provenance=provenance)
+    steward.transition(StewardStatus.READY, actor="operator")
+    candidate = steward.generate_candidate(
+        semantic_version="1.0.0",
+        adapter_version="1.0.0",
+        upstream_compatibility_range="==1.0.0",
+    )
+    for stage in (
+        CandidateIntakeStatus.SOURCE_REVIEW,
+        CandidateIntakeStatus.SECURITY_REVIEW,
+        CandidateIntakeStatus.INTERFACE_RESEARCH,
+        CandidateIntakeStatus.GENERATED,
+        CandidateIntakeStatus.CERTIFYING,
+    ):
+        steward.advance_candidate(candidate.candidate_id, stage)
+    certification = steward.certify_candidate(
+        candidate.candidate_id,
+        conformance={"passed": True},
+        checks={},
+    )
+    assert certification.passed
+    if status == "APPROVED":
+        approval_id = approval_id or uuid4()
+        candidate = steward.approve_candidate(
+            candidate.candidate_id,
+            approval_record_id=approval_id,
+        )
+    elif status != "CERTIFYING":
+        raise ValueError("approval storage fixture supports CERTIFYING or APPROVED")
+
+    candidate_id = candidate.candidate_id
+    steward_id = steward.steward_id
+    bundle_id = candidate.bundle.bundle_id
+    adapter_id = candidate.adapter.adapter_id
+    certification_id = certification.certification_id
+    approval_id = candidate.approval_record_id
+    candidate_record = candidate.model_dump(mode="json")
+    candidate_row = {
         "id": candidate_id,
         "worker_id": worker_id,
         "skill_bundle_id": bundle_id,
         "adapter_id": adapter_id,
-        "intake_status": status,
-        "diff_json": {"summary": "reviewed diff"},
+        "intake_status": candidate.intake_status.value,
+        "diff_json": candidate.diff,
         "evidence_json": {"candidate_record": candidate_record},
         "certification_run_id": certification_id,
         "approval_record_id": approval_id,
@@ -70,7 +96,7 @@ def _state(*, status: str = "CERTIFYING", approval_id=None):
         "approval_id": approval_id,
         "worker": {"id": worker_id},
         "steward": {"id": steward_id, "worker_id": worker_id},
-        "candidate": candidate,
+        "candidate": candidate_row,
         "certification": {
             "id": certification_id,
             "worker_id": worker_id,
@@ -82,18 +108,19 @@ def _state(*, status: str = "CERTIFYING", approval_id=None):
             "id": bundle_id,
             "worker_id": worker_id,
             "steward_id": steward_id,
-            "content_hash": "a" * 64,
+            "content_hash": candidate.bundle.content_hash,
         },
         "adapter": {
             "id": adapter_id,
             "worker_id": worker_id,
-            "content_hash": "b" * 64,
+            "content_hash": candidate.adapter.content_hash,
             "conformance_status": "passed",
             "status": "inactive",
         },
+        "bundle_model_hash": candidate.bundle.content_hash,
     }
     state["snapshot"] = {
-        key: candidate.get(key)
+        key: candidate_row.get(key)
         for key in (
             "id",
             "worker_id",
@@ -159,6 +186,9 @@ def _approval(state, approval_id):
 @pytest.mark.anyio
 async def test_candidate_approval_inserts_once_and_promotes_in_one_transaction():
     state = _state()
+    serialized_bundle = state["candidate"]["evidence_json"]["candidate_record"]["bundle"]
+    assert "content_hash" not in serialized_bundle
+    assert state["bundle"]["content_hash"] == state["bundle_model_hash"]
     approval_id = uuid4()
     approval = _approval(state, approval_id)
     after_record = _approved_record(state, approval_id)
