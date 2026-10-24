@@ -159,6 +159,8 @@ def _storage_for(state):
     storage.create_runtime_adapter = AsyncMock(
         side_effect=lambda **kwargs: {"id": kwargs["adapter_id"], **kwargs}
     )
+    storage.list_skill_bundles = AsyncMock(return_value=[])
+    storage.list_runtime_adapters = AsyncMock(return_value=[])
     storage.create_skill_bundle_candidate = AsyncMock()
     storage.list_certification_runs = AsyncMock(return_value=[])
     storage.create_certification_run = AsyncMock()
@@ -848,11 +850,26 @@ async def test_first_party_rollout_uses_the_exact_precheck_identity_and_provenan
         status=RolloutStatus.PROMOTING,
         sample_count=5,
     )
+    runtime_rollout = state["steward"].rollouts[rollout_id]
     storage.get_rollout_record = AsyncMock(
         return_value={
             "id": rollout_id,
+            "worker_id": state["worker_id"],
+            "steward_id": state["steward"].steward_id,
             "candidate_id": state["candidate_id"],
             "status": RolloutStatus.PROMOTING.value,
+            "eligible_task_classes": list(runtime_rollout.eligible_task_classes),
+            "sample_count": runtime_rollout.sample_count,
+            "sample_targets": {
+                "shadow": runtime_rollout.shadow_sample_target,
+                "readonly_canary": runtime_rollout.readonly_canary_sample_target,
+                "live_canary": runtime_rollout.live_canary_sample_target,
+            },
+            "comparison_metrics": dict(runtime_rollout.comparison_metrics),
+            "rollback_thresholds": dict(runtime_rollout.rollback_thresholds),
+            "in_flight_policy": runtime_rollout.in_flight_policy,
+            "promotion_actor": runtime_rollout.promotion_actor,
+            "rollback_reason": runtime_rollout.rollback_reason,
         }
     )
     storage.activate_rollout_atomically = AsyncMock(return_value={"activated": True})
@@ -867,7 +884,7 @@ async def test_first_party_rollout_uses_the_exact_precheck_identity_and_provenan
         headers={"X-API-Key": "test-operator-key"},
         json={
             "target_status": "ACTIVE",
-            "sample_count": 3,
+            "sample_count": 5,
             "comparison_metrics": {"regression_fraction": 0.0},
         },
     )
@@ -880,6 +897,8 @@ async def test_first_party_rollout_uses_the_exact_precheck_identity_and_provenan
         state["worker"]
     )
     assert kwargs["expected_provenance_hash"] == state["provenance_row"]["provenance_hash"]
+    assert kwargs["sample_count"] == 5
+    assert kwargs["actor"] == "operator"
 
 
 @pytest.mark.anyio
@@ -904,11 +923,26 @@ async def test_first_party_rollout_rejects_identity_change_between_precheck_read
         status=RolloutStatus.PROMOTING,
         sample_count=5,
     )
+    runtime_rollout = state["steward"].rollouts[rollout_id]
     storage.get_rollout_record = AsyncMock(
         return_value={
             "id": rollout_id,
+            "worker_id": state["worker_id"],
+            "steward_id": state["steward"].steward_id,
             "candidate_id": state["candidate_id"],
             "status": RolloutStatus.PROMOTING.value,
+            "eligible_task_classes": list(runtime_rollout.eligible_task_classes),
+            "sample_count": runtime_rollout.sample_count,
+            "sample_targets": {
+                "shadow": runtime_rollout.shadow_sample_target,
+                "readonly_canary": runtime_rollout.readonly_canary_sample_target,
+                "live_canary": runtime_rollout.live_canary_sample_target,
+            },
+            "comparison_metrics": dict(runtime_rollout.comparison_metrics),
+            "rollback_thresholds": dict(runtime_rollout.rollback_thresholds),
+            "in_flight_policy": runtime_rollout.in_flight_policy,
+            "promotion_actor": runtime_rollout.promotion_actor,
+            "rollback_reason": runtime_rollout.rollback_reason,
         }
     )
     storage.activate_rollout_atomically = AsyncMock(return_value={"activated": True})
@@ -923,7 +957,7 @@ async def test_first_party_rollout_rejects_identity_change_between_precheck_read
         headers={"X-API-Key": "test-operator-key"},
         json={
             "target_status": "ACTIVE",
-            "sample_count": 3,
+            "sample_count": 5,
             "comparison_metrics": {"regression_fraction": 0.0},
         },
     )

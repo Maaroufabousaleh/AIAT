@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import copy
 import hashlib
 import hmac
 import importlib
@@ -48,6 +49,7 @@ from pydantic import (
     ConfigDict,
     Field,
     StrictBool,
+    StrictInt,
     StrictStr,
     field_validator,
     model_validator,
@@ -2005,7 +2007,7 @@ class RolloutStartRequest(BaseModel):
 
 class RolloutAdvanceRequest(BaseModel):
     target_status: str
-    sample_count: int | None = Field(default=None, ge=0)
+    sample_count: StrictInt | None = Field(default=None, ge=0)
     comparison_metrics: dict[str, float] = Field(default_factory=dict)
 
 
@@ -10671,6 +10673,52 @@ def _governance_dict(value: Any) -> dict[str, Any]:
         return result if isinstance(result, dict) else {}
     return {}
 
+def _rollout_runtime_matches_persisted(
+    runtime_rollout: Any,
+    persisted_rollout: dict[str, Any],
+) -> bool:
+    """Bind the policy and canary counters used by the steward to its DB row."""
+    runtime = _governance_dict(runtime_rollout)
+    sample_targets = persisted_rollout.get("sample_targets")
+    if not isinstance(sample_targets, dict):
+        return False
+    try:
+        expected_sample_targets = {
+            "shadow": runtime_rollout.shadow_sample_target,
+            "readonly_canary": runtime_rollout.readonly_canary_sample_target,
+            "live_canary": runtime_rollout.live_canary_sample_target,
+        }
+        runtime_sample_count = runtime_rollout.sample_count
+    except AttributeError:
+        return False
+    return (
+        str(runtime.get("rollout_id") or "")
+        == str(persisted_rollout.get("id") or "")
+        and str(runtime.get("worker_id") or "")
+        == str(persisted_rollout.get("worker_id") or "")
+        and str(runtime.get("steward_id") or "")
+        == str(persisted_rollout.get("steward_id") or "")
+        and str(runtime.get("candidate_id") or "")
+        == str(persisted_rollout.get("candidate_id") or "")
+        and str(getattr(runtime_rollout.status, "value", runtime_rollout.status))
+        == str(persisted_rollout.get("status") or "")
+        and list(runtime_rollout.eligible_task_classes or [])
+        == list(persisted_rollout.get("eligible_task_classes") or [])
+        and expected_sample_targets == sample_targets
+        and type(runtime_sample_count) is int
+        and type(persisted_rollout.get("sample_count")) is int
+        and runtime_sample_count == persisted_rollout["sample_count"]
+        and dict(runtime_rollout.comparison_metrics or {})
+        == dict(persisted_rollout.get("comparison_metrics") or {})
+        and dict(runtime_rollout.rollback_thresholds or {})
+        == dict(persisted_rollout.get("rollback_thresholds") or {})
+        and str(runtime_rollout.in_flight_policy)
+        == str(persisted_rollout.get("in_flight_policy") or "")
+        and runtime_rollout.promotion_actor
+        == persisted_rollout.get("promotion_actor")
+    )
+
+
 
 def _candidate_record_source(candidate_record: Any) -> list[dict[str, Any]] | None:
     """Collect the three immutable provenance snapshots in a candidate."""
@@ -12738,10 +12786,26 @@ async def start_steward_rollout(
     steward = await _steward_runtime(storage, worker_id)
     if steward is None:
         raise HTTPException(404, "Dedicated Steward Agent not found")
-    prior_rollout_candidate_ids = {
-        UUID(str(record["candidate_id"]))
-        for record in await storage.list_rollout_records(worker_id)
-    }
+    if str(steward.worker_id) != str(worker_id):
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(404, "Dedicated Steward Agent not found")
+    prior_rollouts = await storage.list_rollout_records(worker_id)
+    prior_rollout_candidate_ids: set[UUID] = set()
+    for record in prior_rollouts:
+        if (
+            str(record.get("worker_id") or "") != str(worker_id)
+            or str(record.get("steward_id") or "")
+            != str(steward.steward_id)
+        ):
+            _worker_steward_runtimes.pop(str(worker_id), None)
+            raise HTTPException(
+                409,
+                {
+                    "code": "ROLLOUT_WORKER_BINDING_INVALID",
+                    "message": "persisted rollout history does not belong to the selected worker and steward",
+                },
+            )
+        prior_rollout_candidate_ids.add(UUID(str(record["candidate_id"])))
     candidate_id = next(
         (
             candidate.candidate_id
@@ -12756,23 +12820,157 @@ async def start_steward_rollout(
             409,
             "No approved candidate without immutable rollout history is available for rollout",
         )
+    candidate = steward.candidates[candidate_id]
+    persisted_candidate = await storage.get_skill_bundle_candidate(candidate_id)
+    persisted_candidate_payload = _governance_dict(persisted_candidate)
+    persisted_candidate_record = _candidate_record_from_row(persisted_candidate)
+    runtime_candidate_snapshot = _governance_dict(candidate)
+    embedded_bundle = _governance_dict(
+        persisted_candidate_record.get("bundle")
+        if isinstance(persisted_candidate_record, dict)
+        else None
+    )
+    embedded_adapter = _governance_dict(
+        persisted_candidate_record.get("adapter")
+        if isinstance(persisted_candidate_record, dict)
+        else None
+    )
+    candidate_approval_id = candidate.approval_record_id
+    candidate_certification_id = candidate.certification_id
+    if (
+        str(candidate.candidate_id) != str(candidate_id)
+        or str(candidate.worker_id) != str(worker_id)
+        or str(candidate.steward_id) != str(steward.steward_id)
+        or str(persisted_candidate_payload.get("id") or "") != str(candidate_id)
+        or str(persisted_candidate_payload.get("worker_id") or "")
+        != str(worker_id)
+        or str(persisted_candidate_payload.get("intake_status") or "")
+        != "APPROVED"
+        or not isinstance(persisted_candidate_record, dict)
+        or persisted_candidate_record != runtime_candidate_snapshot
+        or str(persisted_candidate_record.get("candidate_id") or "")
+        != str(candidate_id)
+        or str(persisted_candidate_record.get("worker_id") or "")
+        != str(worker_id)
+        or str(persisted_candidate_record.get("steward_id") or "")
+        != str(steward.steward_id)
+        or str(persisted_candidate_record.get("intake_status") or "")
+        != "APPROVED"
+        or not candidate_approval_id
+        or str(persisted_candidate_payload.get("approval_record_id") or "")
+        != str(candidate_approval_id)
+        or str(persisted_candidate_record.get("approval_record_id") or "")
+        != str(candidate_approval_id)
+        or not candidate_certification_id
+        or str(persisted_candidate_payload.get("certification_run_id") or "")
+        != str(candidate_certification_id)
+        or str(persisted_candidate_record.get("certification_id") or "")
+        != str(candidate_certification_id)
+        or str(persisted_candidate_payload.get("skill_bundle_id") or "")
+        != str(candidate.bundle.bundle_id)
+        or str(embedded_bundle.get("bundle_id") or "")
+        != str(candidate.bundle.bundle_id)
+        or str(persisted_candidate_payload.get("adapter_id") or "")
+        != str(candidate.adapter.adapter_id)
+        or str(embedded_adapter.get("adapter_id") or "")
+        != str(candidate.adapter.adapter_id)
+    ):
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(
+            409,
+            {
+                "code": "ROLLOUT_CANDIDATE_BINDING_INVALID",
+                "message": "rollout requires a durable approved candidate bound to this worker and steward",
+            },
+        )
+
+    certification_rows = await storage.list_certification_runs(worker_id)
+    persisted_certification = next(
+        (
+            _governance_dict(row)
+            for row in certification_rows
+            if str(_governance_dict(row).get("id") or "")
+            == str(candidate_certification_id)
+            and str(_governance_dict(row).get("candidate_id") or "")
+            == str(candidate_id)
+            and str(_governance_dict(row).get("worker_id") or "")
+            == str(worker_id)
+            and str(_governance_dict(row).get("steward_id") or "")
+            == str(steward.steward_id)
+            and str(_governance_dict(row).get("status") or "").lower()
+            == "passed"
+        ),
+        None,
+    )
+    get_approval_record = getattr(storage, "get_approval_record", None)
+    if persisted_certification is None or not inspect.iscoroutinefunction(
+        get_approval_record
+    ):
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(
+            409,
+            {
+                "code": "ROLLOUT_CERTIFICATION_OR_APPROVAL_INVALID",
+                "message": "rollout requires persisted passing certification and approval evidence",
+            },
+        )
+    approval_row = _governance_dict(await get_approval_record(candidate_approval_id))
+    if (
+        str(approval_row.get("id") or "") != str(candidate_approval_id)
+        or str(approval_row.get("scope_type") or "")
+        != "worker_skill_bundle_candidate"
+        or str(approval_row.get("scope_id") or "") != str(candidate_id)
+        or str(approval_row.get("decision") or "") != "APPROVED"
+    ):
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(
+            409,
+            {
+                "code": "ROLLOUT_CERTIFICATION_OR_APPROVAL_INVALID",
+                "message": "rollout requires persisted passing certification and approval evidence",
+            },
+        )
     try:
         # ``actor`` remains accepted for wire compatibility. Do not let the
         # request body select the durable rollout promotion actor.
         rollout = steward.start_rollout(candidate_id, actor=actor, eligible_task_classes=req.eligible_task_classes)
     except Exception as exc:
         raise HTTPException(409, str(exc)) from exc
-    await storage.create_rollout_record(
-        rollout_id=rollout.rollout_id,
-        worker_id=worker_id,
-        steward_id=steward.steward_id,
-        candidate_id=candidate_id,
-        status=rollout.status.value,
-        eligible_task_classes=list(rollout.eligible_task_classes),
-        sample_targets={"shadow": rollout.shadow_sample_target, "readonly_canary": rollout.readonly_canary_sample_target, "live_canary": rollout.live_canary_sample_target},
-        rollback_thresholds=rollout.rollback_thresholds,
-        promotion_actor=rollout.promotion_actor,
-    )
+    # start_rollout mutates its process-local map synchronously. Keep that
+    # draft private while the durable row is being validated and committed.
+    steward.rollouts.pop(rollout.rollout_id, None)
+    try:
+        persisted_rollout = await storage.create_rollout_record(
+            rollout_id=rollout.rollout_id,
+            worker_id=worker_id,
+            steward_id=steward.steward_id,
+            candidate_id=candidate_id,
+            expected_candidate_snapshot=runtime_candidate_snapshot,
+            status=rollout.status.value,
+            eligible_task_classes=list(rollout.eligible_task_classes),
+            sample_targets={"shadow": rollout.shadow_sample_target, "readonly_canary": rollout.readonly_canary_sample_target, "live_canary": rollout.live_canary_sample_target},
+            rollback_thresholds=rollout.rollback_thresholds,
+            promotion_actor=rollout.promotion_actor,
+        )
+    except Exception as exc:
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(
+            503,
+            {
+                "code": "ROLLOUT_PERSISTENCE_FAILED",
+                "message": "rollout creation could not be persisted",
+            },
+        ) from exc
+    if persisted_rollout is None:
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(
+            409,
+            {
+                "code": "ROLLOUT_CANDIDATE_LIFECYCLE_CHANGED",
+                "message": "candidate approval or rollout eligibility changed before persistence",
+            },
+        )
+    steward.rollouts[rollout.rollout_id] = rollout
     return rollout.model_dump(mode="json")
 
 
@@ -12784,22 +12982,94 @@ async def advance_steward_rollout(
     request: Request,
 ) -> dict[str, Any]:
     _require_operator_identity(request)
+    actor = _authenticated_principal(request)
     storage = _storage()
     steward = await _steward_runtime(storage, worker_id)
     if steward is None:
         raise HTTPException(404, "Dedicated Steward Agent not found")
+    if str(steward.worker_id) != str(worker_id):
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(404, "Dedicated Steward Agent not found")
     persisted_before = await storage.get_rollout_record(rollout_id)
     if persisted_before is None:
         raise HTTPException(404, "Persisted rollout not found")
+    persisted_rollout = _governance_dict(persisted_before)
+    if (
+        str(persisted_rollout.get("id") or "") != str(rollout_id)
+        or str(persisted_rollout.get("worker_id") or "") != str(worker_id)
+    ):
+        raise HTTPException(404, "Persisted rollout not found")
+    try:
+        candidate_id = UUID(str(persisted_rollout.get("candidate_id") or ""))
+    except (TypeError, ValueError):
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(
+            409,
+            {
+                "code": "ROLLOUT_BINDING_INVALID",
+                "message": "persisted rollout is not bound to a governed candidate",
+            },
+        ) from None
+    runtime_rollout = steward.rollouts.get(rollout_id)
+    candidate = steward.candidates.get(candidate_id)
+    persisted_status = str(persisted_rollout.get("status") or "")
+    runtime_status = str(
+        getattr(
+            getattr(runtime_rollout, "status", None),
+            "value",
+            getattr(runtime_rollout, "status", ""),
+        )
+        or ""
+    )
+    if (
+        str(persisted_rollout.get("steward_id") or "")
+        != str(steward.steward_id)
+        or runtime_rollout is None
+        or str(runtime_rollout.rollout_id) != str(rollout_id)
+        or str(runtime_rollout.worker_id) != str(worker_id)
+        or str(runtime_rollout.steward_id) != str(steward.steward_id)
+        or str(runtime_rollout.candidate_id) != str(candidate_id)
+        or runtime_status != persisted_status
+        or not _rollout_runtime_matches_persisted(
+            runtime_rollout, persisted_rollout
+        )
+        or candidate is None
+        or str(candidate.candidate_id) != str(candidate_id)
+        or str(candidate.worker_id) != str(worker_id)
+        or str(candidate.steward_id) != str(steward.steward_id)
+    ):
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(
+            409,
+            {
+                "code": "ROLLOUT_BINDING_INVALID",
+                "message": "persisted rollout, candidate, and steward runtime do not share one worker binding",
+            },
+        )
     from mas_core.worker_registry.steward import RolloutStatus
     try:
         target_status = RolloutStatus(req.target_status)
     except ValueError as exc:
         raise HTTPException(409, f"invalid rollout status: {req.target_status}") from exc
+    if target_status in {RolloutStatus.ROLLING_BACK, RolloutStatus.ROLLED_BACK}:
+        raise HTTPException(
+            409,
+            {
+                "code": "ROLLOUT_ROLLBACK_ENDPOINT_REQUIRED",
+                "message": "rollback stages and evidence must be committed through the atomic rollback route",
+            },
+        )
+    if req.sample_count is not None and req.sample_count < persisted_rollout.get(
+        "sample_count", 0
+    ):
+        raise HTTPException(
+            409,
+            {
+                "code": "ROLLOUT_SAMPLE_COUNT_REGRESSION",
+                "message": "rollout sample counts cannot move backwards",
+            },
+        )
     if target_status is RolloutStatus.ACTIVE:
-        candidate = steward.candidates.get(UUID(str(persisted_before["candidate_id"])))
-        if candidate is None:
-            raise HTTPException(409, "Rollout candidate is not present in the governed steward runtime")
         worker = await storage.get_worker(worker_id)
         if worker is None:
             raise HTTPException(404, "Worker not found")
@@ -12876,19 +13146,43 @@ async def advance_steward_rollout(
                 },
             )
     try:
-        rollout = steward.advance_rollout(rollout_id, target_status, sample_count=req.sample_count, metrics=req.comparison_metrics)
+        # Keep the cached persisted view unchanged while the transition is
+        # being validated and committed. A failed DB write must not expose a
+        # canary count or stage that never became durable.
+        draft_steward = copy.deepcopy(steward)
+        rollout = draft_steward.advance_rollout(
+            rollout_id,
+            target_status,
+            sample_count=req.sample_count,
+            metrics=req.comparison_metrics,
+        )
     except Exception as exc:
         raise HTTPException(409, str(exc)) from exc
     if rollout.status.value == "ACTIVE":
-        activated = await storage.activate_rollout_atomically(
-            rollout_id=rollout_id,
-            worker_id=worker_id,
-            steward_id=steward.steward_id,
-            candidate_id=rollout.candidate_id,
-            completed_at=rollout.completed_at,
-            expected_worker_identity=expected_worker_identity,
-            expected_provenance_hash=expected_provenance_hash,
-        )
+        try:
+            activated = await storage.activate_rollout_atomically(
+                rollout_id=rollout_id,
+                worker_id=worker_id,
+                steward_id=steward.steward_id,
+                candidate_id=rollout.candidate_id,
+                completed_at=rollout.completed_at,
+                expected_worker_identity=expected_worker_identity,
+                expected_provenance_hash=expected_provenance_hash,
+                expected_rollout_snapshot=persisted_rollout,
+                expected_candidate_snapshot=_governance_dict(candidate),
+                sample_count=rollout.sample_count,
+                comparison_metrics=rollout.comparison_metrics,
+                actor=actor,
+            )
+        except Exception as exc:
+            _worker_steward_runtimes.pop(str(worker_id), None)
+            raise HTTPException(
+                503,
+                {
+                    "code": "ROLLOUT_ACTIVATION_PERSISTENCE_FAILED",
+                    "message": "rollout activation could not be persisted",
+                },
+            ) from exc
         if activated is None:
             _worker_steward_runtimes.pop(str(worker_id), None)
             raise HTTPException(
@@ -12899,19 +13193,40 @@ async def advance_steward_rollout(
         # cannot be selected for an older run and older in-flight runs retain
         # their control handle.
     else:
-        transitioned = await storage.transition_rollout(
-            rollout_id,
-            to_status=rollout.status.value,
-            actor="worker-rollout-approver",
-            expected_status=str(persisted_before["status"]),
-            sample_count=rollout.sample_count,
-            comparison_metrics=rollout.comparison_metrics,
-            completed_at=rollout.completed_at,
-            evidence={"target_status": req.target_status},
-        )
+        try:
+            transitioned = await storage.transition_rollout(
+                rollout_id,
+                worker_id=worker_id,
+                steward_id=steward.steward_id,
+                candidate_id=rollout.candidate_id,
+                to_status=rollout.status.value,
+                actor=actor,
+                expected_status=persisted_status,
+                sample_count=rollout.sample_count,
+                comparison_metrics=rollout.comparison_metrics,
+                completed_at=rollout.completed_at,
+                evidence={"target_status": req.target_status},
+                expected_rollout_snapshot=persisted_rollout,
+            )
+        except Exception as exc:
+            _worker_steward_runtimes.pop(str(worker_id), None)
+            raise HTTPException(
+                503,
+                {
+                    "code": "ROLLOUT_TRANSITION_PERSISTENCE_FAILED",
+                    "message": "rollout transition could not be persisted",
+                },
+            ) from exc
         if transitioned is None:
             _worker_steward_runtimes.pop(str(worker_id), None)
             raise HTTPException(409, "Rollout transition lost its compare-and-set lock")
+    # Publish only the state that the durable transition accepted.
+    steward.rollouts[rollout_id] = rollout
+    if rollout.status.value == "ACTIVE":
+        steward.active_bundle = draft_steward.active_bundle
+        steward.active_adapter = draft_steward.active_adapter
+        steward.provenance = draft_steward.provenance
+        steward.candidates[candidate_id] = draft_steward.candidates[candidate_id]
     return rollout.model_dump(mode="json")
 
 
@@ -12923,61 +13238,112 @@ async def rollback_steward_rollout(
     request: Request,
 ) -> dict[str, Any]:
     _require_operator_identity(request)
+    actor = _authenticated_principal(request)
     storage = _storage()
     steward = await _steward_runtime(storage, worker_id)
     if steward is None:
         raise HTTPException(404, "Dedicated Steward Agent not found")
+    if str(steward.worker_id) != str(worker_id):
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(404, "Dedicated Steward Agent not found")
+    persisted_before = await storage.get_rollout_record(rollout_id)
+    if persisted_before is None:
+        raise HTTPException(404, "Persisted rollout not found")
+    persisted = _governance_dict(persisted_before)
+    if (
+        str(persisted.get("id") or "") != str(rollout_id)
+        or str(persisted.get("worker_id") or "") != str(worker_id)
+    ):
+        raise HTTPException(404, "Persisted rollout not found")
     try:
-        rollout = steward.rollback(rollout_id, reason=req.reason)
-    except Exception as exc:
-        raise HTTPException(409, str(exc)) from exc
-    await storage.update_rollout_record(rollout_id, status=rollout.status.value, rollback_reason=req.reason, completed_at=rollout.completed_at)
-    current_candidate = await storage.get_skill_bundle_candidate(rollout.candidate_id)
-    previous_rollouts = [
-        row for row in await storage.list_rollout_records(worker_id)
-        if str(row.get("id")) != str(rollout_id) and str(row.get("status")) == "ACTIVE"
-    ]
-    previous_rollout = previous_rollouts[-1] if previous_rollouts else None
-    previous_candidate = await storage.get_skill_bundle_candidate(UUID(str(previous_rollout["candidate_id"]))) if previous_rollout else None
-    previous_shell_id: UUID | None = None
-    if previous_candidate is not None:
-        try:
-            previous_shell_id = UUID(
-                str((previous_candidate.get("evidence_json") or {}).get("worker_shell_version_id"))
-            )
-        except (TypeError, ValueError):
-            raise HTTPException(
-                409,
-                "The previous rollout has no governed WorkerShell snapshot and cannot be restored",
-            ) from None
-    if current_candidate is not None:
-        if current_candidate.get("adapter_id"):
-            await storage.update_runtime_adapter(current_candidate["adapter_id"], status="superseded")
-        await storage.update_skill_bundle(current_candidate["skill_bundle_id"], status="SUPERSEDED")
-    if previous_candidate is not None:
-        if previous_candidate.get("adapter_id"):
-            await storage.update_runtime_adapter(previous_candidate["adapter_id"], status="active", conformance_status="passed")
-        await storage.update_skill_bundle(previous_candidate["skill_bundle_id"], status="APPROVED")
-        await storage.set_worker_governed_versions(worker_id, active_shell_version_id=previous_shell_id, active_adapter_id=previous_candidate.get("adapter_id"), active_skill_bundle_id=previous_candidate.get("skill_bundle_id"))
-        await storage.set_steward_active_versions(steward.steward_id, active_skill_bundle_id=previous_candidate.get("skill_bundle_id"), active_adapter_id=previous_candidate.get("adapter_id"))
-        target_candidate_id = UUID(str(previous_candidate["id"]))
-    else:
-        await storage.set_worker_governed_versions(worker_id, active_shell_version_id=None, active_adapter_id=None, active_skill_bundle_id=None)
-        await storage.set_steward_active_versions(steward.steward_id, active_skill_bundle_id=None, active_adapter_id=None)
-        await storage.update_steward(steward.steward_id, status="DEGRADED")
-        await storage.update_worker_status(worker_id, status="INACTIVE")
-        target_candidate_id = None
-    await storage.create_rollback_record(
-        rollout_id=rollout_id,
-        worker_id=worker_id,
-        reason=req.reason,
-        triggered_by="operator",
-        from_candidate_id=rollout.candidate_id,
-        target_candidate_id=target_candidate_id,
+        candidate_id = UUID(str(persisted.get("candidate_id") or ""))
+    except (TypeError, ValueError):
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(
+            409,
+            {
+                "code": "ROLLOUT_ROLLBACK_BINDING_INVALID",
+                "message": "persisted rollout is not bound to a governed candidate",
+            },
+        ) from None
+    runtime_rollout = steward.rollouts.get(rollout_id)
+    candidate = steward.candidates.get(candidate_id)
+    persisted_status = str(persisted.get("status") or "")
+    runtime_status = str(
+        getattr(
+            getattr(runtime_rollout, "status", None),
+            "value",
+            getattr(runtime_rollout, "status", ""),
+        )
+        or ""
     )
-    # Keep cached immutable adapters alive for runs pinned before the
-    # rollback; new dispatches resolve the restored active pointer instead.
-    return rollout.model_dump(mode="json")
+    if (
+        str(persisted.get("steward_id") or "") != str(steward.steward_id)
+        or runtime_rollout is None
+        or str(runtime_rollout.rollout_id) != str(rollout_id)
+        or str(runtime_rollout.worker_id) != str(worker_id)
+        or str(runtime_rollout.steward_id) != str(steward.steward_id)
+        or str(runtime_rollout.candidate_id) != str(candidate_id)
+        or runtime_status != persisted_status
+        or candidate is None
+        or str(candidate.candidate_id) != str(candidate_id)
+        or str(candidate.worker_id) != str(worker_id)
+        or str(candidate.steward_id) != str(steward.steward_id)
+    ):
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(
+            409,
+            {
+                "code": "ROLLOUT_ROLLBACK_BINDING_INVALID",
+                "message": "persisted rollout, candidate, and steward runtime do not share one worker binding",
+            },
+        )
+    from datetime import UTC, datetime
+
+    completed_at = datetime.now(tz=UTC)
+    try:
+        rollback_result = await storage.rollback_rollout_atomically(
+            rollout_id=rollout_id,
+            worker_id=worker_id,
+            steward_id=steward.steward_id,
+            candidate_id=candidate_id,
+            expected_status=persisted_status,
+            reason=req.reason,
+            triggered_by=actor,
+            completed_at=completed_at,
+        )
+    except Exception as exc:
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(
+            503,
+            {
+                "code": "ROLLOUT_ROLLBACK_PERSISTENCE_FAILED",
+                "message": "rollout rollback could not be persisted",
+            },
+        ) from exc
+    if rollback_result is None:
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(
+            409,
+            {
+                "code": "ROLLOUT_ROLLBACK_STATE_CHANGED",
+                "message": "rollout or its worker bindings changed before rollback could be committed",
+            },
+        )
+    # Durable pointers and evidence are authoritative after rollback. Discard
+    # the process-local candidate/adapter cache so the next access rehydrates
+    # exactly what the transaction restored.
+    _worker_steward_runtimes.pop(str(worker_id), None)
+    durable_rollout = rollback_result.get("rollout")
+    if not isinstance(durable_rollout, dict):
+        raise HTTPException(
+            503,
+            {
+                "code": "ROLLOUT_ROLLBACK_RESULT_INVALID",
+                "message": "rollback committed but its durable result could not be read",
+            },
+        )
+    return durable_rollout
 
 
 def _model_profile_from_row(row: dict[str, Any]) -> Any:

@@ -46,7 +46,6 @@ from mas_core.worker_contract.conformance import (
     DETERMINISTIC_FILE_CONFORMANCE_DECLARATION,
     attach_deterministic_file_conformance_case,
 )
-
 from mas_core.worker_registry.runtime_adapters import (
     CrewAIAdapter,
     LangGraphAdapter,
@@ -1908,6 +1907,8 @@ def test_pre_activation_rollback_preserves_active_candidate_and_blocks_regressio
 
 
 def test_steward_restores_active_pointers_from_durable_ids() -> None:
+    from mas_core.worker_registry.steward import BundleStatus
+
     steward = ExternalWorkerSteward(
         worker_id="rehydrated-pointer-worker",
         provenance=ExternalProvenance(
@@ -1923,6 +1924,12 @@ def test_steward_restores_active_pointers_from_durable_ids() -> None:
         adapter_version="1.0.0",
         upstream_compatibility_range="==1.0.0",
     )
+    candidate.bundle = candidate.bundle.model_copy(
+        update={"status": BundleStatus.SUPERSEDED}
+    )
+    candidate.adapter = candidate.adapter.model_copy(
+        update={"status": BundleStatus.SUPERSEDED}
+    )
 
     assert steward.restore_active_pointers(
         bundle_id=str(candidate.bundle.bundle_id),
@@ -1930,7 +1937,23 @@ def test_steward_restores_active_pointers_from_durable_ids() -> None:
     ) is True
     assert steward.active_bundle == candidate.bundle
     assert steward.active_adapter == candidate.adapter
+    assert candidate.bundle.status is BundleStatus.APPROVED
+    assert candidate.adapter.status is BundleStatus.APPROVED
     assert steward.provenance == candidate.source_provenance
+
+    other_candidate = steward.generate_candidate(
+        semantic_version="2.0.0",
+        adapter_version="2.0.0",
+        upstream_compatibility_range="==2.0.0",
+    )
+    current_bundle = steward.active_bundle
+    current_adapter = steward.active_adapter
+    assert steward.restore_active_pointers(
+        bundle_id=str(candidate.bundle.bundle_id),
+        adapter_id=str(other_candidate.adapter.adapter_id),
+    ) is False
+    assert steward.active_bundle is current_bundle
+    assert steward.active_adapter is current_adapter
 
     steward.active_bundle = None
     steward.active_adapter = None
@@ -2091,3 +2114,82 @@ def test_capability_intake_attaches_only_the_canonical_file_worker_probe() -> No
                 extensions={"aiat.conformance": {"case_id": "operator-selected"}},
             ),
         )
+
+def test_steward_completes_a_pending_rollback_stage() -> None:
+    from mas_core.worker_registry.steward import RolloutRecord, RolloutStatus
+
+    steward = ExternalWorkerSteward(
+        worker_id="rollback-resume-worker",
+        provenance=ExternalProvenance(
+            canonical_source_repository="https://github.com/example/worker",
+            exact_release="1.0.0",
+            transport_type="http",
+            security_scan_status="passed",
+        ),
+    )
+    rollout = RolloutRecord(
+        worker_id="rollback-resume-worker",
+        steward_id=steward.steward_id,
+        candidate_id=uuid4(),
+        status=RolloutStatus.ROLLING_BACK,
+    )
+    steward.rollouts[rollout.rollout_id] = rollout
+
+    result = steward.rollback(rollout.rollout_id, reason="resume rollback")
+
+    assert result.status is RolloutStatus.ROLLED_BACK
+    assert result.rollback_reason == "resume rollback"
+
+def test_rollout_rejects_negative_irreversible_side_effect_metric() -> None:
+    steward = ExternalWorkerSteward(
+        worker_id="negative-side-effects-worker",
+        provenance=ExternalProvenance(
+            canonical_source_repository="https://github.com/example/worker",
+            exact_release="1.0.0",
+            transport_type="http",
+            security_scan_status="passed",
+        ),
+    )
+    steward.transition(StewardStatus.READY, actor="test")
+    candidate = steward.generate_candidate(
+        semantic_version="1.0.0",
+        adapter_version="1.0.0",
+        upstream_compatibility_range="==1.0.0",
+    )
+    for status in (
+        CandidateIntakeStatus.SOURCE_REVIEW,
+        CandidateIntakeStatus.SECURITY_REVIEW,
+        CandidateIntakeStatus.INTERFACE_RESEARCH,
+        CandidateIntakeStatus.GENERATED,
+        CandidateIntakeStatus.CERTIFYING,
+    ):
+        steward.advance_candidate(candidate.candidate_id, status)
+    certification = steward.certify_candidate(
+        candidate.candidate_id,
+        conformance={"passed": True},
+        checks={},
+    )
+    assert certification.passed
+    steward.approve_candidate(candidate.candidate_id)
+    rollout = steward.start_rollout(
+        candidate.candidate_id,
+        actor="test",
+        eligible_task_classes=["read_only"],
+    )
+    steward.advance_rollout(rollout.rollout_id, RolloutStatus.SHADOW, sample_count=10)
+    steward.advance_rollout(rollout.rollout_id, RolloutStatus.CANARY, sample_count=10)
+    steward.advance_rollout(rollout.rollout_id, RolloutStatus.PROMOTING, sample_count=10)
+
+    with pytest.raises(StewardTransitionError, match="irreversible side effects"):
+        steward.advance_rollout(
+            rollout.rollout_id,
+            RolloutStatus.ACTIVE,
+            sample_count=10,
+            metrics={
+                "regression_fraction": 0.0,
+                "irreversible_side_effects": -1.0,
+            },
+        )
+
+    assert rollout.status is RolloutStatus.PROMOTING
+    assert steward.active_bundle is None

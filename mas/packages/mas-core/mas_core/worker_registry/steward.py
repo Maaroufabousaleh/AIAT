@@ -698,7 +698,7 @@ class ExternalWorkerSteward:
                 raise StewardTransitionError(
                     f"rollout regression {regression:.4f} exceeds rollback threshold {threshold:.4f}"
                 )
-            if float(supplied_metrics.get("irreversible_side_effects", 0.0)) > 0:
+            if float(supplied_metrics.get("irreversible_side_effects", 0.0)) != 0:
                 raise StewardTransitionError("candidate produced irreversible side effects during canary")
         rollout.status = target
         if sample_count is not None:
@@ -721,10 +721,18 @@ class ExternalWorkerSteward:
 
     def rollback(self, rollout_id: UUID, *, reason: str) -> RolloutRecord:
         rollout = self._rollout(rollout_id)
-        if rollout.status not in {RolloutStatus.PENDING, RolloutStatus.SHADOW, RolloutStatus.CANARY, RolloutStatus.PROMOTING, RolloutStatus.ACTIVE}:
+        if rollout.status not in {
+            RolloutStatus.PENDING,
+            RolloutStatus.SHADOW,
+            RolloutStatus.CANARY,
+            RolloutStatus.PROMOTING,
+            RolloutStatus.ACTIVE,
+            RolloutStatus.ROLLING_BACK,
+        }:
             raise StewardTransitionError("rollout cannot be rolled back from its current state")
         rollout.rollback_reason = reason
-        self.advance_rollout(rollout_id, RolloutStatus.ROLLING_BACK)
+        if rollout.status is not RolloutStatus.ROLLING_BACK:
+            self.advance_rollout(rollout_id, RolloutStatus.ROLLING_BACK)
         return self.advance_rollout(rollout_id, RolloutStatus.ROLLED_BACK)
 
     def restore_active_pointers(
@@ -745,24 +753,42 @@ class ExternalWorkerSteward:
         def _matches(value: UUID | str | None, target: UUID | str | None) -> bool:
             return target is not None and str(value) == str(target)
 
-        bundle = next(
+        bundle_owner = next(
             (
-                candidate.bundle
+                candidate
                 for candidate in self.candidates.values()
                 if _matches(candidate.bundle.bundle_id, bundle_id)
             ),
             None,
         )
-        adapter = next(
+        adapter_owner = next(
             (
-                candidate.adapter
+                candidate
                 for candidate in self.candidates.values()
                 if _matches(candidate.adapter.adapter_id, adapter_id)
             ),
             None,
         )
-        if (bundle_id is not None and bundle is None) or (adapter_id is not None and adapter is None):
+        if (bundle_id is not None and bundle_owner is None) or (
+            adapter_id is not None and adapter_owner is None
+        ):
             return False
+        if (
+            bundle_owner is not None
+            and adapter_owner is not None
+            and bundle_owner.candidate_id != adapter_owner.candidate_id
+        ):
+            return False
+        if bundle_owner is not None:
+            bundle_owner.bundle = bundle_owner.bundle.model_copy(
+                update={"status": BundleStatus.APPROVED}
+            )
+        if adapter_owner is not None:
+            adapter_owner.adapter = adapter_owner.adapter.model_copy(
+                update={"status": BundleStatus.APPROVED}
+            )
+        bundle = bundle_owner.bundle if bundle_owner is not None else None
+        adapter = adapter_owner.adapter if adapter_owner is not None else None
         self.active_bundle = bundle
         self.active_adapter = adapter
         if bundle is not None:

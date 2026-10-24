@@ -25,6 +25,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import random
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
@@ -11152,9 +11153,188 @@ class AgentStorage:
                 return None
         return await self.get_model_override_request(request_id)
 
-    async def create_rollout_record(self, *, rollout_id: UUID, worker_id: UUID, steward_id: UUID, candidate_id: UUID, status: str, eligible_task_classes: list[str], sample_targets: dict[str, Any], comparison_metrics: dict[str, Any] | None = None, rollback_thresholds: dict[str, Any] | None = None, promotion_actor: str | None = None) -> dict[str, Any]:
+    async def create_rollout_record(
+        self,
+        *,
+        rollout_id: UUID,
+        worker_id: UUID,
+        steward_id: UUID,
+        candidate_id: UUID,
+        expected_candidate_snapshot: Mapping[str, Any] | None = None,
+        status: str,
+        eligible_task_classes: list[str],
+        sample_targets: dict[str, Any],
+        comparison_metrics: dict[str, Any] | None = None,
+        rollback_thresholds: dict[str, Any] | None = None,
+        promotion_actor: str | None = None,
+    ) -> dict[str, Any] | None:
+        if status != "PENDING" or not isinstance(expected_candidate_snapshot, Mapping):
+            return None
+        expected_record = _governance_json_snapshot(dict(expected_candidate_snapshot))
         values = {"id": rollout_id, "worker_id": worker_id, "steward_id": steward_id, "candidate_id": candidate_id, "status": status, "eligible_task_classes": eligible_task_classes, "sample_targets": sample_targets, "comparison_metrics": comparison_metrics or {}, "rollback_thresholds": rollback_thresholds or {}, "promotion_actor": promotion_actor}
         async with self.engine.begin() as conn:
+            worker = (
+                await conn.execute(
+                    t.worker_registry.select()
+                    .where(t.worker_registry.c.id == worker_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            steward = (
+                await conn.execute(
+                    t.steward_agents.select()
+                    .where(
+                        sa.and_(
+                            t.steward_agents.c.id == steward_id,
+                            t.steward_agents.c.worker_id == worker_id,
+                        )
+                    )
+                    .with_for_update()
+                )
+            ).mappings().first()
+            candidate = (
+                await conn.execute(
+                    t.skill_bundle_candidates.select()
+                    .where(t.skill_bundle_candidates.c.id == candidate_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if (
+                worker is None
+                or steward is None
+                or candidate is None
+                or candidate.get("worker_id") != worker_id
+                or str(candidate.get("id") or "") != str(candidate_id)
+                or str(candidate.get("intake_status") or "") != "APPROVED"
+            ):
+                return None
+            evidence = candidate.get("evidence_json")
+            evidence = evidence if isinstance(evidence, Mapping) else {}
+            raw_candidate_record = evidence.get("candidate_record")
+            if not isinstance(raw_candidate_record, Mapping):
+                return None
+            candidate_record = _governance_json_snapshot(dict(raw_candidate_record))
+            if (
+                candidate_record != expected_record
+                or str(candidate_record.get("candidate_id") or "")
+                != str(candidate_id)
+                or str(candidate_record.get("worker_id") or "")
+                != str(worker_id)
+                or str(candidate_record.get("steward_id") or "")
+                != str(steward_id)
+                or str(candidate_record.get("intake_status") or "") != "APPROVED"
+            ):
+                return None
+            certification_id = candidate.get("certification_run_id")
+            approval_id = candidate.get("approval_record_id")
+            if (
+                certification_id is None
+                or approval_id is None
+                or str(candidate_record.get("candidate_id") or "")
+                != str(candidate_id)
+                or str(candidate_record.get("worker_id") or "")
+                != str(worker_id)
+                or str(candidate_record.get("steward_id") or "")
+                != str(steward_id)
+                or str(candidate_record.get("intake_status") or "") != "APPROVED"
+                or str(candidate_record.get("certification_id") or "")
+                != str(certification_id)
+                or str(candidate_record.get("approval_record_id") or "")
+                != str(approval_id)
+            ):
+                return None
+            certification = (
+                await conn.execute(
+                    t.certification_runs.select()
+                    .where(t.certification_runs.c.id == certification_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if (
+                certification is None
+                or certification.get("worker_id") != worker_id
+                or certification.get("candidate_id") != candidate_id
+                or certification.get("steward_id") != steward_id
+                or str(certification.get("status") or "").lower() != "passed"
+            ):
+                return None
+            approval = (
+                await conn.execute(
+                    t.approval_records.select()
+                    .where(t.approval_records.c.id == approval_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if (
+                approval is None
+                or approval.get("scope_type") != "worker_skill_bundle_candidate"
+                or approval.get("scope_id") != candidate_id
+                or approval.get("decision") != "APPROVED"
+            ):
+                return None
+            bundle_id = candidate.get("skill_bundle_id")
+            adapter_id = candidate.get("adapter_id")
+            bundle_record = candidate_record.get("bundle")
+            bundle_record = (
+                bundle_record if isinstance(bundle_record, Mapping) else {}
+            )
+            adapter_record = candidate_record.get("adapter")
+            adapter_record = (
+                adapter_record if isinstance(adapter_record, Mapping) else {}
+            )
+            if (
+                str(bundle_record.get("bundle_id") or "") != str(bundle_id or "")
+                or str(adapter_record.get("adapter_id") or "") != str(adapter_id or "")
+                or str(bundle_record.get("steward_id") or "") != str(steward_id)
+                or str(adapter_record.get("steward_id") or "") != str(steward_id)
+            ):
+                return None
+            bundle = (
+                await conn.execute(
+                    t.skill_bundles.select()
+                    .where(t.skill_bundles.c.id == bundle_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            adapter = (
+                await conn.execute(
+                    t.runtime_adapters.select()
+                    .where(t.runtime_adapters.c.id == adapter_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            bundle_snapshot_hash = _skill_bundle_snapshot_content_hash(bundle_record)
+            if (
+                bundle is None
+                or bundle.get("worker_id") != worker_id
+                or bundle.get("steward_id") != steward_id
+                or str(bundle.get("id") or "") != str(bundle_id)
+                or bundle_snapshot_hash is None
+                or str(bundle.get("content_hash") or "") != bundle_snapshot_hash
+                or adapter is None
+                or str(adapter.get("id") or "") != str(adapter_id)
+                or adapter.get("worker_id") != worker_id
+                or str(adapter_record.get("adapter_id") or "")
+                != str(adapter_id)
+                or str(adapter.get("content_hash") or "")
+                != str(adapter_record.get("content_hash") or "")
+                or str(adapter.get("conformance_status") or "").lower()
+                != "passed"
+            ):
+                return None
+            prior_rollouts = (
+                await conn.execute(
+                    t.rollout_records.select()
+                    .where(t.rollout_records.c.worker_id == worker_id)
+                    .with_for_update()
+                )
+            ).mappings().all()
+            if any(
+                row.get("candidate_id") == candidate_id
+                or row.get("status") in {"PENDING", "SHADOW", "CANARY", "PROMOTING", "ROLLING_BACK"}
+                for row in prior_rollouts
+            ):
+                return None
             await conn.execute(t.rollout_records.insert().values(**values))
         return values
 
@@ -11181,6 +11361,9 @@ class AgentStorage:
         self,
         rollout_id: UUID,
         *,
+        worker_id: UUID,
+        steward_id: UUID,
+        candidate_id: UUID,
         to_status: str,
         actor: str,
         reason: str | None = None,
@@ -11188,8 +11371,12 @@ class AgentStorage:
         comparison_metrics: dict[str, Any] | None = None,
         completed_at: datetime | None = None,
         expected_status: str | None = None,
+        expected_rollout_snapshot: Mapping[str, Any] | None = None,
         evidence: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
+        if not isinstance(expected_rollout_snapshot, Mapping):
+            return None
+        expected_snapshot = _governance_json_snapshot(dict(expected_rollout_snapshot))
         async with self.engine.begin() as conn:
             current = (
                 await conn.execute(
@@ -11198,20 +11385,72 @@ class AgentStorage:
                     .with_for_update()
                 )
             ).mappings().first()
-            if current is None or (expected_status is not None and current["status"] != expected_status):
+            if (
+                current is None
+                or current["worker_id"] != worker_id
+                or current["steward_id"] != steward_id
+                or current["candidate_id"] != candidate_id
+                or (expected_status is not None and current["status"] != expected_status)
+                or _governance_json_snapshot(dict(current)) != expected_snapshot
+            ):
                 return None
+            legal_transitions = {
+                "PENDING": {"SHADOW"},
+                "SHADOW": {"CANARY"},
+                "CANARY": {"PROMOTING"},
+            }
+            if to_status not in legal_transitions.get(str(current["status"]), set()):
+                return None
+            current_sample_count = current.get("sample_count")
+            next_sample_count = (
+                current_sample_count if sample_count is None else sample_count
+            )
+            if (
+                type(current_sample_count) is not int
+                or type(next_sample_count) is not int
+                or next_sample_count < current_sample_count
+            ):
+                return None
+            if to_status in {"CANARY", "PROMOTING"}:
+                sample_targets = current.get("sample_targets")
+                if not isinstance(sample_targets, Mapping):
+                    return None
+                target_key = "shadow" if to_status == "CANARY" else "readonly_canary"
+                required_samples = sample_targets.get(target_key)
+                if (
+                    type(required_samples) is not int
+                    or next_sample_count < required_samples
+                ):
+                    return None
+                if to_status == "CANARY" and (
+                    not current.get("eligible_task_classes")
+                    or any(
+                        task_class not in {"read_only", "low_risk", "shadow"}
+                        for task_class in current["eligible_task_classes"]
+                    )
+                ):
+                    return None
             values: dict[str, Any] = {"status": to_status}
-            if sample_count is not None:
-                values["sample_count"] = sample_count
+            values["sample_count"] = next_sample_count
             if comparison_metrics is not None:
                 values["comparison_metrics"] = comparison_metrics
             if completed_at is not None:
                 values["completed_at"] = completed_at
-            await conn.execute(
+            result = await conn.execute(
                 t.rollout_records.update()
-                .where(t.rollout_records.c.id == rollout_id)
+                .where(
+                    sa.and_(
+                        t.rollout_records.c.id == rollout_id,
+                        t.rollout_records.c.worker_id == worker_id,
+                        t.rollout_records.c.steward_id == steward_id,
+                        t.rollout_records.c.candidate_id == candidate_id,
+                        t.rollout_records.c.status == current["status"],
+                    )
+                )
                 .values(**values)
             )
+            if result.rowcount != 1:
+                return None
             await conn.execute(
                 t.rollout_transitions.insert().values(
                     id=uuid4(),
@@ -11235,6 +11474,11 @@ class AgentStorage:
         completed_at: datetime | None,
         expected_worker_identity: Mapping[str, Any] | None = None,
         expected_provenance_hash: str | None = None,
+        expected_rollout_snapshot: Mapping[str, Any] | None = None,
+        expected_candidate_snapshot: Mapping[str, Any] | None = None,
+        sample_count: int | None = None,
+        comparison_metrics: Mapping[str, Any] | None = None,
+        actor: str | None = None,
     ) -> dict[str, Any] | None:
         """Promote one candidate with a worker-row lock and compare-and-set.
 
@@ -11251,6 +11495,13 @@ class AgentStorage:
             or not isinstance(expected_provenance_hash, str)
             or len(expected_provenance_hash) != 64
             or any(char not in "0123456789abcdef" for char in expected_provenance_hash)
+            or not isinstance(expected_rollout_snapshot, Mapping)
+            or not isinstance(expected_candidate_snapshot, Mapping)
+            or type(sample_count) is not int
+            or sample_count < 0
+            or not isinstance(comparison_metrics, Mapping)
+            or not isinstance(actor, str)
+            or not actor.strip()
         ):
             return None
         expected_identity = json.loads(
@@ -11261,7 +11512,10 @@ class AgentStorage:
                 default=str,
             )
         )
-        active_states = {"PENDING", "SHADOW", "CANARY", "PROMOTING"}
+        active_states = {"PENDING", "SHADOW", "CANARY", "PROMOTING", "ROLLING_BACK"}
+        expected_rollout = _governance_json_snapshot(dict(expected_rollout_snapshot))
+        expected_candidate = _governance_json_snapshot(dict(expected_candidate_snapshot))
+        accepted_metrics = _governance_json_snapshot(dict(comparison_metrics))
         async with self.engine.begin() as conn:
             worker = (
                 await conn.execute(
@@ -11303,6 +11557,39 @@ class AgentStorage:
                 or rollout["steward_id"] != steward_id
                 or rollout["candidate_id"] != candidate_id
                 or rollout["status"] != "PROMOTING"
+                or _governance_json_snapshot(dict(rollout)) != expected_rollout
+            ):
+                return None
+            sample_targets = rollout.get("sample_targets")
+            rollback_thresholds = rollout.get("rollback_thresholds")
+            if not isinstance(sample_targets, Mapping) or not isinstance(
+                rollback_thresholds, Mapping
+            ):
+                return None
+            live_sample_target = sample_targets.get("live_canary")
+            existing_sample_count = rollout.get("sample_count")
+            try:
+                regression_fraction = float(
+                    accepted_metrics.get("regression_fraction", 0.0)
+                )
+                irreversible_side_effects = float(
+                    accepted_metrics.get("irreversible_side_effects", 0.0)
+                )
+                regression_threshold = float(
+                    rollback_thresholds.get("regression_fraction", 0.10)
+                )
+            except (TypeError, ValueError):
+                return None
+            if (
+                type(live_sample_target) is not int
+                or type(existing_sample_count) is not int
+                or sample_count < existing_sample_count
+                or sample_count < live_sample_target
+                or not math.isfinite(regression_fraction)
+                or not math.isfinite(irreversible_side_effects)
+                or not math.isfinite(regression_threshold)
+                or regression_fraction > regression_threshold
+                or irreversible_side_effects != 0
             ):
                 return None
             competing = (
@@ -11327,17 +11614,119 @@ class AgentStorage:
                     .with_for_update()
                 )
             ).mappings().first()
-            if candidate is None or candidate["approval_record_id"] is None:
+            if (
+                candidate is None
+                or candidate.get("id") != candidate_id
+                or candidate.get("worker_id") != worker_id
+                or candidate.get("intake_status") != "APPROVED"
+                or candidate.get("approval_record_id") is None
+                or candidate.get("certification_run_id") is None
+            ):
                 return None
-            candidate_evidence = dict(candidate.get("evidence_json") or {})
+            candidate_evidence = candidate.get("evidence_json")
+            if not isinstance(candidate_evidence, Mapping):
+                return None
             candidate_record = candidate_evidence.get("candidate_record")
             if (
                 not isinstance(candidate_record, Mapping)
+                or _governance_json_snapshot(dict(candidate_record))
+                != expected_candidate
+                or str(candidate_record.get("candidate_id") or "")
+                != str(candidate_id)
+                or str(candidate_record.get("worker_id") or "")
+                != str(worker_id)
+                or str(candidate_record.get("steward_id") or "")
+                != str(steward_id)
+                or str(candidate_record.get("intake_status") or "")
+                != "APPROVED"
+                or str(candidate_record.get("certification_id") or "")
+                != str(candidate.get("certification_run_id"))
+                or str(candidate_record.get("approval_record_id") or "")
+                != str(candidate.get("approval_record_id"))
                 or not _rollout_provenance_identity_matches(
                     provenance,
                     candidate_record,
                     worker,
                 )
+            ):
+                return None
+            bundle_record = candidate_record.get("bundle")
+            adapter_record = candidate_record.get("adapter")
+            if (
+                not isinstance(bundle_record, Mapping)
+                or not isinstance(adapter_record, Mapping)
+                or str(bundle_record.get("bundle_id") or "")
+                != str(candidate.get("skill_bundle_id") or "")
+                or str(adapter_record.get("adapter_id") or "")
+                != str(candidate.get("adapter_id") or "")
+                or str(bundle_record.get("steward_id") or "")
+                != str(steward_id)
+                or str(adapter_record.get("steward_id") or "")
+                != str(steward_id)
+            ):
+                return None
+            certification = (
+                await conn.execute(
+                    t.certification_runs.select()
+                    .where(
+                        t.certification_runs.c.id
+                        == candidate.get("certification_run_id")
+                    )
+                    .with_for_update()
+                )
+            ).mappings().first()
+            approval = (
+                await conn.execute(
+                    t.approval_records.select()
+                    .where(
+                        t.approval_records.c.id == candidate.get("approval_record_id")
+                    )
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if (
+                certification is None
+                or certification.get("worker_id") != worker_id
+                or certification.get("candidate_id") != candidate_id
+                or certification.get("steward_id") != steward_id
+                or str(certification.get("status") or "").lower() != "passed"
+                or approval is None
+                or approval.get("scope_type") != "worker_skill_bundle_candidate"
+                or approval.get("scope_id") != candidate_id
+                or approval.get("decision") != "APPROVED"
+            ):
+                return None
+            bundle_id = candidate.get("skill_bundle_id")
+            adapter_id = candidate.get("adapter_id")
+            bundle = (
+                await conn.execute(
+                    t.skill_bundles.select()
+                    .where(t.skill_bundles.c.id == bundle_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            adapter = (
+                await conn.execute(
+                    t.runtime_adapters.select()
+                    .where(t.runtime_adapters.c.id == adapter_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            bundle_snapshot_hash = _skill_bundle_snapshot_content_hash(bundle_record)
+            if (
+                bundle is None
+                or bundle.get("id") != bundle_id
+                or bundle.get("worker_id") != worker_id
+                or bundle.get("steward_id") != steward_id
+                or bundle_snapshot_hash is None
+                or str(bundle.get("content_hash") or "") != bundle_snapshot_hash
+                or adapter is None
+                or adapter.get("id") != adapter_id
+                or adapter.get("worker_id") != worker_id
+                or str(adapter.get("content_hash") or "")
+                != str(adapter_record.get("content_hash") or "")
+                or str(adapter.get("conformance_status") or "").lower()
+                != "passed"
             ):
                 return None
             shell_version_raw = candidate_evidence.get("worker_shell_version_id")
@@ -11365,29 +11754,48 @@ class AgentStorage:
                     .with_for_update()
                 )
             ).mappings().first()
-            if steward is None:
+            if steward is None or steward.get("worker_id") != worker_id:
                 return None
-            if candidate["adapter_id"] is not None:
-                await conn.execute(
-                    t.runtime_adapters.update()
-                    .where(t.runtime_adapters.c.id == candidate["adapter_id"])
-                    .values(status="active", conformance_status="passed")
+            adapter_update = await conn.execute(
+                t.runtime_adapters.update()
+                .where(
+                    sa.and_(
+                        t.runtime_adapters.c.id == adapter_id,
+                        t.runtime_adapters.c.worker_id == worker_id,
+                    )
                 )
-            await conn.execute(
+                .values(status="active", conformance_status="passed")
+            )
+            bundle_update = await conn.execute(
                 t.skill_bundles.update()
-                .where(t.skill_bundles.c.id == candidate["skill_bundle_id"])
+                .where(
+                    sa.and_(
+                        t.skill_bundles.c.id == bundle_id,
+                        t.skill_bundles.c.worker_id == worker_id,
+                        t.skill_bundles.c.steward_id == steward_id,
+                    )
+                )
                 .values(status="APPROVED")
             )
-            await conn.execute(
+            if adapter_update.rowcount != 1 or bundle_update.rowcount != 1:
+                raise RuntimeError("rollout version binding changed before activation")
+            steward_update = await conn.execute(
                 t.steward_agents.update()
-                .where(t.steward_agents.c.id == steward_id)
+                .where(
+                    sa.and_(
+                        t.steward_agents.c.id == steward_id,
+                        t.steward_agents.c.worker_id == worker_id,
+                    )
+                )
                 .values(
                     status="READY",
-                    active_skill_bundle_id=candidate["skill_bundle_id"],
-                    active_adapter_id=candidate["adapter_id"],
+                    active_skill_bundle_id=bundle_id,
+                    active_adapter_id=adapter_id,
                     updated_at=datetime.now(tz=UTC),
                 )
             )
+            if steward_update.rowcount != 1:
+                raise RuntimeError("rollout steward binding changed before activation")
             if steward["status"] != "READY":
                 await conn.execute(
                     t.steward_transitions.insert().values(
@@ -11395,30 +11803,40 @@ class AgentStorage:
                         steward_id=steward_id,
                         from_status=steward["status"],
                         to_status="READY",
-                        actor="worker-rollout-approver",
+                        actor=actor,
                         reason="candidate activated through atomic rollout promotion",
                         evidence={"rollout_id": str(rollout_id), "candidate_id": str(candidate_id)},
                     )
                 )
-            await conn.execute(
+            worker_update = await conn.execute(
                 t.worker_registry.update()
                 .where(t.worker_registry.c.id == worker_id)
                 .values(
                     active_shell_version_id=shell_version_id,
-                    active_adapter_id=candidate["adapter_id"],
-                    active_skill_bundle_id=candidate["skill_bundle_id"],
+                    active_adapter_id=adapter_id,
+                    active_skill_bundle_id=bundle_id,
                     updated_at=datetime.now(tz=UTC),
                 )
             )
+            if worker_update.rowcount != 1:
+                raise RuntimeError("rollout worker binding changed before activation")
             result = await conn.execute(
                 t.rollout_records.update()
                 .where(
                     sa.and_(
                         t.rollout_records.c.id == rollout_id,
+                        t.rollout_records.c.worker_id == worker_id,
+                        t.rollout_records.c.steward_id == steward_id,
+                        t.rollout_records.c.candidate_id == candidate_id,
                         t.rollout_records.c.status == "PROMOTING",
                     )
                 )
-                .values(status="ACTIVE", completed_at=completed_at)
+                .values(
+                    status="ACTIVE",
+                    sample_count=sample_count,
+                    comparison_metrics=dict(accepted_metrics),
+                    completed_at=completed_at,
+                )
             )
             if result.rowcount != 1:
                 raise RuntimeError("rollout promotion compare-and-set failed")
@@ -11428,12 +11846,532 @@ class AgentStorage:
                     rollout_id=rollout_id,
                     from_status="PROMOTING",
                     to_status="ACTIVE",
-                    actor="worker-rollout-approver",
+                    actor=actor,
                     reason="atomic controlled promotion",
                     evidence={"candidate_id": str(candidate_id), "approval_record_id": str(candidate["approval_record_id"])},
                 )
             )
         return await self.get_rollout_record(rollout_id)
+
+    async def rollback_rollout_atomically(
+        self,
+        *,
+        rollout_id: UUID,
+        worker_id: UUID,
+        steward_id: UUID,
+        candidate_id: UUID,
+        expected_status: str,
+        reason: str,
+        triggered_by: str,
+        completed_at: datetime,
+    ) -> dict[str, Any] | None:
+        """Roll back one worker rollout and restore its last active version atomically.
+
+        The worker row serializes rollback against promotion and other pointer
+        changes. All durable bindings are checked before writes, and the rollout
+        compare-and-set, pointer changes, transition history, and rollback
+        evidence share one transaction.
+        """
+        rollbackable_states = {
+            "PENDING",
+            "SHADOW",
+            "CANARY",
+            "PROMOTING",
+            "ACTIVE",
+            "ROLLING_BACK",
+        }
+        if (
+            expected_status not in rollbackable_states
+            or not isinstance(reason, str)
+            or not reason.strip()
+            or not isinstance(triggered_by, str)
+            or not triggered_by.strip()
+        ):
+            return None
+
+        async with self.engine.begin() as conn:
+            worker = (
+                await conn.execute(
+                    t.worker_registry.select()
+                    .where(t.worker_registry.c.id == worker_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if worker is None:
+                return None
+            steward = (
+                await conn.execute(
+                    t.steward_agents.select()
+                    .where(t.steward_agents.c.id == steward_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if steward is None or steward.get("worker_id") != worker_id:
+                return None
+            rollout = (
+                await conn.execute(
+                    t.rollout_records.select()
+                    .where(t.rollout_records.c.id == rollout_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if (
+                rollout is None
+                or rollout.get("worker_id") != worker_id
+                or rollout.get("steward_id") != steward_id
+                or rollout.get("candidate_id") != candidate_id
+                or rollout.get("status") != expected_status
+            ):
+                return None
+
+            current_candidate = (
+                await conn.execute(
+                    t.skill_bundle_candidates.select()
+                    .where(t.skill_bundle_candidates.c.id == candidate_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if (
+                current_candidate is None
+                or current_candidate.get("worker_id") != worker_id
+                or current_candidate.get("intake_status") != "APPROVED"
+            ):
+                return None
+            current_evidence = current_candidate.get("evidence_json")
+            if not isinstance(current_evidence, Mapping):
+                return None
+            current_candidate_record = current_evidence.get("candidate_record")
+            if not isinstance(current_candidate_record, Mapping):
+                return None
+            current_bundle_id = current_candidate.get("skill_bundle_id")
+            current_adapter_id = current_candidate.get("adapter_id")
+            current_bundle_record = current_candidate_record.get("bundle")
+            current_adapter_record = current_candidate_record.get("adapter")
+            if (
+                not isinstance(current_bundle_record, Mapping)
+                or not isinstance(current_adapter_record, Mapping)
+                or str(current_candidate_record.get("candidate_id") or "")
+                != str(candidate_id)
+                or str(current_candidate_record.get("worker_id") or "")
+                != str(worker_id)
+                or str(current_candidate_record.get("steward_id") or "")
+                != str(steward_id)
+                or str(current_candidate_record.get("intake_status") or "")
+                != "APPROVED"
+                or str(current_candidate_record.get("bundle", {}).get("bundle_id") or "")
+                != str(current_bundle_id)
+                or str(current_candidate_record.get("adapter", {}).get("adapter_id") or "")
+                != str(current_adapter_id)
+                or str(current_bundle_record.get("steward_id") or "")
+                != str(steward_id)
+                or str(current_adapter_record.get("steward_id") or "")
+                != str(steward_id)
+                or current_adapter_id is None
+            ):
+                return None
+            if expected_status == "ACTIVE":
+                try:
+                    current_shell_id = UUID(
+                        str(current_evidence.get("worker_shell_version_id") or "")
+                    )
+                except (TypeError, ValueError):
+                    return None
+                if (
+                    worker.get("active_skill_bundle_id") != current_bundle_id
+                    or worker.get("active_adapter_id") != current_adapter_id
+                    or worker.get("active_shell_version_id") != current_shell_id
+                ):
+                    return None
+            current_certification_id = current_candidate.get("certification_run_id")
+            current_approval_id = current_candidate.get("approval_record_id")
+            if (
+                current_certification_id is None
+                or current_approval_id is None
+                or str(current_candidate_record.get("certification_id") or "")
+                != str(current_certification_id)
+                or str(current_candidate_record.get("approval_record_id") or "")
+                != str(current_approval_id)
+            ):
+                return None
+            current_certification = (
+                await conn.execute(
+                    t.certification_runs.select()
+                    .where(t.certification_runs.c.id == current_certification_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            current_approval = (
+                await conn.execute(
+                    t.approval_records.select()
+                    .where(t.approval_records.c.id == current_approval_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if (
+                current_certification is None
+                or current_certification.get("worker_id") != worker_id
+                or current_certification.get("candidate_id") != candidate_id
+                or current_certification.get("steward_id") != steward_id
+                or str(current_certification.get("status") or "").lower() != "passed"
+                or current_approval is None
+                or current_approval.get("scope_type") != "worker_skill_bundle_candidate"
+                or current_approval.get("scope_id") != candidate_id
+                or current_approval.get("decision") != "APPROVED"
+            ):
+                return None
+            current_bundle = (
+                await conn.execute(
+                    t.skill_bundles.select()
+                    .where(t.skill_bundles.c.id == current_bundle_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            current_adapter = (
+                await conn.execute(
+                    t.runtime_adapters.select()
+                    .where(t.runtime_adapters.c.id == current_adapter_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            current_bundle_snapshot_hash = _skill_bundle_snapshot_content_hash(
+                current_bundle_record
+            )
+            if (
+                current_bundle is None
+                or current_bundle.get("id") != current_bundle_id
+                or current_bundle.get("worker_id") != worker_id
+                or current_bundle.get("steward_id") != steward_id
+                or current_bundle_snapshot_hash is None
+                or str(current_bundle.get("content_hash") or "")
+                != current_bundle_snapshot_hash
+                or current_adapter is None
+                or current_adapter.get("id") != current_adapter_id
+                or current_adapter.get("worker_id") != worker_id
+                or str(current_adapter.get("content_hash") or "")
+                != str(current_adapter_record.get("content_hash") or "")
+                or str(current_adapter.get("conformance_status") or "").lower()
+                != "passed"
+            ):
+                return None
+
+            prior_rollouts = (
+                await conn.execute(
+                    t.rollout_records.select()
+                    .where(
+                        sa.and_(
+                            t.rollout_records.c.worker_id == worker_id,
+                            t.rollout_records.c.id != rollout_id,
+                            t.rollout_records.c.status == "ACTIVE",
+                        )
+                    )
+                    .order_by(t.rollout_records.c.started_at.asc())
+                    .with_for_update()
+                )
+            ).mappings().all()
+            target_candidate_id: UUID | None = None
+            target_bundle_id: UUID | None = None
+            target_adapter_id: UUID | None = None
+            target_shell_id: UUID | None = None
+            if prior_rollouts:
+                prior_rollout = prior_rollouts[-1]
+                if prior_rollout.get("steward_id") != steward_id:
+                    return None
+                target_candidate_id = prior_rollout.get("candidate_id")
+                if target_candidate_id is None or target_candidate_id == candidate_id:
+                    return None
+                target_candidate_row = (
+                    await conn.execute(
+                        t.skill_bundle_candidates.select()
+                        .where(t.skill_bundle_candidates.c.id == target_candidate_id)
+                        .with_for_update()
+                    )
+                ).mappings().first()
+                if (
+                    target_candidate_row is None
+                    or target_candidate_row.get("worker_id") != worker_id
+                    or target_candidate_row.get("intake_status") != "APPROVED"
+                ):
+                    return None
+                target_candidate_record = (target_candidate_row.get("evidence_json") or {}).get(
+                    "candidate_record"
+                )
+                if not isinstance(target_candidate_record, Mapping):
+                    return None
+                target_bundle_id = target_candidate_row.get("skill_bundle_id")
+                target_adapter_id = target_candidate_row.get("adapter_id")
+                target_bundle_record = target_candidate_record.get("bundle")
+                target_adapter_record = target_candidate_record.get("adapter")
+                try:
+                    target_shell_id = UUID(
+                        str(
+                            (target_candidate_row.get("evidence_json") or {}).get(
+                                "worker_shell_version_id"
+                            )
+                            or ""
+                        )
+                    )
+                except (TypeError, ValueError):
+                    return None
+                if (
+                    not isinstance(target_bundle_record, Mapping)
+                    or not isinstance(target_adapter_record, Mapping)
+                    or str(target_candidate_record.get("candidate_id") or "")
+                    != str(target_candidate_id)
+                    or str(target_candidate_record.get("worker_id") or "")
+                    != str(worker_id)
+                    or str(target_candidate_record.get("steward_id") or "")
+                    != str(steward_id)
+                    or str(target_candidate_record.get("intake_status") or "")
+                    != "APPROVED"
+                    or str(target_bundle_record.get("bundle_id") or "")
+                    != str(target_bundle_id)
+                    or str(target_adapter_record.get("adapter_id") or "")
+                    != str(target_adapter_id)
+                    or str(target_bundle_record.get("steward_id") or "")
+                    != str(steward_id)
+                    or str(target_adapter_record.get("steward_id") or "")
+                    != str(steward_id)
+                    or target_adapter_id is None
+                ):
+                    return None
+                target_bundle = (
+                    await conn.execute(
+                        t.skill_bundles.select()
+                        .where(t.skill_bundles.c.id == target_bundle_id)
+                        .with_for_update()
+                    )
+                ).mappings().first()
+                target_adapter = (
+                    await conn.execute(
+                        t.runtime_adapters.select()
+                        .where(t.runtime_adapters.c.id == target_adapter_id)
+                        .with_for_update()
+                    )
+                ).mappings().first()
+                shell = (
+                    await conn.execute(
+                        t.worker_shell_versions.select()
+                        .where(t.worker_shell_versions.c.id == target_shell_id)
+                        .with_for_update()
+                    )
+                ).mappings().first()
+                target_bundle_snapshot_hash = _skill_bundle_snapshot_content_hash(
+                    target_bundle_record
+                )
+                if (
+                    target_bundle is None
+                    or target_bundle.get("id") != target_bundle_id
+                    or target_bundle.get("worker_id") != worker_id
+                    or target_bundle.get("steward_id") != steward_id
+                    or target_bundle_snapshot_hash is None
+                    or str(target_bundle.get("content_hash") or "")
+                    != target_bundle_snapshot_hash
+                    or target_adapter is None
+                    or target_adapter.get("id") != target_adapter_id
+                    or target_adapter.get("worker_id") != worker_id
+                    or str(target_adapter.get("content_hash") or "")
+                    != str(target_adapter_record.get("content_hash") or "")
+                    or str(target_adapter.get("conformance_status") or "").lower()
+                    != "passed"
+                    or shell is None
+                    or shell.get("worker_id") != worker_id
+                    or shell.get("status") != "active"
+                ):
+                    return None
+
+                certification_id = target_candidate_row.get("certification_run_id")
+                approval_id = target_candidate_row.get("approval_record_id")
+                if certification_id is None or approval_id is None:
+                    return None
+                certification = (
+                    await conn.execute(
+                        t.certification_runs.select()
+                        .where(t.certification_runs.c.id == certification_id)
+                        .with_for_update()
+                    )
+                ).mappings().first()
+                approval = (
+                    await conn.execute(
+                        t.approval_records.select()
+                        .where(t.approval_records.c.id == approval_id)
+                        .with_for_update()
+                    )
+                ).mappings().first()
+                if (
+                    certification is None
+                    or certification.get("worker_id") != worker_id
+                    or certification.get("candidate_id") != target_candidate_id
+                    or certification.get("steward_id") != steward_id
+                    or str(certification.get("status") or "").lower() != "passed"
+                    or approval is None
+                    or approval.get("scope_type") != "worker_skill_bundle_candidate"
+                    or approval.get("scope_id") != target_candidate_id
+                    or approval.get("decision") != "APPROVED"
+                    or str(target_candidate_record.get("certification_id") or "")
+                    != str(certification_id)
+                    or str(target_candidate_record.get("approval_record_id") or "")
+                    != str(approval_id)
+                ):
+                    return None
+
+            # All reads and binding checks complete before the first write.
+            current_adapter_update = await conn.execute(
+                t.runtime_adapters.update()
+                .where(
+                    sa.and_(
+                        t.runtime_adapters.c.id == current_adapter_id,
+                        t.runtime_adapters.c.worker_id == worker_id,
+                    )
+                )
+                .values(status="superseded")
+            )
+            current_bundle_update = await conn.execute(
+                t.skill_bundles.update()
+                .where(
+                    sa.and_(
+                        t.skill_bundles.c.id == current_bundle_id,
+                        t.skill_bundles.c.worker_id == worker_id,
+                        t.skill_bundles.c.steward_id == steward_id,
+                    )
+                )
+                .values(status="SUPERSEDED")
+            )
+            if current_adapter_update.rowcount != 1 or current_bundle_update.rowcount != 1:
+                raise RuntimeError("rollback current version binding changed")
+
+            worker_values: dict[str, Any] = {
+                "active_shell_version_id": target_shell_id,
+                "active_adapter_id": target_adapter_id,
+                "active_skill_bundle_id": target_bundle_id,
+                "updated_at": datetime.now(tz=UTC),
+            }
+            steward_values: dict[str, Any] = {
+                "active_skill_bundle_id": target_bundle_id,
+                "active_adapter_id": target_adapter_id,
+                "updated_at": datetime.now(tz=UTC),
+            }
+            if target_candidate_id is None:
+                worker_values["status"] = "INACTIVE"
+                steward_values["status"] = "DEGRADED"
+            else:
+                target_adapter_update = await conn.execute(
+                    t.runtime_adapters.update()
+                    .where(
+                        sa.and_(
+                            t.runtime_adapters.c.id == target_adapter_id,
+                            t.runtime_adapters.c.worker_id == worker_id,
+                        )
+                    )
+                    .values(status="active", conformance_status="passed")
+                )
+                target_bundle_update = await conn.execute(
+                    t.skill_bundles.update()
+                    .where(
+                        sa.and_(
+                            t.skill_bundles.c.id == target_bundle_id,
+                            t.skill_bundles.c.worker_id == worker_id,
+                            t.skill_bundles.c.steward_id == steward_id,
+                        )
+                    )
+                    .values(status="APPROVED")
+                )
+                if target_adapter_update.rowcount != 1 or target_bundle_update.rowcount != 1:
+                    raise RuntimeError("rollback target version binding changed")
+
+            worker_update = await conn.execute(
+                t.worker_registry.update()
+                .where(t.worker_registry.c.id == worker_id)
+                .values(**worker_values)
+            )
+            steward_update = await conn.execute(
+                t.steward_agents.update()
+                .where(
+                    sa.and_(
+                        t.steward_agents.c.id == steward_id,
+                        t.steward_agents.c.worker_id == worker_id,
+                    )
+                )
+                .values(**steward_values)
+            )
+            if worker_update.rowcount != 1 or steward_update.rowcount != 1:
+                raise RuntimeError("rollback pointer binding changed")
+            rollout_update = await conn.execute(
+                t.rollout_records.update()
+                .where(
+                    sa.and_(
+                        t.rollout_records.c.id == rollout_id,
+                        t.rollout_records.c.worker_id == worker_id,
+                        t.rollout_records.c.steward_id == steward_id,
+                        t.rollout_records.c.candidate_id == candidate_id,
+                        t.rollout_records.c.status == expected_status,
+                    )
+                )
+                .values(
+                    status="ROLLED_BACK",
+                    rollback_reason=reason,
+                    completed_at=completed_at,
+                )
+            )
+            if rollout_update.rowcount != 1:
+                raise RuntimeError("rollback rollout compare-and-set failed")
+            if expected_status != "ROLLING_BACK":
+                await conn.execute(
+                    t.rollout_transitions.insert().values(
+                        id=uuid4(),
+                        rollout_id=rollout_id,
+                        from_status=expected_status,
+                        to_status="ROLLING_BACK",
+                        actor=triggered_by,
+                        reason=reason,
+                        evidence={"candidate_id": str(candidate_id)},
+                    )
+                )
+            await conn.execute(
+                t.rollout_transitions.insert().values(
+                    id=uuid4(),
+                    rollout_id=rollout_id,
+                    from_status="ROLLING_BACK",
+                    to_status="ROLLED_BACK",
+                    actor=triggered_by,
+                    reason=reason,
+                    evidence={
+                        "candidate_id": str(candidate_id),
+                        "target_candidate_id": (
+                            str(target_candidate_id)
+                            if target_candidate_id is not None
+                            else None
+                        ),
+                    },
+                )
+            )
+            await conn.execute(
+                t.rollback_records.insert().values(
+                    id=uuid4(),
+                    rollout_id=rollout_id,
+                    worker_id=worker_id,
+                    from_candidate_id=candidate_id,
+                    target_candidate_id=target_candidate_id,
+                    reason=reason,
+                    triggered_by=triggered_by,
+                    evidence={
+                        "steward_id": str(steward_id),
+                        "from_status": expected_status,
+                    },
+                )
+            )
+
+        return {
+            "rollout": {
+                **dict(rollout),
+                "status": "ROLLED_BACK",
+                "rollback_reason": reason,
+                "completed_at": completed_at,
+            },
+            "target_candidate_id": target_candidate_id,
+            "target_bundle_id": target_bundle_id,
+            "target_adapter_id": target_adapter_id,
+            "target_shell_id": target_shell_id,
+        }
 
     async def create_rollback_record(self, *, rollout_id: UUID, worker_id: UUID, reason: str, triggered_by: str, evidence: dict[str, Any] | None = None, from_candidate_id: UUID | None = None, target_candidate_id: UUID | None = None) -> dict[str, Any]:
         values = {"id": uuid4(), "rollout_id": rollout_id, "worker_id": worker_id, "from_candidate_id": from_candidate_id, "target_candidate_id": target_candidate_id, "reason": reason, "triggered_by": triggered_by, "evidence": evidence or {}}
