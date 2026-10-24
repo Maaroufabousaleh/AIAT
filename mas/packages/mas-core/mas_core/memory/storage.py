@@ -9602,8 +9602,24 @@ class AgentStorage:
                 return None
         return await self.get_steward(steward_id)
 
-    async def create_documentation_source(self, *, steward_id: UUID, uri: str, source_type: str = "official", trusted_for_provenance: bool = False, allowed_domains: list[str] | None = None) -> dict[str, Any]:
-        values = {"id": uuid4(), "steward_id": steward_id, "uri": uri, "source_type": source_type, "trusted_for_provenance": trusted_for_provenance, "allowed_domains": allowed_domains or []}
+    async def create_documentation_source(
+        self,
+        *,
+        steward_id: UUID,
+        uri: str,
+        source_type: str = "official",
+        trusted_for_provenance: bool = False,
+        allowed_domains: list[str] | None = None,
+        source_id: UUID | None = None,
+    ) -> dict[str, Any]:
+        values = {
+            "id": source_id or uuid4(),
+            "steward_id": steward_id,
+            "uri": uri,
+            "source_type": source_type,
+            "trusted_for_provenance": trusted_for_provenance,
+            "allowed_domains": allowed_domains or [],
+        }
         async with self.engine.begin() as conn:
             await conn.execute(t.documentation_sources.insert().values(**values))
         return values
@@ -9616,8 +9632,30 @@ class AgentStorage:
             row = (await conn.execute(query)).mappings().first()
         return dict(row) if row else None
 
-    async def create_documentation_snapshot(self, *, source_id: UUID, version: str, content_sha256: str, content_ref: str | None = None, extracted_interfaces: dict[str, Any] | None = None, security_findings: list[str] | None = None, untrusted: bool = True) -> dict[str, Any]:
-        values = {"id": uuid4(), "source_id": source_id, "version": version, "content_sha256": content_sha256, "content_ref": content_ref, "extracted_interfaces": extracted_interfaces or {}, "security_findings": security_findings or [], "untrusted": untrusted}
+    async def create_documentation_snapshot(
+        self,
+        *,
+        source_id: UUID,
+        version: str,
+        content_sha256: str,
+        content_ref: str | None = None,
+        extracted_interfaces: dict[str, Any] | None = None,
+        security_findings: list[str] | None = None,
+        untrusted: bool = True,
+        snapshot_id: UUID | None = None,
+        captured_at: datetime | None = None,
+    ) -> dict[str, Any]:
+        values = {
+            "id": snapshot_id or uuid4(),
+            "source_id": source_id,
+            "version": version,
+            "content_sha256": content_sha256,
+            "content_ref": content_ref,
+            "extracted_interfaces": extracted_interfaces or {},
+            "security_findings": security_findings or [],
+            "untrusted": untrusted,
+            "captured_at": captured_at or datetime.now(tz=UTC),
+        }
         async with self.engine.begin() as conn:
             await conn.execute(t.documentation_snapshots.insert().values(**values))
         return values
@@ -9643,8 +9681,26 @@ class AgentStorage:
             rows = (await conn.execute(query)).mappings().all()
         return [dict(row) for row in rows]
 
-    async def create_capability_snapshot(self, *, worker_id: UUID, version: str, capabilities: dict[str, Any], steward_id: UUID | None = None, evidence_refs: list[str] | None = None) -> dict[str, Any]:
-        values = {"id": uuid4(), "worker_id": worker_id, "steward_id": steward_id, "version": version, "capabilities_json": capabilities, "evidence_refs": evidence_refs or []}
+    async def create_capability_snapshot(
+        self,
+        *,
+        worker_id: UUID,
+        version: str,
+        capabilities: dict[str, Any],
+        steward_id: UUID | None = None,
+        evidence_refs: list[str] | None = None,
+        snapshot_id: UUID | None = None,
+        discovered_at: datetime | None = None,
+    ) -> dict[str, Any]:
+        values = {
+            "id": snapshot_id or uuid4(),
+            "worker_id": worker_id,
+            "steward_id": steward_id,
+            "version": version,
+            "capabilities_json": capabilities,
+            "evidence_refs": evidence_refs or [],
+            "created_at": discovered_at or datetime.now(tz=UTC),
+        }
         async with self.engine.begin() as conn:
             await conn.execute(t.capability_snapshots.insert().values(**values))
         return values

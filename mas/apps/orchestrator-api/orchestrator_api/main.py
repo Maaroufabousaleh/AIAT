@@ -11541,9 +11541,28 @@ async def add_steward_documentation(
     from mas_core.worker_registry.steward import DocumentationSnapshot, DocumentationSource
 
     source = next((item for item in steward.documentation_sources if item.uri == req.uri), None)
+    new_source = source is None
     if source is None:
         source = DocumentationSource(uri=req.uri, trusted=False)
-        steward.documentation_sources.append(source)
+    persisted = None
+    if inspect.iscoroutinefunction(getattr(storage, "create_documentation_source", None)):
+        source_row = await storage.get_documentation_source(
+            steward_id=steward.steward_id,
+            uri=source.uri,
+        )
+        if source_row is None:
+            source_row = await storage.create_documentation_source(
+                steward_id=steward.steward_id,
+                uri=source.uri,
+                source_type=source.source_type,
+                trusted_for_provenance=False,
+                allowed_domains=list(source.allowed_domains),
+                source_id=source.source_id,
+            )
+        # Storage is authoritative if a prior process created this source.
+        # Keep the shared in-memory object (and snapshots that reference it)
+        # aligned with its durable identity before creating another snapshot.
+        source.source_id = UUID(str(source_row["id"]))
     snapshot = DocumentationSnapshot(
         source=source,
         version=req.version,
@@ -11553,13 +11572,21 @@ async def add_steward_documentation(
         security_findings=tuple(req.security_findings),
         untrusted=True,
     )
-    steward.add_documentation_snapshot(snapshot)
-    persisted = None
     if inspect.iscoroutinefunction(getattr(storage, "create_documentation_source", None)):
-        source_row = await storage.get_documentation_source(steward_id=steward.steward_id, uri=source.uri)
-        if source_row is None:
-            source_row = await storage.create_documentation_source(steward_id=steward.steward_id, uri=source.uri, source_type=source.source_type, trusted_for_provenance=False, allowed_domains=list(source.allowed_domains))
-        persisted = await storage.create_documentation_snapshot(source_id=source_row["id"], version=req.version, content_sha256=req.content_sha256, content_ref=req.content_ref, extracted_interfaces=req.extracted_interfaces, security_findings=req.security_findings, untrusted=True)
+        persisted = await storage.create_documentation_snapshot(
+            source_id=source.source_id,
+            version=req.version,
+            content_sha256=req.content_sha256,
+            content_ref=req.content_ref,
+            extracted_interfaces=req.extracted_interfaces,
+            security_findings=req.security_findings,
+            untrusted=True,
+            snapshot_id=snapshot.snapshot_id,
+            captured_at=snapshot.captured_at,
+        )
+    if new_source:
+        steward.documentation_sources.append(source)
+    steward.add_documentation_snapshot(snapshot)
     return {"snapshot": snapshot.model_dump(mode="json"), "persisted": _serialize(persisted) if persisted else None}
 
 
@@ -11578,7 +11605,6 @@ async def record_steward_capabilities(
     from mas_core.worker_registry.steward import CapabilitySnapshot
 
     snapshot = CapabilitySnapshot(version=str(payload.get("version") or "1.0.0"), capabilities=WorkerCapabilities.model_validate(payload.get("capabilities") or {}), evidence_refs=tuple(str(value) for value in payload.get("evidence_refs") or []))
-    steward.record_capabilities(snapshot)
     persisted = None
     if inspect.iscoroutinefunction(getattr(storage, "create_capability_snapshot", None)):
         persisted = await storage.create_capability_snapshot(
@@ -11587,7 +11613,10 @@ async def record_steward_capabilities(
             version=snapshot.version,
             capabilities=snapshot.capabilities.model_dump(mode="json"),
             evidence_refs=list(snapshot.evidence_refs),
+            snapshot_id=snapshot.snapshot_id,
+            discovered_at=snapshot.discovered_at,
         )
+    steward.record_capabilities(snapshot)
     result = snapshot.model_dump(mode="json")
     result["persisted"] = _serialize(persisted) if persisted else None
     return result

@@ -1432,6 +1432,56 @@ class TestAgentStorageCRUD:
         with pytest.raises(RuntimeError, match="not connected"):
             _ = storage.engine
 
+    @pytest.mark.asyncio
+    async def test_steward_snapshot_writers_preserve_supplied_ids_and_times(self):
+        from sqlalchemy.dialects import postgresql
+
+        storage, engine = self._make_storage()
+        conn = engine._mock_conn
+        conn.execute = AsyncMock()
+        worker_id = uuid4()
+        steward_id = uuid4()
+        source_id = uuid4()
+        documentation_snapshot_id = uuid4()
+        capability_snapshot_id = uuid4()
+        captured_at = datetime(2026, 10, 18, 12, 30, tzinfo=UTC)
+        discovered_at = datetime(2026, 10, 18, 12, 31, tzinfo=UTC)
+
+        source = await storage.create_documentation_source(
+            steward_id=steward_id,
+            uri="https://example.invalid/docs",
+            source_id=source_id,
+        )
+        documentation = await storage.create_documentation_snapshot(
+            source_id=source_id,
+            version="1.0",
+            content_sha256="a" * 64,
+            snapshot_id=documentation_snapshot_id,
+            captured_at=captured_at,
+        )
+        capability = await storage.create_capability_snapshot(
+            worker_id=worker_id,
+            steward_id=steward_id,
+            version="1.0",
+            capabilities={},
+            snapshot_id=capability_snapshot_id,
+            discovered_at=discovered_at,
+        )
+
+        assert source["id"] == source_id
+        assert documentation["id"] == documentation_snapshot_id
+        assert documentation["captured_at"] == captured_at
+        assert capability["id"] == capability_snapshot_id
+        assert capability["created_at"] == discovered_at
+
+        statements = [call.args[0] for call in conn.execute.await_args_list]
+        params = [statement.compile(dialect=postgresql.dialect()).params for statement in statements]
+        assert params[0]["id"] == source_id
+        assert params[1]["id"] == documentation_snapshot_id
+        assert params[1]["captured_at"] == captured_at
+        assert params[2]["id"] == capability_snapshot_id
+        assert params[2]["created_at"] == discovered_at
+
 
 @pytest.mark.asyncio
 async def test_observe_agent_profile_clamps_database_numeric_bounds():
