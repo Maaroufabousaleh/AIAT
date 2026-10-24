@@ -29,6 +29,14 @@ found, stop the commit, keep the value out of chat and logs, remove it safely
 from the staged change without disturbing unrelated work, and notify the
 operator; treat an already exposed credential as requiring rotation.
 
+## GitHub delivery
+
+After reviewing the complete staged diff for sensitive data, running the
+available secret scanner, and passing appropriate validation, commit and push
+completed, scoped changes to the configured GitHub remote on the active
+feature branch. Preserve unrelated work, keep local secrets and private
+operational artifacts out of Git, and do not force-push or bypass failed checks.
+
 ## Licence handling
 
 Licence information is metadata only for this personal instance.
