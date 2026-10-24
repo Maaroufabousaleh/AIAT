@@ -67,6 +67,7 @@ def _patch_env(monkeypatch):
     monkeypatch.setenv("MAS_API_KEY", "test-mas-key")
     monkeypatch.setenv("AIAT_OPERATOR_API_KEY", "test-operator-key")
     monkeypatch.setenv("PM_GATEWAY_API_KEY", "test-gateway-key")
+    monkeypatch.setenv("AIAT_STARTUP_MAINTENANCE", "false")
     monkeypatch.delenv("GATEWAY_API_KEY", raising=False)
 
 
@@ -87,6 +88,7 @@ async def client(monkeypatch):
 
     # Reset cached system state to avoid 503 leaks between tests
     app.state._cached_system_state = "RUNNING"
+    app.state.startup_maintenance = False
     app.state.controller = _fresh_test_controller()
 
     try:
@@ -99,4 +101,5 @@ async def client(monkeypatch):
     finally:
         app.state.controller = None
         app.state.storage = None
+        app.state.startup_maintenance = False
         app.state._cached_system_state = "RUNNING"

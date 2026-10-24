@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 MAS_ROOT = Path(__file__).resolve().parents[2]
@@ -69,6 +72,7 @@ def test_compose_wrapper_preserves_bootstrap_environment_over_dotenv(tmp_path):
     env_file = tmp_path / ".env"
     env_file.write_text(
         "AIAT_OMNIROUTE_BOOTSTRAP=true\n"
+        "AIAT_STARTUP_MAINTENANCE=false\n"
         "AIAT_DEV_PROMETHEUS_PORT=9090\n"
         "MAS_LOCAL_TEST_VALUE=from-file\n",
         encoding="utf-8",
@@ -77,12 +81,14 @@ def test_compose_wrapper_preserves_bootstrap_environment_over_dotenv(tmp_path):
         function.group(0)
         + '\nload_env_file "$1"\n'
         + 'printf "%s\\n" "$AIAT_OMNIROUTE_BOOTSTRAP" '
-        + '"$AIAT_DEV_PROMETHEUS_PORT" "$MAS_LOCAL_TEST_VALUE"\n'
+        + '"$AIAT_DEV_PROMETHEUS_PORT" "$MAS_LOCAL_TEST_VALUE" '
+        + '"$AIAT_STARTUP_MAINTENANCE"\n'
     )
     environment = os.environ.copy()
     environment.update(
         AIAT_OMNIROUTE_BOOTSTRAP="false",
         AIAT_DEV_PROMETHEUS_PORT="18036",
+        AIAT_STARTUP_MAINTENANCE="true",
     )
     result = subprocess.run(
         ["bash", "-c", command, "test-wrapper", str(env_file)],
@@ -92,7 +98,62 @@ def test_compose_wrapper_preserves_bootstrap_environment_over_dotenv(tmp_path):
         env=environment,
     )
 
-    assert result.stdout.splitlines() == ["false", "18036", "from-file"]
+    assert result.stdout.splitlines() == ["false", "18036", "from-file", "true"]
+
+
+def test_orchestrator_startup_maintenance_compose_contract(tmp_path):
+    base_compose = yaml.safe_load(
+        (COMPOSE_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    )
+    dev_compose = yaml.safe_load(
+        (COMPOSE_ROOT / "docker-compose.dev.yml").read_text(encoding="utf-8")
+    )
+    setting = "AIAT_STARTUP_MAINTENANCE"
+    expression = "${AIAT_STARTUP_MAINTENANCE:-false}"
+
+    assert base_compose["services"]["orchestrator-api"]["environment"][setting] == expression
+    for compose in (base_compose, dev_compose):
+        assert all(
+            setting not in service.get("environment", {})
+            for name, service in compose.get("services", {}).items()
+            if name != "orchestrator-api"
+        )
+    assert setting not in dev_compose["services"]["orchestrator-api"].get("environment", {})
+
+    docker = shutil.which("docker")
+    if docker is None:
+        pytest.skip("Docker Compose is unavailable for interpolation verification")
+    compose_file = tmp_path / "maintenance-compose.yml"
+    compose_file.write_text(
+        yaml.safe_dump(
+            {
+                "services": {
+                    "orchestrator-api": {
+                        "image": "local/orchestrator:test",
+                        "environment": {setting: expression},
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    for override, expected in ((None, "false"), ("true", "true")):
+        environment = {
+            "PATH": os.environ.get("PATH", ""),
+            "COMPOSE_DISABLE_ENV_FILE": "1",
+        }
+        if override is not None:
+            environment[setting] = override
+        rendered = subprocess.run(
+            [docker, "compose", "-f", str(compose_file), "config", "--format", "json"],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=environment,
+        )
+        service_env = json.loads(rendered.stdout)["services"]["orchestrator-api"]["environment"]
+        assert service_env == {setting: expected}
 
 
 def test_migrate_no_deps_passes_dsn_without_compose_interpolation():

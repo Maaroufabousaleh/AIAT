@@ -593,6 +593,10 @@ services:
       message-router:
         condition: service_started
     environment:
+      # Maintenance mode must be explicitly passed through Compose so an
+      # operator can bring the API up for read-only inspection without
+      # enabling autonomous startup work. Normal startup remains the default.
+      AIAT_STARTUP_MAINTENANCE: "${AIAT_STARTUP_MAINTENANCE:-false}"
       # Credential resolution must fail closed in the deployed stack.  Local
       # unit tests that omit MAS_ENVIRONMENT still retain the manager's
       # development-only fallback outside Compose.

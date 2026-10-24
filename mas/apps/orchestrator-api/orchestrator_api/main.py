@@ -27,7 +27,7 @@ import re
 import shutil
 import ssl
 import time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from enum import Enum
@@ -52,6 +52,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from starlette.routing import Match
 
 from mas_core.company_manifest import (
     DEFAULT_COMPANY_ID,
@@ -3230,9 +3231,262 @@ async def resume_project(project_id: UUID) -> dict[str, Any]:
 # ── App lifespan ─────────────────────────────────────────────────────────────
 
 
+_STARTUP_MAINTENANCE_ENV = "AIAT_STARTUP_MAINTENANCE"
+_MAINTENANCE_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+# Maintenance reads are deliberately allowlisted by exact route template.
+# A newly added GET/HEAD route is denied until its complete helper path is
+# audited; this protects against lazy DDL, proxy calls, and read-side effects.
+# Credential/privileged audit routes (lazy DDL), identity proxies, repository
+# and upstream checks, provider probes, model-list proxies, and container logs
+# are intentionally absent from this inspection surface.
+_MAINTENANCE_READ_PATH_TEMPLATES = (
+    # Liveness, API description, metrics, and bounded operator status.
+    "/health",
+    "/docs",
+    "/docs/oauth2-redirect",
+    "/openapi.json",
+    "/metrics",
+    "/system/status",
+    "/system/diagnostics",
+    # Canonical project, assignment, and evidence views. Repository status is
+    # excluded because its handler invokes Tool Service and persists a snapshot.
+    "/projects",
+    "/projects/{project_id}",
+    "/projects/{project_id}/self-improvement",
+    "/projects/{project_id}/overview",
+    "/projects/{project_id}/evidence",
+    "/projects/{project_id}/artifacts",
+    # Artifact reads are size-bounded. Document preview/download is excluded:
+    # it reads raw object bytes without a converter but has no byte-size cap.
+    "/projects/{project_id}/artifacts/{artifact_id}/download",
+    "/artifacts/{artifact_id}",
+    "/observability/traces/{trace_id}",
+    "/observability/incidents/{trace_id}",
+    "/observability/retention/plan",
+    "/observability/slo",
+    "/observability/capacity/forecast",
+    "/projects/{project_id}/usage/events",
+    "/usage/events/{event_id}",
+    "/projects/{project_id}/issues",
+    "/projects/{project_id}/audit-timeline",
+    "/projects/{project_id}/workspace",
+    "/projects/{project_id}/allowed-transitions",
+    "/projects/{project_id}/state-history",
+    "/approvals/project-decisions",
+    "/projects/{project_id}/pending-decisions",
+    "/projects/{project_id}/documents",
+    "/projects/{project_id}/documents/{doc_id}",
+    "/projects/{project_id}/review-sessions",
+    "/projects/{project_id}/review-sessions/{session_id}",
+    "/projects/{project_id}/feasibility",
+    "/projects/{project_id}/sprints",
+    "/projects/{project_id}/sprints/{sprint_id}",
+    "/projects/{project_id}/kpi",
+    "/projects/{project_id}/context",
+    "/projects/{project_id}/context/{item_id}",
+    "/projects/{project_id}/flow-instance",
+    "/projects/{project_id}/pm-bindings",
+    "/projects/{project_id}/issues/{issue_id}",
+    "/projects/{project_id}/issues/{issue_id}/comments",
+    "/projects/{project_id}/issues/{issue_id}/links",
+    "/evidence-policies",
+    "/projects/{project_id}/evidence/package",
+    # Local worker registry, steward snapshots, and durable WorkerRun evidence.
+    "/teams",
+    "/runtimes",
+    "/capabilities",
+    "/capabilities/workers",
+    "/capabilities/workers/{worker_id}/health",
+    "/capabilities/workers/{worker_id}/evaluations",
+    "/worker-contract/version",
+    "/capabilities/workers/{worker_id}/steward",
+    "/stewards",
+    "/capabilities/workers/{worker_id}/steward/monitoring",
+    "/capabilities/workers/{worker_id}/steward/candidates",
+    "/model-profiles",
+    "/model-profiles/catalogue",
+    "/executive/reconciliation",
+    "/executive/views/{role}",
+    "/executive/actions/catalogue",
+    "/workers/runs",
+    "/workers/host/local/health",
+    "/workers/runs/{run_id}/host-binding",
+    "/workers/runs/{run_id}/tool-effects",
+    "/workers/runs/{run_id}",
+    "/workers/runs/{run_id}/events",
+    "/workers/runs/{run_id}/transitions",
+    "/workers/runs/{run_id}/artifacts",
+    "/workers/runs/{run_id}/usage",
+    "/workers/runs/{run_id}/checkpoints",
+    # Read-only company and flow records used to inspect project bindings.
+    "/companies",
+    "/companies/{company_id}",
+    "/companies/{company_id}/departments",
+    "/companies/{company_id}/assignments",
+    "/companies/{company_id}/budgets",
+    "/companies/{company_id}/budgets/{budget_key}",
+    "/companies/{company_id}/budget-reservations",
+    "/companies/{company_id}/manifest/history",
+    "/system/company",
+    "/system/org-graph",
+    "/flow-templates",
+    "/flows/node-schemas",
+    "/flows",
+    "/flows/instances",
+    "/flows/{flow_id}",
+    "/flows/{flow_id}/export",
+    "/flows/instances/active",
+    "/flows/instances/{instance_id}",
+    "/flows/instances/{instance_id}/executions",
+    "/integrations/delta-readiness",
+    "/dashboard/access",
+    "/dashboard/sections/{section}",
+)
+
+
+_MAINTENANCE_READ_PATHS = frozenset(_MAINTENANCE_READ_PATH_TEMPLATES)
+
+
+def _startup_maintenance_enabled() -> bool:
+    """Parse the optional maintenance flag without accepting ambiguous values."""
+
+    value = os.getenv(_STARTUP_MAINTENANCE_ENV)
+    if value is None or value == "false":
+        return False
+    if value == "true":
+        return True
+    raise RuntimeError(f"{_STARTUP_MAINTENANCE_ENV} must be exactly 'true' or 'false'")
+
+
+class StartupMaintenanceMiddleware:
+    """Block consequential HTTP and all WebSocket activity in maintenance mode."""
+
+    def __init__(self, app: Any, *, app_state: Any, router: Any) -> None:
+        self.app = app
+        self.app_state = app_state
+        self.router = router
+
+    def _read_route_is_allowlisted(self, scope: dict[str, Any], path: str, method: str) -> bool:
+        route_scope = dict(scope)
+        route_scope["path"] = path
+        if method == "HEAD":
+            route_scope["method"] = "GET"
+        for route in self.router.routes:
+            match, _child_scope = route.matches(route_scope)
+            if match is Match.FULL:
+                return getattr(route, "path", None) in _MAINTENANCE_READ_PATHS
+        return False
+
+    async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+        if not getattr(self.app_state, "startup_maintenance", False):
+            await self.app(scope, receive, send)
+            return
+
+        scope_type = scope.get("type")
+        if scope_type == "websocket":
+            await send({"type": "websocket.close", "code": 1013})
+            return
+        if scope_type != "http":
+            await self.app(scope, receive, send)
+            return
+
+        method = str(scope.get("method") or "").upper()
+        path = str(scope.get("path") or "/")
+        if path.startswith("/api/v1/"):
+            path = path[7:]
+
+        blocked_read = method in {"GET", "HEAD"} and not self._read_route_is_allowlisted(
+            scope,
+            path,
+            method,
+        )
+        if method not in _MAINTENANCE_SAFE_METHODS or blocked_read:
+            response = JSONResponse(
+                status_code=503,
+                headers={"X-AIAT-Startup-Mode": "maintenance"},
+                content={
+                    "code": "STARTUP_MAINTENANCE",
+                    "detail": "The orchestrator is in startup maintenance mode.",
+                },
+            )
+            await response(scope, receive, send)
+            return
+
+        await self.app(scope, receive, send)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # noqa: ANN001
     """Startup: connect to DB, run resume, start watchdog. Shutdown: cleanup."""
+
+    maintenance_mode = _startup_maintenance_enabled()
+    app.state.startup_maintenance = maintenance_mode
+
+    if maintenance_mode:
+        storage = AgentStorage(dsn=PGBOUNCER_DSN)
+        app.state.storage = storage
+        app.state.controller = WorkflowController(
+            storage=storage,
+            event_publisher=publish_system_event,
+        )
+        app.state.dashboard_acl = dict(DEFAULT_DASHBOARD_SECTION_ACL)
+        app.state.watchdog_config = WatchdogConfig()
+        app.state.boot_at = datetime.now(tz=UTC)
+        app.state.stop_event = anyio.Event()
+        app.state.watchdog_task = None
+        app.state.scheduler = None
+        app.state.ceo_command_tasks = set()
+        app.state.ceo_command_task_group = None
+        app.state.worker_run_tasks = set()
+        app.state.local_host_queue_config = None
+        app.state.local_host_queue_runtime = None
+
+        try:
+            await storage.connect()
+        except BaseException as exc:
+            with suppress(Exception):
+                await storage.close()
+            if isinstance(exc, Exception):
+                raise RuntimeError("Could not connect storage for startup maintenance") from None
+            raise
+
+        try:
+            persisted_dashboard_acl = await storage.get_config(DASHBOARD_SECTION_ACL_CONFIG_KEY)
+        except BaseException as exc:
+            with suppress(Exception):
+                await storage.close()
+            if isinstance(exc, Exception):
+                raise RuntimeError(
+                    "Could not load dashboard access policy for startup maintenance"
+                ) from None
+            raise
+        try:
+            if persisted_dashboard_acl:
+                app.state.dashboard_acl = normalize_dashboard_acl(persisted_dashboard_acl)
+        except ValueError:
+            # Keep the same restrictive fallback used by normal startup when
+            # an operator ACL document is malformed.
+            app.state.dashboard_acl = dict(DEFAULT_DASHBOARD_SECTION_ACL)
+        except BaseException as exc:
+            with suppress(Exception):
+                await storage.close()
+            if isinstance(exc, Exception):
+                raise RuntimeError(
+                    "Could not load dashboard access policy for startup maintenance"
+                ) from None
+            raise
+
+        try:
+            yield
+        finally:
+            try:
+                await storage.close()
+            except Exception as exc:
+                logger.warning(
+                    "startup_maintenance_storage_close_failed",
+                    extra={"error_type": type(exc).__name__},
+                )
+        return
 
     # The recovery queue must work under every ASGI/AnyIO backend we support.
     # Keeping one task group alive for the application lifespan gives restart
@@ -3604,7 +3858,10 @@ async def propagate_trace_context(request: Request, call_next):  # type: ignore[
     finally:
         storage = getattr(request.app.state, "storage", None)
         recorder = getattr(storage, "record_api_request_observation", None)
-        if inspect.iscoroutinefunction(recorder):
+        if (
+            not getattr(request.app.state, "startup_maintenance", False)
+            and inspect.iscoroutinefunction(recorder)
+        ):
             route = request.scope.get("route")
             route_template = getattr(route, "path", None)
             try:
@@ -3628,6 +3885,7 @@ async def propagate_trace_context(request: Request, call_next):  # type: ignore[
 # Pre-initialize state defaults so that test monkeypatching and
 # non-lifespan access paths don't raise AttributeError.
 app.state.storage = None
+app.state.startup_maintenance = False
 app.state.dashboard_acl = dict(DEFAULT_DASHBOARD_SECTION_ACL)
 app.state.controller = WorkflowController(storage=None, event_publisher=publish_system_event)
 app.state.watchdog_config = WatchdogConfig()
@@ -4006,7 +4264,10 @@ async def _ensure_workflow_approval_gate(
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok"}
+    result = {"status": "ok"}
+    if getattr(app.state, "startup_maintenance", False):
+        result["startup_mode"] = "maintenance"
+    return result
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -7925,7 +8186,7 @@ async def system_status() -> dict[str, Any]:
         except ValueError:
             pass
 
-    return {
+    result = {
         "state": state,
         "active_projects": active_count,
         "total_projects": total_count,
@@ -7935,6 +8196,9 @@ async def system_status() -> dict[str, Any]:
         if default_company_seeded == "true"
         else ("needs_migration_config" if state == "UNKNOWN" and total_count > 0 else "not_seeded"),
     }
+    if getattr(app.state, "startup_maintenance", False):
+        result["startup_mode"] = "maintenance"
+    return result
 
 
 def _diagnostic_latency(started: float) -> float:
@@ -8054,12 +8318,15 @@ async def system_diagnostics() -> dict[str, Any]:
         if all(item.get("status") == "ok" for item in dependencies.values())
         else "degraded"
     )
-    return {
+    result = {
         "status": overall,
         "state": state,
         "checked_at": datetime.now(tz=UTC).isoformat(),
         "dependencies": dependencies,
     }
+    if getattr(app.state, "startup_maintenance", False):
+        result["startup_mode"] = "maintenance"
+    return result
 
 
 async def _apply_default_company_manifest(storage: AgentStorage) -> dict[str, Any] | None:
@@ -24823,3 +25090,11 @@ async def list_canonical_issue_links(
 from orchestrator_api.project_evidence_routes import router as project_evidence_router
 
 app.include_router(project_evidence_router)
+
+# Added after all routes and HTTP middleware so the maintenance boundary wraps
+# the complete control plane and can reject WebSockets before route dispatch.
+app.add_middleware(
+    StartupMaintenanceMiddleware,
+    app_state=app.state,
+    router=app.router,
+)
