@@ -434,3 +434,233 @@ async def test_api_does_not_add_file_worker_conformance_to_other_workers(
     assert stored_capabilities["extensions"] == declared["extensions"]
     assert "aiat.conformance" not in stored_capabilities["extensions"]
     steward.record_capabilities.assert_called_once()
+
+
+def _candidate_with_persisted_pass(*, rejected: bool = False):
+    from mas_core.worker_registry.steward import (
+        CandidateIntakeStatus,
+        ExternalProvenance,
+        ExternalWorkerSteward,
+    )
+
+    steward = ExternalWorkerSteward(
+        worker_id=str(WORKER_ID),
+        provenance=ExternalProvenance(
+            canonical_source_repository="https://github.com/example/worker",
+            source_provider="github",
+            exact_release="1.0.0",
+            transport_type="process",
+            security_scan_status="passed",
+        ),
+    )
+    candidate = steward.generate_candidate(
+        semantic_version="1.0.0",
+        adapter_version="1.0.0",
+        upstream_compatibility_range="==1.0.0",
+    )
+    for stage in (
+        CandidateIntakeStatus.SOURCE_REVIEW,
+        CandidateIntakeStatus.SECURITY_REVIEW,
+        CandidateIntakeStatus.INTERFACE_RESEARCH,
+        CandidateIntakeStatus.GENERATED,
+        CandidateIntakeStatus.CERTIFYING,
+    ):
+        steward.advance_candidate(candidate.candidate_id, stage)
+    certification = steward.certify_candidate(
+        candidate.candidate_id,
+        conformance={"passed": True},
+        checks={},
+    )
+    assert certification.passed
+    if rejected:
+        candidate.intake_status = CandidateIntakeStatus.REJECTED
+    return steward, candidate, certification
+
+
+@pytest.mark.anyio
+async def test_candidate_approval_rejects_failed_lifecycle_before_writing_approval(
+    client, monkeypatch
+) -> None:
+    """A cached pass cannot approve a candidate already in a rejected stage."""
+    from orchestrator_api import main
+
+    from mas_core.worker_registry.steward import CandidateIntakeStatus
+
+    steward, candidate, certification = _candidate_with_persisted_pass(rejected=True)
+    persisted_candidate = {
+        "id": candidate.candidate_id,
+        "worker_id": WORKER_ID,
+        "intake_status": CandidateIntakeStatus.REJECTED.value,
+        "certification_run_id": certification.certification_id,
+        "approval_record_id": None,
+        "evidence_json": {"candidate_record": candidate.model_dump(mode="json")},
+    }
+    storage = MagicMock()
+    storage.get_skill_bundle_candidate = AsyncMock(return_value=persisted_candidate)
+    storage.create_approval_record = AsyncMock(return_value={"id": UUID("00000000-0000-4000-a000-0000000000d1")})
+    monkeypatch.setattr(main, "_storage", lambda: storage)
+    monkeypatch.setattr(main, "_steward_runtime", AsyncMock(return_value=steward))
+    monkeypatch.setattr(main, "_worker_steward_runtimes", {})
+
+    response = await client.post(
+        f"/capabilities/workers/{WORKER_ID}/steward/candidates/{candidate.candidate_id}/approve",
+        headers={"X-API-Key": "test-operator-key"},
+        json={
+            "decided_by": "forged-operator",
+            "reason": "caller claims this is approved",
+            "evidence": {"passed": True},
+            "passed": True,
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "CANDIDATE_NOT_APPROVABLE"
+    assert candidate.intake_status is CandidateIntakeStatus.REJECTED
+    assert candidate.approval_record_id is None
+    storage.create_approval_record.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_candidate_approval_rejects_caller_pass_without_persisted_certification(
+    client, monkeypatch
+) -> None:
+    """A request pass flag cannot replace the durable server certification row."""
+    from orchestrator_api import main
+
+    steward, candidate, certification = _candidate_with_persisted_pass()
+    persisted_candidate = {
+        "id": candidate.candidate_id,
+        "worker_id": WORKER_ID,
+        "intake_status": candidate.intake_status.value,
+        "certification_run_id": certification.certification_id,
+        "approval_record_id": None,
+        "evidence_json": {"candidate_record": candidate.model_dump(mode="json")},
+    }
+    storage = MagicMock()
+    storage.get_skill_bundle_candidate = AsyncMock(return_value=persisted_candidate)
+    storage.get_worker = AsyncMock(
+        return_value={"id": WORKER_ID, "name": "external_worker"}
+    )
+    storage.list_certification_runs = AsyncMock(return_value=[])
+    storage.create_approval_record = AsyncMock()
+    monkeypatch.setattr(main, "_storage", lambda: storage)
+    monkeypatch.setattr(main, "_steward_runtime", AsyncMock(return_value=steward))
+    monkeypatch.setattr(main, "_worker_steward_runtimes", {})
+
+    response = await client.post(
+        f"/capabilities/workers/{WORKER_ID}/steward/candidates/{candidate.candidate_id}/approve",
+        headers={"X-API-Key": "test-operator-key"},
+        json={
+            "decided_by": "forged-operator",
+            "reason": "caller claims this is approved",
+            "passed": True,
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "CANDIDATE_CERTIFICATION_EVIDENCE_INVALID"
+    assert candidate.intake_status.value == "CERTIFYING"
+    assert candidate.approval_record_id is None
+    storage.create_approval_record.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_candidate_approval_uses_persisted_certification_and_authenticated_actor(
+    client, monkeypatch
+) -> None:
+    """Approval is a separate operator decision backed by a persisted pass."""
+    from orchestrator_api import main
+
+    steward, candidate, certification = _candidate_with_persisted_pass()
+    persisted_candidate = {
+        "id": candidate.candidate_id,
+        "worker_id": WORKER_ID,
+        "skill_bundle_id": candidate.bundle.bundle_id,
+        "adapter_id": candidate.adapter.adapter_id,
+        "intake_status": candidate.intake_status.value,
+        "certification_run_id": certification.certification_id,
+        "approval_record_id": None,
+        "evidence_json": {"candidate_record": candidate.model_dump(mode="json")},
+    }
+    storage = MagicMock()
+    storage.get_skill_bundle_candidate = AsyncMock(return_value=persisted_candidate)
+    storage.get_worker = AsyncMock(
+        return_value={"id": WORKER_ID, "name": "external_worker"}
+    )
+    storage.list_certification_runs = AsyncMock(
+        return_value=[
+            {
+                "id": certification.certification_id,
+                "worker_id": WORKER_ID,
+                "candidate_id": candidate.candidate_id,
+                "status": "passed",
+            }
+        ]
+    )
+    async def approve_atomically(**kwargs):
+        # The route must not expose the proposed approval in its shared runtime
+        # cache while the durable transaction is pending.
+        assert steward.candidates[candidate.candidate_id].intake_status.value == "CERTIFYING"
+        assert kwargs["approval"]["decided_by"] == "operator"
+        approval_id = kwargs["approval"]["id"]
+        approved_record = kwargs["candidate_record_after"]
+        approved_row = {
+            **persisted_candidate,
+            "intake_status": "APPROVED",
+            "approval_record_id": approval_id,
+            "evidence_json": {"candidate_record": approved_record},
+        }
+        return {
+            "candidate": approved_row,
+            "approval": kwargs["approval"],
+            "idempotent": False,
+        }
+
+    storage.approve_steward_candidate_atomically = AsyncMock(
+        side_effect=approve_atomically
+    )
+    storage.create_approval_record = AsyncMock()
+    storage.update_skill_bundle_candidate = AsyncMock()
+    storage.update_skill_bundle = AsyncMock()
+    storage.update_runtime_adapter = AsyncMock()
+    storage.update_worker_config = AsyncMock()
+    monkeypatch.setattr(main, "_storage", lambda: storage)
+    monkeypatch.setattr(main, "_steward_runtime", AsyncMock(return_value=steward))
+    monkeypatch.setattr(main, "_worker_steward_runtimes", {})
+
+    response = await client.post(
+        f"/capabilities/workers/{WORKER_ID}/steward/candidates/{candidate.candidate_id}/approve",
+        headers={"X-API-Key": "test-operator-key"},
+        json={
+            "decided_by": "forged-operator",
+            "reason": "operator reviewed the candidate",
+            "evidence": {"review": "complete"},
+            "passed": True,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["intake_status"] == "APPROVED"
+    storage.approve_steward_candidate_atomically.assert_awaited_once()
+    assert response.json()["approval_record_id"] == str(
+        storage.approve_steward_candidate_atomically.await_args.kwargs["approval"]["id"]
+    )
+    assert (
+        storage.approve_steward_candidate_atomically.await_args.kwargs[
+            "approval"
+        ]["decided_by"]
+        == "operator"
+    )
+    assert (
+        storage.approve_steward_candidate_atomically.await_args.kwargs[
+            "approval"
+        ]["decided_by"]
+        != "forged-operator"
+    )
+    storage.create_approval_record.assert_not_awaited()
+    assert storage.list_certification_runs.await_args.args == (WORKER_ID,)
+    storage.update_skill_bundle_candidate.assert_not_awaited()
+    storage.update_skill_bundle.assert_not_awaited()
+    storage.update_runtime_adapter.assert_not_awaited()
+    storage.update_worker_config.assert_not_awaited()
+    assert steward.candidates[candidate.candidate_id].intake_status.value == "APPROVED"

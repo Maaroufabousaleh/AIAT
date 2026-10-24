@@ -625,6 +625,7 @@ async def test_approval_rejects_candidate_with_stale_embedded_scan_before_any_wr
 
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "SECURITY_SCAN_EVIDENCE_STALE"
+    storage.list_certification_runs.assert_not_awaited()
     storage.approve_first_party_candidate_atomically.assert_not_awaited()
     storage.create_approval_record.assert_not_awaited()
     storage.update_skill_bundle_candidate.assert_not_awaited()

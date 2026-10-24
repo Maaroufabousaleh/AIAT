@@ -12398,12 +12398,39 @@ async def approve_steward_candidate(
     steward = await _steward_runtime(storage, worker_id)
     if steward is None:
         raise HTTPException(404, "Dedicated Steward Agent not found")
+    if str(steward.worker_id) != str(worker_id):
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(404, "Dedicated Steward Agent not found")
     persisted_candidate = await storage.get_skill_bundle_candidate(candidate_id)
     if persisted_candidate is None:
         raise HTTPException(404, "Persisted candidate not found")
     candidate = steward.candidates.get(candidate_id)
     if candidate is None:
         raise HTTPException(404, "Candidate not found")
+    persisted_candidate_payload = _governance_dict(persisted_candidate)
+    persisted_candidate_record = _candidate_record_from_row(persisted_candidate)
+    if (
+        str(candidate.candidate_id) != str(candidate_id)
+        or str(candidate.worker_id) != str(worker_id)
+        or str(persisted_candidate_payload.get("id") or "") != str(candidate_id)
+        or str(persisted_candidate_payload.get("worker_id") or "") != str(worker_id)
+        or not persisted_candidate_record
+        or str(persisted_candidate_record.get("candidate_id") or "") != str(candidate_id)
+        or str(persisted_candidate_record.get("worker_id") or "") != str(worker_id)
+    ):
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(
+            404,
+            {
+                "code": "CANDIDATE_WORKER_BINDING_MISMATCH",
+                "message": "the persisted candidate is unavailable or does not belong to the selected worker",
+            },
+        )
+    candidate_lifecycle = _candidate_lifecycle_snapshot(
+        persisted_candidate,
+        persisted_candidate_record,
+        candidate,
+    )
     certification = (
         steward.certifications.get(candidate.certification_id)
         if candidate.certification_id is not None
@@ -12411,8 +12438,24 @@ async def approve_steward_candidate(
     )
     if certification is None or not certification.passed:
         raise HTTPException(409, "Candidate approval requires a passed server-run certification")
+    if candidate_lifecycle["intake_status"] not in {"CERTIFYING", "APPROVED"}:
+        raise HTTPException(
+            409,
+            {
+                "code": "CANDIDATE_NOT_APPROVABLE",
+                "message": "a rejected or blocked candidate cannot be approved",
+            },
+        )
     current_worker = await storage.get_worker(worker_id)
-    if _is_first_party_candidate(current_worker, candidate):
+    if not isinstance(current_worker, dict) or str(current_worker.get("id") or "") != str(worker_id):
+        raise HTTPException(404, "Worker not found")
+    first_party_candidate = _is_first_party_candidate(current_worker, candidate)
+    source_state = None
+    if first_party_candidate:
+        # Validate the current source-bound scan before generic persisted
+        # certification checks so stale worker/source evidence receives its
+        # specific fail-closed result. The certification row is checked against
+        # this identity immediately below.
         source_state = await _first_party_candidate_source_state(
             storage,
             worker_id=worker_id,
@@ -12431,16 +12474,17 @@ async def approve_steward_candidate(
                     "message": "a rejected or blocked candidate cannot be approved",
                 },
             )
-        list_certifications = getattr(storage, "list_certification_runs", None)
-        if not inspect.iscoroutinefunction(list_certifications):
-            raise HTTPException(
-                409,
-                {
-                    "code": "CANDIDATE_CERTIFICATION_SOURCE_BINDING_UNAVAILABLE",
-                    "message": "persisted source-bound certification evidence is unavailable for approval",
-                },
-            )
-        certification_rows = await list_certifications(worker_id)
+    list_certifications = getattr(storage, "list_certification_runs", None)
+    if not inspect.iscoroutinefunction(list_certifications):
+        raise HTTPException(
+            409,
+            {
+                "code": "CANDIDATE_CERTIFICATION_EVIDENCE_UNAVAILABLE",
+                "message": "persisted certification evidence is unavailable for candidate approval",
+            },
+        )
+    certification_rows = await list_certifications(worker_id)
+    if first_party_candidate:
         persisted_certification = next(
             (
                 row
@@ -12567,34 +12611,119 @@ async def approve_steward_candidate(
             )
         return _candidate_response(candidate)
 
-    approval = await storage.create_approval_record(
-        scope_type="worker_skill_bundle_candidate",
-        scope_id=candidate_id,
-        decision="APPROVED",
-        decided_by=decided_by,
-        reason=req.reason,
-        evidence=req.evidence,
+    persisted_certification = next(
+        (
+            row
+            for row in certification_rows
+            if str(_governance_dict(row).get("id") or "")
+            == str(certification.certification_id)
+            and str(_governance_dict(row).get("candidate_id") or "")
+            == str(candidate_id)
+            and str(_governance_dict(row).get("worker_id") or "")
+            == str(worker_id)
+            and str(_governance_dict(row).get("status") or "").lower()
+            == "passed"
+        ),
+        None,
     )
-    try:
-        candidate = steward.approve_candidate(candidate_id, approval_record_id=approval["id"])
-    except Exception as exc:
-        raise HTTPException(409, str(exc)) from exc
-    evidence = dict(persisted_candidate.get("evidence_json") or {})
-    evidence["candidate_record"] = candidate.model_dump(mode="json")
-    await storage.update_skill_bundle_candidate(candidate_id, intake_status=candidate.intake_status.value, evidence=evidence, approval_record_id=candidate.approval_record_id)
-    await storage.update_skill_bundle(persisted_candidate["skill_bundle_id"], status="APPROVED")
-    if persisted_candidate.get("adapter_id"):
-        current_adapter = await storage.get_runtime_adapter(persisted_candidate["adapter_id"])
-        # Replaying an idempotent approval after rollout must never demote the
-        # currently active immutable adapter back to merely approved.
-        adapter_status = "active" if current_adapter and current_adapter.get("status") == "active" else "approved"
-        await storage.update_runtime_adapter(
-            persisted_candidate["adapter_id"],
-            status=adapter_status,
-            conformance_status="passed",
+    if persisted_certification is None:
+        raise HTTPException(
+            409,
+            {
+                "code": "CANDIDATE_CERTIFICATION_EVIDENCE_INVALID",
+                "message": "candidate approval requires a persisted passing certification for this worker and candidate",
+            },
         )
-    await storage.update_worker_config(worker_id, evaluation_status="approved")
-    return _candidate_response(candidate)
+
+    expected_candidate_snapshot = {
+        key: persisted_candidate_payload.get(key)
+        for key in (
+            "id",
+            "worker_id",
+            "skill_bundle_id",
+            "adapter_id",
+            "intake_status",
+            "diff_json",
+            "evidence_json",
+            "certification_run_id",
+            "approval_record_id",
+        )
+    }
+    candidate_before_approval = candidate.model_copy(deep=True)
+    approval_values: dict[str, Any] | None = None
+    candidate_record_after: dict[str, Any] | None = None
+    if candidate_lifecycle["intake_status"] == "CERTIFYING":
+        approval_id = uuid4()
+        try:
+            approved_candidate = steward.approve_candidate(
+                candidate_id,
+                approval_record_id=approval_id,
+            )
+            candidate_record_after = approved_candidate.model_dump(mode="json")
+        except Exception as exc:
+            steward.candidates[candidate_id] = candidate_before_approval
+            raise HTTPException(409, str(exc)) from exc
+        approval_values = {
+            "id": approval_id,
+            "scope_type": "worker_skill_bundle_candidate",
+            "scope_id": candidate_id,
+            "decision": "APPROVED",
+            "decided_by": decided_by,
+            "reason": req.reason,
+            "evidence": req.evidence,
+            "expires_at": None,
+        }
+        # Domain validation above mutates the cached CandidateRecord. Restore it
+        # before awaiting storage so a pending or failed transaction cannot make
+        # the process-local runtime look more advanced than durable state.
+        steward.candidates[candidate_id] = candidate_before_approval
+
+    try:
+        approval_result = await storage.approve_steward_candidate_atomically(
+            worker_id=worker_id,
+            candidate_id=candidate_id,
+            expected_candidate_snapshot=expected_candidate_snapshot,
+            candidate_record_after=candidate_record_after,
+            approval=approval_values,
+        )
+    except Exception:
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise
+    if approval_result is None:
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(
+            409,
+            {
+                "code": "CANDIDATE_LIFECYCLE_CHANGED_DURING_APPROVAL",
+                "message": "locked candidate state no longer matches the approval precheck",
+            },
+        )
+
+    persisted_approved_record = _candidate_record_from_row(
+        approval_result.get("candidate")
+    )
+    if not persisted_approved_record:
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(
+            409,
+            {
+                "code": "CANDIDATE_APPROVAL_RESULT_INVALID",
+                "message": "the durable approval result could not be rehydrated",
+            },
+        )
+    try:
+        approved_candidate = type(candidate).model_validate(persisted_approved_record)
+    except Exception as exc:
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(
+            409,
+            {
+                "code": "CANDIDATE_APPROVAL_RESULT_INVALID",
+                "message": "the durable approval result could not be rehydrated",
+            },
+        ) from exc
+    steward.candidates[candidate_id] = approved_candidate
+    return _candidate_response(approved_candidate)
 
 
 @app.post("/capabilities/workers/{worker_id}/steward/rollouts", status_code=201)
