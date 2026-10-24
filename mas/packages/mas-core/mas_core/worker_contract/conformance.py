@@ -11,6 +11,7 @@ from uuid import uuid4
 from .models import (
     CapabilityRequirement,
     EventType,
+    WorkerCapabilities,
     WorkerError,
     WorkerEvent,
     WorkerRunRequest,
@@ -29,6 +30,35 @@ _DETERMINISTIC_FILE_CAPABILITY = "deterministic.file_generate"
 _DETERMINISTIC_FILE_TOOL = "file_write"
 _DETERMINISTIC_FILE_PATH = "conformance/aiat-worker-check.txt"
 _DETERMINISTIC_FILE_CONTENT = "AIAT worker conformance fixture v1\n"
+DETERMINISTIC_FILE_CONFORMANCE_DECLARATION = {
+    "schema_version": _CONFORMANCE_SCHEMA_VERSION,
+    "case_id": _DETERMINISTIC_FILE_CASE_ID,
+}
+
+
+def attach_deterministic_file_conformance_case(
+    worker_name: str,
+    capabilities: WorkerCapabilities,
+) -> WorkerCapabilities:
+    """Attach the fixed protocol probe to the canonical file worker snapshot.
+
+    The case is selected from AIAT's fixed worker identity and declared
+    capability. Callers cannot supply a task, tool name, arguments, or a new
+    case. A conflicting declaration is rejected rather than silently replaced.
+    """
+
+    if str(worker_name or "").strip() != "aiat_deterministic_file_worker":
+        return capabilities
+
+    extensions = dict(capabilities.extensions)
+    existing = extensions.get(_CONFORMANCE_EXTENSION)
+    if existing is not None and existing != DETERMINISTIC_FILE_CONFORMANCE_DECLARATION:
+        raise ValueError("deterministic file worker conformance declaration is not canonical")
+    if _DETERMINISTIC_FILE_CAPABILITY not in capabilities.capability_names:
+        return capabilities
+
+    extensions[_CONFORMANCE_EXTENSION] = dict(DETERMINISTIC_FILE_CONFORMANCE_DECLARATION)
+    return capabilities.model_copy(update={"extensions": extensions})
 
 
 @dataclass(frozen=True, slots=True)

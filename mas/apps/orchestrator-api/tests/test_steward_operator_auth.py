@@ -326,3 +326,111 @@ async def test_rollout_creation_audit_actor_uses_authenticated_principal(client,
     assert response.json()["promotion_actor"] == "operator"
     assert storage.create_rollout_record.await_args.kwargs["promotion_actor"] == "operator"
 
+
+def _capability_recording_mocks(monkeypatch, *, worker_name: str):
+    """Stub the local storage/runtime used by capability recording routes."""
+    from orchestrator_api import main
+
+    storage = MagicMock()
+    storage.get_worker = AsyncMock(return_value={"id": WORKER_ID, "name": worker_name})
+    storage.create_capability_snapshot = AsyncMock(
+        return_value={"id": UUID("00000000-0000-4000-a000-0000000000c1")}
+    )
+    steward = MagicMock()
+    steward.steward_id = UUID("00000000-0000-4000-a000-0000000000c2")
+    steward.record_capabilities = MagicMock()
+
+    monkeypatch.setattr(main, "_storage", lambda: storage)
+    monkeypatch.setattr(main, "_steward_runtime", AsyncMock(return_value=steward))
+    return storage, steward
+
+
+@pytest.mark.anyio
+async def test_api_records_canonical_conformance_declaration_for_file_worker(
+    client, monkeypatch
+) -> None:
+    """The canonical worker's fixed conformance case is included in its snapshot."""
+    from mas_core.worker_contract.conformance import (
+        DETERMINISTIC_FILE_CONFORMANCE_DECLARATION,
+    )
+
+    storage, steward = _capability_recording_mocks(
+        monkeypatch, worker_name="aiat_deterministic_file_worker"
+    )
+    response = await client.post(
+        f"/capabilities/workers/{WORKER_ID}/steward/capabilities",
+        headers={"X-API-Key": "test-operator-key"},
+        json={"capabilities": {"capability_names": ["deterministic.file_generate"]}},
+    )
+
+    assert response.status_code == 201, response.text
+    capabilities = response.json()["capabilities"]
+    assert capabilities["extensions"]["aiat.conformance"] == (
+        DETERMINISTIC_FILE_CONFORMANCE_DECLARATION
+    )
+    steward.record_capabilities.assert_called_once()
+    stored_capabilities = storage.create_capability_snapshot.await_args.kwargs[
+        "capabilities"
+    ]
+    assert stored_capabilities["extensions"]["aiat.conformance"] == (
+        DETERMINISTIC_FILE_CONFORMANCE_DECLARATION
+    )
+    assert response.json()["persisted"]["id"] == "00000000-0000-4000-a000-0000000000c1"
+
+
+@pytest.mark.anyio
+async def test_api_rejects_conflicting_file_worker_conformance_declaration(
+    client, monkeypatch
+) -> None:
+    """A caller cannot replace the canonical file-worker conformance case."""
+    storage, steward = _capability_recording_mocks(
+        monkeypatch, worker_name="aiat_deterministic_file_worker"
+    )
+    response = await client.post(
+        f"/capabilities/workers/{WORKER_ID}/steward/capabilities",
+        headers={"X-API-Key": "test-operator-key"},
+        json={
+            "capabilities": {
+                "capability_names": ["deterministic.file_generate"],
+                "extensions": {
+                    "aiat.conformance": {
+                        "schema_version": "aiat.conformance.v1",
+                        "case_id": "caller.supplied.case",
+                    }
+                },
+            }
+        },
+    )
+
+    assert response.status_code == 422
+    assert "declaration is not canonical" in response.json()["detail"]
+    steward.record_capabilities.assert_not_called()
+    storage.create_capability_snapshot.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_api_does_not_add_file_worker_conformance_to_other_workers(
+    client, monkeypatch
+) -> None:
+    """Only the canonical file worker receives AIAT's fixed declaration."""
+    storage, steward = _capability_recording_mocks(
+        monkeypatch, worker_name="another_worker"
+    )
+    declared = {
+        "capability_names": ["deterministic.file_generate"],
+        "extensions": {"vendor.extension": {"mode": "preserve"}},
+    }
+    response = await client.post(
+        f"/capabilities/workers/{WORKER_ID}/steward/capabilities",
+        headers={"X-API-Key": "test-operator-key"},
+        json={"capabilities": declared},
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["capabilities"]["extensions"] == declared["extensions"]
+    stored_capabilities = storage.create_capability_snapshot.await_args.kwargs[
+        "capabilities"
+    ]
+    assert stored_capabilities["extensions"] == declared["extensions"]
+    assert "aiat.conformance" not in stored_capabilities["extensions"]
+    steward.record_capabilities.assert_called_once()

@@ -42,6 +42,11 @@ from mas_core.worker_contract import (
     issue_opencode_tool_grant,
     verify_opencode_tool_grant,
 )
+from mas_core.worker_contract.conformance import (
+    DETERMINISTIC_FILE_CONFORMANCE_DECLARATION,
+    attach_deterministic_file_conformance_case,
+)
+
 from mas_core.worker_registry.runtime_adapters import (
     CrewAIAdapter,
     LangGraphAdapter,
@@ -2053,3 +2058,36 @@ def test_oci_adapter_requires_and_applies_hardened_sandbox() -> None:
     assert "--network" in adapter.command and "none" in adapter.command
     assert "--cap-drop" in adapter.command and "ALL" in adapter.command
     assert "--runtime" in adapter.command and "runsc" in adapter.command
+
+
+def test_capability_intake_attaches_only_the_canonical_file_worker_probe() -> None:
+    capabilities = WorkerCapabilities(
+        capability_names=["deterministic.file_generate"],
+        extensions={"operator.note": {"source": "reviewed"}},
+    )
+
+    prepared = attach_deterministic_file_conformance_case(
+        "aiat_deterministic_file_worker", capabilities
+    )
+
+    assert attach_deterministic_file_conformance_case(
+        "aiat_deterministic_file_worker", prepared
+    ).extensions == prepared.extensions
+    assert capabilities.extensions == {"operator.note": {"source": "reviewed"}}
+    assert prepared.extensions == {
+        "operator.note": {"source": "reviewed"},
+        "aiat.conformance": DETERMINISTIC_FILE_CONFORMANCE_DECLARATION,
+    }
+    assert attach_deterministic_file_conformance_case("other-worker", capabilities) is capabilities
+    assert attach_deterministic_file_conformance_case(
+        "aiat_deterministic_file_worker",
+        WorkerCapabilities(capability_names=["other.capability"]),
+    ).extensions == {}
+    with pytest.raises(ValueError, match="declaration is not canonical"):
+        attach_deterministic_file_conformance_case(
+            "aiat_deterministic_file_worker",
+            WorkerCapabilities(
+                capability_names=["deterministic.file_generate"],
+                extensions={"aiat.conformance": {"case_id": "operator-selected"}},
+            ),
+        )

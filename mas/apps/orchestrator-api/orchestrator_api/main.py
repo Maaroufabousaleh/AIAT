@@ -11601,10 +11601,27 @@ async def record_steward_capabilities(
     steward = await _steward_runtime(storage, worker_id)
     if steward is None:
         raise HTTPException(404, "Dedicated Steward Agent not found")
+    worker = await storage.get_worker(worker_id)
+    if worker is None:
+        raise HTTPException(404, "Worker not found")
     from mas_core.worker_contract import WorkerCapabilities
+    from mas_core.worker_contract.conformance import (
+        attach_deterministic_file_conformance_case,
+    )
     from mas_core.worker_registry.steward import CapabilitySnapshot
 
-    snapshot = CapabilitySnapshot(version=str(payload.get("version") or "1.0.0"), capabilities=WorkerCapabilities.model_validate(payload.get("capabilities") or {}), evidence_refs=tuple(str(value) for value in payload.get("evidence_refs") or []))
+    try:
+        capabilities = WorkerCapabilities.model_validate(payload.get("capabilities") or {})
+        capabilities = attach_deterministic_file_conformance_case(
+            str(worker.get("name") or ""), capabilities
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    snapshot = CapabilitySnapshot(
+        version=str(payload.get("version") or "1.0.0"),
+        capabilities=capabilities,
+        evidence_refs=tuple(str(value) for value in payload.get("evidence_refs") or []),
+    )
     persisted = None
     if inspect.iscoroutinefunction(getattr(storage, "create_capability_snapshot", None)):
         persisted = await storage.create_capability_snapshot(
