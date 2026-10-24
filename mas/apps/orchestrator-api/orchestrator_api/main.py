@@ -10694,6 +10694,26 @@ def _candidate_record_from_row(row: Any) -> dict[str, Any] | None:
     return candidate if isinstance(candidate, dict) else None
 
 
+def _has_canonical_deterministic_conformance(candidate: Any) -> bool:
+    """Check that a first-party candidate binds AIAT's fixed file probe."""
+    from mas_core.worker_contract.conformance import (
+        DETERMINISTIC_FILE_CONFORMANCE_DECLARATION,
+    )
+
+    candidate_payload = _governance_dict(candidate)
+    bundle = _governance_dict(candidate_payload.get("bundle"))
+    snapshot = _governance_dict(bundle.get("verified_capabilities"))
+    capabilities = _governance_dict(snapshot.get("capabilities"))
+    capability_names = capabilities.get("capability_names")
+    extensions = _governance_dict(capabilities.get("extensions"))
+    return (
+        isinstance(capability_names, list)
+        and "deterministic.file_generate" in capability_names
+        and extensions.get("aiat.conformance")
+        == DETERMINISTIC_FILE_CONFORMANCE_DECLARATION
+    )
+
+
 def _candidate_lifecycle_snapshot(
     persisted_candidate: Any,
     candidate_record: Any,
@@ -11898,8 +11918,17 @@ async def certify_steward_candidate(
     steward = await _steward_runtime(storage, worker_id)
     if steward is None:
         raise HTTPException(404, "Dedicated Steward Agent not found")
+    if str(steward.worker_id) != str(worker_id):
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(404, "Dedicated Steward Agent not found")
     candidate = steward.candidates.get(candidate_id)
     if candidate is None:
+        raise HTTPException(404, "Candidate not found")
+    if (
+        str(candidate.candidate_id) != str(candidate_id)
+        or str(candidate.worker_id) != str(worker_id)
+    ):
+        _worker_steward_runtimes.pop(str(worker_id), None)
         raise HTTPException(404, "Candidate not found")
     if candidate.intake_status.value != "CERTIFYING":
         raise HTTPException(
@@ -11911,9 +11940,26 @@ async def certify_steward_candidate(
         raise HTTPException(404, "Worker not found")
     first_party_candidate = _is_first_party_candidate(worker, candidate)
     first_party_source_state: dict[str, Any] | None = None
-    persisted_candidate_for_source: dict[str, Any] | None = None
+    persisted_candidate_for_source = await storage.get_skill_bundle_candidate(candidate_id)
+    persisted_candidate_payload = _governance_dict(persisted_candidate_for_source)
+    persisted_candidate_record = _candidate_record_from_row(persisted_candidate_for_source)
+    if (
+        not persisted_candidate_payload
+        or str(persisted_candidate_payload.get("id") or "") != str(candidate_id)
+        or str(persisted_candidate_payload.get("worker_id") or "") != str(worker_id)
+        or not persisted_candidate_record
+        or str(persisted_candidate_record.get("candidate_id") or "") != str(candidate_id)
+        or str(persisted_candidate_record.get("worker_id") or "") != str(worker_id)
+    ):
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(
+            404,
+            {
+                "code": "CANDIDATE_WORKER_BINDING_MISMATCH",
+                "message": "the persisted candidate is unavailable or does not belong to the selected worker",
+            },
+        )
     if first_party_candidate:
-        persisted_candidate_for_source = await storage.get_skill_bundle_candidate(candidate_id)
         first_party_source_state = await _first_party_candidate_source_state(
             storage,
             worker_id=worker_id,
@@ -11929,6 +11975,11 @@ async def certify_steward_candidate(
         first_party_candidate_lifecycle_record = candidate.model_dump(mode="json")
         first_party_candidate_before_certification = candidate.model_copy(deep=True)
     else:
+        _candidate_lifecycle_snapshot(
+            persisted_candidate_for_source,
+            persisted_candidate_record,
+            candidate,
+        )
         provenance = steward.provenance
         first_party_candidate_lifecycle_record = None
         first_party_candidate_before_certification = None
@@ -11959,6 +12010,19 @@ async def certify_steward_candidate(
             {
                 "code": code,
                 "message": "candidate certification requires a valid server-generated source-bound scan report with zero findings and scanner errors",
+            },
+        )
+    if first_party_candidate and (
+        not _has_canonical_deterministic_conformance(candidate)
+        or not _has_canonical_deterministic_conformance(
+            _candidate_record_from_row(persisted_candidate_for_source)
+        )
+    ):
+        raise HTTPException(
+            409,
+            {
+                "code": "DETERMINISTIC_CONFORMANCE_CASE_REQUIRED",
+                "message": "the first-party candidate must retain AIAT's fixed file-generation conformance case before certification",
             },
         )
     # Licence/redistribution fields are retained on provenance for metadata

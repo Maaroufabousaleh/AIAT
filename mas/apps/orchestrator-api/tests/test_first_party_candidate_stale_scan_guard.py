@@ -11,6 +11,9 @@ import pytest
 
 def _candidate_state():
     from mas_core.worker_contract import WorkerCapabilities
+    from mas_core.worker_contract.conformance import (
+        DETERMINISTIC_FILE_CONFORMANCE_DECLARATION,
+    )
     from mas_core.worker_registry.source_bound_security_scan import (
         FIRST_PARTY_IMAGE_DIGEST,
         FIRST_PARTY_RUNTIME_SHA256,
@@ -66,7 +69,12 @@ def _candidate_state():
     steward.record_capabilities(
         CapabilitySnapshot(
             version=FIRST_PARTY_WORKER_VERSION,
-            capabilities=WorkerCapabilities(),
+            capabilities=WorkerCapabilities(
+                capability_names=["deterministic.file_generate"],
+                extensions={
+                    "aiat.conformance": DETERMINISTIC_FILE_CONFORMANCE_DECLARATION
+                },
+            ),
         )
     )
     candidate = steward.generate_candidate(
@@ -311,6 +319,76 @@ async def test_certification_does_not_write_pass_if_provenance_changes_during_co
     assert storage.create_compatibility_matrix is None
     storage.update_skill_bundle_candidate.assert_not_awaited()
     storage.update_runtime_adapter.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_certification_rejects_first_party_candidate_without_fixed_conformance_snapshot(
+    client, monkeypatch
+) -> None:
+    from orchestrator_api import main
+
+    state = _candidate_state()
+    _patch_source_scan_validation(monkeypatch)
+    candidate = state["steward"].candidates[state["candidate_id"]]
+    snapshot = candidate.bundle.verified_capabilities
+    capabilities = snapshot.capabilities.model_copy(update={"extensions": {}})
+    candidate.bundle = candidate.bundle.model_copy(
+        update={
+            "verified_capabilities": snapshot.model_copy(
+                update={"capabilities": capabilities}
+            )
+        }
+    )
+    state["candidate_row"]["evidence_json"]["candidate_record"] = candidate.model_dump(
+        mode="json"
+    )
+
+    storage = _storage_for(state)
+    monkeypatch.setattr(main, "_storage", lambda: storage)
+    monkeypatch.setattr(
+        main, "_steward_runtime", AsyncMock(return_value=state["steward"])
+    )
+    conformance_calls = []
+
+    class FakeAdapter:
+        capabilities = None
+
+        async def close(self):
+            return None
+
+    class FakeConformanceRunner:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def run(self, *_args, **_kwargs):
+            conformance_calls.append(True)
+            return {"passed": True, "tests": [{"name": "universal-echo"}]}
+
+    from mas_core import worker_contract
+    from mas_core.worker_registry import runtime_adapters
+
+    adapter_factory = MagicMock(return_value=FakeAdapter())
+    monkeypatch.setattr(
+        runtime_adapters,
+        "adapter_for_transport",
+        adapter_factory,
+    )
+    monkeypatch.setattr(worker_contract, "ConformanceRunner", FakeConformanceRunner)
+
+    response = await client.post(
+        f"/capabilities/workers/{state['worker_id']}/steward/candidates/{state['candidate_id']}/certify",
+        headers={"X-API-Key": "test-operator-key"},
+        json={},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "DETERMINISTIC_CONFORMANCE_CASE_REQUIRED"
+    assert candidate.certification_id is None
+    assert state["steward"].certifications == {}
+    assert conformance_calls == []
+    adapter_factory.assert_not_called()
+    storage.persist_first_party_candidate_certification_atomically.assert_not_awaited()
+    storage.create_certification_run.assert_not_awaited()
 
 
 @pytest.mark.anyio
@@ -852,3 +930,129 @@ async def test_first_party_rollout_rejects_identity_change_between_precheck_read
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "ROLLOUT_SOURCE_IDENTITY_CHANGED_DURING_PRECHECK"
     storage.activate_rollout_atomically.assert_not_awaited()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("guard_case", "expected_status", "expected_code"),
+    [
+        ("runtime_steward_worker", 404, None),
+        ("runtime_candidate_id", 404, None),
+        ("runtime_candidate_worker", 404, None),
+        ("persisted_row_missing", 404, "CANDIDATE_WORKER_BINDING_MISMATCH"),
+        ("persisted_row_candidate", 404, "CANDIDATE_WORKER_BINDING_MISMATCH"),
+        ("persisted_row_worker", 404, "CANDIDATE_WORKER_BINDING_MISMATCH"),
+        ("embedded_record_missing", 404, "CANDIDATE_WORKER_BINDING_MISMATCH"),
+        ("embedded_record_candidate", 404, "CANDIDATE_WORKER_BINDING_MISMATCH"),
+        ("embedded_record_worker", 404, "CANDIDATE_WORKER_BINDING_MISMATCH"),
+        ("legacy_lifecycle", 409, "CANDIDATE_LIFECYCLE_STALE"),
+    ],
+)
+async def test_certification_fails_closed_on_runtime_and_persisted_candidate_bindings(
+    client, monkeypatch, guard_case, expected_status, expected_code
+) -> None:
+    from orchestrator_api import main
+
+    from mas_core import worker_contract
+    from mas_core.worker_registry import runtime_adapters
+
+    state = _candidate_state()
+    worker_id = state["worker_id"]
+    candidate_id = state["candidate_id"]
+    steward = state["steward"]
+    storage = _storage_for(state)
+    runtime_steward = steward
+
+    if guard_case == "runtime_steward_worker":
+        from mas_core.worker_registry.steward import ExternalWorkerSteward
+
+        runtime_steward = ExternalWorkerSteward(
+            worker_id=str(uuid4()),
+            provenance=steward.provenance,
+            steward_id=steward.steward_id,
+            status=steward.status,
+        )
+    elif guard_case == "runtime_candidate_id":
+        candidate = steward.candidates[candidate_id]
+        steward.candidates[candidate_id] = candidate.model_copy(
+            update={"candidate_id": uuid4()}
+        )
+    elif guard_case == "runtime_candidate_worker":
+        candidate = steward.candidates[candidate_id]
+        steward.candidates[candidate_id] = candidate.model_copy(
+            update={"worker_id": str(uuid4())}
+        )
+    elif guard_case == "persisted_row_missing":
+        storage.get_skill_bundle_candidate = AsyncMock(return_value=None)
+    elif guard_case == "persisted_row_candidate":
+        state["candidate_row"]["id"] = uuid4()
+    elif guard_case == "persisted_row_worker":
+        state["candidate_row"]["worker_id"] = uuid4()
+    elif guard_case == "embedded_record_missing":
+        state["candidate_row"]["evidence_json"] = {}
+    elif guard_case in {"embedded_record_candidate", "embedded_record_worker"}:
+        record = state["candidate_row"]["evidence_json"]["candidate_record"]
+        field = "candidate_id" if guard_case == "embedded_record_candidate" else "worker_id"
+        record[field] = str(uuid4())
+    elif guard_case == "legacy_lifecycle":
+        from mas_core.worker_registry.steward import ExternalProvenance
+
+        legacy_provenance = ExternalProvenance(
+            canonical_source_repository="https://github.com/example/worker",
+            source_provider="github",
+            exact_release="1.0.0",
+            transport_type="process",
+            security_scan_status="passed",
+        )
+        candidate = steward.candidates[candidate_id].model_copy(
+            update={"source_provenance": legacy_provenance}
+        )
+        candidates = dict(steward.candidates)
+        candidates[candidate_id] = candidate
+        from mas_core.worker_registry.steward import ExternalWorkerSteward
+
+        runtime_steward = ExternalWorkerSteward(
+            worker_id=steward.worker_id,
+            provenance=legacy_provenance,
+            steward_id=steward.steward_id,
+            status=steward.status,
+        )
+        runtime_steward.candidates.update(candidates)
+        state["worker"]["name"] = "legacy_external_worker"
+        state["candidate_row"]["intake_status"] = "SOURCE_REVIEW"
+        state["candidate_row"]["evidence_json"]["candidate_record"] = (
+            candidate.model_dump(mode="json")
+        )
+
+    cache = {str(worker_id): runtime_steward}
+    monkeypatch.setattr(main, "_storage", lambda: storage)
+    monkeypatch.setattr(main, "_steward_runtime", AsyncMock(return_value=runtime_steward))
+    monkeypatch.setattr(main, "_worker_steward_runtimes", cache)
+    adapter_factory = MagicMock(side_effect=AssertionError("adapter must not be constructed"))
+    monkeypatch.setattr(runtime_adapters, "adapter_for_transport", adapter_factory)
+    monkeypatch.setattr(
+        worker_contract,
+        "ConformanceRunner",
+        MagicMock(side_effect=AssertionError("conformance must not run")),
+    )
+
+    response = await client.post(
+        f"/capabilities/workers/{worker_id}/steward/candidates/{candidate_id}/certify",
+        headers={"X-API-Key": "test-operator-key"},
+        json={},
+    )
+
+    assert response.status_code == expected_status
+    if expected_code is not None:
+        assert response.json()["detail"]["code"] == expected_code
+    adapter_factory.assert_not_called()
+    storage.persist_first_party_candidate_certification_atomically.assert_not_awaited()
+    storage.create_certification_run.assert_not_awaited()
+    assert steward.certifications == {}
+    assert steward.candidates[candidate_id].certification_id is None
+    if guard_case != "legacy_lifecycle":
+        assert str(worker_id) not in cache
+    if guard_case.startswith("runtime_"):
+        storage.get_skill_bundle_candidate.assert_not_awaited()
+    else:
+        storage.get_skill_bundle_candidate.assert_awaited_once()
