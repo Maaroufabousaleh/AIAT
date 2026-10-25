@@ -164,9 +164,6 @@ def worker_requires_hardened_isolation(worker: Mapping[str, Any]) -> bool:
         )
     except ValueError as exc:
         raise WorkerIsolationPolicyError("worker_sandbox_profile_invalid") from exc
-    if sandbox_class != "trusted":
-        return True
-
     raw_policy = adapter_config.get("execution_policy")
     if raw_policy is None:
         from mas_core.execution_policy import WorkloadExecutionPolicy

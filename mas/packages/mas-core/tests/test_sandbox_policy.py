@@ -105,6 +105,15 @@ def test_worker_isolation_floor_preserves_trusted_internal_and_fails_closed() ->
         )
     assert invalid_adapter_config.value.reason_code == "worker_execution_policy_invalid"
 
+    with pytest.raises(WorkerIsolationPolicyError) as invalid_hardened_execution:
+        worker_requires_hardened_isolation(
+            {
+                "sandbox_profile": "gvisor",
+                "adapter_config": {"execution_policy": []},
+            }
+        )
+    assert invalid_hardened_execution.value.reason_code == "worker_execution_policy_invalid"
+
 
 def test_worker_manifest_accepts_canonical_class_without_rewriting_legacy_yaml() -> None:
     canonical = WorkerManifest.model_validate(

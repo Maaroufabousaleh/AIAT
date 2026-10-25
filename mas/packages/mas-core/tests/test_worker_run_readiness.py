@@ -29,6 +29,7 @@ def _inputs() -> dict[str, object]:
             "active_shell_version_id": "shell-1",
             "active_adapter_id": "adapter-1",
             "active_skill_bundle_id": "bundle-1",
+            "adapter_type": "oci",
             "sandbox_profile": "gvisor",
         },
         "project": {"id": PROJECT_ID, "company_id": COMPANY_ID, "state": "IN_PROGRESS"},
@@ -124,6 +125,50 @@ def test_invalid_worker_execution_policy_blocks_readiness() -> None:
     codes = {item["code"] for item in report["blockers"]}
     assert report["status"] == "blocked"
     assert "worker_isolation_policy_invalid" in codes
+
+
+def test_external_process_with_hardened_profile_is_not_ready() -> None:
+    inputs = _inputs()
+    worker = dict(inputs["worker"])
+    worker.update(
+        {
+            "source_repo": "https://example.invalid/worker",
+            "adapter_type": "process",
+            "sandbox_profile": "gvisor",
+        }
+    )
+    inputs["worker"] = worker
+    inputs["require_sandbox"] = False
+
+    report = evaluate_worker_run_readiness(**inputs)
+
+    codes = {item["code"] for item in report["blockers"]}
+    assert report["status"] == "blocked"
+    assert report["checks"]["sandbox"]["transport_status"] == "blocked"
+    assert "worker_sandbox_process_transport_unsupported" in codes
+
+
+def test_hardened_readiness_fails_closed_for_unknown_transport_and_invalid_policy() -> None:
+    inputs = _inputs()
+    worker = dict(inputs["worker"])
+    worker.update(
+        {
+            "source_repo": "https://example.invalid/worker",
+            "adapter_type": "unrecognized",
+            "sandbox_profile": "gvisor",
+            "adapter_config": {"execution_policy": []},
+        }
+    )
+    inputs["worker"] = worker
+    inputs["require_sandbox"] = True
+
+    report = evaluate_worker_run_readiness(**inputs)
+
+    codes = {item["code"] for item in report["blockers"]}
+    assert report["status"] == "blocked"
+    assert report["checks"]["sandbox"]["transport_status"] == "not_checked"
+    assert "worker_isolation_policy_invalid" in codes
+    assert "worker_sandbox_transport_unverified" in codes
 
 def test_missing_budget_and_profile_are_fail_closed() -> None:
     inputs = _inputs()

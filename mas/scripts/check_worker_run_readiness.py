@@ -146,6 +146,7 @@ def _fixture() -> dict[str, Any]:
             "active_shell_version_id": "shell-1",
             "active_adapter_id": "adapter-1",
             "active_skill_bundle_id": "bundle-1",
+            "adapter_type": "oci",
             "sandbox_profile": "sandboxed",
         },
         project={"id": project_id, "company_id": company_id, "state": "IN_PROGRESS"},

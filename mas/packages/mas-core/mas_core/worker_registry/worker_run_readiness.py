@@ -50,6 +50,7 @@ DISPATCHABLE_PROJECT_STATES = frozenset(
 TERMINAL_PROJECT_STATES = frozenset({"COMPLETED", "ARCHIVED", "FAILED"})
 VALID_SANDBOX_PROFILES = SUPPORTED_SANDBOX_PROFILES
 HARDENED_SANDBOX_PROFILES = HARDENED_SANDBOX_CLASSES
+HARDENED_SANDBOX_TRANSPORTS = frozenset({"oci", "wasmtime"})
 REQUIRED_BUDGETS = ("max_concurrent_runs", "max_cost_usd")
 REQUIRED_WORKER_POINTERS = (
     "active_shell_version_id",
@@ -134,6 +135,8 @@ def evaluate_worker_run_readiness(
     blockers: list[dict[str, str]] = []
     fetch_status = {str(key): "blocked" for key in (fetch_errors or {})}
     sandbox_hardening_required = bool(require_sandbox)
+    sandbox_transport = ""
+    sandbox_transport_status = "not_checked"
 
     if fetch_errors:
         for key, reason in sorted(fetch_errors.items()):
@@ -152,11 +155,12 @@ def evaluate_worker_run_readiness(
         blockers.append(_blocker("worker_not_found", "the selected worker was not returned by the control plane"))
     else:
         fetch_status.setdefault("worker", "observed")
+        sandbox_transport = _text(
+            worker.get("transport_type") or worker.get("adapter_type")
+        ).lower()
         try:
-            sandbox_hardening_required = (
-                sandbox_hardening_required
-                or worker_requires_hardened_isolation(worker)
-            )
+            worker_hardening_required = worker_requires_hardened_isolation(worker)
+            sandbox_hardening_required = bool(require_sandbox) or worker_hardening_required
         except WorkerIsolationPolicyError as exc:
             sandbox_hardening_required = True
             if exc.reason_code != "worker_sandbox_profile_invalid":
@@ -195,6 +199,27 @@ def evaluate_worker_run_readiness(
                 and sandbox_class not in HARDENED_SANDBOX_PROFILES
             ):
                 blockers.append(_blocker("sandbox_profile_not_hardened", "the selected run requires gVisor/runsc or Kata VM isolation"))
+
+        if not sandbox_hardening_required:
+            sandbox_transport_status = "observed" if sandbox_transport else "not_checked"
+        elif sandbox_transport == "process":
+            sandbox_transport_status = "blocked"
+            blockers.append(
+                _blocker(
+                    "worker_sandbox_process_transport_unsupported",
+                    "a direct process adapter cannot enforce the required worker isolation",
+                )
+            )
+        elif sandbox_transport in HARDENED_SANDBOX_TRANSPORTS:
+            sandbox_transport_status = "declared"
+        else:
+            sandbox_transport_status = "not_checked"
+            blockers.append(
+                _blocker(
+                    "worker_sandbox_transport_unverified",
+                    "the worker transport is missing or cannot be verified to enforce required isolation",
+                )
+            )
 
         if health is not None:
             health_status = _text(health.get("health_status")).lower()
@@ -326,6 +351,8 @@ def evaluate_worker_run_readiness(
                 "class": sandbox_class,
                 "runtime_status": "not_checked",
                 "hardened_required": sandbox_hardening_required,
+                "transport": sandbox_transport or None,
+                "transport_status": sandbox_transport_status,
             },
             "health": {"status": health_status},
             "identity": {"status": "not_checked"},
