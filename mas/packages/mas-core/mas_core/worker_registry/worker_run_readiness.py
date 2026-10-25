@@ -104,6 +104,77 @@ def _profile_status(
     return False, 0, None
 
 
+def worker_run_project_scope_blocker(
+    *,
+    run: Mapping[str, Any],
+    request: Mapping[str, Any],
+    project: Mapping[str, Any] | None,
+    assignments: Iterable[Any] = (),
+) -> str | None:
+    """Return a blocker when a queued run's current project grants are stale.
+
+    The caller supplies rows read at the execution boundary.  Storage claim
+    code calls this while holding the project and assignment row locks; the
+    host consumer also uses it before resolving an adapter so revoked work
+    cannot reach a runtime.
+    """
+
+    run_project_id = _text(run.get("project_id"))
+    request_project_id = _text(request.get("project_id"))
+    if run_project_id != request_project_id:
+        return "worker_request_scope_mismatch"
+    if not run_project_id:
+        return None
+    if project is None or _text(project.get("id")) != run_project_id:
+        return "project_not_found"
+    project_state = _text(project.get("state")).upper()
+    if project_state not in DISPATCHABLE_PROJECT_STATES:
+        if project_state in TERMINAL_PROJECT_STATES:
+            return "project_terminal"
+        return "project_not_dispatchable"
+    company_id = _text(project.get("company_id"))
+    if not company_id:
+        return None
+
+    worker_id = _text(run.get("worker_id"))
+    if not worker_id:
+        return "worker_identity_invalid"
+    matching = [
+        item
+        for item in assignments
+        if isinstance(item, Mapping) and _text(item.get("worker_id")) == worker_id
+    ]
+    if not matching:
+        return "company_assignment_required"
+    if len(matching) != 1:
+        return "company_assignment_ambiguous"
+    assignment = matching[0]
+    if _text(assignment.get("status")).upper() != "ACTIVE":
+        return "company_assignment_required"
+    if assignment.get("approval_required") is True:
+        return "company_assignment_approval_required"
+
+    requested_tools = request.get("tool_grants", [])
+    requested_permissions = request.get("permission_requirements", [])
+    assigned_tools = assignment.get("tool_grants", [])
+    assigned_permissions = assignment.get("permission_grants", [])
+    if any(
+        not isinstance(values, list)
+        or any(not isinstance(value, str) for value in values)
+        for values in (
+            requested_tools,
+            requested_permissions,
+            assigned_tools,
+            assigned_permissions,
+        )
+    ):
+        return "worker_run_grants_invalid"
+    if not set(requested_tools).issubset(assigned_tools) or not set(
+        requested_permissions
+    ).issubset(assigned_permissions):
+        return "company_assignment_grant_exceeded"
+    return None
+
 def evaluate_worker_run_readiness(
     *,
     worker: Mapping[str, Any] | None,
@@ -379,4 +450,5 @@ __all__ = [
     "VALID_SANDBOX_PROFILES",
     "WORKER_RUN_READINESS_SCHEMA",
     "evaluate_worker_run_readiness",
+    "worker_run_project_scope_blocker",
 ]

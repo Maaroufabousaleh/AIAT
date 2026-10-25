@@ -448,6 +448,7 @@ class _RuntimeHostRegistry:
 
 
 PROJECT_ID = UUID("00000000-0000-4000-a000-000000000320")
+COMPANY_ID = UUID("00000000-0000-4000-a000-000000000321")
 
 
 class _DeterministicVerticalStorage(_MemoryStorage):
@@ -494,9 +495,35 @@ class _DeterministicVerticalStorage(_MemoryStorage):
             }
         )
         self.adapter_record["transport_type"] = "oci"
+        self.project = {
+            "id": PROJECT_ID,
+            "company_id": COMPANY_ID,
+            "state": "IN_PROGRESS",
+        }
+        self.assignments = [
+            {
+                "company_id": COMPANY_ID,
+                "worker_id": WORKER_ID,
+                "status": "ACTIVE",
+                "approval_required": False,
+                "tool_grants": ["file_write"],
+                "permission_grants": [],
+            }
+        ]
         self.effects: dict[tuple[UUID, str], dict[str, object]] = {}
         self.project_files: dict[tuple[UUID, str], bytes] = {}
         self.terminal_evidence: dict[str, object] | None = None
+
+    async def get_project(self, project_id: UUID) -> dict[str, object] | None:
+        return deepcopy(self.project) if project_id == PROJECT_ID else None
+
+    async def list_company_worker_assignments(
+        self,
+        company_id: UUID,
+    ) -> list[dict[str, object]]:
+        if company_id != COMPANY_ID:
+            return []
+        return deepcopy(self.assignments)
 
     async def record_project_usage(self, **_values: object) -> dict[str, object]:
         """Expose the project-usage capability expected by the controller.
@@ -1327,6 +1354,48 @@ async def test_deterministic_file_worker_vertical_claim_tool_artifact_and_termin
     assert host_registries[0].calls == ["register", "heartbeat", "offline"]
     await adapter.close()
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("changed_scope", "expected_reason"),
+    [
+        ("terminal_project", "project_terminal"),
+        ("revoked_assignment", "company_assignment_required"),
+        ("pending_approval", "company_assignment_approval_required"),
+        ("revoked_tool_grant", "company_assignment_grant_exceeded"),
+    ],
+)
+async def test_queued_project_scope_is_rechecked_before_adapter_resolution(
+    changed_scope: str,
+    expected_reason: str,
+) -> None:
+    storage = _DeterministicVerticalStorage()
+    if changed_scope == "terminal_project":
+        storage.project["state"] = "COMPLETED"
+    elif changed_scope == "revoked_assignment":
+        storage.assignments[0]["status"] = "INACTIVE"
+    elif changed_scope == "pending_approval":
+        storage.assignments[0]["approval_required"] = True
+    else:
+        storage.assignments[0]["tool_grants"] = []
+
+    bindings = _Bindings(_binding())
+    resolver_calls: list[PinnedWorkerAdapter] = []
+
+    summaries = await _consumer(
+        storage,
+        bindings,
+        lambda pins: resolver_calls.append(pins),
+    ).consume_once()
+
+    assert summaries[0].state == "QUEUED"
+    assert summaries[0].reason_code == expected_reason
+    assert resolver_calls == []
+    assert storage.run["state"] == "QUEUED"
+    assert storage.mutation_calls == []
+    assert storage.effects == {}
+    assert storage.project_files == {}
+    assert storage.terminal_evidence is None
 
 @pytest.mark.asyncio
 async def test_local_host_startup_fences_registered_host_when_readiness_fails(

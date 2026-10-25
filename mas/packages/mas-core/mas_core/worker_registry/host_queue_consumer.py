@@ -26,7 +26,10 @@ from .host_executor import (
     WorkerHostExecutor,
 )
 from .run_host_binding import RunHostBindingIdentity, WorkerRunHostBindingService
-from .worker_run_readiness import HARDENED_SANDBOX_TRANSPORTS
+from .worker_run_readiness import (
+    HARDENED_SANDBOX_TRANSPORTS,
+    worker_run_project_scope_blocker,
+)
 
 if TYPE_CHECKING:
     from ..memory.storage import AgentStorage
@@ -240,6 +243,38 @@ class HostQueueConsumer:
                 raise _RunRejected("worker_request_scope_mismatch")
         return request
 
+    async def _validate_current_project_scope(
+        self,
+        run: Mapping[str, Any],
+        request: WorkerRunRequest,
+    ) -> None:
+        project: Mapping[str, Any] | None = None
+        assignments: list[Mapping[str, Any]] = []
+        if request.project_id is not None:
+            project_reader = getattr(self._storage, "get_project", None)
+            if not inspect.iscoroutinefunction(project_reader):
+                raise _RunRejected("worker_project_scope_store_unavailable")
+            project = await project_reader(request.project_id)
+            if project is not None and project.get("company_id") is not None:
+                assignment_reader = getattr(
+                    self._storage,
+                    "list_company_worker_assignments",
+                    None,
+                )
+                if not inspect.iscoroutinefunction(assignment_reader):
+                    raise _RunRejected("company_assignment_store_unavailable")
+                rows = await assignment_reader(UUID(str(project["company_id"])))
+                if not isinstance(rows, list):
+                    raise _RunRejected("company_assignment_store_invalid")
+                assignments = rows
+        blocker = worker_run_project_scope_blocker(
+            run=run,
+            request=request.model_dump(mode="json"),
+            project=project,
+            assignments=assignments,
+        )
+        if blocker is not None:
+            raise _RunRejected(blocker)
     async def _validate_worker_activation_and_pins(
         self,
         worker: Mapping[str, Any],
@@ -371,6 +406,7 @@ class HostQueueConsumer:
                 raise _RunRejected("binding_worker_mismatch")
 
             request = self._validate_request(run, worker_id)
+            await self._validate_current_project_scope(run, request)
             pins = self._adapter_pins(run, worker_id=worker_id)
             pinned_transport = await self._validate_worker_activation_and_pins(worker, pins)
             adapter = self._adapter_resolver(pins)

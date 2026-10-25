@@ -44,6 +44,7 @@ from ..company_manifest import (
 from ..observability.native_spans import build_native_trace_span
 from ..observability.tracing import current_span_id, current_trace_id, new_span_id
 from ..sandbox_policy import canonical_sandbox_class
+from ..worker_registry.worker_run_readiness import worker_run_project_scope_blocker
 from ..workflow.states import ProjectState
 from . import models as t
 
@@ -12515,6 +12516,65 @@ class AgentStorage:
             ).mappings().first()
         return dict(row) if row is not None else None
 
+    async def _worker_run_project_scope_is_current(
+        self,
+        conn: Any,
+        run: Mapping[str, Any],
+    ) -> bool:
+        """Check project and assignment authority while their rows are locked."""
+
+        request = run.get("request_json")
+        if not isinstance(request, Mapping) and run.get("project_id") is not None:
+            return False
+        if not isinstance(request, Mapping):
+            request = {}
+
+        project = None
+        assignments: list[Mapping[str, Any]] = []
+        project_id = run.get("project_id")
+        if project_id is not None:
+            project = (
+                await conn.execute(
+                    t.projects.select()
+                    .where(t.projects.c.id == project_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            preliminary_blocker = worker_run_project_scope_blocker(
+                run=run,
+                request=request,
+                project=project,
+                assignments=(),
+            )
+            if preliminary_blocker not in {None, "company_assignment_required"}:
+                return False
+            if project is not None and project.get("company_id") is not None:
+                assignment_rows = (
+                    await conn.execute(
+                        t.company_worker_assignments.select()
+                        .where(
+                            sa.and_(
+                                t.company_worker_assignments.c.company_id
+                                == project["company_id"],
+                                t.company_worker_assignments.c.worker_id
+                                == run.get("worker_id"),
+                            )
+                        )
+                        .limit(2)
+                        .with_for_update()
+                    )
+                ).mappings().all()
+                assignments = assignment_rows
+
+        return (
+            worker_run_project_scope_blocker(
+                run=run,
+                request=request,
+                project=project,
+                assignments=assignments,
+            )
+            is None
+        )
     async def claim_worker_run(
         self,
         *,
@@ -12525,7 +12585,6 @@ class AgentStorage:
         """Atomically claim one queued run, or a specified queued run."""
 
         now = datetime.now(tz=UTC)
-        lease_until = now + timedelta(seconds=max(1, lease_seconds))
         async with self.engine.begin() as conn:
             clauses = [
                 t.worker_runs.c.state == "QUEUED",
@@ -12545,6 +12604,10 @@ class AgentStorage:
             row = (await conn.execute(query)).mappings().first()
             if row is None:
                 return None
+            if not await self._worker_run_project_scope_is_current(conn, row):
+                return None
+            now = datetime.now(tz=UTC)
+            lease_until = now + timedelta(seconds=max(1, lease_seconds))
             await conn.execute(
                 t.worker_runs.update().where(t.worker_runs.c.id == row["id"]).values(
                     state="CLAIMED",
