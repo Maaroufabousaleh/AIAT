@@ -117,8 +117,10 @@ def _storage_for_claim(
     [
         ("COMPLETED", _assignment(), 2),
         ("SECURITY_BLOCKED", _assignment(), 2),
+        (" IN_PROGRESS ", _assignment(), 2),
         ("IN_PROGRESS", None, 3),
         ("IN_PROGRESS", _assignment(status="INACTIVE"), 3),
+        ("IN_PROGRESS", _assignment(status="active"), 3),
         ("IN_PROGRESS", _assignment(approval_required=True), 3),
         ("IN_PROGRESS", _assignment(tool_grants=[]), 3),
         ("IN_PROGRESS", _assignment(permission_grants=[]), 3),

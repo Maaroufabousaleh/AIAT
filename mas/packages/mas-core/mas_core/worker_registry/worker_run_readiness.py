@@ -127,7 +127,7 @@ def worker_run_project_scope_blocker(
         return None
     if project is None or _text(project.get("id")) != run_project_id:
         return "project_not_found"
-    project_state = _text(project.get("state")).upper()
+    project_state = str(project.get("state") or "").upper()
     if project_state not in DISPATCHABLE_PROJECT_STATES:
         if project_state in TERMINAL_PROJECT_STATES:
             return "project_terminal"
@@ -149,9 +149,9 @@ def worker_run_project_scope_blocker(
     if len(matching) != 1:
         return "company_assignment_ambiguous"
     assignment = matching[0]
-    if _text(assignment.get("status")).upper() != "ACTIVE":
+    if str(assignment.get("status")) != "ACTIVE":
         return "company_assignment_required"
-    if assignment.get("approval_required") is True:
+    if bool(assignment.get("approval_required")):
         return "company_assignment_approval_required"
 
     requested_tools = request.get("tool_grants", [])
