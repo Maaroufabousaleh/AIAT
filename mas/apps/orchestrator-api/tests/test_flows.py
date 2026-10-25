@@ -740,6 +740,170 @@ async def test_queued_governed_task_remains_active_until_worker_run_is_terminal(
 
 @pytest.mark.anyio
 @pytest.mark.parametrize(
+    ("case", "expected_detail"),
+    [
+        ("different_worker", "Worker Run is not bound to this task's governed worker"),
+        ("missing_result", "Worker Run has no matching successful persisted result"),
+        ("wrong_result_run", "Worker Run has no matching successful persisted result"),
+        ("wrong_result_worker", "Worker Run has no matching successful persisted result"),
+        ("unsuccessful_result", "Worker Run has no matching successful persisted result"),
+    ],
+)
+async def test_governed_task_rejects_unbound_or_missing_worker_result_before_writes(
+    client, case, expected_detail
+):
+    worker_id = uuid4()
+    run_id = uuid4()
+    persisted_worker_id = uuid4() if case == "different_worker" else worker_id
+    result_json = None
+    if case != "missing_result":
+        result_json = {
+            "run_id": str(uuid4() if case == "wrong_result_run" else run_id),
+            "worker_id": str(uuid4() if case == "wrong_result_worker" else persisted_worker_id),
+            "success": case != "unsuccessful_result",
+            "output": {"report": "untrusted"},
+        }
+    execution_id = 41
+    runtime_flow = {
+        **_flow(),
+        "definition_json": {
+            "nodes": [
+                {"id": "governed_task", "type": "task", "label": "Research", "config": {"worker_id": str(worker_id)}},
+                {"id": "end", "type": "end", "label": "Done", "config": {}},
+            ],
+            "edges": [{"id": "task-end", "source": "governed_task", "target": "end"}],
+        },
+    }
+    instance = {
+        **_instance(active_node_ids=["governed_task"], status="RUNNING"),
+        "context_json": {
+            "active_worker_runs": {
+                "governed_task": {"run_id": str(run_id), "state": "SUCCEEDED", "dispatch_mode": "queued"}
+            }
+        },
+    }
+    execution = {"id": execution_id, "node_id": "governed_task", "status": "RUNNING"}
+    storage = MagicMock()
+    storage.get_flow_instance = AsyncMock(return_value=instance)
+    storage.get_flow = AsyncMock(return_value=runtime_flow)
+    storage.list_flow_node_executions = AsyncMock(return_value=[execution])
+    storage.get_worker_run = AsyncMock(
+        return_value={
+            "id": run_id,
+            "worker_id": persisted_worker_id,
+            "flow_instance_id": FLOW_INSTANCE_ID,
+            "flow_node_execution_id": execution_id,
+            "state": "SUCCEEDED",
+            "result_json": result_json,
+        }
+    )
+    storage.update_flow_node_execution = AsyncMock()
+    storage.update_flow_instance = AsyncMock()
+    storage.create_flow_node_execution = AsyncMock()
+    _patch_state(storage)
+
+    response = await client.post(
+        f"/flows/instances/{FLOW_INSTANCE_ID}/node-action",
+        json={
+            "node_id": "governed_task",
+            "action": "complete",
+            "worker_run_id": str(run_id),
+            "output": {"report": "caller-injected"},
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == expected_detail
+    storage.update_flow_node_execution.assert_not_awaited()
+    storage.update_flow_instance.assert_not_awaited()
+    storage.create_flow_node_execution.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_governed_task_uses_persisted_worker_result_not_caller_output(client):
+    worker_id = uuid4()
+    run_id = uuid4()
+    execution_id = 42
+    task_execution = {"id": execution_id, "node_id": "governed_task", "status": "RUNNING"}
+    completed_instance = {
+        **_instance(active_node_ids=[], status="COMPLETED"),
+        "context_json": {"report": "canonical report", "worker_run_id": str(run_id)},
+    }
+    runtime_flow = {
+        **_flow(),
+        "definition_json": {
+            "nodes": [
+                {"id": "governed_task", "type": "task", "label": "Research", "config": {"worker_id": str(worker_id)}},
+                {"id": "end", "type": "end", "label": "Done", "config": {}},
+            ],
+            "edges": [{"id": "task-end", "source": "governed_task", "target": "end"}],
+        },
+    }
+
+    async def list_executions(**kwargs):
+        if kwargs.get("node_id") == "end":
+            return [{"id": execution_id + 1, "node_id": "end", "status": "RUNNING"}]
+        if kwargs.get("node_id") == "governed_task" or kwargs.get("status") == "RUNNING":
+            return [task_execution]
+        return [{**task_execution, "status": "COMPLETED"}]
+
+    storage = MagicMock()
+    storage.get_flow_instance = AsyncMock(side_effect=[_instance(active_node_ids=["governed_task"], status="RUNNING"), completed_instance])
+    storage.get_flow = AsyncMock(return_value=runtime_flow)
+    storage.list_flow_node_executions = AsyncMock(side_effect=list_executions)
+    storage.get_worker_run = AsyncMock(
+        return_value={
+            "id": run_id,
+            "worker_id": worker_id,
+            "flow_instance_id": FLOW_INSTANCE_ID,
+            "flow_node_execution_id": execution_id,
+            "state": "SUCCEEDED",
+            "result_json": {
+                "run_id": str(run_id),
+                "worker_id": str(worker_id),
+                "success": True,
+                "output": {"report": "canonical report"},
+            },
+        }
+    )
+    storage.update_flow_node_execution = AsyncMock(return_value=task_execution)
+    storage.create_flow_node_execution = AsyncMock(return_value={"id": execution_id + 1})
+    storage.update_flow_instance = AsyncMock(return_value=completed_instance)
+    _patch_state(storage)
+
+    response = await client.post(
+        f"/flows/instances/{FLOW_INSTANCE_ID}/node-action",
+        json={
+            "node_id": "governed_task",
+            "action": "complete",
+            "worker_run_id": str(run_id),
+            "output": {"report": "caller-injected", "approval": "approved"},
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "COMPLETED"
+    task_update = next(
+        call.kwargs
+        for call in storage.update_flow_node_execution.await_args_list
+        if call.args[0] == execution_id
+    )
+    assert task_update["output_json"] == {
+        "report": "canonical report",
+        "worker_run_id": str(run_id),
+    }
+    assert task_update["output_json"].get("approval") is None
+    settled_context = next(
+        call.kwargs["context_json"]
+        for call in storage.update_flow_instance.await_args_list
+        if call.kwargs.get("context_json", {}).get("worker_run_id") == str(run_id)
+    )
+    assert settled_context["report"] == "canonical report"
+    assert settled_context.get("approval") is None
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
     ("decision", "expected_node"),
     [("approved", "decision_switch"), ("edit_requested", "decision_switch")],
 )

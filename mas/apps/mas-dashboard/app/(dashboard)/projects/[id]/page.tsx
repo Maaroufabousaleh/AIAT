@@ -517,6 +517,18 @@ function projectWorkerRunStateClass(state: string): string {
   }
 }
 
+function activeFlowWorkerRunId(
+  context: Record<string, unknown> | undefined,
+  nodeId: string,
+): string | null {
+  const bindings = context?.active_worker_runs;
+  if (!bindings || typeof bindings !== "object" || Array.isArray(bindings)) return null;
+  const binding = (bindings as Record<string, unknown>)[nodeId];
+  if (!binding || typeof binding !== "object" || Array.isArray(binding)) return null;
+  const runId = (binding as Record<string, unknown>).run_id;
+  return typeof runId === "string" && UUID_PATTERN.test(runId) ? runId : null;
+}
+
 function isProjectWorkerRun(value: unknown): value is ProjectWorkerRun {
   if (!value || typeof value !== "object") return false;
   const run = value as Partial<ProjectWorkerRun>;
@@ -1934,7 +1946,7 @@ export default function ProjectDetailPage() {
 
   useEffect(() => {
     if (
-      activeTab !== "workspace" ||
+      (activeTab !== "workspace" && activeTab !== "flow") ||
       workspaceLoading ||
       projectWorkerRunsError ||
       accessDenied ||
@@ -2197,7 +2209,7 @@ export default function ProjectDetailPage() {
   async function handleNodeAction(
     nodeId: string,
     action: string,
-    options?: { approved?: boolean; decision?: string; error?: string },
+    options?: { approved?: boolean; decision?: string; error?: string; worker_run_id?: string },
   ) {
     if (!flowInstance || accessDeniedRef.current) return;
     setActionLoading(`node-${nodeId}`);
@@ -2212,7 +2224,7 @@ export default function ProjectDetailPage() {
       );
       if (res.ok) {
         setFlowError(null);
-        await Promise.all([loadFlowData(), load()]);
+        await Promise.all([loadFlowData(), load(), loadWorkspace()]);
       } else {
         if (handleDeniedResponse(res)) return;
         const data = await res.json().catch(() => ({}));
@@ -4663,6 +4675,17 @@ export default function ProjectDetailPage() {
                         const governedTask =
                           activeNode?.type === "task" &&
                           typeof activeNode.config?.worker_id === "string";
+                        const workerRunId = governedTask
+                          ? activeFlowWorkerRunId(flowInstance.context_json, nodeId)
+                          : null;
+                        const linkedWorkerRun = workerRunId
+                          ? projectWorkerRuns.find(
+                              (run) =>
+                                run.id.toLowerCase() === workerRunId.toLowerCase() &&
+                                run.project_id.toLowerCase() === id.toLowerCase(),
+                            )
+                          : undefined;
+                        const linkedWorkerRunState = linkedWorkerRun?.state.trim().toUpperCase();
                         const pendingApprovalGate =
                           activeNode?.type === "approval"
                             ? getActiveFlowApprovalGate(nodeId)
@@ -4738,21 +4761,93 @@ export default function ProjectDetailPage() {
                                   )}
                                 </div>
                               ) : governedTask ? (
-                                <>
+                                workerRunId ? (
+                                  <div className="flex flex-col items-end gap-2" data-testid={`active-worker-run-${nodeId}`}>
+                                    {projectWorkerRunsError ? (
+                                      <p role="alert" className="max-w-sm text-right text-xs text-amber-200">
+                                        {projectWorkerRunsError}
+                                      </p>
+                                    ) : linkedWorkerRun ? (
+                                      <span
+                                        role="status"
+                                        aria-label={`Worker Run state: ${linkedWorkerRunState?.replace(/_/g, " ") ?? "unknown"}`}
+                                        className={clsx("rounded border px-2 py-1 text-xs", projectWorkerRunStateClass(linkedWorkerRun.state))}
+                                      >
+                                        Worker Run {linkedWorkerRunState?.replace(/_/g, " ") ?? "UNKNOWN"}
+                                      </span>
+                                    ) : (
+                                      <p role="status" className="max-w-sm text-right text-xs text-amber-200">
+                                        Worker Run status is not in the latest project run list.
+                                      </p>
+                                    )}
+                                    {linkedWorkerRun && (
+                                      <Link
+                                        href={`/workers/runs/${encodeURIComponent(linkedWorkerRun.id)}`}
+                                        className="min-h-10 inline-flex items-center text-xs text-cyan-200 underline underline-offset-2"
+                                      >
+                                        View Worker Run
+                                      </Link>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() => void loadWorkspace()}
+                                      disabled={workspaceLoading || !!actionLoading}
+                                      className="min-h-10 rounded border border-slate-700 px-3 py-1 text-xs text-slate-200 hover:bg-slate-800 disabled:opacity-50"
+                                    >
+                                      {workspaceLoading ? "Refreshing run status…" : "Refresh run status"}
+                                    </button>
+                                    {linkedWorkerRunState === "SUCCEEDED" && (
+                                      <button
+                                        type="button"
+                                        onClick={() => void handleNodeAction(nodeId, "complete", { worker_run_id: workerRunId })}
+                                        disabled={!!actionLoading || projectStale}
+                                        data-testid={`apply-worker-run-${nodeId}`}
+                                        className="min-h-10 rounded border border-emerald-700 bg-emerald-950/30 px-3 py-1 text-xs text-emerald-100 hover:bg-emerald-900/50 disabled:opacity-50"
+                                      >
+                                        {actionLoading === `node-${nodeId}` ? "Applying result…" : "Apply Worker Run result"}
+                                      </button>
+                                    )}
+                                    {(linkedWorkerRunState === "FAILED" || linkedWorkerRunState === "CANCELLED") && (
+                                      <button
+                                        type="button"
+                                        onClick={() => void handleNodeAction(nodeId, "fail", {
+                                          worker_run_id: workerRunId,
+                                          error: linkedWorkerRunState === "CANCELLED"
+                                            ? "Worker Run was cancelled."
+                                            : "Worker Run failed.",
+                                        })}
+                                        disabled={!!actionLoading || projectStale}
+                                        data-testid={`settle-failed-worker-run-${nodeId}`}
+                                        className="min-h-10 rounded border border-rose-700 bg-rose-950/30 px-3 py-1 text-xs text-rose-100 hover:bg-rose-900/50 disabled:opacity-50"
+                                      >
+                                        Record Worker Run failure
+                                      </button>
+                                    )}
+                                    {linkedWorkerRunState === "TIMED_OUT" && (
+                                      <button
+                                        type="button"
+                                        onClick={() => void handleNodeAction(nodeId, "timeout", {
+                                          worker_run_id: workerRunId,
+                                          error: "Worker Run timed out.",
+                                        })}
+                                        disabled={!!actionLoading || projectStale}
+                                        data-testid={`settle-timeout-worker-run-${nodeId}`}
+                                        className="min-h-10 rounded border border-amber-700 bg-amber-950/30 px-3 py-1 text-xs text-amber-100 hover:bg-amber-900/50 disabled:opacity-50"
+                                      >
+                                        Record Worker Run timeout
+                                      </button>
+                                    )}
+                                  </div>
+                                ) : (
                                   <button
-                                    onClick={() =>
-                                      handleNodeAction(nodeId, "advance")
-                                    }
-                                    disabled={!!actionLoading}
+                                    onClick={() => handleNodeAction(nodeId, "advance")}
+                                    disabled={!!actionLoading || projectStale}
                                     data-testid="dispatch-worker-run-button"
-                                    className="px-2 py-1 text-xs bg-blue-600/20 text-blue-300 border border-blue-800 rounded hover:bg-blue-600/40"
+                                    className="px-2 py-1 text-xs bg-blue-600/20 text-blue-300 border border-blue-800 rounded hover:bg-blue-600/40 disabled:opacity-50"
                                   >
                                     Dispatch Worker Run
                                   </button>
-                                  <span className="self-center text-xxs text-slate-500">
-                                    Result evidence advances this node
-                                  </span>
-                                </>
+                                )
                               ) : (
                                 <>
                                   <button

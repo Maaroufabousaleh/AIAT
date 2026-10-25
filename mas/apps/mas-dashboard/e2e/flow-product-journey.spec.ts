@@ -191,6 +191,12 @@ test("operator builds, edits, starts, and retries a project flow", async ({
     if (pathname === `/api/projects/${PROJECT_ID}/workspace`) {
       return fulfill(blankWorkspace());
     }
+    if (pathname === "/api/governance/runs" && method === "GET") {
+      return fulfill([]);
+    }
+    if (pathname === `/api/projects/${PROJECT_ID}/issues` && method === "GET") {
+      return fulfill([]);
+    }
     if (pathname === `/api/projects/${PROJECT_ID}/repository`) {
       return fulfill({ workspace: null });
     }

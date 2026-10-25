@@ -17088,6 +17088,8 @@ async def _apply_flow_node_action(
                 activation["gate_type"] = next_node.label
         return activation
 
+    authoritative_task_output: dict[str, Any] | None = None
+
     # Task nodes are completed only by a terminal Worker Run.  ``advance`` is
     # the sole operator/API action for a task: it creates the run from the
     # typed node policy and feeds its normalized result back into this same
@@ -17219,6 +17221,9 @@ async def _apply_flow_node_action(
             or worker_run.get("flow_node_execution_id") != execution["id"]
         ):
             raise HTTPException(409, "Worker Run is not bound to this active flow node execution")
+        expected_worker_id = str(node.config.get("worker_id") or "").strip().lower()
+        if str(worker_run.get("worker_id") or "").strip().lower() != expected_worker_id:
+            raise HTTPException(409, "Worker Run is not bound to this task's governed worker")
         expected_run_states = {
             "complete": frozenset({"SUCCEEDED"}),
             # Cancellation is a terminal non-success outcome and therefore
@@ -17232,11 +17237,43 @@ async def _apply_flow_node_action(
                 409,
                 f"Task node action {req.action} requires Worker Run state in {sorted(expected_run_states)}",
             )
+        if req.action == "complete":
+            persisted_result = worker_run.get("result_json")
+            if (
+                not isinstance(persisted_result, dict)
+                or persisted_result.get("success") is not True
+                or str(persisted_result.get("run_id") or "").strip().lower()
+                != str(req.worker_run_id).lower()
+                or str(persisted_result.get("worker_id") or "").strip().lower()
+                != expected_worker_id
+            ):
+                raise HTTPException(
+                    409,
+                    "Worker Run has no matching successful persisted result",
+                )
+            persisted_output = persisted_result.get("output")
+            authoritative_task_output = (
+                dict(persisted_output)
+                if isinstance(persisted_output, dict)
+                else {"worker_output": persisted_output}
+            )
+            authoritative_task_output["worker_run_id"] = str(req.worker_run_id)
 
     if req.action == "complete":
         updated_context = dict(current_context)
-        if req.output:
-            updated_context.update(req.output)
+        task_output = req.output
+        if node.type == FlowNodeType.TASK and node.config.get("worker_id"):
+            # The durable WorkerResult is the only source of task output. The
+            # request body identifies the terminal action, but cannot replace
+            # or decorate the result that downstream nodes see.
+            if authoritative_task_output is None:
+                raise HTTPException(
+                    409,
+                    "Worker Run has no matching successful persisted result",
+                )
+            task_output = authoritative_task_output
+        if task_output:
+            updated_context.update(task_output)
 
         # A governed task's pending asynchronous binding is consumed only by
         # its authoritative terminal Worker Run.  Remove that one node entry
@@ -17271,7 +17308,7 @@ async def _apply_flow_node_action(
             await storage.update_flow_node_execution(
                 executions[0]["id"],
                 status="COMPLETED",
-                output_json=req.output or updated_context,
+                output_json=task_output or updated_context,
                 completed_at=now,
             )
 
