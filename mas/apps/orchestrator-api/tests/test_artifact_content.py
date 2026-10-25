@@ -12,10 +12,48 @@ from conftest import PROJECT_ID
 
 from mas_core.memory.blob import BlobRef
 from mas_core.worker_contract import WorkerArtifact
+from mas_core.worker_registry.execution_lineage import (
+    SHELL_EXECUTION_LINEAGE_KEY,
+    build_worker_execution_config_snapshot,
+    worker_execution_config_snapshot_sha256,
+    worker_shell_content_hash,
+)
 
 _app_dir = str(Path(__file__).resolve().parents[1])
 if _app_dir not in sys.path:
     sys.path.insert(0, _app_dir)
+
+
+def _lineaged_shell(worker_id, adapter_id, transport, config, *, shell_id):
+    snapshot = build_worker_execution_config_snapshot(transport, config)
+    shell = {
+        "id": shell_id,
+        "worker_id": worker_id,
+        "version": "fixture-shell-v1",
+        "identity_json": {"worker_id": str(worker_id)},
+        "capabilities_json": {},
+        "permissions_json": {},
+        "model_mode": "none",
+        "status": "active",
+        "provenance_json": {
+            "runtime_adapter_id": str(adapter_id),
+            "runtime_adapter": {
+                "id": str(adapter_id),
+                "version": "fixture-adapter-v1",
+                "adapter_type": transport,
+                "transport_type": transport,
+                "runtime_api_version": None,
+                "implementation_ref": config.get("implementation_ref"),
+                "content_hash": "fixture-adapter-content-hash",
+            },
+            SHELL_EXECUTION_LINEAGE_KEY: {
+                "sha256": worker_execution_config_snapshot_sha256(snapshot),
+                "snapshot": snapshot,
+            },
+        },
+    }
+    shell["content_hash"] = worker_shell_content_hash(shell)
+    return shell
 
 
 def test_artifact_download_openapi_declares_binary_content() -> None:
@@ -343,6 +381,7 @@ async def test_certified_opencode_adapter_receives_orchestrator_artifact_registr
 
     worker_id = uuid.uuid4()
     adapter_id = uuid.uuid4()
+    shell_id = uuid.uuid4()
     captured: dict[str, object] = {}
 
     class CapturedAdapter:
@@ -352,7 +391,12 @@ async def test_certified_opencode_adapter_receives_orchestrator_artifact_registr
     adapter_row = {
         "id": adapter_id,
         "worker_id": worker_id,
+        "version": "fixture-adapter-v1",
+        "adapter_type": "opencode",
         "transport_type": "opencode",
+        "runtime_api_version": None,
+        "implementation_ref": None,
+        "content_hash": "fixture-adapter-content-hash",
         "status": "active",
         "conformance_status": "passed",
         "capabilities_json": {},
@@ -364,6 +408,7 @@ async def test_certified_opencode_adapter_receives_orchestrator_artifact_registr
     worker = {
         "id": worker_id,
         "active_adapter_id": adapter_id,
+        "active_shell_version_id": shell_id,
         "adapter_type": "opencode",
         "adapter_config": {
             "workspace_path": str(tmp_path),
@@ -371,6 +416,15 @@ async def test_certified_opencode_adapter_receives_orchestrator_artifact_registr
             "interface_verification": {},
         },
     }
+    storage.get_worker_shell_version = AsyncMock(
+        return_value=_lineaged_shell(
+            worker_id,
+            adapter_id,
+            "opencode",
+            worker["adapter_config"],
+            shell_id=shell_id,
+        )
+    )
     monkeypatch.setenv("OPENCODE_SERVER_PASSWORD", "test-password")
     monkeypatch.setenv("TOOL_SECRET", "test-tool-secret")
     monkeypatch.setattr(adapters, "OpenCodeAdapter", CapturedAdapter)
@@ -398,6 +452,7 @@ async def test_certified_oci_adapter_receives_orchestrator_artifact_registrar(
 
     worker_id = uuid.uuid4()
     adapter_id = uuid.uuid4()
+    shell_id = uuid.uuid4()
     captured: dict[str, object] = {}
 
     class CapturedAdapter:
@@ -407,7 +462,12 @@ async def test_certified_oci_adapter_receives_orchestrator_artifact_registrar(
     adapter_row = {
         "id": adapter_id,
         "worker_id": worker_id,
+        "version": "fixture-adapter-v1",
+        "adapter_type": "oci",
         "transport_type": "oci",
+        "runtime_api_version": None,
+        "implementation_ref": None,
+        "content_hash": "fixture-adapter-content-hash",
         "status": "active",
         "conformance_status": "passed",
         "capabilities_json": {},
@@ -419,9 +479,19 @@ async def test_certified_oci_adapter_receives_orchestrator_artifact_registrar(
     worker = {
         "id": worker_id,
         "active_adapter_id": adapter_id,
+        "active_shell_version_id": shell_id,
         "adapter_type": "oci",
         "adapter_config": {"artifact_workspace_path": str(tmp_path)},
     }
+    storage.get_worker_shell_version = AsyncMock(
+        return_value=_lineaged_shell(
+            worker_id,
+            adapter_id,
+            "oci",
+            worker["adapter_config"],
+            shell_id=shell_id,
+        )
+    )
     monkeypatch.setattr(
         adapters,
         "adapter_for_transport",

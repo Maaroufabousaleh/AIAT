@@ -14,7 +14,18 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
+from mas_core.sandbox_policy import (
+    WorkerIsolationPolicyError,
+    worker_requires_hardened_isolation,
+)
+
 from ..worker_contract.models import WorkerRunRequest
+from .execution_lineage import (
+    SHELL_EXECUTION_LINEAGE_KEY,
+    WorkerExecutionLineageError,
+    worker_execution_transport_supported,
+    worker_shell_execution_lineage_blocker,
+)
 from .host_executor import (
     HostExecutionRequest,
     WorkerHostExecutionRejected,
@@ -22,9 +33,9 @@ from .host_executor import (
 )
 from .run_host_binding import RunHostBindingIdentity, WorkerRunHostBindingService
 from .worker_run_readiness import (
+    HARDENED_SANDBOX_TRANSPORTS,
     canonical_worker_adapter_transport,
     worker_run_project_scope_blocker,
-    worker_run_registry_blocker,
 )
 
 if TYPE_CHECKING:
@@ -271,36 +282,103 @@ class HostQueueConsumer:
         )
         if blocker is not None:
             raise _RunRejected(blocker)
+
     async def _validate_worker_activation_and_pins(
         self,
-        run: Mapping[str, Any],
         worker: Mapping[str, Any],
         pins: PinnedWorkerAdapter,
-    ) -> str:
+    ) -> tuple[str, str]:
+        status = str(worker.get("status") or "").upper()
+        if status not in {"ACTIVE", "DRAINING"}:
+            raise _RunRejected("worker_not_active")
+        if str(worker.get("evaluation_status") or "").lower() != "approved":
+            raise _RunRejected("worker_evaluation_not_approved")
+
         shell_reader = getattr(self._storage, "get_worker_shell_version", None)
         adapter_reader = getattr(self._storage, "get_runtime_adapter", None)
-        bundle_reader = getattr(self._storage, "get_skill_bundle", None)
         if not callable(shell_reader) or not callable(adapter_reader):
             raise _RunRejected("worker_pin_validation_unavailable")
         shell = await shell_reader(pins.worker_shell_version_id)
+        if (
+            not isinstance(shell, Mapping)
+            or str(shell.get("id")) != str(pins.worker_shell_version_id)
+            or str(shell.get("worker_id")) != str(pins.worker_id)
+            or str(shell.get("status") or "").lower() not in {"active", "superseded"}
+        ):
+            raise _RunRejected("worker_shell_pin_not_eligible")
+
         adapter = await adapter_reader(pins.adapter_id)
-        bundle = None
+        if (
+            not isinstance(adapter, Mapping)
+            or str(adapter.get("id")) != str(pins.adapter_id)
+            or str(adapter.get("worker_id")) != str(pins.worker_id)
+            or str(adapter.get("status") or "").lower() not in {"active", "superseded"}
+            or str(adapter.get("conformance_status") or "").lower() != "passed"
+        ):
+            raise _RunRejected("worker_adapter_pin_not_eligible")
+
+        transport = canonical_worker_adapter_transport(
+            adapter.get("transport_type")
+        )
+        if not transport:
+            raise _RunRejected("worker_adapter_transport_missing")
+        try:
+            requires_hardened_isolation = worker_requires_hardened_isolation(
+                worker
+            )
+        except WorkerIsolationPolicyError as exc:
+            raise _RunRejected(exc.reason_code) from exc
+        if requires_hardened_isolation:
+            if transport == "process":
+                # ProcessAdapter executes directly on the host. Placement may
+                # certify a host runtime, but that decision is only enforced by
+                # adapters that launch through a supported sandbox runtime.
+                raise _RunRejected("worker_sandbox_process_transport_unsupported")
+            if transport not in HARDENED_SANDBOX_TRANSPORTS:
+                raise _RunRejected("worker_sandbox_transport_unverified")
+
+        if not worker_execution_transport_supported(transport):
+            raise _RunRejected("worker_adapter_transport_unverified")
+
+        lineage_blocker = worker_shell_execution_lineage_blocker(
+            shell=shell,
+            adapter=adapter,
+            worker_id=pins.worker_id,
+            adapter_id=pins.adapter_id,
+        )
+        if lineage_blocker is not None:
+            raise _RunRejected(lineage_blocker)
+        shell_provenance = shell.get("provenance_json") or {}
+        lineage = (
+            shell_provenance.get(SHELL_EXECUTION_LINEAGE_KEY)
+            if isinstance(shell_provenance, Mapping)
+            else None
+        )
+        execution_config_sha256 = (
+            str(lineage.get("sha256") or "") if isinstance(lineage, Mapping) else ""
+        )
+        if not execution_config_sha256:
+            raise _RunRejected("worker_runtime_lineage_unavailable")
+
         if pins.skill_bundle_id is not None:
+            bundle_reader = getattr(self._storage, "get_skill_bundle", None)
             if not callable(bundle_reader):
                 raise _RunRejected("worker_skill_pin_validation_unavailable")
             bundle = await bundle_reader(pins.skill_bundle_id)
+            if (
+                not isinstance(bundle, Mapping)
+                or str(bundle.get("id")) != str(pins.skill_bundle_id)
+                or str(bundle.get("worker_id")) != str(pins.worker_id)
+                or str(bundle.get("status") or "").upper()
+                not in {"APPROVED", "SUPERSEDED"}
+                or (
+                    pins.steward_id is not None
+                    and str(bundle.get("steward_id")) != str(pins.steward_id)
+                )
+            ):
+                raise _RunRejected("worker_skill_pin_not_eligible")
 
-        blocker = worker_run_registry_blocker(
-            run=run,
-            worker=worker,
-            shell=shell if isinstance(shell, Mapping) else None,
-            adapter=adapter if isinstance(adapter, Mapping) else None,
-            skill_bundle=bundle if isinstance(bundle, Mapping) else None,
-        )
-        if blocker is not None:
-            raise _RunRejected(blocker)
-        assert isinstance(adapter, Mapping)
-        return canonical_worker_adapter_transport(adapter.get("transport_type"))
+        return transport, execution_config_sha256
 
     async def _current_state(self, run_id: UUID) -> str:
         try:
@@ -363,13 +441,23 @@ class HostQueueConsumer:
             request = self._validate_request(run, worker_id)
             await self._validate_current_project_scope(run, request)
             pins = self._adapter_pins(run, worker_id=worker_id)
-            pinned_transport = await self._validate_worker_activation_and_pins(run, worker, pins)
+            pinned_transport, pinned_execution_config_sha256 = (
+                await self._validate_worker_activation_and_pins(worker, pins)
+            )
             adapter = self._adapter_resolver(pins)
             if inspect.isawaitable(adapter):
                 adapter = await adapter
             resolved_adapter_id = getattr(adapter, "_aiat_adapter_id", None)
             if str(resolved_adapter_id or "") != str(pins.adapter_id):
                 raise _RunRejected("pinned_adapter_resolution_mismatch")
+            resolved_shell_id = getattr(adapter, "_aiat_shell_version_id", None)
+            if str(resolved_shell_id or "") != str(pins.worker_shell_version_id):
+                raise _RunRejected("pinned_worker_shell_resolution_mismatch")
+            resolved_execution_config_sha256 = getattr(
+                adapter, "_aiat_execution_config_sha256", None
+            )
+            if str(resolved_execution_config_sha256 or "") != pinned_execution_config_sha256:
+                raise _RunRejected("pinned_worker_execution_config_mismatch")
             resolved_transport = str(getattr(adapter, "runtime_type", "") or "").strip().lower()
             expected_runtime_types = _TRANSPORT_RUNTIME_TYPES.get(pinned_transport)
             if expected_runtime_types is None or resolved_transport not in expected_runtime_types:
@@ -404,6 +492,12 @@ class HostQueueConsumer:
                 reason_code=exc.reason_code,
             )
         except WorkerHostExecutionRejected as exc:
+            return HostQueueRunSummary(
+                run_id=safe_run_id,
+                state=await self._current_state(run_id),
+                reason_code=exc.reason_code,
+            )
+        except WorkerExecutionLineageError as exc:
             return HostQueueRunSummary(
                 run_id=safe_run_id,
                 state=await self._current_state(run_id),

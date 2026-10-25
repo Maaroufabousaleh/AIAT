@@ -9,6 +9,80 @@ from uuid import uuid4
 import pytest
 
 
+@pytest.mark.anyio
+async def test_certified_worker_shell_persists_exact_conformance_config_snapshot() -> None:
+    import orchestrator_api.main as main
+
+    from mas_core.worker_registry.execution_lineage import (
+        SHELL_EXECUTION_LINEAGE_KEY,
+        build_worker_execution_config_snapshot,
+        worker_execution_config_snapshot_sha256,
+        worker_shell_content_hash,
+    )
+
+    worker_id = uuid4()
+    candidate_id = uuid4()
+    adapter_id = uuid4()
+    bundle_id = uuid4()
+    adapter = {
+        "id": adapter_id,
+        "worker_id": worker_id,
+        "version": "fixture-adapter-v1",
+        "transport_type": "oci",
+        "implementation_ref": "registry.example/worker@sha256:fixture",
+        "content_hash": "adapter-content-hash",
+        "capabilities_json": {"capability_names": ["deterministic.file_generate"]},
+    }
+    config = {
+        "image": "registry.example/worker@sha256:fixture",
+        "sandbox_profile": "gvisor",
+        "execution_policy": {
+            "trust": "untrusted",
+            "formats": ["oci", "linux"],
+            "minimum_isolation": "sandboxed",
+        },
+        "workspace_path": "/candidate-workspace",
+        "tool_grants": ["file_write"],
+        "contract_version": "aiat.worker.v1",
+    }
+    snapshot = build_worker_execution_config_snapshot(
+        "oci", config, sandbox_profile="sandboxed"
+    )
+
+    class Storage:
+        async def get_runtime_adapter(self, requested_id):
+            assert requested_id == adapter_id
+            return adapter
+
+        async def get_skill_bundle(self, requested_id):
+            assert requested_id == bundle_id
+            return {"id": bundle_id, "worker_id": worker_id}
+
+    shell = await main._candidate_worker_shell_values(
+        Storage(),
+        worker={"id": worker_id, "adapter_config": config, "sandbox_profile": "sandboxed"},
+        candidate={
+            "id": candidate_id,
+            "skill_bundle_id": bundle_id,
+            "adapter_id": adapter_id,
+            "adapter": {
+                "version": adapter["version"],
+                "transport_type": adapter["transport_type"],
+                "implementation_ref": adapter["implementation_ref"],
+                "content_hash": adapter["content_hash"],
+            },
+        },
+        execution_config_snapshot=snapshot,
+    )
+
+    binding = shell["provenance_json"][SHELL_EXECUTION_LINEAGE_KEY]
+    assert binding["snapshot"] == snapshot
+    assert binding["sha256"] == worker_execution_config_snapshot_sha256(snapshot)
+    assert shell["provenance_json"]["candidate_id"] == str(candidate_id)
+    assert shell["permissions_json"]["tool_grants"] == ["file_write"]
+    assert shell["content_hash"] == worker_shell_content_hash(shell)
+
+
 def _candidate_state():
     from mas_core.worker_contract import WorkerCapabilities
     from mas_core.worker_contract.conformance import (

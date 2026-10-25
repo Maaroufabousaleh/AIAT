@@ -3121,14 +3121,17 @@ def adapter_for_transport(
         from mas_core.llm_gateway.models import LLMConfig
 
         context_secrets = context.secrets if context is not None else {}
+        api_key = (
+            context_secrets.get("llm_api_key")
+            or context_secrets.get("LLM_API_KEY")
+            or context_secrets.get("environment:llm_api_key")
+            or context_secrets.get("environment:LLM_API_KEY")
+            or ""
+        )
         gateway_config = LLMConfig(
             gateway_url=str(config.get("gateway_url") or "http://litellm:4000"),
             default_model=str(config.get("default_model") or "auto"),
-            api_key=str(
-                context_secrets.get("llm_api_key")
-                or context_secrets.get("LLM_API_KEY")
-                or ""
-            ),
+            api_key=str(api_key),
             backend=str(config.get("backend") or "litellm"),
             timeout_s=float(config.get("timeout_s", 120.0)),
             max_retries=int(config.get("max_retries", 3)),

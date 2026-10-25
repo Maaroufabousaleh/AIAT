@@ -8,6 +8,12 @@ from uuid import UUID
 import pytest
 
 from mas_core.memory.storage import AgentStorage
+from mas_core.worker_registry.execution_lineage import (
+    SHELL_EXECUTION_LINEAGE_KEY,
+    build_worker_execution_config_snapshot,
+    worker_execution_config_snapshot_sha256,
+    worker_shell_content_hash,
+)
 
 RUN_ID = UUID("00000000-0000-4000-a000-000000000901")
 WORKER_ID = UUID("00000000-0000-4000-a000-000000000902")
@@ -17,6 +23,10 @@ SHELL_ID = UUID("00000000-0000-4000-a000-000000000905")
 ADAPTER_ID = UUID("00000000-0000-4000-a000-000000000906")
 SKILL_ID = UUID("00000000-0000-4000-a000-000000000907")
 STEWARD_ID = UUID("00000000-0000-4000-a000-000000000908")
+ADAPTER_VERSION = "fixture-adapter-v1"
+ADAPTER_TYPE = "fixture"
+ADAPTER_IMPLEMENTATION_REF = "fixture.worker:run"
+ADAPTER_CONTENT_HASH = "fixture-adapter-content-hash"
 
 
 class _Result:
@@ -76,21 +86,50 @@ def _worker(**overrides: object) -> dict[str, object]:
 
 
 def _shell(**overrides: object) -> dict[str, object]:
-    return {
+    snapshot = build_worker_execution_config_snapshot("native", {})
+    shell: dict[str, object] = {
         "id": SHELL_ID,
         "worker_id": WORKER_ID,
+        "version": "fixture-shell-v1",
+        "identity_json": {"worker_id": str(WORKER_ID)},
+        "capabilities_json": {},
+        "permissions_json": {},
+        "model_mode": "none",
         "status": "active",
-        **overrides,
+        "provenance_json": {
+            "runtime_adapter_id": str(ADAPTER_ID),
+            "runtime_adapter": {
+                "id": str(ADAPTER_ID),
+                "version": ADAPTER_VERSION,
+                "adapter_type": ADAPTER_TYPE,
+                "transport_type": "native",
+                "runtime_api_version": None,
+                "implementation_ref": ADAPTER_IMPLEMENTATION_REF,
+                "content_hash": ADAPTER_CONTENT_HASH,
+            },
+            SHELL_EXECUTION_LINEAGE_KEY: {
+                "sha256": worker_execution_config_snapshot_sha256(snapshot),
+                "snapshot": snapshot,
+            },
+        },
     }
+    shell["content_hash"] = worker_shell_content_hash(shell)
+    shell.update(overrides)
+    return shell
 
 
 def _adapter(**overrides: object) -> dict[str, object]:
     return {
         "id": ADAPTER_ID,
         "worker_id": WORKER_ID,
+        "version": ADAPTER_VERSION,
+        "adapter_type": ADAPTER_TYPE,
         "status": "active",
         "conformance_status": "passed",
         "transport_type": "native",
+        "runtime_api_version": None,
+        "implementation_ref": ADAPTER_IMPLEMENTATION_REF,
+        "content_hash": ADAPTER_CONTENT_HASH,
         **overrides,
     }
 
@@ -236,12 +275,25 @@ async def test_claim_locks_current_scope_before_persisting_claim() -> None:
     sql = [str(statement) for statement in statements]
     assert "FROM projects" in sql[1] and "FOR UPDATE" in sql[1]
     assert "FROM company_worker_assignments" in sql[2] and "FOR UPDATE" in sql[2]
-    assert "FROM worker_registry" in sql[3] and "FOR UPDATE" in sql[3]
-    assert "FROM worker_shell_versions" in sql[4] and "FOR UPDATE" in sql[4]
-    assert "FROM runtime_adapters" in sql[5] and "FOR UPDATE" in sql[5]
-    assert "FROM skill_bundles" in sql[6] and "FOR UPDATE" in sql[6]
-    assert sql[7].lstrip().startswith("UPDATE worker_runs")
-    assert sql[8].lstrip().startswith("INSERT INTO worker_run_transitions")
+    update_index = next(
+        index
+        for index, statement in enumerate(sql)
+        if statement.lstrip().startswith("UPDATE worker_runs")
+    )
+    transition_index = next(
+        index
+        for index, statement in enumerate(sql)
+        if statement.lstrip().startswith("INSERT INTO worker_run_transitions")
+    )
+    locked_registry_reads = sql[:update_index]
+    for table in (
+        "worker_registry",
+        "worker_shell_versions",
+        "runtime_adapters",
+        "skill_bundles",
+    ):
+        assert any(f"FROM {table}" in statement and "FOR UPDATE" in statement for statement in locked_registry_reads)
+    assert transition_index > update_index
 
 
 @pytest.mark.asyncio
@@ -316,3 +368,29 @@ async def test_claim_keeps_draining_worker_and_superseded_pins_eligible() -> Non
     assert claimed is not None
     sql = [str(statement) for statement in statements]
     assert sql[7].lstrip().startswith("UPDATE worker_runs")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("shell_changes", "adapter_changes"),
+    [
+        ({"provenance_json": {"runtime_adapter_id": str(ADAPTER_ID)}}, {}),
+        ({}, {"content_hash": "different-immutable-adapter"}),
+    ],
+)
+async def test_claim_rejects_missing_or_changed_execution_lineage_before_write(
+    shell_changes: dict[str, object],
+    adapter_changes: dict[str, object],
+) -> None:
+    shell = _shell(**shell_changes)
+    adapter = _adapter(**adapter_changes)
+    storage, statements = _storage_for_claim(shell=shell, adapter=adapter)
+
+    claimed = await storage.claim_worker_run(owner="host-executor", run_id=RUN_ID)
+
+    assert claimed is None
+    sql = [str(statement).lstrip() for statement in statements]
+    assert not any(
+        statement.startswith(("UPDATE worker_runs", "INSERT INTO worker_run_transitions"))
+        for statement in sql
+    )

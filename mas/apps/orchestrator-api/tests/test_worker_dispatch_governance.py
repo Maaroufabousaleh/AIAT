@@ -15,6 +15,46 @@ PROJECT_ID = UUID("00000000-0000-4000-a000-000000000702")
 COMPANY_ID = UUID("00000000-0000-4000-a000-000000000703")
 
 
+def _lineaged_shell(worker_id, adapter_id, transport, config, *, shell_id=None, status="active"):
+    from mas_core.worker_registry.execution_lineage import (
+        SHELL_EXECUTION_LINEAGE_KEY,
+        build_worker_execution_config_snapshot,
+        worker_execution_config_snapshot_sha256,
+        worker_shell_content_hash,
+    )
+
+    shell_id = shell_id or uuid4()
+    snapshot = build_worker_execution_config_snapshot(transport, config)
+    shell = {
+        "id": shell_id,
+        "worker_id": worker_id,
+        "version": "fixture-shell-v1",
+        "identity_json": {"worker_id": str(worker_id)},
+        "capabilities_json": {},
+        "permissions_json": {},
+        "model_mode": "none",
+        "status": status,
+        "provenance_json": {
+            "runtime_adapter_id": str(adapter_id),
+            "runtime_adapter": {
+                "id": str(adapter_id),
+                "version": "fixture-adapter-v1",
+                "adapter_type": transport,
+                "transport_type": transport,
+                "runtime_api_version": None,
+                "implementation_ref": config.get("implementation_ref"),
+                "content_hash": "fixture-adapter-content-hash",
+            },
+            SHELL_EXECUTION_LINEAGE_KEY: {
+                "sha256": worker_execution_config_snapshot_sha256(snapshot),
+                "snapshot": snapshot,
+            },
+        },
+    }
+    shell["content_hash"] = worker_shell_content_hash(shell)
+    return shell
+
+
 @pytest.mark.anyio
 async def test_worker_heartbeat_requires_and_forwards_attempt_fence(monkeypatch) -> None:
     import orchestrator_api.main as main
@@ -193,6 +233,12 @@ async def test_certified_opencode_adapter_receives_catalogue_model_mapper(monkey
 
     worker_id = uuid4()
     adapter_id = uuid4()
+    shell_id = uuid4()
+    runtime_config = {
+        "base_url": "http://opencode-runtime:4096",
+        "interface_verification": {"report_id": "test"},
+        "auth_password_env": "AIAT_TEST_OPENCODE_PASSWORD",
+    }
 
     class Storage:
         async def get_runtime_adapter(self, requested_id):
@@ -200,11 +246,20 @@ async def test_certified_opencode_adapter_receives_catalogue_model_mapper(monkey
             return {
                 "id": adapter_id,
                 "worker_id": worker_id,
+                "version": "fixture-adapter-v1",
+                "adapter_type": "opencode",
                 "status": "active",
                 "conformance_status": "passed",
                 "transport_type": "opencode",
+                "runtime_api_version": None,
+                "implementation_ref": None,
+                "content_hash": "fixture-adapter-content-hash",
                 "capabilities_json": {},
             }
+
+        async def get_worker_shell_version(self, requested_id):
+            assert requested_id == shell_id
+            return _lineaged_shell(worker_id, adapter_id, "opencode", runtime_config, shell_id=shell_id)
 
     class CapturingOpenCodeAdapter:
         def __init__(self, _verification, *, model_mapper, **_kwargs):
@@ -225,17 +280,254 @@ async def test_certified_opencode_adapter_receives_catalogue_model_mapper(monkey
         {
             "id": worker_id,
             "active_adapter_id": adapter_id,
-            "adapter_config": {
-                "base_url": "http://opencode-runtime:4096",
-                "interface_verification": {"report_id": "test"},
-                "auth_password_env": "AIAT_TEST_OPENCODE_PASSWORD",
-            },
+            "active_shell_version_id": shell_id,
+            "adapter_config": runtime_config,
         },
     )
 
     assert adapter is not None
     assert adapter.model_mapper("omniroute-coding") == "aiat/omniroute-coding"
     assert adapter.model_mapper("unknown-unqualified-alias") is None
+
+
+@pytest.mark.anyio
+async def test_certified_adapter_uses_superseded_run_shell_snapshot_not_current_worker_config(
+    monkeypatch,
+) -> None:
+    import orchestrator_api.main as main
+
+    import mas_core.worker_registry.runtime_adapters as runtime_adapters
+
+    worker_id = uuid4()
+    adapter_id = uuid4()
+    shell_id = uuid4()
+    pinned_config = {"implementation_ref": "pinned.module:worker", "workspace_path": "/pinned"}
+    captured: dict[str, object] = {}
+
+    class CapturedAdapter:
+        runtime_type = "native"
+
+        def close(self):
+            return None
+
+    class Storage:
+        async def get_runtime_adapter(self, requested_id):
+            assert requested_id == adapter_id
+            return {
+                "id": adapter_id,
+                "worker_id": worker_id,
+                "version": "fixture-adapter-v1",
+                "adapter_type": "native",
+                "status": "superseded",
+                "conformance_status": "passed",
+                "transport_type": "native",
+                "runtime_api_version": None,
+                "implementation_ref": pinned_config["implementation_ref"],
+                "content_hash": "fixture-adapter-content-hash",
+                "capabilities_json": {},
+            }
+
+        async def get_worker_shell_version(self, requested_id):
+            assert requested_id == shell_id
+            return _lineaged_shell(
+                worker_id,
+                adapter_id,
+                "native",
+                pinned_config,
+                shell_id=shell_id,
+                status="superseded",
+            )
+
+    def adapter_factory(transport, *, worker_id, config, context):
+        captured.update({"transport": transport, "worker_id": worker_id, "config": config})
+        return CapturedAdapter()
+
+    monkeypatch.setattr(runtime_adapters, "adapter_for_transport", adapter_factory)
+    monkeypatch.setattr(main, "_worker_adapter_runtimes", {})
+
+    adapter = await main._certified_worker_adapter(
+        Storage(),
+        {
+            "id": worker_id,
+            "active_adapter_id": uuid4(),
+            "active_shell_version_id": uuid4(),
+            "adapter_config": {
+                "implementation_ref": "mutable.current:worker",
+                "workspace_path": "/current",
+            },
+        },
+        adapter_id=adapter_id,
+        shell_version_id=shell_id,
+        allow_retired=True,
+    )
+
+    assert isinstance(adapter, CapturedAdapter)
+    assert captured["transport"] == "native"
+    assert captured["config"]["implementation_ref"] == "pinned.module:worker"
+    assert captured["config"]["workspace_path"] == "/pinned"
+    assert adapter._aiat_adapter_id == str(adapter_id)
+    assert adapter._aiat_shell_version_id == str(shell_id)
+
+
+@pytest.mark.anyio
+async def test_certified_adapter_fails_closed_when_historical_shell_config_is_missing(
+    monkeypatch,
+) -> None:
+    import orchestrator_api.main as main
+
+    import mas_core.worker_registry.runtime_adapters as runtime_adapters
+    from mas_core.worker_registry.execution_lineage import WorkerExecutionLineageError
+
+    worker_id = uuid4()
+    adapter_id = uuid4()
+    shell_id = uuid4()
+    factory_calls: list[str] = []
+    shell = {
+        "id": shell_id,
+        "worker_id": worker_id,
+        "version": "legacy-shell",
+        "identity_json": {},
+        "capabilities_json": {},
+        "permissions_json": {},
+        "model_mode": "none",
+        "status": "superseded",
+        "provenance_json": {"runtime_adapter_id": str(adapter_id)},
+    }
+    shell["content_hash"] = "legacy-no-lineage"
+
+    class Storage:
+        async def get_runtime_adapter(self, requested_id):
+            assert requested_id == adapter_id
+            return {
+                "id": adapter_id,
+                "worker_id": worker_id,
+                "version": "fixture-adapter-v1",
+                "adapter_type": "native",
+                "status": "superseded",
+                "conformance_status": "passed",
+                "transport_type": "native",
+                "runtime_api_version": None,
+                "implementation_ref": None,
+                "content_hash": "fixture-adapter-content-hash",
+                "capabilities_json": {},
+            }
+
+        async def get_worker_shell_version(self, requested_id):
+            assert requested_id == shell_id
+            return shell
+
+    def adapter_factory(*_args, **_kwargs):
+        factory_calls.append("called")
+        return object()
+
+    monkeypatch.setattr(runtime_adapters, "adapter_for_transport", adapter_factory)
+    monkeypatch.setattr(main, "_worker_adapter_runtimes", {})
+
+    with pytest.raises(WorkerExecutionLineageError) as exc_info:
+        await main._certified_worker_adapter(
+            Storage(),
+            {"id": worker_id, "adapter_config": {"implementation_ref": "new.module:worker"}},
+            adapter_id=adapter_id,
+            shell_version_id=shell_id,
+            allow_retired=True,
+        )
+
+    assert exc_info.value.reason_code == "worker_runtime_lineage_unavailable"
+    assert factory_calls == []
+
+
+@pytest.mark.anyio
+async def test_certified_adapter_cache_keeps_current_and_superseded_shells_separate(
+    monkeypatch,
+) -> None:
+    import orchestrator_api.main as main
+
+    import mas_core.worker_registry.runtime_adapters as runtime_adapters
+
+    worker_id = uuid4()
+    adapter_id = uuid4()
+    old_shell_id = uuid4()
+    current_shell_id = uuid4()
+    old_config = {"implementation_ref": "shared.module:worker", "workspace_path": "/old"}
+    current_config = {"implementation_ref": "shared.module:worker", "workspace_path": "/current"}
+    shells = {
+        old_shell_id: _lineaged_shell(
+            worker_id,
+            adapter_id,
+            "native",
+            old_config,
+            shell_id=old_shell_id,
+            status="superseded",
+        ),
+        current_shell_id: _lineaged_shell(
+            worker_id,
+            adapter_id,
+            "native",
+            current_config,
+            shell_id=current_shell_id,
+        ),
+    }
+    constructed: list[str] = []
+
+    class CapturedAdapter:
+        runtime_type = "native"
+
+        def __init__(self, config):
+            self.config = config
+
+    class Storage:
+        async def get_runtime_adapter(self, requested_id):
+            assert requested_id == adapter_id
+            return {
+                "id": adapter_id,
+                "worker_id": worker_id,
+                "version": "fixture-adapter-v1",
+                "adapter_type": "native",
+                "status": "active",
+                "conformance_status": "passed",
+                "transport_type": "native",
+                "runtime_api_version": None,
+                "implementation_ref": "shared.module:worker",
+                "content_hash": "fixture-adapter-content-hash",
+                "capabilities_json": {},
+            }
+
+        async def get_worker_shell_version(self, requested_id):
+            return shells[requested_id]
+
+    def adapter_factory(_transport, *, config, **_kwargs):
+        constructed.append(config["implementation_ref"])
+        return CapturedAdapter(config)
+
+    monkeypatch.setattr(runtime_adapters, "adapter_for_transport", adapter_factory)
+    monkeypatch.setattr(main, "_worker_adapter_runtimes", {})
+    storage = Storage()
+    worker = {
+        "id": worker_id,
+        "active_adapter_id": adapter_id,
+        "active_shell_version_id": current_shell_id,
+        "adapter_config": {"implementation_ref": "mutable.current:worker"},
+    }
+
+    old_adapter = await main._certified_worker_adapter(
+        storage,
+        worker,
+        adapter_id=adapter_id,
+        shell_version_id=old_shell_id,
+        allow_retired=True,
+    )
+    current_adapter = await main._certified_worker_adapter(
+        storage,
+        worker,
+        adapter_id=adapter_id,
+        shell_version_id=current_shell_id,
+    )
+
+    assert old_adapter.config["workspace_path"] == "/old"
+    assert current_adapter.config["workspace_path"] == "/current"
+    assert old_adapter is not current_adapter
+    assert constructed == ["shared.module:worker", "shared.module:worker"]
+    assert len(main._worker_adapter_runtimes) == 2
 
 
 class _Adapter:

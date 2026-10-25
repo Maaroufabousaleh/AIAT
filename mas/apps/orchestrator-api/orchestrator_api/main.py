@@ -28,6 +28,7 @@ import re
 import shutil
 import ssl
 import time
+from collections.abc import Mapping
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
@@ -3665,6 +3666,7 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
                         storage,
                         dict(worker_row),
                         adapter_id=pins.adapter_id,
+                        shell_version_id=pins.worker_shell_version_id,
                         allow_retired=True,
                     )
 
@@ -11229,15 +11231,23 @@ async def _certified_worker_adapter(
     worker: dict[str, Any],
     *,
     adapter_id: UUID | str | None = None,
+    shell_version_id: UUID | str | None = None,
     allow_retired: bool = False,
 ) -> Any | None:
-    """Hydrate one immutable certified adapter definition after an API restart.
+    """Hydrate one adapter from the immutable shell pinned to the run.
 
     Dispatches select the worker's active adapter.  Run-control actions pass
-    the adapter pinned on the durable WorkerRun, which may be an older,
-    superseded version while a rollout is in progress.
+    both identities pinned on the durable WorkerRun, which may be older,
+    superseded versions while a rollout is in progress.  Mutable worker
+    configuration is never used to reconstruct a governed runtime.
     """
     from mas_core.worker_contract import AdapterContext, WorkerCapabilities
+    from mas_core.worker_registry.execution_lineage import (
+        SHELL_EXECUTION_LINEAGE_KEY,
+        WorkerExecutionLineageError,
+        resolve_worker_execution_config_snapshot,
+        worker_shell_execution_lineage_blocker,
+    )
     from mas_core.worker_registry.runtime_adapters import (
         OpenCodeAdapter,
         OpenCodeInterfaceVerification,
@@ -11246,6 +11256,7 @@ async def _certified_worker_adapter(
 
     worker_id = UUID(str(worker["id"]))
     selected_adapter_id = adapter_id or worker.get("active_adapter_id")
+    selected_shell_id = shell_version_id or worker.get("active_shell_version_id")
     adapter_row = (
         await storage.get_runtime_adapter(selected_adapter_id)
         if selected_adapter_id is not None
@@ -11261,27 +11272,83 @@ async def _certified_worker_adapter(
             and str(adapter_row["worker_id"]) != str(worker_id)
         )
     ):
-        cache_key = f"{worker_id}:{selected_adapter_id}" if selected_adapter_id else None
-        stale = _worker_adapter_runtimes.pop(cache_key, None) if cache_key else None
-        if stale is not None and hasattr(stale, "close"):
-            try:
-                await stale.close()
-            except Exception:
-                logger.warning("stale_worker_adapter_close_failed", extra={"worker_id": str(worker_id)}, exc_info=True)
+        stale_prefix = f"{worker_id}:{selected_adapter_id}:" if selected_adapter_id else None
+        stale_keys = [
+            key for key in _worker_adapter_runtimes
+            if stale_prefix is not None and key.startswith(stale_prefix)
+        ]
+        for key in stale_keys:
+            stale = _worker_adapter_runtimes.pop(key, None)
+            if stale is not None and hasattr(stale, "close"):
+                try:
+                    await stale.close()
+                except Exception:
+                    logger.warning(
+                        "stale_worker_adapter_close_failed",
+                        extra={"worker_id": str(worker_id)},
+                        exc_info=True,
+                    )
         return None
     immutable_adapter_id = str(adapter_row["id"])
-    cache_key = f"{worker_id}:{immutable_adapter_id}"
+    if selected_shell_id is None:
+        raise WorkerExecutionLineageError("worker_runtime_lineage_unavailable")
+    shell_reader = getattr(storage, "get_worker_shell_version", None)
+    if not inspect.iscoroutinefunction(shell_reader):
+        raise WorkerExecutionLineageError("worker_runtime_lineage_unavailable")
+    shell = await shell_reader(UUID(str(selected_shell_id)))
+    if (
+        not isinstance(shell, Mapping)
+        or str(shell.get("id") or "") != str(selected_shell_id)
+        or str(shell.get("worker_id") or "") != str(worker_id)
+        or str(shell.get("status") or "").lower() not in {"active", "superseded"}
+    ):
+        raise WorkerExecutionLineageError("worker_runtime_lineage_unavailable")
+    lineage_blocker = worker_shell_execution_lineage_blocker(
+        shell=shell,
+        adapter=adapter_row,
+        worker_id=worker_id,
+        adapter_id=immutable_adapter_id,
+    )
+    if lineage_blocker is not None:
+        raise WorkerExecutionLineageError(lineage_blocker)
+    provenance = shell.get("provenance_json") or {}
+    lineage = provenance.get(SHELL_EXECUTION_LINEAGE_KEY) or {}
+    execution_snapshot = lineage.get("snapshot")
+    try:
+        config, resolved_secret_values, resolved_secret_refs = (
+            resolve_worker_execution_config_snapshot(execution_snapshot)
+        )
+    except WorkerExecutionLineageError:
+        raise
+    cache_key = f"{worker_id}:{immutable_adapter_id}:{selected_shell_id}"
     cached = _worker_adapter_runtimes.get(cache_key)
-    if cached is not None and getattr(cached, "_aiat_adapter_id", None) == immutable_adapter_id:
+    transport = str(adapter_row.get("transport_type") or "").lower()
+    refresh_dynamic_secrets = bool(resolved_secret_values) or transport == "opencode"
+    if (
+        cached is not None
+        and getattr(cached, "_aiat_adapter_id", None) == immutable_adapter_id
+        and getattr(cached, "_aiat_shell_version_id", None) == str(selected_shell_id)
+        and getattr(cached, "_aiat_execution_config_sha256", None)
+        == str(lineage.get("sha256") or "")
+        and not refresh_dynamic_secrets
+    ):
         return cached
-    config = dict(worker.get("adapter_config") or {})
-    config.setdefault("sandbox_profile", worker.get("sandbox_profile"))
-    raw_capabilities = adapter_row.get("capabilities_json") or config.get("capabilities") or {}
+    if cached is not None:
+        _worker_adapter_runtimes.pop(cache_key, None)
+        if hasattr(cached, "close"):
+            try:
+                await cached.close()
+            except Exception:
+                logger.warning(
+                    "pinned_worker_adapter_close_failed",
+                    extra={"worker_id": str(worker_id)},
+                    exc_info=True,
+                )
+    raw_capabilities = shell.get("capabilities_json") or {}
     try:
         capabilities = WorkerCapabilities.model_validate(raw_capabilities)
     except ValueError as exc:
-        raise HTTPException(409, f"active adapter capabilities are invalid: {exc}") from exc
-    transport = str(adapter_row.get("transport_type") or worker.get("adapter_type") or "").lower()
+        raise HTTPException(409, "pinned worker shell capabilities are invalid") from exc
     # Mediated Tool Service writes are stored in the shared run workspace for
     # every adapter transport. Keep artifact ownership and upload inside the
     # orchestrator rather than making non-OpenCode adapters persist evidence
@@ -11303,6 +11370,12 @@ async def _certified_worker_adapter(
         artifact_registrar=artifact_registrar,
         metadata={"worker_id": str(worker_id)},
     )
+    context.secrets.update(resolved_secret_values)
+    context.secret_refs.update(resolved_secret_refs)
+    for secret_name in ("auth_password_env", "auth_username_env"):
+        reference = config.get(secret_name)
+        if isinstance(reference, str) and reference:
+            context.secret_refs[secret_name] = reference
     try:
         if transport == "opencode":
             raw_verification = config.get("interface_verification") or {}
@@ -11342,9 +11415,11 @@ async def _certified_worker_adapter(
     except (KeyError, TypeError, ValueError) as exc:
         raise HTTPException(409, f"active adapter configuration is not certified: {exc}") from exc
     # A cache entry is scoped to the immutable adapter row, rather than the
-    # mutable worker pointer.  This allows concurrent old/new runs to be
-    # controlled through the exact runtime selected at dispatch.
+    # adapter and shell rows. This allows concurrent old/new runs to use the
+    # exact certified runtime configuration selected at dispatch.
     adapter._aiat_adapter_id = immutable_adapter_id
+    adapter._aiat_shell_version_id = str(selected_shell_id)
+    adapter._aiat_execution_config_sha256 = str(lineage.get("sha256") or "")
     _worker_adapter_runtimes[cache_key] = adapter
     return adapter
 
@@ -11719,6 +11794,7 @@ async def _candidate_worker_shell_values(
     *,
     worker: dict[str, Any],
     candidate: dict[str, Any],
+    execution_config_snapshot: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the immutable WorkerShell row for a certified candidate.
 
@@ -11736,9 +11812,36 @@ async def _candidate_worker_shell_values(
     bundle = await storage.get_skill_bundle(candidate["skill_bundle_id"])
     if bundle is None or str(bundle.get("worker_id")) != str(worker_id):
         raise HTTPException(409, "Candidate Skill Bundle does not belong to this worker")
+    if (
+        str(adapter.get("id") or "") != str(adapter_id)
+        or str(adapter.get("version") or "")
+        != str((candidate.get("adapter") or {}).get("version") or "")
+        or str(adapter.get("transport_type") or "").lower()
+        != str((candidate.get("adapter") or {}).get("transport_type") or "").lower()
+        or str(adapter.get("implementation_ref") or "")
+        != str((candidate.get("adapter") or {}).get("implementation_ref") or "")
+        or str(adapter.get("content_hash") or "")
+        != str((candidate.get("adapter") or {}).get("content_hash") or "")
+    ):
+        raise HTTPException(409, "Candidate runtime Adapter identity changed before shell certification")
 
     shell_version = f"governed-{candidate['id']}"
-    config = dict(worker.get("adapter_config") or {})
+    config = _governance_dict(worker.get("adapter_config"))
+    from mas_core.worker_registry.execution_lineage import (
+        SHELL_EXECUTION_LINEAGE_KEY,
+        build_worker_execution_config_snapshot,
+        worker_execution_config_snapshot_sha256,
+    )
+
+    execution_snapshot = (
+        dict(execution_config_snapshot)
+        if execution_config_snapshot is not None
+        else build_worker_execution_config_snapshot(
+            str(adapter.get("transport_type") or ""),
+            _governance_dict(worker.get("adapter_config")),
+            sandbox_profile=worker.get("sandbox_profile"),
+        )
+    )
     provenance: dict[str, Any] = {
         "source_repo": worker.get("source_repo"),
         "source_revision": worker.get("source_revision"),
@@ -11746,6 +11849,19 @@ async def _candidate_worker_shell_values(
         "candidate_id": str(candidate["id"]),
         "skill_bundle_id": str(candidate["skill_bundle_id"]),
         "runtime_adapter_id": str(adapter_id),
+        "runtime_adapter": {
+            "id": str(adapter.get("id")),
+            "version": str(adapter.get("version") or ""),
+            "adapter_type": adapter.get("adapter_type"),
+            "transport_type": str(adapter.get("transport_type") or "").lower(),
+            "runtime_api_version": adapter.get("runtime_api_version"),
+            "implementation_ref": adapter.get("implementation_ref"),
+            "content_hash": str(adapter.get("content_hash") or ""),
+        },
+        SHELL_EXECUTION_LINEAGE_KEY: {
+            "sha256": worker_execution_config_snapshot_sha256(execution_snapshot),
+            "snapshot": execution_snapshot,
+        },
     }
     get_provenance = getattr(storage, "get_external_provenance_by_worker", None)
     if inspect.iscoroutinefunction(get_provenance):
@@ -11796,12 +11912,14 @@ async def _materialize_candidate_worker_shell(
     *,
     worker: dict[str, Any],
     candidate: dict[str, Any],
+    execution_config_snapshot: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Persist a prepared shell for legacy/non-atomic certification callers."""
     values = await _candidate_worker_shell_values(
         storage,
         worker=worker,
         candidate=candidate,
+        execution_config_snapshot=execution_config_snapshot,
     )
     existing = await storage.get_worker_shell_version_by_version(
         UUID(str(values["worker_id"])),
@@ -12102,23 +12220,51 @@ async def certify_steward_candidate(
         },
     }
     from mas_core.worker_contract import AdapterContext, ConformanceRunner, WorkerCapabilities
+    from mas_core.worker_registry.execution_lineage import (
+        WorkerExecutionLineageError,
+        build_worker_execution_config_snapshot,
+        resolve_worker_execution_config_snapshot,
+        worker_execution_config_snapshot_sha256,
+    )
     from mas_core.worker_registry.runtime_adapters import (
         OpenCodeAdapter,
         OpenCodeInterfaceVerification,
         adapter_for_transport,
     )
 
-    config = dict(worker.get("adapter_config") or {})
-    config.setdefault("sandbox_profile", worker.get("sandbox_profile"))
+    raw_worker_config = _governance_dict(worker.get("adapter_config"))
+    transport = candidate.adapter.transport_type.lower()
     try:
-        capability_payload = config.get("capabilities") or {}
+        execution_config_snapshot = build_worker_execution_config_snapshot(
+            transport,
+            raw_worker_config,
+            sandbox_profile=worker.get("sandbox_profile"),
+        )
+        config, resolved_secret_values, resolved_secret_refs = (
+            resolve_worker_execution_config_snapshot(execution_config_snapshot)
+        )
+    except WorkerExecutionLineageError as exc:
+        raise HTTPException(
+            409,
+            {
+                "code": exc.reason_code.upper(),
+                "message": "Candidate runtime configuration cannot be safely pinned for certification.",
+            },
+        ) from exc
+    try:
+        capability_payload = raw_worker_config.get("capabilities") or {}
         if not capability_payload and candidate.bundle.verified_capabilities is not None:
             capability_payload = candidate.bundle.verified_capabilities.capabilities.model_dump(mode="json")
         capabilities = WorkerCapabilities.model_validate(
             capability_payload
         )
-        transport = candidate.adapter.transport_type.lower()
         context = AdapterContext(workspace_path=config.get("workspace_path"), metadata={"certification": True})
+        context.secrets.update(resolved_secret_values)
+        context.secret_refs.update(resolved_secret_refs)
+        for secret_name in ("auth_password_env", "auth_username_env"):
+            reference = config.get(secret_name)
+            if isinstance(reference, str) and reference:
+                context.secret_refs[secret_name] = reference
         if transport == "opencode":
             verification = OpenCodeInterfaceVerification.from_report(config.get("interface_verification") or {})
             password_env = str(config.get("auth_password_env") or "OPENCODE_SERVER_PASSWORD")
@@ -12242,7 +12388,7 @@ async def certify_steward_candidate(
             "adapter_version": str(candidate.adapter.version),
             "contract_version": str(
                 provenance.protocol_api_version
-                or config.get("contract_version")
+                or raw_worker_config.get("contract_version")
                 or "aiat.adapter.v1"
             ),
             "model_profiles_json": (
@@ -12295,6 +12441,9 @@ async def certify_steward_candidate(
     certification_evidence = {
         "operator_conformance_submission": req.conformance,
         "server_derived_checks": server_checks,
+        "execution_config_sha256": worker_execution_config_snapshot_sha256(
+            execution_config_snapshot
+        ),
     }
     if first_party_source_state is not None:
         certification_evidence["source_identity_fingerprint"] = first_party_source_state[
@@ -12338,6 +12487,7 @@ async def certify_steward_candidate(
                     storage,
                     worker=worker,
                     candidate=latest_candidate,
+                    execution_config_snapshot=execution_config_snapshot,
                 )
             except HTTPException:
                 discard_unpersisted_first_party_certification()
@@ -12426,6 +12576,7 @@ async def certify_steward_candidate(
                     storage,
                     worker=worker,
                     candidate=persisted_candidate,
+                    execution_config_snapshot=execution_config_snapshot,
                 )
                 evidence["worker_shell_version_id"] = str(shell["id"])
             if compatibility_matrix_row is not None:
@@ -14650,7 +14801,18 @@ async def _dispatch_worker_run(
         tool_grants=req.tool_grants,
         permission_requirements=req.permission_requirements,
     )
-    adapter = await _certified_worker_adapter(storage, worker)
+    from mas_core.worker_registry.execution_lineage import WorkerExecutionLineageError
+
+    try:
+        adapter = await _certified_worker_adapter(storage, worker)
+    except WorkerExecutionLineageError as exc:
+        raise HTTPException(
+            409,
+            {
+                "code": exc.reason_code.upper(),
+                "message": "The selected certified worker shell has no verifiable runtime configuration.",
+            },
+        ) from exc
     if adapter is None:
         raise HTTPException(409, "Worker has no certified runtime adapter registered with the control plane")
     adapter_transport = str(getattr(adapter, "runtime_type", "") or "").strip().lower()
@@ -15383,16 +15545,28 @@ async def _worker_run_control_adapter(
     if not run.get("adapter_id"):
         raise HTTPException(409, "This Worker Run has no pinned certified adapter")
     worker = await storage.get_worker(UUID(str(run["worker_id"])))
-    adapter = (
-        await _certified_worker_adapter(
-            storage,
-            worker,
-            adapter_id=run["adapter_id"],
-            allow_retired=True,
+    from mas_core.worker_registry.execution_lineage import WorkerExecutionLineageError
+
+    try:
+        adapter = (
+            await _certified_worker_adapter(
+                storage,
+                worker,
+                adapter_id=run["adapter_id"],
+                shell_version_id=run.get("worker_shell_version_id"),
+                allow_retired=True,
+            )
+            if worker is not None
+            else None
         )
-        if worker is not None
-        else None
-    )
+    except WorkerExecutionLineageError as exc:
+        raise HTTPException(
+            409,
+            {
+                "code": exc.reason_code.upper(),
+                "message": "The worker shell pinned to this run has no verifiable runtime configuration.",
+            },
+        ) from exc
     if adapter is None:
         raise HTTPException(409, "No certified adapter is registered for this run")
     return run, adapter
@@ -15548,16 +15722,28 @@ async def cancel_worker_run(
             return _serialize(cancelled)
         raise HTTPException(409, "This Worker Run has no pinned certified adapter")
     worker = await storage.get_worker(UUID(str(row["worker_id"])))
-    adapter = (
-        await _certified_worker_adapter(
-            storage,
-            worker,
-            adapter_id=row["adapter_id"],
-            allow_retired=True,
+    from mas_core.worker_registry.execution_lineage import WorkerExecutionLineageError
+
+    try:
+        adapter = (
+            await _certified_worker_adapter(
+                storage,
+                worker,
+                adapter_id=row["adapter_id"],
+                shell_version_id=row.get("worker_shell_version_id"),
+                allow_retired=True,
+            )
+            if worker is not None
+            else None
         )
-        if worker is not None
-        else None
-    )
+    except WorkerExecutionLineageError as exc:
+        raise HTTPException(
+            409,
+            {
+                "code": exc.reason_code.upper(),
+                "message": "The worker shell pinned to this run has no verifiable runtime configuration.",
+            },
+        ) from exc
     if adapter is None:
         raise HTTPException(409, "No certified adapter is registered for this run")
     from mas_core.worker_contract import WorkerRunController

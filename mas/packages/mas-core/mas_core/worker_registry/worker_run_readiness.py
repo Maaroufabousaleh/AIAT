@@ -24,6 +24,11 @@ from mas_core.sandbox_policy import (
     worker_requires_hardened_isolation,
 )
 
+from .execution_lineage import (
+    worker_execution_transport_supported,
+    worker_shell_execution_lineage_blocker,
+)
+
 WORKER_RUN_READINESS_SCHEMA = "aiat.worker-run-readiness.v1"
 
 # These are the project states in which a governed worker task can be
@@ -246,6 +251,18 @@ def worker_run_registry_blocker(
             return "worker_sandbox_process_transport_unsupported"
         if transport not in HARDENED_SANDBOX_TRANSPORTS:
             return "worker_sandbox_transport_unverified"
+
+    if not worker_execution_transport_supported(transport):
+        return "worker_adapter_transport_unverified"
+
+    lineage_blocker = worker_shell_execution_lineage_blocker(
+        shell=shell,
+        adapter=adapter,
+        worker_id=worker_id,
+        adapter_id=adapter_id,
+    )
+    if lineage_blocker is not None:
+        return lineage_blocker
 
     raw_skill_bundle_id = run.get("skill_bundle_id")
     if raw_skill_bundle_id is not None:

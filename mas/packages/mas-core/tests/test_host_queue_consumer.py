@@ -17,6 +17,13 @@ from mas_core.worker_contract.models import (
     WorkerToolResponse,
 )
 from mas_core.worker_registry.deterministic_file_worker import generate_project_file
+from mas_core.worker_registry.execution_lineage import (
+    SHELL_EXECUTION_LINEAGE_KEY,
+    build_worker_execution_config_snapshot,
+    worker_execution_config_snapshot_sha256,
+    worker_execution_transport_supported,
+    worker_shell_content_hash,
+)
 from mas_core.worker_registry.host_queue_consumer import (
     HostQueueConsumer,
     PinnedWorkerAdapter,
@@ -38,12 +45,57 @@ RUN_ID = UUID("00000000-0000-4000-a000-000000000301")
 WORKER_ID = UUID("00000000-0000-4000-a000-000000000302")
 SHELL_ID = UUID("00000000-0000-4000-a000-000000000303")
 ADAPTER_ID = UUID("00000000-0000-4000-a000-000000000304")
+ADAPTER_VERSION = "fixture-adapter-v1"
+ADAPTER_IMPLEMENTATION_REF = "fixture.worker:run"
+ADAPTER_CONTENT_HASH = "fixture-adapter-content-hash"
 SKILL_ID = UUID("00000000-0000-4000-a000-000000000305")
 STEWARD_ID = UUID("00000000-0000-4000-a000-000000000306")
 HOST_ID = "host-local-a"
 OWNER = "host-agent-local-a"
 PAYLOAD_MARKER = "private-task-payload-must-not-escape"
 RESULT_MARKER = "private-worker-result-must-not-escape"
+
+
+def _lineaged_shell(transport: str) -> dict[str, object]:
+    snapshot = build_worker_execution_config_snapshot(transport, {})
+    shell: dict[str, object] = {
+        "id": SHELL_ID,
+        "worker_id": WORKER_ID,
+        "version": "fixture-shell-v1",
+        "identity_json": {"worker_id": str(WORKER_ID)},
+        "capabilities_json": {},
+        "permissions_json": {},
+        "model_mode": "none",
+        "status": "active",
+        "provenance_json": {
+            "candidate_id": "fixture-candidate",
+            "runtime_adapter_id": str(ADAPTER_ID),
+            "runtime_adapter": {
+                "id": str(ADAPTER_ID),
+                "version": ADAPTER_VERSION,
+                "adapter_type": "fixture",
+                "transport_type": transport,
+                "runtime_api_version": None,
+                "implementation_ref": ADAPTER_IMPLEMENTATION_REF,
+                "content_hash": ADAPTER_CONTENT_HASH,
+            },
+            SHELL_EXECUTION_LINEAGE_KEY: {
+                "sha256": worker_execution_config_snapshot_sha256(snapshot),
+                "snapshot": snapshot,
+            },
+        },
+    }
+    shell["content_hash"] = worker_shell_content_hash(shell)
+    return shell
+
+
+def _tag_adapter(adapter: object, storage: _MemoryStorage) -> object:
+    adapter._aiat_adapter_id = str(ADAPTER_ID)
+    adapter._aiat_shell_version_id = str(SHELL_ID)
+    adapter._aiat_execution_config_sha256 = str(
+        storage.shell["provenance_json"][SHELL_EXECUTION_LINEAGE_KEY]["sha256"]
+    )
+    return adapter
 
 
 def _binding(**overrides: object) -> dict[str, object]:
@@ -105,18 +157,19 @@ class _MemoryStorage:
             "status": "ACTIVE",
             "evaluation_status": "approved",
         }
-        self.shell: dict[str, object] = {
-            "id": SHELL_ID,
-            "worker_id": WORKER_ID,
-            "status": "active",
-        }
         self.adapter_record: dict[str, object] = {
             "id": ADAPTER_ID,
             "worker_id": WORKER_ID,
+            "version": ADAPTER_VERSION,
+            "adapter_type": "fixture",
             "transport_type": "native",
+            "runtime_api_version": None,
+            "implementation_ref": ADAPTER_IMPLEMENTATION_REF,
+            "content_hash": ADAPTER_CONTENT_HASH,
             "status": "active",
             "conformance_status": "passed",
         }
+        self.shell = _lineaged_shell("native")
         self.skill_bundle: dict[str, object] = {
             "id": SKILL_ID,
             "worker_id": WORKER_ID,
@@ -125,6 +178,12 @@ class _MemoryStorage:
         }
         self.mutation_calls: list[str] = []
         self.events: list[dict[str, object]] = []
+        self.terminal_evidence: dict[str, object] | None = None
+
+    def set_adapter_transport(self, transport: str) -> None:
+        self.adapter_record["transport_type"] = transport
+        if worker_execution_transport_supported(transport):
+            self.shell = _lineaged_shell(transport)
 
     async def get_worker_run(self, run_id: UUID) -> dict[str, object] | None:
         return deepcopy(self.run) if run_id == RUN_ID else None
@@ -503,7 +562,7 @@ class _DeterministicVerticalStorage(_MemoryStorage):
                 },
             }
         )
-        self.adapter_record["transport_type"] = "oci"
+        self.set_adapter_transport("oci")
         self.project = {
             "id": PROJECT_ID,
             "company_id": COMPANY_ID,
@@ -783,7 +842,7 @@ async def test_queue_consumer_executes_through_host_executor_and_controller(
         )
 
     adapter = NativeWorkerAdapter(local_worker, worker_id=str(WORKER_ID))
-    adapter._aiat_adapter_id = str(ADAPTER_ID)
+    _tag_adapter(adapter, storage)
 
     def resolve_adapter(pins: PinnedWorkerAdapter) -> NativeWorkerAdapter:
         factory_calls.append(pins)
@@ -856,7 +915,7 @@ async def test_queue_consumer_rejects_replayed_nonqueued_run_without_payload() -
         ),
         worker_id=str(WORKER_ID),
     )
-    adapter._aiat_adapter_id = str(ADAPTER_ID)
+    _tag_adapter(adapter, storage)
 
     def resolve_adapter(pins: PinnedWorkerAdapter) -> NativeWorkerAdapter:
         factory_calls.append(pins)
@@ -939,7 +998,7 @@ async def test_queue_consumer_rejects_direct_process_for_hardened_worker() -> No
             },
         }
     )
-    storage.adapter_record["transport_type"] = "process"
+    storage.set_adapter_transport("process")
     bindings = _Bindings(_binding())
     factory_calls: list[PinnedWorkerAdapter] = []
 
@@ -974,7 +1033,7 @@ async def test_queue_consumer_rejects_unverified_hardened_transport_before_resol
             },
         }
     )
-    storage.adapter_record["transport_type"] = transport
+    storage.set_adapter_transport(transport)
     bindings = _Bindings(_binding())
     resolver_calls: list[PinnedWorkerAdapter] = []
 
@@ -1028,7 +1087,7 @@ async def test_queue_consumer_rejects_resolved_transport_mismatch_before_claim(
                 },
             }
         )
-    storage.adapter_record["transport_type"] = pinned_transport
+    storage.set_adapter_transport(pinned_transport)
     bindings = _Bindings(_binding())
     factory_calls: list[PinnedWorkerAdapter] = []
     if resolved_transport == "process":
@@ -1039,14 +1098,21 @@ async def test_queue_consumer_rejects_resolved_transport_mismatch_before_claim(
             ["aiat-test-worker-executable-must-not-run"],
             worker_id=str(WORKER_ID),
         )
-        adapter._aiat_adapter_id = str(ADAPTER_ID)
+        _tag_adapter(adapter, storage)
     else:
         # Firecracker is separately pinned compatibility transport, and an
         # unknown runtime never qualifies as a validated OCI/Kata adapter.
         adapter = type(
             "MismatchedTransport",
             (),
-            {"runtime_type": resolved_transport, "_aiat_adapter_id": str(ADAPTER_ID)},
+            {
+                "runtime_type": resolved_transport,
+                "_aiat_adapter_id": str(ADAPTER_ID),
+                "_aiat_shell_version_id": str(SHELL_ID),
+                "_aiat_execution_config_sha256": str(
+                    storage.shell["provenance_json"][SHELL_EXECUTION_LINEAGE_KEY]["sha256"]
+                ),
+            },
         )()
 
     def resolve_adapter(pins: PinnedWorkerAdapter) -> object:
@@ -1056,8 +1122,12 @@ async def test_queue_consumer_rejects_resolved_transport_mismatch_before_claim(
     summaries = await _consumer(storage, bindings, resolve_adapter).consume_once()
 
     assert summaries[0].state == "QUEUED"
-    assert summaries[0].reason_code == "pinned_adapter_transport_mismatch"
-    assert len(factory_calls) == 1
+    if pinned_transport == "unrecognized-runtime":
+        assert summaries[0].reason_code == "worker_adapter_transport_unverified"
+        assert factory_calls == []
+    else:
+        assert summaries[0].reason_code == "pinned_adapter_transport_mismatch"
+        assert len(factory_calls) == 1
     assert storage.run["state"] == "QUEUED"
     assert storage.mutation_calls == []
     if isinstance(adapter, ProcessAdapter):
@@ -1082,7 +1152,7 @@ async def test_wasm_alias_uses_canonical_wasmtime_sandbox_transport() -> None:
             },
         }
     )
-    storage.adapter_record["transport_type"] = "wasm"
+    storage.set_adapter_transport("wasm")
     adapter = _FakeWasmtimeAdapter(
         lambda request, _adapter: WorkerResult(
             run_id=request.run_id,
@@ -1092,7 +1162,7 @@ async def test_wasm_alias_uses_canonical_wasmtime_sandbox_transport() -> None:
         ),
         worker_id=str(WORKER_ID),
     )
-    adapter._aiat_adapter_id = str(ADAPTER_ID)
+    _tag_adapter(adapter, storage)
     summaries = await _consumer(
         storage,
         _Bindings(_binding()),
@@ -1135,7 +1205,7 @@ async def test_queue_consumer_claim_rechecks_revoked_registry_after_resolver_wai
         ),
         worker_id=str(WORKER_ID),
     )
-    adapter._aiat_adapter_id = str(ADAPTER_ID)
+    _tag_adapter(adapter, storage)
 
     async def resolve_after_revocation(_pins: PinnedWorkerAdapter) -> object:
         record = getattr(storage, changed_record)
@@ -1184,7 +1254,7 @@ async def test_queue_consumer_treats_source_backed_process_worker_as_external() 
             "adapter_config": {"execution_policy": {"formats": ["linux"]}},
         }
     )
-    storage.adapter_record["transport_type"] = "process"
+    storage.set_adapter_transport("process")
     bindings = _Bindings(_binding())
     factory_calls: list[PinnedWorkerAdapter] = []
 
@@ -1210,7 +1280,7 @@ async def test_queue_consumer_allows_trusted_internal_process_worker() -> None:
             },
         }
     )
-    storage.adapter_record["transport_type"] = "process"
+    storage.set_adapter_transport("process")
     bindings = _Bindings(_binding())
     worker_calls: list[str] = []
 
@@ -1228,7 +1298,7 @@ async def test_queue_consumer_allows_trusted_internal_process_worker() -> None:
         worker_id=str(WORKER_ID),
         runner=process_runner,
     )
-    adapter._aiat_adapter_id = str(ADAPTER_ID)
+    _tag_adapter(adapter, storage)
 
     summaries = await _consumer(
         storage,
@@ -1268,6 +1338,78 @@ async def test_queue_consumer_rejects_factory_adapter_with_different_pin() -> No
     assert len(factory_calls) == 1
     assert storage.mutation_calls == []
     await wrong_adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_queue_consumer_rejects_resolver_with_wrong_execution_snapshot() -> None:
+    storage = _MemoryStorage()
+    bindings = _Bindings(_binding())
+    worker_calls: list[str] = []
+    adapter = NativeWorkerAdapter(
+        lambda request, _adapter: (
+            worker_calls.append(str(request.run_id))
+            or WorkerResult(
+                run_id=request.run_id,
+                worker_id=request.worker_id,
+                success=True,
+            )
+        ),
+        worker_id=str(WORKER_ID),
+    )
+    _tag_adapter(adapter, storage)
+    adapter._aiat_execution_config_sha256 = "0" * 64
+
+    summaries = await _consumer(storage, bindings, lambda _pins: adapter).consume_once()
+
+    assert summaries[0].state == "QUEUED"
+    assert summaries[0].reason_code == "pinned_worker_execution_config_mismatch"
+    assert storage.run["state"] == "QUEUED"
+    assert storage.mutation_calls == []
+    assert worker_calls == []
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_claim_rechecks_shell_snapshot_changed_during_adapter_resolution() -> None:
+    storage = _MemoryStorage()
+    bindings = _Bindings(_binding())
+    worker_calls: list[str] = []
+    adapter = NativeWorkerAdapter(
+        lambda request, _adapter: (
+            worker_calls.append(str(request.run_id))
+            or WorkerResult(
+                run_id=request.run_id,
+                worker_id=request.worker_id,
+                success=True,
+            )
+        ),
+        worker_id=str(WORKER_ID),
+    )
+    _tag_adapter(adapter, storage)
+
+    async def resolve_after_shell_change(_pins: PinnedWorkerAdapter) -> NativeWorkerAdapter:
+        provenance = dict(storage.shell["provenance_json"])
+        binding = dict(provenance[SHELL_EXECUTION_LINEAGE_KEY])
+        snapshot = dict(binding["snapshot"])
+        config = dict(snapshot["config"])
+        config["workspace_path"] = "/changed-after-queue"
+        snapshot["config"] = config
+        binding["snapshot"] = snapshot
+        provenance[SHELL_EXECUTION_LINEAGE_KEY] = binding
+        storage.shell["provenance_json"] = provenance
+        return adapter
+
+    summary = (
+        await _consumer(storage, bindings, resolve_after_shell_change).consume_once()
+    )[0]
+
+    assert summary.state == "QUEUED"
+    assert summary.reason_code == "worker_run_claim_failed"
+    assert storage.run["state"] == "QUEUED"
+    assert storage.mutation_calls == ["claim_worker_run"]
+    assert worker_calls == []
+    assert storage.events == []
+    await adapter.close()
 
 
 def test_local_host_queue_configuration_is_explicit_and_development_only() -> None:
@@ -1345,7 +1487,7 @@ async def test_running_local_queue_places_then_consumes_through_real_executor_co
         )
 
     adapter = NativeWorkerAdapter(local_worker, worker_id=str(WORKER_ID))
-    adapter._aiat_adapter_id = str(ADAPTER_ID)
+    _tag_adapter(adapter, storage)
     terminal_summaries = []
 
     async def record_terminal(summary) -> None:
@@ -1462,7 +1604,7 @@ async def test_deterministic_file_worker_vertical_claim_tool_artifact_and_termin
             artifact_registrar=register_artifact,
         ),
     )
-    adapter._aiat_adapter_id = str(ADAPTER_ID)
+    _tag_adapter(adapter, storage)
 
     host_registries: list[_RuntimeHostRegistry] = []
     binding_services: list[_RuntimeBindings] = []

@@ -258,6 +258,10 @@ def test_gateway_worker_adapter_rejects_non_finite_temperature(temperature: floa
 
 
 def test_gateway_transport_factory_uses_aiat_owned_secret_boundary() -> None:
+    from mas_core.worker_contract import AdapterContext
+
+    context = AdapterContext()
+    context.secrets["environment:LLM_API_KEY"] = "synthetic-gateway-key"
     adapter = adapter_for_transport(
         "aiat_gateway",
         worker_id="gateway-worker",
@@ -266,11 +270,13 @@ def test_gateway_transport_factory_uses_aiat_owned_secret_boundary() -> None:
             "provider_id": "fixture-provider",
             "default_model": "fixture/model-v1",
         },
+        context=context,
     )
 
     assert isinstance(adapter, GatewayWorkerAdapter)
     assert adapter.provider_id == "fixture-provider"
     assert adapter.gateway_client._config.gateway_url == "http://fixture-gateway"
+    assert adapter.gateway_client._config.api_key == "synthetic-gateway-key"
 
 
 def test_gateway_transport_is_declared_in_the_worker_manifest_contract() -> None:
