@@ -11,6 +11,7 @@ import hashlib
 import json
 import sys
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -48,13 +49,20 @@ class _EffectLedger:
 
     def __init__(self) -> None:
         self.rows: dict[tuple[UUID, str], dict[str, Any]] = {}
+        self.claim_owner = "executor-fixture"
+        self.attempt_count = 1
 
     async def validate_worker_run_claim(
         self, *, run_id: UUID, claim_owner: str | None, attempt_count: int
     ) -> bool:
-        return claim_owner is None and attempt_count == 0
+        return claim_owner == self.claim_owner and attempt_count == self.attempt_count
 
     async def begin_worker_tool_effect(self, **values: Any) -> dict[str, Any]:
+        if (
+            values.get("claim_owner") != self.claim_owner
+            or values.get("attempt_count") != self.attempt_count
+        ):
+            return {"disposition": "CLAIM_LOST"}
         key = (values["run_id"], values["idempotency_key"])
         existing = self.rows.get(key)
         if existing is not None:
@@ -71,11 +79,22 @@ class _EffectLedger:
         self,
         effect_id: UUID,
         *,
+        run_id: UUID,
+        claim_owner: str | None,
+        attempt_count: int,
         state: str,
         response_json: dict[str, Any],
     ) -> dict[str, Any] | None:
+        if state == "COMPLETED" and (
+            claim_owner != self.claim_owner or attempt_count != self.attempt_count
+        ):
+            return None
         for row in self.rows.values():
-            if row["id"] == effect_id and row["state"] == "IN_FLIGHT":
+            if (
+                row["id"] == effect_id
+                and row["run_id"] == run_id
+                and row["state"] == "IN_FLIGHT"
+            ):
                 row["state"] = state
                 row["response_json"] = response_json
                 return dict(row)
@@ -88,10 +107,14 @@ class _RunStorage:
             "id": run_id,
             "worker_id": worker_id,
             "project_id": project_id,
-            "state": "RUNNING",
-            "claim_owner": None,
-            "attempt_count": 0,
+            "state": "CREATED",
+            "claim_owner": "executor-fixture",
+            "attempt_count": 1,
+            "lease_expires_at": datetime.now(tz=UTC) + timedelta(minutes=2),
         }
+        self.persisted_events: list[dict[str, Any]] = []
+        self.terminal_evidence: dict[str, Any] | None = None
+        self.model_resolution_snapshot_id: UUID | None = None
 
     async def get_worker_run(self, run_id: UUID) -> dict[str, Any] | None:
         return self.row if run_id == self.row["id"] else None
@@ -109,6 +132,83 @@ class _RunStorage:
             and attempt_count == self.row["attempt_count"]
             and self.row["state"] == "RUNNING"
         )
+
+    async def get_model_resolution_snapshot(
+        self,
+        snapshot_id: UUID,
+        *,
+        project_id: UUID | None,
+    ) -> dict[str, Any] | None:
+        if (
+            snapshot_id != self.model_resolution_snapshot_id
+            or project_id != self.row["project_id"]
+        ):
+            return None
+        return {"provider_id": "aiat", "exact_model_id": "aiat/local-fixture"}
+
+    async def transition_worker_run(
+        self,
+        run_id: UUID,
+        *,
+        new_state: str,
+        expected_state: str | None = None,
+        claim_owner: str | None = None,
+        attempt_count: int | None = None,
+        result: dict[str, Any] | None = None,
+        error: dict[str, Any] | None = None,
+        negotiation: dict[str, Any] | None = None,
+        replay_metadata: dict[str, Any] | None = None,
+        transition_metadata: dict[str, Any] | None = None,
+        **_kwargs: Any,
+    ) -> dict[str, Any] | None:
+        if (
+            run_id != self.row["id"]
+            or (expected_state is not None and expected_state != self.row["state"])
+            or claim_owner != self.row["claim_owner"]
+            or attempt_count != self.row["attempt_count"]
+            or self.row["lease_expires_at"] <= datetime.now(tz=UTC)
+        ):
+            return None
+        self.row["state"] = new_state
+        if result is not None:
+            self.row["result_json"] = result
+        if error is not None:
+            self.row["error_json"] = error
+        if negotiation is not None:
+            self.row["negotiation_json"] = negotiation
+        if replay_metadata is not None:
+            self.row["replay_metadata"] = replay_metadata
+        if transition_metadata is not None:
+            self.row["transition_metadata"] = transition_metadata
+        return dict(self.row)
+
+    async def append_worker_event(self, **event: Any) -> dict[str, Any]:
+        self.persisted_events.append(event)
+        return event
+
+    async def complete_worker_run_success_claim_fenced(
+        self,
+        *,
+        run_id: UUID,
+        claim_owner: str | None,
+        attempt_count: int,
+        artifacts: list[dict[str, Any]],
+        usage: dict[str, Any],
+        result: dict[str, Any],
+        **_kwargs: Any,
+    ) -> dict[str, Any] | None:
+        if (
+            run_id != self.row["id"]
+            or self.row["state"] != "RUNNING"
+            or claim_owner != self.row["claim_owner"]
+            or attempt_count != self.row["attempt_count"]
+            or self.row["lease_expires_at"] <= datetime.now(tz=UTC)
+        ):
+            return None
+        self.terminal_evidence = {"artifacts": artifacts, "usage": usage}
+        self.row["state"] = "SUCCEEDED"
+        self.row["result_json"] = result
+        return dict(self.row)
 
 
 class _MemoryBlob:
@@ -339,7 +439,7 @@ async def test_opencode_adapter_tool_service_effects_and_artifacts_integrate(
                         tool_name="opencode.workspace_write",
                         arguments={"path": file_path, "content": content},
                     )
-                    assert result["success"] is True
+                    assert result["success"] is True, result
                 read_back = await _call_mcp_tool(
                     client,
                     request_id=4,
@@ -415,15 +515,24 @@ async def test_opencode_adapter_tool_service_effects_and_artifacts_integrate(
         },
         timeout_seconds=10,
     )
+    run_storage.model_resolution_snapshot_id = (
+        request.resolved_model_profile.resolution_snapshot_id
+    )
+    request._execution_claim_fence = {
+        "claim_owner": "executor-fixture",
+        "attempt_count": 1,
+    }
+
+    controller = WorkerRunController(storage=run_storage)
 
     try:
         async with bridge_lifespan:
-            outcome = await WorkerRunController().execute(request, adapter)
+            outcome = await controller.execute(request, adapter)
     finally:
         await adapter.close()
         await client.aclose()
 
-    assert outcome.state == "SUCCEEDED"
+    assert outcome.state == "SUCCEEDED", run_storage.row.get("error_json")
     assert outcome.result is not None and outcome.result.success is True
     assert outcome.result.output == "Created and verified the expense application."
     assert {artifact.uri for artifact in outcome.result.artifacts} == set(contents)
@@ -431,8 +540,12 @@ async def test_opencode_adapter_tool_service_effects_and_artifacts_integrate(
     assert len(registry.get_audit_log(worker_id=worker_id)) == 4
     assert len(effects.rows) == 4
     assert all(row["state"] == "COMPLETED" for row in effects.rows.values())
+    assert run_storage.row["state"] == "SUCCEEDED"
+    assert run_storage.terminal_evidence is not None
+    assert len(run_storage.terminal_evidence["artifacts"]) == len(contents)
+    assert run_storage.terminal_evidence["usage"]["total_tokens"] == 20
     assert objects == {
-        f"{project_id}/worker-runs/{run_id}/attempt-0/{name}": content.encode()
+        f"{project_id}/worker-runs/{run_id}/attempt-1/{name}": content.encode()
         for name, content in contents.items()
     }
     assert not adapter._active_tasks

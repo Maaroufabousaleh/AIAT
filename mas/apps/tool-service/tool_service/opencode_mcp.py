@@ -58,6 +58,13 @@ def create_opencode_mcp_app(parent: FastAPI):
         grant = _grant_context.get()
         if grant is None or tool_name not in grant.tool_names:
             return {"success": False, "error_code": "FORBIDDEN", "error": "AIAT tool grant denied"}
+        if not grant.claim_owner or grant.attempt_count < 1:
+            return _error_response(
+                tool_name,
+                grant.run_id,
+                error_code="WORKER_RUN_CLAIM_LOST",
+                error="OpenCode tool calls require a claimed Worker Run attempt",
+            )
 
         try:
             request_id = _mcp_effect_request_id(grant.run_id, ctx)
@@ -147,6 +154,21 @@ def create_opencode_mcp_app(parent: FastAPI):
                 idempotency_key=request_id,
             )
         if disposition == "REPLAY":
+            if (
+                not isinstance(effect.get("id"), UUID)
+                or str(effect.get("run_id") or "") != str(grant.run_id)
+                or effect.get("idempotency_key") != str(request_id)
+                or effect.get("tool_name") != tool_name
+                or effect.get("request_sha256") != request_sha256
+                or str(effect.get("state") or "").upper() != "COMPLETED"
+            ):
+                return _error_response(
+                    tool_name,
+                    grant.run_id,
+                    error_code="TOOL_EFFECT_AMBIGUOUS",
+                    error="AIAT found an invalid completed worker-tool effect record",
+                    idempotency_key=request_id,
+                )
             replay = _completed_replay(
                 effect.get("response_json"),
                 grant.run_id,
@@ -178,7 +200,14 @@ def create_opencode_mcp_app(parent: FastAPI):
                 error="AIAT cannot safely replay this worker-tool effect",
                 idempotency_key=request_id,
             )
-        if not isinstance(effect.get("id"), UUID):
+        if (
+            not isinstance(effect.get("id"), UUID)
+            or str(effect.get("run_id") or "") != str(grant.run_id)
+            or effect.get("idempotency_key") != str(request_id)
+            or effect.get("tool_name") != tool_name
+            or effect.get("request_sha256") != request_sha256
+            or str(effect.get("state") or "").upper() != "IN_FLIGHT"
+        ):
             return _error_response(
                 tool_name,
                 grant.run_id,
@@ -199,7 +228,10 @@ def create_opencode_mcp_app(parent: FastAPI):
             try:
                 settled = await complete_effect(
                     effect["id"],
-                    state="COMPLETED",
+                    run_id=grant.run_id,
+                    claim_owner=grant.claim_owner,
+                    attempt_count=grant.attempt_count,
+                    state="AMBIGUOUS",
                     response_json=denied.model_dump(mode="json", exclude_none=True),
                 )
             except Exception:
@@ -232,7 +264,10 @@ def create_opencode_mcp_app(parent: FastAPI):
             try:
                 settled = await complete_effect(
                     effect["id"],
-                    state="COMPLETED",
+                    run_id=grant.run_id,
+                    claim_owner=grant.claim_owner,
+                    attempt_count=grant.attempt_count,
+                    state="AMBIGUOUS",
                     response_json=denied.model_dump(mode="json", exclude_none=True),
                 )
             except Exception:
@@ -268,6 +303,9 @@ def create_opencode_mcp_app(parent: FastAPI):
             try:
                 settled = await complete_effect(
                     effect["id"],
+                    run_id=grant.run_id,
+                    claim_owner=grant.claim_owner,
+                    attempt_count=grant.attempt_count,
                     state="AMBIGUOUS",
                     response_json=ambiguous.model_dump(mode="json", exclude_none=True),
                 )
@@ -286,12 +324,24 @@ def create_opencode_mcp_app(parent: FastAPI):
         try:
             settled = await complete_effect(
                 effect["id"],
+                run_id=grant.run_id,
+                claim_owner=grant.claim_owner,
+                attempt_count=grant.attempt_count,
                 state="COMPLETED",
                 response_json=response_json,
             )
         except Exception:
             settled = None
-        if settled is None or str(settled.get("state", "")).upper() != "COMPLETED":
+        if (
+            not isinstance(settled, dict)
+            or str(settled.get("id") or "") != str(effect.get("id") or "")
+            or str(settled.get("run_id") or "") != str(grant.run_id)
+            or settled.get("idempotency_key") != str(request_id)
+            or settled.get("tool_name") != tool_name
+            or settled.get("request_sha256") != request_sha256
+            or str(settled.get("state") or "").upper() != "COMPLETED"
+            or settled.get("response_json") != response_json
+        ):
             return _error_response(
                 tool_name,
                 grant.run_id,

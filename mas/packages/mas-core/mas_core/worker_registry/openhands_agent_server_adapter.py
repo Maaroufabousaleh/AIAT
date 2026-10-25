@@ -1392,6 +1392,9 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
         if request.run_id in self._mcp_by_run:
             return
         requested_tools = frozenset(str(name).strip() for name in request.tool_grants if str(name).strip())
+        execution_claim_fence = request.execution_claim_fence
+        claim_owner = str(execution_claim_fence.get("claim_owner") or "").strip() or None
+        attempt_count = int(execution_claim_fence.get("attempt_count") or 0)
         unexpected_tools = requested_tools - _OPENHANDS_ALLOWED_TOOL_GRANTS
         if unexpected_tools:
             raise RuntimeError(
@@ -1440,6 +1443,8 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
                 and grant.run_id == request.run_id
                 and grant.project_id == request.project_id
                 and grant.tool_names == requested_tools
+                and grant.claim_owner == claim_owner
+                and grant.attempt_count == attempt_count
             )
             if not bound_to_request:
                 # The trusted certification lifecycle wave uses independent
@@ -1463,6 +1468,8 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
                     run_id=request.run_id,
                     project_id=request.project_id,
                     tool_names=requested_tools,
+                    claim_owner=claim_owner,
+                    attempt_count=attempt_count,
                     ttl_seconds=_OPENHANDS_MCP_GRANT_TTL_SECONDS,
                     now=issued_at,
                 )
@@ -1524,6 +1531,8 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
                     or rotated.run_id != request.run_id
                     or rotated.project_id != request.project_id
                     or rotated.tool_names != requested_tools
+                    or rotated.claim_owner != claim_owner
+                    or rotated.attempt_count != attempt_count
                 ):
                     raise RuntimeError("rotated OpenHands MCP grant is not bound to this run")
                 self._mcp_by_run[request.run_id] = settings_key
@@ -1550,6 +1559,8 @@ class OpenHandsAgentServerAdapter(BaseWorkerAdapter):
             run_id=request.run_id,
             project_id=request.project_id,
             tool_names=requested_tools,
+            claim_owner=claim_owner,
+            attempt_count=attempt_count,
             ttl_seconds=_OPENHANDS_MCP_GRANT_TTL_SECONDS,
             now=issued_at,
         )

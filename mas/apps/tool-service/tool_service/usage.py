@@ -14,11 +14,11 @@ from mas_core.observability import build_native_trace_span, current_trace_id
 
 
 class WorkerToolEffectRepository:
-    """Durable effect journal for tool calls that bypass WorkerRunController.
+    """Durable effect journal for signed MCP tool calls outside the controller.
 
-    OpenCode's signed MCP bridge executes inside Tool Service, so it must
-    reserve and settle the same worker_tool_effects rows used by the worker
-    controller before returning a result to the runtime.  This repository is
+    OpenHands and OpenCode signed MCP bridges execute inside Tool Service, so
+    they reserve and settle the same worker_tool_effects rows used by the
+    controller before returning a result to the runtime. This repository is
     intentionally separate from best-effort usage and trace accounting.
     """
 
@@ -135,6 +135,29 @@ class WorkerToolEffectRepository:
             )
             if not current_claim:
                 return {"disposition": "CLAIM_LOST"}
+            unresolved = await connection.fetchrow(
+                """
+                    SELECT idempotency_key, request_sha256
+                    FROM worker_tool_effects
+                    WHERE run_id = $1 AND state IN ('IN_FLIGHT', 'AMBIGUOUS')
+                    ORDER BY id ASC
+                    LIMIT 1
+                    FOR UPDATE
+                    """,
+                run_id,
+            )
+            if unresolved is not None:
+                if unresolved["idempotency_key"] == idempotency_key:
+                    return {
+                        "disposition": (
+                            "CONFLICT"
+                            if unresolved["request_sha256"] != request_sha256
+                            else "AMBIGUOUS"
+                        )
+                    }
+                # A runtime retry may use a new MCP session/request ID. Do not
+                # let a different key bypass an unresolved prior effect.
+                return {"disposition": "AMBIGUOUS"}
             await connection.execute(
                 """
                     INSERT INTO worker_tool_effects (
@@ -175,30 +198,54 @@ class WorkerToolEffectRepository:
         self,
         effect_id: UUID,
         *,
+        run_id: UUID,
+        claim_owner: str | None,
+        attempt_count: int,
         state: str,
         response_json: dict[str, Any],
     ) -> dict[str, Any] | None:
-        """Settle only an IN_FLIGHT row; never overwrite a prior disposition."""
+        """Settle an in-flight effect, claim-fencing every successful result."""
 
         normalized_state = str(state).strip().upper()
         if normalized_state not in {"COMPLETED", "AMBIGUOUS"}:
             raise ValueError("worker tool effect completion state is invalid")
-        if not isinstance(effect_id, UUID) or not isinstance(response_json, dict):
+        if (
+            not isinstance(effect_id, UUID)
+            or not isinstance(run_id, UUID)
+            or not isinstance(response_json, dict)
+            or isinstance(attempt_count, bool)
+            or not isinstance(attempt_count, int)
+            or attempt_count < 0
+        ):
             raise ValueError("worker tool effect completion payload is invalid")
+        if normalized_state == "COMPLETED" and (
+            not isinstance(claim_owner, str) or not claim_owner.strip() or attempt_count < 1
+        ):
+            return None
+        if normalized_state == "AMBIGUOUS" and response_json.get("success") is True:
+            return None
         now = datetime.now(tz=UTC)
         async with self._pool.acquire() as connection, connection.transaction():
+            if normalized_state == "COMPLETED" and not await self._lock_and_check_worker_run_claim(
+                connection,
+                run_id=run_id,
+                claim_owner=claim_owner,
+                attempt_count=attempt_count,
+            ):
+                return None
             row = await connection.fetchrow(
                 """
                     UPDATE worker_tool_effects
-                    SET state = $2,
-                        response_json = $3::jsonb,
-                        updated_at = $4,
-                        completed_at = CASE WHEN $2 = 'COMPLETED' THEN $4 ELSE NULL END
-                    WHERE id = $1 AND state = 'IN_FLIGHT'
+                    SET state = $3,
+                        response_json = $4::jsonb,
+                        updated_at = $5,
+                        completed_at = CASE WHEN $3 = 'COMPLETED' THEN $5 ELSE NULL END
+                    WHERE id = $1 AND run_id = $2 AND state = 'IN_FLIGHT'
                     RETURNING id, run_id, request_id, idempotency_key, tool_name,
                               request_sha256, state, response_json
                     """,
                 effect_id,
+                run_id,
                 normalized_state,
                 json.dumps(response_json, separators=(",", ":")),
                 now,

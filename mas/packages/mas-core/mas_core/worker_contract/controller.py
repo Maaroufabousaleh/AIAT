@@ -121,7 +121,12 @@ class WorkerRunController:
         attempt_count = int(fence.get("attempt_count") or 0)
         storage_begin = getattr(self.storage, "begin_worker_tool_effect", None)
         if callable(storage_begin):
-            return await storage_begin(
+            if not callable(getattr(self.storage, "complete_worker_tool_effect", None)):
+                raise WorkerRunError(
+                    "TOOL_EFFECT_LEDGER_UNAVAILABLE",
+                    "durable worker-tool effect completion is unavailable",
+                )
+            effect = await storage_begin(
                 run_id=tool_request.run_id,
                 request_id=tool_request.request_id,
                 idempotency_key=tool_request.idempotency_key,
@@ -130,6 +135,44 @@ class WorkerRunController:
                 claim_owner=claim_owner,
                 attempt_count=attempt_count,
             )
+            if not isinstance(effect, dict):
+                raise WorkerRunError(
+                    "TOOL_EFFECT_LEDGER_UNAVAILABLE",
+                    "durable worker-tool effect reservation is unavailable",
+                )
+            disposition = str(effect.get("disposition") or "").upper()
+            if disposition not in {
+                "NEW",
+                "REPLAY",
+                "CONFLICT",
+                "AMBIGUOUS",
+                "CLAIM_LOST",
+            }:
+                raise WorkerRunError(
+                    "TOOL_EFFECT_LEDGER_UNAVAILABLE",
+                    "durable worker-tool effect reservation has an unknown disposition",
+                )
+            expected_state = {
+                "NEW": "IN_FLIGHT",
+                "REPLAY": "COMPLETED",
+            }.get(disposition)
+            if expected_state is not None and (
+                not isinstance(effect.get("id"), UUID)
+                or str(effect.get("run_id") or "") != str(tool_request.run_id)
+                or effect.get("idempotency_key") != tool_request.idempotency_key
+                or effect.get("tool_name") != tool_request.tool_name
+                or effect.get("request_sha256") != request_sha256
+                or str(effect.get("state") or "").upper() != expected_state
+                or (
+                    disposition == "REPLAY"
+                    and not isinstance(effect.get("response_json"), dict)
+                )
+            ):
+                raise WorkerRunError(
+                    "TOOL_EFFECT_LEDGER_UNAVAILABLE",
+                    "durable worker-tool effect record is invalid",
+                )
+            return effect
         if claim_owner is not None or attempt_count > 0:
             # A claimed execution must have durable authority state against
             # which the generation can be checked before any tool dispatch.
@@ -170,13 +213,43 @@ class WorkerRunController:
         response: WorkerToolResponse,
     ) -> None:
         response_json = response.model_dump(mode="json")
+        storage_begin = getattr(self.storage, "begin_worker_tool_effect", None)
         storage_complete = getattr(self.storage, "complete_worker_tool_effect", None)
-        if callable(storage_complete):
-            await storage_complete(
-                effect["id"],
-                state=state,
-                response_json=response_json,
-            )
+        if callable(storage_begin):
+            if not callable(storage_complete):
+                raise WorkerRunError(
+                    "TOOL_EFFECT_COMPLETION_UNAVAILABLE",
+                    "durable worker-tool effect completion is unavailable",
+                )
+            try:
+                claim_fence = tool_request.execution_claim_fence
+                persisted = await storage_complete(
+                    effect["id"],
+                    run_id=tool_request.run_id,
+                    claim_owner=claim_fence.get("claim_owner"),
+                    attempt_count=int(claim_fence.get("attempt_count") or 0),
+                    state=state,
+                    response_json=response_json,
+                )
+            except Exception as exc:
+                raise WorkerRunError(
+                    "TOOL_EFFECT_COMPLETION_UNAVAILABLE",
+                    "AIAT could not confirm the mediated tool outcome",
+                ) from exc
+            if (
+                not isinstance(persisted, dict)
+                or str(persisted.get("id") or "") != str(effect.get("id") or "")
+                or str(persisted.get("run_id") or "") != str(tool_request.run_id)
+                or persisted.get("idempotency_key") != tool_request.idempotency_key
+                or persisted.get("tool_name") != tool_request.tool_name
+                or persisted.get("request_sha256") != effect.get("request_sha256")
+                or str(persisted.get("state") or "").upper() != state.upper()
+                or persisted.get("response_json") != response_json
+            ):
+                raise WorkerRunError(
+                    "TOOL_EFFECT_COMPLETION_UNAVAILABLE",
+                    "AIAT could not confirm the mediated tool outcome",
+                )
             return
         key = (tool_request.run_id, tool_request.idempotency_key)
         row = self._memory_tool_effects.get(key)
@@ -1004,16 +1077,39 @@ class WorkerRunController:
                     "category": "policy",
                 },
             )
-        elif disposition in {"REPLAY", "AMBIGUOUS"}:
+        elif disposition == "REPLAY":
             stored_response = effect.get("response_json")
             if stored_response is not None:
-                response = WorkerToolResponse.model_validate(stored_response).model_copy(
-                    update={
-                        "request_id": tool_request.request_id,
-                        "run_id": request.run_id,
-                        "tool_name": tool_request.tool_name,
-                    }
-                )
+                try:
+                    replayed_response = WorkerToolResponse.model_validate(stored_response)
+                except (TypeError, ValueError):
+                    replayed_response = None
+                if (
+                    replayed_response is None
+                    or replayed_response.run_id != request.run_id
+                    or replayed_response.tool_name != tool_request.tool_name
+                ):
+                    response = WorkerToolResponse(
+                        request_id=tool_request.request_id,
+                        run_id=request.run_id,
+                        tool_name=tool_request.tool_name,
+                        success=False,
+                        error={
+                            "code": "TOOL_EFFECT_AMBIGUOUS",
+                            "message": "A completed tool effect has mismatched response identity",
+                            "retryable": False,
+                            "terminal": True,
+                            "category": "recovery",
+                        },
+                    )
+                else:
+                    response = replayed_response.model_copy(
+                        update={
+                            "request_id": tool_request.request_id,
+                            "run_id": request.run_id,
+                            "tool_name": tool_request.tool_name,
+                        }
+                    )
             else:
                 response = WorkerToolResponse(
                     request_id=tool_request.request_id,
@@ -1028,6 +1124,22 @@ class WorkerRunController:
                         "category": "recovery",
                     },
                 )
+        elif disposition == "AMBIGUOUS":
+            # An ambiguous ledger row is never authoritative for success,
+            # even if an inconsistent stored payload claims otherwise.
+            response = WorkerToolResponse(
+                request_id=tool_request.request_id,
+                run_id=request.run_id,
+                tool_name=tool_request.tool_name,
+                success=False,
+                error={
+                    "code": "TOOL_EFFECT_AMBIGUOUS",
+                    "message": "A previous tool attempt may have performed an effect; automatic replay is blocked",
+                    "retryable": False,
+                    "terminal": True,
+                    "category": "recovery",
+                },
+            )
         else:
             effect_state = "COMPLETED"
             if tool_request.tool_name not in request.tool_grants:
@@ -1060,6 +1172,12 @@ class WorkerRunController:
                     try:
                         raw_response = await dispatcher(tool_request)
                         response = raw_response if isinstance(raw_response, WorkerToolResponse) else WorkerToolResponse.model_validate(raw_response)
+                        if (
+                            response.request_id != tool_request.request_id
+                            or response.run_id != request.run_id
+                            or response.tool_name != tool_request.tool_name
+                        ):
+                            raise ValueError("tool mediator returned a mismatched response identity")
                     except Exception as exc:
                         # The tool may have completed an external effect before
                         # its response reached AIAT.  Record the ambiguity and

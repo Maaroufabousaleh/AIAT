@@ -32,6 +32,7 @@ class _EffectLedger:
         self.claim_owner = claim_owner
         self.attempt_count = attempt_count
         self.reassign_on_validate = reassign_on_validate
+        self.completion_fences: list[dict[str, Any]] = []
 
     def _claim_matches(self, values: dict[str, Any]) -> bool:
         return (
@@ -71,11 +72,33 @@ class _EffectLedger:
         self,
         effect_id: UUID,
         *,
+        run_id: UUID,
+        claim_owner: str | None,
+        attempt_count: int,
         state: str,
         response_json: dict[str, Any],
     ) -> dict[str, Any] | None:
+        self.completion_fences.append(
+            {
+                "run_id": run_id,
+                "claim_owner": claim_owner,
+                "attempt_count": attempt_count,
+                "state": state,
+            }
+        )
+        if state == "COMPLETED" and not self._claim_matches(
+            {
+                "claim_owner": claim_owner,
+                "attempt_count": attempt_count,
+            }
+        ):
+            return None
         for row in self.rows.values():
-            if row["id"] == effect_id and row["state"] == "IN_FLIGHT":
+            if (
+                row["id"] == effect_id
+                and row["run_id"] == run_id
+                and row["state"] == "IN_FLIGHT"
+            ):
                 row["state"] = state
                 row["response_json"] = response_json
                 return dict(row)
@@ -174,10 +197,10 @@ def _parent(
     *,
     with_ledger: bool = True,
     preexisting_state: str | None = None,
-    current_claim_owner: str | None = None,
-    current_attempt_count: int = 0,
-    grant_claim_owner: str | None = None,
-    grant_attempt_count: int = 0,
+    current_claim_owner: str | None = "executor-a",
+    current_attempt_count: int = 1,
+    grant_claim_owner: str | None = "executor-a",
+    grant_attempt_count: int = 1,
     reassign_on_validate: bool = False,
 ) -> tuple[Any, _Registry, _EffectLedger | None, UUID, str]:
     ledger = (
@@ -236,6 +259,119 @@ async def test_new_signed_mcp_tool_call_is_journaled_before_dispatch() -> None:
     assert row["tool_name"] == "opencode.workspace_read"
     assert row["request_id"] == UUID(row["idempotency_key"])
     assert row["response_json"]["result"]["call"] == 1
+    assert ledger.completion_fences == [
+        {
+            "run_id": run_id,
+            "claim_owner": "executor-a",
+            "attempt_count": 1,
+            "state": "COMPLETED",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_unclaimed_signed_grant_is_rejected_before_effect_reservation_or_dispatch() -> None:
+    parent, registry, ledger, _run_id, token = _parent(
+        current_claim_owner=None,
+        current_attempt_count=0,
+        grant_claim_owner=None,
+        grant_attempt_count=0,
+    )
+    assert ledger is not None
+
+    async with _open_mcp_client(parent, token) as client:
+        result = await _call_tool(client, request_id="unclaimed-run")
+
+    assert result["success"] is False
+    assert result["error_code"] == "WORKER_RUN_CLAIM_LOST"
+    assert ledger.rows == {}
+    assert registry.requests == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "wrong_value"),
+    [
+        ("id", "not-a-uuid"),
+        ("run_id", uuid4()),
+        ("idempotency_key", "another-request"),
+        ("tool_name", "another.tool"),
+        ("request_sha256", "0" * 64),
+        ("state", "COMPLETED"),
+    ],
+    ids=["id", "run-id", "idempotency-key", "tool-name", "request-hash", "state"],
+)
+async def test_new_effect_reservation_identity_is_validated_before_dispatch(
+    field: str,
+    wrong_value: Any,
+) -> None:
+    class CorruptReservationLedger(_EffectLedger):
+        async def begin_worker_tool_effect(self, **values: Any) -> dict[str, Any]:
+            effect = await super().begin_worker_tool_effect(**values)
+            if effect.get("disposition") == "NEW":
+                effect[field] = wrong_value
+            return effect
+
+    parent, registry, base_ledger, _, token = _parent()
+    assert base_ledger is not None
+    ledger = CorruptReservationLedger(
+        claim_owner=base_ledger.claim_owner,
+        attempt_count=base_ledger.attempt_count,
+    )
+    parent.state.worker_tool_effects = ledger
+    registry.ledger = ledger
+
+    async with _open_mcp_client(parent, token) as client:
+        result = await _call_tool(client, request_id="corrupt-new-reservation")
+
+    assert result["success"] is False
+    assert result["error_code"] == "TOOL_EFFECT_LEDGER_UNAVAILABLE"
+    assert registry.requests == []
+    assert next(iter(ledger.rows.values()))["state"] == "IN_FLIGHT"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "wrong_value"),
+    [
+        ("id", uuid4()),
+        ("run_id", uuid4()),
+        ("idempotency_key", "another-request"),
+        ("tool_name", "another.tool"),
+        ("request_sha256", "0" * 64),
+        ("response_json", {"success": False}),
+    ],
+    ids=["id", "run-id", "idempotency-key", "tool-name", "request-hash", "response"],
+)
+async def test_completion_readback_must_match_reserved_effect(
+    field: str,
+    wrong_value: Any,
+) -> None:
+    class CorruptCompletionLedger(_EffectLedger):
+        async def complete_worker_tool_effect(
+            self, *args: Any, **values: Any
+        ) -> dict[str, Any] | None:
+            settled = await super().complete_worker_tool_effect(*args, **values)
+            if settled is not None and values.get("state") == "COMPLETED":
+                settled[field] = wrong_value
+            return settled
+
+    parent, registry, base_ledger, _, token = _parent()
+    assert base_ledger is not None
+    ledger = CorruptCompletionLedger(
+        claim_owner=base_ledger.claim_owner,
+        attempt_count=base_ledger.attempt_count,
+    )
+    parent.state.worker_tool_effects = ledger
+    registry.ledger = ledger
+
+    async with _open_mcp_client(parent, token) as client:
+        result = await _call_tool(client, request_id="corrupt-completion-readback")
+
+    assert result["success"] is False
+    assert result["error_code"] == "TOOL_EFFECT_COMPLETION_UNAVAILABLE"
+    assert len(registry.requests) == 1
+    assert next(iter(ledger.rows.values()))["state"] == "COMPLETED"
 
 
 @pytest.mark.asyncio
@@ -250,6 +386,34 @@ async def test_completed_same_request_replays_without_second_registry_dispatch()
 
     assert first == replay
     assert first["result"]["call"] == 1
+    assert len(registry.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_mismatched_effect_request_hash_cannot_be_replayed() -> None:
+    class CorruptReplayLedger(_EffectLedger):
+        async def begin_worker_tool_effect(self, **values: Any) -> dict[str, Any]:
+            effect = await super().begin_worker_tool_effect(**values)
+            if effect.get("disposition") == "REPLAY":
+                effect["request_sha256"] = "0" * 64
+            return effect
+
+    parent, registry, ledger, _, token = _parent()
+    assert ledger is not None
+    corrupt_ledger = CorruptReplayLedger(
+        claim_owner=ledger.claim_owner,
+        attempt_count=ledger.attempt_count,
+    )
+    parent.state.worker_tool_effects = corrupt_ledger
+    registry.ledger = corrupt_ledger
+
+    async with _open_mcp_client(parent, token) as client:
+        first = await _call_tool(client, request_id="corrupt-replay", arguments={"path": "a.txt"})
+        replay = await _call_tool(client, request_id="corrupt-replay", arguments={"path": "a.txt"})
+
+    assert first["success"] is True
+    assert replay["success"] is False
+    assert replay["error_code"] == "TOOL_EFFECT_AMBIGUOUS"
     assert len(registry.requests) == 1
 
 
@@ -315,7 +479,7 @@ async def test_claim_reclaimed_after_effect_reservation_is_denied_at_dispatch_ad
     assert result["error_code"] == "WORKER_RUN_CLAIM_LOST"
     assert registry.requests == []
     row = next(iter(ledger.rows.values()))
-    assert row["state"] == "COMPLETED"
+    assert row["state"] == "AMBIGUOUS"
     assert row["response_json"]["error_code"] == "WORKER_RUN_CLAIM_LOST"
 
 

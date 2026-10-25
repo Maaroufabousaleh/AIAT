@@ -13509,6 +13509,40 @@ class AgentStorage:
             if not current_claim:
                 return {"disposition": "CLAIM_LOST"}
 
+            unresolved = (
+                await conn.execute(
+                    t.worker_tool_effects.select()
+                    .with_only_columns(
+                        t.worker_tool_effects.c.idempotency_key,
+                        t.worker_tool_effects.c.request_sha256,
+                    )
+                    .where(
+                        sa.and_(
+                            t.worker_tool_effects.c.run_id == run_id,
+                            t.worker_tool_effects.c.state.in_(
+                                ("IN_FLIGHT", "AMBIGUOUS")
+                            ),
+                        )
+                    )
+                    .order_by(t.worker_tool_effects.c.id.asc())
+                    .limit(1)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if unresolved is not None:
+                if unresolved["idempotency_key"] == idempotency_key:
+                    return {
+                        "disposition": (
+                            "CONFLICT"
+                            if unresolved["request_sha256"] != request_sha256
+                            else "AMBIGUOUS"
+                        )
+                    }
+                # A runtime retry can establish a new MCP request ID after a
+                # session reset. Keep unresolved prior effects from being
+                # bypassed by that new idempotency key.
+                return {"disposition": "AMBIGUOUS"}
+
             insert = pg_insert(t.worker_tool_effects).values(**values).on_conflict_do_nothing(
                 index_elements=[
                     t.worker_tool_effects.c.run_id,
@@ -13601,32 +13635,70 @@ class AgentStorage:
         self,
         effect_id: UUID,
         *,
+        run_id: UUID,
+        claim_owner: str | None,
+        attempt_count: int,
         state: str,
         response_json: dict[str, Any],
     ) -> dict[str, Any] | None:
-        """Persist a known or ambiguous mediated-tool response."""
+        """Persist a mediated-tool response, fencing successful results by claim."""
 
         normalized_state = str(state).strip().upper()
         if normalized_state not in {"COMPLETED", "AMBIGUOUS"}:
             raise ValueError("worker tool effect completion state is invalid")
-        now = datetime.now(tz=UTC)
+        if (
+            not isinstance(effect_id, UUID)
+            or not isinstance(run_id, UUID)
+            or not isinstance(response_json, dict)
+            or isinstance(attempt_count, bool)
+            or not isinstance(attempt_count, int)
+            or attempt_count < 0
+        ):
+            raise ValueError("worker tool effect completion payload is invalid")
+        if normalized_state == "COMPLETED" and (
+            not isinstance(claim_owner, str) or not claim_owner.strip() or attempt_count < 1
+        ):
+            return None
+        if normalized_state == "AMBIGUOUS" and response_json.get("success") is True:
+            return None
         async with self.engine.begin() as conn:
-            await conn.execute(
+            if normalized_state == "COMPLETED":
+                worker_run = (
+                    await conn.execute(
+                        t.worker_runs.select()
+                        .where(t.worker_runs.c.id == run_id)
+                        .with_for_update()
+                    )
+                ).mappings().first()
+                now = datetime.now(tz=UTC)
+                if not self._worker_run_claim_matches(
+                    worker_run,
+                    claim_owner=claim_owner,
+                    attempt_count=attempt_count,
+                    now=now,
+                    reject_cancel_requested=True,
+                ):
+                    return None
+            else:
+                now = datetime.now(tz=UTC)
+            result = await conn.execute(
                 t.worker_tool_effects.update()
-                .where(t.worker_tool_effects.c.id == effect_id)
+                .where(
+                    sa.and_(
+                        t.worker_tool_effects.c.id == effect_id,
+                        t.worker_tool_effects.c.run_id == run_id,
+                        t.worker_tool_effects.c.state == "IN_FLIGHT",
+                    )
+                )
                 .values(
                     state=normalized_state,
                     response_json=response_json,
                     updated_at=now,
                     completed_at=now if normalized_state == "COMPLETED" else None,
                 )
+                .returning(t.worker_tool_effects)
             )
-            row = (
-                await conn.execute(
-                    t.worker_tool_effects.select()
-                    .where(t.worker_tool_effects.c.id == effect_id)
-                )
-            ).mappings().first()
+            row = result.mappings().first()
         return dict(row) if row else None
 
     async def append_worker_event(self, *, run_id: UUID, sequence: int, event_type: str, event: dict[str, Any], event_sha256: str, max_event_count: int | None = None) -> dict[str, Any]:

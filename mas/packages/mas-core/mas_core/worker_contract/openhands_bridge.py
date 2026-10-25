@@ -38,6 +38,8 @@ class OpenHandsToolGrant:
     run_id: UUID
     project_id: UUID | None
     tool_names: frozenset[str]
+    claim_owner: str | None
+    attempt_count: int
     expires_at: int
     grant_id: str
 
@@ -57,6 +59,8 @@ def issue_openhands_tool_grant(
     run_id: UUID,
     project_id: UUID | None,
     tool_names: Iterable[str],
+    claim_owner: str | None = None,
+    attempt_count: int = 0,
     ttl_seconds: int = 300,
     now: int | None = None,
 ) -> str:
@@ -68,6 +72,14 @@ def issue_openhands_tool_grant(
         raise OpenHandsToolGrantError("OpenHands tool bridge requires a worker id")
     if not 1 <= ttl_seconds <= _MAX_TTL_SECONDS:
         raise OpenHandsToolGrantError("OpenHands tool bridge TTL is out of bounds")
+    normalized_claim_owner = str(claim_owner or "").strip() or None
+    if (
+        isinstance(attempt_count, bool)
+        or not isinstance(attempt_count, int)
+        or attempt_count < 0
+        or (normalized_claim_owner is None) != (attempt_count == 0)
+    ):
+        raise OpenHandsToolGrantError("OpenHands tool bridge claim fence is invalid")
     issued_at = int(time.time()) if now is None else int(now)
     payload = {
         "purpose": _PURPOSE,
@@ -75,6 +87,8 @@ def issue_openhands_tool_grant(
         "run_id": str(run_id),
         "project_id": str(project_id) if project_id else None,
         "tool_names": sorted({str(name).strip() for name in tool_names if str(name).strip()}),
+        "claim_owner": normalized_claim_owner,
+        "attempt_count": attempt_count,
         "exp": issued_at + ttl_seconds,
         "jti": secrets.token_urlsafe(16),
     }
@@ -108,6 +122,19 @@ def verify_openhands_tool_grant(
         ):
             raise OpenHandsToolGrantError("invalid OpenHands tool bridge grant")
         tool_names = frozenset(name.strip() for name in raw_tool_names if name.strip())
+        raw_claim_owner = payload.get("claim_owner")
+        if raw_claim_owner is not None and not isinstance(raw_claim_owner, str):
+            raise OpenHandsToolGrantError("invalid OpenHands tool bridge grant")
+        claim_owner = str(raw_claim_owner or "").strip() or None
+        raw_attempt_count = payload.get("attempt_count", 0)
+        if (
+            isinstance(raw_attempt_count, bool)
+            or not isinstance(raw_attempt_count, int)
+            or raw_attempt_count < 0
+            or (claim_owner is None) != (raw_attempt_count == 0)
+        ):
+            raise OpenHandsToolGrantError("invalid OpenHands tool bridge grant")
+        attempt_count = raw_attempt_count
         expires_at = int(payload["exp"])
         grant_id = str(payload["jti"])
     except (KeyError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -122,6 +149,8 @@ def verify_openhands_tool_grant(
         run_id=run_id,
         project_id=project_id,
         tool_names=tool_names,
+        claim_owner=claim_owner,
+        attempt_count=attempt_count,
         expires_at=expires_at,
         grant_id=grant_id,
     )
