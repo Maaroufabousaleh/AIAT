@@ -258,6 +258,60 @@ class _MemoryStorage:
         return {"artifacts": deepcopy(artifacts), "usage": deepcopy(usage)}
 
 
+    async def complete_worker_run_success_claim_fenced(
+        self,
+        *,
+        run_id: UUID,
+        claim_owner: str | None,
+        attempt_count: int,
+        artifacts: list[dict[str, object]],
+        usage: dict[str, object],
+        result: dict[str, object],
+        replay_metadata: dict[str, object] | None = None,
+        project_usage: dict[str, object] | None = None,
+        reason: str = "worker emitted a normalized terminal result",
+        correlation_id: str | None = None,
+    ) -> dict[str, object] | None:
+        self.mutation_calls.append("complete_worker_run_success_claim_fenced")
+        expires_at = self.run.get("lease_expires_at")
+        if (
+            run_id != RUN_ID
+            or self.run.get("state") not in {"RUNNING", "PAUSING"}
+            or self.run.get("claim_owner") != claim_owner
+            or self.run.get("attempt_count") != attempt_count
+            or not isinstance(expires_at, datetime)
+            or expires_at <= datetime.now(UTC)
+            or self.run.get("cancel_requested_at") is not None
+        ):
+            return None
+        effects = getattr(self, "effects", {})
+        if any(
+            row.get("state") in {"IN_FLIGHT", "AMBIGUOUS"}
+            for row in effects.values()
+            if row.get("run_id") == run_id
+        ):
+            return None
+        # Model the production operation as one terminal write after current
+        # claim and unresolved-effect checks.
+        self.terminal_evidence = {
+            "run_id": run_id,
+            "artifacts": deepcopy(artifacts),
+            "usage": deepcopy(usage),
+            "project_usage": deepcopy(project_usage),
+            "replay_metadata": deepcopy(replay_metadata),
+            "reason": reason,
+            "correlation_id": correlation_id,
+        }
+        self.run.update(
+            {
+                "state": "SUCCEEDED",
+                "result_json": deepcopy(result),
+                "claim_owner": None,
+                "lease_expires_at": None,
+            }
+        )
+        return deepcopy(self.run)
+
 class _Bindings:
     def __init__(self, snapshot: dict[str, object], current: dict[str, object] | None = None) -> None:
         self.snapshot = snapshot
@@ -579,8 +633,12 @@ def _consumer(
 
 
 @pytest.mark.asyncio
-async def test_queue_consumer_executes_through_host_executor_and_controller() -> None:
+@pytest.mark.parametrize("worker_status", ["ACTIVE", "DRAINING"])
+async def test_queue_consumer_executes_through_host_executor_and_controller(
+    worker_status: str,
+) -> None:
     storage = _MemoryStorage()
+    storage.worker["status"] = worker_status
     bindings = _Bindings(_binding())
     worker_calls: list[str] = []
     factory_calls: list[PinnedWorkerAdapter] = []
@@ -630,6 +688,7 @@ async def test_queue_consumer_executes_through_host_executor_and_controller() ->
         "append_worker_event",
         "create_worker_usage",
         "persist_worker_result_evidence_claim_fenced",
+        "complete_worker_run_success_claim_fenced",
     }
     assert set(storage.mutation_calls) <= allowed_mutations
     summary_text = repr(summaries)
@@ -765,6 +824,46 @@ async def test_queue_consumer_rejects_direct_process_for_hardened_worker() -> No
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    "transport",
+    ["http", "mcp", "opencode", "openhands_agent_server", "firecracker", "native"],
+)
+async def test_queue_consumer_rejects_unverified_hardened_transport_before_resolve(
+    transport: str,
+) -> None:
+    storage = _MemoryStorage()
+    storage.worker.update(
+        {
+            "source_repo": "https://example.invalid/worker",
+            "adapter_type": transport,
+            "sandbox_profile": "sandboxed",
+            "adapter_config": {
+                "execution_policy": {
+                    "trust": "untrusted",
+                    "formats": ["oci", "linux"],
+                    "minimum_isolation": "sandboxed",
+                }
+            },
+        }
+    )
+    storage.adapter_record["transport_type"] = transport
+    bindings = _Bindings(_binding())
+    resolver_calls: list[PinnedWorkerAdapter] = []
+
+    summaries = await _consumer(
+        storage,
+        bindings,
+        lambda pins: resolver_calls.append(pins),
+    ).consume_once()
+
+    assert summaries[0].state == "QUEUED"
+    assert summaries[0].reason_code == "worker_sandbox_transport_unverified"
+    assert resolver_calls == []
+    assert storage.run["state"] == "QUEUED"
+    assert storage.mutation_calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     ("pinned_transport", "resolved_transport"),
     [
         ("oci", "process"),
@@ -777,20 +876,29 @@ async def test_queue_consumer_rejects_resolved_transport_mismatch_before_claim(
     resolved_transport: str,
 ) -> None:
     storage = _MemoryStorage()
-    storage.worker.update(
-        {
-            "source_repo": "https://example.invalid/worker",
-            "adapter_type": pinned_transport,
-            "sandbox_profile": "sandboxed",
-            "adapter_config": {
-                "execution_policy": {
-                    "trust": "untrusted",
-                    "formats": ["oci", "linux"],
-                    "minimum_isolation": "sandboxed",
-                }
-            },
-        }
-    )
+    if pinned_transport == "unrecognized-runtime":
+        storage.worker.update(
+            {
+                "adapter_type": pinned_transport,
+                "sandbox_profile": "trusted",
+                "adapter_config": {},
+            }
+        )
+    else:
+        storage.worker.update(
+            {
+                "source_repo": "https://example.invalid/worker",
+                "adapter_type": pinned_transport,
+                "sandbox_profile": "sandboxed",
+                "adapter_config": {
+                    "execution_policy": {
+                        "trust": "untrusted",
+                        "formats": ["oci", "linux"],
+                        "minimum_isolation": "sandboxed",
+                    }
+                },
+            }
+        )
     storage.adapter_record["transport_type"] = pinned_transport
     bindings = _Bindings(_binding())
     factory_calls: list[PinnedWorkerAdapter] = []
@@ -976,8 +1084,13 @@ async def test_running_local_queue_places_then_consumes_through_real_executor_co
     storage = _MemoryStorage()
     storage.worker.update(
         {
-            "sandbox_profile": "sandboxed",
-            "adapter_config": {"execution_policy": {}},
+            "sandbox_profile": "trusted",
+            "adapter_config": {
+                "execution_policy": {
+                    "trust": "trusted",
+                    "minimum_isolation": "trusted",
+                }
+            },
         }
     )
     config = LocalHostQueueConfig(

@@ -26,6 +26,7 @@ from .host_executor import (
     WorkerHostExecutor,
 )
 from .run_host_binding import RunHostBindingIdentity, WorkerRunHostBindingService
+from .worker_run_readiness import HARDENED_SANDBOX_TRANSPORTS
 
 if TYPE_CHECKING:
     from ..memory.storage import AgentStorage
@@ -276,20 +277,20 @@ class HostQueueConsumer:
         transport = str(adapter.get("transport_type") or "").strip().lower()
         if not transport:
             raise _RunRejected("worker_adapter_transport_missing")
-        if transport == "process":
-            try:
-                requires_hardened_isolation = worker_requires_hardened_isolation(
-                    worker
-                )
-            except WorkerIsolationPolicyError as exc:
-                raise _RunRejected(exc.reason_code) from exc
-            if requires_hardened_isolation:
+        try:
+            requires_hardened_isolation = worker_requires_hardened_isolation(
+                worker
+            )
+        except WorkerIsolationPolicyError as exc:
+            raise _RunRejected(exc.reason_code) from exc
+        if requires_hardened_isolation:
+            if transport == "process":
                 # ProcessAdapter executes directly on the host. Placement may
-                # certify that a host has runsc/Kata, but that decision is only
-                # enforced by adapters that actually launch through the selected
-                # runtime (for example OCIAdapter). Do not let a matching host
-                # binding turn a direct process into sandboxed work.
+                # certify a host runtime, but that decision is only enforced by
+                # adapters that launch through a supported sandbox runtime.
                 raise _RunRejected("worker_sandbox_process_transport_unsupported")
+            if transport not in HARDENED_SANDBOX_TRANSPORTS:
+                raise _RunRejected("worker_sandbox_transport_unverified")
 
         if pins.skill_bundle_id is not None:
             bundle_reader = getattr(self._storage, "get_skill_bundle", None)

@@ -505,6 +505,86 @@ async def test_external_process_dispatch_is_blocked_before_run_or_budget_writes(
     assert controller_instances == []
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("dispatch_mode", ["inline", "queued"])
+@pytest.mark.parametrize(
+    "transport",
+    [
+        "http",
+        "mcp",
+        "opencode",
+        "openhands_agent_server",
+        "firecracker",
+        "native",
+        "langgraph",
+        "crewai",
+        "aiat_gateway",
+    ],
+)
+async def test_external_unverified_transport_is_blocked_before_run_or_budget_writes(
+    monkeypatch, dispatch_mode: str, transport: str
+) -> None:
+    import orchestrator_api.main as main
+
+    import mas_core.worker_contract as worker_contract
+
+    class ExternalTransportStorage(_DispatchStorage):
+        def __init__(self) -> None:
+            super().__init__()
+            self.run_creations: list[dict[str, object]] = []
+
+        async def get_worker(self, worker_id: UUID):
+            worker = await super().get_worker(worker_id)
+            if worker is None:
+                return None
+            return {
+                **worker,
+                "source_repo": "https://example.invalid/worker",
+                "runtime_tier": "external",
+                "sandbox_profile": "trusted",
+            }
+
+        async def create_worker_run(self, **kwargs):
+            self.run_creations.append(kwargs)
+            return {"id": kwargs["run_id"], "state": "QUEUED"}
+
+    controller_instances: list[object] = []
+
+    class ForbiddenController:
+        def __init__(self, *, storage) -> None:
+            controller_instances.append(storage)
+
+        async def execute(self, *_args, **_kwargs):
+            pytest.fail("an unverified external transport reached execution")
+
+    storage = ExternalTransportStorage()
+    _patch_storage(storage)
+    adapter = _Adapter()
+    adapter.runtime_type = transport
+    adapter_factory = AsyncMock(return_value=adapter)
+    monkeypatch.setattr(main, "_certified_worker_adapter", adapter_factory)
+    monkeypatch.setattr(worker_contract, "WorkerRunController", ForbiddenController)
+
+    with pytest.raises(main.HTTPException) as rejected:
+        await main.dispatch_worker_run(
+            main.WorkerRunDispatchRequest(
+                worker_id=WORKER_ID,
+                idempotency_key=f"external-{transport}-{dispatch_mode}",
+                task_type="test.run",
+                budget_usd=Decimal("1"),
+                dispatch_mode=dispatch_mode,
+            )
+        )
+
+    assert rejected.value.status_code == 409
+    assert rejected.value.detail["code"] == "WORKER_SANDBOX_TRANSPORT_UNVERIFIED"
+    adapter_factory.assert_awaited_once()
+    assert storage.snapshots == []
+    assert storage.reservations == []
+    assert storage.run_creations == []
+    assert controller_instances == []
+
+
+@pytest.mark.anyio
 async def test_company_dispatch_rejects_grants_outside_active_assignment(
     client, monkeypatch
 ) -> None:

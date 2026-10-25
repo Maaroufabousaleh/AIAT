@@ -157,6 +157,7 @@ from mas_core.worker_registry.runtime_catalog import (
     RUNTIME_REQUIRED_PACKAGES,
 )
 from mas_core.worker_registry.steward import CompatibilityMatrix, operational_promotion_checks
+from mas_core.worker_registry.worker_run_readiness import HARDENED_SANDBOX_TRANSPORTS
 from mas_core.workflow import (
     GateName,
     ImprovementArtifactBundle,
@@ -14652,31 +14653,25 @@ async def _dispatch_worker_run(
     adapter = await _certified_worker_adapter(storage, worker)
     if adapter is None:
         raise HTTPException(409, "Worker has no certified runtime adapter registered with the control plane")
-    if getattr(adapter, "runtime_type", None) == "process":
-        try:
-            process_requires_hardened_isolation = worker_requires_hardened_isolation(
-                worker
-            )
-        except WorkerIsolationPolicyError as exc:
-            raise HTTPException(
-                409,
-                {
-                    "code": exc.reason_code.upper(),
-                    "message": "The worker sandbox policy is invalid and cannot be evaluated safely.",
-                },
-            ) from exc
-        if process_requires_hardened_isolation:
-            # This API's inline and background-queued modes both execute
-            # adapters in the orchestrator process. They cannot satisfy a
-            # hardened worker isolation requirement that the host executor
-            # enforces through a compatible sandbox runtime.
-            raise HTTPException(
-                409,
-                {
-                    "code": "WORKER_SANDBOX_PROCESS_TRANSPORT_UNSUPPORTED",
-                    "message": "A direct process adapter cannot enforce this worker's required isolation.",
-                },
-            )
+    adapter_transport = str(getattr(adapter, "runtime_type", "") or "").strip().lower()
+    try:
+        requires_hardened_isolation = worker_requires_hardened_isolation(worker)
+    except WorkerIsolationPolicyError as exc:
+        raise HTTPException(
+            409,
+            {
+                "code": exc.reason_code.upper(),
+                "message": "The worker sandbox policy is invalid and cannot be evaluated safely.",
+            },
+        ) from exc
+    if requires_hardened_isolation and adapter_transport not in HARDENED_SANDBOX_TRANSPORTS:
+        if adapter_transport == "process":
+            code = "WORKER_SANDBOX_PROCESS_TRANSPORT_UNSUPPORTED"
+            message = "A direct process adapter cannot enforce this worker's required isolation."
+        else:
+            code = "WORKER_SANDBOX_TRANSPORT_UNVERIFIED"
+            message = "The worker adapter transport cannot enforce the required sandbox profile."
+        raise HTTPException(409, {"code": code, "message": message})
     from mas_core.worker_contract import CheckpointMode
 
     if (
