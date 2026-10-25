@@ -51,6 +51,24 @@ _WORKER_RUN_STATES = frozenset(
     }
 )
 
+_TRANSPORT_RUNTIME_TYPES: dict[str, frozenset[str]] = {
+    "process": frozenset({"process"}),
+    "wasm": frozenset({"wasmtime"}),
+    "wasmtime": frozenset({"wasmtime"}),
+    "http": frozenset({"http"}),
+    "mcp": frozenset({"mcp"}),
+    "oci": frozenset({"oci"}),
+    "firecracker": frozenset({"firecracker"}),
+    "gateway": frozenset({"aiat_gateway"}),
+    "aiat_gateway": frozenset({"aiat_gateway"}),
+    "openhands": frozenset({"openhands_agent_server"}),
+    "openhands_agent_server": frozenset({"openhands_agent_server"}),
+    "native": frozenset({"native"}),
+    "langgraph": frozenset({"langgraph"}),
+    "crewai": frozenset({"crewai"}),
+    "opencode": frozenset({"opencode"}),
+}
+
 
 @dataclass(frozen=True, slots=True)
 class PinnedWorkerAdapter:
@@ -225,7 +243,7 @@ class HostQueueConsumer:
         self,
         worker: Mapping[str, Any],
         pins: PinnedWorkerAdapter,
-    ) -> None:
+    ) -> str:
         status = str(worker.get("status") or "").upper()
         if status not in {"ACTIVE", "DRAINING"}:
             raise _RunRejected("worker_not_active")
@@ -255,9 +273,9 @@ class HostQueueConsumer:
         ):
             raise _RunRejected("worker_adapter_pin_not_eligible")
 
-        transport = str(
-            adapter.get("transport_type") or worker.get("adapter_type") or ""
-        ).strip().lower()
+        transport = str(adapter.get("transport_type") or "").strip().lower()
+        if not transport:
+            raise _RunRejected("worker_adapter_transport_missing")
         if transport == "process":
             try:
                 requires_hardened_isolation = worker_requires_hardened_isolation(
@@ -290,6 +308,8 @@ class HostQueueConsumer:
                 )
             ):
                 raise _RunRejected("worker_skill_pin_not_eligible")
+
+        return transport
 
     async def _current_state(self, run_id: UUID) -> str:
         try:
@@ -351,13 +371,17 @@ class HostQueueConsumer:
 
             request = self._validate_request(run, worker_id)
             pins = self._adapter_pins(run, worker_id=worker_id)
-            await self._validate_worker_activation_and_pins(worker, pins)
+            pinned_transport = await self._validate_worker_activation_and_pins(worker, pins)
             adapter = self._adapter_resolver(pins)
             if inspect.isawaitable(adapter):
                 adapter = await adapter
             resolved_adapter_id = getattr(adapter, "_aiat_adapter_id", None)
             if str(resolved_adapter_id or "") != str(pins.adapter_id):
                 raise _RunRejected("pinned_adapter_resolution_mismatch")
+            resolved_transport = str(getattr(adapter, "runtime_type", "") or "").strip().lower()
+            expected_runtime_types = _TRANSPORT_RUNTIME_TYPES.get(pinned_transport)
+            if expected_runtime_types is None or resolved_transport not in expected_runtime_types:
+                raise _RunRejected("pinned_adapter_transport_mismatch")
 
             result = await self._executor.execute(
                 HostExecutionRequest(
