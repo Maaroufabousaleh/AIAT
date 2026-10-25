@@ -44,7 +44,10 @@ from ..company_manifest import (
 from ..observability.native_spans import build_native_trace_span
 from ..observability.tracing import current_span_id, current_trace_id, new_span_id
 from ..sandbox_policy import canonical_sandbox_class
-from ..worker_registry.worker_run_readiness import worker_run_project_scope_blocker
+from ..worker_registry.worker_run_readiness import (
+    worker_run_project_scope_blocker,
+    worker_run_registry_blocker,
+)
 from ..workflow.states import ProjectState
 from . import models as t
 
@@ -12575,6 +12578,61 @@ class AgentStorage:
             )
             is None
         )
+
+    async def _worker_run_registry_pins_are_current(
+        self,
+        conn: Any,
+        run: Mapping[str, Any],
+    ) -> bool:
+        """Lock and validate the canonical worker and immutable run pins."""
+
+        worker_id = run.get("worker_id")
+        shell_id = run.get("worker_shell_version_id")
+        adapter_id = run.get("adapter_id")
+        if worker_id is None or shell_id is None or adapter_id is None:
+            return False
+
+        worker = (
+            await conn.execute(
+                t.worker_registry.select()
+                .where(t.worker_registry.c.id == worker_id)
+                .with_for_update()
+            )
+        ).mappings().first()
+        shell = (
+            await conn.execute(
+                t.worker_shell_versions.select()
+                .where(t.worker_shell_versions.c.id == shell_id)
+                .with_for_update()
+            )
+        ).mappings().first()
+        adapter = (
+            await conn.execute(
+                t.runtime_adapters.select()
+                .where(t.runtime_adapters.c.id == adapter_id)
+                .with_for_update()
+            )
+        ).mappings().first()
+
+        skill_bundle = None
+        skill_bundle_id = run.get("skill_bundle_id")
+        if skill_bundle_id is not None:
+            skill_bundle = (
+                await conn.execute(
+                    t.skill_bundles.select()
+                    .where(t.skill_bundles.c.id == skill_bundle_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+
+        return worker_run_registry_blocker(
+            run=run,
+            worker=worker,
+            shell=shell,
+            adapter=adapter,
+            skill_bundle=skill_bundle,
+        ) is None
+
     async def claim_worker_run(
         self,
         *,
@@ -12605,6 +12663,8 @@ class AgentStorage:
             if row is None:
                 return None
             if not await self._worker_run_project_scope_is_current(conn, row):
+                return None
+            if not await self._worker_run_registry_pins_are_current(conn, row):
                 return None
             now = datetime.now(tz=UTC)
             lease_until = now + timedelta(seconds=max(1, lease_seconds))

@@ -14,11 +14,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from mas_core.sandbox_policy import (
-    WorkerIsolationPolicyError,
-    worker_requires_hardened_isolation,
-)
-
 from ..worker_contract.models import WorkerRunRequest
 from .host_executor import (
     HostExecutionRequest,
@@ -27,8 +22,9 @@ from .host_executor import (
 )
 from .run_host_binding import RunHostBindingIdentity, WorkerRunHostBindingService
 from .worker_run_readiness import (
-    HARDENED_SANDBOX_TRANSPORTS,
+    canonical_worker_adapter_transport,
     worker_run_project_scope_blocker,
+    worker_run_registry_blocker,
 )
 
 if TYPE_CHECKING:
@@ -277,75 +273,34 @@ class HostQueueConsumer:
             raise _RunRejected(blocker)
     async def _validate_worker_activation_and_pins(
         self,
+        run: Mapping[str, Any],
         worker: Mapping[str, Any],
         pins: PinnedWorkerAdapter,
     ) -> str:
-        status = str(worker.get("status") or "").upper()
-        if status not in {"ACTIVE", "DRAINING"}:
-            raise _RunRejected("worker_not_active")
-        if str(worker.get("evaluation_status") or "").lower() != "approved":
-            raise _RunRejected("worker_evaluation_not_approved")
-
         shell_reader = getattr(self._storage, "get_worker_shell_version", None)
         adapter_reader = getattr(self._storage, "get_runtime_adapter", None)
+        bundle_reader = getattr(self._storage, "get_skill_bundle", None)
         if not callable(shell_reader) or not callable(adapter_reader):
             raise _RunRejected("worker_pin_validation_unavailable")
         shell = await shell_reader(pins.worker_shell_version_id)
-        if (
-            not isinstance(shell, Mapping)
-            or str(shell.get("id")) != str(pins.worker_shell_version_id)
-            or str(shell.get("worker_id")) != str(pins.worker_id)
-            or str(shell.get("status") or "").lower() not in {"active", "superseded"}
-        ):
-            raise _RunRejected("worker_shell_pin_not_eligible")
-
         adapter = await adapter_reader(pins.adapter_id)
-        if (
-            not isinstance(adapter, Mapping)
-            or str(adapter.get("id")) != str(pins.adapter_id)
-            or str(adapter.get("worker_id")) != str(pins.worker_id)
-            or str(adapter.get("status") or "").lower() not in {"active", "superseded"}
-            or str(adapter.get("conformance_status") or "").lower() != "passed"
-        ):
-            raise _RunRejected("worker_adapter_pin_not_eligible")
-
-        transport = str(adapter.get("transport_type") or "").strip().lower()
-        if not transport:
-            raise _RunRejected("worker_adapter_transport_missing")
-        try:
-            requires_hardened_isolation = worker_requires_hardened_isolation(
-                worker
-            )
-        except WorkerIsolationPolicyError as exc:
-            raise _RunRejected(exc.reason_code) from exc
-        if requires_hardened_isolation:
-            if transport == "process":
-                # ProcessAdapter executes directly on the host. Placement may
-                # certify a host runtime, but that decision is only enforced by
-                # adapters that launch through a supported sandbox runtime.
-                raise _RunRejected("worker_sandbox_process_transport_unsupported")
-            if transport not in HARDENED_SANDBOX_TRANSPORTS:
-                raise _RunRejected("worker_sandbox_transport_unverified")
-
+        bundle = None
         if pins.skill_bundle_id is not None:
-            bundle_reader = getattr(self._storage, "get_skill_bundle", None)
             if not callable(bundle_reader):
                 raise _RunRejected("worker_skill_pin_validation_unavailable")
             bundle = await bundle_reader(pins.skill_bundle_id)
-            if (
-                not isinstance(bundle, Mapping)
-                or str(bundle.get("id")) != str(pins.skill_bundle_id)
-                or str(bundle.get("worker_id")) != str(pins.worker_id)
-                or str(bundle.get("status") or "").upper()
-                not in {"APPROVED", "SUPERSEDED"}
-                or (
-                    pins.steward_id is not None
-                    and str(bundle.get("steward_id")) != str(pins.steward_id)
-                )
-            ):
-                raise _RunRejected("worker_skill_pin_not_eligible")
 
-        return transport
+        blocker = worker_run_registry_blocker(
+            run=run,
+            worker=worker,
+            shell=shell if isinstance(shell, Mapping) else None,
+            adapter=adapter if isinstance(adapter, Mapping) else None,
+            skill_bundle=bundle if isinstance(bundle, Mapping) else None,
+        )
+        if blocker is not None:
+            raise _RunRejected(blocker)
+        assert isinstance(adapter, Mapping)
+        return canonical_worker_adapter_transport(adapter.get("transport_type"))
 
     async def _current_state(self, run_id: UUID) -> str:
         try:
@@ -408,7 +363,7 @@ class HostQueueConsumer:
             request = self._validate_request(run, worker_id)
             await self._validate_current_project_scope(run, request)
             pins = self._adapter_pins(run, worker_id=worker_id)
-            pinned_transport = await self._validate_worker_activation_and_pins(worker, pins)
+            pinned_transport = await self._validate_worker_activation_and_pins(run, worker, pins)
             adapter = self._adapter_resolver(pins)
             if inspect.isawaitable(adapter):
                 adapter = await adapter

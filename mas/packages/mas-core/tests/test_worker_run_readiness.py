@@ -148,6 +148,19 @@ def test_external_process_with_hardened_profile_is_not_ready() -> None:
     assert "worker_sandbox_process_transport_unsupported" in codes
 
 
+def test_wasm_transport_alias_matches_wasmtime_readiness_contract() -> None:
+    inputs = _inputs()
+    worker = dict(inputs["worker"])
+    worker["adapter_type"] = "wasm"
+    inputs["worker"] = worker
+
+    report = evaluate_worker_run_readiness(**inputs)
+
+    assert report["status"] == "pass"
+    assert report["checks"]["sandbox"]["transport_status"] == "declared"
+    assert report["blockers"] == []
+
+
 def test_hardened_readiness_fails_closed_for_unknown_transport_and_invalid_policy() -> None:
     inputs = _inputs()
     worker = dict(inputs["worker"])

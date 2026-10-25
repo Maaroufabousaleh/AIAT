@@ -26,6 +26,7 @@ from mas_core.worker_registry.local_host_queue_runtime import (
     LocalHostQueueRuntime,
 )
 from mas_core.worker_registry.runtime_adapters import ProcessAdapter
+from mas_core.worker_registry.worker_run_readiness import worker_run_registry_blocker
 
 if TYPE_CHECKING:
     from mas_core.worker_registry.run_host_binding import (
@@ -167,6 +168,14 @@ class _MemoryStorage:
     ) -> dict[str, object] | None:
         self.mutation_calls.append("claim_worker_run")
         if run_id != RUN_ID or self.run["state"] != "QUEUED":
+            return None
+        if worker_run_registry_blocker(
+            run=self.run,
+            worker=self.worker,
+            shell=self.shell,
+            adapter=self.adapter_record,
+            skill_bundle=self.skill_bundle,
+        ) is not None:
             return None
         self.run.update(
             {
@@ -513,6 +522,93 @@ class _DeterministicVerticalStorage(_MemoryStorage):
         self.effects: dict[tuple[UUID, str], dict[str, object]] = {}
         self.project_files: dict[tuple[UUID, str], bytes] = {}
         self.terminal_evidence: dict[str, object] | None = None
+        self.model_snapshots: list[dict[str, object]] = []
+        self.api_run_created = False
+        self.budget_reservations: list[dict[str, object]] = []
+        self.budget_settlements: list[dict[str, object]] = []
+        self.project_transitions: list[dict[str, object]] = []
+        self.worker.update(
+            {
+                "active_shell_version_id": SHELL_ID,
+                "active_adapter_id": ADAPTER_ID,
+                "active_skill_bundle_id": SKILL_ID,
+                "adapter_config": {
+                    **self.worker["adapter_config"],
+                    "steward_id": str(STEWARD_ID),
+                },
+            }
+        )
+
+    async def create_model_resolution_snapshot(self, **values: object) -> None:
+        self.model_snapshots.append(values)
+
+    async def create_worker_run(self, **values: object) -> dict[str, object]:
+        if self.api_run_created:
+            assert values["idempotency_key"] == self.run["idempotency_key"]
+            return deepcopy(self.run)
+        self.api_run_created = True
+        self.run.update(
+            {
+                "id": values["run_id"],
+                "worker_id": values["worker_id"],
+                "idempotency_key": values["idempotency_key"],
+                "task_type": values["task_type"],
+                "request_json": deepcopy(values["request"]),
+                "project_id": values.get("project_id"),
+                "flow_id": values.get("flow_id"),
+                "flow_instance_id": values.get("flow_instance_id"),
+                "flow_node_execution_id": values.get("flow_node_execution_id"),
+                "worker_shell_version_id": values.get("worker_shell_version_id"),
+                "adapter_id": values.get("adapter_id"),
+                "skill_bundle_id": self.worker.get("active_skill_bundle_id"),
+                "steward_id": values.get("steward_id"),
+                "model_resolution_snapshot_id": values.get("model_resolution_snapshot_id"),
+                "state": values.get("state", "CREATED"),
+                "attempt_count": 0,
+                "claim_owner": None,
+                "lease_expires_at": None,
+                "result_json": None,
+            }
+        )
+        return deepcopy(self.run)
+
+    async def reserve_budget(self, **values: object) -> dict[str, object]:
+        reservation = {
+            "id": uuid4(),
+            "state": "RESERVED",
+            **values,
+        }
+        self.budget_reservations.append(reservation)
+        return deepcopy(reservation)
+
+    async def list_budget_reservations(
+        self,
+        *,
+        run_id: UUID,
+        limit: int = 100,
+    ) -> list[dict[str, object]]:
+        assert run_id == self.run["id"]
+        return deepcopy(self.budget_reservations[:limit])
+
+    async def settle_budget_reservation(
+        self,
+        reservation_id: UUID,
+        *,
+        state: str,
+        amount: object = None,
+        metadata: object = None,
+    ) -> None:
+        self.budget_settlements.append(
+            {
+                "reservation_id": reservation_id,
+                "state": state,
+                "amount": amount,
+                "metadata": metadata,
+            }
+        )
+        for reservation in self.budget_reservations:
+            if reservation["id"] == reservation_id:
+                reservation["state"] = state
 
     async def get_project(self, project_id: UUID) -> dict[str, object] | None:
         return deepcopy(self.project) if project_id == PROJECT_ID else None
@@ -643,6 +739,12 @@ class _FakeOciDeterministicAdapter(NativeWorkerAdapter):
     """A fake OCI transport driving the real deterministic worker function."""
 
     runtime_type = "oci"
+
+
+class _FakeWasmtimeAdapter(NativeWorkerAdapter):
+    """A fake Wasmtime transport for alias normalization coverage."""
+
+    runtime_type = "wasmtime"
 
 
 def _consumer(
@@ -964,6 +1066,94 @@ async def test_queue_consumer_rejects_resolved_transport_mismatch_before_claim(
 
 
 @pytest.mark.asyncio
+async def test_wasm_alias_uses_canonical_wasmtime_sandbox_transport() -> None:
+    storage = _MemoryStorage()
+    storage.worker.update(
+        {
+            "source_repo": "https://example.invalid/worker",
+            "adapter_type": "wasm",
+            "sandbox_profile": "sandboxed",
+            "adapter_config": {
+                "execution_policy": {
+                    "trust": "untrusted",
+                    "formats": ["wasm"],
+                    "minimum_isolation": "sandboxed",
+                }
+            },
+        }
+    )
+    storage.adapter_record["transport_type"] = "wasm"
+    adapter = _FakeWasmtimeAdapter(
+        lambda request, _adapter: WorkerResult(
+            run_id=request.run_id,
+            worker_id=request.worker_id,
+            success=True,
+            output={"result": "sandbox alias accepted"},
+        ),
+        worker_id=str(WORKER_ID),
+    )
+    adapter._aiat_adapter_id = str(ADAPTER_ID)
+    summaries = await _consumer(
+        storage,
+        _Bindings(_binding()),
+        lambda _pins: adapter,
+    ).consume_once()
+
+    assert summaries[0].state == "SUCCEEDED"
+    assert summaries[0].reason_code is None
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("changed_record", "field", "value"),
+    [
+        ("worker", "status", "INACTIVE"),
+        ("worker", "evaluation_status", "pending"),
+        ("shell", "status", "revoked"),
+        ("adapter_record", "status", "revoked"),
+        ("adapter_record", "conformance_status", "failed"),
+        ("skill_bundle", "status", "REVOKED"),
+    ],
+)
+async def test_queue_consumer_claim_rechecks_revoked_registry_after_resolver_wait(
+    changed_record: str,
+    field: str,
+    value: str,
+) -> None:
+    storage = _MemoryStorage()
+    bindings = _Bindings(_binding())
+    worker_calls: list[str] = []
+    adapter = NativeWorkerAdapter(
+        lambda request, _adapter: (
+            worker_calls.append(str(request.run_id))
+            or WorkerResult(
+                run_id=request.run_id,
+                worker_id=request.worker_id,
+                success=True,
+            )
+        ),
+        worker_id=str(WORKER_ID),
+    )
+    adapter._aiat_adapter_id = str(ADAPTER_ID)
+
+    async def resolve_after_revocation(_pins: PinnedWorkerAdapter) -> object:
+        record = getattr(storage, changed_record)
+        record[field] = value
+        return adapter
+
+    summary = (await _consumer(storage, bindings, resolve_after_revocation).consume_once())[0]
+
+    assert summary.state == "QUEUED"
+    assert summary.reason_code == "worker_run_claim_failed"
+    assert storage.run["state"] == "QUEUED"
+    assert storage.mutation_calls == ["claim_worker_run"]
+    assert worker_calls == []
+    assert storage.events == []
+    await adapter.close()
+
+
+@pytest.mark.asyncio
 async def test_queue_consumer_requires_transport_from_pinned_adapter_record() -> None:
     storage = _MemoryStorage()
     storage.worker["adapter_type"] = "oci"
@@ -1210,22 +1400,6 @@ async def test_deterministic_file_worker_vertical_claim_tool_artifact_and_termin
         sandbox_runtime="runsc",
         poll_seconds=0.01,
     )
-    host_registries: list[_RuntimeHostRegistry] = []
-    binding_services: list[_RuntimeBindings] = []
-
-    def registry_factory(value: object) -> _RuntimeHostRegistry:
-        registry = _RuntimeHostRegistry(value)
-        host_registries.append(registry)
-        return registry
-
-    def binding_factory(_value: object) -> _RuntimeBindings:
-        bindings = _RuntimeBindings(storage)
-        binding_services.append(bindings)
-        return bindings
-
-    monkeypatch.setattr(local_queue_module, "WorkerHostRegistry", registry_factory)
-    monkeypatch.setattr(local_queue_module, "WorkerRunHostBindingService", binding_factory)
-
     tool_calls: list[object] = []
     worker_calls: list[str] = []
     resolved_pins: list[PinnedWorkerAdapter] = []
@@ -1289,31 +1463,110 @@ async def test_deterministic_file_worker_vertical_claim_tool_artifact_and_termin
         ),
     )
     adapter._aiat_adapter_id = str(ADAPTER_ID)
+
+    host_registries: list[_RuntimeHostRegistry] = []
+    binding_services: list[_RuntimeBindings] = []
+
+    def registry_factory(value: object) -> _RuntimeHostRegistry:
+        registry = _RuntimeHostRegistry(value)
+        host_registries.append(registry)
+        return registry
+
+    def binding_factory(_value: object) -> _RuntimeBindings:
+        bindings = _RuntimeBindings(storage)
+        binding_services.append(bindings)
+        return bindings
+
+    monkeypatch.setattr(local_queue_module, "WorkerHostRegistry", registry_factory)
+    monkeypatch.setattr(local_queue_module, "WorkerRunHostBindingService", binding_factory)
+
+    # Admit this exact run through the real API dispatch handler, including
+    # canonical project and company-assignment checks. Keep the run ID fixed so
+    # the host binding fixture remains explicit.
+    import orchestrator_api.main as api
+
+    import mas_core.worker_contract as worker_contract
+
+    original_request_model = worker_contract.WorkerRunRequest
+
+    def make_canonical_request(**values):
+        return original_request_model(run_id=RUN_ID, **values)
+
+    async def certified_adapter(_storage, _worker, **_kwargs):
+        return adapter
+
+    async def resolve_adapter(pins: PinnedWorkerAdapter) -> object:
+        resolved_pins.append(pins)
+        return adapter
+
     terminal_summaries = []
 
     async def record_terminal(summary) -> None:
+        await api._settle_host_queue_run_budgets(storage, summary)
         terminal_summaries.append(summary)
 
     runtime = LocalHostQueueRuntime(
         storage,  # type: ignore[arg-type]
         config,
-        adapter_resolver=lambda pins: (resolved_pins.append(pins) or adapter),
+        adapter_resolver=resolve_adapter,
         terminal_run_handler=record_terminal,
     )
     await runtime.start()
+    assert runtime.active
+
+    monkeypatch.setattr(api, "_storage", lambda: storage)
+    monkeypatch.setattr(worker_contract, "WorkerRunRequest", make_canonical_request)
+    monkeypatch.setattr(api, "_certified_worker_adapter", certified_adapter)
+    monkeypatch.setattr(api.app.state, "local_host_queue_config", config, raising=False)
+    monkeypatch.setattr(api.app.state, "local_host_queue_runtime", runtime, raising=False)
+
+    accepted = await api.dispatch_worker_run(
+        api.WorkerRunDispatchRequest(
+            worker_id=WORKER_ID,
+            idempotency_key="deterministic-file-vertical-run",
+            task_type="deterministic_file_generation",
+            task_input={"path": "src/vertical.py", "content": "VALUE = 7\n"},
+            project_id=PROJECT_ID,
+            tool_grants=["file_write"],
+            dispatch_mode="queued",
+        )
+    )
+    assert accepted["state"] == "QUEUED"
+    assert storage.run["state"] == "QUEUED"
+    assert storage.run["project_id"] == PROJECT_ID
+    assert storage.run["worker_id"] == WORKER_ID
+    assert storage.run["worker_shell_version_id"] == SHELL_ID
+    assert storage.run["adapter_id"] == ADAPTER_ID
+    assert storage.run["skill_bundle_id"] == SKILL_ID
+    assert storage.project["state"] == "IN_PROGRESS"
+    assert len(storage.model_snapshots) == 1
+    assert storage.model_snapshots[0]["project_id"] == PROJECT_ID
+    assert storage.budget_reservations[0]["project_id"] == PROJECT_ID
+
     stop_event = anyio.Event()
     async with anyio.create_task_group() as task_group:
         task_group.start_soon(runtime.run, stop_event)
         try:
             with anyio.fail_after(2):
-                while storage.run["state"] != "SUCCEEDED":
+                while storage.run["state"] != "SUCCEEDED" or not terminal_summaries:
                     await anyio.sleep(0.01)
         finally:
             stop_event.set()
 
+    assert terminal_summaries[0].state == "SUCCEEDED", (
+        terminal_summaries[0].reason_code,
+        storage.run.get("state"),
+        storage.mutation_calls,
+        worker_calls,
+        [pin.adapter_id for pin in resolved_pins],
+    )
+
     effect_rows = list(storage.effects.values())
     assert storage.run["state"] == "SUCCEEDED"
     assert storage.run["project_id"] == PROJECT_ID
+    # A successful WorkerRun contributes artifacts and evidence; project
+    # completion remains an explicit workflow transition with its own gates.
+    assert storage.project["state"] == "IN_PROGRESS"
     assert resolved_pins == [
         PinnedWorkerAdapter(
             worker_id=WORKER_ID,
@@ -1348,6 +1601,18 @@ async def test_deterministic_file_worker_vertical_claim_tool_artifact_and_termin
     assert storage.terminal_evidence["usage"]["total_tokens"] == 0
     assert [summary.state for summary in terminal_summaries] == ["SUCCEEDED"]
     assert binding_services[0].current["state"] == "RELEASED"
+    assert storage.project["state"] == "IN_PROGRESS"
+    assert storage.project_transitions == []
+    assert storage.budget_settlements == [
+        {
+            "reservation_id": storage.budget_reservations[0]["id"],
+            "state": "RELEASED",
+            "amount": None,
+            "metadata": None,
+        }
+    ]
+    assert len(binding_services) == 1
+    assert len(binding_services[0].placement_requests) == 1
     placement = binding_services[0].placement_requests[0].placement
     assert placement.required_sandbox_profile == "sandboxed"
     assert placement.execution_policy == storage.worker["adapter_config"]["execution_policy"]

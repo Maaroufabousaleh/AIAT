@@ -63,6 +63,15 @@ def _text(value: Any) -> str:
     return str(value or "").strip()
 
 
+
+def canonical_worker_adapter_transport(value: Any) -> str:
+    """Normalize accepted adapter aliases to the runtime's canonical type."""
+
+    transport = _text(value).lower()
+    return "wasmtime" if transport == "wasm" else transport
+
+
+
 def _decimal(value: Any) -> Decimal | None:
     if value is None or isinstance(value, bool):
         return None
@@ -175,6 +184,90 @@ def worker_run_project_scope_blocker(
         return "company_assignment_grant_exceeded"
     return None
 
+
+
+def worker_run_registry_blocker(
+    *,
+    run: Mapping[str, Any],
+    worker: Mapping[str, Any] | None,
+    shell: Mapping[str, Any] | None,
+    adapter: Mapping[str, Any] | None,
+    skill_bundle: Mapping[str, Any] | None,
+) -> str | None:
+    """Return a blocker when a queued run's worker pins are no longer eligible.
+
+    Storage calls this while locking the worker and pinned registry rows at the
+    claim boundary. The host queue uses the same predicates before resolving
+    the adapter, so a changed status cannot pass one boundary and fail another.
+    """
+
+    worker_id = _text(run.get("worker_id"))
+    if not worker_id:
+        return "run_worker_id_invalid"
+    if worker is None or _text(worker.get("id")) != worker_id:
+        return "worker_identity_mismatch"
+    if _text(worker.get("status")).upper() not in {"ACTIVE", "DRAINING"}:
+        return "worker_not_active"
+    if _text(worker.get("evaluation_status")).lower() != "approved":
+        return "worker_evaluation_not_approved"
+
+    shell_id = _text(run.get("worker_shell_version_id"))
+    if not shell_id:
+        return "worker_shell_pin_missing_or_invalid"
+    if (
+        shell is None
+        or _text(shell.get("id")) != shell_id
+        or _text(shell.get("worker_id")) != worker_id
+        or _text(shell.get("status")).lower() not in {"active", "superseded"}
+    ):
+        return "worker_shell_pin_not_eligible"
+
+    adapter_id = _text(run.get("adapter_id"))
+    if not adapter_id:
+        return "worker_adapter_pin_missing_or_invalid"
+    if (
+        adapter is None
+        or _text(adapter.get("id")) != adapter_id
+        or _text(adapter.get("worker_id")) != worker_id
+        or _text(adapter.get("status")).lower() not in {"active", "superseded"}
+        or _text(adapter.get("conformance_status")).lower() != "passed"
+    ):
+        return "worker_adapter_pin_not_eligible"
+
+    transport = canonical_worker_adapter_transport(adapter.get("transport_type"))
+    if not transport:
+        return "worker_adapter_transport_missing"
+    try:
+        requires_hardened_isolation = worker_requires_hardened_isolation(worker)
+    except WorkerIsolationPolicyError as exc:
+        return exc.reason_code
+    if requires_hardened_isolation:
+        if transport == "process":
+            return "worker_sandbox_process_transport_unsupported"
+        if transport not in HARDENED_SANDBOX_TRANSPORTS:
+            return "worker_sandbox_transport_unverified"
+
+    raw_skill_bundle_id = run.get("skill_bundle_id")
+    if raw_skill_bundle_id is not None:
+        skill_bundle_id = _text(raw_skill_bundle_id)
+        if not skill_bundle_id:
+            return "worker_skill_pin_invalid"
+        if (
+            skill_bundle is None
+            or _text(skill_bundle.get("id")) != skill_bundle_id
+            or _text(skill_bundle.get("worker_id")) != worker_id
+            or _text(skill_bundle.get("status")).upper()
+            not in {"APPROVED", "SUPERSEDED"}
+            or (
+                _text(run.get("steward_id"))
+                and _text(skill_bundle.get("steward_id"))
+                != _text(run.get("steward_id"))
+            )
+        ):
+            return "worker_skill_pin_not_eligible"
+    return None
+
+
 def evaluate_worker_run_readiness(
     *,
     worker: Mapping[str, Any] | None,
@@ -226,9 +319,9 @@ def evaluate_worker_run_readiness(
         blockers.append(_blocker("worker_not_found", "the selected worker was not returned by the control plane"))
     else:
         fetch_status.setdefault("worker", "observed")
-        sandbox_transport = _text(
+        sandbox_transport = canonical_worker_adapter_transport(
             worker.get("transport_type") or worker.get("adapter_type")
-        ).lower()
+        )
         try:
             worker_hardening_required = worker_requires_hardened_isolation(worker)
             sandbox_hardening_required = bool(require_sandbox) or worker_hardening_required
@@ -449,6 +542,8 @@ __all__ = [
     "TERMINAL_PROJECT_STATES",
     "VALID_SANDBOX_PROFILES",
     "WORKER_RUN_READINESS_SCHEMA",
+    "canonical_worker_adapter_transport",
     "evaluate_worker_run_readiness",
     "worker_run_project_scope_blocker",
+    "worker_run_registry_blocker",
 ]
