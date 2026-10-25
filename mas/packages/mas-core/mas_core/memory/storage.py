@@ -12946,7 +12946,7 @@ class AgentStorage:
         reason: str = "worker emitted a normalized terminal result",
         correlation_id: str | None = None,
     ) -> dict[str, Any] | None:
-        """Atomically persist the evidence and terminal state for success."""
+        """Commit success only when the claimed run has no unresolved tool effects."""
         return await self._complete_worker_run_terminal_claim_fenced(
             run_id=run_id,
             claim_owner=claim_owner,
@@ -13013,7 +13013,9 @@ class AgentStorage:
         The WorkerRun lock is held from the claim check through the evidence
         inserts and terminal transition. Recovery therefore either reclaims
         the lease before this operation (and nothing is written), or observes
-        a completed run after this transaction commits.
+        a completed run after this transaction commits. If a requested success
+        still has an in-flight or ambiguous mediated tool effect, the same
+        transaction records a failed terminal result and keeps that evidence.
         """
 
         if terminal_state not in {"SUCCEEDED", "FAILED"}:
@@ -13040,6 +13042,47 @@ class AgentStorage:
 
             assert run is not None
             from_state = str(run["state"])
+            if terminal_state == "SUCCEEDED":
+                unresolved_effect = (
+                    await conn.execute(
+                        t.worker_tool_effects.select()
+                        .with_only_columns(t.worker_tool_effects.c.id)
+                        .where(
+                            sa.and_(
+                                t.worker_tool_effects.c.run_id == run_id,
+                                t.worker_tool_effects.c.state.in_(
+                                    ("IN_FLIGHT", "AMBIGUOUS")
+                                ),
+                            )
+                        )
+                        .order_by(t.worker_tool_effects.c.id.asc())
+                        .limit(1)
+                        .with_for_update()
+                    )
+                ).first()
+                if unresolved_effect is not None:
+                    terminal_state = "FAILED"
+                    error = {
+                        "code": "WORKER_TOOL_EFFECT_UNRESOLVED",
+                        "message": (
+                            "worker success cannot be committed while a mediated "
+                            "tool effect is unresolved"
+                        ),
+                        "retryable": False,
+                        "terminal": True,
+                        "category": "recovery",
+                        "details": {"effect_state": "IN_FLIGHT_OR_AMBIGUOUS"},
+                    }
+                    result = {
+                        **result,
+                        "success": False,
+                        "error": error,
+                    }
+                    reason = (
+                        "worker success blocked because a mediated tool effect "
+                        "remains unresolved"
+                    )
+
             values: dict[str, Any] = {
                 "state": terminal_state,
                 "completed_at": now,

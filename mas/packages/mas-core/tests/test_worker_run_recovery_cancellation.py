@@ -1036,7 +1036,8 @@ async def test_claimed_success_commits_evidence_and_transition_in_one_transactio
     async def execute(statement):  # noqa: ANN001
         statements.append(statement)
         if statement.is_select:
-            return _Result([run_row])
+            table = statement.get_final_froms()[0].name
+            return _Result([] if table == "worker_tool_effects" else [run_row])
         if statement.is_insert and statement.table.name == "artifacts":
             return _Scalar()
         return MagicMock(rowcount=1)
@@ -1094,6 +1095,7 @@ async def test_claimed_success_commits_evidence_and_transition_in_one_transactio
 
     assert [table_name(statement) for statement in statements] == [
         "worker_runs",
+        "worker_tool_effects",
         "worker_runs",
         "artifacts",
         "worker_artifacts",
@@ -1105,7 +1107,7 @@ async def test_claimed_success_commits_evidence_and_transition_in_one_transactio
     transition_insert = statements[-1]
     assert transition_insert.compile().params["from_state"] == "RUNNING"
     assert transition_insert.compile().params["to_state"] == "SUCCEEDED"
-    success_update = statements[1]
+    success_update = statements[2]
     assert success_update.compile().params["state"] == "SUCCEEDED"
     assert success_update.compile().params["result_json"] == result_payload
 

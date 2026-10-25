@@ -827,6 +827,23 @@ class WorkerRunController:
                 # A transaction exception can have an ambiguous commit outcome.
                 # Preserve staged artifacts because durable evidence may reference them.
                 raise
+            persisted_error = (
+                persisted.get("error_json")
+                if isinstance(persisted, dict)
+                else None
+            )
+            if (
+                terminal_state == "SUCCEEDED"
+                and isinstance(persisted, dict)
+                and persisted.get("state") == "FAILED"
+                and isinstance(persisted_error, dict)
+                and persisted_error.get("code") == "WORKER_TOOL_EFFECT_UNRESOLVED"
+            ):
+                raise WorkerRunError(
+                    "WORKER_TOOL_EFFECT_UNRESOLVED",
+                    "worker success was blocked by an unresolved mediated tool effect",
+                    details={"terminal_state": "FAILED"},
+                )
             if persisted is None:
                 await self._cleanup_unpersisted_artifacts(adapter, result, claim_fence)
                 raise WorkerRunError(

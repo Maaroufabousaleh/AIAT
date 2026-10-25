@@ -24,6 +24,7 @@ from mas_core.worker_contract import (
     WorkerToolRequest,
     WorkerToolResponse,
 )
+from mas_core.worker_contract.adapters import NativeWorkerAdapter
 from mas_core.worker_contract.controller import WorkerRunError
 
 
@@ -42,6 +43,17 @@ def _mock_storage_with_run(run_row: dict[str, Any], effect_row: dict[str, Any] |
     storage = AgentStorage.__new__(AgentStorage)
     storage._engine = engine
     return storage, engine, connection
+
+
+class _StorageRows:
+    def __init__(self, rows: list[dict[str, Any]]) -> None:
+        self.rows = rows
+
+    def mappings(self):
+        return self
+
+    def first(self):
+        return self.rows[0] if self.rows else None
 
 
 @pytest.mark.asyncio
@@ -195,6 +207,187 @@ async def test_storage_completion_locks_current_run_claim_before_settlement() ->
     assert "worker_tool_effects.run_id" in completion_sql
     assert "worker_tool_effects.state" in completion_sql
     assert "IN_FLIGHT" in completion_query.compile(dialect=postgresql.dialect()).params.values()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("effect_state", ["IN_FLIGHT", "AMBIGUOUS"])
+async def test_claimed_success_atomically_fails_with_unresolved_tool_effect(
+    effect_state: str,
+) -> None:
+    run_id = uuid4()
+    owner = "executor-a"
+    attempt = 4
+    run_row = {
+        "id": run_id,
+        "state": "RUNNING",
+        "claim_owner": owner,
+        "attempt_count": attempt,
+        "lease_expires_at": datetime.now(tz=UTC) + timedelta(minutes=1),
+        "cancel_requested_at": None,
+    }
+    unresolved_effect = {"id": uuid4(), "state": effect_state}
+    statements = []
+    connection = MagicMock()
+
+    async def execute(statement):  # noqa: ANN001
+        statements.append(statement)
+        if statement.is_select:
+            table = statement.get_final_froms()[0].name
+            if table == "worker_runs":
+                return _StorageRows([run_row])
+            if table == "worker_tool_effects":
+                return _StorageRows([unresolved_effect])
+        return MagicMock(rowcount=1)
+
+    connection.execute = AsyncMock(side_effect=execute)
+    transaction = MagicMock()
+    transaction.__aenter__ = AsyncMock(return_value=connection)
+    transaction.__aexit__ = AsyncMock(return_value=False)
+    engine = MagicMock()
+    engine.begin.return_value = transaction
+    storage = AgentStorage.__new__(AgentStorage)
+    storage._engine = engine
+
+    completed = await storage.complete_worker_run_success_claim_fenced(
+        run_id=run_id,
+        claim_owner=owner,
+        attempt_count=attempt,
+        artifacts=[],
+        usage={"prompt_tokens": 1},
+        result={"success": True},
+    )
+
+    assert completed is not None
+    assert completed["state"] == "FAILED"
+    assert completed["result_json"]["success"] is False
+    assert completed["result_json"]["error"]["code"] == "WORKER_TOOL_EFFECT_UNRESOLVED"
+    assert completed["error_json"]["code"] == "WORKER_TOOL_EFFECT_UNRESOLVED"
+    assert engine.begin.call_count == 1
+    run_lock_sql = str(statements[0].compile(dialect=postgresql.dialect()))
+    effect_lock_sql = str(statements[1].compile(dialect=postgresql.dialect()))
+    assert "FROM worker_runs" in run_lock_sql and "FOR UPDATE" in run_lock_sql
+    assert "FROM worker_tool_effects" in effect_lock_sql
+    assert "FOR UPDATE" in effect_lock_sql
+    assert "worker_tool_effects.state IN" in effect_lock_sql
+    state_parameters = {
+        state
+        for value in statements[1].compile(dialect=postgresql.dialect()).params.values()
+        if isinstance(value, (list, tuple))
+        for state in value
+    }
+    assert state_parameters == {"IN_FLIGHT", "AMBIGUOUS"}
+    def table_name(statement):  # noqa: ANN001
+        table = getattr(statement, "table", None)
+        if table is not None:
+            return table.name
+        return statement.get_final_froms()[0].name
+
+    table_names = [
+        name
+        for statement in statements
+        if (name := table_name(statement)) != "native_trace_spans"
+    ]
+    assert table_names == [
+        "worker_runs",
+        "worker_tool_effects",
+        "worker_runs",
+        "worker_usage_records",
+        "worker_run_runtime_bindings",
+        "worker_run_transitions",
+    ]
+    assert statements[-1].compile().params["to_state"] == "FAILED"
+    assert statements[-1].compile().params["reason"] == (
+        "worker success blocked because a mediated tool effect remains unresolved"
+    )
+
+
+@pytest.mark.asyncio
+async def test_claimed_success_allows_terminal_write_after_all_effects_are_resolved() -> None:
+    run_id = uuid4()
+    owner = "executor-a"
+    attempt = 4
+    run_row = {
+        "id": run_id,
+        "state": "RUNNING",
+        "claim_owner": owner,
+        "attempt_count": attempt,
+        "lease_expires_at": datetime.now(tz=UTC) + timedelta(minutes=1),
+        "cancel_requested_at": None,
+    }
+    statements = []
+    connection = MagicMock()
+
+    async def execute(statement):  # noqa: ANN001
+        statements.append(statement)
+        if statement.is_select:
+            table = statement.get_final_froms()[0].name
+            return _StorageRows([run_row] if table == "worker_runs" else [])
+        return MagicMock(rowcount=1)
+
+    connection.execute = AsyncMock(side_effect=execute)
+    transaction = MagicMock()
+    transaction.__aenter__ = AsyncMock(return_value=connection)
+    transaction.__aexit__ = AsyncMock(return_value=False)
+    engine = MagicMock()
+    engine.begin.return_value = transaction
+    storage = AgentStorage.__new__(AgentStorage)
+    storage._engine = engine
+
+    completed = await storage.complete_worker_run_success_claim_fenced(
+        run_id=run_id,
+        claim_owner=owner,
+        attempt_count=attempt,
+        artifacts=[],
+        usage={"prompt_tokens": 1},
+        result={"success": True},
+    )
+
+    assert completed is not None
+    assert completed["state"] == "SUCCEEDED"
+    names = []
+    for statement in statements:
+        table = getattr(statement, "table", None)
+        names.append(
+            table.name if table is not None else statement.get_final_froms()[0].name
+        )
+    assert names[:3] == ["worker_runs", "worker_tool_effects", "worker_runs"]
+    assert names[-2:] == ["worker_run_runtime_bindings", "worker_run_transitions"]
+    effect_sql = str(statements[1].compile(dialect=postgresql.dialect()))
+    assert "FOR UPDATE" in effect_sql and "worker_tool_effects.state IN" in effect_sql
+
+
+@pytest.mark.asyncio
+async def test_claimed_success_does_not_query_effects_after_claim_is_lost() -> None:
+    run_id = uuid4()
+    run_row = {
+        "id": run_id,
+        "state": "RUNNING",
+        "claim_owner": "executor-new",
+        "attempt_count": 5,
+        "lease_expires_at": datetime.now(tz=UTC) + timedelta(minutes=1),
+        "cancel_requested_at": None,
+    }
+    connection = MagicMock()
+    connection.execute = AsyncMock(return_value=_StorageRows([run_row]))
+    transaction = MagicMock()
+    transaction.__aenter__ = AsyncMock(return_value=connection)
+    transaction.__aexit__ = AsyncMock(return_value=False)
+    engine = MagicMock()
+    engine.begin.return_value = transaction
+    storage = AgentStorage.__new__(AgentStorage)
+    storage._engine = engine
+
+    outcome = await storage.complete_worker_run_success_claim_fenced(
+        run_id=run_id,
+        claim_owner="executor-old",
+        attempt_count=4,
+        artifacts=[],
+        usage={},
+        result={"success": True},
+    )
+
+    assert outcome is None
+    assert connection.execute.await_count == 1
 
 
 @pytest.mark.asyncio
@@ -361,6 +554,356 @@ def _request(*, run_id: UUID, key: str, tool_name: str = "mail.send") -> WorkerT
         arguments={"to": "operator@example.test", "body": "hello"},
         idempotency_key=key,
     )
+
+
+class _ClaimedToolRunStore(_EffectStore):
+    def __init__(self, run_id: UUID) -> None:
+        super().__init__()
+        self.run = {
+            "id": run_id,
+            "worker_id": uuid4(),
+            "state": "CLAIMED",
+            "claim_owner": self.claim_owner,
+            "attempt_count": self.attempt_count,
+            "lease_expires_at": datetime.now(tz=UTC) + timedelta(minutes=2),
+            "cancel_requested_at": None,
+        }
+        self.transitions: list[dict[str, Any]] = []
+        self.events: list[dict[str, Any]] = []
+        self.success_calls: list[dict[str, Any]] = []
+        self.failure_calls: list[dict[str, Any]] = []
+        self.result_evidence: dict[str, Any] | None = None
+
+    def _claim_matches(self, claim_owner: str | None, attempt_count: int) -> bool:
+        return (
+            self.run.get("claim_owner") == claim_owner
+            and self.run.get("attempt_count") == attempt_count
+            and self.run.get("lease_expires_at") > datetime.now(tz=UTC)
+            and self.run.get("cancel_requested_at") is None
+            and self.run.get("state") not in {"SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT"}
+        )
+
+    async def create_worker_run(self, **_values):
+        return dict(self.run)
+
+    async def get_worker_run(self, run_id):
+        return dict(self.run) if run_id == self.run["id"] else None
+
+    async def transition_worker_run(
+        self,
+        run_id,
+        *,
+        new_state,
+        expected_state=None,
+        claim_owner=None,
+        attempt_count=None,
+        result=None,
+        error=None,
+        **_values,
+    ):
+        if (
+            run_id != self.run["id"]
+            or self.run.get("state") != expected_state
+            or not self._claim_matches(claim_owner, int(attempt_count or 0))
+        ):
+            return None
+        self.run["state"] = new_state
+        if result is not None:
+            self.run["result_json"] = result
+        if error is not None:
+            self.run["error_json"] = error
+        self.transitions.append({"state": new_state})
+        if new_state in {"SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT"}:
+            self.run["claim_owner"] = None
+            self.run["lease_expires_at"] = None
+        return dict(self.run)
+
+    async def append_worker_event(self, **values):
+        self.events.append(dict(values))
+        return dict(values)
+
+    async def begin_worker_tool_effect(self, **values):
+        if not self._claim_matches(
+            values.get("claim_owner"), int(values.get("attempt_count") or 0)
+        ):
+            return {"disposition": "CLAIM_LOST"}
+        return await super().begin_worker_tool_effect(**values)
+
+    async def complete_worker_tool_effect(self, effect_id, **values):
+        if values.get("state") == "COMPLETED" and not self._claim_matches(
+            values.get("claim_owner"), int(values.get("attempt_count") or 0)
+        ):
+            return None
+        return await super().complete_worker_tool_effect(effect_id, **values)
+
+    async def complete_worker_run_success_claim_fenced(self, **values):
+        self.success_calls.append(dict(values))
+        if not self._claim_matches(values.get("claim_owner"), values["attempt_count"]):
+            return None
+        if any(
+            row["state"] in {"IN_FLIGHT", "AMBIGUOUS"}
+            for row in self.rows.values()
+            if row["run_id"] == values["run_id"]
+        ):
+            effect_error = {
+                "code": "WORKER_TOOL_EFFECT_UNRESOLVED",
+                "message": (
+                    "worker success cannot be committed while a mediated "
+                    "tool effect is unresolved"
+                ),
+                "retryable": False,
+                "terminal": True,
+                "category": "recovery",
+                "details": {"effect_state": "IN_FLIGHT_OR_AMBIGUOUS"},
+            }
+            blocked_values = {
+                **values,
+                "result": {
+                    **values["result"],
+                    "success": False,
+                    "error": effect_error,
+                },
+                "error": effect_error,
+                "reason": (
+                    "worker success blocked because a mediated tool effect "
+                    "remains unresolved"
+                ),
+            }
+            self._persist_terminal("FAILED", blocked_values)
+            self.run["error_json"] = effect_error
+            return dict(self.run)
+        self._persist_terminal("SUCCEEDED", values)
+        return dict(self.run)
+
+    async def complete_worker_run_failure_claim_fenced(self, **values):
+        self.failure_calls.append(dict(values))
+        if not self._claim_matches(values.get("claim_owner"), values["attempt_count"]):
+            return None
+        self._persist_terminal("FAILED", values)
+        self.run["error_json"] = values["error"]
+        return dict(self.run)
+
+    def _persist_terminal(self, state: str, values: dict[str, Any]) -> None:
+        self.run.update(
+            {
+                "state": state,
+                "result_json": values["result"],
+                "claim_owner": None,
+                "lease_expires_at": None,
+            }
+        )
+        self.result_evidence = {
+            "artifacts": values["artifacts"],
+            "usage": values["usage"],
+        }
+        self.transitions.append({"state": state, "reason": values["reason"]})
+
+
+@pytest.mark.asyncio
+async def test_unresolved_effect_blocks_normalized_success_and_persists_failed_evidence() -> None:
+    run_id = uuid4()
+    store = _ClaimedToolRunStore(run_id)
+    dispatches: list[str] = []
+    delivered: list[WorkerToolResponse] = []
+    registrar = AsyncMock()
+    artifact = WorkerArtifact(
+        kind=ArtifactKind.FILE,
+        name="result.txt",
+        uri="result.txt",
+        sha256="a" * 64,
+        size_bytes=7,
+        metadata={"source_tool": "file_write"},
+    )
+
+    async def dispatcher(tool_request: WorkerToolRequest) -> WorkerToolResponse:
+        dispatches.append(tool_request.idempotency_key)
+        raise TimeoutError("simulated response loss after possible tool effect")
+
+    tool_request = _request(run_id=run_id, key="ambiguous-effect-before-success")
+
+    async def worker(request: WorkerRunRequest, runtime: NativeWorkerAdapter):
+        response = await runtime.request_tool(tool_request)
+        delivered.append(response)
+        assert response.success is False
+        return WorkerResult(
+            run_id=request.run_id,
+            worker_id=request.worker_id,
+            success=True,
+            output={"runtime_claimed_success": True},
+            artifacts=[artifact],
+            usage={"prompt_tokens": 3, "completion_tokens": 1},
+        )
+
+    adapter = NativeWorkerAdapter(
+        worker,
+        worker_id="worker-1",
+        context=SimpleNamespace(
+            tool_dispatcher=dispatcher,
+            artifact_registrar=registrar,
+        ),
+    )
+    request = WorkerRunRequest(
+        run_id=run_id,
+        idempotency_key="ambiguous-effect-before-success",
+        worker_id="worker-1",
+        task_type="tool-effect-completion",
+        tool_grants=[tool_request.tool_name],
+    )
+
+    outcome = await WorkerRunController(storage=store).execute(
+        request,
+        adapter,
+        worker_registry_id=store.run["worker_id"],
+    )
+    await adapter.close()
+
+    effect = store.rows[(run_id, tool_request.idempotency_key)]
+    assert outcome.state == "FAILED"
+    assert outcome.result is None
+    assert store.run["state"] == "FAILED"
+    assert store.run["result_json"]["success"] is False
+    assert store.run["result_json"]["error"]["code"] == "WORKER_TOOL_EFFECT_UNRESOLVED"
+    assert store.run["error_json"]["code"] == "WORKER_TOOL_EFFECT_UNRESOLVED"
+    assert store.result_evidence is not None
+    assert store.result_evidence["artifacts"][0]["uri"] == "result.txt"
+    assert store.result_evidence["usage"]["prompt_tokens"] == 3
+    assert effect["state"] == "AMBIGUOUS"
+    assert dispatches == [tool_request.idempotency_key]
+    assert len(delivered) == 1 and delivered[0].error.code == "TOOL_EFFECT_AMBIGUOUS"
+    assert len(store.success_calls) == 1
+    assert not store.failure_calls
+    assert [row["state"] for row in store.transitions].count("SUCCEEDED") == 0
+    registrar.assert_awaited_once_with(
+        artifact,
+        claim_fence={"claim_owner": "executor-test", "attempt_count": 1},
+    )
+    assert all(call.kwargs.get("cleanup") is not True for call in registrar.await_args_list)
+
+
+@pytest.mark.asyncio
+async def test_resolved_tool_effect_allows_normalized_success_completion() -> None:
+    run_id = uuid4()
+    store = _ClaimedToolRunStore(run_id)
+    tool_request = _request(run_id=run_id, key="resolved-effect-before-success")
+
+    async def dispatcher(request: WorkerToolRequest) -> WorkerToolResponse:
+        return WorkerToolResponse(
+            request_id=request.request_id,
+            run_id=request.run_id,
+            tool_name=request.tool_name,
+            success=True,
+            result={"accepted": True},
+        )
+
+    async def worker(request: WorkerRunRequest, runtime: NativeWorkerAdapter):
+        response = await runtime.request_tool(tool_request)
+        assert response.success is True
+        return WorkerResult(
+            run_id=request.run_id,
+            worker_id=request.worker_id,
+            success=True,
+            output={"done": True},
+        )
+
+    adapter = NativeWorkerAdapter(
+        worker,
+        worker_id="worker-1",
+        context=SimpleNamespace(tool_dispatcher=dispatcher),
+    )
+    request = WorkerRunRequest(
+        run_id=run_id,
+        idempotency_key="resolved-effect-before-success",
+        worker_id="worker-1",
+        task_type="tool-effect-completion",
+        tool_grants=[tool_request.tool_name],
+    )
+
+    outcome = await WorkerRunController(storage=store).execute(
+        request,
+        adapter,
+        worker_registry_id=store.run["worker_id"],
+    )
+    await adapter.close()
+
+    effect = store.rows[(run_id, tool_request.idempotency_key)]
+    assert outcome.state == "SUCCEEDED"
+    assert outcome.result is not None and outcome.result.success is True
+    assert store.run["state"] == "SUCCEEDED"
+    assert effect["state"] == "COMPLETED"
+    assert len(store.success_calls) == 1
+    assert not store.failure_calls
+
+
+@pytest.mark.asyncio
+async def test_claim_lost_before_unresolved_effect_check_is_not_reported_as_blocker() -> None:
+    run_id = uuid4()
+
+    class ReclaimedBeforeCompletionStore(_ClaimedToolRunStore):
+        async def complete_worker_run_success_claim_fenced(self, **values):
+            self.success_calls.append(dict(values))
+            self.run.update(
+                {
+                    "state": "RUNNING",
+                    "claim_owner": "executor-reclaimed",
+                    "attempt_count": self.attempt_count + 1,
+                    "lease_expires_at": datetime.now(tz=UTC) + timedelta(minutes=2),
+                }
+            )
+            return None
+
+    store = ReclaimedBeforeCompletionStore(run_id)
+    dispatcher = AsyncMock(side_effect=TimeoutError("simulated response loss"))
+    registrar = AsyncMock()
+    tool_request = _request(run_id=run_id, key="reclaimed-unresolved-effect")
+    artifact = WorkerArtifact(
+        kind=ArtifactKind.FILE,
+        name="result.txt",
+        uri="result.txt",
+        sha256="b" * 64,
+        size_bytes=7,
+        metadata={"source_tool": "file_write"},
+    )
+
+    async def worker(request: WorkerRunRequest, runtime: NativeWorkerAdapter):
+        await runtime.request_tool(tool_request)
+        return WorkerResult(
+            run_id=request.run_id,
+            worker_id=request.worker_id,
+            success=True,
+            artifacts=[artifact],
+        )
+
+    adapter = NativeWorkerAdapter(
+        worker,
+        worker_id="worker-1",
+        context=SimpleNamespace(tool_dispatcher=dispatcher, artifact_registrar=registrar),
+    )
+    request = WorkerRunRequest(
+        run_id=run_id,
+        idempotency_key="reclaimed-unresolved-effect",
+        worker_id="worker-1",
+        task_type="tool-effect-completion",
+        tool_grants=[tool_request.tool_name],
+    )
+
+    outcome = await WorkerRunController(storage=store).execute(
+        request,
+        adapter,
+        worker_registry_id=store.run["worker_id"],
+    )
+    await adapter.close()
+
+    assert outcome.state == "RUNNING"
+    assert store.run["claim_owner"] == "executor-reclaimed"
+    assert store.run["attempt_count"] == store.attempt_count + 1
+    assert store.rows[(run_id, tool_request.idempotency_key)]["state"] == "AMBIGUOUS"
+    assert len(store.success_calls) == 1
+    assert not store.failure_calls
+    assert registrar.await_count == 2
+    assert registrar.await_args_list[0].kwargs == {
+        "claim_fence": {"claim_owner": "executor-test", "attempt_count": 1}
+    }
+    assert registrar.await_args_list[1].kwargs.get("cleanup") is True
 
 
 @pytest.mark.asyncio
