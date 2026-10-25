@@ -19,7 +19,9 @@ from typing import Any
 from mas_core.sandbox_policy import (
     HARDENED_SANDBOX_CLASSES,
     SUPPORTED_SANDBOX_PROFILES,
+    WorkerIsolationPolicyError,
     canonical_sandbox_class,
+    worker_requires_hardened_isolation,
 )
 
 WORKER_RUN_READINESS_SCHEMA = "aiat.worker-run-readiness.v1"
@@ -131,6 +133,7 @@ def evaluate_worker_run_readiness(
     requested_profile = _text(requested_model_profile_id)
     blockers: list[dict[str, str]] = []
     fetch_status = {str(key): "blocked" for key in (fetch_errors or {})}
+    sandbox_hardening_required = bool(require_sandbox)
 
     if fetch_errors:
         for key, reason in sorted(fetch_errors.items()):
@@ -149,6 +152,20 @@ def evaluate_worker_run_readiness(
         blockers.append(_blocker("worker_not_found", "the selected worker was not returned by the control plane"))
     else:
         fetch_status.setdefault("worker", "observed")
+        try:
+            sandbox_hardening_required = (
+                sandbox_hardening_required
+                or worker_requires_hardened_isolation(worker)
+            )
+        except WorkerIsolationPolicyError as exc:
+            sandbox_hardening_required = True
+            if exc.reason_code != "worker_sandbox_profile_invalid":
+                blockers.append(
+                    _blocker(
+                        "worker_isolation_policy_invalid",
+                        "the worker's sandbox and execution policy could not be evaluated safely",
+                    )
+                )
         if _text(worker.get("id")) and _text(worker.get("id")) != selected_worker_id:
             blockers.append(_blocker("worker_selection_mismatch", "the returned worker ID differs from the selected worker ID"))
         if worker_status not in {"ACTIVE", "DRAINING"}:
@@ -172,7 +189,11 @@ def evaluate_worker_run_readiness(
             sandbox_class = None
             blockers.append(_blocker("sandbox_profile_invalid", "the worker has no recognized sandbox profile"))
         else:
-            if require_sandbox and sandbox_class not in HARDENED_SANDBOX_PROFILES:
+            if (
+                sandbox_hardening_required
+                and sandbox_class is not None
+                and sandbox_class not in HARDENED_SANDBOX_PROFILES
+            ):
                 blockers.append(_blocker("sandbox_profile_not_hardened", "the selected run requires gVisor/runsc or Kata VM isolation"))
 
         if health is not None:
@@ -304,7 +325,7 @@ def evaluate_worker_run_readiness(
                 "profile": sandbox_profile,
                 "class": sandbox_class,
                 "runtime_status": "not_checked",
-                "hardened_required": bool(require_sandbox),
+                "hardened_required": sandbox_hardening_required,
             },
             "health": {"status": health_status},
             "identity": {"status": "not_checked"},

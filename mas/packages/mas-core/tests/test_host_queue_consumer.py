@@ -19,6 +19,7 @@ from mas_core.worker_registry.local_host_queue_runtime import (
     LocalHostQueueConfig,
     LocalHostQueueRuntime,
 )
+from mas_core.worker_registry.runtime_adapters import ProcessAdapter
 
 if TYPE_CHECKING:
     from mas_core.worker_registry.run_host_binding import (
@@ -555,6 +556,101 @@ async def test_queue_consumer_rejects_unapproved_pinned_adapter() -> None:
     assert summaries[0].reason_code == "worker_adapter_pin_not_eligible"
     assert factory_calls == []
     assert storage.mutation_calls == []
+
+
+@pytest.mark.asyncio
+async def test_queue_consumer_rejects_direct_process_for_hardened_worker() -> None:
+    storage = _MemoryStorage()
+    storage.worker.update(
+        {
+            "sandbox_profile": "sandboxed",
+            "adapter_config": {
+                "execution_policy": {
+                    "trust": "untrusted",
+                    "formats": ["oci", "linux"],
+                    "minimum_isolation": "sandboxed",
+                }
+            },
+        }
+    )
+    storage.adapter_record["transport_type"] = "process"
+    bindings = _Bindings(_binding())
+    factory_calls: list[PinnedWorkerAdapter] = []
+
+    summaries = await _consumer(storage, bindings, factory_calls.append).consume_once()
+
+    assert summaries[0].state == "QUEUED"
+    assert summaries[0].reason_code == "worker_sandbox_process_transport_unsupported"
+    assert factory_calls == []
+    assert storage.mutation_calls == []
+
+
+@pytest.mark.asyncio
+async def test_queue_consumer_treats_source_backed_process_worker_as_external() -> None:
+    storage = _MemoryStorage()
+    storage.worker.update(
+        {
+            "source_repo": "https://example.invalid/worker",
+            "sandbox_profile": "trusted",
+            "adapter_config": {"execution_policy": {"formats": ["linux"]}},
+        }
+    )
+    storage.adapter_record["transport_type"] = "process"
+    bindings = _Bindings(_binding())
+    factory_calls: list[PinnedWorkerAdapter] = []
+
+    summaries = await _consumer(storage, bindings, factory_calls.append).consume_once()
+
+    assert summaries[0].state == "QUEUED"
+    assert summaries[0].reason_code == "worker_sandbox_process_transport_unsupported"
+    assert factory_calls == []
+    assert storage.mutation_calls == []
+
+
+@pytest.mark.asyncio
+async def test_queue_consumer_allows_trusted_internal_process_worker() -> None:
+    storage = _MemoryStorage()
+    storage.worker.update(
+        {
+            "sandbox_profile": "trusted",
+            "adapter_config": {
+                "execution_policy": {
+                    "trust": "trusted",
+                    "minimum_isolation": "trusted",
+                }
+            },
+        }
+    )
+    storage.adapter_record["transport_type"] = "process"
+    bindings = _Bindings(_binding())
+    worker_calls: list[str] = []
+
+    async def process_runner(request, _adapter):
+        worker_calls.append(str(request.run_id))
+        return WorkerResult(
+            run_id=request.run_id,
+            worker_id=request.worker_id,
+            success=True,
+            output={"result": "trusted internal process fixture"},
+        )
+
+    adapter = ProcessAdapter(
+        ["unused-fixture-command"],
+        worker_id=str(WORKER_ID),
+        runner=process_runner,
+    )
+    adapter._aiat_adapter_id = str(ADAPTER_ID)
+
+    summaries = await _consumer(
+        storage,
+        bindings,
+        lambda _pins: adapter,
+    ).consume_once()
+
+    assert summaries[0].state == "SUCCEEDED"
+    assert summaries[0].reason_code is None
+    assert worker_calls == [str(RUN_ID)]
+    await adapter.close()
 
 
 @pytest.mark.asyncio

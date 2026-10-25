@@ -396,6 +396,115 @@ async def test_non_llm_dispatch_keeps_policy_snapshot_out_of_model_attribution(
 
 
 @pytest.mark.anyio
+async def test_trusted_internal_process_adapter_remains_dispatchable(monkeypatch) -> None:
+    import orchestrator_api.main as main
+
+    import mas_core.worker_contract as worker_contract
+
+    storage = _DispatchStorage()
+    _patch_storage(storage)
+    adapter = _Adapter()
+    adapter.runtime_type = "process"
+    executions: list[UUID] = []
+
+    class RecordingController:
+        def __init__(self, *, storage) -> None:
+            self.storage = storage
+
+        async def execute(self, request, _adapter, **_kwargs):
+            executions.append(request.run_id)
+            return worker_contract.WorkerRunOutcome(
+                run_id=request.run_id,
+                state="SUCCEEDED",
+                result=worker_contract.WorkerResult(
+                    run_id=request.run_id,
+                    worker_id=request.worker_id,
+                    success=True,
+                ),
+            )
+
+    monkeypatch.setattr(worker_contract, "WorkerRunController", RecordingController)
+    monkeypatch.setattr(main, "_certified_worker_adapter", AsyncMock(return_value=adapter))
+
+    result = await main.dispatch_worker_run(
+        main.WorkerRunDispatchRequest(
+            worker_id=WORKER_ID,
+            idempotency_key="trusted-internal-process",
+            task_type="deterministic.test",
+            dispatch_mode="inline",
+        )
+    )
+
+    assert result["state"] == "SUCCEEDED"
+    assert len(executions) == 1
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("dispatch_mode", ["inline", "queued"])
+async def test_external_process_dispatch_is_blocked_before_run_or_budget_writes(
+    monkeypatch, dispatch_mode: str
+) -> None:
+    import orchestrator_api.main as main
+
+    import mas_core.worker_contract as worker_contract
+
+    class ExternalProcessStorage(_DispatchStorage):
+        def __init__(self) -> None:
+            super().__init__()
+            self.run_creations: list[dict[str, object]] = []
+
+        async def get_worker(self, worker_id: UUID):
+            worker = await super().get_worker(worker_id)
+            if worker is None:
+                return None
+            return {
+                **worker,
+                "source_repo": "https://example.invalid/worker",
+                "runtime_tier": "external",
+                "sandbox_profile": "trusted",
+            }
+
+        async def create_worker_run(self, **kwargs):
+            self.run_creations.append(kwargs)
+            return {"id": kwargs["run_id"], "state": "QUEUED"}
+
+    controller_instances: list[object] = []
+
+    class ForbiddenController:
+        def __init__(self, *, storage) -> None:
+            controller_instances.append(storage)
+
+        async def execute(self, *_args, **_kwargs):
+            pytest.fail("a rejected external process adapter reached execution")
+
+    storage = ExternalProcessStorage()
+    _patch_storage(storage)
+    adapter = _Adapter()
+    adapter.runtime_type = "process"
+    adapter_factory = AsyncMock(return_value=adapter)
+    monkeypatch.setattr(main, "_certified_worker_adapter", adapter_factory)
+    monkeypatch.setattr(worker_contract, "WorkerRunController", ForbiddenController)
+
+    with pytest.raises(main.HTTPException) as rejected:
+        await main.dispatch_worker_run(
+            main.WorkerRunDispatchRequest(
+                worker_id=WORKER_ID,
+                idempotency_key=f"external-process-{dispatch_mode}",
+                task_type="test.run",
+                budget_usd=Decimal("1"),
+                dispatch_mode=dispatch_mode,
+            )
+        )
+
+    assert rejected.value.status_code == 409
+    assert rejected.value.detail["code"] == "WORKER_SANDBOX_PROCESS_TRANSPORT_UNSUPPORTED"
+    adapter_factory.assert_awaited_once()
+    assert storage.snapshots == []
+    assert storage.reservations == []
+    assert storage.run_creations == []
+    assert controller_instances == []
+
+@pytest.mark.anyio
 async def test_company_dispatch_rejects_grants_outside_active_assignment(
     client, monkeypatch
 ) -> None:

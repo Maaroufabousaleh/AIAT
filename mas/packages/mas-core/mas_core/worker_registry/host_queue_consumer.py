@@ -14,6 +14,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
+from mas_core.sandbox_policy import (
+    WorkerIsolationPolicyError,
+    worker_requires_hardened_isolation,
+)
+
 from ..worker_contract.models import WorkerRunRequest
 from .host_executor import (
     HostExecutionRequest,
@@ -249,6 +254,24 @@ class HostQueueConsumer:
             or str(adapter.get("conformance_status") or "").lower() != "passed"
         ):
             raise _RunRejected("worker_adapter_pin_not_eligible")
+
+        transport = str(
+            adapter.get("transport_type") or worker.get("adapter_type") or ""
+        ).strip().lower()
+        if transport == "process":
+            try:
+                requires_hardened_isolation = worker_requires_hardened_isolation(
+                    worker
+                )
+            except WorkerIsolationPolicyError as exc:
+                raise _RunRejected(exc.reason_code) from exc
+            if requires_hardened_isolation:
+                # ProcessAdapter executes directly on the host. Placement may
+                # certify that a host has runsc/Kata, but that decision is only
+                # enforced by adapters that actually launch through the selected
+                # runtime (for example OCIAdapter). Do not let a matching host
+                # binding turn a direct process into sandboxed work.
+                raise _RunRejected("worker_sandbox_process_transport_unsupported")
 
         if pins.skill_bundle_id is not None:
             bundle_reader = getattr(self._storage, "get_skill_bundle", None)

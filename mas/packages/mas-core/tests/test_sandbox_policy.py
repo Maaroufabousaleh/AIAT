@@ -7,10 +7,12 @@ import pytest
 from mas_core.protocols.worker_manifest import WorkerManifest
 from mas_core.sandbox_policy import (
     HARDENED_SANDBOX_CLASSES,
+    WorkerIsolationPolicyError,
     canonical_sandbox_class,
     is_hardened_sandbox,
     required_runtime_for_sandbox,
     runtime_implements_sandbox,
+    worker_requires_hardened_isolation,
 )
 from mas_core.worker_registry.host_registry import _normalize_sandbox_runtime
 from mas_core.worker_registry.placement import (
@@ -32,6 +34,76 @@ def test_legacy_profiles_resolve_to_canonical_policy_classes() -> None:
     assert is_hardened_sandbox("restricted") is False
     assert required_runtime_for_sandbox("gvisor") == "runsc"
     assert required_runtime_for_sandbox("vm_isolated") == "kata"
+
+
+def test_worker_isolation_floor_treats_external_workers_as_untrusted() -> None:
+    assert worker_requires_hardened_isolation(
+        {
+            "source_repo": "https://example.invalid/worker",
+            "sandbox_profile": "trusted",
+            "adapter_config": {},
+        }
+    ) is True
+    assert worker_requires_hardened_isolation(
+        {
+            "runtime_tier": "external",
+            "sandbox_profile": "trusted",
+            "adapter_config": {"runtime_tier": "internal"},
+        }
+    ) is True
+    assert worker_requires_hardened_isolation(
+        {
+            "runtime_tier": "builtin",
+            "source_repo": "local",
+            "sandbox_profile": "trusted",
+            "adapter_config": {
+                "runtime_tier": "builtin",
+                "legacy_manifest": {"runtime_tier": "external"},
+            },
+        }
+    ) is True
+    assert worker_requires_hardened_isolation(
+        {"source_repo": "LOCAL", "sandbox_profile": "trusted", "adapter_config": {}}
+    ) is True
+    assert worker_requires_hardened_isolation(
+        {
+            "sandbox_profile": "gvisor",
+            "adapter_config": {"execution_policy": {"trust": "trusted"}},
+        }
+    ) is True
+
+
+def test_worker_isolation_floor_preserves_trusted_internal_and_fails_closed() -> None:
+    assert worker_requires_hardened_isolation(
+        {"source_repo": "local", "sandbox_profile": "trusted", "adapter_config": {}}
+    ) is False
+    assert worker_requires_hardened_isolation(
+        {
+            "source_repo": "",
+            "sandbox_profile": "trusted",
+            "adapter_config": {
+                "execution_policy": {"trust": "trusted", "minimum_isolation": "trusted"}
+            },
+        }
+    ) is False
+
+    with pytest.raises(WorkerIsolationPolicyError) as invalid_profile:
+        worker_requires_hardened_isolation(
+            {"sandbox_profile": "unknown", "adapter_config": {}}
+        )
+    assert invalid_profile.value.reason_code == "worker_sandbox_profile_invalid"
+
+    with pytest.raises(WorkerIsolationPolicyError) as invalid_execution:
+        worker_requires_hardened_isolation(
+            {"sandbox_profile": "trusted", "adapter_config": {"execution_policy": []}}
+        )
+    assert invalid_execution.value.reason_code == "worker_execution_policy_invalid"
+
+    with pytest.raises(WorkerIsolationPolicyError) as invalid_adapter_config:
+        worker_requires_hardened_isolation(
+            {"sandbox_profile": "trusted", "adapter_config": []}  # type: ignore[dict-item]
+        )
+    assert invalid_adapter_config.value.reason_code == "worker_execution_policy_invalid"
 
 
 def test_worker_manifest_accepts_canonical_class_without_rewriting_legacy_yaml() -> None:

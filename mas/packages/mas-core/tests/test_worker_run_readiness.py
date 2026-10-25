@@ -92,6 +92,39 @@ def test_inactive_worker_terminal_project_and_missing_immutable_records_block() 
     assert "project_terminal" in codes
 
 
+def test_source_backed_worker_requires_hardened_sandbox_by_default() -> None:
+    inputs = _inputs()
+    worker = dict(inputs["worker"])
+    worker.update({"source_repo": "https://example.invalid/worker", "sandbox_profile": "trusted"})
+    inputs["worker"] = worker
+    inputs["require_sandbox"] = False
+
+    report = evaluate_worker_run_readiness(**inputs)
+
+    codes = {item["code"] for item in report["blockers"]}
+    assert report["status"] == "blocked"
+    assert report["checks"]["sandbox"]["hardened_required"] is True
+    assert "sandbox_profile_not_hardened" in codes
+
+
+def test_invalid_worker_execution_policy_blocks_readiness() -> None:
+    inputs = _inputs()
+    worker = dict(inputs["worker"])
+    worker.update(
+        {
+            "sandbox_profile": "trusted",
+            "adapter_config": {"execution_policy": []},
+        }
+    )
+    inputs["worker"] = worker
+    inputs["require_sandbox"] = False
+
+    report = evaluate_worker_run_readiness(**inputs)
+
+    codes = {item["code"] for item in report["blockers"]}
+    assert report["status"] == "blocked"
+    assert "worker_isolation_policy_invalid" in codes
+
 def test_missing_budget_and_profile_are_fail_closed() -> None:
     inputs = _inputs()
     inputs["budgets"] = []

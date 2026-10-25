@@ -147,7 +147,9 @@ from mas_core.protocols.enums import AgentRole, MessageType
 from mas_core.sandbox_policy import (
     HARDENED_SANDBOX_CLASSES,
     SUPPORTED_SANDBOX_PROFILES,
+    WorkerIsolationPolicyError,
     canonical_sandbox_class,
+    worker_requires_hardened_isolation,
 )
 from mas_core.worker_registry._risk_utils import is_medium_or_dual_use_worker, worker_risk_labels
 from mas_core.worker_registry.runtime_catalog import (
@@ -14650,6 +14652,31 @@ async def _dispatch_worker_run(
     adapter = await _certified_worker_adapter(storage, worker)
     if adapter is None:
         raise HTTPException(409, "Worker has no certified runtime adapter registered with the control plane")
+    if getattr(adapter, "runtime_type", None) == "process":
+        try:
+            process_requires_hardened_isolation = worker_requires_hardened_isolation(
+                worker
+            )
+        except WorkerIsolationPolicyError as exc:
+            raise HTTPException(
+                409,
+                {
+                    "code": exc.reason_code.upper(),
+                    "message": "The worker sandbox policy is invalid and cannot be evaluated safely.",
+                },
+            ) from exc
+        if process_requires_hardened_isolation:
+            # This API's inline and background-queued modes both execute
+            # adapters in the orchestrator process. They cannot satisfy a
+            # hardened worker isolation requirement that the host executor
+            # enforces through a compatible sandbox runtime.
+            raise HTTPException(
+                409,
+                {
+                    "code": "WORKER_SANDBOX_PROCESS_TRANSPORT_UNSUPPORTED",
+                    "message": "A direct process adapter cannot enforce this worker's required isolation.",
+                },
+            )
     from mas_core.worker_contract import CheckpointMode
 
     if (
