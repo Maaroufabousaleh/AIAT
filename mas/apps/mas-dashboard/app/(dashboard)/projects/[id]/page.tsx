@@ -529,6 +529,59 @@ function activeFlowWorkerRunId(
   return typeof runId === "string" && UUID_PATTERN.test(runId) ? runId : null;
 }
 
+function completedApprovalWorkerRuns(
+  approvalNodeId: string,
+  flowDefinition: FlowDefinition | null,
+  flowInstanceId: string,
+  nodeExecutions: FlowNodeExecution[],
+  workerRuns: ProjectWorkerRun[],
+  projectId: string,
+): Array<{ nodeId: string; nodeLabel: string; run: ProjectWorkerRun }> {
+  if (!flowDefinition) return [];
+
+  const upstreamTaskNodeIds = new Set(
+    flowDefinition.edges
+      .filter((edge) => edge.target === approvalNodeId)
+      .map((edge) => edge.source)
+      .filter((sourceId) =>
+        flowDefinition.nodes.some(
+          (node) => node.id === sourceId && node.type === "task",
+        ),
+      ),
+  );
+  const seenRunIds = new Set<string>();
+
+  return nodeExecutions.flatMap((execution) => {
+    if (
+      execution.instance_id !== flowInstanceId ||
+      !upstreamTaskNodeIds.has(execution.node_id) ||
+      execution.node_type !== "task" ||
+      execution.status !== "COMPLETED"
+    ) {
+      return [];
+    }
+
+    const rawRunId = execution.output_json?.worker_run_id;
+    if (typeof rawRunId !== "string" || !UUID_PATTERN.test(rawRunId)) return [];
+    const normalizedRunId = rawRunId.toLowerCase();
+    if (seenRunIds.has(normalizedRunId)) return [];
+
+    const run = workerRuns.find(
+      (candidate) =>
+        candidate.id.toLowerCase() === normalizedRunId &&
+        candidate.project_id.toLowerCase() === projectId.toLowerCase(),
+    );
+    if (!run) return [];
+
+    seenRunIds.add(normalizedRunId);
+    return [{
+      nodeId: execution.node_id,
+      nodeLabel: execution.node_label || execution.node_id,
+      run,
+    }];
+  });
+}
+
 function isProjectWorkerRun(value: unknown): value is ProjectWorkerRun {
   if (!value || typeof value !== "object") return false;
   const run = value as Partial<ProjectWorkerRun>;
@@ -4690,6 +4743,17 @@ export default function ProjectDetailPage() {
                           activeNode?.type === "approval"
                             ? getActiveFlowApprovalGate(nodeId)
                             : null;
+                        const approvalWorkerRuns =
+                          activeNode?.type === "approval"
+                            ? completedApprovalWorkerRuns(
+                                nodeId,
+                                flowDefinition,
+                                flowInstance.id,
+                                nodeExecutions,
+                                projectWorkerRuns,
+                                id,
+                              )
+                            : [];
                         return (
                           <div
                             key={nodeId}
@@ -4711,6 +4775,28 @@ export default function ProjectDetailPage() {
                             <div className="flex gap-2">
                               {activeNode?.type === "approval" ? (
                                 <div className="flex flex-col items-end gap-2">
+                                  {approvalWorkerRuns.length > 0 && (
+                                    <div
+                                      role="region"
+                                      aria-label="Completed worker results for approval"
+                                      data-testid={`approval-worker-results-${nodeId}`}
+                                      className="flex flex-col items-end gap-1"
+                                    >
+                                      <span className="text-xs text-slate-300">
+                                        Review completed task results before deciding.
+                                      </span>
+                                      {approvalWorkerRuns.map(({ nodeLabel, run }) => (
+                                        <Link
+                                          key={run.id}
+                                          href={`/workers/runs/${encodeURIComponent(run.id)}`}
+                                          data-testid={`approval-worker-run-${run.id}`}
+                                          className="min-h-10 inline-flex items-center text-xs text-cyan-200 underline underline-offset-2"
+                                        >
+                                          Review {nodeLabel} result · Worker Run {run.state.trim().toUpperCase()}
+                                        </Link>
+                                      ))}
+                                    </div>
+                                  )}
                                   {pendingApprovalGate ? (
                                     <div className="flex gap-2">
                                       <button

@@ -348,6 +348,11 @@ test("Project Detail carries a governed research result through review and evide
   await expect(page.getByRole("status", { name: "Worker Run state: SUCCEEDED" })).toBeVisible();
   await page.getByTestId("apply-worker-run-research").click();
   await expect(page.getByRole("button", { name: "Approve", exact: true })).toBeVisible();
+  await expect(page.getByTestId("approval-worker-results-review")).toBeVisible();
+  await expect(page.getByTestId(`approval-worker-run-${RESEARCH_RUN_ID}`)).toHaveAttribute(
+    "href",
+    `/workers/runs/${RESEARCH_RUN_ID}`,
+  );
   expect(settlementRequests[0]).toEqual({ node_id: "research", action: "complete", worker_run_id: RESEARCH_RUN_ID });
   expect(settlementRequests[0].output).toBeUndefined();
 
