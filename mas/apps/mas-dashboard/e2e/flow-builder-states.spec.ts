@@ -250,6 +250,10 @@ test("Research Brief requires bindings, validates, and attaches to a project", a
   await page.getByTestId("template-research").click();
   await expect(page.getByTestId("research-template-binding-checklist")).toContainText("Research");
   await expect(page.getByTestId("research-template-binding-checklist")).toContainText("Write report");
+  await expect(page.locator(".react-flow__node")).toHaveCount(5);
+  const canvasBounds = await page.locator(".react-flow").first().boundingBox();
+  expect(canvasBounds?.width).toBeGreaterThan(150);
+  expect(canvasBounds?.height).toBeGreaterThan(200);
   await page.getByLabel("Activate flow on save").check();
 
   await page.getByTestId("flow-dry-run-button").click();
