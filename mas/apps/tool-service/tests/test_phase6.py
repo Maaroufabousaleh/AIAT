@@ -161,6 +161,36 @@ class TestToolRegistry:
         assert resp.error_code == "TOOL_NOT_FOUND"
 
     @pytest.mark.anyio
+    async def test_execute_rejects_blank_caller_before_tool_dispatch(self, make_registry):
+        from mas_tools_sdk.base import BaseTool
+        from mas_tools_sdk.groups import ToolGroup
+
+        calls = []
+
+        class CallerIdentityTool(BaseTool):
+            name = "test.caller_identity"
+            group = ToolGroup.KPI_UTILITY
+            allowed_roles = [AgentRole.WORKER]
+
+            async def execute(self, **kwargs):
+                calls.append(kwargs)
+                return {"ok": True}
+
+        registry = make_registry()
+        registry.register(CallerIdentityTool())
+        response = await registry.execute(
+            ToolRequest(
+                caller_id=" \t",
+                caller_role=AgentRole.WORKER,
+                tool_name="test.caller_identity",
+            )
+        )
+
+        assert response.success is False
+        assert response.error_code == "VALIDATION_ERROR"
+        assert calls == []
+
+    @pytest.mark.anyio
     async def test_execute_forbidden_role(self, make_registry):
         """SUB_AGENT should not be able to call project.create (ORCHESTRATOR only)."""
         registry = make_registry()

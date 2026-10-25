@@ -273,6 +273,12 @@ class ToolRegistry:
     async def execute(self, request: ToolRequest) -> ToolResponse:
         """Execute a tool request through the full pipeline."""
         tool_name = request.tool_name
+        if not isinstance(request.caller_id, str) or not request.caller_id.strip():
+            return self._error_response(
+                request,
+                error="Caller identity must be a non-empty string.",
+                error_code="VALIDATION_ERROR",
+            )
         resolved_tool_name = resolve_tool_name(tool_name)
         if resolved_tool_name is None and tool_name in self._tools:
             resolved_tool_name = tool_name

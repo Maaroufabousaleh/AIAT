@@ -19,6 +19,7 @@ from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field
 
 from mas_core.observability import current_trace_id
+from mas_core.protocols.enums import AgentRole
 from mas_core.protocols.tool import ToolRequest, ToolResponse
 
 from .caller_auth import verify_signed_caller
@@ -96,11 +97,20 @@ async def _verify_secret(
         )
 
 
-def _assert_signed_body_caller(request: Request, caller_id: str, settings: Settings) -> None:
-    """A production signature must bind to the request's asserted caller."""
+def _assert_signed_body_caller(
+    request: Request,
+    caller_id: str,
+    caller_role: AgentRole | str,
+    settings: Settings,
+) -> None:
+    """Bind identity and role claims to the production signing authority."""
     signed_caller = getattr(request.state, "signed_caller_id", None)
     if signed_caller is not None and signed_caller != caller_id and signed_caller not in settings.tool_delegate_client_ids:
         raise HTTPException(403, "Signed caller does not match tool request caller")
+    if signed_caller is not None and signed_caller not in settings.tool_delegate_client_ids:
+        role_value = getattr(caller_role, "value", caller_role)
+        if role_value != AgentRole.WORKER.value:
+            raise HTTPException(403, "Signed worker callers may only assert the worker role")
 
 
 async def _execute_via_registry(request: Request, body: ToolRequest) -> ToolResponse | JSONResponse:
@@ -164,7 +174,9 @@ async def execute_tool(
 
     Pipeline: auth → registry.execute (policy → breaker → rate limit → cache → run).
     """
-    _assert_signed_body_caller(request, body.caller_id, request.app.state.settings)
+    _assert_signed_body_caller(
+        request, body.caller_id, body.caller_role, request.app.state.settings
+    )
     if body.worker_run_id is not None:
         raise HTTPException(
             status_code=409,
@@ -193,7 +205,9 @@ async def run_tool(
             detail=f"Body tool_name {body.tool_name!r} does not match path {tool_name!r}.",
         )
 
-    _assert_signed_body_caller(request, body.caller_id, request.app.state.settings)
+    _assert_signed_body_caller(
+        request, body.caller_id, body.caller_role, request.app.state.settings
+    )
 
     effective_body = ToolRequest.model_validate(
         body.model_dump(mode="json", by_alias=True)
