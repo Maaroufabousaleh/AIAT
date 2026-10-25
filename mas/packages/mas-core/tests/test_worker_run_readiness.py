@@ -170,6 +170,27 @@ def test_hardened_readiness_fails_closed_for_unknown_transport_and_invalid_polic
     assert "worker_isolation_policy_invalid" in codes
     assert "worker_sandbox_transport_unverified" in codes
 
+def test_hardened_profile_does_not_hide_invalid_execution_policy() -> None:
+    inputs = _inputs()
+    worker = dict(inputs["worker"])
+    worker.update(
+        {
+            "source_repo": "https://example.invalid/worker",
+            "adapter_type": "oci",
+            "sandbox_profile": "gvisor",
+            "adapter_config": {"execution_policy": []},
+        }
+    )
+    inputs["worker"] = worker
+    inputs["require_sandbox"] = True
+
+    report = evaluate_worker_run_readiness(**inputs)
+
+    codes = {item["code"] for item in report["blockers"]}
+    assert report["status"] == "blocked"
+    assert report["checks"]["sandbox"]["hardened_required"] is True
+    assert "worker_isolation_policy_invalid" in codes
+
 def test_missing_budget_and_profile_are_fail_closed() -> None:
     inputs = _inputs()
     inputs["budgets"] = []
