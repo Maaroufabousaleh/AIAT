@@ -12731,8 +12731,9 @@ class AgentStorage:
         attempt_count: int,
         now: datetime,
         reject_cancel_requested: bool = False,
+        allowed_states: tuple[str, ...] = ("RUNNING",),
     ) -> bool:
-        if row is None or str(row.get("state") or "") != "RUNNING":
+        if row is None or str(row.get("state") or "") not in allowed_states:
             return False
         # A durable cancellation request closes the execution capability
         # before the adapter has necessarily acknowledged cancellation.  The
@@ -12777,6 +12778,117 @@ class AgentStorage:
                 reject_cancel_requested=True,
             )
 
+    async def _insert_worker_result_evidence_tx(
+        self,
+        conn: Any,
+        *,
+        run_id: UUID,
+        artifacts: list[dict[str, Any]],
+        usage: dict[str, Any],
+        now: datetime,
+    ) -> dict[str, Any]:
+        """Insert worker artifacts, usage, and evidence spans in an open transaction."""
+
+        stored_artifacts: list[dict[str, Any]] = []
+        trace_id = usage.get("trace_id") or current_trace_id()
+        span_id = (
+            (usage.get("span_id") or current_span_id() or new_span_id())
+            if trace_id
+            else usage.get("span_id")
+        )
+        usage_values = {
+            "id": uuid4(),
+            "run_id": run_id,
+            "prompt_tokens": usage.get("prompt_tokens", 0),
+            "completion_tokens": usage.get("completion_tokens", 0),
+            "total_tokens": usage.get("total_tokens", 0),
+            "cost_usd": usage.get("cost_usd", 0),
+            "duration_ms": usage.get("duration_ms", 0),
+            "resource_json": usage.get("resource_json") or {},
+            "provider_id": usage.get("provider_id"),
+            "exact_model_id": usage.get("exact_model_id"),
+            "trace_id": trace_id,
+            "span_id": span_id,
+            "created_at": now,
+        }
+
+        for artifact in artifacts:
+            artifact_values = {
+                "agent_id": artifact["agent_id"],
+                "path": artifact["path"],
+                "metadata": artifact.get("metadata"),
+                "sha256": artifact.get("sha256"),
+                "size_bytes": artifact.get("size_bytes"),
+                "created_at": now,
+            }
+            artifact_id = (
+                await conn.execute(
+                    t.artifacts.insert()
+                    .values(**artifact_values)
+                    .returning(t.artifacts.c.id)
+                )
+            ).scalar_one()
+            worker_artifact_values = {
+                "id": uuid4(),
+                "run_id": run_id,
+                "artifact_id": artifact_id,
+                "kind": artifact["kind"],
+                "uri": artifact["uri"],
+                "sha256": artifact["sha256"],
+                "size_bytes": artifact.get("size_bytes"),
+                "metadata": artifact.get("metadata") or {},
+                "trace_id": artifact.get("trace_id"),
+                "span_id": artifact.get("span_id"),
+                "created_at": now,
+            }
+            await conn.execute(t.worker_artifacts.insert().values(**worker_artifact_values))
+            stored_artifacts.append(
+                {
+                    "artifact": {**artifact_values, "id": artifact_id},
+                    "worker_artifact": worker_artifact_values,
+                }
+            )
+            if artifact.get("trace_id"):
+                await self._insert_native_trace_span_tx(
+                    conn,
+                    trace_id=str(artifact["trace_id"]),
+                    span_id=new_span_id(),
+                    parent_span_id=artifact.get("span_id"),
+                    source_kind="audit",
+                    operation=f"artifact.{artifact['kind']}",
+                    service="worker_evidence",
+                    status="success",
+                    started_at=now,
+                    ended_at=now,
+                    attributes={
+                        "kind": artifact["kind"],
+                        "size_bytes": artifact.get("size_bytes") or 0,
+                    },
+                )
+
+        await conn.execute(t.worker_usage_records.insert().values(**usage_values))
+        if trace_id:
+            duration_ms = usage.get("duration_ms") or 0
+            await self._insert_native_trace_span_tx(
+                conn,
+                trace_id=trace_id,
+                span_id=new_span_id(),
+                parent_span_id=span_id,
+                source_kind="model",
+                operation=usage.get("exact_model_id") or "worker.model",
+                service="worker_evidence",
+                status="success",
+                started_at=now - timedelta(milliseconds=float(duration_ms or 0)),
+                ended_at=now,
+                duration_ms=duration_ms,
+                attributes={
+                    "run_id": str(run_id),
+                    "prompt_tokens": usage.get("prompt_tokens", 0),
+                    "completion_tokens": usage.get("completion_tokens", 0),
+                },
+            )
+        return {"artifacts": stored_artifacts, "usage": usage_values}
+
     async def persist_worker_result_evidence_claim_fenced(
         self,
         *,
@@ -12793,9 +12905,6 @@ class AgentStorage:
         callers use attempt-scoped keys and delete them if this fence rejects.
         """
 
-        stored_artifacts: list[dict[str, Any]] = []
-        trace_id = usage.get("trace_id") or current_trace_id()
-        span_id = (usage.get("span_id") or current_span_id() or new_span_id()) if trace_id else usage.get("span_id")
         async with self.engine.begin() as conn:
             run = (
                 await conn.execute(
@@ -12815,99 +12924,275 @@ class AgentStorage:
                 now=now,
             ):
                 return None
+            return await self._insert_worker_result_evidence_tx(
+                conn,
+                run_id=run_id,
+                artifacts=artifacts,
+                usage=usage,
+                now=now,
+            )
 
-            usage_values = {
-                "id": uuid4(),
-                "run_id": run_id,
-                "prompt_tokens": usage.get("prompt_tokens", 0),
-                "completion_tokens": usage.get("completion_tokens", 0),
-                "total_tokens": usage.get("total_tokens", 0),
-                "cost_usd": usage.get("cost_usd", 0),
-                "duration_ms": usage.get("duration_ms", 0),
-                "resource_json": usage.get("resource_json") or {},
-                "provider_id": usage.get("provider_id"),
-                "exact_model_id": usage.get("exact_model_id"),
-                "trace_id": trace_id,
-                "span_id": span_id,
-                "created_at": now,
+    async def complete_worker_run_success_claim_fenced(
+        self,
+        *,
+        run_id: UUID,
+        claim_owner: str | None,
+        attempt_count: int,
+        artifacts: list[dict[str, Any]],
+        usage: dict[str, Any],
+        result: dict[str, Any],
+        replay_metadata: dict[str, Any] | None = None,
+        project_usage: dict[str, Any] | None = None,
+        reason: str = "worker emitted a normalized terminal result",
+        correlation_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Atomically persist the evidence and terminal state for success."""
+        return await self._complete_worker_run_terminal_claim_fenced(
+            run_id=run_id,
+            claim_owner=claim_owner,
+            attempt_count=attempt_count,
+            artifacts=artifacts,
+            usage=usage,
+            result=result,
+            terminal_state="SUCCEEDED",
+            replay_metadata=replay_metadata,
+            project_usage=project_usage,
+            reason=reason,
+            correlation_id=correlation_id,
+        )
+
+    async def complete_worker_run_failure_claim_fenced(
+        self,
+        *,
+        run_id: UUID,
+        claim_owner: str | None,
+        attempt_count: int,
+        artifacts: list[dict[str, Any]],
+        usage: dict[str, Any],
+        result: dict[str, Any],
+        error: dict[str, Any] | None,
+        replay_metadata: dict[str, Any] | None = None,
+        project_usage: dict[str, Any] | None = None,
+        reason: str = "worker emitted a normalized terminal result",
+        correlation_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Atomically persist the evidence and terminal state for failure."""
+        return await self._complete_worker_run_terminal_claim_fenced(
+            run_id=run_id,
+            claim_owner=claim_owner,
+            attempt_count=attempt_count,
+            artifacts=artifacts,
+            usage=usage,
+            result=result,
+            terminal_state="FAILED",
+            error=error,
+            replay_metadata=replay_metadata,
+            project_usage=project_usage,
+            reason=reason,
+            correlation_id=correlation_id,
+        )
+
+    async def _complete_worker_run_terminal_claim_fenced(
+        self,
+        *,
+        run_id: UUID,
+        claim_owner: str | None,
+        attempt_count: int,
+        artifacts: list[dict[str, Any]],
+        usage: dict[str, Any],
+        result: dict[str, Any],
+        terminal_state: str,
+        error: dict[str, Any] | None = None,
+        replay_metadata: dict[str, Any] | None = None,
+        project_usage: dict[str, Any] | None = None,
+        reason: str = "worker emitted a normalized terminal result",
+        correlation_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Persist a claimed run's result evidence and terminal state atomically.
+
+        The WorkerRun lock is held from the claim check through the evidence
+        inserts and terminal transition. Recovery therefore either reclaims
+        the lease before this operation (and nothing is written), or observes
+        a completed run after this transaction commits.
+        """
+
+        if terminal_state not in {"SUCCEEDED", "FAILED"}:
+            raise ValueError("claimed terminal state must be SUCCEEDED or FAILED")
+
+        async with self.engine.begin() as conn:
+            run = (
+                await conn.execute(
+                    t.worker_runs.select()
+                    .where(t.worker_runs.c.id == run_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            now = datetime.now(tz=UTC)
+            if not self._worker_run_claim_matches(
+                run,
+                claim_owner=claim_owner,
+                attempt_count=attempt_count,
+                now=now,
+                reject_cancel_requested=True,
+                allowed_states=("RUNNING", "PAUSING"),
+            ):
+                return None
+
+            assert run is not None
+            from_state = str(run["state"])
+            values: dict[str, Any] = {
+                "state": terminal_state,
+                "completed_at": now,
+                "claim_owner": None,
+                "lease_expires_at": None,
+                "heartbeat_at": None,
+                "result_json": result,
             }
-
-            for artifact in artifacts:
-                artifact_created_at = now
-                artifact_values = {
-                    "agent_id": artifact["agent_id"],
-                    "path": artifact["path"],
-                    "metadata": artifact.get("metadata"),
-                    "sha256": artifact.get("sha256"),
-                    "size_bytes": artifact.get("size_bytes"),
-                    "created_at": artifact_created_at,
-                }
-                artifact_id = (
-                    await conn.execute(
-                        t.artifacts.insert()
-                        .values(**artifact_values)
-                        .returning(t.artifacts.c.id)
+            if terminal_state == "FAILED":
+                values["error_json"] = error
+            if replay_metadata is not None:
+                values["replay_metadata"] = replay_metadata
+            updated = await conn.execute(
+                t.worker_runs.update()
+                .where(
+                    sa.and_(
+                        t.worker_runs.c.id == run_id,
+                        t.worker_runs.c.state == from_state,
+                        t.worker_runs.c.claim_owner == claim_owner,
+                        t.worker_runs.c.attempt_count == attempt_count,
+                        t.worker_runs.c.lease_expires_at > now,
+                        t.worker_runs.c.cancel_requested_at.is_(None),
                     )
-                ).scalar_one()
-                worker_artifact_values = {
-                    "id": uuid4(),
+                )
+                .values(**values)
+            )
+            if not updated.rowcount:
+                return None
+
+            await self._insert_worker_result_evidence_tx(
+                conn,
+                run_id=run_id,
+                artifacts=artifacts,
+                usage=usage,
+                now=now,
+            )
+
+            if project_usage is not None:
+                event_type = project_usage.get("event_type")
+                if event_type not in {"llm", "tool"}:
+                    raise ValueError("project usage event_type must be 'llm' or 'tool'")
+                project_id = project_usage["project_id"]
+                normalized_project_id = (
+                    project_id if isinstance(project_id, UUID) else UUID(str(project_id))
+                )
+                company_id = project_usage.get("company_id")
+                if company_id is None:
+                    company_id = (
+                        await conn.execute(
+                            sa.select(t.projects.c.company_id).where(
+                                t.projects.c.id == normalized_project_id
+                            )
+                        )
+                    ).scalar_one_or_none()
+                project_trace_id = project_usage.get("trace_id") or current_trace_id()
+                project_span_id = (
+                    (project_usage.get("span_id") or current_span_id() or new_span_id())
+                    if project_trace_id
+                    else project_usage.get("span_id")
+                )
+                project_usage_values = {
+                    "id": project_usage.get("event_id") or uuid4(),
+                    "project_id": normalized_project_id,
+                    "company_id": company_id,
                     "run_id": run_id,
-                    "artifact_id": artifact_id,
-                    "kind": artifact["kind"],
-                    "uri": artifact["uri"],
-                    "sha256": artifact["sha256"],
-                    "size_bytes": artifact.get("size_bytes"),
-                    "metadata": artifact.get("metadata") or {},
-                    "trace_id": artifact.get("trace_id"),
-                    "span_id": artifact.get("span_id"),
-                    "created_at": artifact_created_at,
+                    "worker_id": project_usage.get("worker_id"),
+                    "event_type": event_type,
+                    "agent_id": project_usage.get("agent_id"),
+                    "team_id": project_usage.get("team_id"),
+                    "model": project_usage.get("model"),
+                    "provider_id": project_usage.get("provider_id"),
+                    "tool_name": project_usage.get("tool_name"),
+                    "billing_code": project_usage.get("billing_code"),
+                    "pricing_snapshot": project_usage.get("pricing_snapshot"),
+                    "resource_json": project_usage.get("resource_json"),
+                    "idempotency_key": project_usage.get("idempotency_key"),
+                    "status": project_usage.get("status") or "success",
+                    "prompt_tokens": max(0, int(project_usage.get("prompt_tokens") or 0)),
+                    "completion_tokens": max(
+                        0, int(project_usage.get("completion_tokens") or 0)
+                    ),
+                    "cost_usd": max(0.0, float(project_usage.get("cost_usd") or 0.0)),
+                    "duration_ms": project_usage.get("duration_ms"),
+                    "trace_id": project_trace_id,
+                    "span_id": project_span_id,
+                    "details": project_usage.get("details"),
+                    "occurred_at": project_usage.get("occurred_at") or now,
                 }
-                await conn.execute(t.worker_artifacts.insert().values(**worker_artifact_values))
-                artifact_row = {**artifact_values, "id": artifact_id}
-                worker_artifact_row = worker_artifact_values
-                stored_artifacts.append(
-                    {"artifact": artifact_row, "worker_artifact": worker_artifact_row}
-                )
-                if artifact.get("trace_id"):
-                    await self._insert_native_trace_span_tx(
-                        conn,
-                        trace_id=str(artifact["trace_id"]),
-                        span_id=new_span_id(),
-                        parent_span_id=artifact.get("span_id"),
-                        source_kind="audit",
-                        operation=f"artifact.{artifact['kind']}",
-                        service="worker_evidence",
-                        status="success",
-                        started_at=artifact_created_at,
-                        ended_at=artifact_created_at,
-                        attributes={
-                            "kind": artifact["kind"],
-                            "size_bytes": artifact.get("size_bytes") or 0,
-                        },
+                idempotency_key = project_usage_values["idempotency_key"]
+                existing_usage = None
+                if idempotency_key:
+                    existing_usage = (
+                        await conn.execute(
+                            t.project_usage_events.select().where(
+                                t.project_usage_events.c.idempotency_key == idempotency_key
+                            )
+                        )
+                    ).mappings().first()
+                if existing_usage is None:
+                    await conn.execute(
+                        t.project_usage_events.insert().values(**project_usage_values)
                     )
+                    if project_trace_id:
+                        occurred_at = project_usage_values["occurred_at"]
+                        duration_ms = project_usage_values["duration_ms"] or 0
+                        await self._insert_native_trace_span_tx(
+                            conn,
+                            trace_id=project_trace_id,
+                            span_id=new_span_id(),
+                            parent_span_id=project_span_id,
+                            source_kind="model" if event_type == "llm" else "tool",
+                            operation=project_usage_values["model"]
+                            or project_usage_values["tool_name"]
+                            or event_type,
+                            service="project_usage",
+                            status=project_usage_values["status"],
+                            started_at=occurred_at
+                            - timedelta(milliseconds=float(duration_ms or 0)),
+                            ended_at=occurred_at,
+                            duration_ms=duration_ms,
+                            attributes={
+                                "event_type": event_type,
+                                "agent_id": project_usage_values["agent_id"],
+                                "team_id": project_usage_values["team_id"],
+                            },
+                        )
 
-            await conn.execute(t.worker_usage_records.insert().values(**usage_values))
-            if trace_id:
-                duration_ms = usage.get("duration_ms") or 0
-                await self._insert_native_trace_span_tx(
-                    conn,
-                    trace_id=trace_id,
-                    span_id=new_span_id(),
-                    parent_span_id=span_id,
-                    source_kind="model",
-                    operation=usage.get("exact_model_id") or "worker.model",
-                    service="worker_evidence",
-                    status="success",
-                    started_at=now - timedelta(milliseconds=float(duration_ms or 0)),
-                    ended_at=now,
-                    duration_ms=duration_ms,
-                    attributes={
-                        "run_id": str(run_id),
-                        "prompt_tokens": usage.get("prompt_tokens", 0),
-                        "completion_tokens": usage.get("completion_tokens", 0),
-                    },
+            await conn.execute(
+                t.worker_run_runtime_bindings.update()
+                .where(
+                    sa.and_(
+                        t.worker_run_runtime_bindings.c.run_id == run_id,
+                        t.worker_run_runtime_bindings.c.attempt_count == attempt_count,
+                    )
                 )
-        return {"artifacts": stored_artifacts, "usage": usage_values}
+                .values(status=terminal_state, updated_at=now)
+            )
+            await conn.execute(
+                t.worker_run_transitions.insert().values(
+                    id=uuid4(),
+                    run_id=run_id,
+                    from_state=from_state,
+                    to_state=terminal_state,
+                    actor="worker-run-controller",
+                    reason=reason,
+                    correlation_id=correlation_id,
+                    metadata={},
+                )
+            )
+
+        completed = dict(run)
+        completed.update(values)
+        return completed
 
     async def list_worker_runs(self, *, project_id: UUID | None = None, worker_id: UUID | None = None, flow_instance_id: UUID | None = None, state: str | None = None, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
         q = t.worker_runs.select().order_by(t.worker_runs.c.created_at.desc()).limit(limit).offset(offset)

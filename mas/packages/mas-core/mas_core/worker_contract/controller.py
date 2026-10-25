@@ -582,17 +582,33 @@ class WorkerRunController:
         result: WorkerResult,
         *,
         adapter: WorkerAdapter | None = None,
-    ) -> None:
+        terminal_success: dict[str, Any] | None = None,
+        terminal_failure: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
         """Persist every returned artifact and usage record before terminal state.
 
         A worker result is only authoritative once its evidence is queryable.
         The canonical artifact table keeps existing retention behaviour; the
         worker-specific link preserves the run-local kind, checksum, and URI.
         """
-        if self.storage is None:
-            return
         claim_fence = request.execution_claim_fence
         attempt_count = int(claim_fence.get("attempt_count") or 0)
+        if terminal_success is not None and terminal_failure is not None:
+            raise ValueError("result persistence cannot finalize both success and failure")
+        terminal_completion = terminal_success or terminal_failure
+        if self.storage is None:
+            if claim_fence and terminal_completion is not None:
+                persistence_code = (
+                    "ATOMIC_FAILURE_PERSISTENCE_UNAVAILABLE"
+                    if terminal_failure is not None
+                    else "ATOMIC_SUCCESS_PERSISTENCE_UNAVAILABLE"
+                )
+                completion_kind = "failure" if terminal_failure is not None else "success"
+                raise WorkerRunError(
+                    persistence_code,
+                    f"claimed worker {completion_kind} requires atomic result and evidence storage",
+                )
+            return None
         context = getattr(adapter, "context", None)
         registrar = getattr(context, "artifact_registrar", None)
         tool_artifacts = [
@@ -659,6 +675,92 @@ class WorkerRunController:
                 "trace_id": request.trace_id,
                 "span_id": request.span_id,
             }
+        if claim_fence and terminal_completion is not None:
+            terminal_state = "FAILED" if terminal_failure is not None else "SUCCEEDED"
+            writer_name = (
+                "complete_worker_run_failure_claim_fenced"
+                if terminal_state == "FAILED"
+                else "complete_worker_run_success_claim_fenced"
+            )
+            terminal_writer = getattr(
+                self.storage,
+                writer_name,
+                None,
+            )
+            if not callable(terminal_writer):
+                await self._cleanup_unpersisted_artifacts(adapter, result, claim_fence)
+                persistence_code = (
+                    "ATOMIC_FAILURE_PERSISTENCE_UNAVAILABLE"
+                    if terminal_state == "FAILED"
+                    else "ATOMIC_SUCCESS_PERSISTENCE_UNAVAILABLE"
+                )
+                completion_kind = "failure" if terminal_state == "FAILED" else "success"
+                raise WorkerRunError(
+                    persistence_code,
+                    f"claimed worker {completion_kind} requires atomic result and evidence storage",
+                )
+            project_usage: dict[str, Any] | None = None
+            if request.project_id is not None and callable(
+                getattr(self.storage, "record_project_usage", None)
+            ):
+                worker_id: UUID | None = None
+                with suppress(TypeError, ValueError):
+                    worker_id = UUID(str(request.worker_id))
+                project_usage = {
+                    "project_id": request.project_id,
+                    "event_type": "llm",
+                    "run_id": request.run_id,
+                    "worker_id": worker_id,
+                    "model": usage.exact_model_id,
+                    "provider_id": usage.provider,
+                    "prompt_tokens": usage.prompt_tokens,
+                    "completion_tokens": usage.completion_tokens,
+                    "cost_usd": usage.cost_usd,
+                    "duration_ms": usage.duration_ms,
+                    "resource_json": {
+                        "cpu_seconds": usage.cpu_seconds,
+                        "memory_bytes": usage.memory_bytes,
+                    },
+                    "trace_id": request.trace_id,
+                    "span_id": request.span_id,
+                    "idempotency_key": (
+                        f"worker-run:{request.run_id}:attempt:{attempt_count}:usage"
+                    ),
+                    "details": {
+                        "source": "worker_result",
+                        "runtime_worker_id": request.worker_id,
+                    },
+                }
+            try:
+                terminal_kwargs: dict[str, Any] = {
+                    "run_id": request.run_id,
+                    "claim_owner": claim_fence.get("claim_owner"),
+                    "attempt_count": attempt_count,
+                    "artifacts": artifact_rows,
+                    "usage": usage_row,
+                    "result": terminal_completion["result"],
+                    "project_usage": project_usage,
+                    "reason": terminal_completion.get("reason")
+                    or "worker emitted a normalized terminal result",
+                    "correlation_id": terminal_completion.get("correlation_id"),
+                }
+                if terminal_state == "FAILED":
+                    terminal_kwargs["error"] = terminal_completion.get("error")
+                terminal_kwargs["replay_metadata"] = terminal_completion.get(
+                    "replay_metadata"
+                )
+                persisted = await terminal_writer(**terminal_kwargs)
+            except Exception:
+                # A transaction exception can have an ambiguous commit outcome.
+                # Preserve staged artifacts because durable evidence may reference them.
+                raise
+            if persisted is None:
+                await self._cleanup_unpersisted_artifacts(adapter, result, claim_fence)
+                raise WorkerRunError(
+                    "WORKER_RUN_CLAIM_LOST",
+                    "worker run claim changed before result evidence and terminal state were persisted",
+                )
+            return persisted
         atomic_writer = getattr(self.storage, "persist_worker_result_evidence_claim_fenced", None)
         if callable(atomic_writer):
             try:
@@ -764,6 +866,7 @@ class WorkerRunController:
                 # if a legacy storage double or a telemetry-only backend does
                 # not yet expose the project ledger columns.
                 logger.exception("project_usage_ledger_write_failed", extra={"run_id": str(request.run_id)})
+        return None
 
     @staticmethod
     async def _cleanup_unpersisted_artifacts(
@@ -1303,9 +1406,6 @@ class WorkerRunController:
                 model_resolution_snapshot_id,
             )
             terminal = "SUCCEEDED" if result.success else "CANCELLED" if result.error and result.error.code == "CANCELLED" else "FAILED"
-            if terminal != "CANCELLED":
-                await ensure_claim_current()
-                await self._persist_result_evidence(request, result, adapter=adapter)
             terminal_kwargs = {
                 "result": result.model_dump(mode="json"),
                 "error": None if result.success else result.error.model_dump(mode="json") if result.error else None,
@@ -1313,25 +1413,47 @@ class WorkerRunController:
                 "reason": "worker emitted a normalized terminal result",
                 "correlation_id": request.idempotency_key,
             }
-            persisted_terminal = await self.transition(
-                request.run_id,
-                terminal,
-                expected="RUNNING",
-                **execution_claim_fence,
-                **terminal_kwargs,
-            )
-            # A pause request owns RUNNING -> PAUSING, but it does not make a
-            # concurrently emitted terminal result disappear.  Allow the
-            # result to settle the run from PAUSING before pause can write
-            # PAUSED, preserving one coherent durable state and result.
-            if persisted_terminal is None:
+            if terminal in {"SUCCEEDED", "FAILED"} and execution_claim_fence:
+                await ensure_claim_current()
+                completion_args = (
+                    {"terminal_success": terminal_kwargs}
+                    if terminal == "SUCCEEDED"
+                    else {"terminal_failure": terminal_kwargs}
+                )
+                persisted_terminal = await self._persist_result_evidence(
+                    request,
+                    result,
+                    adapter=adapter,
+                    **completion_args,
+                )
+            else:
+                if terminal != "CANCELLED":
+                    await ensure_claim_current()
+                    await self._persist_result_evidence(
+                        request,
+                        result,
+                        adapter=adapter,
+                    )
                 persisted_terminal = await self.transition(
                     request.run_id,
                     terminal,
-                    expected="PAUSING",
+                    expected="RUNNING",
                     **execution_claim_fence,
                     **terminal_kwargs,
                 )
+                # A pause request owns RUNNING -> PAUSING, but it does not
+                # make a concurrently emitted terminal result disappear.
+                # Allow the result to settle the run from PAUSING before the
+                # pause can write PAUSED, preserving the legacy unclaimed and
+                # non-success lifecycle behavior.
+                if persisted_terminal is None:
+                    persisted_terminal = await self.transition(
+                        request.run_id,
+                        terminal,
+                        expected="PAUSING",
+                        **execution_claim_fence,
+                        **terminal_kwargs,
+                    )
             if persisted_terminal is None:
                 current = await self.get_run(request.run_id)
                 current_state = str((current or {}).get("state") or terminal)
