@@ -108,11 +108,15 @@ test("new flow enters the denied state when readiness validation loses authoriza
   await expect(page.locator(".react-flow__node")).toHaveCount(1);
 });
 
-test("Research Brief requires governed task bindings before readiness or activation", async ({
+test("Research Brief requires bindings, validates, and attaches to a project", async ({
   page,
 }) => {
   const taskCreatePayloads: Array<Record<string, unknown>> = [];
+  const projectCreatePayloads: Array<Record<string, unknown>> = [];
+  let savedFlow: Record<string, unknown> | null = null;
+  let createdProject: Record<string, unknown> | null = null;
   let dryRunRequests = 0;
+  let dryRunPayload: Record<string, unknown> | null = null;
   const researchTemplate = {
     template_id: "research",
     name: "Research brief",
@@ -162,25 +166,82 @@ test("Research Brief requires governed task bindings before readiness or activat
       body: JSON.stringify({ templates: [researchTemplate] }),
     });
   });
-  await page.route("**/api/flows/dry-run", async (route) => {
-    dryRunRequests += 1;
+  await page.route("**/api/flows**", async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (pathname === "/api/flows/dry-run" && request.method() === "POST") {
+      dryRunRequests += 1;
+      dryRunPayload = request.postDataJSON() as Record<string, unknown>;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ valid: true, errors: [], warnings: [] }),
+      });
+      return;
+    }
+    if (pathname === "/api/flows" && request.method() === "POST") {
+      const payload = request.postDataJSON() as Record<string, unknown>;
+      taskCreatePayloads.push(payload);
+      savedFlow = {
+        id: "research-flow-created",
+        name: payload.name,
+        version: 1,
+        is_active: payload.is_active,
+        definition_json: payload.definition_json,
+      };
+      await route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({ id: "research-flow-created", name: payload.name }),
+      });
+      return;
+    }
+    if (pathname === "/api/flows" && request.method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(savedFlow ? [savedFlow] : []),
+      });
+      return;
+    }
+    if (pathname === "/api/flows/research-flow-created" && request.method() === "GET") {
+      await route.fulfill({
+        status: savedFlow ? 200 : 404,
+        contentType: "application/json",
+        body: JSON.stringify(savedFlow ?? { detail: "Flow is not available." }),
+      });
+      return;
+    }
+    await route.fulfill({ status: 404, contentType: "application/json", body: "{}" });
+  });
+  await page.route("**/api/projects**", async (route) => {
+    const request = route.request();
+    if (new URL(request.url()).pathname !== "/api/projects") {
+      await route.fulfill({ status: 404, contentType: "application/json", body: "{}" });
+      return;
+    }
+    if (request.method() === "POST") {
+      const payload = request.postDataJSON() as Record<string, unknown>;
+      projectCreatePayloads.push(payload);
+      createdProject = {
+        id: "00000000-0000-4000-a000-000000000703",
+        name: String(payload.name ?? ""),
+        description: payload.description ?? null,
+        state: "INIT",
+        created_at: "2026-10-25T12:00:00Z",
+        updated_at: "2026-10-25T12:00:00Z",
+      };
+      await route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify(createdProject),
+      });
+      return;
+    }
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ valid: true, errors: [], warnings: [] }),
-    });
-  });
-  await page.route("**/api/flows", async (route) => {
-    if (route.request().method() !== "POST") {
-      await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
-      return;
-    }
-    const payload = route.request().postDataJSON() as Record<string, unknown>;
-    taskCreatePayloads.push(payload);
-    await route.fulfill({
-      status: 201,
-      contentType: "application/json",
-      body: JSON.stringify({ id: "research-flow-created", name: payload.name }),
+      body: JSON.stringify(createdProject ? [createdProject] : []),
     });
   });
 
@@ -207,6 +268,9 @@ test("Research Brief requires governed task bindings before readiness or activat
   await page.getByTestId("task-worker-select").first().selectOption("00000000-0000-4000-a000-000000000701");
   await page.getByTestId("task-model-profile-select").first().selectOption("approved-research-profile");
   await expect(page.getByTestId("research-template-bindings-complete")).toBeVisible();
+  await page.getByTestId("flow-dry-run-button").click();
+  await expect(page.getByTestId("flow-dry-run-result")).toBeVisible();
+  expect(dryRunRequests).toBe(1);
 
   const createResponse = page.waitForResponse(
     (response) => response.url().endsWith("/api/flows") && response.request().method() === "POST",
@@ -225,4 +289,23 @@ test("Research Brief requires governed task bindings before readiness or activat
     expect(task.config.model_profile_id).toBe("approved-research-profile");
     expect(task.config.team_id).toBeUndefined();
   }
+  expect(dryRunPayload).toEqual(expect.objectContaining({ definition_json: taskCreatePayloads[0].definition_json }));
+
+  await page.goto("/projects");
+  await page.getByRole("button", { name: "New Project" }).first().click();
+  await page.getByPlaceholder("my-project").fill("Research Brief setup project");
+  const startWork = page.getByRole("checkbox", {
+    name: "Start CEO feasibility after creation",
+  });
+  await startWork.uncheck();
+  await page.locator("select").last().selectOption("research-flow-created");
+  await page.getByRole("button", { name: "Create", exact: true }).click();
+
+  await expect(page.getByRole("link", { name: "Research Brief setup project", exact: true })).toBeVisible();
+  expect(projectCreatePayloads).toHaveLength(1);
+  expect(projectCreatePayloads[0]).toEqual(expect.objectContaining({
+    name: "Research Brief setup project",
+    flow_id: "research-flow-created",
+    start_immediately: false,
+  }));
 });
