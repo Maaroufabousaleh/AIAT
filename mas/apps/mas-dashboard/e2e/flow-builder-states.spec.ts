@@ -111,10 +111,13 @@ test("new flow enters the denied state when readiness validation loses authoriza
 test("Research Brief requires bindings, validates, and attaches to a project", async ({
   page,
 }) => {
+  const projectId = "00000000-0000-4000-a000-000000000703";
+  const flowInstanceId = "00000000-0000-4000-a000-000000000704";
   const taskCreatePayloads: Array<Record<string, unknown>> = [];
   const projectCreatePayloads: Array<Record<string, unknown>> = [];
   let savedFlow: Record<string, unknown> | null = null;
   let createdProject: Record<string, unknown> | null = null;
+  let projectFlowInstance: Record<string, unknown> | null = null;
   let dryRunRequests = 0;
   let dryRunPayload: Record<string, unknown> | null = null;
   const researchTemplate = {
@@ -212,11 +215,97 @@ test("Research Brief requires bindings, validates, and attaches to a project", a
       });
       return;
     }
+    if (pathname === `/api/flows/instances/${flowInstanceId}/executions` && request.method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: "[]",
+      });
+      return;
+    }
     await route.fulfill({ status: 404, contentType: "application/json", body: "{}" });
   });
   await page.route("**/api/projects**", async (route) => {
     const request = route.request();
-    if (new URL(request.url()).pathname !== "/api/projects") {
+    const pathname = new URL(request.url()).pathname;
+    if (pathname === `/api/projects/${projectId}` && request.method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(createdProject),
+      });
+      return;
+    }
+    if (pathname === `/api/projects/${projectId}/flow-instance` && request.method() === "GET") {
+      await route.fulfill({
+        status: projectFlowInstance ? 200 : 404,
+        contentType: "application/json",
+        body: JSON.stringify(projectFlowInstance ?? { detail: "No flow is attached." }),
+      });
+      return;
+    }
+    if (
+      [
+        `/api/projects/${projectId}/state-history`,
+        `/api/projects/${projectId}/decisions`,
+        `/api/projects/${projectId}/transition`,
+        `/api/projects/${projectId}/issues`,
+      ].includes(pathname)
+    ) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: "[]",
+      });
+      return;
+    }
+    if (pathname === `/api/projects/${projectId}/workspace`) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          next_actions: [],
+          pending_approvals: [],
+          recent_activity: [],
+          worker_activity: [],
+          artifacts: [],
+          logs: [],
+          cost_usage: {
+            available: false,
+            reason: "No usage recorded in this fixture.",
+          },
+        }),
+      });
+      return;
+    }
+    if (pathname === `/api/projects/${projectId}/repository`) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ workspace: null }),
+      });
+      return;
+    }
+    if (
+      [
+        `/api/projects/${projectId}/evidence`,
+        `/api/projects/${projectId}/evidence/package`,
+      ].includes(pathname)
+    ) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          status: "incomplete",
+          checks: [],
+          items: [],
+          categories: [],
+          notices: [],
+        }),
+      });
+      return;
+    }
+    if (pathname !== "/api/projects") {
       await route.fulfill({ status: 404, contentType: "application/json", body: "{}" });
       return;
     }
@@ -224,13 +313,26 @@ test("Research Brief requires bindings, validates, and attaches to a project", a
       const payload = request.postDataJSON() as Record<string, unknown>;
       projectCreatePayloads.push(payload);
       createdProject = {
-        id: "00000000-0000-4000-a000-000000000703",
+        id: projectId,
         name: String(payload.name ?? ""),
         description: payload.description ?? null,
         state: "INIT",
         created_at: "2026-10-25T12:00:00Z",
         updated_at: "2026-10-25T12:00:00Z",
       };
+      if (payload.flow_id === "research-flow-created") {
+        projectFlowInstance = {
+          id: flowInstanceId,
+          flow_id: "research-flow-created",
+          flow_version: 1,
+          project_id: projectId,
+          active_node_ids: [],
+          status: "NOT_STARTED",
+          context_json: {},
+          created_at: "2026-10-25T12:00:00Z",
+          updated_at: "2026-10-25T12:00:00Z",
+        };
+      }
       await route.fulfill({
         status: 201,
         contentType: "application/json",
@@ -242,6 +344,13 @@ test("Research Brief requires bindings, validates, and attaches to a project", a
       status: 200,
       contentType: "application/json",
       body: JSON.stringify(createdProject ? [createdProject] : []),
+    });
+  });
+  await page.route("**/api/governance/runs**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: "[]",
     });
   });
 
@@ -312,4 +421,18 @@ test("Research Brief requires bindings, validates, and attaches to a project", a
     flow_id: "research-flow-created",
     start_immediately: false,
   }));
+
+  await page.getByRole("link", { name: "Research Brief setup project", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Research Brief setup project" })).toBeVisible();
+  await page.getByTestId("project-tab-flow").click();
+  await expect(page.getByTestId("flow-start-button")).toBeVisible();
+  await expect(page.getByText("NOT_STARTED", { exact: true }).first()).toBeVisible();
+  await expect(page.locator(".react-flow__node")).toHaveCount(5);
+  expect(projectFlowInstance).toEqual(
+    expect.objectContaining({
+      flow_id: "research-flow-created",
+      project_id: projectId,
+      status: "NOT_STARTED",
+    }),
+  );
 });
