@@ -17,9 +17,7 @@ Tests
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from uuid import UUID
 
 import yaml
 
@@ -27,6 +25,9 @@ from mas_core.protocols.worker_manifest import WorkerManifest
 from mas_core.sandbox_policy import SUPPORTED_SANDBOX_PROFILES
 
 if TYPE_CHECKING:
+    from pathlib import Path
+    from uuid import UUID
+
     from mas_core.memory.storage import AgentStorage
 
 logger = logging.getLogger(__name__)
@@ -143,10 +144,9 @@ async def _test_sandbox_compliance(
 
     details = [f"Sandbox profile '{profile}' is valid"]
 
-    if manifest:
-        if manifest.sandbox.network_mode == "egress-allowlist":
-            allowed = manifest.sandbox.egress_allowlist
-            details.append(f"Egress allowlist: {len(allowed)} entries")
+    if manifest and manifest.sandbox.network_mode == "egress-allowlist":
+        allowed = manifest.sandbox.egress_allowlist
+        details.append(f"Egress allowlist: {len(allowed)} entries")
 
     return {
         "passed": True,

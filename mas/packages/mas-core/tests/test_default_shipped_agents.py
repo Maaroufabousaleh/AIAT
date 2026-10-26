@@ -12,9 +12,9 @@ from mas_core.worker_registry.evaluator import (
     DEFAULT_GUARDED_CHECKS,
     MANDATORY_GUARDED_CHECKS,
     _blocked_reasons,
+    _check_licensing,
     _compute_overall_score,
     _compute_verdict,
-    _check_licensing,
 )
 from mas_tools_sdk.manifest import TOOL_MANIFEST
 
@@ -108,6 +108,11 @@ def _load_manifests() -> dict[str, WorkerManifest]:
     manifests = {}
     for path in _workers_dir().glob("*.yaml"):
         manifest = WorkerManifest.model_validate(yaml.safe_load(path.read_text()))
+        # Integration candidates are deliberately kept inactive and pending
+        # governance. They are available to candidate tooling, but are not
+        # members of the default shipped agent catalogue.
+        if "integration_candidate" in manifest.metadata.tags:
+            continue
         manifests[manifest.metadata.id] = manifest
     return manifests
 

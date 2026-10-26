@@ -30,6 +30,7 @@ from conftest import NOW_ISO
 
 WORKER_ID = UUID("00000000-0000-4000-a000-0000000000c1")
 CAP_ID = UUID("00000000-0000-4000-a000-0000000000d1")
+OPERATOR_HEADERS = {"X-API-Key": "test-operator-key"}
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -267,6 +268,7 @@ async def test_deactivate_worker_changes_status_to_inactive(client):
 
     resp = await client.patch(
         f"/capabilities/workers/{WORKER_ID}/status",
+        headers=OPERATOR_HEADERS,
         json={"action": "DEACTIVATE"},
     )
     assert resp.status_code == 200
@@ -298,6 +300,7 @@ async def test_deactivate_nonexistent_worker_returns_404(client):
 
     resp = await client.patch(
         f"/capabilities/workers/{uuid4()}/status",
+        headers=OPERATOR_HEADERS,
         json={"action": "DEACTIVATE"},
     )
     assert resp.status_code == 404
@@ -318,6 +321,7 @@ async def test_reactivate_worker_changes_status_back_to_active(client):
 
     resp = await client.patch(
         f"/capabilities/workers/{WORKER_ID}/status",
+        headers=OPERATOR_HEADERS,
         json={"action": "ACTIVATE"},
     )
     assert resp.status_code == 200
@@ -356,6 +360,7 @@ async def test_drain_worker_changes_status_to_draining(client):
 
     resp = await client.patch(
         f"/capabilities/workers/{WORKER_ID}/status",
+        headers=OPERATOR_HEADERS,
         json={"action": "DRAIN"},
     )
     assert resp.status_code == 200
@@ -375,6 +380,7 @@ async def test_unknown_status_action_returns_400(client):
 
     resp = await client.patch(
         f"/capabilities/workers/{WORKER_ID}/status",
+        headers=OPERATOR_HEADERS,
         json={"action": "EXPLODE"},
     )
     assert resp.status_code == 400
@@ -564,6 +570,7 @@ async def test_yaml_import_from_valid_manifest_creates_worker(client, tmp_path, 
     resp = await client.post(
         "/capabilities/workers/import",
         json={"workers_dir": "workers", "dry_run": False},
+        headers=OPERATOR_HEADERS,
     )
     assert resp.status_code == 200
     summary = resp.json()
@@ -609,6 +616,7 @@ async def test_yaml_import_dry_run_does_not_write_to_db(client, tmp_path, monkey
     resp = await client.post(
         "/capabilities/workers/import",
         json={"workers_dir": "workers", "dry_run": True},
+        headers=OPERATOR_HEADERS,
     )
     assert resp.status_code == 200
     summary = resp.json()
@@ -642,6 +650,7 @@ async def test_yaml_import_invalid_manifest_reports_error(client, tmp_path, monk
     resp = await client.post(
         "/capabilities/workers/import",
         json={"workers_dir": "workers", "dry_run": False},
+        headers=OPERATOR_HEADERS,
     )
     assert resp.status_code == 200
     summary = resp.json()
@@ -664,6 +673,7 @@ async def test_yaml_import_outside_cwd_returns_400(client, tmp_path, monkeypatch
     resp = await client.post(
         "/capabilities/workers/import",
         json={"workers_dir": str(tmp_path / "workers"), "dry_run": False},
+        headers=OPERATOR_HEADERS,
     )
     assert resp.status_code == 400
     assert "within" in resp.json()["detail"].lower() or "not found" in resp.json()["detail"].lower()
@@ -679,9 +689,26 @@ async def test_yaml_import_nonexistent_directory_returns_400(client, tmp_path, m
     resp = await client.post(
         "/capabilities/workers/import",
         json={"workers_dir": "nonexistent_workers_dir", "dry_run": False},
+        headers=OPERATOR_HEADERS,
     )
     assert resp.status_code == 400
     assert "not found" in resp.json()["detail"].lower()
+
+
+@pytest.mark.anyio
+async def test_yaml_import_requires_operator_identity(client, monkeypatch, tmp_path):
+    """Service credentials cannot register worker manifests."""
+    workers_dir = tmp_path / "workers"
+    workers_dir.mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    response = await client.post(
+        "/capabilities/workers/import",
+        json={"workers_dir": "workers", "dry_run": False},
+    )
+
+    assert response.status_code == 403
+    assert "operator" in response.json()["detail"].lower()
 
 
 # ── 11. Upstream info endpoint ────────────────────────────────────────────────
@@ -740,6 +767,7 @@ async def test_reclassify_worker_updates_entrypoint(client):
 
     resp = await client.patch(
         f"/capabilities/workers/{WORKER_ID}/status",
+        headers=OPERATOR_HEADERS,
         json={"action": "RECLASSIFY", "new_role": "ToolAgent"},
     )
     assert resp.status_code == 200
@@ -747,6 +775,54 @@ async def test_reclassify_worker_updates_entrypoint(client):
     storage.update_worker_config.assert_awaited_once()
     _, kwargs = storage.update_worker_config.await_args
     assert kwargs.get("adapter_entrypoint") == "ToolAgent"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("status", ["ACTIVE", "active", " ACTIVE "])
+async def test_reclassify_cannot_bypass_governed_worker_activation(client, status):
+    """RECLASSIFY must not write ACTIVE around the governed activation checks."""
+    row = _worker_row(status="INACTIVE", evaluation_status=None)
+    storage = MagicMock()
+    storage.get_worker = AsyncMock(return_value=row)
+    storage.update_worker_status = AsyncMock(return_value=None)
+    storage.update_worker_config = AsyncMock(return_value=None)
+    _patch(storage)
+
+    response = await client.patch(
+        f"/capabilities/workers/{WORKER_ID}/status",
+        headers=OPERATOR_HEADERS,
+        json={"action": "RECLASSIFY", "new_status": status, "new_role": "ToolAgent"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "WORKER_ACTIVATION_REQUIRES_ACTIVATE_ACTION"
+    storage.update_worker_status.assert_not_awaited()
+    storage.update_worker_config.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_reclassify_preserves_non_active_status_updates(client):
+    """A non-ACTIVE reclassification can still update status and worker role."""
+    row = _worker_row(status="ACTIVE")
+    updated_row = _worker_row(status="INACTIVE", adapter_entrypoint="ToolAgent")
+    storage = MagicMock()
+    storage.get_worker = AsyncMock(side_effect=[row, updated_row])
+    storage.update_worker_status = AsyncMock(return_value=None)
+    storage.update_worker_config = AsyncMock(return_value=None)
+    _patch(storage)
+
+    response = await client.patch(
+        f"/capabilities/workers/{WORKER_ID}/status",
+        headers=OPERATOR_HEADERS,
+        json={"action": "RECLASSIFY", "new_status": "INACTIVE", "new_role": "ToolAgent"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "INACTIVE"
+    storage.update_worker_status.assert_awaited_once_with(WORKER_ID, status="INACTIVE")
+    storage.update_worker_config.assert_awaited_once_with(
+        WORKER_ID, adapter_entrypoint="ToolAgent"
+    )
 
 
 # ── 13. Integration: full lifecycle register → update → deactivate → reactivate
@@ -798,6 +874,7 @@ async def test_worker_full_lifecycle(client):
     storage.update_worker_status = AsyncMock(return_value=None)
     resp4 = await client.patch(
         f"/capabilities/workers/{worker_id}/status",
+        headers=OPERATOR_HEADERS,
         json={"action": "DEACTIVATE"},
     )
     assert resp4.status_code == 200
@@ -814,6 +891,7 @@ async def test_worker_full_lifecycle(client):
     storage.update_worker_status = AsyncMock(return_value=None)
     resp6 = await client.patch(
         f"/capabilities/workers/{worker_id}/status",
+        headers=OPERATOR_HEADERS,
         json={"action": "ACTIVATE"},
     )
     assert resp6.status_code == 200

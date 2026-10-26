@@ -31,4 +31,4 @@ def test_worker_postgres_checkers_require_runtime_binding_head() -> None:
     for name in WORKER_POSTGRES_CHECKERS:
         source = (SCRIPTS / name).read_text(encoding="utf-8")
         assert "0042_worker_run_host_binding" not in source, name
-        assert "0045_worker_tool_effects" in source, name
+        assert "0046_project_approval_inbox_index" in source, name

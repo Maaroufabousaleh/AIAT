@@ -113,6 +113,8 @@ export default function ToolsPage() {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasReadContextRef = useRef(false);
+  const expandedGroupsInitializedRef = useRef(false);
+  const requestSequenceRef = useRef(0);
 
   const handleAccessDenied = useCallback(() => {
     if (intervalRef.current) {
@@ -139,6 +141,7 @@ export default function ToolsPage() {
 
   const fetchTools = useCallback(async () => {
     if (accessDenied) return;
+    const requestSequence = ++requestSequenceRef.current;
     try {
       const res = await fetch('/api/tools', { cache: 'no-store' });
       if (!res.ok) {
@@ -147,19 +150,22 @@ export default function ToolsPage() {
         throw error;
       }
       const json: ToolsResponse = await res.json();
+      if (requestSequence !== requestSequenceRef.current) return;
       dataRef.current = json;
       hasReadContextRef.current = true;
       setData(json);
       setHasReadContext(true);
       setError(null);
       setStale(false);
-      // Default: expand all groups on first load
-      const groups = Object.keys(groupTools((json.tools ?? []).filter((t) => !t.deprecated_alias_of)));
-      setExpandedGroups(prev => {
-        if (prev.size === 0) return new Set(groups);
-        return prev;
-      });
+      // Default: expand all groups on first load. Keep the operator's choice
+      // across refreshes, including an intentional collapse-all (empty Set).
+      if (!expandedGroupsInitializedRef.current) {
+        expandedGroupsInitializedRef.current = true;
+        const groups = Object.keys(groupTools((json.tools ?? []).filter((t) => !t.deprecated_alias_of)));
+        setExpandedGroups(new Set(groups));
+      }
     } catch (e) {
+      if (requestSequence !== requestSequenceRef.current) return;
       const status = e instanceof Error ? (e as HttpError).status : undefined;
       if (status === 401 || status === 403) {
         handleAccessDenied();
@@ -168,7 +174,7 @@ export default function ToolsPage() {
       setError(e instanceof Error ? e.message : 'Failed to fetch tools');
       setStale(dataRef.current !== null);
     } finally {
-      setLoading(false);
+      if (requestSequence === requestSequenceRef.current) setLoading(false);
     }
   }, [accessDenied, handleAccessDenied]);
 
@@ -213,11 +219,11 @@ export default function ToolsPage() {
     setExpandedGroups(open ? new Set(allGroups) : new Set());
   };
 
+  const currentGroupNames = data
+    ? Object.keys(groupTools((data.tools ?? []).filter((t) => !t.deprecated_alias_of)))
+    : [];
   const allExpanded =
-    !!data &&
-    expandedGroups.size ===
-      Object.keys(groupTools((data.tools ?? []).filter((t) => !t.deprecated_alias_of))).length &&
-      expandedGroups.size > 0;
+    currentGroupNames.length > 0 && currentGroupNames.every((group) => expandedGroups.has(group));
 
   const requestRefresh = () => {
     if (accessDenied) return;

@@ -2,6 +2,14 @@ import { NextResponse } from "next/server";
 
 const TOOL_SERVICE_URL = process.env.TOOL_SERVICE_URL ?? "http://localhost:8002";
 const TOOL_SECRET = process.env.TOOL_SECRET ?? "";
+const CATALOGUE_UNAVAILABLE = "Tool Service catalogue is temporarily unavailable.";
+
+function unavailable(status = 503) {
+  return NextResponse.json(
+    { error: CATALOGUE_UNAVAILABLE },
+    { status },
+  );
+}
 
 export async function GET() {
   try {
@@ -25,14 +33,27 @@ export async function GET() {
       );
     }
 
-    const rawTools = toolsRes.status === "fulfilled" && toolsRes.value.ok
-      ? await toolsRes.value.json()
-      : null;
+    if (toolsRes.status === "rejected") {
+      return unavailable();
+    }
+    if (!toolsRes.value.ok) {
+      const status = toolsRes.value.status >= 500 ? 503 : 502;
+      return unavailable(status);
+    }
+
+    const rawTools = await toolsRes.value.json();
     const health = healthRes.status === "fulfilled" && healthRes.value.ok
       ? await healthRes.value.json()
       : null;
 
-    const toolList = Array.isArray(rawTools) ? rawTools : rawTools?.tools ?? [];
+    const toolList = Array.isArray(rawTools)
+      ? rawTools
+      : Array.isArray(rawTools?.tools)
+        ? rawTools.tools
+        : null;
+    if (!toolList) {
+      return unavailable(502);
+    }
     const tools = toolList.map((tool: Record<string, unknown>) => ({
       ...tool,
       name: tool.name ?? tool.tool_name,
@@ -40,7 +61,7 @@ export async function GET() {
     }));
 
     return NextResponse.json({ tools, groups: rawTools?.groups, health });
-  } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+  } catch {
+    return unavailable(502);
   }
 }

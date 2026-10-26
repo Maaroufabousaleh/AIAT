@@ -84,6 +84,15 @@ networks:
   workers:
     driver: bridge
     internal: true
+  # gVisor cannot use Docker's embedded 127.0.0.11 resolver. This dedicated
+  # bridge gives the runsc OpenCode service stable, host-file-resolved gateway
+  # addresses while keeping its reachable service set internal and narrow.
+  sandbox_gateway:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: "${AIAT_SANDBOX_GATEWAY_SUBNET:-172.31.250.0/29}"
 
 # ── Volumes ───────────────────────────────────────────────────────────────────
 volumes:
@@ -326,9 +335,11 @@ services:
       - path: ../../../.env
         format: raw
     networks:
-      - internal
-      - workers
-      - public
+      internal: {}
+      workers: {}
+      public: {}
+      sandbox_gateway:
+        ipv4_address: "${AIAT_SANDBOX_TOOL_SERVICE_IP:-172.31.250.3}"
     # No host port in production — team-runners reach this gateway on workers;
     # the service itself owns the private data-plane bridges.
     # Use docker-compose.dev.yml to expose for local debugging.
@@ -467,9 +478,11 @@ services:
     image: "${LITELLM_IMAGE_REF:?LITELLM_IMAGE_REF must be an immutable OCI image reference}"
     restart: unless-stopped
     networks:
-      - internal
-      - workers
-      - public
+      internal: {}
+      workers: {}
+      public: {}
+      sandbox_gateway:
+        ipv4_address: "${AIAT_SANDBOX_LITELLM_IP:-172.31.250.4}"
     dns:
       - 1.1.1.1
       - 8.8.8.8
@@ -509,12 +522,18 @@ services:
         OPENCODE_VERSION: "1.17.13"
         OPENCODE_TARBALL_SHA512: "qUb9m6X6f9/imuDxc2tUcN+E1vx1XWjmQWJo2Pk/t+cNxqt5KGkaMF89CvJK6QQP7gx1E82gKpV7n1QiI5spxQ=="
     restart: unless-stopped
+    # OpenCode executes untrusted coding tasks. Keep the whole runtime service
+    # inside the canonical gVisor tier; never let Docker silently select runc.
+    runtime: runsc
     user: "10001:10001"
     networks:
-      - internal
-    env_file:
-      - path: ../../../.env
-        format: raw
+      sandbox_gateway:
+        ipv4_address: "${AIAT_SANDBOX_OPENCODE_IP:-172.31.250.2}"
+    # Docker's embedded DNS listens outside runsc's isolated network stack.
+    # Compose writes these fixed internal addresses into /etc/hosts instead.
+    extra_hosts:
+      - "tool-service=${AIAT_SANDBOX_TOOL_SERVICE_IP:-172.31.250.3}"
+      - "litellm=${AIAT_SANDBOX_LITELLM_IP:-172.31.250.4}"
     depends_on:
       opencode-workspace-init:
         condition: service_completed_successfully
@@ -555,9 +574,11 @@ services:
       - path: ../../../.env
         format: raw
     networks:
-      - internal
-      - workers
-      - public
+      internal: {}
+      workers: {}
+      public: {}
+      sandbox_gateway:
+        ipv4_address: "${AIAT_SANDBOX_ORCHESTRATOR_IP:-172.31.250.5}"
     ports:
       - "127.0.0.1:${AIAT_DEV_ORCHESTRATOR_PORT:-8000}:8000"
     depends_on:
@@ -572,6 +593,10 @@ services:
       message-router:
         condition: service_started
     environment:
+      # Maintenance mode must be explicitly passed through Compose so an
+      # operator can bring the API up for read-only inspection without
+      # enabling autonomous startup work. Normal startup remains the default.
+      AIAT_STARTUP_MAINTENANCE: "${AIAT_STARTUP_MAINTENANCE:-false}"
       # Credential resolution must fail closed in the deployed stack.  Local
       # unit tests that omit MAS_ENVIRONMENT still retain the manager's
       # development-only fallback outside Compose.

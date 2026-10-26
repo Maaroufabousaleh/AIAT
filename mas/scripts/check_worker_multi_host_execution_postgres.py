@@ -61,7 +61,7 @@ from mas_core.worker_registry.run_host_binding import (  # noqa: E402
 )
 
 CHECK_SCHEMA = "aiat.worker-multi-host-execution-postgres-certification.v1"
-EXPECTED_MIGRATION = "0045_worker_tool_effects"
+EXPECTED_MIGRATION = "0046_project_approval_inbox_index"
 WORKER_NAME = "aiat-cert-multi-host-execution-v1"
 WORKER_PREFIX = f"{WORKER_NAME}%"
 HOST_PREFIX = "aiat-cert-multi-host-execution-worker-v1-"
@@ -538,7 +538,7 @@ async def _run(dsn: str | None) -> dict[str, Any]:
                         HostExecutionRequest(
                             run_id=RUN_A,
                             host_id=HOST_A,
-                            owner=f"{OWNER_A}-duplicate",
+                            owner=OWNER_A,
                             lease_seconds=30,
                         ),
                         request_a,

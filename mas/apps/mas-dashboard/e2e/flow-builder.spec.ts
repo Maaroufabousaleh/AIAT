@@ -94,8 +94,8 @@ test("operator can build, version, assign, refresh, and override a flow from the
   page,
 }) => {
   const stamp = Date.now();
-  const flowName = `Simple Product Build Flow ${stamp}`;
-  const projectName = `flow-ui-project-${stamp}`;
+  const flowName = `aiat_e2e_flow_product_build_${stamp}`;
+  const projectName = `aiat_e2e_project_flow_ui_${stamp}`;
 
   await authenticate(page, "/projects");
   await page.goto("/flows/new");

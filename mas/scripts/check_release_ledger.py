@@ -339,6 +339,19 @@ def _safe_summary(payload: dict[str, Any] | None, stdout: str, stderr: str) -> d
     summary = {key: payload[key] for key in allowed if key in payload}
     if isinstance(payload.get("findings"), list):
         summary["finding_count"] = len(payload["findings"])
+    pending_security_findings = summary.get("pending_security_findings")
+    if isinstance(pending_security_findings, dict):
+        # Older binding certificates retain a historical scalar claim for a
+        # scan whose raw results and source snapshot are absent. Preserve the
+        # binding evidence, but never promote that claim into current counts.
+        summary["pending_security_findings"] = {
+            key: pending_security_findings[key]
+            for key in ("workers", "status")
+            if key in pending_security_findings
+        }
+        summary["pending_security_findings"]["finding_count_status"] = (
+            "unavailable_no_retained_raw_evidence"
+        )
     native_release = payload.get("native_release")
     if isinstance(native_release, dict):
         native_blockers = native_release.get("blockers")

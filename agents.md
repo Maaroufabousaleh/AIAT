@@ -16,6 +16,27 @@ hosting, or third-party commercial deployment.
   resource use, maintainability, and integration quality.
 - Treat every external runtime as untrusted execution regardless of licence.
 
+## Pre-commit secret safety
+
+Before every commit, AI agents must review the complete staged diff, including
+new files, for secrets and sensitive data. Run the repository's configured
+secret scanner when available, and inspect its results without printing or
+copying matched values. Check for API keys, tokens, passwords, private keys,
+cookies, credential-bearing URLs, connection strings, and secret-bearing logs
+or generated artifacts. Do not stage or commit `.env` files, credentials,
+private keys, or unredacted secret-bearing evidence. If a possible secret is
+found, stop the commit, keep the value out of chat and logs, remove it safely
+from the staged change without disturbing unrelated work, and notify the
+operator; treat an already exposed credential as requiring rotation.
+
+## GitHub delivery
+
+After reviewing the complete staged diff for sensitive data, running the
+available secret scanner, and passing appropriate validation, commit and push
+completed, scoped changes to the configured GitHub remote on the active
+feature branch. Preserve unrelated work, keep local secrets and private
+operational artifacts out of Git, and do not force-push or bypass failed checks.
+
 ## Licence handling
 
 Licence information is metadata only for this personal instance.
@@ -55,7 +76,7 @@ licence-based bans.
 | Research/browser | Scrapling, guarded Playwright/browser-use | Other sandboxed fetch/browser tools |
 | Code review | AIAT deterministic diff reviewer; optional pr-agent/open-code-review/stage-cli | Other exact-pinned review tools |
 | Security | Semgrep, SkillSpector, TruffleHog, sandbox tests | Other scanners through bounded adapters |
-| Sandboxing | gVisor; Firecracker for high risk | Other host-certified isolation profiles |
+| Sandboxing | Wasmtime for WASM artifacts; gVisor for compatible OCI/Linux; Kata for high-risk or gVisor-incompatible work | Other host-certified isolation profiles; direct Firecracker only as a possible Kata VMM/legacy compatibility path |
 | DevOps | OpenTofu, GitHub Actions, Ansible | Other bounded infrastructure adapters |
 | Planning/PM | ccpm, GitHub Issues, YouTrack | Plane, OpenProject, and other providers |
 | Identity/secrets | AIAT identity/credentials, Stalwart, Resend | ZITADEL, Vault, OpenBao, cloud KMS |

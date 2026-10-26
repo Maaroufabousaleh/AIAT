@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from unittest.mock import AsyncMock
-from uuid import uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import anyio
 import pytest
@@ -130,6 +130,7 @@ async def test_deduplicated_async_ceo_request_is_still_scheduled(
 
     response = await client.post(
         "/ceo/message",
+        headers={"X-API-Key": "test-operator-key"},
         json={
             "message": "create a project named dedupe test",
             "request_id": "b870d9a2-8695-4f6e-870a-6f205202bdde",
@@ -143,6 +144,7 @@ async def test_deduplicated_async_ceo_request_is_still_scheduled(
 
     retry = await client.post(
         "/ceo/message",
+        headers={"X-API-Key": "test-operator-key"},
         json={
             "message": "create a project named dedupe test",
             "request_id": "b870d9a2-8695-4f6e-870a-6f205202bdde",
@@ -154,13 +156,30 @@ async def test_deduplicated_async_ceo_request_is_still_scheduled(
     assert retry.json()["status"] == "duplicate"
     handle.assert_awaited_once()
 
+    changed_mode = await client.post(
+        "/ceo/message",
+        headers={"X-API-Key": "test-operator-key"},
+        json={
+            "message": "create a project named dedupe test",
+            "request_id": "b870d9a2-8695-4f6e-870a-6f205202bdde",
+            "async_mode": True,
+            "project_start_mode": "prepare_only",
+        },
+    )
+
+    assert changed_mode.status_code == 409
+    assert "different CEO command" in changed_mode.text
+    handle.assert_awaited_once()
+
     recovered_id = "00000000-0000-4000-a000-000000000099"
     await main._store_new_ceo_command(
         main.app.state.storage,
         message_id=recovered_id,
         instruction="create a project named recovered command",
+        principal="operator",
         context_worker_id=None,
         context_confirmation_token=None,
+        project_start_mode="prepare_only",
     )
     async with anyio.create_task_group() as task_group:
         monkeypatch.setattr(main.app.state, "ceo_command_task_group", task_group)
@@ -170,3 +189,68 @@ async def test_deduplicated_async_ceo_request_is_still_scheduled(
     assert recovered is not None
     assert recovered[0]["status"] == "COMPLETED"
     assert handle.await_count == 2
+    assert handle.await_args_list[-1].kwargs["project_start_mode"] == "prepare_only"
+
+
+@pytest.mark.anyio
+async def test_recovered_ceo_project_creation_reuses_message_idempotency_key(monkeypatch) -> None:
+    from orchestrator_api import main
+
+    class ProjectStorage:
+        def __init__(self) -> None:
+            self.projects: dict[UUID, dict[str, object]] = {}
+            self.create_calls: list[dict[str, object]] = []
+
+        async def get_config(self, key: str):
+            return None
+
+        async def get_project(self, project_id: UUID):
+            return self.projects.get(project_id)
+
+        async def create_project(self, **kwargs):
+            self.create_calls.append(kwargs)
+            project_id = kwargs.get("project_id", uuid4())
+            project = {
+                "id": project_id,
+                "name": kwargs["name"],
+                "description": kwargs["description"],
+                "state": "INIT",
+                "created_by": kwargs["created_by"],
+                "config": kwargs["config"],
+            }
+            self.projects[project_id] = project
+            return project
+
+    storage = ProjectStorage()
+    previous_storage = main.app.state.storage
+    main.app.state.storage = storage
+    progress = AsyncMock()
+    response = AsyncMock()
+    monkeypatch.setattr(main, "_publish_ceo_chat_progress", progress)
+    monkeypatch.setattr(main, "_publish_ceo_chat_response", response)
+
+    message_id = str(uuid4())
+    expected_project_id = uuid5(
+        NAMESPACE_URL,
+        f"aiat:project-create:{main.DEFAULT_COMPANY_ID}:{message_id}",
+    )
+    command = {
+        "instruction": "Create a project named Expense Analyzer for CSV expense totals and tests.",
+        "context_worker_id": None,
+        "context_confirmation_token": None,
+        "message_id": message_id,
+        "principal": "operator",
+        "project_start_mode": "prepare_only",
+    }
+    try:
+        # Simulate recovery after project creation but before the CEO command
+        # receipt was committed.
+        await main._process_ceo_operator_intent(**command)
+        await main._process_ceo_operator_intent(**command)
+    finally:
+        main.app.state.storage = previous_storage
+
+    assert len(storage.create_calls) == 1
+    assert storage.create_calls[0]["project_id"] == expected_project_id
+    assert len(storage.projects) == 1
+    assert response.await_count == 2

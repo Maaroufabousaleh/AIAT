@@ -15,7 +15,7 @@ from mas_core.sandbox_policy import canonical_sandbox_class
 from mas_tools_sdk.base import BaseTool
 from mas_tools_sdk.groups import ToolGroup
 
-from .file import _safe_workspace_path, _workspace_root
+from .file import _resolve_project_id, _safe_workspace_path, _workspace_root
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -222,14 +222,14 @@ def _decode_code_review_output(result: dict[str, Any]) -> dict[str, Any]:
 def _workspace_cwd(project_id: str = "", path: str = ".") -> Path:
     root = _workspace_root()
     if path in ("", "."):
-        candidate = root / project_id if project_id else root
+        candidate = _safe_workspace_path(".", project_id=project_id) if project_id else root
     else:
         candidate = _safe_workspace_path(path, project_id=project_id)
     resolved = candidate.resolve()
     try:
-        resolved.relative_to(root)
+        resolved.relative_to((root / project_id).resolve() if project_id else root)
     except ValueError as exc:
-        raise ValueError("Path traversal detected") from exc
+        raise ValueError("Path traversal escapes the project workspace") from exc
     return resolved
 
 
@@ -460,7 +460,8 @@ class CommandRunSafeTool(BaseTool):
             raise ValueError("command must be a string or list")
         if not _command_allowed(argv):
             raise ValueError(f"Command is not allowlisted: {' '.join(argv[:3])}")
-        cwd = _workspace_cwd(kwargs.get("project_id", ""), kwargs.get("cwd", "."))
+        project_id = _resolve_project_id(kwargs)
+        cwd = _workspace_cwd(project_id, kwargs.get("cwd", "."))
         if not cwd.is_dir():
             raise ValueError("cwd must be an existing directory")
         return await _run_sandboxed_process(
@@ -481,7 +482,7 @@ class RepoReadTool(BaseTool):
     max_concurrency = 10
 
     async def execute(self, **kwargs: Any) -> Any:
-        project_id = kwargs.get("project_id", "")
+        project_id = _resolve_project_id(kwargs)
         path = kwargs.get("path", "")
         safe_path = _safe_workspace_path(path, project_id=project_id)
         content = safe_path.read_text(encoding="utf-8")
@@ -505,7 +506,7 @@ class RepoSearchTool(BaseTool):
         query = str(kwargs.get("query") or "")
         if not query:
             raise ValueError("query is required")
-        project_id = kwargs.get("project_id", "")
+        project_id = _resolve_project_id(kwargs)
         cwd = _workspace_cwd(project_id, kwargs.get("path", "."))
         max_results = int(
             _bounded_number(
@@ -559,7 +560,7 @@ class DocumentIngestTool(BaseTool):
 
     async def execute(self, **kwargs: Any) -> Any:
         path = kwargs.get("path", "")
-        project_id = kwargs.get("project_id", "")
+        project_id = _resolve_project_id(kwargs)
         safe_path = _safe_workspace_path(path, project_id=project_id)
         docling = shutil.which("docling")
         if docling:
@@ -593,7 +594,7 @@ class SecurityScanTool(BaseTool):
     max_concurrency = 2
 
     async def execute(self, **kwargs: Any) -> Any:
-        project_id = kwargs.get("project_id", "")
+        project_id = _resolve_project_id(kwargs)
         cwd = _workspace_cwd(project_id, kwargs.get("path", "."))
         scanner = str(kwargs.get("scanner") or "semgrep").strip().lower()
         if scanner not in {"semgrep", "skillspector", "trufflehog"}:
@@ -762,12 +763,14 @@ class TestRunTool(BaseTool):
             command = ["npx", "playwright", "test", *args]
         else:
             raise ValueError("runner must be 'pytest' or 'playwright'")
+        project_id = _resolve_project_id(kwargs)
         return await CommandRunSafeTool().execute(
             command=command,
-            project_id=kwargs.get("project_id", ""),
+            project_id=project_id,
             cwd=kwargs.get("cwd", "."),
             timeout_seconds=kwargs.get("timeout_seconds", 120),
             max_output_bytes=kwargs.get("max_output_bytes", 256_000),
+            _aiat_context=kwargs.get("_aiat_context"),
         )
 
 
@@ -782,7 +785,8 @@ class CodeReviewTool(BaseTool):
 
     async def execute(self, **kwargs: Any) -> Any:
         raw = os.getenv("TOOL_CODE_REVIEW_COMMAND", "").strip()
-        cwd = _workspace_cwd(kwargs.get("project_id", ""), kwargs.get("cwd", "."))
+        project_id = _resolve_project_id(kwargs)
+        cwd = _workspace_cwd(project_id, kwargs.get("cwd", "."))
         payload = {
             "mode": str(kwargs.get("mode") or "diff"),
             "base": str(kwargs.get("base") or ""),
@@ -832,7 +836,8 @@ class IaCPlanTool(BaseTool):
         binary = "opentofu" if shutil.which("opentofu") else "tofu"
         args = [str(arg) for arg in kwargs.get("args", [])]
         command = [binary, "plan", *args]
-        cwd = _workspace_cwd(kwargs.get("project_id", ""), kwargs.get("cwd", "."))
+        project_id = _resolve_project_id(kwargs)
+        cwd = _workspace_cwd(project_id, kwargs.get("cwd", "."))
         return await _run_process(
             command,
             cwd=cwd,
@@ -861,9 +866,10 @@ class DiagramRenderTool(BaseTool):
                 "reason": "mmdc_binary_not_found",
                 "source": source,
             }
-        cwd = _workspace_cwd(kwargs.get("project_id", ""), kwargs.get("cwd", "."))
+        project_id = _resolve_project_id(kwargs)
+        cwd = _workspace_cwd(project_id, kwargs.get("cwd", "."))
         output = str(kwargs.get("output", "diagram.svg"))
-        out_path = _safe_workspace_path(output, project_id=kwargs.get("project_id", ""))
+        out_path = _safe_workspace_path(output, project_id=project_id)
         result = await _run_process(
             [
                 mmdc,

@@ -1,0 +1,272 @@
+[
+  {
+    "column": 14,
+    "disposition": "NEEDS_OPERATOR_REVIEW",
+    "line": 19,
+    "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+    "owner": "personal-operator",
+    "path": ".github/workflows/containers.yml",
+    "rule_id": "runner-label",
+    "severity": "UNSPECIFIED_BY_SCANNER"
+  },
+  {
+    "column": 9,
+    "disposition": "NEEDS_OPERATOR_REVIEW",
+    "line": 12,
+    "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+    "owner": "personal-operator",
+    "path": ".github/workflows/docs-locale-sync.yml",
+    "rule_id": "if-cond",
+    "severity": "UNSPECIFIED_BY_SCANNER"
+  },
+  {
+    "column": 14,
+    "disposition": "NEEDS_OPERATOR_REVIEW",
+    "line": 14,
+    "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+    "owner": "personal-operator",
+    "path": ".github/workflows/docs-locale-sync.yml",
+    "rule_id": "runner-label",
+    "severity": "UNSPECIFIED_BY_SCANNER"
+  },
+  {
+    "column": 14,
+    "disposition": "NEEDS_OPERATOR_REVIEW",
+    "line": 14,
+    "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+    "owner": "personal-operator",
+    "path": ".github/workflows/docs-update.yml",
+    "rule_id": "runner-label",
+    "severity": "UNSPECIFIED_BY_SCANNER"
+  },
+  {
+    "column": 14,
+    "disposition": "NEEDS_OPERATOR_REVIEW",
+    "line": 10,
+    "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+    "owner": "personal-operator",
+    "path": ".github/workflows/duplicate-issues.yml",
+    "rule_id": "runner-label",
+    "severity": "UNSPECIFIED_BY_SCANNER"
+  },
+  {
+    "column": 14,
+    "disposition": "NEEDS_OPERATOR_REVIEW",
+    "line": 144,
+    "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+    "owner": "personal-operator",
+    "path": ".github/workflows/duplicate-issues.yml",
+    "rule_id": "runner-label",
+    "severity": "UNSPECIFIED_BY_SCANNER"
+  },
+  {
+    "column": 14,
+    "disposition": "NEEDS_OPERATOR_REVIEW",
+    "line": 10,
+    "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+    "owner": "personal-operator",
+    "path": ".github/workflows/generate.yml",
+    "rule_id": "runner-label",
+    "severity": "UNSPECIFIED_BY_SCANNER"
+  },
+  {
+    "column": 245,
+    "disposition": "NEEDS_OPERATOR_REVIEW",
+    "line": 32,
+    "next_action": "Review the untrusted-expression shell context and correlate it with the retained Zizmor template-injection results.",
+    "owner": "personal-operator",
+    "path": ".github/workflows/generate.yml",
+    "rule_id": "expression",
+    "severity": "UNSPECIFIED_BY_SCANNER"
+  },
+  {
+    "column": 14,
+    "disposition": "NEEDS_OPERATOR_REVIEW",
+    "line": 19,
+    "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+    "owner": "personal-operator",
+    "path": ".github/workflows/nix-eval.yml",
+    "rule_id": "runner-label",
+    "severity": "UNSPECIFIED_BY_SCANNER"
+  },
+  {
+    "column": 21,
+    "disposition": "NEEDS_OPERATOR_REVIEW",
+    "line": 33,
+    "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+    "owner": "personal-operator",
+    "path": ".github/workflows/nix-hashes.yml",
+    "rule_id": "runner-label",
+    "severity": "UNSPECIFIED_BY_SCANNER"
+  },
+  {
+    "column": 21,
+    "disposition": "NEEDS_OPERATOR_REVIEW",
+    "line": 35,
+    "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+    "owner": "personal-operator",
+    "path": ".github/workflows/nix-hashes.yml",
+    "rule_id": "runner-label",
+    "severity": "UNSPECIFIED_BY_SCANNER"
+  },
+  {
+    "column": 14,
+    "disposition": "NEEDS_OPERATOR_REVIEW",
+    "line": 94,
+    "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+    "owner": "personal-operator",
+    "path": ".github/workflows/nix-hashes.yml",
+    "rule_id": "runner-label",
+    "severity": "UNSPECIFIED_BY_SCANNER"
+  },
+  {
+    "column": 14,
+    "disposition": "NEEDS_OPERATOR_REVIEW",
+    "line": 9,
+    "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+    "owner": "personal-operator",
+    "path": ".github/workflows/notify-discord.yml",
+    "rule_id": "runner-label",
+    "severity": "UNSPECIFIED_BY_SCANNER"
+  },
+  {
+    "column": 14,
+    "disposition": "NEEDS_OPERATOR_REVIEW",
+    "line": 16,
+    "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+    "owner": "personal-operator",
+    "path": ".github/workflows/opencode.yml",
+    "rule_id": "runner-label",
+    "severity": "UNSPECIFIED_BY_SCANNER"
+  },
+  {
+    "column": 14,
+    "disposition": "NEEDS_OPERATOR_REVIEW",
+    "line": 9,
+    "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+    "owner": "personal-operator",
+    "path": ".github/workflows/pr-management.yml",
+    "rule_id": "runner-label",
+    "severity": "UNSPECIFIED_BY_SCANNER"
+  },
+  {
+    "column": 14,
+    "disposition": "NEEDS_OPERATOR_REVIEW",
+    "line": 17,
+    "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+    "owner": "personal-operator",
+    "path": ".github/workflows/publish-github-action.yml",
+    "rule_id": "runner-label",
+    "severity": "UNSPECIFIED_BY_SCANNER"
+  },
+  {
+    "column": 14,
+    "disposition": "NEEDS_OPERATOR_REVIEW",
+    "line": 16,
+    "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+    "owner": "personal-operator",
+    "path": ".github/workflows/publish-vscode.yml",
+    "rule_id": "runner-label",
+    "severity": "UNSPECIFIED_BY_SCANNER"
+  },
+  {
+    "column": 14,
+    "disposition": "NEEDS_OPERATOR_REVIEW",
+    "line": 36,
+    "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+    "owner": "personal-operator",
+    "path": ".github/workflows/publish.yml",
+    "rule_id": "runner-label",
+    "severity": "UNSPECIFIED_BY_SCANNER"
+  },
+  {
+    "column": 14,
+    "disposition": "NEEDS_OPERATOR_REVIEW",
+    "line": 73,
+    "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+    "owner": "personal-operator",
+    "path": ".github/workflows/publish.yml",
+    "rule_id": "runner-label",
+    "severity": "UNSPECIFIED_BY_SCANNER"
+  },
+  {
+    "column": 14,
+    "disposition": "NEEDS_OPERATOR_REVIEW",
+    "line": 124,
+    "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+    "owner": "personal-operator",
+    "path": ".github/workflows/publish.yml",
+    "rule_id": "runner-label",
+    "severity": "UNSPECIFIED_BY_SCANNER"
+  },
+  {
+    "column": 14,
+    "disposition": "NEEDS_OPERATOR_REVIEW",
+    "line": 411,
+    "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+    "owner": "personal-operator",
+    "path": ".github/workflows/publish.yml",
+    "rule_id": "runner-label",
+    "severity": "UNSPECIFIED_BY_SCANNER"
+  },
+  {
+    "column": 14,
+    "disposition": "NEEDS_OPERATOR_REVIEW",
+    "line": 17,
+    "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+    "owner": "personal-operator",
+    "path": ".github/workflows/release-github-action.yml",
+    "rule_id": "runner-label",
+    "severity": "UNSPECIFIED_BY_SCANNER"
+  },
+  {
+    "column": 14,
+    "disposition": "NEEDS_OPERATOR_REVIEW",
+    "line": 13,
+    "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+    "owner": "personal-operator",
+    "path": ".github/workflows/review.yml",
+    "rule_id": "runner-label",
+    "severity": "UNSPECIFIED_BY_SCANNER"
+  },
+  {
+    "column": 14,
+    "disposition": "NEEDS_OPERATOR_REVIEW",
+    "line": 13,
+    "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+    "owner": "personal-operator",
+    "path": ".github/workflows/stats.yml",
+    "rule_id": "runner-label",
+    "severity": "UNSPECIFIED_BY_SCANNER"
+  },
+  {
+    "column": 14,
+    "disposition": "NEEDS_OPERATOR_REVIEW",
+    "line": 31,
+    "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+    "owner": "personal-operator",
+    "path": ".github/workflows/storybook.yml",
+    "rule_id": "runner-label",
+    "severity": "UNSPECIFIED_BY_SCANNER"
+  },
+  {
+    "column": 14,
+    "disposition": "NEEDS_OPERATOR_REVIEW",
+    "line": 9,
+    "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+    "owner": "personal-operator",
+    "path": ".github/workflows/triage.yml",
+    "rule_id": "runner-label",
+    "severity": "UNSPECIFIED_BY_SCANNER"
+  },
+  {
+    "column": 14,
+    "disposition": "NEEDS_OPERATOR_REVIEW",
+    "line": 12,
+    "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+    "owner": "personal-operator",
+    "path": ".github/workflows/typecheck.yml",
+    "rule_id": "runner-label",
+    "severity": "UNSPECIFIED_BY_SCANNER"
+  }
+]

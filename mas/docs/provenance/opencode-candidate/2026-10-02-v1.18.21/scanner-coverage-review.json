@@ -1,0 +1,2984 @@
+{
+  "candidate": {
+    "aiat_scan_harness_commit": "04a6b511a2caa638118756258afa36a314ffeb73",
+    "source_archive_sha256": "77b8cee43c3f74d94ad4651c375ec02bcd55a20aff06f9aac8e7be59c70811a0",
+    "source_snapshot_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21/source-snapshot.tar.xz",
+    "source_snapshot_sha256": "e338f0fc18145f7fc0ac848da5593ae77ea63adbd5f1d386ca8d82151a280370",
+    "upstream_commit": "826d9ad46a22bef0294998e08daa3c4904fea28f",
+    "version": "1.18.21"
+  },
+  "candidate_triage_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21/candidate-triage.json",
+  "candidate_triage_sha256": "54e5f271d05b01f5b96e73ef30246984c34e6f38e5e4f7a9de39d26a212a25a8",
+  "disposition_policy": {
+    "licence_metadata_is_gate": false,
+    "raw_secret_values_retained_or_printed": false,
+    "semgrep_findings_next_action": "Review the 335 exact-source Semgrep findings, prioritizing the two runtime process-launch candidates; keep all unresolved items open.",
+    "semgrep_findings_owner": "personal-operator",
+    "skillspector_findings": 0,
+    "skillspector_scope": "recursive .opencode/skills resources only; --no-llm",
+    "technical_findings_resolved": false,
+    "trufflehog_classification_counts": {
+      "DOCUMENTATION_EXAMPLE": 42,
+      "FALSE_POSITIVE": 3,
+      "TEST_FIXTURE": 8
+    },
+    "trufflehog_unverified_findings": 53,
+    "trufflehog_verified_secrets": 0
+  },
+  "generated_at": "2026-10-02T01:27:15.337801+00:00",
+  "normalization": {
+    "actionlint": {
+      "duplicates_removed": 0,
+      "normalized_diagnostics": 27,
+      "raw_diagnostics": 27
+    },
+    "cross_scanner": {
+      "distinct_source_path_line_locations": 455,
+      "locations_seen_in_multiple_normalized_scans": 5,
+      "scanner_set_by_location_sha256": "4d1b68ad10b54cd1e329bb6d162e1415da767170aa256f7393400ce3ed988587"
+    },
+    "semgrep": {
+      "duplicates_removed": 83,
+      "raw_records": 335,
+      "unique_rule_path_line_ranges": 252
+    },
+    "skillspector": {
+      "duplicates_removed": 0,
+      "raw_records": 0,
+      "unique_rule_path_lines": 0
+    },
+    "trufflehog": {
+      "duplicates_removed": 0,
+      "raw_records": 53,
+      "unique_detector_path_lines": 53
+    },
+    "zizmor": {
+      "duplicate_records_removed": 2,
+      "normalized_findings": 92,
+      "raw_finding_records": 94,
+      "raw_locations": 178,
+      "unique_rule_path_lines": 139
+    }
+  },
+  "programme_scope": "personal-internal-only",
+  "schema_version": "aiat.opencode-scanner-coverage-review.v1",
+  "scope": {
+    "decision": "blocked",
+    "explanation": "All 54 Semgrep errors are classified; 4 are internal rule execution errors and 50 are documented parser coverage gaps. Supplemental CI scanners and a syntax parser check are retained, but the TypeScript parse check is not security coverage and the Semgrep runtime coverage gate remains incomplete.",
+    "normalized_registered_scanner_records": 507,
+    "note": "Counts are scanner records, not unique vulnerabilities. Cross-scanner location overlaps are reported separately; no aggregate unique-vulnerability claim is made.",
+    "primary_candidate_scanner_records": 388,
+    "raw_scanner_records_across_primary_and_supplemental_scanners": 509,
+    "semgrep_security_coverage_complete": false,
+    "supplemental_normalized_records": 119,
+    "unexplained_scanner_errors": 0
+  },
+  "semgrep_errors": {
+    "by_class": {
+      "SCANNER_EXECUTION_FAILURE": 4,
+      "embedded GitHub-expression/YAML parsing limitation": 44,
+      "source syntax genuinely unsupported": 6
+    },
+    "error_inventory": [
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 6,
+        "line": 61,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/actions/setup-bun/action.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 7,
+        "line": 61,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/actions/setup-bun/action.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 8,
+        "line": 29,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/actions/setup-git-committer/action.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 9,
+        "line": 29,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/actions/setup-git-committer/action.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 10,
+        "line": 41,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/actions/setup-git-committer/action.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 11,
+        "line": 41,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/actions/setup-git-committer/action.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 12,
+        "line": 36,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/close-prs.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 13,
+        "line": 36,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/close-prs.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 14,
+        "line": 36,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/deploy.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 15,
+        "line": 36,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/deploy.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 16,
+        "line": 37,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/docs-locale-sync.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 17,
+        "line": 37,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/docs-locale-sync.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 18,
+        "line": 30,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/docs-update.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 19,
+        "line": 30,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/docs-update.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 20,
+        "line": 22,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/duplicate-issues.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 21,
+        "line": 22,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/duplicate-issues.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 22,
+        "line": 58,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/duplicate-issues.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 23,
+        "line": 58,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/duplicate-issues.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 24,
+        "line": 156,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/duplicate-issues.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 25,
+        "line": 156,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/duplicate-issues.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 26,
+        "line": 190,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/duplicate-issues.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 27,
+        "line": 190,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/duplicate-issues.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 28,
+        "line": 38,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/generate.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 29,
+        "line": 38,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/generate.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "SCANNER_EXECUTION_FAILURE",
+        "code": "2",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "Internal matching error",
+        "index": 3,
+        "line": null,
+        "next_action": "Review the internal Semgrep rule failure and the matching workflow locations in Actionlint/Zizmor.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/nix-hashes.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "SCANNER_EXECUTION_FAILURE",
+        "code": "2",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "Internal matching error",
+        "index": 5,
+        "line": null,
+        "next_action": "Review the internal Semgrep rule failure and the matching workflow locations in Actionlint/Zizmor.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/nix-hashes.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 30,
+        "line": 21,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/pr-management.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 31,
+        "line": 21,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/pr-management.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "SCANNER_EXECUTION_FAILURE",
+        "code": "2",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "Internal matching error",
+        "index": 2,
+        "line": null,
+        "next_action": "Review the internal Semgrep rule failure and the matching workflow locations in Actionlint/Zizmor.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/publish.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "SCANNER_EXECUTION_FAILURE",
+        "code": "2",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "Internal matching error",
+        "index": 4,
+        "line": null,
+        "next_action": "Review the internal Semgrep rule failure and the matching workflow locations in Actionlint/Zizmor.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/publish.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 32,
+        "line": 91,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/publish.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 33,
+        "line": 91,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/publish.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 34,
+        "line": 177,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/publish.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 35,
+        "line": 177,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/publish.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 36,
+        "line": 362,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/publish.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 37,
+        "line": 362,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/publish.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 38,
+        "line": 380,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/publish.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 39,
+        "line": 380,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/publish.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 40,
+        "line": 504,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/publish.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 41,
+        "line": 504,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/publish.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 42,
+        "line": 21,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/review.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 43,
+        "line": 21,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/review.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 44,
+        "line": 39,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/review.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 45,
+        "line": 39,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/review.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 46,
+        "line": 56,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/review.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 47,
+        "line": 56,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/review.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 48,
+        "line": 21,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/triage.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "ci/release code",
+        "classification": "embedded GitHub-expression/YAML parsing limitation",
+        "code": "3",
+        "disposition": "bounded_non_runtime_scan_error",
+        "error_type": "PartialParsing",
+        "index": 49,
+        "line": 21,
+        "next_action": "Review this CI YAML parser limitation against the retained Actionlint and Zizmor results, then record a disposition.",
+        "owner": "personal-operator",
+        "path": ".github/workflows/triage.yml",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": true,
+        "area": "shipped/runtime code",
+        "classification": "source syntax genuinely unsupported",
+        "code": "3",
+        "disposition": "coverage_gap_requires_alternate_scan",
+        "error_type": "PartialParsing",
+        "index": 50,
+        "line": 5,
+        "next_action": "Review the exact unsupported source syntax and obtain a security scanner/configuration that covers this path; the TypeScript parse check is syntax-only.",
+        "owner": "personal-operator",
+        "path": "packages/core/src/effect/keyed-mutex.ts",
+        "runtime_security_relevant": true
+      },
+      {
+        "aiat_serve_reachable": true,
+        "area": "shipped/runtime code",
+        "classification": "source syntax genuinely unsupported",
+        "code": "3",
+        "disposition": "coverage_gap_requires_alternate_scan",
+        "error_type": "PartialParsing",
+        "index": 51,
+        "line": 78,
+        "next_action": "Review the exact unsupported source syntax and obtain a security scanner/configuration that covers this path; the TypeScript parse check is syntax-only.",
+        "owner": "personal-operator",
+        "path": "packages/core/src/util/effect-flock.ts",
+        "runtime_security_relevant": true
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "shipped/runtime code",
+        "classification": "source syntax genuinely unsupported",
+        "code": "3",
+        "disposition": "coverage_gap_requires_alternate_scan",
+        "error_type": "Syntax error",
+        "index": 1,
+        "line": null,
+        "next_action": "Review the exact unsupported source syntax and obtain a security scanner/configuration that covers this path; the TypeScript parse check is syntax-only.",
+        "owner": "personal-operator",
+        "path": "packages/opencode/src/lsp/server.ts",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": true,
+        "area": "shipped/runtime code",
+        "classification": "source syntax genuinely unsupported",
+        "code": "3",
+        "disposition": "coverage_gap_requires_alternate_scan",
+        "error_type": "PartialParsing",
+        "index": 52,
+        "line": 6,
+        "next_action": "Review the exact unsupported source syntax and obtain a security scanner/configuration that covers this path; the TypeScript parse check is syntax-only.",
+        "owner": "personal-operator",
+        "path": "packages/opencode/src/server/routes/instance/httpapi/public.ts",
+        "runtime_security_relevant": true
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "shipped/runtime code",
+        "classification": "source syntax genuinely unsupported",
+        "code": "3",
+        "disposition": "coverage_gap_requires_alternate_scan",
+        "error_type": "PartialParsing",
+        "index": 53,
+        "line": 514,
+        "next_action": "Review the exact unsupported source syntax and obtain a security scanner/configuration that covers this path; the TypeScript parse check is syntax-only.",
+        "owner": "personal-operator",
+        "path": "packages/plugin/src/tui.ts",
+        "runtime_security_relevant": false
+      },
+      {
+        "aiat_serve_reachable": false,
+        "area": "shipped/runtime code",
+        "classification": "source syntax genuinely unsupported",
+        "code": "3",
+        "disposition": "coverage_gap_requires_alternate_scan",
+        "error_type": "PartialParsing",
+        "index": 54,
+        "line": 13,
+        "next_action": "Review the exact unsupported source syntax and obtain a security scanner/configuration that covers this path; the TypeScript parse check is syntax-only.",
+        "owner": "personal-operator",
+        "path": "packages/tui/src/plugin/slots.tsx",
+        "runtime_security_relevant": false
+      }
+    ],
+    "explained_parser_coverage_gaps": 50,
+    "normalized_result_sha256": "69d159701b3bf6315cd77bde2236584e49fc17a2acd58bd6918c84644d70afe8",
+    "rule_execution_errors": 4,
+    "semgrep_exit_status": 0,
+    "total": 54,
+    "unexplained_errors": 0
+  },
+  "supplemental_scanners": [
+    {
+      "binary_sha256": "c872d6db8c6bf83a8eaa704fc93999f027d55dffbc63b8a6abdccb47df5f4cd4",
+      "diagnostic_kind_counts": {
+        "expression": 1,
+        "if-cond": 1,
+        "runner-label": 25
+      },
+      "exit_status": 1,
+      "invocation": [
+        "/tmp/aiat-opencode-scan-tools/bin/actionlint",
+        "-format",
+        "{{json .}}",
+        ".github/workflows/close-issues.yml",
+        ".github/workflows/close-prs.yml",
+        ".github/workflows/compliance-close.yml",
+        ".github/workflows/containers.yml",
+        ".github/workflows/deploy.yml",
+        ".github/workflows/docs-locale-sync.yml",
+        ".github/workflows/docs-update.yml",
+        ".github/workflows/duplicate-issues.yml",
+        ".github/workflows/generate.yml",
+        ".github/workflows/nix-eval.yml",
+        ".github/workflows/nix-hashes.yml",
+        ".github/workflows/notify-discord.yml",
+        ".github/workflows/opencode.yml",
+        ".github/workflows/pr-management.yml",
+        ".github/workflows/pr-standards.yml",
+        ".github/workflows/publish-github-action.yml",
+        ".github/workflows/publish-vscode.yml",
+        ".github/workflows/publish.yml",
+        ".github/workflows/release-github-action.yml",
+        ".github/workflows/review.yml",
+        ".github/workflows/stats.yml",
+        ".github/workflows/storybook.yml",
+        ".github/workflows/test.yml",
+        ".github/workflows/triage.yml",
+        ".github/workflows/typecheck.yml"
+      ],
+      "name": "actionlint",
+      "next_action": "Review every retained actionlint diagnostic; validate custom runner labels and workflow expression/condition findings against the configured CI environment.",
+      "normalized_finding_count": 27,
+      "normalized_findings": [
+        {
+          "column": 14,
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "line": 19,
+          "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+          "owner": "personal-operator",
+          "path": ".github/workflows/containers.yml",
+          "rule_id": "runner-label",
+          "severity": "UNSPECIFIED_BY_SCANNER"
+        },
+        {
+          "column": 9,
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "line": 12,
+          "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+          "owner": "personal-operator",
+          "path": ".github/workflows/docs-locale-sync.yml",
+          "rule_id": "if-cond",
+          "severity": "UNSPECIFIED_BY_SCANNER"
+        },
+        {
+          "column": 14,
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "line": 14,
+          "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+          "owner": "personal-operator",
+          "path": ".github/workflows/docs-locale-sync.yml",
+          "rule_id": "runner-label",
+          "severity": "UNSPECIFIED_BY_SCANNER"
+        },
+        {
+          "column": 14,
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "line": 14,
+          "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+          "owner": "personal-operator",
+          "path": ".github/workflows/docs-update.yml",
+          "rule_id": "runner-label",
+          "severity": "UNSPECIFIED_BY_SCANNER"
+        },
+        {
+          "column": 14,
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "line": 10,
+          "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+          "owner": "personal-operator",
+          "path": ".github/workflows/duplicate-issues.yml",
+          "rule_id": "runner-label",
+          "severity": "UNSPECIFIED_BY_SCANNER"
+        },
+        {
+          "column": 14,
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "line": 144,
+          "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+          "owner": "personal-operator",
+          "path": ".github/workflows/duplicate-issues.yml",
+          "rule_id": "runner-label",
+          "severity": "UNSPECIFIED_BY_SCANNER"
+        },
+        {
+          "column": 14,
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "line": 10,
+          "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+          "owner": "personal-operator",
+          "path": ".github/workflows/generate.yml",
+          "rule_id": "runner-label",
+          "severity": "UNSPECIFIED_BY_SCANNER"
+        },
+        {
+          "column": 245,
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "line": 32,
+          "next_action": "Review the untrusted-expression shell context and correlate it with the retained Zizmor template-injection results.",
+          "owner": "personal-operator",
+          "path": ".github/workflows/generate.yml",
+          "rule_id": "expression",
+          "severity": "UNSPECIFIED_BY_SCANNER"
+        },
+        {
+          "column": 14,
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "line": 19,
+          "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+          "owner": "personal-operator",
+          "path": ".github/workflows/nix-eval.yml",
+          "rule_id": "runner-label",
+          "severity": "UNSPECIFIED_BY_SCANNER"
+        },
+        {
+          "column": 21,
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "line": 33,
+          "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+          "owner": "personal-operator",
+          "path": ".github/workflows/nix-hashes.yml",
+          "rule_id": "runner-label",
+          "severity": "UNSPECIFIED_BY_SCANNER"
+        },
+        {
+          "column": 21,
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "line": 35,
+          "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+          "owner": "personal-operator",
+          "path": ".github/workflows/nix-hashes.yml",
+          "rule_id": "runner-label",
+          "severity": "UNSPECIFIED_BY_SCANNER"
+        },
+        {
+          "column": 14,
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "line": 94,
+          "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+          "owner": "personal-operator",
+          "path": ".github/workflows/nix-hashes.yml",
+          "rule_id": "runner-label",
+          "severity": "UNSPECIFIED_BY_SCANNER"
+        },
+        {
+          "column": 14,
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "line": 9,
+          "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+          "owner": "personal-operator",
+          "path": ".github/workflows/notify-discord.yml",
+          "rule_id": "runner-label",
+          "severity": "UNSPECIFIED_BY_SCANNER"
+        },
+        {
+          "column": 14,
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "line": 16,
+          "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+          "owner": "personal-operator",
+          "path": ".github/workflows/opencode.yml",
+          "rule_id": "runner-label",
+          "severity": "UNSPECIFIED_BY_SCANNER"
+        },
+        {
+          "column": 14,
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "line": 9,
+          "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+          "owner": "personal-operator",
+          "path": ".github/workflows/pr-management.yml",
+          "rule_id": "runner-label",
+          "severity": "UNSPECIFIED_BY_SCANNER"
+        },
+        {
+          "column": 14,
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "line": 17,
+          "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+          "owner": "personal-operator",
+          "path": ".github/workflows/publish-github-action.yml",
+          "rule_id": "runner-label",
+          "severity": "UNSPECIFIED_BY_SCANNER"
+        },
+        {
+          "column": 14,
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "line": 16,
+          "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+          "owner": "personal-operator",
+          "path": ".github/workflows/publish-vscode.yml",
+          "rule_id": "runner-label",
+          "severity": "UNSPECIFIED_BY_SCANNER"
+        },
+        {
+          "column": 14,
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "line": 36,
+          "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+          "owner": "personal-operator",
+          "path": ".github/workflows/publish.yml",
+          "rule_id": "runner-label",
+          "severity": "UNSPECIFIED_BY_SCANNER"
+        },
+        {
+          "column": 14,
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "line": 73,
+          "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+          "owner": "personal-operator",
+          "path": ".github/workflows/publish.yml",
+          "rule_id": "runner-label",
+          "severity": "UNSPECIFIED_BY_SCANNER"
+        },
+        {
+          "column": 14,
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "line": 124,
+          "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+          "owner": "personal-operator",
+          "path": ".github/workflows/publish.yml",
+          "rule_id": "runner-label",
+          "severity": "UNSPECIFIED_BY_SCANNER"
+        },
+        {
+          "column": 14,
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "line": 411,
+          "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+          "owner": "personal-operator",
+          "path": ".github/workflows/publish.yml",
+          "rule_id": "runner-label",
+          "severity": "UNSPECIFIED_BY_SCANNER"
+        },
+        {
+          "column": 14,
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "line": 17,
+          "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+          "owner": "personal-operator",
+          "path": ".github/workflows/release-github-action.yml",
+          "rule_id": "runner-label",
+          "severity": "UNSPECIFIED_BY_SCANNER"
+        },
+        {
+          "column": 14,
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "line": 13,
+          "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+          "owner": "personal-operator",
+          "path": ".github/workflows/review.yml",
+          "rule_id": "runner-label",
+          "severity": "UNSPECIFIED_BY_SCANNER"
+        },
+        {
+          "column": 14,
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "line": 13,
+          "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+          "owner": "personal-operator",
+          "path": ".github/workflows/stats.yml",
+          "rule_id": "runner-label",
+          "severity": "UNSPECIFIED_BY_SCANNER"
+        },
+        {
+          "column": 14,
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "line": 31,
+          "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+          "owner": "personal-operator",
+          "path": ".github/workflows/storybook.yml",
+          "rule_id": "runner-label",
+          "severity": "UNSPECIFIED_BY_SCANNER"
+        },
+        {
+          "column": 14,
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "line": 9,
+          "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+          "owner": "personal-operator",
+          "path": ".github/workflows/triage.yml",
+          "rule_id": "runner-label",
+          "severity": "UNSPECIFIED_BY_SCANNER"
+        },
+        {
+          "column": 14,
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "line": 12,
+          "next_action": "Confirm this workflow diagnostic is intentional and record the CI provider configuration or corrective action.",
+          "owner": "personal-operator",
+          "path": ".github/workflows/typecheck.yml",
+          "rule_id": "runner-label",
+          "severity": "UNSPECIFIED_BY_SCANNER"
+        }
+      ],
+      "normalized_result_path": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21/actionlint-normalized.json",
+      "normalized_result_sha256": "c298db9440cce8a9983968314e91dadf6406cacdf1d32d9fb4fc5d25e638ce1e",
+      "owner": "personal-operator",
+      "raw_diagnostic_count": 27,
+      "raw_result_sha256": "dcb6106df04e121639ac5496de934cf1785079b30ddbb85499e773512e058a33",
+      "version": "1.7.12",
+      "working_directory": "<exact-source-snapshot-root>"
+    },
+    {
+      "binary_sha256": "d39db5594fd89d57fdadd744079e1b3a405f24ff312714904f8bd708c69f322f",
+      "exit_status": 14,
+      "invocation": [
+        "/tmp/aiat-opencode-scan-tools/bin/zizmor",
+        "--collect",
+        "all",
+        "--format",
+        "json",
+        "--no-progress",
+        ".github",
+        "github/action.yml"
+      ],
+      "name": "zizmor",
+      "next_action": "Review each retained workflow/action supply-chain finding and record a disposition before candidate activation.",
+      "normalized_finding_count": 92,
+      "normalized_findings": [
+        {
+          "confidence": "LOW",
+          "dedup_key": "05e88c10f21a1682ddd582b3dad57cc0b0f9955f06095d44d16701bfcf034fea",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 15,
+              "path": ".github/workflows/close-issues.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "artipacked",
+          "severity": "MEDIUM"
+        },
+        {
+          "confidence": "LOW",
+          "dedup_key": "68e30a9b4d44d67c136dafdc60b6e38c6b4d2655f64ac19ecbe69e5a335ed1ef",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 27,
+              "path": ".github/workflows/close-prs.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "artipacked",
+          "severity": "MEDIUM"
+        },
+        {
+          "confidence": "LOW",
+          "dedup_key": "ccd891a08b225fc1c3ae689ca49ffc2d894681099f90f3d4e10db6ca08c66300",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 24,
+              "path": ".github/workflows/containers.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "artipacked",
+          "severity": "MEDIUM"
+        },
+        {
+          "confidence": "LOW",
+          "dedup_key": "bf7285ab3fd44b79031bbb9376034fcc26abbd253af06a5ff6ad2142cc123da2",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 22,
+              "path": ".github/workflows/deploy.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "artipacked",
+          "severity": "MEDIUM"
+        },
+        {
+          "confidence": "LOW",
+          "dedup_key": "5c5cf9bec0dfd73e30cdd204433df12a4fd74fda0e8625c19bf6ae49710056a6",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 20,
+              "path": ".github/workflows/docs-update.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "artipacked",
+          "severity": "MEDIUM"
+        },
+        {
+          "confidence": "LOW",
+          "dedup_key": "de935e29eaffef1d4dff894e2146a846164fe693fe829c46ec3d384a2074fc51",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 15,
+              "path": ".github/workflows/duplicate-issues.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "artipacked",
+          "severity": "MEDIUM"
+        },
+        {
+          "confidence": "LOW",
+          "dedup_key": "e10a2506483e197975d22e8f1a8acc7de9aad28f2ef9662f1e3fc18b386fab09",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 149,
+              "path": ".github/workflows/duplicate-issues.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "artipacked",
+          "severity": "MEDIUM"
+        },
+        {
+          "confidence": "LOW",
+          "dedup_key": "ede44a607f8a22996368e7ebbf5da5a1333dc942c7b3bd5e719f05e9ec086119",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 15,
+              "path": ".github/workflows/generate.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "artipacked",
+          "severity": "MEDIUM"
+        },
+        {
+          "confidence": "LOW",
+          "dedup_key": "c6a3f1e9e6049a0caff8b5a03c7dc3e6d5d06e1e4db28f186b67df2ceac2e1bb",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 22,
+              "path": ".github/workflows/nix-eval.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "artipacked",
+          "severity": "MEDIUM"
+        },
+        {
+          "confidence": "LOW",
+          "dedup_key": "d400a7f6cfa1928f43bf5a124c3101bf8b61e749d7acd9a25f3a4cd3796cc729",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 43,
+              "path": ".github/workflows/nix-hashes.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "artipacked",
+          "severity": "MEDIUM"
+        },
+        {
+          "confidence": "LOW",
+          "dedup_key": "6c53deff3acf53041b5bf0ae8d0f07b49dcc0c7cb83069a7ad578660a717435e",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 23,
+              "path": ".github/workflows/opencode.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "artipacked",
+          "severity": "MEDIUM"
+        },
+        {
+          "confidence": "LOW",
+          "dedup_key": "c445a631c15fff50808e0f217cda27d726c608eb1eaf09f087e1b77463372076",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 14,
+              "path": ".github/workflows/pr-management.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "artipacked",
+          "severity": "MEDIUM"
+        },
+        {
+          "confidence": "LOW",
+          "dedup_key": "c9ddccc62ea6e618009e613562abbc83c927123d94d2e7483939f1d8754d315b",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 19,
+              "path": ".github/workflows/publish-github-action.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "artipacked",
+          "severity": "MEDIUM"
+        },
+        {
+          "confidence": "LOW",
+          "dedup_key": "d6af15f241cb6ba842df4f4fbaa37c5dab524f30cdafa66d1c2cd9221e8981a2",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 18,
+              "path": ".github/workflows/publish-vscode.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "artipacked",
+          "severity": "MEDIUM"
+        },
+        {
+          "confidence": "LOW",
+          "dedup_key": "74a8443fbd28f3f512585490d007872b2d118bfe7222433071bd068d245e8193",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 39,
+              "path": ".github/workflows/publish.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "artipacked",
+          "severity": "MEDIUM"
+        },
+        {
+          "confidence": "LOW",
+          "dedup_key": "64b24b33312204276df8ca88c1f95bde0655d70ab16230df074ec172c61db397",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 76,
+              "path": ".github/workflows/publish.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "artipacked",
+          "severity": "MEDIUM"
+        },
+        {
+          "confidence": "LOW",
+          "dedup_key": "86a085c0e1fda6053193086c1a196beed0bd784e49c8d9e2679014c17461f9b0",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 134,
+              "path": ".github/workflows/publish.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "artipacked",
+          "severity": "MEDIUM"
+        },
+        {
+          "confidence": "LOW",
+          "dedup_key": "73e3529c4121c65f9308cd1cd6301b32bb69930184abeb2db97010ac6700d693",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 259,
+              "path": ".github/workflows/publish.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "artipacked",
+          "severity": "MEDIUM"
+        },
+        {
+          "confidence": "LOW",
+          "dedup_key": "8a73dd01ecc072cfd12319e7a66e7a85c49c0077ba6990e4ef489dcbc25bd42f",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 413,
+              "path": ".github/workflows/publish.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "artipacked",
+          "severity": "MEDIUM"
+        },
+        {
+          "confidence": "LOW",
+          "dedup_key": "59e3f768ae25d86a7a63800a3423b40192aa4ab1757275448ea3f49e488e3e9c",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 19,
+              "path": ".github/workflows/release-github-action.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "artipacked",
+          "severity": "MEDIUM"
+        },
+        {
+          "confidence": "LOW",
+          "dedup_key": "d00236967bb48c8729006f50fcb4037f95cd82e6edcb4df8dd050e9106052f0e",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 27,
+              "path": ".github/workflows/review.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "artipacked",
+          "severity": "MEDIUM"
+        },
+        {
+          "confidence": "LOW",
+          "dedup_key": "d48314b0cc019960316341b35bf6d275cf5595d056e590a7a84e125b6b0a3136",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 18,
+              "path": ".github/workflows/stats.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "artipacked",
+          "severity": "MEDIUM"
+        },
+        {
+          "confidence": "LOW",
+          "dedup_key": "fe7a2037c3f15cb6b3f24f9232a0462949ea6427191d98c6c15ab223bcf5725d",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 33,
+              "path": ".github/workflows/storybook.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "artipacked",
+          "severity": "MEDIUM"
+        },
+        {
+          "confidence": "LOW",
+          "dedup_key": "c45fe8d105f32a82b506590088b768fcf43113d7b262cca9d32a0e34c10ccedf",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 39,
+              "path": ".github/workflows/test.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "artipacked",
+          "severity": "MEDIUM"
+        },
+        {
+          "confidence": "LOW",
+          "dedup_key": "958f244c10699cadb9ad207af5fae12f63abfbe0fa6dfd291ea69d14db9f6f70",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 99,
+              "path": ".github/workflows/test.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "artipacked",
+          "severity": "MEDIUM"
+        },
+        {
+          "confidence": "LOW",
+          "dedup_key": "7056de05c3d57b2e3fef84640b4d959aea9cb84498bd84574b69407209e971bf",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 14,
+              "path": ".github/workflows/triage.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "artipacked",
+          "severity": "MEDIUM"
+        },
+        {
+          "confidence": "LOW",
+          "dedup_key": "0ba4205f864f69d145ee49e0177b04e3eacb8c790b777bbb9f5806abc356dd04",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 14,
+              "path": ".github/workflows/typecheck.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "artipacked",
+          "severity": "MEDIUM"
+        },
+        {
+          "confidence": "MEDIUM",
+          "dedup_key": "65e8cd46119cd50bb4f50adfb4c28ce4960fc1600b9163c04a4312bf35a196d1",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 3,
+              "path": ".github/workflows/pr-management.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "dangerous-triggers",
+          "severity": "HIGH"
+        },
+        {
+          "confidence": "MEDIUM",
+          "dedup_key": "578b31a1144753f02284c27e5859cc21910d7b7be6f4f254e10720c6b87347bc",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 3,
+              "path": ".github/workflows/pr-standards.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "dangerous-triggers",
+          "severity": "HIGH"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "74ce42a4f67f9bb9e3baa7cc5c40e47ebcec03e75925bfa106e34526ff19c5f8",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 4,
+              "path": ".github/workflows/nix-hashes.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "excessive-permissions",
+          "severity": "HIGH"
+        },
+        {
+          "confidence": "MEDIUM",
+          "dedup_key": "962bac2f763c0f324ca140434ee031922d41f64c0689035d3688cf9b9b2a7c3c",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 8,
+              "path": ".github/workflows/notify-discord.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "excessive-permissions",
+          "severity": "MEDIUM"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "01521e1c041f4984c65980759bddf3871808ed0097230937546344304a216f7c",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 30,
+              "path": ".github/workflows/publish.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "excessive-permissions",
+          "severity": "HIGH"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "4a2d0669165bbfd021d4ec943db1207a14f5248ec89e5f8dfcf2d6fd089151f1",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 31,
+              "path": ".github/workflows/publish.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "excessive-permissions",
+          "severity": "HIGH"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "b1b5f6b1a94e071e3bd571d7ddd1d2a0df9b752c022758cc2e59d0f21f701385",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 32,
+              "path": ".github/workflows/publish.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "excessive-permissions",
+          "severity": "HIGH"
+        },
+        {
+          "confidence": "MEDIUM",
+          "dedup_key": "7012f16ee1947e8d78e1dc6cd87683788258163ed8ca5715dd9f755dbe810279",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 29,
+              "path": ".github/workflows/storybook.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "excessive-permissions",
+          "severity": "MEDIUM"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "bcc642f1530afb33105cc4e7b008c212e5a4f8e154453c3700a4e1a26a83f6b5",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 18,
+              "path": ".github/workflows/test.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "excessive-permissions",
+          "severity": "MEDIUM"
+        },
+        {
+          "confidence": "MEDIUM",
+          "dedup_key": "d885b7355d079b95eb390a728dbc852d2257a9b740807f81abbd0b9be2d0c062",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 11,
+              "path": ".github/workflows/typecheck.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "excessive-permissions",
+          "severity": "MEDIUM"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "5a1f8b3340d55608954a0ad2bd09aa958b26bb09ede418dfc9849496e175e8fa",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 22,
+              "path": ".github/actions/setup-git-committer/action.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "github-app",
+          "severity": "HIGH"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "2acfbfefa62dcfd768debf3cb196976ee8b8805ec493c629de719969974a2ee7",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 22,
+              "path": ".github/actions/setup-git-committer/action.yml"
+            },
+            {
+              "line": 26,
+              "path": ".github/actions/setup-git-committer/action.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "github-app",
+          "severity": "HIGH"
+        },
+        {
+          "confidence": "LOW",
+          "dedup_key": "6d64c3a8ec590777be4b2aa87c54aa79be1ac025a09bb0fd41ac685321638001",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 65,
+              "path": "github/action.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "github-env",
+          "severity": "HIGH"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "ad618815bddc1606dad5b6026d7faae19b4f5c2666b5fd630df8710d117dd464",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 26,
+              "path": ".github/workflows/containers.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "self-repository",
+          "severity": "LOW"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "da70f9adbd2fcd499b24feeb1c1d6975be13bb7370953f6f1d6e7d8f05450186",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 24,
+              "path": ".github/workflows/deploy.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "self-repository",
+          "severity": "LOW"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "04bcb6ef588131810c9dac625324c3c01445b1d7c9fc2a7a618f518559386d55",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 25,
+              "path": ".github/workflows/docs-update.yml"
+            },
+            {
+              "line": 26,
+              "path": ".github/workflows/docs-update.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "self-repository",
+          "severity": "LOW"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "6a29946ce1a5e6bfe77d522dbb257455eccfb5dbb0c137f4d9d51bfb558614d4",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 36,
+              "path": ".github/workflows/duplicate-issues.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "self-repository",
+          "severity": "LOW"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "287e8443365c2afa74081e670dd541e35b6449d024b53d635ab854517c161f9d",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 170,
+              "path": ".github/workflows/duplicate-issues.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "self-repository",
+          "severity": "LOW"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "22f5f64e1800ada5ae95654b5e50159cea71eb2d0f5a34229bdabc2e2641c939",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 18,
+              "path": ".github/workflows/generate.yml"
+            },
+            {
+              "line": 19,
+              "path": ".github/workflows/generate.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "self-repository",
+          "severity": "LOW"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "5456d50bc5492be1b6ba7537e2440989b8cac8a16a33859d52edd20176bf0cd5",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 21,
+              "path": ".github/workflows/generate.yml"
+            },
+            {
+              "line": 23,
+              "path": ".github/workflows/generate.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "self-repository",
+          "severity": "LOW"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "c722efb9224b6749f6acc3a45bfa5409987abd0872f6997ff1fd661d5b340887",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 104,
+              "path": ".github/workflows/nix-hashes.yml"
+            },
+            {
+              "line": 105,
+              "path": ".github/workflows/nix-hashes.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "self-repository",
+          "severity": "LOW"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "76b9d98a12e82d38c2b39c1540f94f382ff4cd6bd45985399150209b8ba79865",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 26,
+              "path": ".github/workflows/opencode.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "self-repository",
+          "severity": "LOW"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "bd1aa50fa34eafe51653d7ba59dc611a53157e8b921b19075a5155a944c6a935",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 30,
+              "path": ".github/workflows/pr-management.yml"
+            },
+            {
+              "line": 32,
+              "path": ".github/workflows/pr-management.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "self-repository",
+          "severity": "LOW"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "0a8c09f053f244cb1cdf728262fa0053364e3675f92b2e2f81802cb0122bb5f1",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 22,
+              "path": ".github/workflows/publish-vscode.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "self-repository",
+          "severity": "LOW"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "66732bc0b5a26d9cd8d6099fa983092929871979f9a06c697122c1c400600c04",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 43,
+              "path": ".github/workflows/publish.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "self-repository",
+          "severity": "LOW"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "0cd77e9d0641b2769c4aa70f66a2a003b3d4790794d4f219584e65281c71a2f8",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 45,
+              "path": ".github/workflows/publish.yml"
+            },
+            {
+              "line": 47,
+              "path": ".github/workflows/publish.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "self-repository",
+          "severity": "LOW"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "0d01b462652ee00709c48663b09d4aec22a6c0c3d3fb397de170a386f6ae4bd0",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 80,
+              "path": ".github/workflows/publish.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "self-repository",
+          "severity": "LOW"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "e3258282d9f3295c80c2e38e9e9be83a0896c0b955ced67ef21b64911b14142d",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 82,
+              "path": ".github/workflows/publish.yml"
+            },
+            {
+              "line": 84,
+              "path": ".github/workflows/publish.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "self-repository",
+          "severity": "LOW"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "3a559df0dc0eea6619c7b915c87a173ce781915ee8f9f2917f827d5a80f094f2",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 141,
+              "path": ".github/workflows/publish.yml"
+            },
+            {
+              "line": 143,
+              "path": ".github/workflows/publish.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "self-repository",
+          "severity": "LOW"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "fe684f376bee33b52db544c67ee40727d909d80e66aab94f0407bff3850a3a6c",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 272,
+              "path": ".github/workflows/publish.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "self-repository",
+          "severity": "LOW"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "cbe22485e3fb5aba9fb1dd070a76ebfe2d085aaa01f6ac18b33d9ed8954b05d9",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 305,
+              "path": ".github/workflows/publish.yml"
+            },
+            {
+              "line": 307,
+              "path": ".github/workflows/publish.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "self-repository",
+          "severity": "LOW"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "4405ad800a165c79787c0318bcb87d1c6c5008cdb80bd28692f00a0f2a363c94",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 415,
+              "path": ".github/workflows/publish.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "self-repository",
+          "severity": "LOW"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "95e39deac1590203f43cd532372cbfb6c9e31228e400f729b1eab63cbe5ffbbb",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 468,
+              "path": ".github/workflows/publish.yml"
+            },
+            {
+              "line": 470,
+              "path": ".github/workflows/publish.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "self-repository",
+          "severity": "LOW"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "5ece13495b536f36c9beb705c5e6f943f0a9b0d2b4a40d7c94baca8333fb6106",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 32,
+              "path": ".github/workflows/review.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "self-repository",
+          "severity": "LOW"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "68de2ec4ce440b327dc1069f3f78093fcf6c32d49d9b5d2d742bc63291d39c2e",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 21,
+              "path": ".github/workflows/stats.yml"
+            },
+            {
+              "line": 22,
+              "path": ".github/workflows/stats.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "self-repository",
+          "severity": "LOW"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "65ec0dbe6b1d947586c5502f88f80964d98923e0b64720d4fe389cf5fb0011c1",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 36,
+              "path": ".github/workflows/storybook.yml"
+            },
+            {
+              "line": 37,
+              "path": ".github/workflows/storybook.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "self-repository",
+          "severity": "LOW"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "29d7fe8c6f9b4b3ba4d0fd474886db49f0446833dd14e296ce0176cc51797b05",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 49,
+              "path": ".github/workflows/test.yml"
+            },
+            {
+              "line": 50,
+              "path": ".github/workflows/test.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "self-repository",
+          "severity": "LOW"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "36980c69773c0a917c7540f18c439a5aa280870b546ee39bcc99e31be9af2983",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 110,
+              "path": ".github/workflows/test.yml"
+            },
+            {
+              "line": 111,
+              "path": ".github/workflows/test.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "self-repository",
+          "severity": "LOW"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "e517b9c9c06eb01ff9fffccafbe8d82e1460c6097b9697651474644cea1f068c",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 35,
+              "path": ".github/workflows/triage.yml"
+            },
+            {
+              "line": 37,
+              "path": ".github/workflows/triage.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "self-repository",
+          "severity": "LOW"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "0255a7dd444460c39578d2a2863b7ae89d12589a5fe4cb8e622609661be441cf",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 17,
+              "path": ".github/workflows/typecheck.yml"
+            },
+            {
+              "line": 18,
+              "path": ".github/workflows/typecheck.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "self-repository",
+          "severity": "LOW"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "13c36cdd97af9980bb48dff7e3668408b5dfa166b1a67606a595ed0b7098841d",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 56,
+              "path": ".github/actions/setup-bun/action.yml"
+            },
+            {
+              "line": 57,
+              "path": ".github/actions/setup-bun/action.yml"
+            },
+            {
+              "line": 62,
+              "path": ".github/actions/setup-bun/action.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "template-injection",
+          "severity": "HIGH"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "43f0ee35628eac80fbac99c8ab073f25a8cc819d431ab826d6696d0c06bd1be8",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 56,
+              "path": ".github/actions/setup-bun/action.yml"
+            },
+            {
+              "line": 57,
+              "path": ".github/actions/setup-bun/action.yml"
+            },
+            {
+              "line": 64,
+              "path": ".github/actions/setup-bun/action.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "template-injection",
+          "severity": "HIGH"
+        },
+        {
+          "confidence": "LOW",
+          "dedup_key": "6a791766ec77f34dee3513dd91883e2f5b5c5fe1ea9b90c1ee291a2cda0c1d18",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 28,
+              "path": ".github/actions/setup-git-committer/action.yml"
+            },
+            {
+              "line": 29,
+              "path": ".github/actions/setup-git-committer/action.yml"
+            },
+            {
+              "line": 30,
+              "path": ".github/actions/setup-git-committer/action.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "template-injection",
+          "severity": "INFORMATIONAL"
+        },
+        {
+          "confidence": "LOW",
+          "dedup_key": "75614153dfbbacdcbf06b8a7def053e0703cff9a7685ba617c25c97f592fea75",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 40,
+              "path": ".github/actions/setup-git-committer/action.yml"
+            },
+            {
+              "line": 41,
+              "path": ".github/actions/setup-git-committer/action.yml"
+            },
+            {
+              "line": 42,
+              "path": ".github/actions/setup-git-committer/action.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "template-injection",
+          "severity": "INFORMATIONAL"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "826f0573b77265e8e87dcd9c2847de43601c823c26ebf1b73e4c21f23e44b263",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 33,
+              "path": ".github/workflows/close-prs.yml"
+            },
+            {
+              "line": 36,
+              "path": ".github/workflows/close-prs.yml"
+            },
+            {
+              "line": 37,
+              "path": ".github/workflows/close-prs.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "template-injection",
+          "severity": "HIGH"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "225e9bc8f7cc54e4871aa86822ebc8abd45c238428ee1e3b629865096ec535b0",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 36,
+              "path": ".github/workflows/deploy.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "template-injection",
+          "severity": "HIGH"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "577fb2d706f0798c4232cf6253bb674c305447b7043db33ea3c755725735b88c",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 20,
+              "path": ".github/workflows/duplicate-issues.yml"
+            },
+            {
+              "line": 22,
+              "path": ".github/workflows/duplicate-issues.yml"
+            },
+            {
+              "line": 23,
+              "path": ".github/workflows/duplicate-issues.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "template-injection",
+          "severity": "HIGH"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "801bf830f422612be76578db6b22853f6c76a29cda02bb05250a43f3c30292c9",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 20,
+              "path": ".github/workflows/duplicate-issues.yml"
+            },
+            {
+              "line": 22,
+              "path": ".github/workflows/duplicate-issues.yml"
+            },
+            {
+              "line": 24,
+              "path": ".github/workflows/duplicate-issues.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "template-injection",
+          "severity": "HIGH"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "17c2811c5128eb62cbe2730287291e429d72a5ffdbeadd2a8cf655e02488edd0",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 43,
+              "path": ".github/workflows/duplicate-issues.yml"
+            },
+            {
+              "line": 56,
+              "path": ".github/workflows/duplicate-issues.yml"
+            },
+            {
+              "line": 60,
+              "path": ".github/workflows/duplicate-issues.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "template-injection",
+          "severity": "HIGH"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "53986b326c33a59f50d23857fd393999a071ad38789120521f18dcee536bcab7",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 154,
+              "path": ".github/workflows/duplicate-issues.yml"
+            },
+            {
+              "line": 156,
+              "path": ".github/workflows/duplicate-issues.yml"
+            },
+            {
+              "line": 157,
+              "path": ".github/workflows/duplicate-issues.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "template-injection",
+          "severity": "HIGH"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "8be9d91675b77170b1e13311eb12db230a2b707b37f8c5adda1d7bdbe588c9ce",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 154,
+              "path": ".github/workflows/duplicate-issues.yml"
+            },
+            {
+              "line": 156,
+              "path": ".github/workflows/duplicate-issues.yml"
+            },
+            {
+              "line": 158,
+              "path": ".github/workflows/duplicate-issues.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "template-injection",
+          "severity": "HIGH"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "d5d8396e51473bb3cec255f564a20f47b5190ac823fd78b0df1525cbcfc68b62",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 177,
+              "path": ".github/workflows/duplicate-issues.yml"
+            },
+            {
+              "line": 190,
+              "path": ".github/workflows/duplicate-issues.yml"
+            },
+            {
+              "line": 192,
+              "path": ".github/workflows/duplicate-issues.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "template-injection",
+          "severity": "HIGH"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "e73e505622196ed3be81c12d0846e0d3199ea4d4c79418403606a6ca77d01018",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 31,
+              "path": ".github/workflows/generate.yml"
+            },
+            {
+              "line": 32,
+              "path": ".github/workflows/generate.yml"
+            },
+            {
+              "line": 39,
+              "path": ".github/workflows/generate.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "template-injection",
+          "severity": "HIGH"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "c9af0675195885ba9f38ef9703dbaa79364f25d2a44f8e6766ddc9da3f364a02",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 2,
+          "locations": [
+            {
+              "line": 31,
+              "path": ".github/workflows/generate.yml"
+            },
+            {
+              "line": 32,
+              "path": ".github/workflows/generate.yml"
+            },
+            {
+              "line": 40,
+              "path": ".github/workflows/generate.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "template-injection",
+          "severity": "HIGH"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "d603cbf0473588510d9bc0d3989b041c320e48f4baaf741f404a5b1a014ec088",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 19,
+              "path": ".github/workflows/pr-management.yml"
+            },
+            {
+              "line": 21,
+              "path": ".github/workflows/pr-management.yml"
+            },
+            {
+              "line": 22,
+              "path": ".github/workflows/pr-management.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "template-injection",
+          "severity": "HIGH"
+        },
+        {
+          "confidence": "LOW",
+          "dedup_key": "4d65bf9d88cb259a70e910570326bafaa759707e3fd8154ff217e8ba47cb2150",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 199,
+              "path": ".github/workflows/publish.yml"
+            },
+            {
+              "line": 204,
+              "path": ".github/workflows/publish.yml"
+            },
+            {
+              "line": 205,
+              "path": ".github/workflows/publish.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "template-injection",
+          "severity": "INFORMATIONAL"
+        },
+        {
+          "confidence": "LOW",
+          "dedup_key": "dfa698d96c5cae646e791e2d942bc794590b8684e03c7d2f447e8e4138c262d3",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 199,
+              "path": ".github/workflows/publish.yml"
+            },
+            {
+              "line": 204,
+              "path": ".github/workflows/publish.yml"
+            },
+            {
+              "line": 210,
+              "path": ".github/workflows/publish.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "template-injection",
+          "severity": "INFORMATIONAL"
+        },
+        {
+          "confidence": "LOW",
+          "dedup_key": "c4ff8d44b6d5c9077b9f783886b1ae361ca6f65fe770a87ffe7bebaaeeef4fa6",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 2,
+          "locations": [
+            {
+              "line": 494,
+              "path": ".github/workflows/publish.yml"
+            },
+            {
+              "line": 498,
+              "path": ".github/workflows/publish.yml"
+            },
+            {
+              "line": 505,
+              "path": ".github/workflows/publish.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "template-injection",
+          "severity": "INFORMATIONAL"
+        },
+        {
+          "confidence": "LOW",
+          "dedup_key": "cab1fe3fc56195e76236a6d6ba4e8641366408560314cb1e79aaf830ac2dce8e",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 37,
+              "path": ".github/workflows/review.yml"
+            },
+            {
+              "line": 39,
+              "path": ".github/workflows/review.yml"
+            },
+            {
+              "line": 40,
+              "path": ".github/workflows/review.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "template-injection",
+          "severity": "INFORMATIONAL"
+        },
+        {
+          "confidence": "LOW",
+          "dedup_key": "35ea1099d8a3213b2b605b7ab0e74458c3e2b6cd71a1a052b2a54c7fd423f138",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 46,
+              "path": ".github/workflows/review.yml"
+            },
+            {
+              "line": 52,
+              "path": ".github/workflows/review.yml"
+            },
+            {
+              "line": 57,
+              "path": ".github/workflows/review.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "template-injection",
+          "severity": "INFORMATIONAL"
+        },
+        {
+          "confidence": "LOW",
+          "dedup_key": "679b84c5f0fecc8b28777e73053e32e614f7c2af8c1cc7f3a55179c948c4e89e",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 46,
+              "path": ".github/workflows/review.yml"
+            },
+            {
+              "line": 52,
+              "path": ".github/workflows/review.yml"
+            },
+            {
+              "line": 79,
+              "path": ".github/workflows/review.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "template-injection",
+          "severity": "INFORMATIONAL"
+        },
+        {
+          "confidence": "LOW",
+          "dedup_key": "85e07851ee795208ae5d044ae03c269d33ef00e059f8d2a35e77aada5f6a07f1",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 46,
+              "path": ".github/workflows/review.yml"
+            },
+            {
+              "line": 52,
+              "path": ".github/workflows/review.yml"
+            },
+            {
+              "line": 80,
+              "path": ".github/workflows/review.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "template-injection",
+          "severity": "INFORMATIONAL"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "63f5191e15a08a000b1312c60f4cb17150a2b8b2a2af56f7aaec1cffb66f55ac",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 19,
+              "path": ".github/workflows/triage.yml"
+            },
+            {
+              "line": 21,
+              "path": ".github/workflows/triage.yml"
+            },
+            {
+              "line": 22,
+              "path": ".github/workflows/triage.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "template-injection",
+          "severity": "HIGH"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "dbe9bcb9bfb39f72a93047280d94b5861bc97b6c54a8361d14fe9dcec03b6d04",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 19,
+              "path": ".github/workflows/triage.yml"
+            },
+            {
+              "line": 21,
+              "path": ".github/workflows/triage.yml"
+            },
+            {
+              "line": 23,
+              "path": ".github/workflows/triage.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "template-injection",
+          "severity": "HIGH"
+        },
+        {
+          "confidence": "HIGH",
+          "dedup_key": "744cf47a1d0d637cd191ef39cdd2257ad8f014cedf158d47948519ce7ba2961b",
+          "disposition": "NEEDS_OPERATOR_REVIEW",
+          "duplicate_record_count": 1,
+          "locations": [
+            {
+              "line": 51,
+              "path": "github/action.yml"
+            },
+            {
+              "line": 53,
+              "path": "github/action.yml"
+            }
+          ],
+          "next_action": "Review the workflow trigger, permissions, token exposure, action pinning, and data flow; record a disposition before worker activation.",
+          "owner": "personal-operator",
+          "rule_id": "unpinned-uses",
+          "severity": "HIGH"
+        }
+      ],
+      "normalized_result_path": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21/zizmor-normalized.json",
+      "normalized_result_sha256": "05c91f1b72e05e61303b38173ab207b6a6c893f7d1be9f4ce315da126443f23f",
+      "normalized_unique_rule_path_line_count": 139,
+      "owner": "personal-operator",
+      "raw_finding_record_count": 94,
+      "raw_result_sha256": "34482f7367f9f550832e464ed73a6d1801101c9df93519c559cc533df833afb6",
+      "rule_counts": {
+        "artipacked": 27,
+        "dangerous-triggers": 2,
+        "excessive-permissions": 8,
+        "github-app": 2,
+        "github-env": 1,
+        "self-repository": 27,
+        "template-injection": 24,
+        "unpinned-uses": 1
+      },
+      "severity_counts": {
+        "HIGH": 25,
+        "INFORMATIONAL": 9,
+        "LOW": 27,
+        "MEDIUM": 31
+      },
+      "version": "1.30.1",
+      "working_directory": "<exact-source-snapshot-root>"
+    }
+  ],
+  "syntax_only_compensating_check": {
+    "checks": [
+      {
+        "parse_diagnostic_count": 0,
+        "path": "packages/core/src/effect/keyed-mutex.ts",
+        "source_sha256": "e5a8e2b09efe31d44173872ced31e4f5eee7b2632f52511fde30ca391c63f09d"
+      },
+      {
+        "parse_diagnostic_count": 0,
+        "path": "packages/core/src/util/effect-flock.ts",
+        "source_sha256": "926d0d566e1101ae4374576781f6015a33ae42ad5fd161286539ec6f284a15cf"
+      },
+      {
+        "parse_diagnostic_count": 0,
+        "path": "packages/opencode/src/lsp/server.ts",
+        "source_sha256": "907617f9c83c4677a0a0911618eb562744ea00c5b36c48a515af293e7a139e5e"
+      },
+      {
+        "parse_diagnostic_count": 0,
+        "path": "packages/opencode/src/server/routes/instance/httpapi/public.ts",
+        "source_sha256": "9b14f978056e39a8083ed618d56b7b7fe9dcb9733bf4b2db18d1fc43d7258d69"
+      },
+      {
+        "parse_diagnostic_count": 0,
+        "path": "packages/plugin/src/tui.ts",
+        "source_sha256": "3b0ccca22ebf8558afb9dc055505c7c503930f2f622d1db8c3fb9ca3e9278e8c"
+      },
+      {
+        "parse_diagnostic_count": 0,
+        "path": "packages/tui/src/plugin/slots.tsx",
+        "source_sha256": "3686841ad88cfded90321113d2c72bb8fe9e044ebfeb86971303660b4abb19e0"
+      }
+    ],
+    "limitation": "Syntax validation proves parseability only and does not replace security-rule analysis for these paths.",
+    "parse_diagnostic_count": 0,
+    "prior_normalized_result_sha256": "a1bef8ef99aeed373ee4392c6c5f864729acd09cc3e2798638c4030309358f87",
+    "scanner": "TypeScript compiler parser",
+    "scope": "six TypeScript/TSX files with Semgrep parser errors",
+    "security_coverage": false,
+    "source_hashes_verified_against_candidate_snapshot": true,
+    "status": "pass",
+    "version": "5.8.2"
+  }
+}

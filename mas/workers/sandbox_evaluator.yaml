@@ -14,6 +14,13 @@ runtime:
     entrypoint: WorkerAgent
     default_sandbox: sandboxed
     high_risk_sandbox: vm_isolated
+execution:
+  trust: untrusted
+  formats: [oci, linux]
+  preferred_runtime: [kata, runsc]
+  minimum_isolation: sandboxed
+  gvisor_compatible: true
+  remote_vm_allowed: true
 integration:
   adapter_entrypoint: WorkerAgent
   isolation_mode: wrapper

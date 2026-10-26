@@ -1,0 +1,100 @@
+{
+  "checks": [
+    {
+      "name": "boot_grace_suppresses_timeout",
+      "reason": "stale projects are not timed out during the post-boot grace window",
+      "status": "pass"
+    },
+    {
+      "name": "downtime_aware_elapsed_time",
+      "reason": "elapsed time starts at max(project.updated_at, boot_at) and fires at the configured boundary",
+      "status": "pass"
+    },
+    {
+      "name": "watchdog_transitions_to_failed",
+      "reason": "watchdog timeout uses the universal workflow failure transition",
+      "status": "pass"
+    },
+    {
+      "name": "retry_restores_last_safe_state",
+      "reason": "explicit retry restores the recorded safe state rather than guessing a new stage",
+      "status": "pass"
+    },
+    {
+      "name": "terminal_states_are_excluded",
+      "reason": "terminal project states are not automatically re-entered by the watchdog",
+      "status": "pass"
+    },
+    {
+      "name": "explicit_human_cancellation",
+      "reason": "human cancellation reaches the terminal archived state through the controller",
+      "status": "pass"
+    },
+    {
+      "name": "review_circuit_escalation",
+      "reason": "review-circuit escalation uses the universal failure transition",
+      "status": "pass"
+    },
+    {
+      "name": "node_timeout_failure",
+      "reason": "node timeout reaches failure without guessing a recovery state",
+      "status": "pass"
+    },
+    {
+      "name": "invalid_transition_fails_closed",
+      "reason": "events not present in the transition table are rejected",
+      "status": "pass"
+    }
+  ],
+  "controller": {
+    "mutation": false,
+    "storage": false,
+    "worker_dispatch": false
+  },
+  "licence_metadata": {
+    "affects_discovery_install_activation_or_execution": false,
+    "recorded": false
+  },
+  "live": {
+    "reason": "native watchdog and cold-recovery proof remains an operator gate",
+    "status": "not_checked"
+  },
+  "mode": "fixture",
+  "run_provenance": {
+    "aiat_source_revision": "bc0d1a8bb7a2d3f8b647dcac3e13876a4bd5195f",
+    "changed_path_count": 6,
+    "environment": "WSL local AIAT Compose",
+    "external_provider_dispatch_authorized": false,
+    "worktree_dirty": true
+  },
+  "schema_version": "aiat.workflow-watchdog-recovery.v1",
+  "status": "pass",
+  "transition_cases": {
+    "cancellation": {
+      "event": "human_cancelled",
+      "next_state": "ARCHIVED",
+      "prior_state": "HUMAN_APPROVAL"
+    },
+    "escalation": {
+      "event": "review_circuit_open",
+      "next_state": "FAILED",
+      "prior_state": "PDR_REVIEW"
+    },
+    "invalid_transition_blocked": true,
+    "retry": {
+      "event": "retry",
+      "next_state": "IN_PROGRESS",
+      "prior_state": "FAILED"
+    },
+    "timeout": {
+      "event": "watchdog_timeout",
+      "next_state": "FAILED",
+      "prior_state": "CDR_CREATION"
+    },
+    "watchdog": {
+      "event": "watchdog_timeout",
+      "next_state": "FAILED",
+      "prior_state": "IN_PROGRESS"
+    }
+  }
+}

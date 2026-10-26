@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 import httpx
 import pytest
 from orchestrator_api.main import (
+    DEFAULT_COMPANY_ID,
     _ceo_action_evidence,
     _ceo_fallback_evidence,
     _ceo_operator_intent_is_api_owned,
@@ -98,6 +99,22 @@ def test_project_decisions_are_owned_by_the_orchestrator_api():
     assert _ceo_operator_intent_is_api_owned(f"retry project {project_id} after an infra failure") is True
 
 
+def test_natural_software_build_request_is_owned_by_the_project_control_plane():
+    instruction = (
+        "Create a small Python application that accepts a CSV of expenses, "
+        "calculates totals by category, includes tests, and produces a README."
+    )
+
+    assert _ceo_operator_intent_is_api_owned(instruction) is True
+    assert _ceo_operator_intent_is_api_owned("Create a password for the test account") is False
+    assert (
+        _ceo_operator_intent_is_api_owned(
+            "Create a software engineering department and hire OpenCode as an engineer."
+        )
+        is True
+    )
+
+
 def test_security_blocker_revision_is_owned_by_the_orchestrator_api():
     project_id = UUID("00000000-0000-4000-a000-0000000000c1")
 
@@ -137,10 +154,11 @@ async def test_ceo_project_approval_is_persisted_and_reports_authoritative_state
             "next_state": "PDR_CREATION",
         }
     )
-    monkeypatch.setattr("orchestrator_api.main.submit_decision", submit)
+    monkeypatch.setattr("orchestrator_api.main._submit_project_decision", submit)
 
     result = await _handle_ceo_project_intent(
-        f"approve feasibility for project {project_id}"
+        f"approve feasibility for project {project_id}",
+        principal="operator",
     )
 
     assert result is not None
@@ -153,11 +171,12 @@ async def test_ceo_project_approval_is_persisted_and_reports_authoritative_state
     request = submit.await_args.args[1]
     assert request.decision == "APPROVED"
     assert request.decided_by == "human_operator"
+    assert submit.await_args.kwargs["actor_id"] == "operator"
 
 
 @pytest.mark.anyio
 async def test_ceo_project_decision_reports_the_newest_mutated_gate(monkeypatch):
-    """Chat must identify the same newest gate that submit_decision updates."""
+    """Chat must identify the same newest gate that the internal decision path updates."""
     from orchestrator_api.main import app
 
     project_id = UUID("00000000-0000-4000-a000-0000000000d1")
@@ -179,7 +198,7 @@ async def test_ceo_project_decision_reports_the_newest_mutated_gate(monkeypatch)
     submit = AsyncMock(
         return_value={"status": "transitioned", "gate_id": str(newest["id"])}
     )
-    monkeypatch.setattr("orchestrator_api.main.submit_decision", submit)
+    monkeypatch.setattr("orchestrator_api.main._submit_project_decision", submit)
 
     result = await _handle_ceo_project_intent(f"approve project {project_id}")
 
@@ -203,7 +222,7 @@ async def test_ceo_project_rejection_requires_a_reason(monkeypatch):
     )
     app.state.storage = storage
     submit = AsyncMock()
-    monkeypatch.setattr("orchestrator_api.main.submit_decision", submit)
+    monkeypatch.setattr("orchestrator_api.main._submit_project_decision", submit)
 
     result = await _handle_ceo_project_intent(f"reject project {project_id}")
 
@@ -229,7 +248,8 @@ async def test_ceo_security_blocker_recovery_requests_document_revision(monkeypa
     app.state.storage = storage
     transitions: list[Any] = []
 
-    async def fake_transition(project_uuid: UUID, request: Any) -> dict[str, Any]:
+    async def fake_transition(project_uuid: UUID, request: Any, *, actor_id: str) -> dict[str, Any]:
+        assert actor_id == "operator"
         transitions.append((project_uuid, request))
         return {
             "next_state": "CDR_REVIEW"
@@ -237,7 +257,7 @@ async def test_ceo_security_blocker_recovery_requests_document_revision(monkeypa
             else "CDR_CREATION"
         }
 
-    monkeypatch.setattr("orchestrator_api.main.transition_project", fake_transition)
+    monkeypatch.setattr("orchestrator_api.main._execute_project_transition", fake_transition)
 
     result = await _handle_ceo_project_intent(
         f"resolve the security blocker for project {project_id} because TLS, AES-256, data classification, STRIDE, GDPR/SOC2 mapping, secrets rotation, MCP authentication, and gVisor controls are complete"
@@ -270,11 +290,12 @@ async def test_ceo_document_revision_chat_requests_cdr_revision(monkeypatch):
     app.state.storage = storage
     transitions: list[Any] = []
 
-    async def fake_transition(project_uuid: UUID, request: Any) -> dict[str, Any]:
+    async def fake_transition(project_uuid: UUID, request: Any, *, actor_id: str) -> dict[str, Any]:
+        assert actor_id == "operator"
         transitions.append((project_uuid, request))
         return {"next_state": "CDR_CREATION"}
 
-    monkeypatch.setattr("orchestrator_api.main.transition_project", fake_transition)
+    monkeypatch.setattr("orchestrator_api.main._execute_project_transition", fake_transition)
 
     result = await _handle_ceo_project_intent(
         f"revise the CDR for project {project_id} because CFO requested budget, ROI, and contingency details"
@@ -490,9 +511,22 @@ async def test_operator_send_to_ceo_publishes_human_directive(client, monkeypatc
 
     monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
 
+    denied = await client.post(
+        "/ceo/message",
+        headers={"X-API-Key": "test-mas-key"},
+        json={
+            "message": (
+                "Initialize a new project named 'CEO Command Project' "
+                "with description 'Build through CEO chat'."
+            )
+        },
+    )
+    assert denied.status_code == 403
+    assert published == {}
+
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "Hello CEO, confirm you are online."},
     )
 
@@ -547,7 +581,7 @@ async def test_operator_send_to_ceo_async_mode_uses_caller_request_id(client, mo
 
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={
             "message": "Hello CEO, give me a concise operational summary.",
             "request_id": request_id,
@@ -625,7 +659,7 @@ async def test_operator_send_to_ceo_hiring_request_registers_candidate(client, m
 
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={
             "message": (
                 "Create a software engineering department and hire OpenCode "
@@ -979,7 +1013,7 @@ async def test_operator_send_to_ceo_hiring_url_then_role_uses_repo_name(client, 
 
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "hire https://github.com/OpenHands/openhands as a software engineer"},
     )
 
@@ -1046,7 +1080,7 @@ async def test_operator_send_to_ceo_hiring_same_repo_reuses_existing_candidate(
 
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "hire https://github.com/OpenHands/openhands as a software engineer"},
     )
 
@@ -1108,7 +1142,7 @@ async def test_operator_send_to_ceo_hiring_name_conflict_blocks_overwrite(
 
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={
             "message": (
                 "hire a worker named coding specialist from "
@@ -1186,7 +1220,7 @@ async def test_operator_send_to_ceo_explains_production_department_routing(clien
 
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "why production dep?", "context_worker_id": str(worker_id)},
     )
 
@@ -1247,7 +1281,7 @@ async def test_operator_send_to_ceo_does_not_guess_ambiguous_hiring_followup(cli
 
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "why production dep?"},
     )
 
@@ -1302,7 +1336,7 @@ async def test_operator_send_to_ceo_uses_context_for_worker_pronoun(client, monk
 
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "what is its status?", "context_worker_id": str(worker_id)},
     )
 
@@ -1381,17 +1415,17 @@ async def test_operator_send_to_ceo_controls_named_worker_lifecycle(client, monk
 
     status_response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "status of worker openhands"},
     )
     approve_response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "approve worker openhands"},
     )
     activate_response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "activate worker openhands"},
     )
 
@@ -1474,7 +1508,7 @@ async def test_operator_send_to_ceo_blocks_approval_when_latest_evaluation_rejec
 
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "approve worker openhands"},
     )
 
@@ -1538,7 +1572,7 @@ async def test_operator_send_to_ceo_requires_evaluation_before_approving_externa
 
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "approve unevaluated_worker"},
     )
 
@@ -1602,7 +1636,7 @@ async def test_operator_send_to_ceo_rejects_inactive_candidate(client, monkeypat
 
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "reject worker rejected_candidate"},
     )
 
@@ -1666,7 +1700,7 @@ async def test_operator_send_to_ceo_blocks_rejecting_active_worker(client, monke
 
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "deny worker active_worker"},
     )
 
@@ -1738,7 +1772,7 @@ async def test_operator_send_to_ceo_prefers_exact_worker_name_over_substring(cli
 
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "status of worker ceo_chat_smoke_1783282647840"},
     )
 
@@ -1799,7 +1833,7 @@ async def test_operator_send_to_ceo_reclassifies_candidate_department(client, mo
 
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "reclassify openhands to QA"},
     )
 
@@ -1868,7 +1902,7 @@ async def test_operator_send_to_ceo_blocks_reclassifying_active_worker(client, m
 
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "reclassify active_opencode to QA"},
     )
 
@@ -1938,7 +1972,7 @@ async def test_operator_send_to_ceo_hiring_request_uses_existing_team_ids(client
 
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "Hire a security agent from https://github.com/example/security-worker."},
     )
 
@@ -1980,7 +2014,7 @@ async def test_operator_send_to_ceo_hiring_request_without_repo_asks_for_source(
 
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "Hire an agent for QA."},
     )
 
@@ -1991,8 +2025,27 @@ async def test_operator_send_to_ceo_hiring_request_without_repo_asks_for_source(
     assert "need a GitHub repository URL" in published[1]["envelope"]["payload"]["response"]
 
 
+@pytest.mark.parametrize(
+    ("instruction", "expected_project_name"),
+    [
+        (
+            "Initialize a new project named 'CEO Command Project' "
+            "with description 'Build through CEO chat'.",
+            "CEO Command Project",
+        ),
+        (
+            "Create a small Python application that accepts a CSV of expenses, "
+            "calculates totals by category, includes tests, and produces a README.",
+            "Python application",
+        ),
+    ],
+)
 @pytest.mark.anyio
-async def test_operator_send_to_ceo_creates_project_and_traces_workflow(client, monkeypatch):
+async def test_operator_send_to_ceo_creates_project_and_traces_workflow(
+    client, monkeypatch, instruction: str, expected_project_name: str
+):
+    from mas_core.workflow import WorkflowEvent, WorkflowTransitionResult
+    from mas_core.workflow.states import ProjectState
     from orchestrator_api.main import app
 
     published: list[dict[str, Any]] = []
@@ -2026,8 +2079,16 @@ async def test_operator_send_to_ceo_creates_project_and_traces_workflow(client, 
         def __init__(self) -> None:
             self.transitions: list[dict[str, Any]] = []
 
-        async def transition(self, **kwargs: Any) -> None:
+        async def transition(self, **kwargs: Any) -> Any:
             self.transitions.append(kwargs)
+            return WorkflowTransitionResult(
+                project_id=kwargs["project_id"],
+                prior_state=ProjectState.INIT,
+                event=WorkflowEvent.PROJECT_CREATED,
+                next_state=ProjectState.FEASIBILITY_CHECK,
+                actor_id=kwargs["actor_id"],
+                context=kwargs["context"],
+            )
 
     project_id = UUID("00000000-0000-4000-a000-00000000c001")
     storage = MagicMock()
@@ -2047,13 +2108,8 @@ async def test_operator_send_to_ceo_creates_project_and_traces_workflow(client, 
 
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
-        json={
-            "message": (
-                "Initialize a new project named 'CEO Command Project' "
-                "with description 'Build through CEO chat'."
-            )
-        },
+        headers={"X-API-Key": "test-operator-key"},
+        json={"message": instruction},
     )
 
     assert response.status_code == 200
@@ -2063,13 +2119,122 @@ async def test_operator_send_to_ceo_creates_project_and_traces_workflow(client, 
     assert "created_project_record" in body["action"]["trace"]
     assert {"kind": "project", "id": str(project_id)} in body["evidence"]["refs"]
     storage.create_project.assert_awaited_once()
-    assert len(published) == 3
+    assert storage.create_project.await_args.kwargs["name"] == expected_project_name
+    assert storage.create_project.await_args.kwargs["description"] == (
+        "Build through CEO chat" if expected_project_name == "CEO Command Project" else instruction
+    )
+    assert len(app.state.controller.transitions) == 1
+    assert app.state.controller.transitions[0]["event"] == WorkflowEvent.PROJECT_CREATED
+    # The transition publisher owns the durable SYSTEM_EVENT and its stage
+    # directive. This HTTP request publishes the operator's CEO task and the
+    # immediate response; transition delivery is covered by the outbox tests.
+    assert len(published) == 2
     assert published[0]["envelope"]["msg_type"] == "TASK"
     assert published[0]["envelope"]["payload"]["execution_owner"] == "orchestrator-api"
-    assert published[1]["envelope"]["msg_type"] == "DIRECTIVE"
-    assert published[1]["envelope"]["payload"]["action"] == "START_FEASIBILITY"
-    assert published[2]["envelope"]["msg_type"] == "RESPONSE"
-    assert {"kind": "project", "id": str(project_id)} in published[2]["envelope"]["payload"]["evidence"]["refs"]
+    assert published[1]["envelope"]["msg_type"] == "RESPONSE"
+    assert {"kind": "project", "id": str(project_id)} in published[1]["envelope"]["payload"]["evidence"]["refs"]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "instruction",
+    [
+        "Prepare a project named Expense Analyzer for a Python CSV expense app with category totals, tests, and a README.",
+        "Create a project named Expense Analyzer for a Python CSV expense app with category totals, tests, and a README.",
+    ],
+)
+async def test_operator_send_to_ceo_prepares_project_without_starting_workflow(
+    client, monkeypatch, instruction: str
+):
+    from orchestrator_api.main import app
+
+    published: list[dict[str, Any]] = []
+
+    class FakeResponse:
+        status_code = 200
+        text = "ok"
+
+        @property
+        def is_success(self) -> bool:
+            return True
+
+        def json(self) -> dict[str, str]:
+            return {"entry_id": f"stream-entry-{len(published)}"}
+
+    class FakeAsyncClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> FakeAsyncClient:
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+        async def post(self, url: str, json: dict[str, Any]) -> FakeResponse:
+            published.append({"url": url, "envelope": json})
+            return FakeResponse()
+
+    request_id = "a5ec5a8f-6b7c-46fa-9bb5-74844dcab011"
+    project_id = uuid5(
+        NAMESPACE_URL,
+        f"aiat:project-create:{DEFAULT_COMPANY_ID}:{request_id}",
+    )
+    storage = MagicMock()
+    storage.get_project = AsyncMock(return_value=None)
+    storage.create_project = AsyncMock(
+        return_value={
+            "id": project_id,
+            "name": "Expense Analyzer",
+            "description": instruction,
+            "state": "INIT",
+            "created_by": "operator",
+        }
+    )
+    app.state.storage = storage
+    controller = MagicMock()
+    controller.transition = AsyncMock()
+    app.state.controller = controller
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+
+    response = await client.post(
+        "/ceo/message",
+        headers={"X-API-Key": "test-operator-key"},
+        json={
+            "message": instruction,
+            "request_id": request_id,
+            "project_start_mode": "prepare_only",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["action"]["type"] == "project_create"
+    assert body["action"]["status"] == "prepared"
+    assert body["action"]["project"]["state"] == "INIT"
+    assert "no feasibility or workflow work was started" in body["action"]["response"]
+    assert {"kind": "project", "id": str(project_id)} in body["evidence"]["refs"]
+    storage.create_project.assert_awaited_once()
+    create_kwargs = storage.create_project.await_args.kwargs
+    assert create_kwargs["name"] == "Expense Analyzer"
+    assert create_kwargs["description"] == instruction
+    assert create_kwargs["project_id"] == project_id
+    assert create_kwargs["initial_context"] == [
+        {
+            "item_type": "TEXT",
+            "name": "CEO project brief",
+            "content_text": instruction,
+            "tags": ["project-brief", "ceo-chat"],
+            "created_by": "operator",
+        }
+    ]
+    controller.transition.assert_not_awaited()
+    # Only the operator's CEO request and its receipt are published. With no
+    # WorkflowController transition, no feasibility outbox directive is made.
+    assert [item["envelope"]["msg_type"] for item in published] == ["TASK", "RESPONSE"]
+    assert published[0]["envelope"]["payload"]["execution_owner"] == "orchestrator-api"
+    assert published[0]["envelope"]["payload"]["project_start_mode"] == "prepare_only"
+    assert published[1]["envelope"]["payload"]["action"]["status"] == "prepared"
 
 
 @pytest.mark.anyio
@@ -2133,12 +2298,12 @@ async def test_operator_send_to_ceo_reads_company_and_hiring_board(client, monke
 
     company_response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "Show company overview."},
     )
     board_response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "Show hiring board status."},
     )
 
@@ -2183,7 +2348,7 @@ async def test_operator_send_to_ceo_reads_runtime_readiness(client, monkeypatch)
 
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "Show LangGraph CrewAI AutoGen Letta runtime readiness."},
     )
 
@@ -2257,7 +2422,7 @@ async def test_operator_send_to_ceo_fails_closed_without_configured_credentials(
 async def test_operator_send_to_ceo_rejects_empty_message(client):
     response = await client.post(
         "/ceo/message",
-        headers={"Authorization": "Bearer test-mas-key"},
+        headers={"X-API-Key": "test-operator-key"},
         json={"message": "   "},
     )
 

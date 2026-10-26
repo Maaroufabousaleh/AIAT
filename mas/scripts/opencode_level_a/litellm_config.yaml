@@ -1,0 +1,13 @@
+model_list:
+  - model_name: omniroute-coding
+    litellm_params:
+      model: openai/fixture-model
+      api_base: http://provider-fixture:8000/v1
+      api_key: aiat-level-a-provider-dummy
+
+litellm_settings:
+  drop_params: true
+  request_timeout: 10
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY

@@ -13,7 +13,9 @@ it never prints container environment values or API credentials.
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -51,6 +53,56 @@ FORBIDDEN_ENV_NAMES = frozenset(
     }
 )
 IDENTITY_ENV_NAMES = frozenset({"AIAT_CEO_API_KEY", "AIAT_WORKER_API_KEY"})
+RUNSC_SERVICE = "opencode-runtime"
+RUNSC_NETWORK = "sandbox_gateway"
+RUNSC_GATEWAYS = (("tool-service", 8002), ("litellm", 4000))
+RUNSC_PROTECTED = ("redis", "postgres", "pgbouncer", "minio")
+RUNSC_NETWORK_MEMBERS = frozenset({RUNSC_SERVICE, "orchestrator-api", *(name for name, _port in RUNSC_GATEWAYS)})
+RUNSC_FORBIDDEN_ENV = frozenset(
+    {
+        "MAS_API_KEY",
+        "AIAT_OPERATOR_API_KEY",
+        "AIAT_CEO_API_KEY",
+        "AIAT_WORKER_API_KEY",
+        "PGBOUNCER_DSN",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "TOOL_SECRET",
+    }
+)
+
+
+def _compose_default(value: Any) -> str:
+    """Resolve the literal default in a simple Compose ${NAME:-default} value."""
+    raw = str(value)
+    match = re.fullmatch(r"\$\{[A-Za-z_][A-Za-z0-9_]*:-([^{}]+)\}", raw)
+    return match.group(1) if match else raw
+
+
+def _network_ipv4(service: dict[str, Any], network: str) -> str | None:
+    networks = service.get("networks") or {}
+    if not isinstance(networks, dict):
+        return None
+    config = networks.get(network)
+    if not isinstance(config, dict) or "ipv4_address" not in config:
+        return None
+    return _compose_default(config["ipv4_address"])
+
+
+def _extra_host_entries(service: dict[str, Any]) -> dict[str, str]:
+    entries = service.get("extra_hosts") or []
+    if isinstance(entries, dict):
+        return {str(host): _compose_default(address) for host, address in entries.items()}
+    result: dict[str, str] = {}
+    if isinstance(entries, list):
+        for entry in entries:
+            if isinstance(entry, str):
+                separator = "=" if "=" in entry else ":"
+                if separator in entry:
+                    host, address = entry.split(separator, 1)
+                    result[host.strip()] = _compose_default(address.strip())
+    return result
 
 
 def _load_policy(policy_path: Path = DEFAULT_POLICY) -> dict[str, Any]:
@@ -66,14 +118,33 @@ def _load_policy(policy_path: Path = DEFAULT_POLICY) -> dict[str, Any]:
     if raw.get("programme_scope") != "personal-internal-only":
         raise ValueError("network policy must declare personal-internal-only scope")
     runner = raw.get("runner")
+    control_plane = raw.get("control_plane")
     protected = raw.get("protected_services")
     allowed = raw.get("allowed_gateways")
     external = raw.get("external_denied_targets")
     networks = raw.get("networks")
-    if not isinstance(runner, dict) or not isinstance(protected, list) or not isinstance(allowed, list) or not isinstance(external, list) or not isinstance(networks, dict):
-        raise ValueError("network policy runner, protected, allowed, and external sections are required")
+    if not isinstance(runner, dict) or not isinstance(control_plane, dict) or not isinstance(protected, list) or not isinstance(allowed, list) or not isinstance(external, list) or not isinstance(networks, dict):
+        raise ValueError("network policy runner, control_plane, protected, allowed, and external sections are required")
     if not protected or not allowed or not external:
         raise ValueError("network policy protected, allowed, and external sections must not be empty")
+    if (
+        not isinstance(control_plane.get("service"), str)
+        or not control_plane["service"]
+        or not isinstance(control_plane.get("network"), str)
+        or not control_plane["network"]
+        or not isinstance(control_plane.get("required_tcp"), list)
+        or not control_plane["required_tcp"]
+    ):
+        raise ValueError("network policy control_plane requires service, network, and required_tcp rows")
+    for row in control_plane["required_tcp"]:
+        if (
+            not isinstance(row, dict)
+            or not isinstance(row.get("service"), str)
+            or not row["service"]
+            or not isinstance(row.get("port"), int)
+            or not 1 <= row["port"] <= 65535
+        ):
+            raise ValueError("network policy control_plane required_tcp rows must contain a service and valid port")
     required_runner = {"service_prefix", "ceo_service", "network", "identity_env", "forbidden_env_names", "forbidden_env_prefixes", "forbidden_mounts"}
     if not required_runner.issubset(runner):
         missing = sorted(required_runner - set(runner))
@@ -120,6 +191,14 @@ def _policy_targets(policy: dict[str, Any]) -> dict[str, Any]:
         "service_prefix": runner["service_prefix"],
         "ceo_service": runner["ceo_service"],
         "identity_env": dict(runner["identity_env"]),
+        "control_plane": {
+            "service": str(policy["control_plane"]["service"]),
+            "network": str(policy["control_plane"]["network"]),
+            "required_tcp": [
+                {"service": str(row["service"]), "port": int(row["port"])}
+                for row in policy["control_plane"]["required_tcp"]
+            ],
+        },
         "forbidden_env_names": list(runner["forbidden_env_names"]),
         "forbidden_env_prefixes": list(runner["forbidden_env_prefixes"]),
         "forbidden_mounts": list(runner["forbidden_mounts"]),
@@ -209,6 +288,25 @@ def inspect_static(
         services = {}
 
     runner_network = str(targets["runner_network"])
+    control_plane = targets["control_plane"]
+    control_plane_service = str(control_plane["service"])
+    control_plane_network = str(control_plane["network"])
+    control_plane_compose = services.get(control_plane_service)
+    if not isinstance(control_plane_compose, dict):
+        errors.append(f"control-plane service {control_plane_service!r} is missing")
+    elif control_plane_network not in _service_networks(control_plane_compose):
+        errors.append(
+            f"control-plane service {control_plane_service!r} is not attached to {control_plane_network}"
+        )
+    for row in control_plane["required_tcp"]:
+        service_name = str(row["service"])
+        service = services.get(service_name)
+        if not isinstance(service, dict):
+            errors.append(f"control-plane dependency {service_name!r} is missing")
+        elif control_plane_network not in _service_networks(service):
+            errors.append(
+                f"control-plane dependency {service_name!r} is not attached to {control_plane_network}"
+            )
     service_prefix = str(targets["service_prefix"])
     ceo_service = str(targets["ceo_service"])
     defaults = compose.get("x-team-defaults") or {}
@@ -227,6 +325,114 @@ def inspect_static(
             errors.append(
                 f"Compose network {network_name!r} internal flag must be {expected_internal}"
             )
+
+    # runsc cannot reach Docker's embedded bridge DNS at 127.0.0.11. Require
+    # the OpenCode sandbox to use a private bridge with stable /etc/hosts
+    # mappings for only the mediated tool and model-gateway services.
+    sandbox_network = compose_networks.get(RUNSC_NETWORK)
+    sandbox_subnet: ipaddress.IPv4Network | None = None
+    sandbox_ipam = sandbox_network.get("ipam") if isinstance(sandbox_network, dict) else None
+    ipam_rows = sandbox_ipam.get("config") if isinstance(sandbox_ipam, dict) else None
+    subnet_value = None
+    if isinstance(ipam_rows, list) and ipam_rows and isinstance(ipam_rows[0], dict):
+        subnet_value = _compose_default(ipam_rows[0].get("subnet", ""))
+    try:
+        parsed_subnet = ipaddress.ip_network(str(subnet_value), strict=True)
+        if not isinstance(parsed_subnet, ipaddress.IPv4Network):
+            raise ValueError("sandbox gateway subnet must be IPv4")
+        sandbox_subnet = parsed_subnet
+    except ValueError:
+        errors.append("sandbox_gateway must declare a valid IPv4 IPAM subnet")
+
+    runsc_service = services.get(RUNSC_SERVICE)
+    runsc_ips: dict[str, str] = {}
+    if not isinstance(runsc_service, dict):
+        errors.append(f"{RUNSC_SERVICE}: runsc service is missing")
+    else:
+        if str(runsc_service.get("runtime") or "").strip() != "runsc":
+            errors.append(f"{RUNSC_SERVICE}: runtime must remain explicitly set to runsc")
+        if _service_networks(runsc_service) != {RUNSC_NETWORK}:
+            errors.append(
+                f"{RUNSC_SERVICE}: networks must be exactly [{RUNSC_NETWORK!r}]"
+            )
+        if runsc_service.get("network_mode"):
+            errors.append(f"{RUNSC_SERVICE}: network_mode overrides are forbidden")
+        runsc_forbidden_env = _environment_names(runsc_service) & RUNSC_FORBIDDEN_ENV
+        if runsc_forbidden_env:
+            errors.append(
+                f"{RUNSC_SERVICE}: privileged or data-plane environment names are forbidden: {sorted(runsc_forbidden_env)}"
+            )
+        opencode_ip = _network_ipv4(runsc_service, RUNSC_NETWORK)
+        if opencode_ip is None:
+            errors.append(f"{RUNSC_SERVICE}: stable {RUNSC_NETWORK} IPv4 address is required")
+        else:
+            runsc_ips[RUNSC_SERVICE] = opencode_ip
+        host_entries = _extra_host_entries(runsc_service)
+        if set(host_entries) != {name for name, _port in RUNSC_GATEWAYS}:
+            errors.append(
+                f"{RUNSC_SERVICE}: extra_hosts must contain only the approved tool and model gateway aliases"
+            )
+        for gateway_name, _port in RUNSC_GATEWAYS:
+            gateway_service = services.get(gateway_name)
+            gateway_ip = (
+                _network_ipv4(gateway_service, RUNSC_NETWORK)
+                if isinstance(gateway_service, dict)
+                else None
+            )
+            if gateway_ip is None:
+                errors.append(
+                    f"{gateway_name}: stable {RUNSC_NETWORK} IPv4 address is required"
+                )
+                continue
+            runsc_ips[gateway_name] = gateway_ip
+            if RUNSC_NETWORK not in _service_networks(gateway_service):
+                errors.append(f"{gateway_name}: must share {RUNSC_NETWORK} with {RUNSC_SERVICE}")
+            if host_entries.get(gateway_name) != gateway_ip:
+                errors.append(
+                    f"{RUNSC_SERVICE}: extra_hosts must map {gateway_name} to its {RUNSC_NETWORK} IPv4 address"
+                )
+        orchestrator = services.get("orchestrator-api")
+        if not isinstance(orchestrator, dict) or RUNSC_NETWORK not in _service_networks(orchestrator):
+            errors.append(f"orchestrator-api: must share {RUNSC_NETWORK} to call {RUNSC_SERVICE}")
+        else:
+            orchestrator_ip = _network_ipv4(orchestrator, RUNSC_NETWORK)
+            if orchestrator_ip is None:
+                errors.append(f"orchestrator-api: stable {RUNSC_NETWORK} IPv4 address is required")
+            else:
+                runsc_ips["orchestrator-api"] = orchestrator_ip
+        protected_off_sandbox = ("redis", "postgres", "pgbouncer", "minio")
+        for protected_name in protected_off_sandbox:
+            protected_service = services.get(protected_name)
+            if isinstance(protected_service, dict) and RUNSC_NETWORK in _service_networks(protected_service):
+                errors.append(f"{protected_name}: protected service must not join {RUNSC_NETWORK}")
+        if any(
+            isinstance(volume, str) and "/var/run/docker.sock" in volume
+            for volume in runsc_service.get("volumes") or []
+        ):
+            errors.append(f"{RUNSC_SERVICE}: Docker socket mount is forbidden")
+
+    parsed_ips: dict[str, ipaddress.IPv4Address] = {}
+    for service_name, value in runsc_ips.items():
+        try:
+            parsed = ipaddress.ip_address(value)
+            if not isinstance(parsed, ipaddress.IPv4Address):
+                raise ValueError("address must be IPv4")
+            parsed_ips[service_name] = parsed
+            if sandbox_subnet is not None and parsed not in sandbox_subnet:
+                errors.append(f"{service_name}: {RUNSC_NETWORK} IPv4 address is outside its subnet")
+        except ValueError:
+            errors.append(f"{service_name}: invalid {RUNSC_NETWORK} IPv4 address")
+    if len(set(parsed_ips.values())) != len(parsed_ips):
+        errors.append(f"{RUNSC_NETWORK}: runsc and gateway IPv4 addresses must be unique")
+    sandbox_members = {
+        service_name
+        for service_name, service in services.items()
+        if isinstance(service, dict) and RUNSC_NETWORK in _service_networks(service)
+    }
+    if sandbox_members != RUNSC_NETWORK_MEMBERS:
+        errors.append(
+            f"{RUNSC_NETWORK}: expected only the OpenCode runtime, its orchestrator management peer, Tool Service and LiteLLM; got {sorted(sandbox_members)}"
+        )
 
     team_services = sorted(
         name
@@ -345,6 +551,20 @@ def inspect_static(
         "protected_services": present_protected,
         "identity_services": identity_services,
         "allowed_gateways": [str(row["service"]) for row in allowed_rows],
+        "runsc_network": {
+            "service": RUNSC_SERVICE,
+            "network": RUNSC_NETWORK,
+            "subnet": str(sandbox_subnet) if sandbox_subnet is not None else None,
+            "static_ipv4": runsc_ips,
+            "host_mappings": _extra_host_entries(runsc_service)
+            if isinstance(runsc_service, dict)
+            else {},
+            "network_members": sorted(sandbox_members),
+            "allowed_gateways": [
+                {"service": service, "port": port} for service, port in RUNSC_GATEWAYS
+            ],
+            "protected_services": list(RUNSC_PROTECTED),
+        },
     }
 
 
@@ -446,6 +666,60 @@ _TCP_PROBE = (
     "s=socket.create_connection((h,p),timeout=2); s.close()"
 )
 
+_RUNSC_NODE_TCP_PROBE = r"""
+const dns = require('node:dns').promises;
+const net = require('node:net');
+const host = process.argv[1];
+const port = Number(process.argv[2]);
+const bounded = (promise, ms) => {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' })), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+};
+(async () => {
+  try {
+    const records = await bounded(dns.lookup(host, { all: true, verbatim: true }), 3000);
+    if (!records.length) throw Object.assign(new Error('empty DNS result'), { code: 'ENODATA' });
+    let connected = false;
+    let lastCode = 'ECONNREFUSED';
+    for (const record of records) {
+      try {
+        await bounded(new Promise((resolve, reject) => {
+          const socket = net.createConnection({ host: record.address, port, timeout: 2000 }, () => {
+            socket.destroy();
+            resolve();
+          });
+          socket.once('timeout', () => {
+            socket.destroy();
+            reject(Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' }));
+          });
+          socket.once('error', reject);
+        }), 2500);
+        connected = true;
+        break;
+      } catch (error) {
+        lastCode = error.code || lastCode;
+      }
+    }
+    process.stdout.write(JSON.stringify({
+      reachable: connected,
+      addresses: records.map((record) => record.address),
+      reason: connected ? null : lastCode,
+    }));
+    process.exitCode = connected ? 0 : 1;
+  } catch (error) {
+    const code = typeof error.code === 'string' && /^[A-Z0-9_]+$/.test(error.code)
+      ? error.code : 'PROBE_FAILED';
+    process.stdout.write(JSON.stringify({ reachable: false, addresses: [], reason: code }));
+    process.exitCode = 1;
+  }
+})();
+"""
+
 _FILE_PROBE = "import os,sys; sys.exit(0 if os.path.exists(sys.argv[1]) else 1)"
 
 
@@ -459,6 +733,147 @@ def _probe_tcp(container_id: str, host: str, port: int) -> bool:
         if "executable file not found" not in (result.stderr or "").lower():
             return False
     raise RuntimeError("team-runner image has neither python nor python3 for probes")
+
+
+def _probe_runsc_tcp(container_id: str, host: str, port: int) -> dict[str, Any]:
+    """Resolve a host using runsc's own NSS path, then make a bounded TCP probe."""
+    result = _run(
+        ["docker", "exec", container_id, "node", "-e", _RUNSC_NODE_TCP_PROBE, host, str(port)]
+    )
+    try:
+        probe = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return {
+            "host": host,
+            "port": port,
+            "reachable": False,
+            "resolved_addresses": [],
+            "reason": "invalid_probe_output",
+        }
+    if not isinstance(probe, dict):
+        probe = {}
+    addresses = probe.get("addresses")
+    return {
+        "host": host,
+        "port": port,
+        "reachable": result.returncode == 0 and probe.get("reachable") is True,
+        "resolved_addresses": addresses if isinstance(addresses, list) else [],
+        "reason": probe.get("reason") if result.returncode != 0 else None,
+    }
+
+
+def _container_ipv4(container_id: str, logical_network: str) -> str | None:
+    result = _run(
+        ["docker", "inspect", "--format", "{{json .NetworkSettings.Networks}}", container_id]
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        networks = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(networks, dict):
+        return None
+    for actual_name, config in networks.items():
+        if _logical_network_name(str(actual_name)) != logical_network:
+            continue
+        if isinstance(config, dict) and isinstance(config.get("IPAddress"), str):
+            return str(config["IPAddress"])
+    return None
+
+
+def _inspect_runsc_boundary(protected_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Exercise OpenCode's real runsc resolver and verify its narrow reachability."""
+    errors: list[str] = []
+    container_id = _docker_container_for_service(RUNSC_SERVICE)
+    if not container_id:
+        return {
+            "service": RUNSC_SERVICE,
+            "status": "fail",
+            "errors": [f"{RUNSC_SERVICE}: no running container found"],
+            "gateway_probes": [],
+            "protected_denials": [],
+        }
+
+    runtime_result = _run(
+        ["docker", "inspect", "--format", "{{.HostConfig.Runtime}}", container_id]
+    )
+    runtime = runtime_result.stdout.strip() if runtime_result.returncode == 0 else ""
+    if runtime != "runsc":
+        errors.append(f"{RUNSC_SERVICE}: expected Docker runtime runsc")
+
+    try:
+        logical_networks, actual_networks = _logical_networks(container_id)
+    except (RuntimeError, OSError):
+        logical_networks, actual_networks = set(), set()
+        errors.append(f"{RUNSC_SERVICE}: could not inspect attached networks")
+    if logical_networks != {RUNSC_NETWORK}:
+        errors.append(f"{RUNSC_SERVICE}: must be attached only to {RUNSC_NETWORK}")
+
+    gateway_probes: list[dict[str, Any]] = []
+    for service_name, port in RUNSC_GATEWAYS:
+        target_id = _docker_container_for_service(service_name)
+        target_ip = _container_ipv4(target_id, RUNSC_NETWORK) if target_id else None
+        if not target_id or not target_ip:
+            probe = {
+                "host": service_name,
+                "port": port,
+                "reachable": False,
+                "resolved_addresses": [],
+                "reason": "gateway_missing_from_sandbox_network",
+            }
+        else:
+            probe = _probe_runsc_tcp(container_id, service_name, port)
+            if target_ip not in probe["resolved_addresses"]:
+                probe["reachable"] = False
+                probe["reason"] = "host_mapping_does_not_match_gateway_address"
+        gateway_probes.append(probe)
+        if not probe["reachable"]:
+            errors.append(f"{RUNSC_SERVICE}: allowed gateway {service_name}:{port} is unreachable")
+
+    protected_denials: list[dict[str, Any]] = []
+    # Only interpret a failed protected-service connection as a denial after
+    # proving the same sandbox can reach its allowed control gateways.
+    if all(probe["reachable"] for probe in gateway_probes):
+        for service_name in RUNSC_PROTECTED:
+            target_id = _docker_container_for_service(service_name)
+            target_ip = _container_ipv4(target_id, "internal") if target_id else None
+            if not target_id or not target_ip:
+                protected_denials.append(
+                    {"service": service_name, "denied": False, "reason": "service_unavailable"}
+                )
+                errors.append(f"{RUNSC_SERVICE}: protected service {service_name} is unavailable for denial probe")
+                continue
+            row = next((item for item in protected_rows if item.get("service") == service_name), None)
+            port = int(row["port"]) if isinstance(row, dict) else 0
+            probe = _probe_runsc_tcp(container_id, target_ip, port)
+            denied = not probe["reachable"]
+            protected_denials.append(
+                {
+                    "service": service_name,
+                    "denied": denied,
+                    "reason": probe["reason"],
+                }
+            )
+            if not denied:
+                errors.append(f"{RUNSC_SERVICE}: protected service {service_name} is reachable")
+    else:
+        protected_denials = [
+            {"service": service_name, "denied": None, "reason": "allowed_gateway_probe_failed"}
+            for service_name in RUNSC_PROTECTED
+        ]
+
+    return {
+        "service": RUNSC_SERVICE,
+        "container_id": container_id[:12],
+        "runtime": runtime,
+        "networks": sorted(actual_networks),
+        "logical_networks": sorted(logical_networks),
+        "status": "pass" if not errors else "fail",
+        "errors": errors,
+        "gateway_probes": gateway_probes,
+        "protected_denials": protected_denials,
+    }
 
 
 def _probe_storage_health(container_id: str, team_id: str) -> bool:
@@ -520,6 +935,7 @@ def inspect_live(
     errors: list[str] = []
     containers: list[dict[str, Any]] = []
     policy = static_report.get("boundary_policy") or {}
+    control_plane_policy = policy.get("control_plane") or {}
     protected_rows = policy.get("protected") or []
     allowed_rows = policy.get("allowed") or []
     denied_targets = [
@@ -551,8 +967,54 @@ def inspect_live(
     forbidden_env_names = set(policy.get("forbidden_env_names") or FORBIDDEN_ENV_NAMES)
     forbidden_env_prefixes = tuple(policy.get("forbidden_env_prefixes") or ("MINIO_",))
     runner_network = str(policy.get("runner_network") or "workers")
+    control_plane_service = str(control_plane_policy.get("service") or "orchestrator-api")
+    control_plane_network = str(control_plane_policy.get("network") or "internal")
+    control_plane_entry: dict[str, Any] = {
+        "service": control_plane_service,
+        "required_connections": [],
+    }
+    try:
+        control_plane_id = _docker_container_for_service(control_plane_service)
+        if not control_plane_id:
+            errors.append(f"{control_plane_service}: no running container found")
+            control_plane_entry["status"] = "missing"
+        else:
+            control_plane_entry["container_id"] = control_plane_id[:12]
+            networks, actual_networks = _logical_networks(control_plane_id)
+            control_plane_entry["networks"] = sorted(actual_networks)
+            if control_plane_network not in networks:
+                errors.append(
+                    f"{control_plane_service}: live logical networks do not include {control_plane_network}"
+                )
+            for row in control_plane_policy.get("required_tcp") or []:
+                host = str(row["service"])
+                port = int(row["port"])
+                reachable = _probe_tcp(control_plane_id, host, port)
+                control_plane_entry["required_connections"].append(
+                    {"host": host, "port": port, "reachable": reachable}
+                )
+                if not reachable:
+                    errors.append(
+                        f"{control_plane_service}: required internal service {host}:{port} is unreachable"
+                    )
+            control_plane_entry["status"] = (
+                "pass"
+                if control_plane_network in networks
+                and all(row["reachable"] for row in control_plane_entry["required_connections"])
+                else "fail"
+            )
+    except (RuntimeError, OSError) as exc:
+        control_plane_entry["status"] = "error"
+        errors.append(f"{control_plane_service}: live connectivity probe failed: {exc}")
+
+    runsc_entry: dict[str, Any] | None = None
+    if isinstance(static_report.get("runsc_network"), dict):
+        runsc_entry = _inspect_runsc_boundary(protected_rows)
+        errors.extend(runsc_entry["errors"])
+
     ceo_service = str(policy.get("ceo_service") or CEO_SERVICE)
     for service_name in static_report.get("team_services", []):
+        entry_error_count = len(errors)
         entry: dict[str, Any] = {"service": service_name}
         try:
             container_id = _docker_container_for_service(service_name)
@@ -607,7 +1069,7 @@ def inspect_live(
                 errors.append(f"{service_name}: control-plane storage health failed")
             entry["denied"] = denied_results
             entry["allowed"] = allowed_results
-            entry["status"] = "pass"
+            entry["status"] = "pass" if len(errors) == entry_error_count else "fail"
         except (RuntimeError, OSError) as exc:
             entry["status"] = "error"
             errors.append(f"{service_name}: live probe failed: {exc}")
@@ -619,6 +1081,8 @@ def inspect_live(
         "errors": errors,
         "warnings": [],
         "containers": containers,
+        "control_plane": control_plane_entry,
+        "runsc": runsc_entry,
     }
 
 

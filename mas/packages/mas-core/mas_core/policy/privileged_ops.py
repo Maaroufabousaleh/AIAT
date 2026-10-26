@@ -51,31 +51,133 @@ class PrivilegeLevel(StrEnum):
 # Privileged operations that require Layer 2 approval/audit
 PRIVILEGED_ACTIONS: dict[str, dict[str, Any]] = {
     # System lifecycle
-    "system.shutdown": {"require_approval": True, "risk": "critical"},
-    "system.restart": {"require_approval": True, "risk": "critical"},
-    "system.rebuild": {"require_approval": True, "risk": "high"},
-    "system.wipe": {"require_approval": True, "risk": "critical"},
+    "system.shutdown": {"require_approval": True, "risk": "critical", "label": "Shut down the AIAT system"},
+    "system.restart": {"require_approval": True, "risk": "critical", "label": "Restart the AIAT system"},
+    "system.rebuild": {"require_approval": True, "risk": "high", "label": "Rebuild the AIAT system"},
+    "system.wipe": {"require_approval": True, "risk": "critical", "label": "Wipe the AIAT system"},
     # Team control
-    "team.shutdown": {"require_approval": True, "risk": "high"},
-    "team.restart": {"require_approval": False, "risk": "medium"},
-    "team.drain": {"require_approval": False, "risk": "medium"},
+    "team.shutdown": {"require_approval": True, "risk": "high", "label": "Stop a team"},
+    "team.restart": {"require_approval": False, "risk": "medium", "label": "Restart a team"},
+    "team.drain": {"require_approval": False, "risk": "medium", "label": "Drain a team"},
     # Container operations
-    "container.stop": {"require_approval": True, "risk": "high"},
-    "container.start": {"require_approval": False, "risk": "low"},
-    "container.remove": {"require_approval": True, "risk": "critical"},
+    "container.stop": {"require_approval": True, "risk": "high", "label": "Stop a container"},
+    "container.start": {"require_approval": False, "risk": "low", "label": "Start a container"},
+    "container.remove": {"require_approval": True, "risk": "critical", "label": "Remove a container"},
     # Credential access
-    "credentials.resolve": {"require_approval": False, "risk": "medium"},
-    "credentials.export": {"require_approval": True, "risk": "critical"},
+    "credentials.resolve": {"require_approval": False, "risk": "medium", "label": "Resolve a credential reference"},
+    "credentials.export": {"require_approval": True, "risk": "critical", "label": "Export credential material"},
     # Security overrides
-    "security.override_cso": {"require_approval": True, "risk": "high"},
-    "policy.override": {"require_approval": True, "risk": "critical"},
+    "security.override_cso": {"require_approval": True, "risk": "high", "label": "Request a security review override"},
+    "policy.override": {"require_approval": True, "risk": "critical", "label": "Request a policy override"},
     # Infrastructure
-    "infra.provision": {"require_approval": False, "risk": "medium"},
-    "infra.deprovision": {"require_approval": True, "risk": "high"},
+    "infra.provision": {"require_approval": False, "risk": "medium", "label": "Provision infrastructure"},
+    "infra.deprovision": {"require_approval": True, "risk": "high", "label": "Deprovision infrastructure"},
     # Worker management
-    "worker.force_stop": {"require_approval": True, "risk": "high"},
-    "worker.delete": {"require_approval": True, "risk": "high"},
+    "worker.force_stop": {"require_approval": True, "risk": "high", "label": "Force stop a worker"},
+    "worker.delete": {"require_approval": True, "risk": "high", "label": "Delete a worker"},
 }
+
+# Bounded operator-facing payloads for the privileged-action vocabulary above.
+# This is deliberately policy metadata: the dashboard can render a useful form
+# from it, and the API can reject unrecognized fields before they reach the
+# durable audit/approval gate. Values are identifiers or explanatory text;
+# this contract never accepts credential material.
+PRIVILEGED_ACTION_PAYLOAD_FIELDS: dict[str, tuple[dict[str, Any], ...]] = {
+    "system.shutdown": ({"name": "reason", "label": "Reason", "type": "textarea", "required": True, "max_length": 4000},),
+    "system.restart": ({"name": "reason", "label": "Reason", "type": "textarea", "required": True, "max_length": 4000},),
+    "system.rebuild": ({"name": "reason", "label": "Reason", "type": "textarea", "required": True, "max_length": 4000},),
+    "system.wipe": ({"name": "reason", "label": "Reason", "type": "textarea", "required": True, "max_length": 4000},),
+    "team.shutdown": (
+        {"name": "team_id", "label": "Team identifier", "type": "text", "required": True, "max_length": 256},
+        {"name": "reason", "label": "Reason", "type": "textarea", "required": True, "max_length": 4000},
+    ),
+    "team.restart": (
+        {"name": "team_id", "label": "Team identifier", "type": "text", "required": True, "max_length": 256},
+        {"name": "reason", "label": "Reason", "type": "textarea", "required": True, "max_length": 4000},
+    ),
+    "team.drain": (
+        {"name": "team_id", "label": "Team identifier", "type": "text", "required": True, "max_length": 256},
+        {"name": "reason", "label": "Reason", "type": "textarea", "required": True, "max_length": 4000},
+    ),
+    "container.stop": (
+        {"name": "container_id", "label": "Container identifier", "type": "text", "required": True, "max_length": 256},
+        {"name": "reason", "label": "Reason", "type": "textarea", "required": True, "max_length": 4000},
+    ),
+    "container.start": (
+        {"name": "container_id", "label": "Container identifier", "type": "text", "required": True, "max_length": 256},
+        {"name": "reason", "label": "Reason", "type": "textarea", "required": True, "max_length": 4000},
+    ),
+    "container.remove": (
+        {"name": "container_id", "label": "Container identifier", "type": "text", "required": True, "max_length": 256},
+        {"name": "reason", "label": "Reason", "type": "textarea", "required": True, "max_length": 4000},
+    ),
+    "credentials.resolve": (
+        {"name": "credential_name", "label": "Credential name (reference only)", "type": "text", "required": True, "max_length": 256},
+        {"name": "reason", "label": "Reason", "type": "textarea", "required": True, "max_length": 4000},
+    ),
+    "credentials.export": (
+        {"name": "credential_name", "label": "Credential name (reference only)", "type": "text", "required": True, "max_length": 256},
+        {"name": "reason", "label": "Reason", "type": "textarea", "required": True, "max_length": 4000},
+    ),
+    "security.override_cso": (
+        {"name": "finding_id", "label": "Security finding identifier", "type": "text", "required": True, "max_length": 256},
+        {"name": "reason", "label": "Reason", "type": "textarea", "required": True, "max_length": 4000},
+    ),
+    "policy.override": (
+        {"name": "policy_id", "label": "Policy identifier", "type": "text", "required": True, "max_length": 256},
+        {"name": "reason", "label": "Reason", "type": "textarea", "required": True, "max_length": 4000},
+    ),
+    "infra.provision": (
+        {"name": "resource_id", "label": "Resource identifier", "type": "text", "required": True, "max_length": 256},
+        {"name": "environment", "label": "Environment", "type": "text", "required": True, "max_length": 128},
+        {"name": "reason", "label": "Reason", "type": "textarea", "required": True, "max_length": 4000},
+    ),
+    "infra.deprovision": (
+        {"name": "resource_id", "label": "Resource identifier", "type": "text", "required": True, "max_length": 256},
+        {"name": "environment", "label": "Environment", "type": "text", "required": True, "max_length": 128},
+        {"name": "reason", "label": "Reason", "type": "textarea", "required": True, "max_length": 4000},
+    ),
+    "worker.force_stop": (
+        {"name": "worker_id", "label": "Worker identifier", "type": "text", "required": True, "max_length": 256},
+        {"name": "reason", "label": "Reason", "type": "textarea", "required": True, "max_length": 4000},
+    ),
+    "worker.delete": (
+        {"name": "worker_id", "label": "Worker identifier", "type": "text", "required": True, "max_length": 256},
+        {"name": "reason", "label": "Reason", "type": "textarea", "required": True, "max_length": 4000},
+    ),
+}
+
+
+def validate_privileged_action_payload(action: str, payload: Any) -> dict[str, str]:
+    """Validate an operator-facing privileged action payload against policy."""
+
+    if not isinstance(payload, dict):
+        raise ValueError("payload must be an object")
+    field_specs = PRIVILEGED_ACTION_PAYLOAD_FIELDS.get(action)
+    if field_specs is None:
+        raise ValueError("action does not have a supported request schema")
+    allowed = {str(field["name"]): field for field in field_specs}
+    unknown = sorted(set(payload) - set(allowed))
+    if unknown:
+        raise ValueError(f"payload contains unsupported field(s): {', '.join(unknown)}")
+    normalized: dict[str, str] = {}
+    for name, spec in allowed.items():
+        value = payload.get(name)
+        if value is None:
+            if spec.get("required"):
+                raise ValueError(f"payload.{name} is required")
+            continue
+        if not isinstance(value, str):
+            raise ValueError(f"payload.{name} must be text")
+        value = value.strip()
+        if not value:
+            if spec.get("required"):
+                raise ValueError(f"payload.{name} must not be blank")
+            continue
+        if len(value) > int(spec["max_length"]):
+            raise ValueError(f"payload.{name} exceeds {spec['max_length']} characters")
+        normalized[name] = value
+    return normalized
 
 # Normal CEO executive actions (Layer 1) — no gate needed
 EXECUTIVE_ACTIONS: set[str] = {

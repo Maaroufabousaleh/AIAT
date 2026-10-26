@@ -18,6 +18,7 @@ type SchemaField = {
   default?: unknown;
   deprecated?: boolean;
   minimum?: number;
+  max_bytes?: number;
   min_items?: number;
   min_properties?: number;
   items?: string;
@@ -50,6 +51,10 @@ type NodeSchemaFormProps = {
   governedWorkers?: GovernedWorkerOption[];
   modelProfiles?: GovernedModelProfile[];
   governanceLoading?: boolean;
+  taskInputDraft?: string;
+  taskInputError?: string | null;
+  onTaskInputDraftChange?: (draft: string, error: string | null) => void;
+  onClearTaskInput?: () => void;
 };
 
 function stringifyJson(value: unknown, fallback: unknown): string {
@@ -80,6 +85,7 @@ function fieldTestId(nodeType: FlowNodeType, name: string): string {
     model_mode: "task-model-mode-select",
     model_profile_id: "task-model-profile-select",
     task_type: "task-type-input",
+    task_input: "task-input-json",
     required_capabilities: "task-capabilities-input",
     project_workspace_mode: "task-workspace-mode-select",
     permission_requirements: "task-permissions-input",
@@ -93,42 +99,105 @@ function JsonField({
   field,
   value,
   onChange,
+  draftValue,
+  draftError,
+  onDraftChange,
+  onClear,
+  testId,
 }: {
   field: SchemaField;
   value: unknown;
   onChange: (value: unknown) => void;
+  draftValue?: string;
+  draftError?: string | null;
+  onDraftChange?: (draft: string, error: string | null) => void;
+  onClear?: () => void;
+  testId?: string;
 }) {
-  const serialized = useMemo(
-    () => stringifyJson(value, field.default ?? (field.type === "array" ? [] : {})),
-    [field.default, field.type, value],
+  const fallback = useMemo(
+    () => field.name === "task_input" ? undefined : field.default ?? (field.type === "array" ? [] : {}),
+    [field.default, field.name, field.type],
   );
-  const [draft, setDraft] = useState(serialized);
-  const [error, setError] = useState<string | null>(null);
+  const serialized = useMemo(
+    () => stringifyJson(value, fallback),
+    [fallback, value],
+  );
+  const [localDraft, setLocalDraft] = useState(serialized);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const draft = draftValue ?? localDraft;
+  const error = draftError === undefined ? localError : draftError;
 
   useEffect(() => {
-    setDraft(serialized);
-  }, [serialized]);
+    if (draftValue === undefined) setLocalDraft(serialized);
+  }, [draftValue, serialized]);
+
+  const validateDraft = (nextDraft: string): { error: string | null; parsed?: unknown } => {
+    if (!nextDraft.trim() && field.name === "task_input") return { error: null, parsed: undefined };
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(nextDraft);
+    } catch {
+      return { error: "Enter valid JSON before leaving this field" };
+    }
+    if (field.type === "object" && (!parsed || typeof parsed !== "object" || Array.isArray(parsed))) {
+      return { error: field.name === "task_input" ? "Task input must be a JSON object" : "Enter a JSON object" };
+    }
+    if (field.max_bytes !== undefined) {
+      let serialized: string | undefined;
+      try {
+        serialized = JSON.stringify(parsed);
+      } catch {
+        return { error: "JSON input could not be represented safely" };
+      }
+      if (serialized === undefined || new TextEncoder().encode(serialized).byteLength > field.max_bytes) {
+        return { error: `JSON input must not exceed ${field.max_bytes} bytes` };
+      }
+    }
+    if (field.name === "task_input") {
+      const values = [parsed];
+      while (values.length > 0) {
+        const item = values.pop();
+        if (typeof item === "number" && !Number.isFinite(item)) {
+          return { error: "Task input numbers must be finite" };
+        }
+        if (Array.isArray(item)) {
+          for (const child of item) values.push(child);
+        } else if (item && typeof item === "object") {
+          for (const child of Object.values(item)) values.push(child);
+        }
+      }
+    }
+    return { error: null, parsed };
+  };
 
   return (
     <>
+      {onClear && (
+        <div className="mb-1 flex justify-end">
+          <button type="button" onClick={onClear} data-testid="task-input-clear" className="text-xs text-slate-400 hover:text-white">Clear</button>
+        </div>
+      )}
       <textarea
+        id={testId}
         value={draft}
         onChange={(event) => {
           const nextDraft = event.target.value;
-          setDraft(nextDraft);
-          try {
-            const parsed = JSON.parse(nextDraft);
-            onChange(parsed);
-            setError(null);
-          } catch {
-            setError("Enter valid JSON before leaving this field");
-          }
+          setLocalDraft(nextDraft);
+          const result = validateDraft(nextDraft);
+          setLocalError(result.error);
+          onDraftChange?.(nextDraft, result.error);
+          if (!result.error) onChange(result.parsed);
         }}
         placeholder={field.placeholder}
-        data-testid={`node-schema-${field.name}-json`}
+        data-testid={testId || `node-schema-${field.name}-json`}
         aria-label={field.label}
         className={`${inputClass()} min-h-20 font-mono text-xs`}
       />
+      {field.name === "task_input" && (
+        <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
+          Leave blank to pass the preceding flow context (`flow_context`) to this worker.
+        </p>
+      )}
       {error && <p className="mt-1 text-[11px] text-rose-300" role="alert">{error}</p>}
     </>
   );
@@ -148,12 +217,17 @@ export function NodeSchemaForm({
   governedWorkers = [],
   modelProfiles = [],
   governanceLoading = false,
+  taskInputDraft,
+  taskInputError,
+  onTaskInputDraftChange,
+  onClearTaskInput,
 }: NodeSchemaFormProps) {
   const schema = FLOW_NODE_SCHEMA_CATALOG.node_types[nodeType] as SchemaContract;
   const requiredAny = schema.required_any || [];
 
   const updateField = (field: SchemaField, fieldValue: unknown) => {
     const next: Record<string, unknown> = { ...value, [field.name]: fieldValue };
+    if (field.name === "task_input" && fieldValue === undefined) delete next.task_input;
     if (field.name === "worker_id") {
       next.team_id = undefined;
       const selected = governedWorkers.find((worker) => worker.id === fieldValue);
@@ -255,7 +329,16 @@ export function NodeSchemaForm({
                     className={inputClass()}
                   />
                 ) : field.widget === "json" ? (
-                  <JsonField field={field} value={fieldValue} onChange={(next) => updateField(field, next)} />
+                  <JsonField
+                    field={field}
+                    value={fieldValue}
+                    onChange={(next) => updateField(field, next)}
+                    draftValue={field.name === "task_input" ? taskInputDraft : undefined}
+                    draftError={field.name === "task_input" ? taskInputError : undefined}
+                    onDraftChange={field.name === "task_input" ? onTaskInputDraftChange : undefined}
+                    onClear={field.name === "task_input" ? onClearTaskInput : undefined}
+                    testId={field.name === "task_input" ? fieldTestId(nodeType, field.name) : undefined}
+                  />
                 ) : field.type === "boolean" ? (
                   <label className="inline-flex min-h-11 items-center gap-2 text-xs text-slate-300">
                     <input

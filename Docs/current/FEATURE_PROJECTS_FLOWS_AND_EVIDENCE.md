@@ -17,18 +17,67 @@ Projects are the primary ownership, security, cost, evidence, and lifecycle boun
 ## Implemented now
 
 - Canonical projects with state, history, revision, owner/requester, company, configuration, retry, archive, and deletion paths.
+- Project creation preserves the existing immediate CEO-feasibility start for operator requests and also supports a prepared `INIT` project (`start_immediately: false`). A governed service may create only a prepared project; worker credentials cannot create projects or start work. The operator-only `/projects/{id}/start` action begins feasibility through `WorkflowController`; the transition outbox retains a stable directive identity and can replay the start intent after interruption. This is at-least-once delivery; it is not a claim of durable consumer-side deduplication beyond the router's own window. The provider/budget policy still applies when work starts.
 - Project state-history reads verify that the project exists before returning
   audit rows; an unknown project is a 404 rather than an indistinguishable
   empty history (`f49f7501`).
+- The generic `/projects/{id}/transition` API now requires the operator
+  credential and uses the authenticated principal for transition attribution;
+  a caller-supplied `actor_id` cannot authorize or relabel the transition.
+  Role-gated Tool Service transition actions use the configured operator
+  credential after the Tool Registry applies its existing caller-role policy.
+  API regressions cover service/worker rejection, operator attribution, and
+  the internal CEO transition path.
 - Project state/history and project-transition notification intent commit atomically through `WorkflowController`/`AgentStorage`; the bounded outbox dispatcher publishes stable transition IDs and retains failed notifications for retry (migration `0043_project_transition_outbox`).
 - Default software lifecycle from feasibility through PDR/CDR, human approval, requirements review, sprint execution, retrospective, KPI persistence, completion, and archive.
 - Durable documents with lineage, immutable revisions, statuses, preview/download, and supersession.
+- OpenCode worker artifacts now retain their bytes in the configured S3-compatible object store as well as their project/run metadata. Registration derives project ownership from the durable WorkerRun, uses bounded no-follow reads from the run workspace, and rejects metadata that conflicts with the run binding. The operator-authenticated `GET /projects/{project_id}/artifacts/{artifact_id}/download` route checks project/run association and verifies the stored checksum before returning bytes. The API suite passes 19/19, including its OpenAPI binary-response regression. Project Detail exposes an authenticated download action only when project/run/blob/hash/size metadata validates; the BFF passes 4/4 and focused download/recovery Playwright passes 1/1 with typecheck passing (`e14d20dc`, `1641bf2f`, `83eff8a6`). This is local API/UI coverage, not a live object-store or real OpenCode task certificate.
+- Project Detail exposes generated document preview and download through an
+  authenticated, project-scoped dashboard route. Inline previews are limited
+  to text-like content and 512 KiB, rendered as text, and protected with
+  no-store/nosniff headers; blob storage keys are not shown in the workspace.
+  The project-detail suite passes 7/7 with mocked APIs, and the BFF suite passes
+  5/5. This verifies the dashboard boundary and UI behavior, not live object
+  storage ownership or a production provider.
 - Document ownership checks accept both UUID and database-string project IDs for
   revision, status, read, preview/download, and document-backed context routes;
   malformed or missing identifiers fail closed. Focused API regressions cover
   the database-shaped row boundary (`66f8f80d`).
 - Review sessions/comments, CSO veto, approval gates, pending decisions, and audit timeline.
 - Sprints, issues, parent/dependencies, comments, links, KPI snapshots, agent performance observations, and estimation adjustment.
+- Project Detail now provides an operator-facing issue lifecycle: create a
+  project-owned issue, update title/description/status/priority/team/worker with
+  `expected_revision`, and add comments. A stale edit receives `409`, reloads
+  the canonical issue, and requires the operator to review the newer revision
+  before retrying. The BFF rejects browser-supplied actor attribution and uses
+  the authenticated dashboard operator identity. The bounded
+  `project-issue-management.spec.ts` source-built Playwright flow covers create,
+  update conflict/review, comment, and project scoping 1/1. The issue BFF route
+  handlers also pass seven focused tests for field/UUID/revision validation,
+  fixed operator attribution, and propagation of canonical ownership errors;
+  those route tests stub the orchestrator transport and do not claim live
+  FastAPI ownership integration or worker/provider execution.
+- Project issue detail can start governed work by selecting a currently
+  dispatchable worker and explicitly confirming possible project-budget and
+  approved-provider use. Dispatch goes through the existing audited CTO
+  WorkerRun action, uses the issue revision for retry idempotency, and links
+  the returned run evidence. Its focused scenarios cover signed-session
+  enforcement, dispatch/replay, gateway-shaped bounded prompt construction,
+  and the no-adapter unavailable state. API responses are mocked; no provider
+  call was made, and the complete
+  CEO-to-worker project journey remains partial.
+- Project activity now retrieves Worker Runs in bounded 100-row pages, displays
+  50 at a time, and supports loading older history through offset 100,000. The
+  dashboard BFF returns an allowlisted projection and drops rows that do not
+  match the requested project. It exposes issue IDs/revisions from validated
+  durable dispatch keys; retry IDs remain candidates until a same-project
+  parent chain and request issue match are verified. The issue panel prefers
+  the selected revision's run, and retry links recover after reload when the
+  parent lies on an older loaded page. A stale history-page response cannot
+  replace a refreshed history window. The issue/run Playwright suite passes
+  9/9, project activity passes 2/2, and focused BFF checks pass 8/8; these use
+  mocked APIs and make no provider calls. The history bound and provider-backed
+  project execution remain separate limitations.
 - A first transition to `DONE`/`COMPLETED`/`CLOSED` on an assigned issue now automatically records its estimated-versus-actual hours in the durable agent profile; repeated terminal updates do not double-count the observation, and the response links the profile update to the source issue.
 - The same first terminal transition for a sprint issue persists a `sprint_retrospective` KPI snapshot with aggregate completion/velocity/estimation values and raw source issue IDs, completed issue IDs, status counts, and assigned-agent profile lineage; the existing project KPI API is the read surface.
 - Project context items/chunks/tags/relations with text, semantic, and hybrid search through pgvector.
@@ -37,12 +86,25 @@ Projects are the primary ownership, security, cost, evidence, and lifecycle boun
   the retrieval API regression suite (`90ac61ff`).
 - Artifact and usage APIs plus a consolidated project workspace/evidence view.
 - Versioned flow definitions, React Flow editor, validation/dry run, instances, execution history, actions, node actions, switch, override, context, escalation, and retry.
+- Flow approval gates now retain a unique binding to their active approval-node
+  execution (migration `0047_flow_approval_execution_binding`). The project
+  decision endpoint resolves that exact execution and applies the gate and
+  flow transition atomically; retry/cancellation keep the gate and execution
+  lifecycle aligned. If a pre-migration unbound gate cannot be safely matched,
+  cancellation returns 409 before mutation and the flow stays active until
+  that approval is resolved. Focused storage/API regressions pass 278 tests
+  with one optional database integration skip, and project-detail UI coverage passes
+  7/7. The prepared-project API E2E was updated to verify one project decision
+  completes the approval and end node, but has not been run against the local
+  database in this change group.
 - The Flows list reads `/api/flows` with `cache: "no-store"`, retains the last successful definitions through a failed refresh, keeps rows visible while retrying, labels the list as showing last-known flows, and exposes header Refresh plus banner Retry controls. Its table now has an accessible name/caption, scoped headers, responsive overflow, and 44px targets for refresh/create/search/filter/selection/link/delete controls. Focused source-built coverage passes 1/1 (`6b0413b`); native/live flow evidence remains open.
 - The Projects list pairs canonical project and active-flow reads with `cache: "no-store"`, retains the last known list through either source failure, and now exposes an accessible table caption/column scopes, explicit description disclosure, responsive overflow, and 44px selection/filter/sort/link/action targets. Source-built `projects-states.spec.ts` covers the stale/retry path and focused table semantics 1/1 (`d3482ab`, `7828b48`).
 - The flow editor reads a route-selected flow through the canonical store, shows an explicit first-load unavailable state with Retry instead of exposing a blank editable canvas, and provides Refresh plus retained last-known flow/Retry recovery after a failed refresh. Its editor now exposes semantic header/main/palette/canvas/config landmarks, 44px toolbar/palette/config targets, and 44px generated schema-form controls. Backend error details remain visible, and source-built `flow-editor-states.spec.ts` covers first-load failure, retained nodes, stale labeling, recovery, and the focused accessibility baseline 1/1 (`b5098e7`, `140af1c`).
 - The project detail route now distinguishes first-load project/API failure from a missing project: it preserves backend error detail, shows an explicit Project unavailable state with a keyboard-visible Retry action, and recovers into the complete project workspace after a successful retry. Existing-project refresh failures continue to retain the last-known project state. [`project-detail-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/project-detail-states.spec.ts) covers the source-built failure → Retry → recovered detail path 1/1 (`f364763`).
 - The project workspace sub-surface retains the last successful workspace summary when `/workspace` or `/repository` refreshes fail, preserves the last repository snapshot across a partial failure, labels retained data, and exposes Retry for stale and first-load failures. Its Activity/Resources/Cost tabs now use semantic tab/tabpanel relationships, roving `tabIndex`, Arrow/Home/End navigation, and 44px targets. [`project-workspace-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/project-workspace-states.spec.ts) covers the source-built failure → retained workspace → recovered workspace path plus keyboard tab recovery 1/1 (`cb1c665`, `fcb0f4b`).
+- Project workspace retry/archive actions retain the current view when a mutation fails, show the error, refresh canonical state, and offer Retry for transient failure. [`project-workspace-action-recovery.spec.ts`](../../mas/apps/mas-dashboard/e2e/project-workspace-action-recovery.spec.ts) passes 1/1 with mocked APIs; this is UI recovery coverage, not a full live project execution certificate.
 - The project evidence page reads the canonical package with `cache: "no-store"`, retains the last successful package after a failed refresh, labels the view as showing the last known package, and exposes a keyboard-visible Retry action; first-load failure remains an explicit unavailable state. Named main/package sections, labeled 44px back/refresh actions, and a captioned/scoped evidence table form a focused accessibility baseline. [`project-evidence-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/project-evidence-states.spec.ts) passes 1/1 against the source-built dashboard (`bc80ad5`, `89091c1`), while full project-page composition and live provider/worker generation remain separate gates.
+- Evidence-package artifact items now link to the canonical artifact detail page, and only UUID-shaped WorkerRun items link to WorkerRun detail. The page remounts its package state when the project ID changes and rejects a successful response whose `project_id` does not match the requested project. Source-built Playwright coverage passes 6/6 for artifact/run navigation, stale refresh, denial, project identity mismatch, and cross-project state isolation; this is dashboard/API-read coverage, not a real worker-generated artifact certificate.
 - Governed task dispatch now distinguishes asynchronous Worker Run progress from terminal outcomes: queued/claimed/running runs keep the node active and are recorded in `context_json.active_worker_runs`; only an authoritative terminal run may settle the node. Safe retry re-enters this same dispatch path for restored governed tasks, while legacy task compatibility remains manual until migration. The deterministic `aiat.flow-worker-binding.v1` fixture covers state classification, copy-on-write parallel bindings, terminal settlement, and unknown-state fail-closed behavior.
 - Flow retry preserves prior node executions as `SUPERSEDED` evidence instead of deleting the failed attempt; both the recorded-safe-node path and the no-safe-node storage fallback use that boundary. The newly created execution is the only traversal-authoritative attempt, while inputs, outputs, errors, and timestamps remain inspectable. The local Postgres certificate (`1f20132`) reopens the database and verifies this history boundary together with flow switching/context preservation and cancelled-instance retry; evidence is [`flow_instance_recovery_postgres_evidence.json`](../../mas/docs/provenance/flow_instance_recovery_postgres_evidence.json).
 - The deterministic `aiat.workflow-watchdog-recovery.v1` fixture drives the real `WatchdogConfig`/elapsed-time helpers and pure `WorkflowController` through boot grace, downtime-aware timeout, watchdog failure, safe-state retry, terminal-state exclusion, explicit human cancellation, review-circuit escalation, node-timeout failure, and invalid-transition rejection (`9972b3b`); native watchdog/cold-crash recovery remains a live operator gate.
@@ -53,6 +115,7 @@ Projects are the primary ownership, security, cost, evidence, and lifecycle boun
 - `POST /flows/{flow_id}/migrate-legacy-tasks` provides a deterministic dry-run and an operator-approved immutable version migration. Every unbound task requires an explicit UUID worker binding; `action` becomes `task_type` only when needed, deprecated aliases are removed, missing model declarations become node-level `model_mode: none` so the worker policy remains authoritative, and the source flow is never mutated. The new version records `aiat.flow-legacy-task-migration.v1` evidence in metadata.
 - Evidence policy catalogue (`/evidence-policies`) is selectable by operator clients. Required artifact kinds are evaluated, and evidence-policy dry runs include worker-run and repository checks instead of omitting those resources.
 - Evidence policy selections persist at project default and milestone override scope through `PUT /projects/{project_id}/evidence-policy`; company defaults persist in the active company manifest through `PUT /companies/{company_id}/evidence-policy`. The canonical `resolve_evidence_policy_selection` helper makes precedence explicit: project milestone, project default, flow-definition metadata, company milestone, company default, then manual fallback. The `aiat.evidence-policy-resolution-check.v1` fixture covers every scope and reports licence/restriction metadata as non-gating.
+- A transition that resolves to `COMPLETED` now evaluates the persisted/resolved project evidence policy before calling `WorkflowController`. Incomplete required evidence returns `409 PROJECT_EVIDENCE_INCOMPLETE` with the selected policy and bounded failed-check names; caller-supplied transition context cannot override the policy or claim completeness. Empty requirement objects preserve the selected built-in policy defaults. The project route suite passes 98 tests; this enforces configured evidence policy but does not claim a live worker/artifact completion run.
 - `GET /projects/{project_id}/evidence/package` exposes the fresh `aiat.project-evidence-package.v1` read model across repository, documents, tests, security, deployment, cost, approvals, flow, worker, artifact, and audit categories. `POST /projects/{project_id}/evidence/package` is an operator-only, idempotent snapshot projection backed by `project_evidence_packages`; it never mutates project state or creates a second completion predicate. Resource licence/restriction values remain bounded notices in package metadata and never affect status.
 - PM inbound canary and lifecycle activation now use a bounded operator boundary: ACTIVE issue updates persist sanitized actor/command/projection evidence atomically, verified terminal-conflict events can be replayed only by digest-confirmed operator action, and ACTIVE lifecycle plans snapshot trusted actor scope, blast radius, and default-deny command policy. See [PM inbound canary status](PM_INBOUND_CANARY_STATUS.md).
 - Six canonical reusable templates (`software_delivery`, `research`, `hiring`, `incident_response`, `integration_rollout`, and `self_improvement`) are validated by the same flow engine and exposed through `/flow-templates` and `/flows/from-template`; the new-flow dashboard now fetches and applies that canonical catalogue, preserving node configs, evidence metadata, and reference remapping. A blank canvas remains the local fallback when the catalogue is unavailable.
@@ -116,12 +179,20 @@ Projects are the primary ownership, security, cost, evidence, and lifecycle boun
 - Evidence-policy scope resolver and fixture: [`resolve_evidence_policy_selection`](../../mas/packages/mas-core/mas_core/workflow/evidence.py), [`check_evidence_policy_resolution.py`](../../mas/scripts/check_evidence_policy_resolution.py), [`test_evidence_policy_resolution.py`](../../mas/packages/mas-core/tests/test_evidence_policy_resolution.py)
 - Evidence-package review batches: core/export commits `a44a1aa` and `d0472af`; isolated API/snapshot/policy routes and clean-checkout tests commit `cbf00d9`, with the router boundary clarified in `33e0384`; bounded dashboard project-evidence/deep-link/proxy surfaces commit `82bbaeb`; and the project workspace coverage, durable package upsert, terminal profile learning, and sprint retrospective lineage commit `1112d5e`. [`test_evidence_package_runner.py`](../../mas/packages/mas-core/tests/test_evidence_package_runner.py), [`check_project_evidence_package.py`](../../mas/scripts/check_project_evidence_package.py), and [`test_project_evidence_routes.py`](../../mas/apps/orchestrator-api/tests/test_project_evidence_routes.py) cover deterministic grouping, operator-only persistence, metadata-only notices, and fail-closed live mode; `test_projects.py` and `test_test7_operator_ui.py` cover the API/UI additions. Dashboard workspace typecheck passes after the project-evidence error-state repair (`fc4f0fa`).
 - Project evidence package page stale/retry and accessibility recovery: [`page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/projects/[id]/evidence/page.tsx>) and [`project-evidence-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/project-evidence-states.spec.ts) (commits `bc80ad5`, `89091c1`, source-built 1/1). A successful package remains visible through a failed refresh, the warning identifies last-known data, Retry recovers the package, and the page exposes named landmarks, labeled 44px actions, and captioned/scoped evidence-table semantics.
+- Project evidence-package rows link canonical artifact entries to the bounded
+  evidence-detail route while leaving non-artifact identifiers as text. The
+  focused mocked navigation regression passes 4/4 with the full spec
+  (`6bef8805`); the link opens an existing read surface and does not change
+  project state.
 - Storage/tables: [`mas/packages/mas-core/mas_core/memory/`](../../mas/packages/mas-core/mas_core/memory/)
 - Canonical self-improvement project API/writer: [`mas/apps/orchestrator-api/orchestrator_api/main.py`](../../mas/apps/orchestrator-api/orchestrator_api/main.py) (`POST /projects/self-improvement`, `GET /projects/{project_id}/self-improvement`, `POST /projects/{project_id}/self-improvement/references`, and `POST /projects/{project_id}/self-improvement/actions`) and [`mas/packages/mas-core/mas_core/memory/storage.py`](../../mas/packages/mas-core/mas_core/memory/storage.py) (`create_self_improvement_project`, `get_self_improvement_lifecycle`, `update_self_improvement_lifecycle`)
 - Self-improvement artifact conversion/read-back: [`ImprovementArtifactBundle.from_worker_artifacts`](../../mas/packages/mas-core/mas_core/workflow/self_improvement.py), [`ImprovementArtifactReadback`](../../mas/packages/mas-core/mas_core/workflow/self_improvement.py), [`check_self_improvement_lifecycle.py`](../../mas/scripts/check_self_improvement_lifecycle.py), and [`test_self_improvement.py`](../../mas/packages/mas-core/tests/test_self_improvement.py)
 - Self-improvement local Postgres certificate: [`check_self_improvement_postgres_evidence.py`](../../mas/scripts/check_self_improvement_postgres_evidence.py), [`test_check_self_improvement_postgres_evidence.py`](../../mas/scripts/tests/test_check_self_improvement_postgres_evidence.py), and [`self_improvement_postgres_evidence.json`](../../mas/docs/provenance/self_improvement_postgres_evidence.json) (`10983c8`)
 - Flow UI: [`mas/apps/mas-dashboard/app/(dashboard)/flows/`](<../../mas/apps/mas-dashboard/app/(dashboard)/flows/>)
 - Flows list stale/retry and accessibility baseline: [`page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/flows/page.tsx>) and [`flows-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/flows-states.spec.ts) (commits `a0faf5b`, `6b0413b`, source-built 1/1)
+- The Flows list now reports interrupted single-flow deletes and offers a
+  refresh to verify whether the flow remains. Its focused mocked state suite
+  passes 5/5; no API or workflow-authority behavior changed (`ba176de8`).
 - Flow editor load/stale/retry and accessibility baseline: [`flows/[id]/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/flows/[id]/page.tsx>), [`flow-store.ts`](../../mas/apps/mas-dashboard/lib/flow-store.ts), and [`flow-editor-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/flow-editor-states.spec.ts) (commits `b5098e7`, `140af1c`, source-built 1/1)
 - Project detail first-load/retry recovery: [`projects/[id]/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/projects/[id]/page.tsx>) and [`project-detail-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/project-detail-states.spec.ts) (commit `f364763`, source-built 1/1)
 - Project workspace stale/retry recovery and nested tab semantics: [`projects/[id]/page.tsx`](<../../mas/apps/mas-dashboard/app/(dashboard)/projects/[id]/page.tsx>) and [`project-workspace-states.spec.ts`](../../mas/apps/mas-dashboard/e2e/project-workspace-states.spec.ts) (commits `cb1c665`, `fcb0f4b`, source-built 1/1)

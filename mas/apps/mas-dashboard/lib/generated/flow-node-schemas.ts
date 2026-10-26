@@ -152,6 +152,14 @@ export const FLOW_NODE_SCHEMA_CATALOG = {
           "widget": "text"
         },
         {
+          "description": "Bounded task-specific JSON passed to the governed worker; project/run authority stays in the Worker Run envelope.",
+          "label": "Task input (JSON object)",
+          "max_bytes": 65536,
+          "name": "task_input",
+          "type": "object",
+          "widget": "json"
+        },
+        {
           "default": "aiat_gateway",
           "enum": [
             "none",

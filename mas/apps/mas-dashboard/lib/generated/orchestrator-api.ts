@@ -215,6 +215,14 @@ export type CompanyCreateRequest = {
   slug: string;
 };
 
+export type CompanyManifestApplyRequest = {
+  expected_manifest_version: number;
+  manifest: {
+  [key: string]: unknown;
+};
+  source?: string;
+};
+
 export type CompanyManifestRequest = {
   manifest: {
   [key: string]: unknown;
@@ -310,8 +318,10 @@ export type CreateProjectRequest = {
   description?: (string | null);
   flow_id?: (string | null);
   human_requester?: (string | null);
+  idempotency_key?: (string | null);
   initial_context?: Array<ProjectContextSeedRequest>;
   name: string;
+  start_immediately?: boolean;
   workspace?: (ProjectWorkspaceRequest | null);
 };
 
@@ -335,10 +345,11 @@ export type DashboardSectionACLRequest = {
 export type DecisionRequest = {
   comments?: (string | null);
   decided_by?: string;
-  decision: string;
+  decision: ("APPROVED" | "REJECTED" | "EDITS" | "CANCELLED");
   edits?: ({
   [key: string]: unknown;
 } | null);
+  gate_id?: (string | null);
 };
 
 export type DoclingCertificationRequest = {
@@ -375,10 +386,29 @@ export type EvidencePolicyRequest = {
   scope?: ("project" | "milestone");
 };
 
+export type ExecutiveActionCatalogueResponse = {
+  ceo_privileged_actions: Array<ExecutivePrivilegedActionOption>;
+  cfo_model_override_fields: Array<ExecutiveActionFormField>;
+  cto_worker_run_fields: Array<ExecutiveActionFormField>;
+  schema_version: "aiat.executive-actions.catalogue.v1";
+};
+
+export type ExecutiveActionFormField = {
+  control: ("select" | "text" | "textarea" | "number");
+  help_text?: (string | null);
+  label: string;
+  max_length?: (number | null);
+  maximum?: (number | null);
+  minimum?: (number | null);
+  name: string;
+  option_source?: (("projects" | "workers" | "model_profiles") | null);
+  required: boolean;
+};
+
 export type ExecutiveCEOPrivilegedActionRequest = {
   action: string;
   payload?: {
-  [key: string]: unknown;
+  [key: string]: string;
 };
   requested_by?: string;
 };
@@ -388,14 +418,29 @@ export type ExecutiveCFOModelOverrideRequest = {
   reason: string;
   requested_by?: string;
   requested_profile_id: string;
-  scope?: {
-  [key: string]: unknown;
 };
+
+export type ExecutiveCTOWorkerRunDispatchRequest = {
+  budget_usd?: (number | null);
+  idempotency_key: string;
+  project_id?: (string | null);
+  prompt: string;
+  task_type: string;
+  timeout_seconds?: (number | null);
+  worker_id: string;
 };
 
 export type ExecutiveCTOWorkerRunRequest = {
-  dispatch: WorkerRunDispatchRequest;
+  dispatch: ExecutiveCTOWorkerRunDispatchRequest;
   requested_by?: string;
+};
+
+export type ExecutivePrivilegedActionOption = {
+  action: string;
+  fields: Array<ExecutiveActionFormField>;
+  label: string;
+  requires_approval: boolean;
+  risk: string;
 };
 
 export type FlowDiffRequest = {
@@ -619,7 +664,11 @@ export type ModelProfileCreateRequest = {
   profile_id: string;
   purpose: string;
   required_capabilities?: Array<string>;
-  status?: string;
+  status?: "draft";
+};
+
+export type ModelProfileVersionActivationRequest = {
+  reason: string;
 };
 
 export type ModelProfileVersionRequest = {
@@ -644,7 +693,7 @@ export type ModelProfileVersionRequest = {
 };
   reasoning?: boolean;
   regions?: Array<string>;
-  status?: string;
+  status?: "draft";
   streaming?: boolean;
   structured_output?: boolean;
   tool_calling?: boolean;
@@ -680,6 +729,7 @@ export type OperatorToCeoRequest = {
   context_confirmation_token?: (string | null);
   context_worker_id?: (string | null);
   message: string;
+  project_start_mode?: ("start_immediately" | "prepare_only");
   request_id?: (string | null);
 };
 
@@ -861,6 +911,22 @@ export type ProjectContextSeedRequest = {
   url?: (string | null);
 };
 
+export type ProjectDecisionInboxItem = {
+  company_id: string;
+  created_at: string;
+  gate_type: string;
+  id: string;
+  project_id: string;
+  project_name: string;
+  project_state: string;
+  status: string;
+};
+
+export type ProjectDecisionInboxPage = {
+  items: Array<ProjectDecisionInboxItem>;
+  next_cursor?: (string | null);
+};
+
 export type ProjectEvidencePolicyRequest = {
   milestone?: (string | null);
   policy_id: string;
@@ -906,6 +972,7 @@ export type RegisterWorkerRequest = {
   adapter_type: string;
   capability_ids?: Array<string>;
   capability_names?: Array<string>;
+  execution?: (WorkloadExecutionPolicy | null);
   identity_mailbox_class?: string;
   model_mode?: string;
   model_profile_id?: (string | null);
@@ -1240,6 +1307,7 @@ export type UpdateWorkerRequest = {
   adapter_module?: (string | null);
   adapter_type?: (string | null);
   capability_ids?: (Array<string> | null);
+  execution?: (WorkloadExecutionPolicy | null);
   isolation_mode?: (string | null);
   model_mode?: (string | null);
   model_profile_id?: (string | null);
@@ -1265,6 +1333,11 @@ export type ValidationError = {
 export type WorkerEvaluateRequest = {
   checks?: (Array<string> | null);
   source_repo?: (string | null);
+};
+
+export type WorkerRunCancelRequest = {
+  force?: boolean;
+  reason?: string;
 };
 
 export type WorkerRunDispatchRequest = {
@@ -1322,12 +1395,15 @@ export type WorkerRunDispatchRequest = {
 
 export type WorkerRunPauseRequest = {
   reason?: string;
-  requested_by?: string;
 };
 
 export type WorkerRunResumeRequest = {
   checkpoint_id?: (string | null);
-  requested_by?: string;
+};
+
+export type WorkerRunRetryRequest = {
+  idempotency_key: string;
+  reason: string;
 };
 
 export type WorkerStatusTransition = {
@@ -1339,6 +1415,20 @@ export type WorkerStatusTransition = {
 export type WorkerUpgradeRequest = {
   run_compat_tests?: boolean;
   source_revision?: (string | null);
+};
+
+export type WorkloadExecutionPolicy = {
+  allowed_runtimes?: Array<("runc" | "wasmtime" | "runsc" | "kata" | "remote_vm")>;
+  filesystem?: {
+  [key: string]: string;
+};
+  formats?: Array<("oci" | "linux" | "wasm")>;
+  gvisor_compatible?: boolean;
+  minimum_isolation?: (("trusted" | "sandboxed" | "vm_isolated" | "remote_vm") | null);
+  network?: ("none" | "egress-allowlist" | "egress-deny-all" | "unrestricted");
+  preferred_runtimes?: Array<("runc" | "wasmtime" | "runsc" | "kata" | "remote_vm")>;
+  remote_vm_allowed?: boolean;
+  trust?: (("trusted" | "untrusted" | "hostile") | null);
 };
 
 export type OrchestratorApiOperations = {
@@ -1380,6 +1470,18 @@ export type OrchestratorApiOperations = {
       "201": {
   [key: string]: unknown;
 };
+      "422": HTTPValidationError;
+    };
+  };
+  "list_project_decision_inbox_approvals_project_decisions_get": {
+    method: "GET";
+    path: "/approvals/project-decisions";
+    parameters: {
+      "query:limit"?: number;
+      "query:cursor"?: (string | null);
+    };
+    responses: {
+      "200": ProjectDecisionInboxPage;
       "422": HTTPValidationError;
     };
   };
@@ -1738,6 +1840,19 @@ export type OrchestratorApiOperations = {
       "422": HTTPValidationError;
     };
   };
+  "scan_first_party_worker_security_source_capabilities_workers__worker_id__steward_security_scan_post": {
+    method: "POST";
+    path: "/capabilities/workers/{worker_id}/steward/security-scan";
+    parameters: {
+      "path:worker_id": string;
+    };
+    responses: {
+      "200": {
+  [key: string]: unknown;
+};
+      "422": HTTPValidationError;
+    };
+  };
   "upgrade_worker_capabilities_workers__worker_id__upgrade_post": {
     method: "POST";
     path: "/capabilities/workers/{worker_id}/upgrade";
@@ -1948,7 +2063,7 @@ export type OrchestratorApiOperations = {
     parameters: {
       "path:company_id": string;
     };
-    requestBody: CompanyManifestRequest;
+    requestBody: CompanyManifestApplyRequest;
     responses: {
       "200": {
   [key: string]: unknown;
@@ -2254,6 +2369,13 @@ export type OrchestratorApiOperations = {
       "200": {
   [key: string]: unknown;
 };
+    };
+  };
+  "executive_action_catalogue_executive_actions_catalogue_get": {
+    method: "GET";
+    path: "/executive/actions/catalogue";
+    responses: {
+      "200": ExecutiveActionCatalogueResponse;
     };
   };
   "executive_ceo_privileged_action_executive_actions_ceo_privileged_actions_post": {
@@ -3076,6 +3198,20 @@ export type OrchestratorApiOperations = {
       "422": HTTPValidationError;
     };
   };
+  "list_inbound_canary_plans_integrations_inbound_canaries_get": {
+    method: "GET";
+    path: "/integrations/inbound-canaries";
+    parameters: {
+      "query:connection_id"?: (string | null);
+      "query:limit"?: number;
+    };
+    responses: {
+      "200": {
+  [key: string]: unknown;
+};
+      "422": HTTPValidationError;
+    };
+  };
   "get_inbound_canary_plan_integrations_inbound_canaries__plan_id__get": {
     method: "GET";
     path: "/integrations/inbound-canaries/{plan_id}";
@@ -3456,6 +3592,21 @@ export type OrchestratorApiOperations = {
       "422": HTTPValidationError;
     };
   };
+  "activate_model_profile_version_model_profiles__profile_id__versions__version_id__activate_post": {
+    method: "POST";
+    path: "/model-profiles/{profile_id}/versions/{version_id}/activate";
+    parameters: {
+      "path:profile_id": string;
+      "path:version_id": string;
+    };
+    requestBody: ModelProfileVersionActivationRequest;
+    responses: {
+      "200": {
+  [key: string]: unknown;
+};
+      "422": HTTPValidationError;
+    };
+  };
   "get_capacity_forecast_observability_capacity_forecast_get": {
     method: "GET";
     path: "/observability/capacity/forecast";
@@ -3645,6 +3796,18 @@ export type OrchestratorApiOperations = {
       "200": {
   [key: string]: string;
 };
+      "422": HTTPValidationError;
+    };
+  };
+  "download_project_artifact_projects__project_id__artifacts__artifact_id__download_get": {
+    method: "GET";
+    path: "/projects/{project_id}/artifacts/{artifact_id}/download";
+    parameters: {
+      "path:project_id": string;
+      "path:artifact_id": number;
+    };
+    responses: {
+      "200": string;
       "422": HTTPValidationError;
     };
   };
@@ -4372,6 +4535,19 @@ export type OrchestratorApiOperations = {
       "422": HTTPValidationError;
     };
   };
+  "start_project_projects__project_id__start_post": {
+    method: "POST";
+    path: "/projects/{project_id}/start";
+    parameters: {
+      "path:project_id": string;
+    };
+    responses: {
+      "200": {
+  [key: string]: unknown;
+};
+      "422": HTTPValidationError;
+    };
+  };
   "get_state_history_projects__project_id__state_history_get": {
     method: "GET";
     path: "/projects/{project_id}/state-history";
@@ -4680,6 +4856,15 @@ export type OrchestratorApiOperations = {
 };
     };
   };
+  "local_host_queue_health_workers_host_local_health_get": {
+    method: "GET";
+    path: "/workers/host/local/health";
+    responses: {
+      "200": {
+  [key: string]: unknown;
+};
+    };
+  };
   "list_worker_runs_api_workers_runs_get": {
     method: "GET";
     path: "/workers/runs";
@@ -4755,9 +4940,7 @@ export type OrchestratorApiOperations = {
     parameters: {
       "path:run_id": string;
     };
-    requestBody: {
-  [key: string]: unknown;
-};
+    requestBody: WorkerRunCancelRequest;
     responses: {
       "200": {
   [key: string]: unknown;
@@ -4810,6 +4993,19 @@ export type OrchestratorApiOperations = {
       "422": HTTPValidationError;
     };
   };
+  "get_worker_run_host_binding_api_workers_runs__run_id__host_binding_get": {
+    method: "GET";
+    path: "/workers/runs/{run_id}/host-binding";
+    parameters: {
+      "path:run_id": string;
+    };
+    responses: {
+      "200": {
+  [key: string]: unknown;
+};
+      "422": HTTPValidationError;
+    };
+  };
   "pause_worker_run_workers_runs__run_id__pause_post": {
     method: "POST";
     path: "/workers/runs/{run_id}/pause";
@@ -4831,6 +5027,34 @@ export type OrchestratorApiOperations = {
       "path:run_id": string;
     };
     requestBody: WorkerRunResumeRequest;
+    responses: {
+      "200": {
+  [key: string]: unknown;
+};
+      "422": HTTPValidationError;
+    };
+  };
+  "retry_worker_run_api_workers_runs__run_id__retry_post": {
+    method: "POST";
+    path: "/workers/runs/{run_id}/retry";
+    parameters: {
+      "path:run_id": string;
+    };
+    requestBody: WorkerRunRetryRequest;
+    responses: {
+      "202": {
+  [key: string]: unknown;
+};
+      "422": HTTPValidationError;
+    };
+  };
+  "get_worker_run_tool_effects_api_workers_runs__run_id__tool_effects_get": {
+    method: "GET";
+    path: "/workers/runs/{run_id}/tool-effects";
+    parameters: {
+      "path:run_id": string;
+      "query:limit"?: number;
+    };
     responses: {
       "200": {
   [key: string]: unknown;

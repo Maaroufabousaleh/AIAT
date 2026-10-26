@@ -1,0 +1,301 @@
+{
+  "authenticated_api": {
+    "/capabilities/workers": {
+      "http_status": 200,
+      "row_count": 39
+    },
+    "/health": {
+      "http_status": 200,
+      "row_count": null
+    },
+    "/projects": {
+      "http_status": 200,
+      "row_count": 0
+    }
+  },
+  "branch": "agent/fix-review-p1",
+  "compose_entrypoint": "infra/compose/mas.sh",
+  "compose_entrypoint_required_for_dev_defaults": true,
+  "containers": [
+    {
+      "health": "healthy",
+      "image_ref": "mas/pm-gateway:dev",
+      "name": "mas-pm-gateway-1",
+      "service": null,
+      "state": "running"
+    },
+    {
+      "health": "healthy",
+      "image_ref": "mas/dashboard:dev",
+      "name": "mas-dashboard",
+      "service": null,
+      "state": "running"
+    },
+    {
+      "health": "healthy",
+      "image_ref": "mas/orchestrator-api:dev",
+      "name": "mas-orchestrator-api-1",
+      "service": null,
+      "state": "running"
+    },
+    {
+      "health": "not_configured",
+      "image_ref": "ghcr.io/berriai/litellm:main-stable",
+      "name": "mas-litellm-1",
+      "service": null,
+      "state": "running"
+    },
+    {
+      "health": "healthy",
+      "image_ref": "diegosouzapw/omniroute:3.8.38",
+      "name": "mas-omniroute-1",
+      "service": null,
+      "state": "running"
+    },
+    {
+      "health": "healthy",
+      "image_ref": "mas/tool-service:dev",
+      "name": "mas-tool-service-1",
+      "service": null,
+      "state": "running"
+    },
+    {
+      "health": "healthy",
+      "image_ref": "prom/prometheus:v2.51.0",
+      "name": "mas-prometheus-1",
+      "service": null,
+      "state": "running"
+    },
+    {
+      "health": "not_configured",
+      "image_ref": "dpage/pgadmin4:latest",
+      "name": "mas-pgadmin-1",
+      "service": null,
+      "state": "running"
+    },
+    {
+      "health": "healthy",
+      "image_ref": "mas/message-router:dev",
+      "name": "mas-message-router-1",
+      "service": null,
+      "state": "running"
+    },
+    {
+      "health": "not_configured",
+      "image_ref": "redislabs/redisinsight:latest",
+      "name": "mas-redis-insight-1",
+      "service": null,
+      "state": "running"
+    },
+    {
+      "health": "not_configured",
+      "image_ref": "mas/team-runner:dev",
+      "name": "mas-team-office-cso",
+      "service": null,
+      "state": "exited"
+    },
+    {
+      "health": "not_configured",
+      "image_ref": "mas/team-runner:dev",
+      "name": "mas-team-office-chrm",
+      "service": null,
+      "state": "exited"
+    },
+    {
+      "health": "not_configured",
+      "image_ref": "mas/team-runner:dev",
+      "name": "mas-team-dept-devops",
+      "service": null,
+      "state": "exited"
+    },
+    {
+      "health": "not_configured",
+      "image_ref": "mas/team-runner:dev",
+      "name": "mas-team-office-cio",
+      "service": null,
+      "state": "exited"
+    },
+    {
+      "health": "not_configured",
+      "image_ref": "mas/team-runner:dev",
+      "name": "mas-team-dept-qa",
+      "service": null,
+      "state": "exited"
+    },
+    {
+      "health": "not_configured",
+      "image_ref": "mas/team-runner:dev",
+      "name": "mas-team-dept-production",
+      "service": null,
+      "state": "exited"
+    },
+    {
+      "health": "not_configured",
+      "image_ref": "mas/team-runner:dev",
+      "name": "mas-team-exec-coo",
+      "service": null,
+      "state": "exited"
+    },
+    {
+      "health": "not_configured",
+      "image_ref": "mas/team-runner:dev",
+      "name": "mas-team-office-cto",
+      "service": null,
+      "state": "exited"
+    },
+    {
+      "health": "not_configured",
+      "image_ref": "mas/team-runner:dev",
+      "name": "mas-team-office-cfo",
+      "service": null,
+      "state": "exited"
+    },
+    {
+      "health": "not_configured",
+      "image_ref": "mas/team-runner:dev",
+      "name": "mas-team-exec-ceo",
+      "service": null,
+      "state": "exited"
+    },
+    {
+      "health": "not_configured",
+      "image_ref": "mas/team-runner:dev",
+      "name": "mas-team-dept-system",
+      "service": null,
+      "state": "exited"
+    },
+    {
+      "health": "not_configured",
+      "image_ref": "edoburu/pgbouncer:latest",
+      "name": "mas-pgbouncer-1",
+      "service": null,
+      "state": "running"
+    },
+    {
+      "health": "not_configured",
+      "image_ref": "quay.io/minio/mc:latest",
+      "name": "mas-minio-init-1",
+      "service": null,
+      "state": "exited"
+    },
+    {
+      "health": "healthy",
+      "image_ref": "mas/opencode-runtime:dev",
+      "name": "mas-opencode-runtime-1",
+      "service": null,
+      "state": "running"
+    },
+    {
+      "health": "not_configured",
+      "image_ref": "mas/redis-acl-init:dev",
+      "name": "mas-redis-acl-init-1",
+      "service": null,
+      "state": "exited"
+    },
+    {
+      "health": "not_configured",
+      "image_ref": "alpine:3.21.3",
+      "name": "mas-omniroute-data-init-1",
+      "service": null,
+      "state": "exited"
+    },
+    {
+      "health": "healthy",
+      "image_ref": "quay.io/minio/minio:latest",
+      "name": "mas-minio-1",
+      "service": null,
+      "state": "running"
+    },
+    {
+      "health": "not_configured",
+      "image_ref": "alpine:3.21.3",
+      "name": "mas-opencode-workspace-init-1",
+      "service": null,
+      "state": "exited"
+    },
+    {
+      "health": "healthy",
+      "image_ref": "pgvector/pgvector:pg16",
+      "name": "mas-postgres-1",
+      "service": null,
+      "state": "running"
+    },
+    {
+      "health": "healthy",
+      "image_ref": "redis:7.2-alpine",
+      "name": "mas-redis-1",
+      "service": null,
+      "state": "running"
+    }
+  ],
+  "docker_contexts": {
+    "aiat-wsl": {
+      "daemon_id_prefix": "1deebc1d-e7c",
+      "docker_root": "/var/lib/docker-aiat",
+      "endpoint": "unix:///run/aiat-docker/docker.sock"
+    },
+    "default": {
+      "daemon_id_prefix": "ac1b2fc2-51d",
+      "docker_root": "/var/lib/docker",
+      "endpoint": "unix:///var/run/docker.sock"
+    }
+  },
+  "mas_internal": {
+    "driver": "bridge",
+    "internal": true,
+    "member_count": 15,
+    "members": [
+      "mas-dashboard",
+      "mas-litellm-1",
+      "mas-message-router-1",
+      "mas-minio-1",
+      "mas-omniroute-1",
+      "mas-opencode-runtime-1",
+      "mas-orchestrator-api-1",
+      "mas-pgadmin-1",
+      "mas-pgbouncer-1",
+      "mas-pm-gateway-1",
+      "mas-postgres-1",
+      "mas-prometheus-1",
+      "mas-redis-1",
+      "mas-redis-insight-1",
+      "mas-tool-service-1"
+    ]
+  },
+  "network_boundary_latest": {
+    "current_probe_status": "incomplete_team_runners_stopped",
+    "prior_11_runner_certificate": "pass",
+    "prior_evidence_ref": "docs/provenance/network_boundary_live.json"
+  },
+  "network_recovery": {
+    "compose_down_used_canonical_wrapper": true,
+    "east_west_connectivity_restored": true,
+    "network_recreated": true,
+    "persistent_volume_count_after": 9,
+    "persistent_volume_count_before": 9,
+    "privileged_forwarding_rule_identified": false,
+    "volume_deletion_requested": false
+  },
+  "observed_at": "2026-10-03T01:31:31.617178+00:00",
+  "orchestrator_dns_tcp": {
+    "pgbouncer:5432": "pass",
+    "postgres:5432": "pass",
+    "redis:6379": "pass",
+    "tool-service:8002": "pass"
+  },
+  "payloads_or_credentials_retained": false,
+  "provider_dispatch_authorized": false,
+  "root_cause": "The dedicated aiat-wsl daemon was the correct daemon. On it, mas_internal had valid bridge/IPAM/endpoints, service DNS, container routes, and ARP state, but inter-container TCP probes timed out. Recreating only the AIAT Compose bridge through the canonical wrapper (mas.sh down without -v, then normal up) restored east-west TCP; all nine persistent volumes remained. Docker Desktop default is a separate daemon and caused published host-port collisions when its default Compose ports were selected, not the original bridge outage. The privileged bridge firewall/forwarding layer could not be inspected, so the lower-level mechanism is unconfirmed.",
+  "schema_version": "aiat.local-compose-connectivity-evidence.v1",
+  "scope": "local WSL development Compose only; not native-Linux certification",
+  "selected_context": "aiat-wsl",
+  "selected_context_note": "AIAT Compose containers run on the dedicated WSL daemon; Docker Desktop default is a distinct daemon and data root. That distinction caused host-port collisions with the wrong published-port profile; it did not explain the original inter-container timeout, which cleared when the AIAT bridge was recreated.",
+  "source_revision": "95f2139edefb4656a6c5d1f46f31a24212509100",
+  "team_runner_containers": {
+    "configured_count": 11,
+    "running_count": 0,
+    "stopped_count": 11,
+    "stopped_to_prevent_provider_dispatch": true
+  },
+  "worktree_dirty": true
+}

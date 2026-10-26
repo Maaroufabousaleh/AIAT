@@ -1,0 +1,60 @@
+{
+  "active_team_runner_count": 0,
+  "baseline": {
+    "entry_count": 2,
+    "pending_entry_count": 0,
+    "stream_history_sha256": "5e74f1198280c9b7640c6bf75c65036127fa6f89c318ced4e0d336ab7aa8fcdd",
+    "team_stream_count": 11
+  },
+  "cleanup": {
+    "attempted": true,
+    "zero_residue": true
+  },
+  "compose_project": "mas",
+  "credentials_persisted": false,
+  "docker_context": "aiat-wsl",
+  "environment": "WSL local AIAT Compose",
+  "external_provider_dispatch_authorized": false,
+  "external_provider_dispatch_performed": false,
+  "fixture": {
+    "entry_count": 1,
+    "fixture_id_sha256": "afdda9da8a80ae88fddd065c521ffda92dc6ae695bfd8923829c789173255885",
+    "payload_retained_in_evidence": false,
+    "pending_before_restart": 1
+  },
+  "fixture_payload_retained_in_evidence": false,
+  "licence_metadata_is_gate": false,
+  "mode": "live-local-compose-redis-restart-recovery",
+  "observed_at": "2026-10-03T01:33:23.120427+00:00",
+  "reclaim_idle_threshold_override_ms": 0,
+  "redis_container": "mas-redis-1",
+  "redis_health_wait_ms": 6367.86404600025,
+  "redis_image_ref": "redis:7.2-alpine@sha256:05a97a479bc73de66f087dc05b569010772880f778cc8671fa6b8aadee32e5c6",
+  "redis_restart_duration_ms": 935.2304850008295,
+  "router_container": "mas-message-router-1",
+  "router_health_after_restart": "healthy",
+  "router_health_wait_ms": 6185.271231000115,
+  "router_reconnect_wait_ms": 30.95295400089526,
+  "router_restart_duration_ms": 2120.527970000694,
+  "schema_version": "aiat.redis-restart-recovery.v1",
+  "source_revision": "95f2139edefb4656a6c5d1f46f31a24212509100",
+  "status": "pass",
+  "steps": {
+    "ack_clears_pending_without_redelivery": "pass",
+    "atomic_publish_deduplication": "pass",
+    "canonical_stream_history_preserved": "pass",
+    "canonical_stream_history_unchanged": "pass",
+    "compose_identity": "pass",
+    "dedupe_ttl_expires": "pass",
+    "fixture_pending_before_restart": "pass",
+    "fixture_pending_survived_restart": "pass",
+    "no_preexisting_pending_work": "pass",
+    "provider_dispatch_guard": "pass",
+    "redis_restarted_healthy": "pass",
+    "requeue_response_replay_is_idempotent": "pass",
+    "router_reconnected_after_redis_restart": "pass",
+    "router_restart_rehydrated_redis_state": "pass",
+    "xautoclaim_recovered_pending_entry": "pass"
+  },
+  "worker_dispatch_performed": false
+}

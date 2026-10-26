@@ -1,0 +1,162 @@
+{
+  "boundary": {
+    "expired_host_offline_transition": "checked",
+    "external_provider_calls": "not_checked",
+    "host_lease_generation": "checked",
+    "live_worker_dispatch": "not_checked",
+    "placement_exclusion_after_recovery": "checked",
+    "reservation_generation_fencing": "checked",
+    "split_brain_stale_heartbeat": "checked"
+  },
+  "cleanup_after": {
+    "hosts": 1,
+    "reservations": 2
+  },
+  "cleanup_before": {
+    "hosts": 0,
+    "reservations": 0
+  },
+  "expected_migration": "0045_worker_tool_effects",
+  "expired_host_recovery": {
+    "generation": 3,
+    "report": {
+      "expired_reservation_count": 1,
+      "external_provider_mutation_performed": false,
+      "host_filter": [
+        "aiat-cert-worker-host-recovery-v1"
+      ],
+      "hosts": [
+        {
+          "expired_reservation_count": 1,
+          "from_status": "READY",
+          "host_id": "aiat-cert-worker-host-recovery-v1",
+          "lease_generation": 3,
+          "previous_lease_generation": 2
+        }
+      ],
+      "licence_metadata_is_gate": false,
+      "limit": 100,
+      "mutation_performed": true,
+      "recovered_host_count": 1,
+      "schema_version": "aiat.worker-host-recovery.v1",
+      "scope": "expired READY/DRAINING host leases are durably fenced and marked OFFLINE; reservations from the lost host incarnation are expired",
+      "status": "RECOVERED",
+      "worker_dispatch_performed": false
+    },
+    "reservation_state": "EXPIRED",
+    "stale_heartbeat_rejected": true,
+    "status": "OFFLINE"
+  },
+  "external_network_access_performed": false,
+  "external_provider_mutation_performed": false,
+  "first_counts": {
+    "hosts": 0,
+    "reservations": 0
+  },
+  "host_registry_schema": "aiat.worker-host-registry.v1",
+  "licence_metadata_is_gate": false,
+  "migration_version": "0045_worker_tool_effects",
+  "mode": "local-postgres-worker-host-recovery",
+  "mutation_performed": true,
+  "placement_after_recovery": {
+    "eligible": [
+      {
+        "eligible": false,
+        "execution_runtime": null,
+        "execution_sandbox_class": null,
+        "free_gpus": 0,
+        "free_memory_bytes": 1073741824,
+        "free_slots": 1,
+        "host_id": "aiat-cert-host-loss-queue-recovery-worker-v1-a",
+        "priority": 100,
+        "reason_codes": [
+          "host_not_ready",
+          "host_lease_invalid",
+          "sandbox_profile_unsupported",
+          "isolation_mode_unsupported"
+        ]
+      },
+      {
+        "eligible": false,
+        "execution_runtime": null,
+        "execution_sandbox_class": null,
+        "free_gpus": 0,
+        "free_memory_bytes": 1073741824,
+        "free_slots": 1,
+        "host_id": "aiat-cert-host-loss-queue-recovery-worker-v1-b",
+        "priority": 99,
+        "reason_codes": [
+          "host_lease_invalid",
+          "sandbox_profile_unsupported",
+          "isolation_mode_unsupported"
+        ]
+      },
+      {
+        "eligible": false,
+        "execution_runtime": null,
+        "execution_sandbox_class": null,
+        "free_gpus": 0,
+        "free_memory_bytes": 1073741824,
+        "free_slots": 1,
+        "host_id": "aiat-cert-independent-process-worker-v1-a",
+        "priority": 2,
+        "reason_codes": [
+          "host_lease_invalid",
+          "sandbox_profile_unsupported",
+          "isolation_mode_unsupported"
+        ]
+      },
+      {
+        "eligible": false,
+        "execution_runtime": null,
+        "execution_sandbox_class": null,
+        "free_gpus": 0,
+        "free_memory_bytes": 1073741824,
+        "free_slots": 1,
+        "host_id": "aiat-cert-independent-process-worker-v1-b",
+        "priority": 1,
+        "reason_codes": [
+          "host_lease_invalid",
+          "sandbox_profile_unsupported",
+          "isolation_mode_unsupported"
+        ]
+      },
+      {
+        "eligible": false,
+        "execution_runtime": null,
+        "execution_sandbox_class": null,
+        "free_gpus": 0,
+        "free_memory_bytes": 4294967296,
+        "free_slots": 1,
+        "host_id": "aiat-cert-worker-host-recovery-v1",
+        "priority": 0,
+        "reason_codes": [
+          "host_not_ready",
+          "host_lease_invalid"
+        ]
+      }
+    ],
+    "selected_host_id": null
+  },
+  "recovery_schema": "aiat.worker-host-recovery.v1",
+  "remaining": {
+    "hosts": 0,
+    "reservations": 0
+  },
+  "reopen_readback": {
+    "host_lease_generation": 3,
+    "host_status": "OFFLINE",
+    "reservation_state": "EXPIRED"
+  },
+  "reservation_schema": "aiat.worker-host-reservation.v1",
+  "schema_version": "aiat.worker-host-recovery-postgres-certification.v1",
+  "scope": "host re-registration fencing, stale-heartbeat rejection, expired lease reconciliation, reservation invalidation, placement exclusion, and durable read-back",
+  "split_brain_fencing": {
+    "initial_generation": 1,
+    "old_reservation_state": "EXPIRED",
+    "replacement_generation": 2,
+    "stale_heartbeat_rejected": true
+  },
+  "status": "pass",
+  "worker_dispatch_performed": false
+}

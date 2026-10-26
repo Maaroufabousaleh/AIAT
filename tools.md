@@ -31,7 +31,7 @@ network policy.
 | DevOps and IaC | plan/apply requests, CI/CD evidence, health checks | OpenTofu, GitHub Actions, monitoring adapters |
 | Diagrams and specifications | Mermaid and document/spec exports | Mermaid, Docling, GitHub Spec Kit |
 | Protocol bridge | typed external tool/worker calls | MCP SDKs and certified server adapters |
-| Isolation | worker/tool execution boundary | `trusted` → runc; `sandboxed` → gVisor/runsc; `vm_isolated` → optional Kata; no runc fallback for external workers |
+| Isolation | worker/tool execution boundary | `trusted` → runc; WASM artifacts → optional Wasmtime; `sandboxed` → gVisor/runsc; `vm_isolated` → optional Kata; no runc fallback for external workers |
 
 ## Default personal-instance profile
 

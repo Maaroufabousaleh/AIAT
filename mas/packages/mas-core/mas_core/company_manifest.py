@@ -14,7 +14,7 @@ from typing import Annotated, Any, Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
 
 from .sandbox_policy import SandboxProfileName, canonical_sandbox_class
 
@@ -191,6 +191,16 @@ class DeploymentPolicyManifest(BaseModel):
         return value
 
 
+class CompanyPolicyManifest(BaseModel):
+    """Typed, security-relevant company policy with forward-compatible metadata."""
+
+    model_config = ConfigDict(extra="allow")
+
+    # None preserves the historical canonical form when this policy was
+    # absent. StrictBool prevents string values from silently setting a gate.
+    require_human_approval_for_external_workers: StrictBool | None = None
+
+
 class CompanyManifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -208,7 +218,7 @@ class CompanyManifest(BaseModel):
     departments: list[DepartmentManifest] = Field(min_length=1)
     worker_assignments: list[WorkerAssignmentManifest] = Field(default_factory=list)
     budgets: dict[str, NonNegativeFiniteFloat] = Field(default_factory=dict)
-    policy: dict[str, Any] = Field(default_factory=dict)
+    policy: CompanyPolicyManifest = Field(default_factory=CompanyPolicyManifest)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("timezone")
@@ -294,3 +304,66 @@ def compile_company_manifest(raw: dict[str, Any]) -> tuple[CompanyManifest, str,
         raise CompanyManifestError(str(exc)) from exc
     canonical = manifest.canonical_dict()
     return manifest, manifest.digest(), canonical
+
+
+def validate_external_worker_assignment_approvals(
+    manifest: CompanyManifest,
+    workers_by_name: dict[str, dict[str, Any]],
+    *,
+    approving_actor: str | None = None,
+    require_operator_approval: bool = False,
+) -> None:
+    """Enforce approval policy using persisted source and execution provenance.
+
+    Repository-local workers without a source URL are recognized only when
+    their persisted execution policy declares trusted code. Unknown provenance
+    fails closed while the company policy is enabled.
+    """
+
+    if manifest.policy.require_human_approval_for_external_workers is not True:
+        return
+
+    for assignment in manifest.worker_assignments:
+        worker = workers_by_name.get(assignment.worker_id)
+        if worker is None:
+            raise CompanyManifestError(
+                f"worker {assignment.worker_id!r} is not registered; external provenance cannot be verified"
+            )
+        if "source_repo" not in worker:
+            raise CompanyManifestError(
+                f"worker {assignment.worker_id!r} source provenance is unavailable"
+            )
+        source_repo = worker.get("source_repo")
+        if source_repo is not None and str(source_repo).strip().lower() == "local":
+            continue
+        execution_policy = (worker.get("adapter_config") or {}).get("execution_policy")
+        trust = execution_policy.get("trust") if isinstance(execution_policy, dict) else None
+        if source_repo is None and trust == "trusted":
+            continue
+        external = bool(
+            (source_repo is not None and str(source_repo).strip())
+            or trust == "untrusted"
+        )
+        if not external:
+            raise CompanyManifestError(
+                f"worker {assignment.worker_id!r} source provenance is unavailable"
+            )
+        # The canonical manifest/apply route is operator-authenticated and
+        # records its actor on the immutable manifest version. An explicit
+        # false therefore represents that operator's approval when applied;
+        # omission must never silently become approval through the default.
+        if external and "approval_required" not in assignment.model_fields_set:
+            raise CompanyManifestError(
+                f"external worker assignment {assignment.worker_id!r} must explicitly set approval_required"
+            )
+        if (
+            external
+            and assignment.approval_required is False
+            and (
+                (require_operator_approval and approving_actor != "operator")
+                or (approving_actor is not None and approving_actor != "operator")
+            )
+        ):
+            raise CompanyManifestError(
+                f"external worker assignment {assignment.worker_id!r} approval must be applied by the operator"
+            )

@@ -1,133 +1,189 @@
+# Open security findings remain active review items; this register does not waive any gate.
 schema_version: aiat.security-scan-review.v1
 programme_scope: personal-internal-only
-
-# This register makes the open technical review work explicit. It is not a
-# waiver, a scan result, or an activation approval. Licence/restriction data
-# remains metadata-only and is intentionally absent from the review predicate.
 policy:
   security_scan_is_technical_gate: true
   unresolved_findings_block_activation: true
   review_register_is_not_a_waiver: true
   licence_metadata_is_gate: false
-
 latest_reproduction:
   path: mas/docs/provenance/security_scan_reproduction_local.json
   schema_version: aiat.security-scan-reproduction-local.v1
-
-# The historical reproduction remains for audit traceability only. The fresh
-# candidate package is the new technical source of truth and is currently
-# Tool provisioning and SBOM generation now pass in the reproducible workflow;
-# the candidate remains blocked on scanner coverage errors and unresolved
-# findings. This is not an activation waiver.
 latest_candidate:
-  path: mas/docs/provenance/opencode-candidate/2026-08-21-v1.18.21/candidate-certification.json
+  path: mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/candidate-certification.json
   schema_version: aiat.opencode-candidate-certification.v1
   status: blocked
   remediation_input: true
-
 reviews:
-  - id: opencode-1.17.13-semgrep-2026-08-10-review
-    scan_ref: mas/docs/provenance/security_scan_evidence.yaml#opencode-1.17.13-semgrep-2026-08-10
-    owner: personal-operator
-    status: open
-    gate_status: blocked
-    next_action: >-
-      Treat the historical 1.17.13 row as FAILED_UNREPRODUCIBLE and do not use
-      its scalar counts as patch instructions. The fresh pinned 1.18.21
-      candidate workflow is now reproducible and retained sanitized raw
-      scanner/SBOM evidence. Review its 644 aggregate findings and 54 Semgrep
-      parser/internal engine errors, remediate or disposition each applicable
-      finding, and rerun the bounded scan before either coding_worker or tester
-      can activate.
-    engine_warning_action: >-
-      Re-run the scanner with a supported ruleset and capture a warning-free
-      result or a bounded explanation for each warning before activation.
-    rule_groups:
-      - id: path-resolution
-        rules:
-          - javascript.lang.security.audit.path-join-resolve-traversal
-        finding_count: 261
-        next_action: >-
-          Reproduce path traversal cases and verify canonicalization,
-          workspace-root containment, and symlink handling at every file-input
-          boundary.
-      - id: dynamic-regexp
-        rules:
-          - javascript.lang.security.audit.detect-non-literal-regexp
-        finding_count: 13
-        next_action: >-
-          Review every dynamic pattern for bounded input, escaping, and denial
-          of regular-expression abuse.
-      - id: string-sanitization
-        rules:
-          - javascript.audit.detect-replaceall-sanitization
-        finding_count: 11
-        next_action: >-
-          Confirm each replacement is an intentional complete sanitization
-          boundary and add focused adversarial tests where it is not.
-      - id: workflow-shell-input
-        rules:
-          - yaml.github-actions.security.gha-curl-pipe-shell
-          - yaml.github-actions.security.run-shell-injection
-        finding_count: 12
-        next_action: >-
-          Replace untrusted workflow interpolation and curl-to-shell paths with
-          pinned, reviewed actions and explicit argument boundaries.
-      - id: unsafe-formatting
-        rules:
-          - javascript.lang.security.audit.unsafe-formatstring
-        finding_count: 6
-        next_action: >-
-          Trace untrusted format strings and require safe structured formatting
-          at every reported call site.
-      - id: process-launch
-        rules:
-          - javascript.lang.security.audit.spawn-shell-true
-          - javascript.lang.security.detect-child-process
-        finding_count: 5
-        next_action: >-
-          Require argv-only launch, executable allowlists, bounded environment,
-          and sandbox coverage for every child-process path.
-      - id: transport-verification
-        rules:
-          - problem-based-packs.insecure-transport.js-node.bypass-tls-verification
-        finding_count: 2
-        next_action: >-
-          Remove or narrowly justify TLS-verification bypasses and prove
-          certificate validation in the provider and callback paths.
-      - id: dependency-freshness
-        rules:
-          - package_managers.bun.bun-missing-minimum-release-age
-        finding_count: 1
-        next_action: >-
-          Confirm dependency-age policy and pin an acceptable release or record
-          an explicit technical exception for operator review.
-      - id: workflow-action-pinning
-        rules:
-          - yaml.github-actions.security.github-actions-mutable-action-tag
-        finding_count: 1
-        next_action: >-
-          Pin each workflow action to an immutable commit and rerun the exact
-          source scan.
-      - id: object-key-safety
-        rules:
-          - javascript.lang.security.audit.prototype-pollution
-        finding_count: 1
-        next_action: >-
-          Validate untrusted object keys and prove prototype-safe merge and
-          deserialization behavior.
-      - id: container-identity
-        rules:
-          - dockerfile.security.missing-user-entrypoint
-          - dockerfile.security.missing-user
-        finding_count: 2
-        next_action: >-
-          Set an explicit non-root runtime identity and verify entrypoint
-          privilege boundaries in the isolated image build.
-      - id: cors-policy
-        rules:
-          - javascript.express.security.cors-misconfiguration
-        finding_count: 1
-        next_action: >-
-          Restrict origins, credentials, and methods to the explicit AIAT
-          control-plane boundary and add a negative preflight test.
+- id: opencode-1.18.21-semgrep-2026-10-02-review
+  scan_ref: mas/docs/provenance/security_scan_evidence.yaml#opencode-1.18.21-semgrep-2026-10-02
+  owner: personal-operator
+  status: open
+  gate_status: blocked
+  finding_disposition: unreviewed
+  finding_review_ref: mas/docs/provenance/opencode_security_review_supplement_2026-10-12.json
+  finding_review_sha256: 51a99f4d29c9289af3f9e2241bd06beeeec6f0553f0c25141a950b3f44dc48fd
+  next_action: The linked bounded review records exact dispositions for the adapter-denied native shell
+    findings, the confirmed project-plugin autoload defect and image-recipe mitigation, test-only regexes,
+    wrapper spawns, and AIAT prompt-route reachability. All 328 primary findings have individual source-level dispositions; coverage remains incomplete, confirmed
+    upstream issues remain, and the exact 1.18.21 image/adapter must be verified before activation.
+  engine_warning_action: 'Semgrep has zero execution failures and six explained TypeScript parser coverage gaps;
+    the pinned Bun parser/transpiler check succeeds on all six exact paths but does not replace security analysis.
+    The two workflow rule exclusions have compensating Actionlint/Zizmor scans; seven findings from the excluded
+    pipe-to-shell rule remain carried forward for review.'
+  rule_groups:
+  - id: semgrep-current-rules
+    rules:
+    - dockerfile.security.missing-user-entrypoint.missing-user-entrypoint
+    - dockerfile.security.missing-user.missing-user
+    - javascript.audit.detect-replaceall-sanitization.detect-replaceall-sanitization
+    - javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
+    - javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
+    - javascript.lang.security.audit.prototype-pollution.prototype-pollution-loop.prototype-pollution-loop
+    - javascript.lang.security.audit.spawn-shell-true.spawn-shell-true
+    - javascript.lang.security.audit.unsafe-formatstring.unsafe-formatstring
+    - javascript.lang.security.detect-child-process.detect-child-process
+    - package_managers.bun.bun-missing-minimum-release-age.bun-missing-minimum-release-age
+    - problem-based-packs.insecure-transport.js-node.bypass-tls-verification.bypass-tls-verification
+    - yaml.github-actions.security.github-actions-mutable-action-tag.github-actions-mutable-action-tag
+    - yaml.github-actions.security.run-shell-injection.run-shell-injection
+    finding_count: 328
+    next_action: All 328 primary records now have individual source-level dispositions. Keep this group open because confirmed
+      upstream issues, candidate-image/adapter compatibility, and six parser coverage gaps remain; do not close
+      the technical gate or activation gate.
+- id: opencode-1.18.21-semgrep-excluded-rule-carry-forward-2026-10-02-review
+  scan_ref:
+    mas/docs/provenance/security_scan_evidence.yaml#opencode-1.18.21-semgrep-excluded-rule-carry-forward-2026-10-02
+  owner: personal-operator
+  status: open
+  gate_status: blocked
+  finding_disposition: unreviewed
+  finding_review_ref: mas/docs/provenance/opencode_security_review_supplement_2026-10-12.json
+  finding_review_sha256: 51a99f4d29c9289af3f9e2241bd06beeeec6f0553f0c25141a950b3f44dc48fd
+  next_action: The supplement individually records all seven exact-source workflow locations as upstream CI
+    supply-chain risks with untrusted workflow/installer input paths. Keep open until the operator decides
+    whether the upstream release pipeline is an acceptable trust source or an independently verified build
+    is required.
+  engine_warning_action: The prior unfiltered exact-source Semgrep run found seven records for the excluded
+    workflow rule and had 54 parser/execution diagnostics overall. The current exclusion is not a waiver; the
+    raw prior result hash and current filtered invocation are retained.
+  rule_groups:
+  - id: semgrep-excluded-rule-findings
+    rules:
+    - yaml.github-actions.security.gha-curl-pipe-shell.gha-curl-pipe-shell
+    finding_count: 7
+    next_action: See each finding ID/path/line in the linked supplement; the Semgrep exclusion is a scanner
+      limitation, not a waiver. Retain the human upstream-release trust decision.
+- id: opencode-1.18.21-trufflehog-2026-10-02-review
+  scan_ref: mas/docs/provenance/security_scan_evidence.yaml#opencode-1.18.21-trufflehog-2026-10-02
+  owner: personal-operator
+  status: open
+  gate_status: blocked
+  finding_disposition: unreviewed
+  finding_review_ref: mas/docs/provenance/opencode_security_review_supplement_2026-10-12.json
+  finding_review_sha256: 51a99f4d29c9289af3f9e2241bd06beeeec6f0553f0c25141a950b3f44dc48fd
+  next_action: All 53 unique locations are path/line classified in the linked supplement as documentation
+    examples, test fixtures, or specific false positives; zero detections were verified and no values or
+    source context are retained. The operator must confirm whether any example was historically a live
+    credential; rotate that credential only if outside account history establishes it was real.
+  engine_warning_action: TruffleHog completed with 55 unverified raw records, 53 unique findings after two
+    duplicate URI records, and zero verified credentials. Preserve the findings as open until individually
+    reviewed.
+  rule_groups:
+  - id: trufflehog-detectors
+    rules:
+    - Box
+    - DigitalOceanToken
+    - Gitlab
+    - GoogleGeminiAPIKey
+    - Honeycomb
+    - Postgres
+    - URI
+    finding_count: 55
+    next_action: The exact sanitized locations and classifications are in the linked supplement. No .env path
+      was detected; do not disclose or copy scanner values into evidence.
+- id: opencode-1.18.21-skillspector-2026-10-02-review
+  scan_ref: mas/docs/provenance/security_scan_evidence.yaml#opencode-1.18.21-skillspector-2026-10-02
+  owner: personal-operator
+  status: resolved
+  gate_status: passed
+  finding_disposition: no_findings
+  next_action: Repeat the recursive no-LLM scan whenever the exact source candidate or its bundled skills
+    change.
+  engine_warning_action: Pinned SkillSpector 2.9.6 completed successfully after the output path was resolved
+    from the repository working directory; both bundled skills were scanned with zero findings.
+  rule_groups: []
+- id: opencode-1.18.21-actionlint-2026-10-02-review
+  scan_ref: mas/docs/provenance/security_scan_evidence.yaml#opencode-1.18.21-actionlint-2026-10-02
+  owner: personal-operator
+  status: open
+  gate_status: blocked
+  finding_disposition: unreviewed
+  finding_review_ref: mas/docs/provenance/opencode_security_review_supplement_2026-10-12.json
+  finding_review_sha256: 51a99f4d29c9289af3f9e2241bd06beeeec6f0553f0c25141a950b3f44dc48fd
+  next_action: >-
+    The supplement lists all 27 exact locations: 25 custom Blacksmith runner labels and the disabled-job
+    condition and expression diagnostic. These are upstream CI context and do not execute in the AIAT server;
+    confirm the provider context only if relying on upstream workflows.
+  engine_warning_action: Actionlint completed with diagnostics (exit 1); this exit reflects findings, not a
+    scanner execution failure.
+  rule_groups:
+  - id: actionlint-diagnostics
+    rules:
+    - runner-label
+    - if-cond
+    - expression
+    finding_count: 27
+    next_action: The supplement includes every path/line/column and classifies runtime relevance. Retain the
+      runner inventory confirmation as part of the upstream release trust decision.
+- id: opencode-1.18.21-zizmor-2026-10-02-review
+  scan_ref: mas/docs/provenance/security_scan_evidence.yaml#opencode-1.18.21-zizmor-2026-10-02
+  owner: personal-operator
+  status: open
+  gate_status: blocked
+  finding_disposition: unreviewed
+  finding_review_ref: mas/docs/provenance/opencode_security_review_supplement_2026-10-12.json
+  finding_review_sha256: 51a99f4d29c9289af3f9e2241bd06beeeec6f0553f0c25141a950b3f44dc48fd
+  next_action: All 92 normalized rule/severity/location records are individually mapped in the supplement.
+    High and medium findings concern upstream CI triggers, template interpolation, permissions, app
+    credentials and action provenance; decide on upstream release trust only after technical runtime and
+    image checks are complete. No blanket acceptance is recorded.
+  engine_warning_action: Zizmor completed and returned findings (exit 14); this exit reflects findings, not a
+    scanner execution failure.
+  rule_groups:
+  - id: zizmor-rules
+    rules:
+    - artipacked
+    - dangerous-triggers
+    - excessive-permissions
+    - github-app
+    - github-env
+    - self-repository
+    - template-injection
+    - unpinned-uses
+    finding_count: 92
+    next_action: Each normalized finding ID and exact location is retained in the linked supplement; the
+      remaining decision is trust in the upstream Actions/release path, not AIAT runtime reachability.
+- id: opencode-1.18.21-semgrep-transpiled-typescript-2026-10-03-review
+  scan_ref: mas/docs/provenance/security_scan_evidence.yaml#opencode-1.18.21-semgrep-transpiled-typescript-2026-10-03
+  owner: personal-operator
+  status: open
+  gate_status: blocked
+  finding_disposition: unreviewed
+  next_action: The supplement maps all four records to the three exact EffectFlock source locations. Inspected
+    in-tree production callers use the fixed lock root and omit optional dir; AIAT project plugin loading is
+    disabled by the image recipe. Keep the upstream API risk documented and the review row open until the
+    aligned runtime image is verified.
+  engine_warning_action: The pinned Semgrep run completed with exit 0 and four warnings; it also reported one
+    parser error on non-AIAT-serving LSP source. All three AIAT-serving TypeScript paths completed without
+    parser errors. Keep the finding gate blocked and retain the non-runtime coverage limitation.
+  finding_review_ref: mas/docs/provenance/opencode_security_review_supplement_2026-10-12.json
+  finding_review_sha256: 51a99f4d29c9289af3f9e2241bd06beeeec6f0553f0c25141a950b3f44dc48fd
+  rule_groups:
+  - id: semgrep-transpiled-path-join-findings
+    rules:
+    - javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
+    finding_count: 4
+    next_action: The exact source locations, in-tree call sites and residual API trust boundary are described
+      in the linked supplement. Keep all four records open (including the duplicate pair at line 257) until
+      post-image verification confirms the AIAT configuration path.

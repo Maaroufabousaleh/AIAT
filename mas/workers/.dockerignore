@@ -1,0 +1,3 @@
+# Keep candidate manifests and unrelated worker files out of this image build.
+**
+!aiat_deterministic_file_worker_process.py

@@ -29,6 +29,7 @@ def _inputs() -> dict[str, object]:
             "active_shell_version_id": "shell-1",
             "active_adapter_id": "adapter-1",
             "active_skill_bundle_id": "bundle-1",
+            "adapter_type": "oci",
             "sandbox_profile": "gvisor",
         },
         "project": {"id": PROJECT_ID, "company_id": COMPANY_ID, "state": "IN_PROGRESS"},
@@ -91,6 +92,130 @@ def test_inactive_worker_terminal_project_and_missing_immutable_records_block() 
     assert "active_skill_bundle_id_missing" in codes
     assert "project_terminal" in codes
 
+
+def test_draining_worker_blocks_readiness_for_a_new_run() -> None:
+    inputs = _inputs()
+    worker = dict(inputs["worker"])
+    worker["status"] = "DRAINING"
+    inputs["worker"] = worker
+
+    report = evaluate_worker_run_readiness(**inputs)
+
+    codes = {item["code"] for item in report["blockers"]}
+    assert report["status"] == "blocked"
+    assert "worker_not_active" in codes
+
+
+def test_source_backed_worker_requires_hardened_sandbox_by_default() -> None:
+    inputs = _inputs()
+    worker = dict(inputs["worker"])
+    worker.update({"source_repo": "https://example.invalid/worker", "sandbox_profile": "trusted"})
+    inputs["worker"] = worker
+    inputs["require_sandbox"] = False
+
+    report = evaluate_worker_run_readiness(**inputs)
+
+    codes = {item["code"] for item in report["blockers"]}
+    assert report["status"] == "blocked"
+    assert report["checks"]["sandbox"]["hardened_required"] is True
+    assert "sandbox_profile_not_hardened" in codes
+
+
+def test_invalid_worker_execution_policy_blocks_readiness() -> None:
+    inputs = _inputs()
+    worker = dict(inputs["worker"])
+    worker.update(
+        {
+            "sandbox_profile": "trusted",
+            "adapter_config": {"execution_policy": []},
+        }
+    )
+    inputs["worker"] = worker
+    inputs["require_sandbox"] = False
+
+    report = evaluate_worker_run_readiness(**inputs)
+
+    codes = {item["code"] for item in report["blockers"]}
+    assert report["status"] == "blocked"
+    assert "worker_isolation_policy_invalid" in codes
+
+
+def test_external_process_with_hardened_profile_is_not_ready() -> None:
+    inputs = _inputs()
+    worker = dict(inputs["worker"])
+    worker.update(
+        {
+            "source_repo": "https://example.invalid/worker",
+            "adapter_type": "process",
+            "sandbox_profile": "gvisor",
+        }
+    )
+    inputs["worker"] = worker
+    inputs["require_sandbox"] = False
+
+    report = evaluate_worker_run_readiness(**inputs)
+
+    codes = {item["code"] for item in report["blockers"]}
+    assert report["status"] == "blocked"
+    assert report["checks"]["sandbox"]["transport_status"] == "blocked"
+    assert "worker_sandbox_process_transport_unsupported" in codes
+
+
+def test_wasm_transport_alias_matches_wasmtime_readiness_contract() -> None:
+    inputs = _inputs()
+    worker = dict(inputs["worker"])
+    worker["adapter_type"] = "wasm"
+    inputs["worker"] = worker
+
+    report = evaluate_worker_run_readiness(**inputs)
+
+    assert report["status"] == "pass"
+    assert report["checks"]["sandbox"]["transport_status"] == "declared"
+    assert report["blockers"] == []
+
+
+def test_hardened_readiness_fails_closed_for_unknown_transport_and_invalid_policy() -> None:
+    inputs = _inputs()
+    worker = dict(inputs["worker"])
+    worker.update(
+        {
+            "source_repo": "https://example.invalid/worker",
+            "adapter_type": "unrecognized",
+            "sandbox_profile": "gvisor",
+            "adapter_config": {"execution_policy": []},
+        }
+    )
+    inputs["worker"] = worker
+    inputs["require_sandbox"] = True
+
+    report = evaluate_worker_run_readiness(**inputs)
+
+    codes = {item["code"] for item in report["blockers"]}
+    assert report["status"] == "blocked"
+    assert report["checks"]["sandbox"]["transport_status"] == "not_checked"
+    assert "worker_isolation_policy_invalid" in codes
+    assert "worker_sandbox_transport_unverified" in codes
+
+def test_hardened_profile_does_not_hide_invalid_execution_policy() -> None:
+    inputs = _inputs()
+    worker = dict(inputs["worker"])
+    worker.update(
+        {
+            "source_repo": "https://example.invalid/worker",
+            "adapter_type": "oci",
+            "sandbox_profile": "gvisor",
+            "adapter_config": {"execution_policy": []},
+        }
+    )
+    inputs["worker"] = worker
+    inputs["require_sandbox"] = True
+
+    report = evaluate_worker_run_readiness(**inputs)
+
+    codes = {item["code"] for item in report["blockers"]}
+    assert report["status"] == "blocked"
+    assert report["checks"]["sandbox"]["hardened_required"] is True
+    assert "worker_isolation_policy_invalid" in codes
 
 def test_missing_budget_and_profile_are_fail_closed() -> None:
     inputs = _inputs()

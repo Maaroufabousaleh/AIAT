@@ -1,6 +1,5 @@
 {
   "artifact_count": 1,
-  "commit": "2bc7ca5",
   "binding_recovery_schema": "aiat.worker-run-host-recovery.v1",
   "binding_schema": "aiat.worker-run-host-binding.v1",
   "binding_state": "RELEASED",
@@ -13,7 +12,7 @@
     "payload_free_usage_artifact_trace_evidence": "checked",
     "postgres_connection_reopen": "checked",
     "provider_backed_recovery": "not_checked",
-    "sandbox_runtime_gvisor_or_firecracker": "not_checked",
+    "sandbox_runtime_sandboxed_or_vm_isolated": "not_checked",
     "stale_lost_host_execution_rejection": "checked",
     "worker_run_claim_lease_requeue": "checked"
   },
@@ -39,7 +38,7 @@
   },
   "event_count": 2,
   "execution_schema": "aiat.worker-host-execution.v1",
-  "expected_migration": "0042_worker_run_host_binding",
+  "expected_migration": "0045_worker_tool_effects",
   "external_network_access_performed": false,
   "external_provider_mutation_performed": false,
   "host_ids": [
@@ -67,12 +66,12 @@
   },
   "licence_metadata_is_gate": false,
   "local_database_access_performed": true,
-  "migration_version": "0042_worker_run_host_binding",
+  "migration_version": "0045_worker_tool_effects",
   "mode": "local-postgres-worker-host-loss-queue-recovery",
   "mutation_performed": true,
   "native_span_count": 3,
   "network_access_performed": true,
-  "observed_at": "2026-08-18T20:09:17.891658Z",
+  "observed_at": "2026-10-02T00:25:37.118299Z",
   "payload_free": true,
   "remaining_fixture_counts": {
     "bindings": 0,
@@ -83,6 +82,13 @@
     "workers": 0
   },
   "reservation_state": "RELEASED",
+  "run_provenance": {
+    "aiat_source_revision": "bc0d1a8bb7a2d3f8b647dcac3e13876a4bd5195f",
+    "changed_path_count": 6,
+    "environment": "WSL local AIAT Compose",
+    "external_provider_dispatch_authorized": false,
+    "worktree_dirty": true
+  },
   "run_state": "SUCCEEDED",
   "schema_version": "aiat.worker-host-loss-queue-recovery-postgres-certification.v1",
   "scope": "fenced host loss, canonical Worker Run requeue, stale executor rejection, alternate-host reassignment, native retry, durable reopen, and scoped cleanup",

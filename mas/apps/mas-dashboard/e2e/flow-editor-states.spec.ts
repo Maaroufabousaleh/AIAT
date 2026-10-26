@@ -171,6 +171,101 @@ test("flow editor fails closed when the initial flow read is denied", async ({
   await expect(page.getByRole("button", { name: "Add Task node" })).toHaveCount(0);
 });
 
+test("flow editor clears the previous canvas when a new version cannot be loaded", async ({ page }) => {
+  const newVersionId = "flow-editor-recovery-copy";
+  const newVersion = { ...FLOW_FIXTURE, id: newVersionId, version: 2 };
+  await page.route("**/api/workers", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route("**/api/governance/model-profiles", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route("**/api/flows/flow-editor-recovery", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(FLOW_FIXTURE) });
+  });
+  await page.route("**/api/flows", async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.continue();
+      return;
+    }
+    await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify(newVersion) });
+  });
+  await page.route(`**/api/flows/${newVersionId}`, async (route) => {
+    await route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "new flow version is temporarily unavailable" }),
+    });
+  });
+
+  await authenticate(page, "/flows/flow-editor-recovery");
+  await expect(page.getByTestId("flow-name-input")).toHaveValue("Recovery Flow");
+  await page.getByTestId("flow-save-version-button").click();
+  await expect(page).toHaveURL(new RegExp(`/flows/${newVersionId}$`));
+  await expect(page.getByRole("heading", { name: "Flow unavailable" })).toBeVisible();
+  await expect(page.getByText("new flow version is temporarily unavailable")).toBeVisible();
+  await expect(page.getByTestId("flow-name-input")).toHaveCount(0);
+  await expect(page.getByRole("main", { name: "Flow editor" })).toHaveCount(0);
+  await expect(page.getByTestId("flow-save-button")).toHaveCount(0);
+  await expect(page.getByTestId("flow-save-version-button")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Add Task node" })).toHaveCount(0);
+});
+
+test("a late flow read cannot replace the flow selected afterward", async ({ page }) => {
+  const secondFlow = { ...FLOW_FIXTURE, id: "flow-editor-second", name: "Second Flow", version: 3 };
+  let releaseFirstRead!: () => void;
+  let finishFirstRead!: () => void;
+  const firstReadGate = new Promise<void>((resolve) => { releaseFirstRead = resolve; });
+  const firstReadFinished = new Promise<void>((resolve) => { finishFirstRead = resolve; });
+  let firstReadCount = 0;
+
+  await page.route("**/api/workers", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route("**/api/governance/model-profiles", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route("**/api/flows**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === "/api/flows" && route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([FLOW_FIXTURE, secondFlow]),
+      });
+      return;
+    }
+    if (url.pathname === `/api/flows/${FLOW_FIXTURE.id}` && route.request().method() === "GET") {
+      firstReadCount += 1;
+      if (firstReadCount === 1) {
+        await firstReadGate;
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(FLOW_FIXTURE) });
+        finishFirstRead();
+        return;
+      }
+    }
+    if (url.pathname === `/api/flows/${secondFlow.id}` && route.request().method() === "GET") {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(secondFlow) });
+      return;
+    }
+    await route.continue();
+  });
+
+  try {
+    await authenticate(page, `/flows/${FLOW_FIXTURE.id}`);
+    await page.getByRole("link", { name: "Back to flows" }).click();
+    await page.getByRole("link", { name: "Second Flow", exact: true }).click();
+    await expect(page.getByTestId("flow-name-input")).toHaveValue("Second Flow");
+
+    releaseFirstRead();
+    await firstReadFinished;
+    await expect(page.getByTestId("flow-name-input")).toHaveValue("Second Flow");
+    await expect(page.getByRole("heading", { name: "Flow unavailable" })).toHaveCount(0);
+  } finally {
+    releaseFirstRead();
+  }
+});
+
 test("flow editor preserves the last canvas but hides controls after read denial", async ({
   page,
 }) => {
@@ -253,4 +348,178 @@ test("flow editor enters the same denied state when saving loses authorization",
   await expect(page.getByRole("button", { name: "Save", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Save As New Version" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Add Task node" })).toHaveCount(0);
+});
+
+test("saved Research Brief drafts cannot be activated or versioned before worker binding", async ({
+  page,
+}) => {
+  const researchFlow = {
+    ...FLOW_FIXTURE,
+    id: "research-flow-draft",
+    name: "Research Brief draft",
+    is_active: false,
+    definition_json: {
+      schema_version: "aiat.flow-node-schemas.v1.0",
+      metadata: { template_id: "research", evidence_policy: "research" },
+      nodes: [
+        { id: "start", type: "start", label: "Start", config: {}, position: { x: 80, y: 80 } },
+        { id: "research", type: "task", label: "Research", config: { team_id: "legacy-team", action: "research.collect" }, position: { x: 280, y: 80 } },
+        { id: "end", type: "end", label: "Complete", config: {}, position: { x: 480, y: 80 } },
+      ],
+      edges: [
+        { id: "start-research", source: "start", target: "research" },
+        { id: "research-end", source: "research", target: "end" },
+      ],
+    },
+  };
+  let updateRequests = 0;
+  let versionCreateRequests = 0;
+
+  await page.route("**/api/workers", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route("**/api/governance/model-profiles", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route("**/api/flows/research-flow-draft", async (route) => {
+    if (route.request().method() === "PUT") updateRequests += 1;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(researchFlow),
+    });
+  });
+  await page.route("**/api/flows", async (route) => {
+    if (route.request().method() === "POST") versionCreateRequests += 1;
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+
+  await authenticate(page, "/flows/research-flow-draft");
+  const checklist = page.getByTestId("research-template-activation-checklist");
+  await expect(checklist).toContainText("Bind a governed worker");
+  await expect(checklist).toContainText("Research");
+  await page.getByLabel("Mark flow as active").check();
+
+  await page.getByTestId("flow-save-button").click();
+  const saveError = page.getByRole("alert").filter({ hasText: "Cannot save flow" });
+  await expect(saveError).toContainText("Bind a governed worker to each Research Brief task before activation");
+  await page.getByTestId("flow-save-version-button").click();
+  await expect(saveError).toContainText("Bind a governed worker to each Research Brief task before activation");
+
+  expect(updateRequests).toBe(0);
+  expect(versionCreateRequests).toBe(0);
+});
+
+test("existing flow editor retains and gates invalid task input until a valid edit is saved", async ({ page }) => {
+  const flowId = "flow-editor-task-input";
+  const initialFlow = {
+    ...FLOW_FIXTURE,
+    id: flowId,
+    name: "Task input editor flow",
+    is_active: false,
+    definition_json: {
+      schema_version: "aiat.flow-node-schemas.v1.0",
+      nodes: [
+        { id: "start", type: "start", label: "Start", config: {}, position: { x: 80, y: 80 } },
+        {
+          id: "research",
+          type: "task",
+          label: "Research",
+          config: {
+            team_id: "legacy-team",
+            action: "research.collect",
+            task_type: "research.collect",
+            task_input: { query: "original query" },
+          },
+          position: { x: 280, y: 80 },
+        },
+        { id: "end", type: "end", label: "End", config: {}, position: { x: 480, y: 80 } },
+      ],
+      edges: [
+        { id: "start-research", source: "start", target: "research" },
+        { id: "research-end", source: "research", target: "end" },
+      ],
+    },
+  };
+  let currentFlow = initialFlow;
+  const updatePayloads: Record<string, unknown>[] = [];
+  let updateRequests = 0;
+  let versionCreateRequests = 0;
+  let migrationDryRunRequests = 0;
+
+  await page.route("**/api/**", async (route) => {
+    const request = route.request();
+    const { pathname } = new URL(request.url());
+    const method = request.method();
+    const fulfill = (body: unknown, status = 200) => route.fulfill({
+      status,
+      contentType: "application/json",
+      body: JSON.stringify(body),
+    });
+
+    if (pathname === "/api/workers" && method === "GET") return fulfill([]);
+    if (pathname === "/api/governance/model-profiles" && method === "GET") return fulfill([]);
+    if (pathname === `/api/flows/${flowId}` && method === "GET") return fulfill(currentFlow);
+    if (pathname === `/api/flows/${flowId}` && method === "PUT") {
+      updateRequests += 1;
+      const updatePayload = request.postDataJSON() as Record<string, unknown>;
+      updatePayloads.push(updatePayload);
+      currentFlow = {
+        ...currentFlow,
+        ...updatePayload,
+        updated_at: "2026-10-26T12:00:00Z",
+      } as typeof initialFlow;
+      return fulfill(currentFlow);
+    }
+    if (pathname === "/api/flows" && method === "POST") {
+      versionCreateRequests += 1;
+      return fulfill({ ...currentFlow, id: "unexpected-new-version" }, 201);
+    }
+    if (pathname === `/api/flows/${flowId}/migrate-legacy-tasks` && method === "POST") {
+      migrationDryRunRequests += 1;
+      return fulfill({ status: "dry_run", valid: true, changed: false });
+    }
+    return fulfill({ error: "unhandled test route" }, 404);
+  });
+
+  await authenticate(page, `/flows/${flowId}`);
+  await expect(page.getByTestId("flow-name-input")).toHaveValue("Task input editor flow");
+  await page.locator(".react-flow__node").nth(1).click();
+  const taskInput = page.getByTestId("task-input-json");
+  await expect(taskInput).toHaveValue('{\n  "query": "original query"\n}');
+
+  const invalidDraft = '{"nested":[{"value":1e999}]}';
+  await taskInput.fill(invalidDraft);
+  await expect(page.getByText("Task input numbers must be finite", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Close node config panel" }).click();
+  await expect(taskInput).toHaveCount(0);
+  await page.locator(".react-flow__node").nth(1).click();
+  await expect(taskInput).toHaveValue(invalidDraft);
+
+  const validationMessage = "Correct the JSON task input for Research before validating or saving this flow";
+  await page.getByTestId("flow-save-button").click();
+  await expect(page.getByText(validationMessage, { exact: true })).toBeVisible();
+  await page.getByTestId("flow-save-version-button").click();
+  await expect(page.getByText(validationMessage, { exact: true })).toBeVisible();
+  await page.getByTestId("legacy-migration-preview-button").click();
+  await expect(page.getByText(validationMessage, { exact: true })).toBeVisible();
+  expect(updateRequests).toBe(0);
+  expect(versionCreateRequests).toBe(0);
+  expect(migrationDryRunRequests).toBe(0);
+
+  await page.getByTestId("task-input-clear").click();
+  await expect(taskInput).toHaveValue("");
+  await taskInput.fill('{"query":"corrected query"}');
+  await expect(page.getByText("Task input numbers must be finite", { exact: true })).toHaveCount(0);
+
+  const updateResponse = page.waitForResponse(
+    (response) => response.url().endsWith(`/api/flows/${flowId}`) && response.request().method() === "PUT",
+  );
+  await page.getByTestId("flow-save-button").click();
+  expect((await updateResponse).status()).toBe(200);
+  expect(updateRequests).toBe(1);
+  const definition = updatePayloads[0]?.definition_json as { nodes: Array<{ id: string; config: Record<string, unknown> }> };
+  expect(definition.nodes.find((node) => node.id === "research")?.config.task_input).toEqual({ query: "corrected query" });
+  expect(versionCreateRequests).toBe(0);
+  expect(migrationDryRunRequests).toBe(0);
 });

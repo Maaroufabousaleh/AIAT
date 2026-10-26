@@ -34,6 +34,35 @@ def test_grant_binds_aiat_identity_and_tool_allowlist() -> None:
     assert grant.tool_names == frozenset({"repository.read", "tests.execute"})
 
 
+def test_grant_binds_worker_run_claim_owner_and_attempt() -> None:
+    token = issue_openhands_tool_grant(
+        "bridge-secret",
+        worker_id="worker-openhands",
+        run_id=uuid4(),
+        project_id=None,
+        tool_names=["repository.read"],
+        claim_owner="host-executor-1",
+        attempt_count=3,
+        now=100,
+    )
+
+    grant = verify_openhands_tool_grant(token, "bridge-secret", now=110)
+
+    assert grant.claim_owner == "host-executor-1"
+    assert grant.attempt_count == 3
+    with pytest.raises(OpenHandsToolGrantError, match="claim fence"):
+        issue_openhands_tool_grant(
+            "bridge-secret",
+            worker_id="worker-openhands",
+            run_id=uuid4(),
+            project_id=None,
+            tool_names=["repository.read"],
+            claim_owner="host-executor-1",
+            attempt_count=0,
+            now=100,
+        )
+
+
 def test_grant_rejects_tampering_and_expiry() -> None:
     token = issue_openhands_tool_grant(
         "bridge-secret",

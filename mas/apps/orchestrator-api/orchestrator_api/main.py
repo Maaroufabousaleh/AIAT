@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import copy
 import hashlib
 import hmac
 import importlib
@@ -27,12 +28,13 @@ import re
 import shutil
 import ssl
 import time
-from contextlib import asynccontextmanager
+from collections.abc import Mapping
+from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from enum import Enum
 from functools import partial
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -43,13 +45,25 @@ import sqlalchemy as sa
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from prometheus_client import Counter
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    StrictStr,
+    field_validator,
+    model_validator,
+)
+from starlette.routing import Match
 
 from mas_core.company_manifest import (
     DEFAULT_COMPANY_ID,
     CompanyManifestError,
     compile_company_manifest,
+    validate_external_worker_assignment_approvals,
 )
+from mas_core.execution_policy import WorkloadExecutionPolicy
 from mas_core.integrations import ProviderRegistry
 from mas_core.integrations.contracts import (
     DEDICATED_PROJECT_MAPPING_PROFILE,
@@ -76,7 +90,12 @@ from mas_core.integrations.providers.base import (
 )
 from mas_core.llm_gateway.client import LLMGatewayClient
 from mas_core.memory import models as memory_models
-from mas_core.memory.storage import AgentStorage, document_to_context_item
+from mas_core.memory.storage import (
+    TERMINAL_WORKER_RUN_STATES,
+    AgentStorage,
+    document_to_context_item,
+    worker_identity_snapshot_for_rollout,
+)
 from mas_core.observability import configure_logging
 from mas_core.observability.metrics import (
     observe_project_state,
@@ -119,19 +138,32 @@ from mas_core.policy.dashboard_access import (
     sections_for_principal,
     serialize_dashboard_acl,
 )
+from mas_core.policy.privileged_ops import (
+    PRIVILEGED_ACTION_PAYLOAD_FIELDS,
+    PRIVILEGED_ACTIONS,
+    validate_privileged_action_payload,
+)
 from mas_core.policy.tool_access import can_use_tool_with_metadata
 from mas_core.protocols.enums import AgentRole, MessageType
 from mas_core.sandbox_policy import (
     HARDENED_SANDBOX_CLASSES,
     SUPPORTED_SANDBOX_PROFILES,
+    WorkerIsolationPolicyError,
     canonical_sandbox_class,
+    worker_requires_hardened_isolation,
 )
 from mas_core.worker_registry._risk_utils import is_medium_or_dual_use_worker, worker_risk_labels
 from mas_core.worker_registry.runtime_catalog import (
     OPTIONAL_RUNTIME_IDS,
     RUNTIME_REQUIRED_PACKAGES,
 )
-from mas_core.worker_registry.steward import operational_promotion_checks
+from mas_core.worker_registry.steward import CompatibilityMatrix, operational_promotion_checks
+from mas_core.worker_registry.worker_run_readiness import (
+    DISPATCHABLE_PROJECT_STATES,
+    DISPATCHABLE_WORKER_STATUSES,
+    HARDENED_SANDBOX_TRANSPORTS,
+    TERMINAL_PROJECT_STATES,
+)
 from mas_core.workflow import (
     GateName,
     ImprovementArtifactBundle,
@@ -153,6 +185,7 @@ from mas_core.workflow import (
     should_watchdog_fire,
 )
 from mas_core.workflow.states import ProjectState
+from mas_core.workflow.node_schema import TASK_INPUT_MAX_BYTES
 
 VALID_SANDBOX_PROFILES = set(SUPPORTED_SANDBOX_PROFILES)
 HARDENED_SANDBOX_PROFILES = set(HARDENED_SANDBOX_CLASSES)
@@ -486,9 +519,6 @@ def _is_medium_or_dual_use_worker(worker: dict[str, Any]) -> bool:
     return is_medium_or_dual_use_worker(worker)
 
 
-TERMINAL_PROJECT_STATES = {"COMPLETED", "ARCHIVED", "FAILED"}
-
-
 def _decode_json_config(raw: str | None, fallback: Any) -> Any:
     if not raw:
         return fallback
@@ -803,6 +833,10 @@ def _wrapper_manifest_for_hiring(
     version_pin: str | None,
 ) -> dict[str, Any]:
     """Build the AIAT-owned adapter contract for an external OSS candidate."""
+    sandbox_class = canonical_sandbox_class(sandbox_profile)
+    execution_minimum = (
+        sandbox_class if sandbox_class in HARDENED_SANDBOX_PROFILES else "sandboxed"
+    )
     return {
         "protocol_version": "aiat.v1",
         "metadata": {
@@ -829,6 +863,19 @@ def _wrapper_manifest_for_hiring(
             "network_mode": "egress-allowlist",
             "egress_allowlist": ["api.github.com:443", "github.com:443"],
         },
+        "execution": {
+            "trust": "untrusted",
+            "formats": ["oci", "linux"],
+            "preferred_runtime": [
+                "kata",
+                "runsc",
+            ]
+            if sandbox_class == "vm_isolated"
+            else ["runsc", "kata"],
+            "minimum_isolation": execution_minimum,
+            "gvisor_compatible": sandbox_class == "sandboxed",
+            "remote_vm_allowed": True,
+        },
         "runtime_tier": "external",
     }
 
@@ -849,7 +896,7 @@ def _extract_named_text(text: str, default: str) -> str:
     if quoted:
         return quoted.group(1).strip()
     bare = re.search(
-        r"(?:named|called|title(?:d)?|name)\s+(.+?)(?:\s+with\s+description|\s+description|[.;]|$)",
+        r"(?:named|called|title(?:d)?|name)\s+(.+?)(?:\s+with\s+description|\s+description|\s+(?:for|to|with|that|which)\b|[.;]|$)",
         text,
         re.I,
     )
@@ -1235,6 +1282,8 @@ class CreateProjectRequest(BaseModel):
     human_requester: str | None = None
     config: dict[str, Any] | None = None
     flow_id: UUID | None = None
+    start_immediately: bool = True
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=255)
     workspace: ProjectWorkspaceRequest | None = None
     initial_context: list[ProjectContextSeedRequest] = Field(default_factory=list, max_length=25)
     company_id: UUID = DEFAULT_COMPANY_ID
@@ -1245,6 +1294,16 @@ class CreateProjectRequest(BaseModel):
         normalized = value.strip()
         if not normalized:
             raise ValueError("name must not be blank")
+        return normalized
+
+    @field_validator("idempotency_key")
+    @classmethod
+    def normalize_idempotency_key(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("idempotency_key must not be blank")
         return normalized
 
 
@@ -1382,6 +1441,10 @@ class CompanyCreateRequest(BaseModel):
 class CompanyManifestRequest(BaseModel):
     manifest: dict[str, Any]
     source: str = Field(default="api", min_length=1, max_length=1000)
+
+
+class CompanyManifestApplyRequest(CompanyManifestRequest):
+    expected_manifest_version: int = Field(ge=0)
 
 
 class CompanyManifestRollbackRequest(BaseModel):
@@ -1680,10 +1743,27 @@ class TransitionRequest(BaseModel):
 
 
 class DecisionRequest(BaseModel):
-    decision: str = Field(..., description="APPROVED | REJECTED | EDITS | CANCELLED")
+    decision: Literal["APPROVED", "REJECTED", "EDITS", "CANCELLED"] = Field(
+        ...,
+        description="APPROVED | REJECTED | EDITS | CANCELLED (case-insensitive)",
+    )
+    gate_id: UUID | None = Field(
+        default=None,
+        description="Exact project approval gate to decide; omitted for legacy newest-pending behavior.",
+    )
     comments: str | None = None
     edits: dict[str, Any] | None = None
-    decided_by: str = "human"
+    decided_by: str = Field(
+        default="human",
+        description="Legacy compatibility field; persisted attribution uses the authenticated principal.",
+    )
+
+    @field_validator("decision", mode="before")
+    @classmethod
+    def normalize_decision(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return value.strip().upper()
+        return value
 
 
 class CreateDocumentRequest(BaseModel):
@@ -1801,6 +1881,7 @@ class RegisterWorkerRequest(BaseModel):
     adapter_type: str
     adapter_config: dict[str, Any] = Field(default_factory=dict)
     sandbox_profile: str = "sandboxed"
+    execution: WorkloadExecutionPolicy | None = None
     capability_ids: list[UUID] = Field(default_factory=list)
     capability_names: list[str] = Field(default_factory=list)
     required_tools: list[str] = Field(default_factory=list)
@@ -1818,6 +1899,7 @@ class UpdateWorkerRequest(BaseModel):
     adapter_type: str | None = None
     adapter_config: dict[str, Any] | None = None
     sandbox_profile: str | None = None
+    execution: WorkloadExecutionPolicy | None = None
     capability_ids: list[UUID] | None = None
     team_id: str | None = None
     version: str | None = None
@@ -1863,6 +1945,27 @@ class StewardCreateRequest(BaseModel):
     redistribution_status: str = "pending"
     security_scan_status: str = "pending"
     monitoring_cadence: str = "daily"
+
+
+def _is_unverified_security_scan_pass(status: Any) -> bool:
+    return str(status or "").strip().lower() == "passed"
+
+
+def _reject_unverified_security_scan_pass(status: Any, *, status_code: int = 422) -> None:
+    """Reject scalar PASS claims until scanner evidence has a verified ingress.
+
+    External provenance currently has no evidence-bound update API.  Accepting
+    ``security_scan_status=passed`` here would let a caller satisfy the
+    certification gate with an unverified string alone.
+    """
+    if _is_unverified_security_scan_pass(status):
+        raise HTTPException(
+            status_code,
+            {
+                "code": "SECURITY_SCAN_EVIDENCE_REQUIRED",
+                "message": "security scan PASS requires retained, source-bound evidence; scalar PASS claims are not accepted",
+            },
+        )
 
 
 class DocumentationSnapshotRequest(BaseModel):
@@ -1911,7 +2014,7 @@ class RolloutStartRequest(BaseModel):
 
 class RolloutAdvanceRequest(BaseModel):
     target_status: str
-    sample_count: int | None = Field(default=None, ge=0)
+    sample_count: StrictInt | None = Field(default=None, ge=0)
     comparison_metrics: dict[str, float] = Field(default_factory=dict)
 
 
@@ -1925,7 +2028,7 @@ class ModelProfileCreateRequest(BaseModel):
     approved_provider_ids: list[str] = Field(default_factory=list)
     required_capabilities: list[str] = Field(default_factory=list)
     fallback_profile_ids: list[str] = Field(default_factory=list)
-    status: str = "draft"
+    status: Literal["draft"] = "draft"
 
 
 class ModelProfileVersionRequest(BaseModel):
@@ -1953,7 +2056,19 @@ class ModelProfileVersionRequest(BaseModel):
     provider_settings: dict[str, Any] = Field(default_factory=dict)
     effective_from: datetime | None = None
     effective_until: datetime | None = None
-    status: str = "draft"
+    status: Literal["draft"] = "draft"
+
+
+class ModelProfileVersionActivationRequest(BaseModel):
+    reason: str = Field(..., min_length=1, max_length=4_000)
+
+    @field_validator("reason")
+    @classmethod
+    def normalize_reason(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("reason must not be blank")
+        return normalized
 
 
 class ModelOverrideCreateRequest(BaseModel):
@@ -2050,6 +2165,22 @@ class WorkerRunDispatchRequest(BaseModel):
     queue_priority: int = Field(default=0, ge=-100, le=100)
     lease_seconds: int = Field(default=300, ge=30, le=86_400)
 
+    @field_validator("task_input")
+    @classmethod
+    def bounded_json_task_input(cls, value: dict[str, Any]) -> dict[str, Any]:
+        try:
+            encoded = json.dumps(
+                value,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+        except (TypeError, ValueError) as exc:
+            raise ValueError("task_input must contain JSON-compatible values") from exc
+        if len(encoded) > TASK_INPUT_MAX_BYTES:
+            raise ValueError(f"task_input must not exceed {TASK_INPUT_MAX_BYTES} UTF-8 bytes")
+        return value
+
 
 EXECUTIVE_ACTION_SCHEMA = "aiat.executive-action.v1"
 
@@ -2057,36 +2188,182 @@ EXECUTIVE_ACTION_SCHEMA = "aiat.executive-action.v1"
 class ExecutiveCFOModelOverrideRequest(BaseModel):
     """CFO request for a project-scoped model-profile override."""
 
+    model_config = ConfigDict(extra="forbid")
+
     project_id: UUID
     requested_profile_id: str = Field(..., min_length=1, max_length=256)
     requested_by: str = Field(default="cfo", min_length=1, max_length=256)
     reason: str = Field(..., min_length=1, max_length=4_000)
-    scope: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("requested_profile_id", "requested_by", "reason")
+    @classmethod
+    def normalize_executive_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("value must not be blank")
+        return normalized
+
+
+class ExecutiveCTOWorkerRunDispatchRequest(BaseModel):
+    """Bounded operator form for the common prompt-based worker dispatch."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    worker_id: UUID
+    idempotency_key: str = Field(..., min_length=1, max_length=256)
+    task_type: str = Field(..., min_length=1, max_length=256)
+    prompt: str = Field(..., min_length=1, max_length=20_000)
+    project_id: UUID | None = None
+    budget_usd: float | None = Field(default=None, gt=0)
+    timeout_seconds: int | None = Field(default=None, ge=1, le=86_400)
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_bounded_legacy_prompt(cls, value: Any) -> Any:
+        """Accept the old nested shape only when it contains a prompt string."""
+
+        if not isinstance(value, dict) or "task_input" not in value:
+            return value
+        normalized = dict(value)
+        task_input = normalized.pop("task_input")
+        if "prompt" in normalized:
+            raise ValueError("provide prompt or task_input.prompt, not both")
+        if not isinstance(task_input, dict) or set(task_input) != {"prompt"}:
+            raise ValueError("task_input must contain only a prompt string")
+        normalized["prompt"] = task_input["prompt"]
+        return normalized
+
+    @field_validator("idempotency_key", "task_type", "prompt")
+    @classmethod
+    def normalize_worker_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("value must not be blank")
+        return normalized
+
+    def to_worker_dispatch_request(self) -> WorkerRunDispatchRequest:
+        values = self.model_dump(exclude={"prompt"})
+        return WorkerRunDispatchRequest(**values, task_input={"prompt": self.prompt})
 
 
 class ExecutiveCTOWorkerRunRequest(BaseModel):
     """CTO request for a governed worker run using the canonical dispatch contract."""
 
+    model_config = ConfigDict(extra="forbid")
+
     requested_by: str = Field(default="cto", min_length=1, max_length=256)
-    dispatch: WorkerRunDispatchRequest
+    dispatch: ExecutiveCTOWorkerRunDispatchRequest
+
+    @field_validator("requested_by")
+    @classmethod
+    def normalize_requested_by(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("requested_by must not be blank")
+        return normalized
 
 
 class ExecutiveCEOPrivilegedActionRequest(BaseModel):
     """CEO request for a privileged operation through the audited gate."""
 
+    model_config = ConfigDict(extra="forbid")
+
     action: str = Field(..., min_length=1, max_length=256)
     requested_by: str = Field(default="ceo", min_length=1, max_length=256)
-    payload: dict[str, Any] = Field(default_factory=dict)
+    payload: dict[str, StrictStr] = Field(default_factory=dict)
+
+    @field_validator("action", "requested_by")
+    @classmethod
+    def normalize_privileged_request_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("value must not be blank")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_payload_from_policy(self) -> ExecutiveCEOPrivilegedActionRequest:
+        try:
+            self.payload = validate_privileged_action_payload(self.action, self.payload)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+        return self
+
+
+class ExecutiveActionFormField(BaseModel):
+    name: str
+    label: str
+    control: Literal["select", "text", "textarea", "number"]
+    required: bool
+    max_length: int | None = None
+    minimum: float | None = None
+    maximum: float | None = None
+    option_source: Literal["projects", "workers", "model_profiles"] | None = None
+    help_text: str | None = None
+
+
+class ExecutivePrivilegedActionOption(BaseModel):
+    action: str
+    label: str
+    risk: str
+    requires_approval: bool
+    fields: list[ExecutiveActionFormField]
+
+
+class ExecutiveActionCatalogueResponse(BaseModel):
+    schema_version: Literal["aiat.executive-actions.catalogue.v1"]
+    cfo_model_override_fields: list[ExecutiveActionFormField]
+    cto_worker_run_fields: list[ExecutiveActionFormField]
+    ceo_privileged_actions: list[ExecutivePrivilegedActionOption]
 
 
 class WorkerRunPauseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     reason: str = Field(default="operator pause", min_length=1, max_length=4_000)
-    requested_by: str = Field(default="operator", min_length=1, max_length=256)
+
+    @field_validator("reason")
+    @classmethod
+    def normalize_reason(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("reason must not be blank")
+        return normalized
 
 
 class WorkerRunResumeRequest(BaseModel):
-    requested_by: str = Field(default="operator", min_length=1, max_length=256)
+    model_config = ConfigDict(extra="forbid")
+
     checkpoint_id: UUID | None = None
+
+
+class WorkerRunCancelRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(default="operator cancellation", min_length=1, max_length=4_000)
+    force: StrictBool = False
+
+    @field_validator("reason")
+    @classmethod
+    def normalize_reason(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("reason must not be blank")
+        return normalized
+
+
+class WorkerRunRetryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    idempotency_key: str = Field(..., min_length=1, max_length=128)
+    reason: str = Field(..., min_length=1, max_length=4_000)
+
+    @field_validator("idempotency_key", "reason")
+    @classmethod
+    def normalize_retry_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("retry idempotency key and reason must not be blank")
+        return normalized
 
 
 class EvidencePolicyRequest(BaseModel):
@@ -2267,11 +2544,17 @@ def _build_stage_directive(
     parent_id: str | None = None,
     triggered_by_event: str | None = None,
     directive_override: tuple[str, str] | None = None,
+    transition_id: UUID | str | None = None,
 ) -> dict[str, Any] | None:
     stage_directive = directive_override or PROJECT_STAGE_DIRECTIVES.get(state)
     if stage_directive is None:
         return None
     recipient_team, action = stage_directive
+    message_id = (
+        str(uuid5(NAMESPACE_URL, f"aiat:project-transition:{transition_id}:stage:{action}"))
+        if transition_id is not None
+        else str(uuid4())
+    )
     payload: dict[str, Any] = {
         "action": action,
         "state": state,
@@ -2280,7 +2563,7 @@ def _build_stage_directive(
     if triggered_by_event:
         payload["triggered_by_event"] = triggered_by_event
     directive: dict[str, Any] = {
-        "message_id": str(uuid4()),
+        "message_id": message_id,
         "correlation_id": project_id,
         "msg_type": MessageType.DIRECTIVE.value,
         "sender_id": "orchestrator",
@@ -2398,14 +2681,14 @@ async def publish_system_event(
     """Publish a SYSTEM_EVENT and report router acceptance.
 
     ``transition_id`` is the stable message identity persisted by the narrow
-    project-transition outbox.  The optional stage directive remains a
-    separate, actionable message with its existing retry behavior; outbox
-    replays only retry the system event so a router outage cannot create a
-    second actionable directive on every replay.
+    project-transition outbox. Actionable stage directives derived from that
+    transition use a stable sibling identity, allowing the outbox to replay
+    both without creating duplicate work.
     """
     if include_stage_directive:
         _cancel_project_stage_retries(project_id)
     message_id = str(transition_id) if transition_id is not None else str(uuid4())
+    event_context = dict(context)
     envelope = {
         "message_id": message_id,
         "correlation_id": project_id,
@@ -2420,17 +2703,32 @@ async def publish_system_event(
             "from_state": from_state,
             "to_state": to_state,
             "actor_id": actor_id,
-            "context": context,
+            "context": event_context,
         },
         "created_at": datetime.now(tz=UTC).isoformat(),
     }
+    project_start = (
+        from_state == ProjectState.INIT.value
+        and to_state == ProjectState.FEASIBILITY_CHECK.value
+        and event == WorkflowEvent.PROJECT_CREATED.value
+    )
+    directive_context: dict[str, Any] | str = context
+    directive_override: tuple[str, str] | None = None
+    if project_start:
+        directive_override = ("exec_ceo", "START_FEASIBILITY")
+        directive_context = {
+            "project_name": context.get("name") or context.get("project_name"),
+            "description": context.get("description"),
+        }
     directive = (
         _build_stage_directive(
             project_id=project_id,
             state=to_state,
-            context=context,
+            context=directive_context,
             parent_id=envelope["message_id"],
             triggered_by_event=event,
+            directive_override=directive_override,
+            transition_id=transition_id,
         )
         if include_stage_directive
         else None
@@ -2443,16 +2741,16 @@ async def publish_system_event(
 
     if not include_stage_directive or directive is None:
         return system_delivered
+    directive_delivered = False
     try:
-        delivered = await _publish_router_envelope(directive)
+        directive_delivered = await _publish_router_envelope(directive)
     except Exception:
-        delivered = False
         logger.exception(
             "Failed to publish stage DIRECTIVE: project=%s state=%s",
             project_id,
             to_state,
         )
-    if delivered:
+    if directive_delivered:
         logger.info(
             "Published stage directive: project=%s state=%s action=%s team=%s",
             project_id,
@@ -2460,9 +2758,11 @@ async def publish_system_event(
             directive["payload"]["action"],
             directive["recipient_team"],
         )
-    else:
+    elif not project_start:
+        # Initial project-start directives have a durable transition-outbox
+        # retry path. Avoid racing it with a detached in-process retry.
         _schedule_stage_directive_retry(project_id, to_state, directive)
-    return system_delivered
+    return system_delivered and directive_delivered
 
 
 async def drain_project_transition_outbox(
@@ -2485,15 +2785,23 @@ async def drain_project_transition_outbox(
         if outbox is None:
             continue
         try:
+            event_context = dict(outbox.get("payload") or {})
+            include_start_directive = (
+                str(outbox.get("from_state") or "") == ProjectState.INIT.value
+                and str(outbox.get("to_state") or "")
+                == ProjectState.FEASIBILITY_CHECK.value
+                and str(outbox.get("event") or "")
+                == WorkflowEvent.PROJECT_CREATED.value
+            )
             delivered = await publish_system_event(
                 str(outbox["project_id"]),
                 str(outbox.get("from_state") or ""),
                 str(outbox["to_state"]),
                 str(outbox["event"]),
                 str(outbox.get("triggered_by") or "system"),
-                dict(outbox.get("payload") or {}),
+                event_context,
                 transition_id=outbox["id"],
-                include_stage_directive=False,
+                include_stage_directive=include_start_directive,
             )
         except Exception as exc:
             delivered = False
@@ -2697,6 +3005,99 @@ async def worker_run_recovery_loop(
             logger.exception("worker_run_recovery_loop_error")
 
 
+async def worker_budget_reservation_recovery_loop(
+    storage: AgentStorage,
+    stop_event: Any,
+    *,
+    interval_seconds: int = 30,
+    batch_size: int = 100,
+) -> None:
+    """Settle bounded pages of terminal runs' durable reserved budgets."""
+    cursor: tuple[datetime, UUID] | None = None
+    bounded_batch_size = min(1000, max(1, int(batch_size)))
+    while not stop_event.is_set():
+        try:
+            _processed, cursor = await reconcile_terminal_worker_budget_reservations(
+                storage,
+                limit=bounded_batch_size,
+                cursor=cursor,
+            )
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            logger.exception("worker_budget_reservation_recovery_loop_error")
+            cursor = None
+        try:
+            await anyio.sleep(max(1, int(interval_seconds)))
+        except asyncio.CancelledError:
+            break
+
+
+async def reconcile_terminal_worker_budget_reservations(
+    storage: Any,
+    *,
+    limit: int = 100,
+    cursor: tuple[datetime, UUID] | None = None,
+) -> tuple[int, tuple[datetime, UUID] | None]:
+    """Settle one keyset page of RESERVED budget rows for terminal runs.
+
+    Storage filters terminal runs and bounds the page. This second state check
+    fails closed if a storage adapter returns an active row. Settlement uses
+    the existing policy and only the authoritative scalar usage amount read
+    alongside the run; no usage is inferred when it is absent.
+    """
+    list_pending = getattr(storage, "list_terminal_worker_budget_reservations", None)
+    if not inspect.iscoroutinefunction(list_pending):
+        return 0, None
+    query: dict[str, Any] = {"limit": limit}
+    if cursor is not None:
+        query["after_created_at"], query["after_reservation_id"] = cursor
+    rows = await list_pending(**query)
+    if not rows:
+        return 0, None
+
+    processed = 0
+    for row in rows:
+        try:
+            run_state = str(row.get("run_state") or "").upper()
+            if run_state not in TERMINAL_WORKER_RUN_STATES:
+                continue
+            reservation_id = UUID(str(row["reservation_id"]))
+            budget_key = str(row["budget_key"] or "")
+            if not budget_key:
+                continue
+            actual_cost = row.get("actual_cost_usd")
+            if actual_cost is not None:
+                try:
+                    actual_cost = Decimal(str(actual_cost))
+                except (InvalidOperation, TypeError, ValueError):
+                    logger.warning("terminal_worker_budget_usage_invalid")
+                    continue
+                if not actual_cost.is_finite() or actual_cost < 0:
+                    logger.warning("terminal_worker_budget_usage_invalid")
+                    continue
+            await _settle_worker_run_budgets(
+                storage,
+                [(reservation_id, budget_key)],
+                state=run_state,
+                actual_cost_usd=actual_cost,
+            )
+            processed += 1
+        except (KeyError, TypeError, ValueError):
+            logger.warning("terminal_worker_budget_projection_invalid")
+
+    next_cursor: tuple[datetime, UUID] | None = None
+    if len(rows) >= limit:
+        try:
+            next_cursor = (
+                rows[-1]["reservation_created_at"],
+                UUID(str(rows[-1]["reservation_id"])),
+            )
+        except (KeyError, TypeError, ValueError):
+            logger.warning("terminal_worker_budget_cursor_invalid")
+    return processed, next_cursor
+
+
 # ── Resume protocol ──────────────────────────────────────────────────────────
 
 
@@ -2855,9 +3256,262 @@ async def resume_project(project_id: UUID) -> dict[str, Any]:
 # ── App lifespan ─────────────────────────────────────────────────────────────
 
 
+_STARTUP_MAINTENANCE_ENV = "AIAT_STARTUP_MAINTENANCE"
+_MAINTENANCE_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+# Maintenance reads are deliberately allowlisted by exact route template.
+# A newly added GET/HEAD route is denied until its complete helper path is
+# audited; this protects against lazy DDL, proxy calls, and read-side effects.
+# Credential/privileged audit routes (lazy DDL), identity proxies, repository
+# and upstream checks, provider probes, model-list proxies, and container logs
+# are intentionally absent from this inspection surface.
+_MAINTENANCE_READ_PATH_TEMPLATES = (
+    # Liveness, API description, metrics, and bounded operator status.
+    "/health",
+    "/docs",
+    "/docs/oauth2-redirect",
+    "/openapi.json",
+    "/metrics",
+    "/system/status",
+    "/system/diagnostics",
+    # Canonical project, assignment, and evidence views. Repository status is
+    # excluded because its handler invokes Tool Service and persists a snapshot.
+    "/projects",
+    "/projects/{project_id}",
+    "/projects/{project_id}/self-improvement",
+    "/projects/{project_id}/overview",
+    "/projects/{project_id}/evidence",
+    "/projects/{project_id}/artifacts",
+    # Artifact reads are size-bounded. Document preview/download is excluded:
+    # it reads raw object bytes without a converter but has no byte-size cap.
+    "/projects/{project_id}/artifacts/{artifact_id}/download",
+    "/artifacts/{artifact_id}",
+    "/observability/traces/{trace_id}",
+    "/observability/incidents/{trace_id}",
+    "/observability/retention/plan",
+    "/observability/slo",
+    "/observability/capacity/forecast",
+    "/projects/{project_id}/usage/events",
+    "/usage/events/{event_id}",
+    "/projects/{project_id}/issues",
+    "/projects/{project_id}/audit-timeline",
+    "/projects/{project_id}/workspace",
+    "/projects/{project_id}/allowed-transitions",
+    "/projects/{project_id}/state-history",
+    "/approvals/project-decisions",
+    "/projects/{project_id}/pending-decisions",
+    "/projects/{project_id}/documents",
+    "/projects/{project_id}/documents/{doc_id}",
+    "/projects/{project_id}/review-sessions",
+    "/projects/{project_id}/review-sessions/{session_id}",
+    "/projects/{project_id}/feasibility",
+    "/projects/{project_id}/sprints",
+    "/projects/{project_id}/sprints/{sprint_id}",
+    "/projects/{project_id}/kpi",
+    "/projects/{project_id}/context",
+    "/projects/{project_id}/context/{item_id}",
+    "/projects/{project_id}/flow-instance",
+    "/projects/{project_id}/pm-bindings",
+    "/projects/{project_id}/issues/{issue_id}",
+    "/projects/{project_id}/issues/{issue_id}/comments",
+    "/projects/{project_id}/issues/{issue_id}/links",
+    "/evidence-policies",
+    "/projects/{project_id}/evidence/package",
+    # Local worker registry, steward snapshots, and durable WorkerRun evidence.
+    "/teams",
+    "/runtimes",
+    "/capabilities",
+    "/capabilities/workers",
+    "/capabilities/workers/{worker_id}/health",
+    "/capabilities/workers/{worker_id}/evaluations",
+    "/worker-contract/version",
+    "/capabilities/workers/{worker_id}/steward",
+    "/stewards",
+    "/capabilities/workers/{worker_id}/steward/monitoring",
+    "/capabilities/workers/{worker_id}/steward/candidates",
+    "/model-profiles",
+    "/model-profiles/catalogue",
+    "/executive/reconciliation",
+    "/executive/views/{role}",
+    "/executive/actions/catalogue",
+    "/workers/runs",
+    "/workers/host/local/health",
+    "/workers/runs/{run_id}/host-binding",
+    "/workers/runs/{run_id}/tool-effects",
+    "/workers/runs/{run_id}",
+    "/workers/runs/{run_id}/events",
+    "/workers/runs/{run_id}/transitions",
+    "/workers/runs/{run_id}/artifacts",
+    "/workers/runs/{run_id}/usage",
+    "/workers/runs/{run_id}/checkpoints",
+    # Read-only company and flow records used to inspect project bindings.
+    "/companies",
+    "/companies/{company_id}",
+    "/companies/{company_id}/departments",
+    "/companies/{company_id}/assignments",
+    "/companies/{company_id}/budgets",
+    "/companies/{company_id}/budgets/{budget_key}",
+    "/companies/{company_id}/budget-reservations",
+    "/companies/{company_id}/manifest/history",
+    "/system/company",
+    "/system/org-graph",
+    "/flow-templates",
+    "/flows/node-schemas",
+    "/flows",
+    "/flows/instances",
+    "/flows/{flow_id}",
+    "/flows/{flow_id}/export",
+    "/flows/instances/active",
+    "/flows/instances/{instance_id}",
+    "/flows/instances/{instance_id}/executions",
+    "/integrations/delta-readiness",
+    "/dashboard/access",
+    "/dashboard/sections/{section}",
+)
+
+
+_MAINTENANCE_READ_PATHS = frozenset(_MAINTENANCE_READ_PATH_TEMPLATES)
+
+
+def _startup_maintenance_enabled() -> bool:
+    """Parse the optional maintenance flag without accepting ambiguous values."""
+
+    value = os.getenv(_STARTUP_MAINTENANCE_ENV)
+    if value is None or value == "false":
+        return False
+    if value == "true":
+        return True
+    raise RuntimeError(f"{_STARTUP_MAINTENANCE_ENV} must be exactly 'true' or 'false'")
+
+
+class StartupMaintenanceMiddleware:
+    """Block consequential HTTP and all WebSocket activity in maintenance mode."""
+
+    def __init__(self, app: Any, *, app_state: Any, router: Any) -> None:
+        self.app = app
+        self.app_state = app_state
+        self.router = router
+
+    def _read_route_is_allowlisted(self, scope: dict[str, Any], path: str, method: str) -> bool:
+        route_scope = dict(scope)
+        route_scope["path"] = path
+        if method == "HEAD":
+            route_scope["method"] = "GET"
+        for route in self.router.routes:
+            match, _child_scope = route.matches(route_scope)
+            if match is Match.FULL:
+                return getattr(route, "path", None) in _MAINTENANCE_READ_PATHS
+        return False
+
+    async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+        if not getattr(self.app_state, "startup_maintenance", False):
+            await self.app(scope, receive, send)
+            return
+
+        scope_type = scope.get("type")
+        if scope_type == "websocket":
+            await send({"type": "websocket.close", "code": 1013})
+            return
+        if scope_type != "http":
+            await self.app(scope, receive, send)
+            return
+
+        method = str(scope.get("method") or "").upper()
+        path = str(scope.get("path") or "/")
+        if path.startswith("/api/v1/"):
+            path = path[7:]
+
+        blocked_read = method in {"GET", "HEAD"} and not self._read_route_is_allowlisted(
+            scope,
+            path,
+            method,
+        )
+        if method not in _MAINTENANCE_SAFE_METHODS or blocked_read:
+            response = JSONResponse(
+                status_code=503,
+                headers={"X-AIAT-Startup-Mode": "maintenance"},
+                content={
+                    "code": "STARTUP_MAINTENANCE",
+                    "detail": "The orchestrator is in startup maintenance mode.",
+                },
+            )
+            await response(scope, receive, send)
+            return
+
+        await self.app(scope, receive, send)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # noqa: ANN001
     """Startup: connect to DB, run resume, start watchdog. Shutdown: cleanup."""
+
+    maintenance_mode = _startup_maintenance_enabled()
+    app.state.startup_maintenance = maintenance_mode
+
+    if maintenance_mode:
+        storage = AgentStorage(dsn=PGBOUNCER_DSN)
+        app.state.storage = storage
+        app.state.controller = WorkflowController(
+            storage=storage,
+            event_publisher=publish_system_event,
+        )
+        app.state.dashboard_acl = dict(DEFAULT_DASHBOARD_SECTION_ACL)
+        app.state.watchdog_config = WatchdogConfig()
+        app.state.boot_at = datetime.now(tz=UTC)
+        app.state.stop_event = anyio.Event()
+        app.state.watchdog_task = None
+        app.state.scheduler = None
+        app.state.ceo_command_tasks = set()
+        app.state.ceo_command_task_group = None
+        app.state.worker_run_tasks = set()
+        app.state.local_host_queue_config = None
+        app.state.local_host_queue_runtime = None
+
+        try:
+            await storage.connect()
+        except BaseException as exc:
+            with suppress(Exception):
+                await storage.close()
+            if isinstance(exc, Exception):
+                raise RuntimeError("Could not connect storage for startup maintenance") from None
+            raise
+
+        try:
+            persisted_dashboard_acl = await storage.get_config(DASHBOARD_SECTION_ACL_CONFIG_KEY)
+        except BaseException as exc:
+            with suppress(Exception):
+                await storage.close()
+            if isinstance(exc, Exception):
+                raise RuntimeError(
+                    "Could not load dashboard access policy for startup maintenance"
+                ) from None
+            raise
+        try:
+            if persisted_dashboard_acl:
+                app.state.dashboard_acl = normalize_dashboard_acl(persisted_dashboard_acl)
+        except ValueError:
+            # Keep the same restrictive fallback used by normal startup when
+            # an operator ACL document is malformed.
+            app.state.dashboard_acl = dict(DEFAULT_DASHBOARD_SECTION_ACL)
+        except BaseException as exc:
+            with suppress(Exception):
+                await storage.close()
+            if isinstance(exc, Exception):
+                raise RuntimeError(
+                    "Could not load dashboard access policy for startup maintenance"
+                ) from None
+            raise
+
+        try:
+            yield
+        finally:
+            try:
+                await storage.close()
+            except Exception as exc:
+                logger.warning(
+                    "startup_maintenance_storage_close_failed",
+                    extra={"error_type": type(exc).__name__},
+                )
+        return
 
     # The recovery queue must work under every ASGI/AnyIO backend we support.
     # Keeping one task group alive for the application lifespan gives restart
@@ -2910,6 +3564,17 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
     app.state.scheduler = None
     app.state.ceo_command_tasks = set()
     app.state.worker_run_tasks = set()
+    app.state.local_host_queue_config = None
+    app.state.local_host_queue_runtime = None
+    from mas_core.worker_registry.local_host_queue_runtime import (
+        LocalHostQueueConfig,
+        LocalHostQueueRuntime,
+    )
+
+    local_host_config = LocalHostQueueConfig.from_environment()
+    app.state.local_host_queue_config = local_host_config
+    if local_host_config is not None and storage is None:
+        raise RuntimeError("local host queue is enabled but orchestrator storage is unavailable")
 
     # Run resume sequence if DB is available
     if storage is not None:
@@ -3007,10 +3672,58 @@ async def lifespan(app: FastAPI):  # noqa: ANN001
         except Exception:
             logger.exception("Default model-profile bootstrap failed; continuing with profile resolution fail-closed")
 
+        # The local host executor is an explicit development/test opt-in. It
+        # uses the same scheduler, reservations, fenced host queue, and
+        # WorkerRunController path as separately operated worker hosts.
+        try:
+            if local_host_config is not None:
+                async def resolve_local_host_adapter(pins: Any) -> Any:
+                    worker_row = await storage.get_worker(pins.worker_id)
+                    if worker_row is None:
+                        return None
+                    return await _certified_worker_adapter(
+                        storage,
+                        dict(worker_row),
+                        adapter_id=pins.adapter_id,
+                        shell_version_id=pins.worker_shell_version_id,
+                        allow_retired=True,
+                    )
+
+                async def settle_local_host_run(summary: Any) -> None:
+                    await _settle_host_queue_run_budgets(storage, summary)
+
+                local_host_runtime = LocalHostQueueRuntime(
+                    storage,
+                    local_host_config,
+                    adapter_resolver=resolve_local_host_adapter,
+                    terminal_run_handler=settle_local_host_run,
+                )
+                await local_host_runtime.start()
+                app.state.local_host_queue_runtime = local_host_runtime
+                ceo_command_task_group.start_soon(
+                    local_host_runtime.run,
+                    stop_event,
+                )
+                logger.info(
+                    "local_host_queue_started",
+                    extra={"host_id": local_host_runtime.host_id},
+                )
+        except Exception:
+            # An explicitly enabled local executor is an operator choice. Fail
+            # startup closed when its authenticated host cannot be registered.
+            if local_host_config is not None:
+                raise
+            logger.exception("Unexpected local host queue setup failure")
+
         # Start after seeding so newly created external-worker stewardship
         # jobs are eligible on the first scheduler cycle.
         ceo_command_task_group.start_soon(update_monitor_loop, storage, stop_event)
         ceo_command_task_group.start_soon(worker_run_recovery_loop, storage, stop_event)
+        ceo_command_task_group.start_soon(
+            worker_budget_reservation_recovery_loop,
+            storage,
+            stop_event,
+        )
         ceo_command_task_group.start_soon(project_transition_outbox_loop, storage, stop_event)
 
         try:
@@ -3171,7 +3884,10 @@ async def propagate_trace_context(request: Request, call_next):  # type: ignore[
     finally:
         storage = getattr(request.app.state, "storage", None)
         recorder = getattr(storage, "record_api_request_observation", None)
-        if inspect.iscoroutinefunction(recorder):
+        if (
+            not getattr(request.app.state, "startup_maintenance", False)
+            and inspect.iscoroutinefunction(recorder)
+        ):
             route = request.scope.get("route")
             route_template = getattr(route, "path", None)
             try:
@@ -3195,6 +3911,7 @@ async def propagate_trace_context(request: Request, call_next):  # type: ignore[
 # Pre-initialize state defaults so that test monkeypatching and
 # non-lifespan access paths don't raise AttributeError.
 app.state.storage = None
+app.state.startup_maintenance = False
 app.state.dashboard_acl = dict(DEFAULT_DASHBOARD_SECTION_ACL)
 app.state.controller = WorkflowController(storage=None, event_publisher=publish_system_event)
 app.state.watchdog_config = WatchdogConfig()
@@ -3573,7 +4290,10 @@ async def _ensure_workflow_approval_gate(
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok"}
+    result = {"status": "ok"}
+    if getattr(app.state, "startup_maintenance", False):
+        result["startup_mode"] = "maintenance"
+    return result
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -3639,21 +4359,47 @@ async def _persist_project_workspace(
     return project
 
 
-@app.post("/projects", status_code=201)
-async def create_project(req: CreateProjectRequest) -> dict[str, Any]:
-    """Human creates a project request. Triggers CEO via SYSTEM_EVENT."""
+async def _create_project_for_principal(
+    req: CreateProjectRequest,
+    *,
+    principal: str,
+) -> dict[str, Any]:
+    """Create a project after its caller has established an authenticated principal."""
     tid = current_trace_id() or new_trace_id()
     bind_trace_id(tid)
 
     storage = _storage()
-    if inspect.iscoroutinefunction(getattr(storage, "get_company", None)):
-        if await storage.get_company(req.company_id) is None:
-            raise HTTPException(404, f"Company {req.company_id} not found")
+    company_reader = getattr(storage, "get_company", None)
+    if (
+        inspect.iscoroutinefunction(company_reader)
+        and await company_reader(req.company_id) is None
+    ):
+        raise HTTPException(404, f"Company {req.company_id} not found")
     flow_for_instance: dict[str, Any] | None = None
     if req.flow_id is not None:
         flow_for_instance = await storage.get_flow(req.flow_id)
         if flow_for_instance is None:
             raise HTTPException(404, f"Flow {req.flow_id} not found")
+
+    idempotency_project_id: UUID | None = None
+    idempotency_digest: str | None = None
+    if req.idempotency_key is not None:
+        idempotency_project_id = uuid5(
+            NAMESPACE_URL,
+            f"aiat:project-create:{req.company_id}:{req.idempotency_key}",
+        )
+        identity_payload = req.model_dump(
+            mode="json",
+            exclude={"idempotency_key", "human_requester"},
+        )
+        idempotency_digest = hashlib.sha256(
+            json.dumps(
+                identity_payload,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
+        ).hexdigest()
 
     project_config = dict(req.config or {})
     # Every canonical project starts with an explicit, provider-neutral PM
@@ -3663,6 +4409,11 @@ async def create_project(req: CreateProjectRequest) -> dict[str, Any]:
     pm_provisioning.setdefault("mapping_profile", DEDICATED_PROJECT_MAPPING_PROFILE)
     pm_provisioning.setdefault("state", "UNPROVISIONED")
     project_config["pm_provisioning"] = pm_provisioning
+    if idempotency_digest is not None:
+        project_config["_aiat_project_create"] = {
+            "request_sha256": idempotency_digest,
+            "version": 1,
+        }
     requested_workspace: dict[str, Any] | None = None
     if req.workspace is not None:
         requested_workspace = {
@@ -3679,26 +4430,64 @@ async def create_project(req: CreateProjectRequest) -> dict[str, Any]:
             # readers; the workspace block is the canonical source metadata.
             project_config.setdefault("repository_url", req.workspace.repository_url)
 
-    # Create project
-    project = await storage.create_project(
-        name=req.name,
-        description=req.description,
-        created_by=req.human_requester or "human",
-        human_requester=req.human_requester,
-        company_id=req.company_id,
-        config=project_config or None,
-        initial_context=[
-            {
-                **seed.model_dump(exclude_none=True),
-                "created_by": req.human_requester or "human",
-            }
-            for seed in req.initial_context
-        ],
-    )
+    project: dict[str, Any] | None = None
+    if idempotency_project_id is not None:
+        project = await storage.get_project(idempotency_project_id)
+        if project is not None:
+            _verify_project_create_replay(project, idempotency_digest)
 
+    created_new = project is None
+    if project is None:
+        create_kwargs: dict[str, Any] = {
+            "name": req.name,
+            "description": req.description,
+            "created_by": principal,
+            "human_requester": principal,
+            "company_id": req.company_id,
+            "config": project_config or None,
+            "initial_context": [
+                {
+                    **seed.model_dump(exclude_none=True),
+                    "created_by": principal,
+                }
+                for seed in req.initial_context
+            ],
+        }
+        if idempotency_project_id is not None:
+            create_kwargs["project_id"] = idempotency_project_id
+        try:
+            project = await storage.create_project(**create_kwargs)
+        except Exception:
+            if idempotency_project_id is None:
+                raise
+            # A concurrent retry may win the deterministic project ID after
+            # this request's initial lookup. Return only a row carrying the
+            # exact same payload digest; unrelated collisions remain errors.
+            try:
+                raced_project = await storage.get_project(idempotency_project_id)
+            except Exception:
+                raise
+            if raced_project is None:
+                raise
+            _verify_project_create_replay(raced_project, idempotency_digest)
+            project = raced_project
+            created_new = False
+
+    assert project is not None
     pid = str(project["id"])
 
-    if requested_workspace is not None and requested_workspace["status"] != "DISABLED":
+    if requested_workspace is not None:
+        existing_workspace = (project.get("config") or {}).get("workspace")
+        if (
+            isinstance(existing_workspace, dict)
+            and existing_workspace.get("status") == "READY"
+        ):
+            requested_workspace = existing_workspace
+
+    if (
+        requested_workspace is not None
+        and requested_workspace["status"] not in {"DISABLED", "READY"}
+    ):
         try:
             repository = await _invoke_project_repository_tool(
                 project_id=UUID(pid),
@@ -3734,69 +4523,153 @@ async def create_project(req: CreateProjectRequest) -> dict[str, Any]:
 
     # Keep the state gauge bounded. Per-project drill-down belongs in the
     # structured workflow/audit records, not an unbounded Prometheus label.
-    observe_project_state(ProjectState.INIT)
-    projects_created_total.inc()
+    if created_new:
+        observe_project_state(ProjectState.INIT)
+        projects_created_total.inc()
 
-    # Trigger workflow: INIT → FEASIBILITY_CHECK
-    try:
-        creation_transition = await _controller().transition(
-            project_id=pid,
-            current_state=ProjectState.INIT,
-            event=WorkflowEvent.PROJECT_CREATED,
-            actor_id=req.human_requester or "human",
-            context={"name": req.name, "description": req.description},
-        )
+    if req.start_immediately and str(project.get("state") or ProjectState.INIT.value) == ProjectState.INIT.value:
+        try:
+            creation_transition = await _controller().transition(
+                project_id=pid,
+                current_state=ProjectState.INIT,
+                event=WorkflowEvent.PROJECT_CREATED,
+                actor_id=principal,
+                context={
+                    "name": req.name,
+                    "description": req.description,
+                },
+            )
+        except InvalidTransitionError:
+            logger.warning("Could not auto-transition new project %s", pid)
+            creation_transition = None
+
         if creation_transition is not None:
             record_project_state_transition(
                 creation_transition.prior_state,
                 creation_transition.next_state,
             )
-    except InvalidTransitionError:
-        logger.warning("Could not auto-transition new project %s", pid)
 
-    # Return the authoritative post-transition row rather than the INSERT
-    # snapshot, so callers never observe a stale INIT state.
-    project_reader = getattr(storage, "get_project", None)
-    if inspect.iscoroutinefunction(project_reader):
-        refreshed_project = await project_reader(UUID(pid))
-        if refreshed_project is not None:
-            project = refreshed_project
+            # Return the authoritative post-transition row rather than the
+            # INSERT snapshot, so callers never observe a stale INIT state.
+            project_reader = getattr(storage, "get_project", None)
+            if inspect.iscoroutinefunction(project_reader):
+                refreshed_project = await project_reader(UUID(pid))
+                if refreshed_project is not None:
+                    project = refreshed_project
 
-    # Publish a DIRECTIVE to CEO to start feasibility. Keep the original
-    # project fields in the payload for the CEO prompt, while using the
-    # shared stage publisher so rejected/unavailable router responses retry.
-    directive = _build_stage_directive(
-        project_id=pid,
-        state="FEASIBILITY_CHECK",
-        context={"project_name": req.name, "description": req.description},
-        triggered_by_event=WorkflowEvent.PROJECT_CREATED.value,
-        directive_override=("exec_ceo", "START_FEASIBILITY"),
-    )
-    assert directive is not None
-    directive["payload"].update(
-        {"project_name": req.name, "description": req.description}
-    )
-    try:
-        delivered = await _publish_router_envelope(directive)
-    except Exception:
-        delivered = False
-        logger.exception("Failed to publish project start directive")
-    if not delivered:
-        _schedule_stage_directive_retry(pid, "FEASIBILITY_CHECK", directive)
 
     if req.flow_id is not None and flow_for_instance is not None:
+        flow_instance_reader = getattr(storage, "get_flow_instance_by_project", None)
+        flow_instance = (
+            await flow_instance_reader(UUID(pid))
+            if idempotency_project_id is not None
+            and inspect.iscoroutinefunction(flow_instance_reader)
+            else None
+        )
         try:
-            await storage.create_flow_instance(
-                flow_id=req.flow_id,
-                flow_version=flow_for_instance["version"],
-                project_id=project["id"],
-            )
+            if flow_instance is None:
+                await storage.create_flow_instance(
+                    flow_id=req.flow_id,
+                    flow_version=flow_for_instance["version"],
+                    project_id=project["id"],
+                )
         except HTTPException:
             raise
         except Exception:
-            logger.exception("Failed to create flow instance for project %s", pid)
+            if idempotency_project_id is None or not inspect.iscoroutinefunction(
+                flow_instance_reader
+            ):
+                logger.exception("Failed to create flow instance for project %s", pid)
+            else:
+                # A concurrent replay can race the uniqueness constraint. It
+                # is safe only when a canonical instance is now readable.
+                flow_instance = await flow_instance_reader(UUID(pid))
+                if flow_instance is None:
+                    logger.exception("Failed to create flow instance for project %s", pid)
 
     return _serialize(project)
+
+
+def _verify_project_create_replay(
+    project: dict[str, Any],
+    expected_digest: str | None,
+) -> None:
+    """Reject key reuse unless the existing project is the exact same request."""
+    config = project.get("config")
+    metadata = config.get("_aiat_project_create") if isinstance(config, dict) else None
+    if (
+        expected_digest is None
+        or not isinstance(metadata, dict)
+        or metadata.get("request_sha256") != expected_digest
+    ):
+        raise HTTPException(409, "Project idempotency key was already used for another request")
+
+
+@app.post("/projects", status_code=201)
+async def create_project(req: CreateProjectRequest, request: Request) -> dict[str, Any]:
+    """Create a project and optionally start its CEO feasibility work."""
+    principal = _authenticated_principal(request)
+    if req.start_immediately:
+        _require_operator_identity(request)
+    elif principal not in {"operator", "service"}:
+        raise HTTPException(
+            403,
+            "project creation requires an operator or governed service credential",
+        )
+    return await _create_project_for_principal(req, principal=principal)
+
+
+@app.post("/projects/{project_id}/start")
+async def start_project(project_id: UUID, request: Request) -> dict[str, Any]:
+    """Start a prepared project through WorkflowController and queue CEO work."""
+    _require_operator_identity(request)
+    storage = _storage()
+    project = await storage.get_project(project_id)
+    if project is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+
+    try:
+        current_state = ProjectState(str(project.get("state") or ""))
+    except ValueError:
+        raise HTTPException(409, "Project has an invalid workflow state") from None
+
+    if current_state == ProjectState.FEASIBILITY_CHECK:
+        return {
+            "project_id": str(project_id),
+            "state": current_state.value,
+            "status": "already_started",
+        }
+    if current_state != ProjectState.INIT:
+        raise HTTPException(409, "Only a prepared project can be started")
+
+    try:
+        result = await _controller().transition(
+            project_id=str(project_id),
+            current_state=ProjectState.INIT,
+            event=WorkflowEvent.PROJECT_CREATED,
+            actor_id=_authenticated_principal(request),
+            context={
+                "name": project.get("name"),
+                "description": project.get("description"),
+            },
+        )
+    except InvalidTransitionError as exc:
+        raise HTTPException(409, "Project is no longer in a startable state") from exc
+    except ValueError as exc:
+        raise HTTPException(409, "Project state changed; refresh and try again") from exc
+
+    if result is None or str(result.next_state) != ProjectState.FEASIBILITY_CHECK.value:
+        raise HTTPException(503, "Workflow controller did not confirm project start")
+    if result.transition_id is None:
+        raise HTTPException(503, "Workflow controller did not record a durable start intent")
+
+    record_project_state_transition(result.prior_state, result.next_state)
+    return {
+        "project_id": str(project_id),
+        "state": ProjectState.FEASIBILITY_CHECK.value,
+        "status": "started",
+        "directive_delivery": "durably_queued",
+    }
 
 
 @app.post("/projects/self-improvement", status_code=201)
@@ -4151,7 +5024,12 @@ async def _collect_project_evidence(
             company_selection=company_default,
         )
     if isinstance(selected, dict):
-        policy = policy_for(str(selected.get("policy_id") or "custom"), version=selected.get("version"), requirements=dict(selected.get("requirements") or {}))
+        policy_requirements = dict(selected.get("requirements") or {})
+        policy = policy_for(
+            str(selected.get("policy_id") or "custom"),
+            version=selected.get("version"),
+            requirements=policy_requirements or None,
+        )
     else:
         policy = policy_for(str(selected))
     documents = await storage.list_documents(project_id)
@@ -4244,7 +5122,11 @@ async def validate_project_evidence(project_id: UUID, req: EvidencePolicyRequest
         repository = await storage.get_project_repository_record(project_id) if inspect.iscoroutinefunction(getattr(storage, "get_project_repository_record", None)) else (config.get("workspace") or None)
         evidence = evaluate_project_evidence(
             project_id=str(project_id),
-            policy=policy_for(req.policy_id, version=req.policy_version, requirements=req.requirements),
+            policy=policy_for(
+                req.policy_id,
+                version=req.policy_version,
+                requirements=req.requirements or None,
+            ),
             project=project,
             documents=documents,
             artifacts=artifacts,
@@ -4503,6 +5385,115 @@ async def list_project_artifacts(
     if await storage.get_project(project_id) is None:
         raise HTTPException(404, f"Project {project_id} not found")
     return [_serialize(a) for a in await _project_artifact_rows(storage, project_id, limit)]
+
+
+@app.get(
+    "/projects/{project_id}/artifacts/{artifact_id}/download",
+    response_class=Response,
+    responses={
+        200: {
+            "description": "Verified artifact bytes",
+            "content": {
+                "application/octet-stream": {
+                    "schema": {"type": "string", "format": "binary"}
+                }
+            },
+        }
+    },
+)
+async def download_project_artifact(
+    project_id: UUID,
+    artifact_id: int,
+    request: Request,
+) -> Response:
+    """Download bounded worker artifact bytes for an authorized project owner.
+
+    The artifact row is joined to its durable WorkerRun and worker-artifact
+    association before the object store is consulted. Project IDs in request
+    metadata are never treated as authority by themselves.
+    """
+    _require_operator_identity(request)
+    storage = _storage()
+    if await storage.get_project(project_id) is None:
+        raise HTTPException(404, "Project not found")
+    artifact = await storage.get_artifact(artifact_id)
+    if artifact is None:
+        raise HTTPException(404, "Artifact not found")
+    metadata = artifact.get("metadata") or {}
+    try:
+        run_id = UUID(str(metadata.get("worker_run_id") or ""))
+    except (TypeError, ValueError, AttributeError):
+        raise HTTPException(404, "Artifact not found") from None
+    run = await storage.get_worker_run(run_id)
+    if (
+        run is None
+        or str(run.get("project_id") or "") != str(project_id)
+        or str(run.get("worker_id") or "") != str(artifact.get("agent_id") or "")
+        or str(metadata.get("project_id") or "") != str(project_id)
+    ):
+        raise HTTPException(404, "Artifact not found")
+    linked_artifacts = await storage.list_worker_artifacts(run_id, limit=1_000)
+    association = next(
+        (row for row in linked_artifacts if row.get("artifact_id") == artifact_id),
+        None,
+    )
+    if association is None:
+        raise HTTPException(404, "Artifact not found")
+    if (
+        str(association.get("uri") or "") != str(artifact.get("path") or "")
+        or str(association.get("sha256") or "").lower()
+        != str(artifact.get("sha256") or "").lower()
+        or association.get("size_bytes") != artifact.get("size_bytes")
+    ):
+        raise HTTPException(404, "Artifact not found")
+
+    from orchestrator_api.artifact_content import (
+        ArtifactContentError,
+        ArtifactIntegrityError,
+        ArtifactStorageUnavailable,
+        artifact_download_filename,
+        artifact_download_reference,
+        download_artifact_bytes,
+        new_artifact_blob_client,
+    )
+
+    try:
+        ref = artifact_download_reference(
+            project_id=project_id,
+            artifact=artifact,
+            run_id=run_id,
+        )
+        blob = new_artifact_blob_client()
+        await blob.connect()
+        try:
+            content = await download_artifact_bytes(blob, ref)
+        finally:
+            await blob.close()
+    except ArtifactStorageUnavailable as exc:
+        raise HTTPException(503, "Artifact storage is not available") from exc
+    except ArtifactContentError:
+        raise HTTPException(404, "Artifact content is not available") from None
+    except ArtifactIntegrityError as exc:
+        raise HTTPException(502, "Artifact integrity verification failed") from exc
+    except Exception as exc:
+        logger.warning(
+            "worker_artifact_download_failed",
+            extra={"artifact_id": artifact_id, "error_type": type(exc).__name__},
+        )
+        raise HTTPException(502, "Artifact download failed") from exc
+
+    filename = artifact_download_filename(str(artifact.get("path") or ""), artifact_id)
+    return Response(
+        content=content,
+        media_type=ref.content_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-AIAT-Artifact-SHA256": ref.sha256,
+            "X-AIAT-Artifact-Size": str(ref.size_bytes),
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "private, no-store",
+        },
+    )
 
 
 @app.get("/artifacts/{artifact_id}")
@@ -5076,8 +6067,27 @@ async def manage_project_repository(
 
 
 @app.post("/projects/{project_id}/transition")
-async def transition_project(project_id: UUID, req: TransitionRequest) -> dict[str, Any]:
+async def transition_project(
+    project_id: UUID,
+    req: TransitionRequest,
+    request: Request,
+) -> dict[str, Any]:
     """Execute a state transition. This is the SOLE writer of projects.state."""
+    _require_operator_identity(request)
+    return await _execute_project_transition(
+        project_id,
+        req,
+        actor_id=_authenticated_principal(request),
+    )
+
+
+async def _execute_project_transition(
+    project_id: UUID,
+    req: TransitionRequest,
+    *,
+    actor_id: str,
+) -> dict[str, Any]:
+    """Apply a transition after the caller has established its authority."""
     storage = _storage()
     project = await storage.get_project(project_id)
     if project is None:
@@ -5093,13 +6103,57 @@ async def transition_project(project_id: UUID, req: TransitionRequest) -> dict[s
     except ValueError:
         raise HTTPException(400, f"Unknown workflow event: {req.event}")
 
+    # Project completion is allowed only after the evidence policy already
+    # persisted on the project (or its resolved flow/company scope) passes.
+    # Request context is deliberately not consulted here: it is descriptive
+    # transition data, not a source of policy or evidence authority.
+    completion_policy: dict[str, bool] | None = None
+    if resolve_transition(current_state, event) == ProjectState.COMPLETED:
+        evidence_project, evidence, _evidence_sources, policy = await _collect_project_evidence(
+            project_id,
+            storage,
+        )
+        if not evidence.can_complete:
+            failed_check_names = [
+                check.name for check in evidence.checks if check.required and not check.passed
+            ]
+            max_failed_check_names = 12
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "PROJECT_EVIDENCE_INCOMPLETE",
+                    "message": "Project cannot be completed until its required evidence is complete.",
+                    "policy_id": evidence.policy_id,
+                    "policy_version": evidence.policy_version,
+                    "evidence_status": evidence.status,
+                    "failed_check_names": failed_check_names[:max_failed_check_names],
+                    "failed_check_count": len(failed_check_names),
+                    "failed_check_names_truncated": len(failed_check_names)
+                    > max_failed_check_names,
+                },
+            )
+        completion_policy = {
+            "requires_flow_terminal": policy.requires_flow_terminal,
+            "allow_active_runs": policy.allow_active_runs,
+        }
+        evidence_project_revision = evidence_project.get("revision")
+    else:
+        evidence_project_revision = None
+
     try:
+        transition_kwargs: dict[str, Any] = {
+            "project_id": str(project_id),
+            "current_state": current_state,
+            "event": event,
+            "actor_id": actor_id,
+            "context": req.context,
+        }
+        if completion_policy is not None:
+            transition_kwargs["completion_policy"] = completion_policy
+            if type(evidence_project_revision) is int:
+                transition_kwargs["expected_revision"] = evidence_project_revision
         result = await _controller().transition(
-            project_id=str(project_id),
-            current_state=current_state,
-            event=event,
-            actor_id=req.actor_id,
-            context=req.context,
+            **transition_kwargs,
         )
         # The controller has committed the state transition at this point;
         # keep aggregate metrics aligned even if a later evidence/approval
@@ -5217,6 +6271,78 @@ async def get_state_history(
 # ═════════════════════════════════════════════════════════════════════════════
 
 
+class ProjectDecisionInboxItem(BaseModel):
+    """Payload-safe project context for one pending human decision."""
+
+    id: UUID
+    project_id: UUID
+    project_name: str
+    project_state: str
+    company_id: UUID
+    gate_type: str
+    status: str
+    created_at: datetime
+
+
+class ProjectDecisionInboxPage(BaseModel):
+    items: list[ProjectDecisionInboxItem]
+    next_cursor: str | None = None
+
+
+def _encode_project_decision_cursor(created_at: datetime, gate_id: UUID) -> str:
+    if created_at.tzinfo is None or created_at.utcoffset() is None:
+        raise ValueError("approval inbox cursor timestamp must include a timezone")
+    payload = json.dumps(
+        {"created_at": created_at.astimezone(UTC).isoformat(), "id": str(gate_id)},
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+
+def _decode_project_decision_cursor(value: str) -> tuple[datetime, UUID]:
+    try:
+        if not value or len(value) > 512:
+            raise ValueError("invalid cursor length")
+        encoded = value + "=" * (-len(value) % 4)
+        payload = json.loads(base64.b64decode(encoded, altchars=b"-_", validate=True))
+        if not isinstance(payload, dict) or set(payload) != {"created_at", "id"}:
+            raise ValueError("invalid cursor fields")
+        created_at = datetime.fromisoformat(str(payload["created_at"]).replace("Z", "+00:00"))
+        if created_at.tzinfo is None or created_at.utcoffset() is None:
+            raise ValueError("cursor timestamp must include a timezone")
+        gate_id = UUID(str(payload["id"]))
+    except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+        raise HTTPException(status_code=400, detail="Invalid project decision cursor") from None
+    return created_at.astimezone(UTC), gate_id
+
+
+@app.get("/approvals/project-decisions", response_model=ProjectDecisionInboxPage)
+async def list_project_decision_inbox(
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: str | None = Query(default=None, min_length=1, max_length=512),
+) -> ProjectDecisionInboxPage:
+    """Return one bounded operator page of pending project decisions.
+
+    Project ownership/context is resolved with a single indexed join. The
+    endpoint only reads decisions; decisions remain owned by the existing
+    project-scoped write endpoint.
+    """
+    _require_operator_identity(request)
+    storage = _storage()
+    position = _decode_project_decision_cursor(cursor) if cursor is not None else None
+    rows = await storage.list_pending_project_decisions(limit=limit + 1, cursor=position)
+    has_more = len(rows) > limit
+    page_rows = rows[:limit]
+    next_cursor = (
+        _encode_project_decision_cursor(page_rows[-1]["created_at"], page_rows[-1]["id"])
+        if has_more and page_rows
+        else None
+    )
+    return ProjectDecisionInboxPage(items=page_rows, next_cursor=next_cursor)
+
+
 @app.get("/projects/{project_id}/pending-decisions")
 async def get_pending_decisions(project_id: UUID) -> list[dict[str, Any]]:
     """What decisions need human input for this project."""
@@ -5245,47 +6371,130 @@ async def get_pending_decisions(project_id: UUID) -> list[dict[str, Any]]:
 
 
 @app.post("/projects/{project_id}/decisions")
-async def submit_decision(project_id: UUID, req: DecisionRequest) -> dict[str, Any]:
-    """Human submits a decision (approve/reject/edit)."""
+async def submit_decision(
+    project_id: UUID,
+    req: DecisionRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """An authenticated operator submits a project approval decision."""
+    _require_operator_identity(request)
+    return await _submit_project_decision(
+        project_id,
+        req,
+        actor_id=_authenticated_principal(request),
+    )
+
+
+async def _submit_project_decision(
+    project_id: UUID,
+    req: DecisionRequest,
+    *,
+    actor_id: str,
+) -> dict[str, Any]:
+    """Persist and apply a decision for already-authorized API/internal callers."""
     storage = _storage()
     decision = req.decision.upper()
     project = await storage.get_project(project_id)
     if project is None:
         raise HTTPException(404, f"Project {project_id} not found")
 
-    # Find the latest pending gate
+    # Preserve the legacy newest-pending behavior for callers that do not
+    # identify a gate. When a gate ID is supplied, scope the lookup by both
+    # project and ID and never fall back to a different pending gate.
     async with storage.engine.connect() as conn:
         from mas_core.memory import models as t
 
-        gate = (
-            (
-                await conn.execute(
-                    t.approval_gates.select()
-                    .where(t.approval_gates.c.project_id == project_id)
-                    .where(t.approval_gates.c.status == "PENDING")
-                    .order_by(t.approval_gates.c.created_at.desc())
-                    .limit(1)
-                )
-            )
-            .mappings()
-            .first()
+        gate_query = t.approval_gates.select().where(
+            t.approval_gates.c.project_id == project_id
         )
+        if req.gate_id is not None:
+            gate_query = gate_query.where(t.approval_gates.c.id == req.gate_id)
+        else:
+            gate_query = (
+                gate_query.where(t.approval_gates.c.status == "PENDING")
+                .order_by(t.approval_gates.c.created_at.desc())
+                .limit(1)
+            )
+        gate = (await conn.execute(gate_query)).mappings().first()
 
     if gate is None:
+        if req.gate_id is not None:
+            raise HTTPException(404, "Approval gate not found for this project")
         raise HTTPException(404, "No pending decisions for this project")
+
+    is_flow_gate = gate.get("flow_node_execution_id") is not None
+    if not is_flow_gate and str(gate.get("status", "")).upper() == "PENDING":
+        legacy_binder = getattr(storage, "bind_legacy_flow_approval_gate", None)
+        if inspect.iscoroutinefunction(legacy_binder):
+            # The legacy newest-pending contract still selects one exact gate
+            # above. Recover its flow binding by that resolved identity just
+            # as we do when the operator supplies gate_id explicitly.
+            legacy_binding = await legacy_binder(gate["id"], project_id=project_id)
+            binding_outcome = legacy_binding.get("outcome")
+            if binding_outcome == "ambiguous":
+                raise HTTPException(
+                    409,
+                    detail={
+                        "code": "AMBIGUOUS_LEGACY_FLOW_APPROVAL_BINDING",
+                        "message": "The selected pending gate matches multiple active flow approval nodes; no decision was recorded.",
+                    },
+                )
+            if binding_outcome == "unresolved":
+                raise HTTPException(
+                    409,
+                    detail={
+                        "code": "UNRESOLVED_LEGACY_FLOW_APPROVAL_BINDING",
+                        "message": "The active flow definition cannot safely identify this legacy approval gate; no decision was recorded.",
+                    },
+                )
+            if binding_outcome == "conflict":
+                raise HTTPException(
+                    409,
+                    detail={
+                        "code": "STALE_LEGACY_FLOW_APPROVAL_BINDING",
+                        "message": "The selected pending gate or flow approval changed; reload the decision inbox.",
+                    },
+                )
+            if binding_outcome == "not_found":
+                raise HTTPException(404, "Approval gate not found for this project")
+            if binding_outcome in {"bound", "already_bound"}:
+                gate = legacy_binding["gate"]
+                is_flow_gate = gate.get("flow_node_execution_id") is not None
+
+    if (
+        req.gate_id is not None
+        and str(gate.get("status", "")).upper() != "PENDING"
+        and not is_flow_gate
+    ):
+        raise HTTPException(409, "Approval gate is no longer pending")
 
     gate_id = gate["id"]
 
-    # Record decision
-    gate_updated = await storage.decide_approval_gate(
-        gate_id,
-        status=decision,
-        decided_by=req.decided_by,
-        justification=req.comments,
-        human_input=req.edits,
-    )
-    if gate_updated is False:
-        raise HTTPException(409, "Approval gate is no longer pending")
+    resolved_flow_instance: dict[str, Any] | None = None
+    if is_flow_gate:
+        if actor_id != "operator":
+            raise HTTPException(403, "Flow approval decisions require an operator identity")
+        flow_status, flow_decision = _flow_approval_status_and_value(decision)
+        resolved_flow_instance = await _resolve_bound_flow_approval(
+            dict(gate),
+            project_id=project_id,
+            actor_id=actor_id,
+            gate_status=flow_status,
+            flow_decision=flow_decision,
+            justification=req.comments,
+            human_input=req.edits,
+        )
+    else:
+        # Generic project gates retain their existing approval lifecycle.
+        gate_updated = await storage.decide_approval_gate(
+            gate_id,
+            status=decision,
+            decided_by=actor_id,
+            justification=req.comments,
+            human_input=req.edits,
+        )
+        if gate_updated is False:
+            raise HTTPException(409, "Approval gate is no longer pending")
 
     # Map decision to workflow event
     decision_to_event = {
@@ -5305,7 +6514,7 @@ async def submit_decision(project_id: UUID, req: DecisionRequest) -> dict[str, A
             project_id=str(project_id),
             current_state=current_state,
             event=event,
-            actor_id=req.decided_by,
+            actor_id=actor_id,
             context={
                 "decision": req.decision,
                 "comments": req.comments,
@@ -5317,11 +6526,21 @@ async def submit_decision(project_id: UUID, req: DecisionRequest) -> dict[str, A
             "status": "transitioned",
             "gate_id": str(gate_id),
             "next_state": str(result.next_state),
+            **(
+                {"flow_instance_id": str(resolved_flow_instance["id"])}
+                if resolved_flow_instance is not None
+                else {}
+            ),
         }
     except InvalidTransitionError:
         return {
             "status": "decision_recorded",
             "gate_id": str(gate_id),
+            **(
+                {"flow_instance_id": str(resolved_flow_instance["id"])}
+                if resolved_flow_instance is not None
+                else {}
+            ),
             "note": "Decision saved but no state transition applicable",
         }
     except ValueError:
@@ -5334,7 +6553,7 @@ async def submit_decision(project_id: UUID, req: DecisionRequest) -> dict[str, A
                     project_id=str(project_id),
                     current_state=retried_state,
                     event=event,
-                    actor_id=req.decided_by,
+                    actor_id=actor_id,
                     context={
                         "decision": req.decision,
                         "comments": req.comments,
@@ -5349,12 +6568,22 @@ async def submit_decision(project_id: UUID, req: DecisionRequest) -> dict[str, A
                     "status": "transitioned",
                     "gate_id": str(gate_id),
                     "next_state": str(retried_result.next_state),
+                    **(
+                        {"flow_instance_id": str(resolved_flow_instance["id"])}
+                        if resolved_flow_instance is not None
+                        else {}
+                    ),
                 }
         except (InvalidTransitionError, ValueError, KeyError):
             pass
         return {
             "status": "decision_recorded",
             "gate_id": str(gate_id),
+            **(
+                {"flow_instance_id": str(resolved_flow_instance["id"])}
+                if resolved_flow_instance is not None
+                else {}
+            ),
             "note": "State changed concurrently — decision saved but transition skipped",
         }
 
@@ -7001,7 +8230,7 @@ async def system_status() -> dict[str, Any]:
         except ValueError:
             pass
 
-    return {
+    result = {
         "state": state,
         "active_projects": active_count,
         "total_projects": total_count,
@@ -7011,6 +8240,9 @@ async def system_status() -> dict[str, Any]:
         if default_company_seeded == "true"
         else ("needs_migration_config" if state == "UNKNOWN" and total_count > 0 else "not_seeded"),
     }
+    if getattr(app.state, "startup_maintenance", False):
+        result["startup_mode"] = "maintenance"
+    return result
 
 
 def _diagnostic_latency(started: float) -> float:
@@ -7130,12 +8362,15 @@ async def system_diagnostics() -> dict[str, Any]:
         if all(item.get("status") == "ok" for item in dependencies.values())
         else "degraded"
     )
-    return {
+    result = {
         "status": overall,
         "state": state,
         "checked_at": datetime.now(tz=UTC).isoformat(),
         "dependencies": dependencies,
     }
+    if getattr(app.state, "startup_maintenance", False):
+        result["startup_mode"] = "maintenance"
+    return result
 
 
 async def _apply_default_company_manifest(storage: AgentStorage) -> dict[str, Any] | None:
@@ -7373,8 +8608,18 @@ async def validate_company_manifest(company_id: UUID, req: CompanyManifestReques
     storage = _storage()
     if await storage.get_company(company_id) is None:
         raise HTTPException(404, "company not found")
+    read_model = getattr(storage, "get_company_read_model", None)
+    if not inspect.iscoroutinefunction(read_model):
+        raise HTTPException(503, "company manifest version lookup is unavailable")
+    company_read_model = await read_model(company_id)
+    current_manifest = company_read_model.get("manifest") if isinstance(company_read_model, dict) else None
+    try:
+        current_manifest_version = int((current_manifest or {}).get("manifest_version") or 0)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(503, "company manifest version is invalid") from exc
     try:
         manifest, digest, canonical = compile_company_manifest(req.manifest)
+        await _validate_external_worker_assignment_approvals(storage, manifest)
     except CompanyManifestError as exc:
         raise HTTPException(422, str(exc)) from exc
     return {
@@ -7384,6 +8629,7 @@ async def validate_company_manifest(company_id: UUID, req: CompanyManifestReques
         "digest": digest,
         "manifest": canonical,
         "source": req.source,
+        "current_manifest_version": current_manifest_version,
     }
 
 
@@ -7399,11 +8645,12 @@ async def company_manifest_history(
 
 
 @app.post("/companies/{company_id}/manifest/apply")
-async def apply_company_manifest(company_id: UUID, request: Request, req: CompanyManifestRequest) -> dict[str, Any]:
+async def apply_company_manifest(company_id: UUID, request: Request, req: CompanyManifestApplyRequest) -> dict[str, Any]:
     _require_operator_identity(request)
     storage = _storage()
     try:
         manifest, digest, canonical = compile_company_manifest(req.manifest)
+        await _validate_external_worker_assignment_approvals(storage, manifest)
         result = await storage.apply_company_manifest(
             company_id=company_id,
             manifest=manifest,
@@ -7411,12 +8658,46 @@ async def apply_company_manifest(company_id: UUID, request: Request, req: Compan
             canonical=canonical,
             source=req.source,
             actor=_authenticated_principal(request),
+            expected_manifest_version=req.expected_manifest_version,
         )
     except CompanyManifestError as exc:
         raise HTTPException(422, str(exc)) from exc
     except ValueError as exc:
+        if str(exc).startswith("COMPANY_MANIFEST_VERSION_CONFLICT"):
+            raise HTTPException(
+                409,
+                {
+                    "code": "COMPANY_MANIFEST_VERSION_CONFLICT",
+                    "message": "Company manifest changed since validation. Reload the current version and validate again.",
+                },
+            ) from exc
         raise HTTPException(409, str(exc)) from exc
     return _serialize(result)
+
+
+async def _validate_external_worker_assignment_approvals(
+    storage: Any,
+    manifest: Any,
+) -> None:
+    """Validate external-worker approval policy against registry provenance."""
+
+    if manifest.policy.require_human_approval_for_external_workers is not True:
+        return
+    get_worker_by_name = getattr(storage, "get_worker_by_name", None)
+    if not inspect.iscoroutinefunction(get_worker_by_name):
+        raise HTTPException(
+            503,
+            {
+                "code": "COMPANY_WORKER_PROVENANCE_UNAVAILABLE",
+                "message": "External worker assignment policy cannot be verified",
+            },
+        )
+    workers_by_name: dict[str, dict[str, Any]] = {}
+    for assignment in manifest.worker_assignments:
+        worker = await get_worker_by_name(assignment.worker_id)
+        if worker is not None:
+            workers_by_name[assignment.worker_id] = worker
+    validate_external_worker_assignment_approvals(manifest, workers_by_name)
 
 
 @app.post("/companies/{company_id}/manifest/rollback")
@@ -8392,6 +9673,36 @@ async def register_worker(req: RegisterWorkerRequest) -> dict[str, Any]:
     if req.identity_mailbox_class.strip().lower() not in {"permanent", "temporary"}:
         raise HTTPException(422, "identity_mailbox_class must be permanent or temporary")
     is_external_candidate = bool(req.source_repo and str(req.source_repo).lower() != "local")
+    if is_external_candidate:
+        provenance_evidence = req.adapter_config.get("provenance") or {}
+        if isinstance(provenance_evidence, dict):
+            _reject_unverified_security_scan_pass(
+                provenance_evidence.get("security_scan_status")
+            )
+    execution_policy = req.execution or WorkloadExecutionPolicy(
+        trust="untrusted" if is_external_candidate else "trusted",
+        minimum_isolation=(
+            sandbox_class
+            if is_external_candidate and sandbox_class in HARDENED_SANDBOX_PROFILES
+            else ("sandboxed" if is_external_candidate else "trusted")
+        ),
+    )
+    if is_external_candidate:
+        effective_external_minimum = execution_policy.effective_minimum_isolation(external=True)
+        if (
+            execution_policy.effective_trust(external=True) == "trusted"
+            or effective_external_minimum == "trusted"
+        ):
+            raise HTTPException(422, "External workers cannot select trusted/runc execution")
+        # The legacy sandbox_profile remains a compatibility projection.  If
+        # the canonical execution policy requires a VM (including hostile or
+        # gVisor-incompatible work), persist the matching policy class so old
+        # readers cannot accidentally display or dispatch it as sandboxed.
+        if (
+            effective_external_minimum in {"vm_isolated", "remote_vm"}
+            or not execution_policy.gvisor_compatible
+        ):
+            sandbox_class = "vm_isolated"
     if is_external_candidate and not req.version_pin:
         raise HTTPException(
             422,
@@ -8423,7 +9734,11 @@ async def register_worker(req: RegisterWorkerRequest) -> dict[str, Any]:
     worker = await storage.register_worker(
         name=req.name,
         adapter_type=req.adapter_type,
-        adapter_config={**req.adapter_config, "identity_mailbox_class": req.identity_mailbox_class.strip().lower()},
+        adapter_config={
+            **req.adapter_config,
+            "execution_policy": execution_policy.model_dump(mode="json"),
+            "identity_mailbox_class": req.identity_mailbox_class.strip().lower(),
+        },
         sandbox_profile=sandbox_class,
         capability_ids=capability_ids,
         team_id=req.team_id,
@@ -8599,19 +9914,45 @@ async def update_worker(worker_id: UUID, req: UpdateWorkerRequest) -> dict[str, 
         )
 
     update_kwargs: dict[str, Any] = {}
+    is_external_candidate = bool(
+        (req.source_repo if req.source_repo is not None else existing.get("source_repo"))
+        and str(req.source_repo if req.source_repo is not None else existing.get("source_repo")).lower()
+        != "local"
+    )
     if req.adapter_type is not None:
         update_kwargs["adapter_type"] = req.adapter_type
     if req.adapter_config is not None:
         update_kwargs["adapter_config"] = req.adapter_config
+    if req.execution is not None:
+        effective_external_minimum = req.execution.effective_minimum_isolation(
+            external=is_external_candidate
+        )
+        if is_external_candidate and (
+            req.execution.effective_trust(external=True) == "trusted"
+            or effective_external_minimum == "trusted"
+        ):
+            raise HTTPException(422, "External workers cannot select trusted/runc execution")
+        adapter_config = dict(
+            req.adapter_config
+            if req.adapter_config is not None
+            else existing.get("adapter_config") or {}
+        )
+        adapter_config["execution_policy"] = req.execution.model_dump(mode="json")
+        update_kwargs["adapter_config"] = adapter_config
+        if is_external_candidate and (
+            effective_external_minimum in {"vm_isolated", "remote_vm"}
+            or not req.execution.gvisor_compatible
+        ) and req.sandbox_profile is None:
+            update_kwargs["sandbox_profile"] = "vm_isolated"
     if req.sandbox_profile is not None:
         try:
-            canonical_sandbox_class(req.sandbox_profile)
+            canonical_profile = canonical_sandbox_class(req.sandbox_profile)
         except ValueError:
             raise HTTPException(
                 422,
                 f"Invalid sandbox_profile '{req.sandbox_profile}'. Allowed: {sorted(VALID_SANDBOX_PROFILES)}",
             )
-        update_kwargs["sandbox_profile"] = req.sandbox_profile
+        update_kwargs["sandbox_profile"] = canonical_profile
     if req.capability_ids is not None:
         update_kwargs["capability_ids"] = req.capability_ids
     if req.team_id is not None:
@@ -8740,13 +10081,51 @@ async def _worker_activation_blockers(
             inspect.iscoroutinefunction(getattr(storage, name, None))
             for name in required_external_methods
         ):
-            if await storage.get_steward_by_worker(worker["id"]) is None:
+            persisted_steward = await storage.get_steward_by_worker(worker["id"])
+            if persisted_steward is None:
                 blockers.append("external worker requires a dedicated Steward Agent")
             external_provenance = await storage.get_external_provenance_by_worker(worker["id"])
             if external_provenance is None:
                 blockers.append("external worker requires immutable provenance")
-            elif str(external_provenance.get("security_scan_status") or "").lower() != "passed":
-                blockers.append("external worker requires a passed security scan")
+            else:
+                steward_metadata = (persisted_steward or {}).get("metadata") or {}
+                source_provenance_extra = (
+                    steward_metadata.get("source_provenance_extra")
+                    if isinstance(steward_metadata, dict)
+                    else {}
+                )
+                scan_report = (
+                    source_provenance_extra.get("source_bound_security_scan")
+                    if isinstance(source_provenance_extra, dict)
+                    else None
+                )
+                from mas_core.worker_registry.source_bound_security_scan import (
+                    source_bound_security_scan_is_valid,
+                    source_bound_security_scan_required,
+                )
+
+                bound_provenance = {
+                    **external_provenance,
+                    "source_bound_security_scan": scan_report,
+                }
+                scan_required = source_bound_security_scan_required(
+                    bound_provenance,
+                    worker=worker,
+                )
+                scan_valid = str(external_provenance.get("security_scan_status") or "").lower() == "passed"
+                if scan_required:
+                    scan_valid = scan_valid and source_bound_security_scan_is_valid(
+                        scan_report,
+                        expected_worker_id=str(worker["id"]),
+                        provenance=bound_provenance,
+                        current_worker=worker,
+                    )
+                if not scan_valid:
+                    # A scalar PASS, a caller report, or a report for a
+                    # different source/runtime is never activation evidence.
+                    blockers.append(
+                        "external worker security scan is missing required governed evidence"
+                    )
 
     return blockers
 
@@ -8755,6 +10134,7 @@ async def _worker_activation_blockers(
 async def transition_worker_status(
     worker_id: UUID,
     req: WorkerStatusTransition,
+    request: Request,
 ) -> dict[str, Any]:
     """Transition a worker's lifecycle status.
 
@@ -8764,6 +10144,29 @@ async def transition_worker_status(
     - DRAIN: set status to DRAINING (finish current tasks, no new ones)
     - RECLASSIFY: change the worker's role (e.g. worker -> tool)
     """
+    _require_operator_identity(request)
+    return await _transition_worker_status_for_principal(
+        worker_id,
+        req,
+        principal=_authenticated_principal(request),
+    )
+
+
+async def _transition_worker_status_for_principal(
+    worker_id: UUID,
+    req: WorkerStatusTransition,
+    *,
+    principal: str,
+) -> dict[str, Any]:
+    """Apply the canonical lifecycle transition after checking its principal.
+
+    CEO commands run after the HTTP request has returned, so they cannot carry
+    a Starlette ``Request`` object into the durable background task. They pass
+    the authenticated principal captured by the API (and revalidated during
+    recovery) through this same policy-enforcing implementation.
+    """
+    if principal.lower() != "operator":
+        raise HTTPException(403, "canonical mutation requires an operator credential")
     storage = _storage()
     existing = await storage.get_worker(worker_id)
     if existing is None:
@@ -8852,6 +10255,14 @@ async def transition_worker_status(
     elif req.action == "RECLASSIFY":
         updates: dict[str, Any] = {}
         if req.new_status:
+            if req.new_status.strip().upper() == "ACTIVE":
+                raise HTTPException(
+                    409,
+                    {
+                        "code": "WORKER_ACTIVATION_REQUIRES_ACTIVATE_ACTION",
+                        "message": "worker activation must use the governed ACTIVATE action",
+                    },
+                )
             await storage.update_worker_status(worker_id, status=req.new_status)
         if req.new_role:
             updates["adapter_entrypoint"] = req.new_role
@@ -8928,8 +10339,9 @@ async def upgrade_worker(
 
 
 @app.post("/capabilities/workers/import")
-async def import_workers(req: ImportWorkersRequest) -> dict[str, Any]:
+async def import_workers(req: ImportWorkersRequest, request: Request) -> dict[str, Any]:
     """Bulk import workers from a directory of YAML manifests."""
+    _require_operator_identity(request)
     from pathlib import Path
 
     from mas_core.worker_registry.seeder import seed_workers_from_directory
@@ -8941,7 +10353,7 @@ async def import_workers(req: ImportWorkersRequest) -> dict[str, Any]:
     try:
         workers_dir.relative_to(base)
     except ValueError:
-        raise HTTPException(400, f"Workers directory must be within {base}")
+        raise HTTPException(400, f"Workers directory must be within {base}") from None
 
     if not workers_dir.is_dir():
         raise HTTPException(400, f"Workers directory not found: {workers_dir}")
@@ -8988,12 +10400,14 @@ async def get_worker_health(worker_id: UUID) -> dict[str, Any]:
 async def evaluate_worker(
     worker_id: UUID,
     req: WorkerEvaluateRequest,
+    request: Request,
 ) -> dict[str, Any]:
     """Trigger a repository evaluation for a worker.
 
     Evaluates the worker's source repo for architectural fit,
     maintenance quality, licensing, security, and compatibility.
     """
+    _require_operator_identity(request)
     storage = _storage()
     worker = await storage.get_worker(worker_id)
     if worker is None:
@@ -9081,6 +10495,7 @@ async def get_worker_evaluations(
 def _governed_external_provenance(worker: dict[str, Any], req: StewardCreateRequest):
     from mas_core.worker_registry.steward import ExternalProvenance
 
+    _reject_unverified_security_scan_pass(req.security_scan_status)
     source_repo = req.source_repo or worker.get("source_repo")
     if not source_repo:
         raise HTTPException(422, "external worker provenance requires source_repo")
@@ -9137,6 +10552,16 @@ async def _steward_runtime(storage: AgentStorage, worker_id: UUID) -> Any | None
     provenance_row = await storage.get_external_provenance_by_worker(worker_id)
     if persisted is None or provenance_row is None:
         return None
+    steward_metadata = persisted.get("metadata")
+    if not isinstance(steward_metadata, dict):
+        steward_metadata = {}
+    source_provenance_extra = steward_metadata.get("source_provenance_extra")
+    if not isinstance(source_provenance_extra, dict):
+        source_provenance_extra = {}
+    source_bound_scan = source_provenance_extra.get("source_bound_security_scan")
+    provenance_payload = dict(provenance_row)
+    if isinstance(source_bound_scan, dict):
+        provenance_payload["source_bound_security_scan"] = source_bound_scan
     try:
         status = StewardStatus(str(persisted.get("status", StewardStatus.PROVISIONING)))
     except ValueError:
@@ -9144,7 +10569,7 @@ async def _steward_runtime(storage: AgentStorage, worker_id: UUID) -> Any | None
     steward = ExternalWorkerSteward(
         worker_id=key,
         steward_id=UUID(str(persisted["id"])),
-        provenance=ExternalProvenance.model_validate(provenance_row),
+        provenance=ExternalProvenance.model_validate(provenance_payload),
         status=status,
     )
     if inspect.iscoroutinefunction(getattr(storage, "list_documentation_snapshots", None)):
@@ -9280,6 +10705,495 @@ async def _steward_runtime(storage: AgentStorage, worker_id: UUID) -> Any | None
     return steward
 
 
+def _governance_dict(value: Any) -> dict[str, Any]:
+    """Return a bounded object projection from a persisted/model value."""
+    if isinstance(value, dict):
+        return value
+    dump = getattr(value, "model_dump", None)
+    if callable(dump):
+        result = dump(mode="json")
+        return result if isinstance(result, dict) else {}
+    return {}
+
+def _rollout_runtime_matches_persisted(
+    runtime_rollout: Any,
+    persisted_rollout: dict[str, Any],
+) -> bool:
+    """Bind the policy and canary counters used by the steward to its DB row."""
+    runtime = _governance_dict(runtime_rollout)
+    sample_targets = persisted_rollout.get("sample_targets")
+    if not isinstance(sample_targets, dict):
+        return False
+    try:
+        expected_sample_targets = {
+            "shadow": runtime_rollout.shadow_sample_target,
+            "readonly_canary": runtime_rollout.readonly_canary_sample_target,
+            "live_canary": runtime_rollout.live_canary_sample_target,
+        }
+        runtime_sample_count = runtime_rollout.sample_count
+    except AttributeError:
+        return False
+    return (
+        str(runtime.get("rollout_id") or "")
+        == str(persisted_rollout.get("id") or "")
+        and str(runtime.get("worker_id") or "")
+        == str(persisted_rollout.get("worker_id") or "")
+        and str(runtime.get("steward_id") or "")
+        == str(persisted_rollout.get("steward_id") or "")
+        and str(runtime.get("candidate_id") or "")
+        == str(persisted_rollout.get("candidate_id") or "")
+        and str(getattr(runtime_rollout.status, "value", runtime_rollout.status))
+        == str(persisted_rollout.get("status") or "")
+        and list(runtime_rollout.eligible_task_classes or [])
+        == list(persisted_rollout.get("eligible_task_classes") or [])
+        and expected_sample_targets == sample_targets
+        and type(runtime_sample_count) is int
+        and type(persisted_rollout.get("sample_count")) is int
+        and runtime_sample_count == persisted_rollout["sample_count"]
+        and dict(runtime_rollout.comparison_metrics or {})
+        == dict(persisted_rollout.get("comparison_metrics") or {})
+        and dict(runtime_rollout.rollback_thresholds or {})
+        == dict(persisted_rollout.get("rollback_thresholds") or {})
+        and str(runtime_rollout.in_flight_policy)
+        == str(persisted_rollout.get("in_flight_policy") or "")
+        and runtime_rollout.promotion_actor
+        == persisted_rollout.get("promotion_actor")
+    )
+
+
+
+def _candidate_record_source(candidate_record: Any) -> list[dict[str, Any]] | None:
+    """Collect the three immutable provenance snapshots in a candidate."""
+    record = _governance_dict(candidate_record)
+    bundle = _governance_dict(record.get("bundle"))
+    adapter = _governance_dict(record.get("adapter"))
+    snapshots = [
+        _governance_dict(record.get("source_provenance")),
+        _governance_dict(bundle.get("source_provenance")),
+        _governance_dict(adapter.get("source_provenance")),
+    ]
+    if any(not snapshot for snapshot in snapshots):
+        return None
+    return snapshots
+
+
+def _candidate_record_from_row(row: Any) -> dict[str, Any] | None:
+    persisted = _governance_dict(row)
+    evidence = _governance_dict(persisted.get("evidence_json"))
+    candidate = evidence.get("candidate_record")
+    return candidate if isinstance(candidate, dict) else None
+
+
+def _has_canonical_deterministic_conformance(candidate: Any) -> bool:
+    """Check that a first-party candidate binds AIAT's fixed file probe."""
+    from mas_core.worker_contract.conformance import (
+        DETERMINISTIC_FILE_CONFORMANCE_DECLARATION,
+    )
+
+    candidate_payload = _governance_dict(candidate)
+    bundle = _governance_dict(candidate_payload.get("bundle"))
+    snapshot = _governance_dict(bundle.get("verified_capabilities"))
+    capabilities = _governance_dict(snapshot.get("capabilities"))
+    capability_names = capabilities.get("capability_names")
+    extensions = _governance_dict(capabilities.get("extensions"))
+    return (
+        isinstance(capability_names, list)
+        and "deterministic.file_generate" in capability_names
+        and extensions.get("aiat.conformance")
+        == DETERMINISTIC_FILE_CONFORMANCE_DECLARATION
+    )
+
+
+def _candidate_lifecycle_snapshot(
+    persisted_candidate: Any,
+    candidate_record: Any,
+    runtime_candidate: Any,
+) -> dict[str, Any]:
+    """Require the persisted and hydrated candidate lifecycle to agree."""
+
+    persisted = _governance_dict(persisted_candidate)
+    record = _governance_dict(candidate_record)
+    runtime = _governance_dict(runtime_candidate)
+
+    def _value(value: Any) -> str | None:
+        value = getattr(value, "value", value)
+        return str(value) if value not in (None, "") else None
+
+    persisted_status = _value(persisted.get("intake_status"))
+    record_status = _value(record.get("intake_status"))
+    runtime_status = _value(runtime.get("intake_status"))
+    persisted_certification = _value(persisted.get("certification_run_id"))
+    record_certification = _value(record.get("certification_id"))
+    runtime_certification = _value(runtime.get("certification_id"))
+    persisted_approval = _value(persisted.get("approval_record_id"))
+    record_approval = _value(record.get("approval_record_id"))
+    runtime_approval = _value(runtime.get("approval_record_id"))
+
+    if (
+        not persisted_status
+        or persisted_status != record_status
+        or persisted_status != runtime_status
+        or persisted_certification != record_certification
+        or persisted_certification != runtime_certification
+        or persisted_approval != record_approval
+        or persisted_approval != runtime_approval
+    ):
+        raise HTTPException(
+            409,
+            {
+                "code": "CANDIDATE_LIFECYCLE_STALE",
+                "message": "persisted, hydrated, and candidate evidence lifecycle state do not match",
+            },
+        )
+    return {
+        "intake_status": persisted_status,
+        "certification_run_id": persisted_certification,
+        "approval_record_id": persisted_approval,
+    }
+
+
+def _is_first_party_candidate(worker: Any, candidate: Any) -> bool:
+    from mas_core.worker_registry.source_bound_security_scan import (
+        FIRST_PARTY_SOURCE_REPOSITORY,
+        FIRST_PARTY_WORKER_ID,
+    )
+
+    worker_payload = _governance_dict(worker)
+    if str(worker_payload.get("name") or "") == FIRST_PARTY_WORKER_ID:
+        return True
+    candidate_payload = _governance_dict(candidate)
+    provenance = _governance_dict(candidate_payload.get("source_provenance"))
+    return (
+        str(provenance.get("source_provider") or "").lower() == "aiat"
+        and str(provenance.get("canonical_source_repository") or "")
+        == FIRST_PARTY_SOURCE_REPOSITORY
+    )
+
+
+async def _first_party_candidate_source_state(
+    storage: AgentStorage,
+    *,
+    worker_id: UUID,
+    candidate_id: UUID,
+    candidate_row: Any,
+    runtime_candidate: Any = None,
+) -> dict[str, Any]:
+    """Load and bind source-scan evidence to current worker/candidate state.
+
+    This is deliberately limited to the pinned first-party deterministic
+    worker. The report is read from the persisted Steward metadata and checked
+    against the current worker and provenance immediately before governance
+    writes. The returned fingerprint contains only bounded identity metadata.
+    """
+    from mas_core.worker_registry.source_bound_security_scan import (
+        FIRST_PARTY_WORKER_ID,
+        canonical_sha256,
+        source_bound_security_scan_is_valid,
+    )
+
+    worker = await storage.get_worker(worker_id)
+    if not isinstance(worker, dict) or str(worker.get("name") or "") != FIRST_PARTY_WORKER_ID:
+        raise HTTPException(
+            409,
+            {
+                "code": "CANDIDATE_SOURCE_IDENTITY_STALE",
+                "message": "the deterministic worker identity changed during candidate governance",
+            },
+        )
+    get_provenance = getattr(storage, "get_external_provenance_by_worker", None)
+    get_steward = getattr(storage, "get_steward_by_worker", None)
+    if not inspect.iscoroutinefunction(get_provenance) or not inspect.iscoroutinefunction(get_steward):
+        raise HTTPException(
+            409,
+            {
+                "code": "SECURITY_SCAN_EVIDENCE_REQUIRED",
+                "message": "current persisted worker provenance and Steward scan evidence are unavailable",
+            },
+        )
+    provenance_row = await get_provenance(worker_id)
+    steward_row = await get_steward(worker_id)
+    if not isinstance(provenance_row, dict) or not isinstance(steward_row, dict):
+        raise HTTPException(
+            409,
+            {
+                "code": "SECURITY_SCAN_EVIDENCE_REQUIRED",
+                "message": "current persisted worker provenance and Steward scan evidence are unavailable",
+            },
+        )
+    steward_metadata = _governance_dict(steward_row.get("metadata"))
+    provenance_extra = _governance_dict(steward_metadata.get("source_provenance_extra"))
+    report = provenance_extra.get("source_bound_security_scan")
+    if not isinstance(report, dict) or str(provenance_row.get("security_scan_status") or "").lower() != "passed":
+        raise HTTPException(
+            409,
+            {
+                "code": "SECURITY_SCAN_EVIDENCE_REQUIRED",
+                "message": "a current persisted source-bound security scan is required for this candidate",
+            },
+        )
+    bound_provenance = {**provenance_row, "source_bound_security_scan": report}
+    if not source_bound_security_scan_is_valid(
+        report,
+        expected_worker_id=str(worker_id),
+        provenance=bound_provenance,
+        current_worker=worker,
+    ):
+        raise HTTPException(
+            409,
+            {
+                "code": "SECURITY_SCAN_EVIDENCE_STALE",
+                "message": "the persisted source-bound security report does not match the current worker and provenance",
+            },
+        )
+
+    persisted_candidate = _governance_dict(candidate_row)
+    candidate_record = _candidate_record_from_row(candidate_row)
+    if (
+        not persisted_candidate
+        or str(persisted_candidate.get("id") or "") != str(candidate_id)
+        or str(persisted_candidate.get("worker_id") or "") != str(worker_id)
+        or not candidate_record
+    ):
+        raise HTTPException(
+            409,
+            {
+                "code": "CANDIDATE_SOURCE_SNAPSHOT_UNAVAILABLE",
+                "message": "the persisted candidate source snapshot is unavailable or belongs to a different worker",
+            },
+        )
+    if str(candidate_record.get("candidate_id") or "") != str(candidate_id) or str(
+        candidate_record.get("worker_id") or ""
+    ) != str(worker_id):
+        raise HTTPException(
+            409,
+            {
+                "code": "CANDIDATE_SOURCE_SNAPSHOT_STALE",
+                "message": "the persisted candidate record no longer matches the selected worker and candidate",
+            },
+        )
+
+    candidate_lifecycle = _candidate_lifecycle_snapshot(
+        persisted_candidate,
+        candidate_record,
+        runtime_candidate,
+    )
+    candidate_snapshot = json.loads(
+        json.dumps(
+            {
+                "id": persisted_candidate.get("id"),
+                "worker_id": persisted_candidate.get("worker_id"),
+                "skill_bundle_id": persisted_candidate.get("skill_bundle_id"),
+                "adapter_id": persisted_candidate.get("adapter_id"),
+                "intake_status": persisted_candidate.get("intake_status"),
+                "certification_run_id": persisted_candidate.get(
+                    "certification_run_id"
+                ),
+                "approval_record_id": persisted_candidate.get("approval_record_id"),
+                "evidence_json": _governance_dict(
+                    persisted_candidate.get("evidence_json")
+                ),
+                "candidate_record": candidate_record,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+    )
+
+    source_fields = (
+        "canonical_source_repository",
+        "source_provider",
+        "exact_release",
+        "commit_sha",
+        "package_version",
+        "oci_image_digest",
+        "dependency_lock_hash",
+        "protocol_api_version",
+        "adapter_version",
+        "transport_type",
+        "runtime_fingerprint",
+        "implementation_ref",
+        "content_hash",
+    )
+    current_source_identity = {key: provenance_row.get(key) for key in source_fields}
+    for record in (candidate_record, _governance_dict(runtime_candidate)):
+        if not record:
+            continue
+        if str(record.get("candidate_id") or "") != str(candidate_id) or str(
+            record.get("worker_id") or ""
+        ) != str(worker_id):
+            raise HTTPException(
+                409,
+                {
+                    "code": "CANDIDATE_SOURCE_SNAPSHOT_STALE",
+                    "message": "the in-memory candidate no longer matches its persisted identity",
+                },
+            )
+        snapshots = _candidate_record_source(record)
+        if snapshots is None:
+            raise HTTPException(
+                409,
+                {
+                    "code": "CANDIDATE_SOURCE_SNAPSHOT_UNAVAILABLE",
+                    "message": "the candidate does not retain all immutable source snapshots",
+                },
+            )
+        for snapshot in snapshots:
+            if any(snapshot.get(key) != current_source_identity[key] for key in source_fields):
+                raise HTTPException(
+                    409,
+                    {
+                        "code": "CANDIDATE_SOURCE_SNAPSHOT_STALE",
+                        "message": "the candidate source snapshot differs from current persisted provenance",
+                    },
+                )
+            embedded_report = snapshot.get("source_bound_security_scan")
+            if embedded_report is not None and embedded_report != report:
+                raise HTTPException(
+                    409,
+                    {
+                        "code": "SECURITY_SCAN_EVIDENCE_STALE",
+                        "message": "the candidate snapshot refers to a different source-bound scan report",
+                    },
+                )
+
+    worker_config = _governance_dict(worker.get("adapter_config"))
+    worker_identity = {
+        key: worker.get(key)
+        for key in (
+            "id",
+            "name",
+            "version",
+            "version_pin",
+            "source_repo",
+            "source_revision",
+            "adapter_type",
+            "adapter_entrypoint",
+            "sandbox_profile",
+        )
+    }
+    worker_identity["image"] = worker_config.get("image")
+    worker_identity["capabilities_sha256"] = canonical_sha256(
+        worker_config.get("capabilities") or {}
+    )
+    candidate_payload = _governance_dict(candidate_record)
+    bundle_payload = _governance_dict(candidate_payload.get("bundle"))
+    adapter_payload = _governance_dict(candidate_payload.get("adapter"))
+    def _id_value(value: Any) -> str | None:
+        return str(value) if value not in (None, "") else None
+
+    persisted_bundle_id = _id_value(persisted_candidate.get("skill_bundle_id"))
+    persisted_adapter_id = _id_value(persisted_candidate.get("adapter_id"))
+    if (
+        persisted_bundle_id != _id_value(bundle_payload.get("bundle_id"))
+        or persisted_adapter_id != _id_value(adapter_payload.get("adapter_id"))
+    ):
+        raise HTTPException(
+            409,
+            {
+                "code": "CANDIDATE_SOURCE_SNAPSHOT_STALE",
+                "message": "persisted candidate bundle or adapter references do not match its immutable candidate record",
+            },
+        )
+    candidate_identity = {
+        "candidate_id": str(candidate_id),
+        "worker_id": str(worker_id),
+        "persisted_skill_bundle_id": persisted_bundle_id,
+        "persisted_adapter_id": persisted_adapter_id,
+        "steward_id": str(candidate_payload.get("steward_id") or ""),
+        "source": current_source_identity,
+        "bundle": {
+            "semantic_version": bundle_payload.get("semantic_version"),
+            "upstream_compatibility_range": bundle_payload.get("upstream_compatibility_range"),
+            "verified_capabilities": bundle_payload.get("verified_capabilities"),
+            "permission_mappings": bundle_payload.get("permission_mappings"),
+        },
+        "adapter": {
+            "version": adapter_payload.get("version"),
+            "transport_type": adapter_payload.get("transport_type"),
+            "entrypoint": adapter_payload.get("entrypoint"),
+            "implementation_ref": adapter_payload.get("implementation_ref"),
+            "content_hash": adapter_payload.get("content_hash"),
+        },
+    }
+    provenance_identity = {
+        **current_source_identity,
+        "security_scan_status": str(provenance_row.get("security_scan_status") or "").lower(),
+        "provenance_hash": provenance_row.get("provenance_hash"),
+    }
+    fingerprint = canonical_sha256(
+        {
+            "worker": worker_identity,
+            "provenance": provenance_identity,
+            "candidate": candidate_identity,
+            "security_scan_report_sha256": report.get("report_sha256"),
+        }
+    )
+    from mas_core.worker_registry.steward import ExternalProvenance
+
+    provenance_model = ExternalProvenance.model_validate(bound_provenance)
+    return {
+        "worker": worker,
+        "provenance": provenance_model,
+        "provenance_hash": str(provenance_row.get("provenance_hash") or ""),
+        "report_sha256": str(report["report_sha256"]),
+        "identity_fingerprint": fingerprint,
+        "candidate_lifecycle": candidate_lifecycle,
+        "candidate_lifecycle_fingerprint": canonical_sha256(candidate_lifecycle),
+        "worker_identity_snapshot": worker_identity_snapshot_for_rollout(worker),
+        "candidate_snapshot": candidate_snapshot,
+    }
+
+
+async def _revalidate_first_party_candidate_source_state(
+    storage: AgentStorage,
+    *,
+    worker_id: UUID,
+    candidate_id: UUID,
+    expected_state: dict[str, Any],
+    runtime_candidate: Any,
+    error_code: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Re-read first-party candidate authority immediately before a write."""
+    latest_candidate = await storage.get_skill_bundle_candidate(candidate_id)
+    latest_state = await _first_party_candidate_source_state(
+        storage,
+        worker_id=worker_id,
+        candidate_id=candidate_id,
+        candidate_row=latest_candidate,
+        runtime_candidate=runtime_candidate,
+    )
+    if (
+        latest_state["identity_fingerprint"] != expected_state["identity_fingerprint"]
+        or latest_state["report_sha256"] != expected_state["report_sha256"]
+        or latest_state["candidate_lifecycle_fingerprint"]
+        != expected_state["candidate_lifecycle_fingerprint"]
+    ):
+        raise HTTPException(
+            409,
+            {
+                "code": error_code,
+                "message": "worker, candidate lifecycle, provenance, or source-scan evidence changed before governance could be persisted",
+            },
+        )
+    return latest_candidate, latest_state
+
+
+def _first_party_certification_row_matches(
+    certification_row: Any,
+    *,
+    identity_fingerprint: str,
+    report_sha256: str,
+) -> bool:
+    row = _governance_dict(certification_row)
+    evidence = _governance_dict(row.get("evidence_json"))
+    return (
+        str(row.get("status") or "").lower() == "passed"
+        and evidence.get("source_identity_fingerprint") == identity_fingerprint
+        and evidence.get("source_bound_security_scan_report_sha256") == report_sha256
+    )
+
+
 def _worker_tool_dispatcher(storage: AgentStorage, worker: dict[str, Any]):
     """Return the only bridge from a Worker ToolRequest to tool-service."""
     from mas_core.worker_contract import WorkerToolResponse, WorkerUsage
@@ -9301,12 +11215,15 @@ def _worker_tool_dispatcher(storage: AgentStorage, worker: dict[str, Any]):
         if run is None:
             raise RuntimeError("Worker Run is not persisted; tool dispatch is denied")
         request_json = dict(run.get("request_json") or {})
+        execution_claim_fence = tool_request.execution_claim_fence
         body = {
             "caller_id": str(worker["id"]),
             "caller_role": AgentRole.WORKER.value,
             "caller_team": worker.get("team_id"),
             "project_id": str(run["project_id"]) if run.get("project_id") else None,
             "worker_run_id": str(tool_request.run_id),
+            "claim_owner": execution_claim_fence.get("claim_owner"),
+            "claim_attempt_count": int(execution_claim_fence.get("attempt_count") or 0),
             "permission_scope": list(tool_request.permission_scope),
             "budget_snapshot": request_json.get("budget") or {},
             "audit_context": {
@@ -9351,15 +11268,23 @@ async def _certified_worker_adapter(
     worker: dict[str, Any],
     *,
     adapter_id: UUID | str | None = None,
+    shell_version_id: UUID | str | None = None,
     allow_retired: bool = False,
 ) -> Any | None:
-    """Hydrate one immutable certified adapter definition after an API restart.
+    """Hydrate one adapter from the immutable shell pinned to the run.
 
     Dispatches select the worker's active adapter.  Run-control actions pass
-    the adapter pinned on the durable WorkerRun, which may be an older,
-    superseded version while a rollout is in progress.
+    both identities pinned on the durable WorkerRun, which may be older,
+    superseded versions while a rollout is in progress.  Mutable worker
+    configuration is never used to reconstruct a governed runtime.
     """
     from mas_core.worker_contract import AdapterContext, WorkerCapabilities
+    from mas_core.worker_registry.execution_lineage import (
+        SHELL_EXECUTION_LINEAGE_KEY,
+        WorkerExecutionLineageError,
+        resolve_worker_execution_config_snapshot,
+        worker_shell_execution_lineage_blocker,
+    )
     from mas_core.worker_registry.runtime_adapters import (
         OpenCodeAdapter,
         OpenCodeInterfaceVerification,
@@ -9368,6 +11293,7 @@ async def _certified_worker_adapter(
 
     worker_id = UUID(str(worker["id"]))
     selected_adapter_id = adapter_id or worker.get("active_adapter_id")
+    selected_shell_id = shell_version_id or worker.get("active_shell_version_id")
     adapter_row = (
         await storage.get_runtime_adapter(selected_adapter_id)
         if selected_adapter_id is not None
@@ -9383,32 +11309,110 @@ async def _certified_worker_adapter(
             and str(adapter_row["worker_id"]) != str(worker_id)
         )
     ):
-        cache_key = f"{worker_id}:{selected_adapter_id}" if selected_adapter_id else None
-        stale = _worker_adapter_runtimes.pop(cache_key, None) if cache_key else None
-        if stale is not None and hasattr(stale, "close"):
-            try:
-                await stale.close()
-            except Exception:
-                logger.warning("stale_worker_adapter_close_failed", extra={"worker_id": str(worker_id)}, exc_info=True)
+        stale_prefix = f"{worker_id}:{selected_adapter_id}:" if selected_adapter_id else None
+        stale_keys = [
+            key for key in _worker_adapter_runtimes
+            if stale_prefix is not None and key.startswith(stale_prefix)
+        ]
+        for key in stale_keys:
+            stale = _worker_adapter_runtimes.pop(key, None)
+            if stale is not None and hasattr(stale, "close"):
+                try:
+                    await stale.close()
+                except Exception:
+                    logger.warning(
+                        "stale_worker_adapter_close_failed",
+                        extra={"worker_id": str(worker_id)},
+                        exc_info=True,
+                    )
         return None
     immutable_adapter_id = str(adapter_row["id"])
-    cache_key = f"{worker_id}:{immutable_adapter_id}"
+    if selected_shell_id is None:
+        raise WorkerExecutionLineageError("worker_runtime_lineage_unavailable")
+    shell_reader = getattr(storage, "get_worker_shell_version", None)
+    if not inspect.iscoroutinefunction(shell_reader):
+        raise WorkerExecutionLineageError("worker_runtime_lineage_unavailable")
+    shell = await shell_reader(UUID(str(selected_shell_id)))
+    if (
+        not isinstance(shell, Mapping)
+        or str(shell.get("id") or "") != str(selected_shell_id)
+        or str(shell.get("worker_id") or "") != str(worker_id)
+        or str(shell.get("status") or "").lower() not in {"active", "superseded"}
+    ):
+        raise WorkerExecutionLineageError("worker_runtime_lineage_unavailable")
+    lineage_blocker = worker_shell_execution_lineage_blocker(
+        shell=shell,
+        adapter=adapter_row,
+        worker_id=worker_id,
+        adapter_id=immutable_adapter_id,
+    )
+    if lineage_blocker is not None:
+        raise WorkerExecutionLineageError(lineage_blocker)
+    provenance = shell.get("provenance_json") or {}
+    lineage = provenance.get(SHELL_EXECUTION_LINEAGE_KEY) or {}
+    execution_snapshot = lineage.get("snapshot")
+    try:
+        config, resolved_secret_values, resolved_secret_refs = (
+            resolve_worker_execution_config_snapshot(execution_snapshot)
+        )
+    except WorkerExecutionLineageError:
+        raise
+    cache_key = f"{worker_id}:{immutable_adapter_id}:{selected_shell_id}"
     cached = _worker_adapter_runtimes.get(cache_key)
-    if cached is not None and getattr(cached, "_aiat_adapter_id", None) == immutable_adapter_id:
+    transport = str(adapter_row.get("transport_type") or "").lower()
+    refresh_dynamic_secrets = bool(resolved_secret_values) or transport == "opencode"
+    if (
+        cached is not None
+        and getattr(cached, "_aiat_adapter_id", None) == immutable_adapter_id
+        and getattr(cached, "_aiat_shell_version_id", None) == str(selected_shell_id)
+        and getattr(cached, "_aiat_execution_config_sha256", None)
+        == str(lineage.get("sha256") or "")
+        and not refresh_dynamic_secrets
+    ):
         return cached
-    config = dict(worker.get("adapter_config") or {})
-    config.setdefault("sandbox_profile", worker.get("sandbox_profile"))
-    raw_capabilities = adapter_row.get("capabilities_json") or config.get("capabilities") or {}
+    if cached is not None:
+        _worker_adapter_runtimes.pop(cache_key, None)
+        if hasattr(cached, "close"):
+            try:
+                await cached.close()
+            except Exception:
+                logger.warning(
+                    "pinned_worker_adapter_close_failed",
+                    extra={"worker_id": str(worker_id)},
+                    exc_info=True,
+                )
+    raw_capabilities = shell.get("capabilities_json") or {}
     try:
         capabilities = WorkerCapabilities.model_validate(raw_capabilities)
     except ValueError as exc:
-        raise HTTPException(409, f"active adapter capabilities are invalid: {exc}") from exc
+        raise HTTPException(409, "pinned worker shell capabilities are invalid") from exc
+    # Mediated Tool Service writes are stored in the shared run workspace for
+    # every adapter transport. Keep artifact ownership and upload inside the
+    # orchestrator rather than making non-OpenCode adapters persist evidence
+    # themselves.
+    from orchestrator_api.artifact_content import make_opencode_artifact_registrar
+
+    artifact_registrar = make_opencode_artifact_registrar(
+        storage,
+        worker_id=worker_id,
+        workspace_root=(
+            config.get("artifact_workspace_path")
+            or config.get("workspace_path")
+            or "/workspace"
+        ),
+    )
     context = AdapterContext(
         workspace_path=config.get("workspace_path"),
         tool_dispatcher=_worker_tool_dispatcher(storage, worker),
+        artifact_registrar=artifact_registrar,
         metadata={"worker_id": str(worker_id)},
     )
-    transport = str(adapter_row.get("transport_type") or worker.get("adapter_type") or "").lower()
+    context.secrets.update(resolved_secret_values)
+    context.secret_refs.update(resolved_secret_refs)
+    for secret_name in ("auth_password_env", "auth_username_env"):
+        reference = config.get(secret_name)
+        if isinstance(reference, str) and reference:
+            context.secret_refs[secret_name] = reference
     try:
         if transport == "opencode":
             raw_verification = config.get("interface_verification") or {}
@@ -9432,6 +11436,7 @@ async def _certified_worker_adapter(
                 verification,
                 base_url=str(config["base_url"]),
                 worker_id=str(worker_id),
+                model_mapper=_governed_opencode_model_mapper,
                 endpoints=config.get("endpoints"),
                 context=context,
                 capabilities=capabilities,
@@ -9447,11 +11452,41 @@ async def _certified_worker_adapter(
     except (KeyError, TypeError, ValueError) as exc:
         raise HTTPException(409, f"active adapter configuration is not certified: {exc}") from exc
     # A cache entry is scoped to the immutable adapter row, rather than the
-    # mutable worker pointer.  This allows concurrent old/new runs to be
-    # controlled through the exact runtime selected at dispatch.
+    # adapter and shell rows. This allows concurrent old/new runs to use the
+    # exact certified runtime configuration selected at dispatch.
     adapter._aiat_adapter_id = immutable_adapter_id
+    adapter._aiat_shell_version_id = str(selected_shell_id)
+    adapter._aiat_execution_config_sha256 = str(lineage.get("sha256") or "")
     _worker_adapter_runtimes[cache_key] = adapter
     return adapter
+
+
+def _governed_opencode_model_mapper(exact_model_id: str) -> str | None:
+    """Resolve only model IDs with an explicit OpenCode identity in the catalogue.
+
+    The OpenCode runtime has a configured ``aiat`` gateway provider. Gateway
+    model aliases may be unqualified in AIAT model profiles, so the runtime
+    identity comes from the model catalogue's explicit
+    ``profile_identity_aliases`` metadata. Unknown aliases stay unavailable;
+    this function never infers a provider or sends a direct provider request.
+    """
+
+    from mas_core.llm_gateway.providers import MODEL_REGISTRY
+
+    entry = MODEL_REGISTRY.get(str(exact_model_id or "").strip())
+    if entry is None:
+        return None
+    aliases = entry.extra.get("profile_identity_aliases")
+    if not isinstance(aliases, list):
+        return None
+    matches = {
+        str(alias.get("model_id") or "").strip()
+        for alias in aliases
+        if isinstance(alias, dict)
+        and str(alias.get("provider") or "").strip() == "aiat"
+        and str(alias.get("model_id") or "").strip().startswith("aiat/")
+    }
+    return next(iter(matches)) if len(matches) == 1 else None
 
 
 @app.get("/worker-contract/version")
@@ -9469,7 +11504,12 @@ async def worker_contract_version() -> dict[str, Any]:
 
 
 @app.post("/capabilities/workers/{worker_id}/steward", status_code=201)
-async def create_worker_steward(worker_id: UUID, req: StewardCreateRequest) -> dict[str, Any]:
+async def create_worker_steward(
+    worker_id: UUID,
+    req: StewardCreateRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _require_operator_identity(request)
     storage = _storage()
     worker = await storage.get_worker(worker_id)
     if worker is None:
@@ -9539,6 +11579,80 @@ async def get_worker_steward(worker_id: UUID) -> dict[str, Any]:
     return response
 
 
+@app.post("/capabilities/workers/{worker_id}/steward/security-scan")
+async def scan_first_party_worker_security_source(
+    worker_id: UUID,
+    request: Request,
+) -> dict[str, Any]:
+    """Run the fixed, local source-bound scan for the first-party OCI worker.
+
+    This action accepts no report, source path, command, or candidate override.
+    It scans only the checked-in source and Dockerfile after matching them to
+    the immutable manifest and persisted worker/provenance records.
+    """
+    _require_operator_identity(request)
+    storage = _storage()
+    worker = await storage.get_worker(worker_id)
+    if worker is None:
+        raise HTTPException(404, "Worker not found")
+    get_provenance = getattr(storage, "get_external_provenance_by_worker", None)
+    get_steward = getattr(storage, "get_steward_by_worker", None)
+    persist_scan = getattr(storage, "persist_source_bound_worker_security_scan", None)
+    if not all(inspect.iscoroutinefunction(method) for method in (get_provenance, get_steward, persist_scan)):
+        raise HTTPException(503, "source-bound security scan persistence is unavailable")
+    provenance = await get_provenance(worker_id)
+    steward_row = await get_steward(worker_id)
+    if provenance is None or steward_row is None:
+        raise HTTPException(409, "worker requires persisted external provenance and a dedicated Steward Agent")
+
+    from mas_core.worker_registry.source_bound_security_scan import (
+        SourceBoundSecurityScanPersistenceError,
+    )
+    from orchestrator_api.worker_security_scan import (
+        WorkerSecurityScanError,
+        run_first_party_worker_source_scan,
+    )
+
+    try:
+        report = await run_first_party_worker_source_scan(
+            worker=worker,
+            provenance=provenance,
+        )
+    except WorkerSecurityScanError as exc:
+        raise HTTPException(
+            409,
+            {"code": exc.code, "message": "candidate identity or bounded scan inputs are not eligible"},
+        ) from exc
+    try:
+        persisted = await persist_scan(
+            worker_id=worker_id,
+            report=report,
+            expected_provenance_hash=str(provenance.get("provenance_hash") or ""),
+        )
+    except SourceBoundSecurityScanPersistenceError as exc:
+        stale = exc.code == "SECURITY_SCAN_PROVENANCE_CHANGED"
+        raise HTTPException(
+            409 if stale else 422,
+            {
+                "code": exc.code,
+                "message": (
+                    "worker provenance changed while the scan was running"
+                    if stale
+                    else "source-bound security scan evidence failed persistence validation"
+                ),
+            },
+        ) from exc
+    if persisted is None:
+        raise HTTPException(409, "worker provenance or steward record disappeared during scan")
+    _worker_steward_runtimes.pop(str(worker_id), None)
+    return {
+        "worker_id": str(worker_id),
+        "scan": report,
+        "security_scan_status": persisted.get("security_scan_status"),
+        "persisted": True,
+    }
+
+
 @app.get("/stewards")
 async def list_stewards(
     status: str | None = None,
@@ -9575,9 +11689,10 @@ async def list_worker_steward_monitoring(worker_id: UUID) -> list[dict[str, Any]
 
 
 @app.post("/capabilities/workers/{worker_id}/steward/monitor")
-async def run_worker_steward_monitor(worker_id: UUID) -> list[dict[str, Any]]:
+async def run_worker_steward_monitor(worker_id: UUID, request: Request) -> list[dict[str, Any]]:
     """Run one operator-requested, review-only upstream discovery pass."""
 
+    _require_operator_identity(request)
     from mas_core.worker_registry.monitoring import run_due_update_monitors
 
     storage = _storage()
@@ -9596,7 +11711,12 @@ async def run_worker_steward_monitor(worker_id: UUID) -> list[dict[str, Any]]:
 
 
 @app.post("/capabilities/workers/{worker_id}/steward/documentation", status_code=201)
-async def add_steward_documentation(worker_id: UUID, req: DocumentationSnapshotRequest) -> dict[str, Any]:
+async def add_steward_documentation(
+    worker_id: UUID,
+    req: DocumentationSnapshotRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _require_operator_identity(request)
     storage = _storage()
     steward = await _steward_runtime(storage, worker_id)
     if steward is None:
@@ -9604,9 +11724,28 @@ async def add_steward_documentation(worker_id: UUID, req: DocumentationSnapshotR
     from mas_core.worker_registry.steward import DocumentationSnapshot, DocumentationSource
 
     source = next((item for item in steward.documentation_sources if item.uri == req.uri), None)
+    new_source = source is None
     if source is None:
         source = DocumentationSource(uri=req.uri, trusted=False)
-        steward.documentation_sources.append(source)
+    persisted = None
+    if inspect.iscoroutinefunction(getattr(storage, "create_documentation_source", None)):
+        source_row = await storage.get_documentation_source(
+            steward_id=steward.steward_id,
+            uri=source.uri,
+        )
+        if source_row is None:
+            source_row = await storage.create_documentation_source(
+                steward_id=steward.steward_id,
+                uri=source.uri,
+                source_type=source.source_type,
+                trusted_for_provenance=False,
+                allowed_domains=list(source.allowed_domains),
+                source_id=source.source_id,
+            )
+        # Storage is authoritative if a prior process created this source.
+        # Keep the shared in-memory object (and snapshots that reference it)
+        # aligned with its durable identity before creating another snapshot.
+        source.source_id = UUID(str(source_row["id"]))
     snapshot = DocumentationSnapshot(
         source=source,
         version=req.version,
@@ -9616,27 +11755,56 @@ async def add_steward_documentation(worker_id: UUID, req: DocumentationSnapshotR
         security_findings=tuple(req.security_findings),
         untrusted=True,
     )
-    steward.add_documentation_snapshot(snapshot)
-    persisted = None
     if inspect.iscoroutinefunction(getattr(storage, "create_documentation_source", None)):
-        source_row = await storage.get_documentation_source(steward_id=steward.steward_id, uri=source.uri)
-        if source_row is None:
-            source_row = await storage.create_documentation_source(steward_id=steward.steward_id, uri=source.uri, source_type=source.source_type, trusted_for_provenance=False, allowed_domains=list(source.allowed_domains))
-        persisted = await storage.create_documentation_snapshot(source_id=source_row["id"], version=req.version, content_sha256=req.content_sha256, content_ref=req.content_ref, extracted_interfaces=req.extracted_interfaces, security_findings=req.security_findings, untrusted=True)
+        persisted = await storage.create_documentation_snapshot(
+            source_id=source.source_id,
+            version=req.version,
+            content_sha256=req.content_sha256,
+            content_ref=req.content_ref,
+            extracted_interfaces=req.extracted_interfaces,
+            security_findings=req.security_findings,
+            untrusted=True,
+            snapshot_id=snapshot.snapshot_id,
+            captured_at=snapshot.captured_at,
+        )
+    if new_source:
+        steward.documentation_sources.append(source)
+    steward.add_documentation_snapshot(snapshot)
     return {"snapshot": snapshot.model_dump(mode="json"), "persisted": _serialize(persisted) if persisted else None}
 
 
 @app.post("/capabilities/workers/{worker_id}/steward/capabilities", status_code=201)
-async def record_steward_capabilities(worker_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
+async def record_steward_capabilities(
+    worker_id: UUID,
+    payload: dict[str, Any],
+    request: Request,
+) -> dict[str, Any]:
+    _require_operator_identity(request)
     storage = _storage()
     steward = await _steward_runtime(storage, worker_id)
     if steward is None:
         raise HTTPException(404, "Dedicated Steward Agent not found")
+    worker = await storage.get_worker(worker_id)
+    if worker is None:
+        raise HTTPException(404, "Worker not found")
     from mas_core.worker_contract import WorkerCapabilities
+    from mas_core.worker_contract.conformance import (
+        attach_deterministic_file_conformance_case,
+    )
     from mas_core.worker_registry.steward import CapabilitySnapshot
 
-    snapshot = CapabilitySnapshot(version=str(payload.get("version") or "1.0.0"), capabilities=WorkerCapabilities.model_validate(payload.get("capabilities") or {}), evidence_refs=tuple(str(value) for value in payload.get("evidence_refs") or []))
-    steward.record_capabilities(snapshot)
+    try:
+        capabilities = WorkerCapabilities.model_validate(payload.get("capabilities") or {})
+        capabilities = attach_deterministic_file_conformance_case(
+            str(worker.get("name") or ""), capabilities
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    snapshot = CapabilitySnapshot(
+        version=str(payload.get("version") or "1.0.0"),
+        capabilities=capabilities,
+        evidence_refs=tuple(str(value) for value in payload.get("evidence_refs") or []),
+    )
     persisted = None
     if inspect.iscoroutinefunction(getattr(storage, "create_capability_snapshot", None)):
         persisted = await storage.create_capability_snapshot(
@@ -9645,7 +11813,10 @@ async def record_steward_capabilities(worker_id: UUID, payload: dict[str, Any]) 
             version=snapshot.version,
             capabilities=snapshot.capabilities.model_dump(mode="json"),
             evidence_refs=list(snapshot.evidence_refs),
+            snapshot_id=snapshot.snapshot_id,
+            discovered_at=snapshot.discovered_at,
         )
+    steward.record_capabilities(snapshot)
     result = snapshot.model_dump(mode="json")
     result["persisted"] = _serialize(persisted) if persisted else None
     return result
@@ -9655,17 +11826,18 @@ def _candidate_response(candidate: Any) -> dict[str, Any]:
     return candidate.model_dump(mode="json") if hasattr(candidate, "model_dump") else _serialize(candidate)
 
 
-async def _materialize_candidate_worker_shell(
+async def _candidate_worker_shell_values(
     storage: AgentStorage,
     *,
     worker: dict[str, Any],
     candidate: dict[str, Any],
+    execution_config_snapshot: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Snapshot a certified candidate into the immutable WorkerShell record.
+    """Build the immutable WorkerShell row for a certified candidate.
 
     The shell binds the worker declaration, permissions, capabilities and
-    provenance reviewed with this particular candidate.  It is created during
-    certification but selected for dispatch only after rollout promotion.
+    provenance reviewed with this particular candidate. Callers may persist
+    the returned row directly or include it in a larger atomic governance write.
     """
     worker_id = UUID(str(worker["id"]))
     adapter_id = candidate.get("adapter_id")
@@ -9677,13 +11849,36 @@ async def _materialize_candidate_worker_shell(
     bundle = await storage.get_skill_bundle(candidate["skill_bundle_id"])
     if bundle is None or str(bundle.get("worker_id")) != str(worker_id):
         raise HTTPException(409, "Candidate Skill Bundle does not belong to this worker")
+    if (
+        str(adapter.get("id") or "") != str(adapter_id)
+        or str(adapter.get("version") or "")
+        != str((candidate.get("adapter") or {}).get("version") or "")
+        or str(adapter.get("transport_type") or "").lower()
+        != str((candidate.get("adapter") or {}).get("transport_type") or "").lower()
+        or str(adapter.get("implementation_ref") or "")
+        != str((candidate.get("adapter") or {}).get("implementation_ref") or "")
+        or str(adapter.get("content_hash") or "")
+        != str((candidate.get("adapter") or {}).get("content_hash") or "")
+    ):
+        raise HTTPException(409, "Candidate runtime Adapter identity changed before shell certification")
 
     shell_version = f"governed-{candidate['id']}"
-    existing = await storage.get_worker_shell_version_by_version(worker_id, shell_version)
-    if existing is not None:
-        return existing
+    config = _governance_dict(worker.get("adapter_config"))
+    from mas_core.worker_registry.execution_lineage import (
+        SHELL_EXECUTION_LINEAGE_KEY,
+        build_worker_execution_config_snapshot,
+        worker_execution_config_snapshot_sha256,
+    )
 
-    config = dict(worker.get("adapter_config") or {})
+    execution_snapshot = (
+        dict(execution_config_snapshot)
+        if execution_config_snapshot is not None
+        else build_worker_execution_config_snapshot(
+            str(adapter.get("transport_type") or ""),
+            _governance_dict(worker.get("adapter_config")),
+            sandbox_profile=worker.get("sandbox_profile"),
+        )
+    )
     provenance: dict[str, Any] = {
         "source_repo": worker.get("source_repo"),
         "source_revision": worker.get("source_revision"),
@@ -9691,6 +11886,19 @@ async def _materialize_candidate_worker_shell(
         "candidate_id": str(candidate["id"]),
         "skill_bundle_id": str(candidate["skill_bundle_id"]),
         "runtime_adapter_id": str(adapter_id),
+        "runtime_adapter": {
+            "id": str(adapter.get("id")),
+            "version": str(adapter.get("version") or ""),
+            "adapter_type": adapter.get("adapter_type"),
+            "transport_type": str(adapter.get("transport_type") or "").lower(),
+            "runtime_api_version": adapter.get("runtime_api_version"),
+            "implementation_ref": adapter.get("implementation_ref"),
+            "content_hash": str(adapter.get("content_hash") or ""),
+        },
+        SHELL_EXECUTION_LINEAGE_KEY: {
+            "sha256": worker_execution_config_snapshot_sha256(execution_snapshot),
+            "snapshot": execution_snapshot,
+        },
     }
     get_provenance = getattr(storage, "get_external_provenance_by_worker", None)
     if inspect.iscoroutinefunction(get_provenance):
@@ -9720,22 +11928,66 @@ async def _materialize_candidate_worker_shell(
     content_hash = hashlib.sha256(
         json.dumps(shell_payload, sort_keys=True, separators=(",", ":"), default=str).encode()
     ).hexdigest()
+    return {
+        "id": uuid4(),
+        "worker_id": worker_id,
+        "version": shell_version,
+        "contract_version": str(config.get("contract_version") or "aiat.worker.v1"),
+        "schema_version": "1.0",
+        "identity_json": identity,
+        "capabilities_json": capabilities,
+        "permissions_json": permissions,
+        "model_mode": shell_payload["model_mode"],
+        "provenance_json": provenance,
+        "content_hash": content_hash,
+        "status": "active",
+    }
+
+
+async def _materialize_candidate_worker_shell(
+    storage: AgentStorage,
+    *,
+    worker: dict[str, Any],
+    candidate: dict[str, Any],
+    execution_config_snapshot: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Persist a prepared shell for legacy/non-atomic certification callers."""
+    values = await _candidate_worker_shell_values(
+        storage,
+        worker=worker,
+        candidate=candidate,
+        execution_config_snapshot=execution_config_snapshot,
+    )
+    existing = await storage.get_worker_shell_version_by_version(
+        UUID(str(values["worker_id"])),
+        str(values["version"]),
+    )
+    if existing is not None:
+        if str(existing.get("content_hash") or "") != str(values["content_hash"]):
+            raise HTTPException(409, "Candidate WorkerShell identity changed after certification")
+        return existing
     return await storage.create_worker_shell_version(
-        worker_id=worker_id,
-        version=shell_version,
-        contract_version=str(config.get("contract_version") or "aiat.worker.v1"),
-        schema_version="1.0",
-        identity=identity,
-        capabilities=capabilities,
-        permissions=permissions,
-        model_mode=shell_payload["model_mode"],
-        provenance=provenance,
-        content_hash=content_hash,
+        worker_id=values["worker_id"],
+        version=values["version"],
+        contract_version=values["contract_version"],
+        schema_version=values["schema_version"],
+        identity=values["identity_json"],
+        capabilities=values["capabilities_json"],
+        permissions=values["permissions_json"],
+        model_mode=values["model_mode"],
+        provenance=values["provenance_json"],
+        content_hash=values["content_hash"],
+        shell_version_id=values["id"],
     )
 
 
 @app.post("/capabilities/workers/{worker_id}/steward/candidates", status_code=201)
-async def generate_steward_candidate(worker_id: UUID, req: CandidateGenerationRequest) -> dict[str, Any]:
+async def generate_steward_candidate(
+    worker_id: UUID,
+    req: CandidateGenerationRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _require_operator_identity(request)
     storage = _storage()
     steward = await _steward_runtime(storage, worker_id)
     if steward is None:
@@ -9758,6 +12010,14 @@ async def generate_steward_candidate(worker_id: UUID, req: CandidateGenerationRe
         provenance=candidate.bundle.source_provenance.model_dump(mode="json"),
         bundle=candidate.bundle.model_dump(mode="json"),
         content_hash=candidate.bundle.content_hash,
+        bundle_id=candidate.bundle.bundle_id,
+    )
+    # Candidate model IDs are the immutable identities stored inside its JSON
+    # snapshots. Keep those aligned with the canonical row IDs before saving
+    # candidate_record, so later source-bound governance checks can compare the
+    # embedded candidate with the persisted bundle and adapter rows.
+    candidate.bundle = candidate.bundle.model_copy(
+        update={"bundle_id": UUID(str(bundle_row["id"]))}
     )
     adapter_row = await storage.create_runtime_adapter(
         worker_id=worker_id,
@@ -9768,6 +12028,10 @@ async def generate_steward_candidate(worker_id: UUID, req: CandidateGenerationRe
         content_hash=candidate.adapter.content_hash,
         conformance_status="pending",
         status="candidate",
+        adapter_id=candidate.adapter.adapter_id,
+    )
+    candidate.adapter = candidate.adapter.model_copy(
+        update={"adapter_id": UUID(str(adapter_row["id"]))}
     )
     await storage.create_skill_bundle_candidate(
         candidate_id=candidate.candidate_id,
@@ -9795,8 +12059,11 @@ async def advance_steward_candidate_stage(
     worker_id: UUID,
     candidate_id: UUID,
     req: CandidateStageAdvanceRequest,
+    request: Request,
 ) -> dict[str, Any]:
     """Record exactly one reviewed intake transition and its evidence."""
+    _require_operator_identity(request)
+    actor = _authenticated_principal(request)
     storage = _storage()
     steward = await _steward_runtime(storage, worker_id)
     if steward is None:
@@ -9816,7 +12083,9 @@ async def advance_steward_candidate_stage(
         {
             "from": previous_status.value,
             "to": target.value,
-            "actor": req.actor,
+            # Keep the request field for wire compatibility, but the durable
+            # audit actor must come from the authenticated principal.
+            "actor": actor,
             "evidence": req.evidence,
             "recorded_at": datetime.now(UTC).isoformat(),
         }
@@ -9825,22 +12094,47 @@ async def advance_steward_candidate_stage(
     if persisted is not None:
         evidence = dict(persisted.get("evidence_json") or {})
         evidence["candidate_record"] = candidate.model_dump(mode="json")
-        await storage.update_skill_bundle_candidate(
+        updated_candidate = await storage.update_skill_bundle_candidate(
             candidate_id,
             intake_status=candidate.intake_status.value,
             evidence=evidence,
+            expected_intake_status=previous_status.value,
         )
+        if updated_candidate is None:
+            _worker_steward_runtimes.pop(str(worker_id), None)
+            raise HTTPException(
+                409,
+                {
+                    "code": "CANDIDATE_LIFECYCLE_CHANGED_DURING_STAGE",
+                    "message": "candidate lifecycle changed before this stage transition could be persisted",
+                },
+            )
     return _candidate_response(candidate)
 
 
 @app.post("/capabilities/workers/{worker_id}/steward/candidates/{candidate_id}/certify")
-async def certify_steward_candidate(worker_id: UUID, candidate_id: UUID, req: CandidateCertificationRequest) -> dict[str, Any]:
+async def certify_steward_candidate(
+    worker_id: UUID,
+    candidate_id: UUID,
+    req: CandidateCertificationRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _require_operator_identity(request)
     storage = _storage()
     steward = await _steward_runtime(storage, worker_id)
     if steward is None:
         raise HTTPException(404, "Dedicated Steward Agent not found")
+    if str(steward.worker_id) != str(worker_id):
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(404, "Dedicated Steward Agent not found")
     candidate = steward.candidates.get(candidate_id)
     if candidate is None:
+        raise HTTPException(404, "Candidate not found")
+    if (
+        str(candidate.candidate_id) != str(candidate_id)
+        or str(candidate.worker_id) != str(worker_id)
+    ):
+        _worker_steward_runtimes.pop(str(worker_id), None)
         raise HTTPException(404, "Candidate not found")
     if candidate.intake_status.value != "CERTIFYING":
         raise HTTPException(
@@ -9850,12 +12144,100 @@ async def certify_steward_candidate(worker_id: UUID, candidate_id: UUID, req: Ca
     worker = await storage.get_worker(worker_id)
     if worker is None:
         raise HTTPException(404, "Worker not found")
-    provenance = steward.provenance
+    first_party_candidate = _is_first_party_candidate(worker, candidate)
+    first_party_source_state: dict[str, Any] | None = None
+    persisted_candidate_for_source = await storage.get_skill_bundle_candidate(candidate_id)
+    persisted_candidate_payload = _governance_dict(persisted_candidate_for_source)
+    persisted_candidate_record = _candidate_record_from_row(persisted_candidate_for_source)
+    if (
+        not persisted_candidate_payload
+        or str(persisted_candidate_payload.get("id") or "") != str(candidate_id)
+        or str(persisted_candidate_payload.get("worker_id") or "") != str(worker_id)
+        or not persisted_candidate_record
+        or str(persisted_candidate_record.get("candidate_id") or "") != str(candidate_id)
+        or str(persisted_candidate_record.get("worker_id") or "") != str(worker_id)
+    ):
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(
+            404,
+            {
+                "code": "CANDIDATE_WORKER_BINDING_MISMATCH",
+                "message": "the persisted candidate is unavailable or does not belong to the selected worker",
+            },
+        )
+    if first_party_candidate:
+        first_party_source_state = await _first_party_candidate_source_state(
+            storage,
+            worker_id=worker_id,
+            candidate_id=candidate_id,
+            candidate_row=persisted_candidate_for_source,
+            runtime_candidate=candidate,
+        )
+        worker = first_party_source_state["worker"]
+        provenance = first_party_source_state["provenance"]
+        # Keep the lifecycle evidence as it existed before conformance mutates
+        # the in-memory candidate to CERTIFIED. It is the baseline for the
+        # final persisted-state checks immediately before durable writes.
+        first_party_candidate_lifecycle_record = candidate.model_dump(mode="json")
+        first_party_candidate_before_certification = candidate.model_copy(deep=True)
+    else:
+        _candidate_lifecycle_snapshot(
+            persisted_candidate_for_source,
+            persisted_candidate_record,
+            candidate,
+        )
+        provenance = steward.provenance
+        first_party_candidate_lifecycle_record = None
+        first_party_candidate_before_certification = None
+    from mas_core.worker_registry.source_bound_security_scan import (
+        source_bound_security_scan_is_valid,
+        source_bound_security_scan_required,
+    )
+
+    scan_required = source_bound_security_scan_required(provenance, worker=worker)
+    scan_valid = provenance.security_scan_status == "passed"
+    if scan_required:
+        scan_valid = scan_valid and source_bound_security_scan_is_valid(
+            getattr(provenance, "source_bound_security_scan", None),
+            expected_worker_id=str(worker_id),
+            provenance=provenance,
+            current_worker=worker,
+        )
+    if not scan_valid:
+        code = (
+            "SECURITY_SCAN_FINDINGS_REVIEW_REQUIRED"
+            if isinstance(getattr(provenance, "source_bound_security_scan", None), dict)
+            and getattr(provenance, "source_bound_security_scan", {}).get("status")
+            == "findings_review_required"
+            else "SECURITY_SCAN_EVIDENCE_REQUIRED"
+        )
+        raise HTTPException(
+            409,
+            {
+                "code": code,
+                "message": "candidate certification requires a valid server-generated source-bound scan report with zero findings and scanner errors",
+            },
+        )
+    if first_party_candidate and (
+        not _has_canonical_deterministic_conformance(candidate)
+        or not _has_canonical_deterministic_conformance(
+            _candidate_record_from_row(persisted_candidate_for_source)
+        )
+    ):
+        raise HTTPException(
+            409,
+            {
+                "code": "DETERMINISTIC_CONFORMANCE_CASE_REQUIRED",
+                "message": "the first-party candidate must retain AIAT's fixed file-generation conformance case before certification",
+            },
+        )
     # Licence/redistribution fields are retained on provenance for metadata
     # and operator notices, but personal internal-use policy never makes them
     # a certification predicate.
     server_checks = operational_promotion_checks(
         provenance,
+        worker_id=str(worker_id),
+        current_worker=worker,
         documentation=bool(steward.documentation_snapshots),
         capability_snapshot=bool(steward.capability_snapshots),
     )
@@ -9875,23 +12257,51 @@ async def certify_steward_candidate(worker_id: UUID, candidate_id: UUID, req: Ca
         },
     }
     from mas_core.worker_contract import AdapterContext, ConformanceRunner, WorkerCapabilities
+    from mas_core.worker_registry.execution_lineage import (
+        WorkerExecutionLineageError,
+        build_worker_execution_config_snapshot,
+        resolve_worker_execution_config_snapshot,
+        worker_execution_config_snapshot_sha256,
+    )
     from mas_core.worker_registry.runtime_adapters import (
         OpenCodeAdapter,
         OpenCodeInterfaceVerification,
         adapter_for_transport,
     )
 
-    config = dict(worker.get("adapter_config") or {})
-    config.setdefault("sandbox_profile", worker.get("sandbox_profile"))
+    raw_worker_config = _governance_dict(worker.get("adapter_config"))
+    transport = candidate.adapter.transport_type.lower()
     try:
-        capability_payload = config.get("capabilities") or {}
+        execution_config_snapshot = build_worker_execution_config_snapshot(
+            transport,
+            raw_worker_config,
+            sandbox_profile=worker.get("sandbox_profile"),
+        )
+        config, resolved_secret_values, resolved_secret_refs = (
+            resolve_worker_execution_config_snapshot(execution_config_snapshot)
+        )
+    except WorkerExecutionLineageError as exc:
+        raise HTTPException(
+            409,
+            {
+                "code": exc.reason_code.upper(),
+                "message": "Candidate runtime configuration cannot be safely pinned for certification.",
+            },
+        ) from exc
+    try:
+        capability_payload = raw_worker_config.get("capabilities") or {}
         if not capability_payload and candidate.bundle.verified_capabilities is not None:
             capability_payload = candidate.bundle.verified_capabilities.capabilities.model_dump(mode="json")
         capabilities = WorkerCapabilities.model_validate(
             capability_payload
         )
-        transport = candidate.adapter.transport_type.lower()
         context = AdapterContext(workspace_path=config.get("workspace_path"), metadata={"certification": True})
+        context.secrets.update(resolved_secret_values)
+        context.secret_refs.update(resolved_secret_refs)
+        for secret_name in ("auth_password_env", "auth_username_env"):
+            reference = config.get(secret_name)
+            if isinstance(reference, str) and reference:
+                context.secret_refs[secret_name] = reference
         if transport == "opencode":
             verification = OpenCodeInterfaceVerification.from_report(config.get("interface_verification") or {})
             password_env = str(config.get("auth_password_env") or "OPENCODE_SERVER_PASSWORD")
@@ -9949,15 +12359,56 @@ async def certify_steward_candidate(worker_id: UUID, candidate_id: UUID, req: Ca
     except (KeyError, TypeError, ValueError) as exc:
         raise HTTPException(409, f"Candidate adapter cannot be certified: {exc}") from exc
 
+    # Conformance can take seconds or minutes. Re-read the authoritative rows
+    # after it finishes and immediately before the in-memory certification and
+    # durable PASS path. A report that was current at start cannot authorize a
+    # changed worker, candidate snapshot, or provenance row.
+    if first_party_source_state is not None:
+        _, latest_source_state = await _revalidate_first_party_candidate_source_state(
+            storage,
+            worker_id=worker_id,
+            candidate_id=candidate_id,
+            expected_state=first_party_source_state,
+            runtime_candidate=candidate,
+            error_code="CANDIDATE_SOURCE_OR_LIFECYCLE_CHANGED_DURING_CONFORMANCE",
+        )
+        worker = latest_source_state["worker"]
+        provenance = latest_source_state["provenance"]
+        steward.provenance = provenance
+        first_party_source_state = latest_source_state
+
     certification = steward.certify_candidate(
         candidate_id,
         conformance=conformance,
         checks=checks,
         approved_by=None,
     )
+
+    def discard_unpersisted_first_party_certification() -> None:
+        if first_party_candidate_before_certification is None:
+            return
+        steward.candidates[candidate_id] = first_party_candidate_before_certification
+        steward.certifications.pop(certification.certification_id, None)
+
     compatibility_matrix_row: dict[str, Any] | None = None
     create_matrix = getattr(storage, "create_compatibility_matrix", None)
     if inspect.iscoroutinefunction(create_matrix):
+        if first_party_source_state is not None:
+            try:
+                _, latest_source_state = await _revalidate_first_party_candidate_source_state(
+                    storage,
+                    worker_id=worker_id,
+                    candidate_id=candidate_id,
+                    expected_state=first_party_source_state,
+                    runtime_candidate=first_party_candidate_lifecycle_record,
+                    error_code="CANDIDATE_SOURCE_OR_LIFECYCLE_CHANGED_BEFORE_CERTIFICATION_WRITE",
+                )
+            except HTTPException:
+                discard_unpersisted_first_party_certification()
+                raise
+            worker = latest_source_state["worker"]
+            provenance = latest_source_state["provenance"]
+            first_party_source_state = latest_source_state
         provenance_version = (
             provenance.exact_release
             or provenance.package_version
@@ -9967,82 +12418,209 @@ async def certify_steward_candidate(worker_id: UUID, candidate_id: UUID, req: Ca
             or "unknown"
         )
         verified_capabilities = candidate.bundle.verified_capabilities
-        compatibility_matrix_row = await create_matrix(
-            worker_id=worker_id,
-            runtime_version=str(provenance_version),
-            adapter_version=str(candidate.adapter.version),
-            contract_version=str(
+        matrix_values = {
+            "id": uuid4(),
+            "worker_id": worker_id,
+            "runtime_version": str(provenance_version),
+            "adapter_version": str(candidate.adapter.version),
+            "contract_version": str(
                 provenance.protocol_api_version
-                or config.get("contract_version")
+                or raw_worker_config.get("contract_version")
                 or "aiat.adapter.v1"
             ),
-            model_profiles=(
+            "model_profiles_json": (
                 {"worker": str(worker.get("model_profile_id"))}
                 if worker.get("model_profile_id")
                 else {}
             ),
-            capabilities=(
+            "capabilities_json": (
                 verified_capabilities.capabilities.model_dump(mode="json")
                 if verified_capabilities is not None
                 else {}
             ),
-            fixtures=[
+            "fixtures": [
                 str(test.get("name"))
                 for test in (certification.conformance.get("tests") or [])
                 if isinstance(test, dict) and test.get("name")
             ],
-            passed=certification.passed,
-        )
-        # Keep the process-local steward evidence graph in lockstep with the
-        # canonical storage write.  Restart rehydration covers the durable
-        # boundary, but a same-process status/rollout must not temporarily
-        # report an empty compatibility history.
-        steward.record_compatibility_matrix(
-            CompatibilityMatrix(
-                matrix_id=UUID(str(compatibility_matrix_row["id"])),
-                runtime_version=str(compatibility_matrix_row["runtime_version"]),
-                adapter_version=str(compatibility_matrix_row["adapter_version"]),
-                contract_version=str(compatibility_matrix_row["contract_version"]),
-                model_profiles=compatibility_matrix_row.get("model_profiles_json") or {},
-                capabilities=compatibility_matrix_row.get("capabilities_json") or {},
-                fixtures=tuple(compatibility_matrix_row.get("fixtures") or []),
-                passed=bool(compatibility_matrix_row.get("passed", False)),
-                generated_at=compatibility_matrix_row.get("created_at") or datetime.now(UTC),
+            "passed": certification.passed,
+        }
+        if first_party_source_state is not None:
+            # Defer persistence until the candidate/source CAS transaction.
+            compatibility_matrix_row = matrix_values
+        else:
+            compatibility_matrix_row = await create_matrix(
+                worker_id=worker_id,
+                runtime_version=matrix_values["runtime_version"],
+                adapter_version=matrix_values["adapter_version"],
+                contract_version=matrix_values["contract_version"],
+                model_profiles=matrix_values["model_profiles_json"],
+                capabilities=matrix_values["capabilities_json"],
+                fixtures=matrix_values["fixtures"],
+                passed=matrix_values["passed"],
+                matrix_id=matrix_values["id"],
             )
-        )
+            # Keep the process-local steward evidence graph in lockstep with
+            # the canonical storage write.
+            steward.record_compatibility_matrix(
+                CompatibilityMatrix(
+                    matrix_id=UUID(str(compatibility_matrix_row["id"])),
+                    runtime_version=str(compatibility_matrix_row["runtime_version"]),
+                    adapter_version=str(compatibility_matrix_row["adapter_version"]),
+                    contract_version=str(compatibility_matrix_row["contract_version"]),
+                    model_profiles=compatibility_matrix_row.get("model_profiles_json") or {},
+                    capabilities=compatibility_matrix_row.get("capabilities_json") or {},
+                    fixtures=tuple(compatibility_matrix_row.get("fixtures") or []),
+                    passed=bool(compatibility_matrix_row.get("passed", False)),
+                    generated_at=compatibility_matrix_row.get("created_at") or datetime.now(UTC),
+                )
+            )
     certification_evidence = {
         "operator_conformance_submission": req.conformance,
         "server_derived_checks": server_checks,
+        "execution_config_sha256": worker_execution_config_snapshot_sha256(
+            execution_config_snapshot
+        ),
     }
+    if first_party_source_state is not None:
+        certification_evidence["source_identity_fingerprint"] = first_party_source_state[
+            "identity_fingerprint"
+        ]
+        certification_evidence["source_bound_security_scan_report_sha256"] = first_party_source_state[
+            "report_sha256"
+        ]
+
+    # A candidate may be rejected or superseded while the conformance result
+    # is being materialized. Re-read the canonical row at the durable
+    # certification boundary; the earlier check protects the in-memory
+    # steward mutation, while this one protects the persisted PASS record.
+    if first_party_source_state is not None:
+        try:
+            latest_candidate, latest_source_state = await _revalidate_first_party_candidate_source_state(
+                storage,
+                worker_id=worker_id,
+                candidate_id=candidate_id,
+                expected_state=first_party_source_state,
+                runtime_candidate=first_party_candidate_lifecycle_record,
+                error_code="CANDIDATE_SOURCE_OR_LIFECYCLE_CHANGED_BEFORE_CERTIFICATION_WRITE",
+            )
+        except HTTPException:
+            discard_unpersisted_first_party_certification()
+            raise
+        worker = latest_source_state["worker"]
+        provenance = latest_source_state["provenance"]
+        first_party_source_state = latest_source_state
+
     if compatibility_matrix_row is not None:
         certification_evidence["compatibility_matrix_id"] = str(compatibility_matrix_row["id"])
-    await storage.create_certification_run(
-        certification_id=certification.certification_id,
-        worker_id=worker_id,
-        candidate_id=candidate_id,
-        steward_id=steward.steward_id,
-        status="passed" if certification.passed else "rejected",
-        conformance=certification.conformance,
-        checks=certification.checks,
-        evidence=certification_evidence,
-        failure_reasons=list(certification.failures),
-        completed_at=certification.completed_at,
-    )
-    persisted_candidate = await storage.get_skill_bundle_candidate(candidate_id)
-    if persisted_candidate is not None:
-        evidence = dict(persisted_candidate.get("evidence_json") or {})
+    if first_party_source_state is not None:
+        if latest_candidate is None:
+            discard_unpersisted_first_party_certification()
+            raise HTTPException(409, "Candidate disappeared before certification could be persisted")
+        shell_values = None
         if certification.passed:
-            shell = await _materialize_candidate_worker_shell(
-                storage,
-                worker=worker,
-                candidate=persisted_candidate,
+            try:
+                shell_values = await _candidate_worker_shell_values(
+                    storage,
+                    worker=worker,
+                    candidate=latest_candidate,
+                    execution_config_snapshot=execution_config_snapshot,
+                )
+            except HTTPException:
+                discard_unpersisted_first_party_certification()
+                raise
+        certification_values = {
+            "id": certification.certification_id,
+            "worker_id": worker_id,
+            "steward_id": steward.steward_id,
+            "candidate_id": candidate_id,
+            "status": "passed" if certification.passed else "rejected",
+            "conformance_json": certification.conformance,
+            "checks_json": certification.checks,
+            "evidence_json": certification_evidence,
+            "failure_reasons": list(certification.failures),
+            "completed_at": certification.completed_at,
+        }
+        try:
+            persisted_governance = await storage.persist_first_party_candidate_certification_atomically(
+                worker_id=worker_id,
+                candidate_id=candidate_id,
+                expected_worker_identity=first_party_source_state[
+                    "worker_identity_snapshot"
+                ],
+                expected_provenance_hash=first_party_source_state["provenance_hash"],
+                expected_scan_report_sha256=first_party_source_state["report_sha256"],
+                expected_source_identity_fingerprint=first_party_source_state[
+                    "identity_fingerprint"
+                ],
+                expected_candidate_snapshot=first_party_source_state[
+                    "candidate_snapshot"
+                ],
+                certification=certification_values,
+                candidate_record_after=steward.candidates[candidate_id].model_dump(
+                    mode="json"
+                ),
+                shell_values=shell_values,
+                compatibility_matrix=compatibility_matrix_row,
             )
-            evidence["worker_shell_version_id"] = str(shell["id"])
+        except Exception:
+            discard_unpersisted_first_party_certification()
+            _worker_steward_runtimes.pop(str(worker_id), None)
+            raise
+        if persisted_governance is None:
+            discard_unpersisted_first_party_certification()
+            _worker_steward_runtimes.pop(str(worker_id), None)
+            raise HTTPException(
+                409,
+                {
+                    "code": "CANDIDATE_SOURCE_OR_LIFECYCLE_CHANGED_BEFORE_CERTIFICATION_WRITE",
+                    "message": "locked worker, source, scan, or candidate lifecycle no longer matches the certification precheck",
+                },
+            )
+        compatibility_matrix_row = persisted_governance.get("compatibility_matrix")
         if compatibility_matrix_row is not None:
-            evidence["compatibility_matrix_id"] = str(compatibility_matrix_row["id"])
-        evidence["candidate_record"] = steward.candidates[candidate_id].model_dump(mode="json")
-        await storage.update_skill_bundle_candidate(candidate_id, intake_status=steward.candidates[candidate_id].intake_status.value, evidence=evidence, certification_run_id=certification.certification_id)
-    await storage.update_runtime_adapter((persisted_candidate or {}).get("adapter_id"), conformance_status="passed" if certification.passed else "failed", conformance=certification.conformance) if persisted_candidate and persisted_candidate.get("adapter_id") else None
+            steward.record_compatibility_matrix(
+                CompatibilityMatrix(
+                    matrix_id=UUID(str(compatibility_matrix_row["id"])),
+                    runtime_version=str(compatibility_matrix_row["runtime_version"]),
+                    adapter_version=str(compatibility_matrix_row["adapter_version"]),
+                    contract_version=str(compatibility_matrix_row["contract_version"]),
+                    model_profiles=compatibility_matrix_row.get("model_profiles_json") or {},
+                    capabilities=compatibility_matrix_row.get("capabilities_json") or {},
+                    fixtures=tuple(compatibility_matrix_row.get("fixtures") or []),
+                    passed=bool(compatibility_matrix_row.get("passed", False)),
+                    generated_at=compatibility_matrix_row.get("created_at") or datetime.now(UTC),
+                )
+            )
+    else:
+        await storage.create_certification_run(
+            certification_id=certification.certification_id,
+            worker_id=worker_id,
+            candidate_id=candidate_id,
+            steward_id=steward.steward_id,
+            status="passed" if certification.passed else "rejected",
+            conformance=certification.conformance,
+            checks=certification.checks,
+            evidence=certification_evidence,
+            failure_reasons=list(certification.failures),
+            completed_at=certification.completed_at,
+        )
+        persisted_candidate = await storage.get_skill_bundle_candidate(candidate_id)
+        if persisted_candidate is not None:
+            evidence = dict(persisted_candidate.get("evidence_json") or {})
+            if certification.passed:
+                shell = await _materialize_candidate_worker_shell(
+                    storage,
+                    worker=worker,
+                    candidate=persisted_candidate,
+                    execution_config_snapshot=execution_config_snapshot,
+                )
+                evidence["worker_shell_version_id"] = str(shell["id"])
+            if compatibility_matrix_row is not None:
+                evidence["compatibility_matrix_id"] = str(compatibility_matrix_row["id"])
+            evidence["candidate_record"] = steward.candidates[candidate_id].model_dump(mode="json")
+            await storage.update_skill_bundle_candidate(candidate_id, intake_status=steward.candidates[candidate_id].intake_status.value, evidence=evidence, certification_run_id=certification.certification_id)
+        await storage.update_runtime_adapter((persisted_candidate or {}).get("adapter_id"), conformance_status="passed" if certification.passed else "failed", conformance=certification.conformance) if persisted_candidate and persisted_candidate.get("adapter_id") else None
     return certification.model_dump(mode="json")
 
 
@@ -10051,10 +12629,16 @@ async def approve_steward_candidate(
     worker_id: UUID,
     candidate_id: UUID,
     req: CandidateApprovalRequest,
+    request: Request,
 ) -> dict[str, Any]:
+    _require_operator_identity(request)
+    decided_by = _authenticated_principal(request)
     storage = _storage()
     steward = await _steward_runtime(storage, worker_id)
     if steward is None:
+        raise HTTPException(404, "Dedicated Steward Agent not found")
+    if str(steward.worker_id) != str(worker_id):
+        _worker_steward_runtimes.pop(str(worker_id), None)
         raise HTTPException(404, "Dedicated Steward Agent not found")
     persisted_candidate = await storage.get_skill_bundle_candidate(candidate_id)
     if persisted_candidate is None:
@@ -10062,6 +12646,30 @@ async def approve_steward_candidate(
     candidate = steward.candidates.get(candidate_id)
     if candidate is None:
         raise HTTPException(404, "Candidate not found")
+    persisted_candidate_payload = _governance_dict(persisted_candidate)
+    persisted_candidate_record = _candidate_record_from_row(persisted_candidate)
+    if (
+        str(candidate.candidate_id) != str(candidate_id)
+        or str(candidate.worker_id) != str(worker_id)
+        or str(persisted_candidate_payload.get("id") or "") != str(candidate_id)
+        or str(persisted_candidate_payload.get("worker_id") or "") != str(worker_id)
+        or not persisted_candidate_record
+        or str(persisted_candidate_record.get("candidate_id") or "") != str(candidate_id)
+        or str(persisted_candidate_record.get("worker_id") or "") != str(worker_id)
+    ):
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(
+            404,
+            {
+                "code": "CANDIDATE_WORKER_BINDING_MISMATCH",
+                "message": "the persisted candidate is unavailable or does not belong to the selected worker",
+            },
+        )
+    candidate_lifecycle = _candidate_lifecycle_snapshot(
+        persisted_candidate,
+        persisted_candidate_record,
+        candidate,
+    )
     certification = (
         steward.certifications.get(candidate.certification_id)
         if candidate.certification_id is not None
@@ -10069,50 +12677,326 @@ async def approve_steward_candidate(
     )
     if certification is None or not certification.passed:
         raise HTTPException(409, "Candidate approval requires a passed server-run certification")
-    approval = await storage.create_approval_record(
-        scope_type="worker_skill_bundle_candidate",
-        scope_id=candidate_id,
-        decision="APPROVED",
-        decided_by=req.decided_by,
-        reason=req.reason,
-        evidence=req.evidence,
-    )
-    try:
-        candidate = steward.approve_candidate(candidate_id, approval_record_id=approval["id"])
-    except Exception as exc:
-        raise HTTPException(409, str(exc)) from exc
-    evidence = dict(persisted_candidate.get("evidence_json") or {})
-    evidence["candidate_record"] = candidate.model_dump(mode="json")
-    await storage.update_skill_bundle_candidate(candidate_id, intake_status=candidate.intake_status.value, evidence=evidence, approval_record_id=candidate.approval_record_id)
-    await storage.update_skill_bundle(persisted_candidate["skill_bundle_id"], status="APPROVED")
-    if persisted_candidate.get("adapter_id"):
-        current_adapter = await storage.get_runtime_adapter(persisted_candidate["adapter_id"])
-        # Replaying an idempotent approval after rollout must never demote the
-        # currently active immutable adapter back to merely approved.
-        adapter_status = "active" if current_adapter and current_adapter.get("status") == "active" else "approved"
-        await storage.update_runtime_adapter(
-            persisted_candidate["adapter_id"],
-            status=adapter_status,
-            conformance_status="passed",
+    if candidate_lifecycle["intake_status"] not in {"CERTIFYING", "APPROVED"}:
+        raise HTTPException(
+            409,
+            {
+                "code": "CANDIDATE_NOT_APPROVABLE",
+                "message": "a rejected or blocked candidate cannot be approved",
+            },
         )
-    # The server-run conformance result plus this independent approval are
-    # the authoritative external-worker evaluation.  Activation consumes the
-    # worker-level projection, so update it here rather than requiring a
-    # weaker legacy evaluation workflow after steward approval.
-    await storage.update_worker_config(worker_id, evaluation_status="approved")
-    return _candidate_response(candidate)
+    current_worker = await storage.get_worker(worker_id)
+    if not isinstance(current_worker, dict) or str(current_worker.get("id") or "") != str(worker_id):
+        raise HTTPException(404, "Worker not found")
+    first_party_candidate = _is_first_party_candidate(current_worker, candidate)
+    source_state = None
+    if first_party_candidate:
+        # Validate the current source-bound scan before generic persisted
+        # certification checks so stale worker/source evidence receives its
+        # specific fail-closed result. The certification row is checked against
+        # this identity immediately below.
+        source_state = await _first_party_candidate_source_state(
+            storage,
+            worker_id=worker_id,
+            candidate_id=candidate_id,
+            candidate_row=persisted_candidate,
+            runtime_candidate=candidate,
+        )
+        if source_state["candidate_lifecycle"]["intake_status"] not in {
+            "CERTIFYING",
+            "APPROVED",
+        }:
+            raise HTTPException(
+                409,
+                {
+                    "code": "CANDIDATE_NOT_APPROVABLE",
+                    "message": "a rejected or blocked candidate cannot be approved",
+                },
+            )
+    list_certifications = getattr(storage, "list_certification_runs", None)
+    if not inspect.iscoroutinefunction(list_certifications):
+        raise HTTPException(
+            409,
+            {
+                "code": "CANDIDATE_CERTIFICATION_EVIDENCE_UNAVAILABLE",
+                "message": "persisted certification evidence is unavailable for candidate approval",
+            },
+        )
+    certification_rows = await list_certifications(worker_id)
+    if first_party_candidate:
+        persisted_certification = next(
+            (
+                row
+                for row in certification_rows
+                if str(_governance_dict(row).get("id") or "")
+                == str(certification.certification_id)
+                and str(_governance_dict(row).get("candidate_id") or "")
+                == str(candidate_id)
+            ),
+            None,
+        )
+        if not _first_party_certification_row_matches(
+            persisted_certification,
+            identity_fingerprint=source_state["identity_fingerprint"],
+            report_sha256=source_state["report_sha256"],
+        ):
+            raise HTTPException(
+                409,
+                {
+                    "code": "CANDIDATE_CERTIFICATION_SOURCE_IDENTITY_STALE",
+                    "message": "candidate approval requires a passing certification bound to the current worker and source-scan report; rerun certification",
+                },
+            )
+        # Certification reads and rehydration may yield. Recheck the candidate
+        # immediately before creating the durable human approval so an intervening
+        # rejection or lifecycle transition cannot leave an orphan APPROVED row.
+        latest_candidate = await storage.get_skill_bundle_candidate(candidate_id)
+        latest_source_state = await _first_party_candidate_source_state(
+            storage,
+            worker_id=worker_id,
+            candidate_id=candidate_id,
+            candidate_row=latest_candidate,
+            runtime_candidate=candidate,
+        )
+        if (
+            latest_source_state["identity_fingerprint"]
+            != source_state["identity_fingerprint"]
+            or latest_source_state["report_sha256"] != source_state["report_sha256"]
+            or latest_source_state["candidate_lifecycle_fingerprint"]
+            != source_state["candidate_lifecycle_fingerprint"]
+            or latest_source_state["candidate_lifecycle"]["intake_status"]
+            not in {"CERTIFYING", "APPROVED"}
+            or str(candidate.certification_id or "")
+            != str(certification.certification_id)
+        ):
+            raise HTTPException(
+                409,
+                {
+                    "code": "CANDIDATE_LIFECYCLE_CHANGED_DURING_APPROVAL",
+                    "message": "candidate identity or lifecycle changed before approval could be recorded",
+                },
+            )
+        source_state = latest_source_state
+        persisted_candidate = latest_candidate
+        candidate_before_approval = candidate.model_copy(deep=True)
+        if source_state["candidate_lifecycle"]["intake_status"] == "APPROVED":
+            approval_result = await storage.approve_first_party_candidate_atomically(
+                worker_id=worker_id,
+                candidate_id=candidate_id,
+                expected_worker_identity=source_state["worker_identity_snapshot"],
+                expected_provenance_hash=source_state["provenance_hash"],
+                expected_scan_report_sha256=source_state["report_sha256"],
+                expected_source_identity_fingerprint=source_state[
+                    "identity_fingerprint"
+                ],
+                expected_candidate_snapshot=source_state["candidate_snapshot"],
+            )
+            if approval_result is None:
+                _worker_steward_runtimes.pop(str(worker_id), None)
+                raise HTTPException(
+                    409,
+                    {
+                        "code": "CANDIDATE_LIFECYCLE_CHANGED_DURING_APPROVAL",
+                        "message": "locked candidate state no longer matches the completed approval",
+                    },
+                )
+            return _candidate_response(candidate)
+
+        approval_id = uuid4()
+        try:
+            candidate = steward.approve_candidate(
+                candidate_id,
+                approval_record_id=approval_id,
+            )
+        except Exception as exc:
+            raise HTTPException(409, str(exc)) from exc
+        approval_values = {
+            "id": approval_id,
+            "scope_type": "worker_skill_bundle_candidate",
+            "scope_id": candidate_id,
+            "decision": "APPROVED",
+            "decided_by": decided_by,
+            "reason": req.reason,
+            "evidence": req.evidence,
+            "expires_at": None,
+        }
+        try:
+            approval_result = await storage.approve_first_party_candidate_atomically(
+                worker_id=worker_id,
+                candidate_id=candidate_id,
+                expected_worker_identity=source_state["worker_identity_snapshot"],
+                expected_provenance_hash=source_state["provenance_hash"],
+                expected_scan_report_sha256=source_state["report_sha256"],
+                expected_source_identity_fingerprint=source_state[
+                    "identity_fingerprint"
+                ],
+                expected_candidate_snapshot=source_state["candidate_snapshot"],
+                candidate_record_after=candidate.model_dump(mode="json"),
+                approval=approval_values,
+            )
+        except Exception:
+            steward.candidates[candidate_id] = candidate_before_approval
+            _worker_steward_runtimes.pop(str(worker_id), None)
+            raise
+        if approval_result is None:
+            steward.candidates[candidate_id] = candidate_before_approval
+            _worker_steward_runtimes.pop(str(worker_id), None)
+            raise HTTPException(
+                409,
+                {
+                    "code": "CANDIDATE_LIFECYCLE_CHANGED_DURING_APPROVAL",
+                    "message": "locked candidate state no longer matches the approval precheck",
+                },
+            )
+        return _candidate_response(candidate)
+
+    persisted_certification = next(
+        (
+            row
+            for row in certification_rows
+            if str(_governance_dict(row).get("id") or "")
+            == str(certification.certification_id)
+            and str(_governance_dict(row).get("candidate_id") or "")
+            == str(candidate_id)
+            and str(_governance_dict(row).get("worker_id") or "")
+            == str(worker_id)
+            and str(_governance_dict(row).get("status") or "").lower()
+            == "passed"
+        ),
+        None,
+    )
+    if persisted_certification is None:
+        raise HTTPException(
+            409,
+            {
+                "code": "CANDIDATE_CERTIFICATION_EVIDENCE_INVALID",
+                "message": "candidate approval requires a persisted passing certification for this worker and candidate",
+            },
+        )
+
+    expected_candidate_snapshot = {
+        key: persisted_candidate_payload.get(key)
+        for key in (
+            "id",
+            "worker_id",
+            "skill_bundle_id",
+            "adapter_id",
+            "intake_status",
+            "diff_json",
+            "evidence_json",
+            "certification_run_id",
+            "approval_record_id",
+        )
+    }
+    candidate_before_approval = candidate.model_copy(deep=True)
+    approval_values: dict[str, Any] | None = None
+    candidate_record_after: dict[str, Any] | None = None
+    if candidate_lifecycle["intake_status"] == "CERTIFYING":
+        approval_id = uuid4()
+        try:
+            approved_candidate = steward.approve_candidate(
+                candidate_id,
+                approval_record_id=approval_id,
+            )
+            candidate_record_after = approved_candidate.model_dump(mode="json")
+        except Exception as exc:
+            steward.candidates[candidate_id] = candidate_before_approval
+            raise HTTPException(409, str(exc)) from exc
+        approval_values = {
+            "id": approval_id,
+            "scope_type": "worker_skill_bundle_candidate",
+            "scope_id": candidate_id,
+            "decision": "APPROVED",
+            "decided_by": decided_by,
+            "reason": req.reason,
+            "evidence": req.evidence,
+            "expires_at": None,
+        }
+        # Domain validation above mutates the cached CandidateRecord. Restore it
+        # before awaiting storage so a pending or failed transaction cannot make
+        # the process-local runtime look more advanced than durable state.
+        steward.candidates[candidate_id] = candidate_before_approval
+
+    try:
+        approval_result = await storage.approve_steward_candidate_atomically(
+            worker_id=worker_id,
+            candidate_id=candidate_id,
+            expected_candidate_snapshot=expected_candidate_snapshot,
+            candidate_record_after=candidate_record_after,
+            approval=approval_values,
+        )
+    except Exception:
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise
+    if approval_result is None:
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(
+            409,
+            {
+                "code": "CANDIDATE_LIFECYCLE_CHANGED_DURING_APPROVAL",
+                "message": "locked candidate state no longer matches the approval precheck",
+            },
+        )
+
+    persisted_approved_record = _candidate_record_from_row(
+        approval_result.get("candidate")
+    )
+    if not persisted_approved_record:
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(
+            409,
+            {
+                "code": "CANDIDATE_APPROVAL_RESULT_INVALID",
+                "message": "the durable approval result could not be rehydrated",
+            },
+        )
+    try:
+        approved_candidate = type(candidate).model_validate(persisted_approved_record)
+    except Exception as exc:
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(
+            409,
+            {
+                "code": "CANDIDATE_APPROVAL_RESULT_INVALID",
+                "message": "the durable approval result could not be rehydrated",
+            },
+        ) from exc
+    steward.candidates[candidate_id] = approved_candidate
+    return _candidate_response(approved_candidate)
 
 
 @app.post("/capabilities/workers/{worker_id}/steward/rollouts", status_code=201)
-async def start_steward_rollout(worker_id: UUID, req: RolloutStartRequest) -> dict[str, Any]:
+async def start_steward_rollout(
+    worker_id: UUID,
+    req: RolloutStartRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _require_operator_identity(request)
+    actor = _authenticated_principal(request)
     storage = _storage()
     steward = await _steward_runtime(storage, worker_id)
     if steward is None:
         raise HTTPException(404, "Dedicated Steward Agent not found")
-    prior_rollout_candidate_ids = {
-        UUID(str(record["candidate_id"]))
-        for record in await storage.list_rollout_records(worker_id)
-    }
+    if str(steward.worker_id) != str(worker_id):
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(404, "Dedicated Steward Agent not found")
+    prior_rollouts = await storage.list_rollout_records(worker_id)
+    prior_rollout_candidate_ids: set[UUID] = set()
+    for record in prior_rollouts:
+        if (
+            str(record.get("worker_id") or "") != str(worker_id)
+            or str(record.get("steward_id") or "")
+            != str(steward.steward_id)
+        ):
+            _worker_steward_runtimes.pop(str(worker_id), None)
+            raise HTTPException(
+                409,
+                {
+                    "code": "ROLLOUT_WORKER_BINDING_INVALID",
+                    "message": "persisted rollout history does not belong to the selected worker and steward",
+                },
+            )
+        prior_rollout_candidate_ids.add(UUID(str(record["candidate_id"])))
     candidate_id = next(
         (
             candidate.candidate_id
@@ -10127,43 +13011,321 @@ async def start_steward_rollout(worker_id: UUID, req: RolloutStartRequest) -> di
             409,
             "No approved candidate without immutable rollout history is available for rollout",
         )
+    candidate = steward.candidates[candidate_id]
+    persisted_candidate = await storage.get_skill_bundle_candidate(candidate_id)
+    persisted_candidate_payload = _governance_dict(persisted_candidate)
+    persisted_candidate_record = _candidate_record_from_row(persisted_candidate)
+    runtime_candidate_snapshot = _governance_dict(candidate)
+    embedded_bundle = _governance_dict(
+        persisted_candidate_record.get("bundle")
+        if isinstance(persisted_candidate_record, dict)
+        else None
+    )
+    embedded_adapter = _governance_dict(
+        persisted_candidate_record.get("adapter")
+        if isinstance(persisted_candidate_record, dict)
+        else None
+    )
+    candidate_approval_id = candidate.approval_record_id
+    candidate_certification_id = candidate.certification_id
+    if (
+        str(candidate.candidate_id) != str(candidate_id)
+        or str(candidate.worker_id) != str(worker_id)
+        or str(candidate.steward_id) != str(steward.steward_id)
+        or str(persisted_candidate_payload.get("id") or "") != str(candidate_id)
+        or str(persisted_candidate_payload.get("worker_id") or "")
+        != str(worker_id)
+        or str(persisted_candidate_payload.get("intake_status") or "")
+        != "APPROVED"
+        or not isinstance(persisted_candidate_record, dict)
+        or persisted_candidate_record != runtime_candidate_snapshot
+        or str(persisted_candidate_record.get("candidate_id") or "")
+        != str(candidate_id)
+        or str(persisted_candidate_record.get("worker_id") or "")
+        != str(worker_id)
+        or str(persisted_candidate_record.get("steward_id") or "")
+        != str(steward.steward_id)
+        or str(persisted_candidate_record.get("intake_status") or "")
+        != "APPROVED"
+        or not candidate_approval_id
+        or str(persisted_candidate_payload.get("approval_record_id") or "")
+        != str(candidate_approval_id)
+        or str(persisted_candidate_record.get("approval_record_id") or "")
+        != str(candidate_approval_id)
+        or not candidate_certification_id
+        or str(persisted_candidate_payload.get("certification_run_id") or "")
+        != str(candidate_certification_id)
+        or str(persisted_candidate_record.get("certification_id") or "")
+        != str(candidate_certification_id)
+        or str(persisted_candidate_payload.get("skill_bundle_id") or "")
+        != str(candidate.bundle.bundle_id)
+        or str(embedded_bundle.get("bundle_id") or "")
+        != str(candidate.bundle.bundle_id)
+        or str(persisted_candidate_payload.get("adapter_id") or "")
+        != str(candidate.adapter.adapter_id)
+        or str(embedded_adapter.get("adapter_id") or "")
+        != str(candidate.adapter.adapter_id)
+    ):
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(
+            409,
+            {
+                "code": "ROLLOUT_CANDIDATE_BINDING_INVALID",
+                "message": "rollout requires a durable approved candidate bound to this worker and steward",
+            },
+        )
+
+    certification_rows = await storage.list_certification_runs(worker_id)
+    persisted_certification = next(
+        (
+            _governance_dict(row)
+            for row in certification_rows
+            if str(_governance_dict(row).get("id") or "")
+            == str(candidate_certification_id)
+            and str(_governance_dict(row).get("candidate_id") or "")
+            == str(candidate_id)
+            and str(_governance_dict(row).get("worker_id") or "")
+            == str(worker_id)
+            and str(_governance_dict(row).get("steward_id") or "")
+            == str(steward.steward_id)
+            and str(_governance_dict(row).get("status") or "").lower()
+            == "passed"
+        ),
+        None,
+    )
+    get_approval_record = getattr(storage, "get_approval_record", None)
+    if persisted_certification is None or not inspect.iscoroutinefunction(
+        get_approval_record
+    ):
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(
+            409,
+            {
+                "code": "ROLLOUT_CERTIFICATION_OR_APPROVAL_INVALID",
+                "message": "rollout requires persisted passing certification and approval evidence",
+            },
+        )
+    approval_row = _governance_dict(await get_approval_record(candidate_approval_id))
+    if (
+        str(approval_row.get("id") or "") != str(candidate_approval_id)
+        or str(approval_row.get("scope_type") or "")
+        != "worker_skill_bundle_candidate"
+        or str(approval_row.get("scope_id") or "") != str(candidate_id)
+        or str(approval_row.get("decision") or "") != "APPROVED"
+    ):
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(
+            409,
+            {
+                "code": "ROLLOUT_CERTIFICATION_OR_APPROVAL_INVALID",
+                "message": "rollout requires persisted passing certification and approval evidence",
+            },
+        )
     try:
-        rollout = steward.start_rollout(candidate_id, actor=req.actor, eligible_task_classes=req.eligible_task_classes)
+        # ``actor`` remains accepted for wire compatibility. Do not let the
+        # request body select the durable rollout promotion actor.
+        rollout = steward.start_rollout(candidate_id, actor=actor, eligible_task_classes=req.eligible_task_classes)
     except Exception as exc:
         raise HTTPException(409, str(exc)) from exc
-    await storage.create_rollout_record(
-        rollout_id=rollout.rollout_id,
-        worker_id=worker_id,
-        steward_id=steward.steward_id,
-        candidate_id=candidate_id,
-        status=rollout.status.value,
-        eligible_task_classes=list(rollout.eligible_task_classes),
-        sample_targets={"shadow": rollout.shadow_sample_target, "readonly_canary": rollout.readonly_canary_sample_target, "live_canary": rollout.live_canary_sample_target},
-        rollback_thresholds=rollout.rollback_thresholds,
-        promotion_actor=rollout.promotion_actor,
-    )
+    # start_rollout mutates its process-local map synchronously. Keep that
+    # draft private while the durable row is being validated and committed.
+    steward.rollouts.pop(rollout.rollout_id, None)
+    try:
+        persisted_rollout = await storage.create_rollout_record(
+            rollout_id=rollout.rollout_id,
+            worker_id=worker_id,
+            steward_id=steward.steward_id,
+            candidate_id=candidate_id,
+            expected_candidate_snapshot=runtime_candidate_snapshot,
+            status=rollout.status.value,
+            eligible_task_classes=list(rollout.eligible_task_classes),
+            sample_targets={"shadow": rollout.shadow_sample_target, "readonly_canary": rollout.readonly_canary_sample_target, "live_canary": rollout.live_canary_sample_target},
+            rollback_thresholds=rollout.rollback_thresholds,
+            promotion_actor=rollout.promotion_actor,
+        )
+    except Exception as exc:
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(
+            503,
+            {
+                "code": "ROLLOUT_PERSISTENCE_FAILED",
+                "message": "rollout creation could not be persisted",
+            },
+        ) from exc
+    if persisted_rollout is None:
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(
+            409,
+            {
+                "code": "ROLLOUT_CANDIDATE_LIFECYCLE_CHANGED",
+                "message": "candidate approval or rollout eligibility changed before persistence",
+            },
+        )
+    steward.rollouts[rollout.rollout_id] = rollout
     return rollout.model_dump(mode="json")
 
 
 @app.post("/capabilities/workers/{worker_id}/steward/rollouts/{rollout_id}/advance")
-async def advance_steward_rollout(worker_id: UUID, rollout_id: UUID, req: RolloutAdvanceRequest) -> dict[str, Any]:
+async def advance_steward_rollout(
+    worker_id: UUID,
+    rollout_id: UUID,
+    req: RolloutAdvanceRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _require_operator_identity(request)
+    actor = _authenticated_principal(request)
     storage = _storage()
     steward = await _steward_runtime(storage, worker_id)
     if steward is None:
         raise HTTPException(404, "Dedicated Steward Agent not found")
+    if str(steward.worker_id) != str(worker_id):
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(404, "Dedicated Steward Agent not found")
     persisted_before = await storage.get_rollout_record(rollout_id)
     if persisted_before is None:
         raise HTTPException(404, "Persisted rollout not found")
+    persisted_rollout = _governance_dict(persisted_before)
+    if (
+        str(persisted_rollout.get("id") or "") != str(rollout_id)
+        or str(persisted_rollout.get("worker_id") or "") != str(worker_id)
+    ):
+        raise HTTPException(404, "Persisted rollout not found")
+    try:
+        candidate_id = UUID(str(persisted_rollout.get("candidate_id") or ""))
+    except (TypeError, ValueError):
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(
+            409,
+            {
+                "code": "ROLLOUT_BINDING_INVALID",
+                "message": "persisted rollout is not bound to a governed candidate",
+            },
+        ) from None
+    runtime_rollout = steward.rollouts.get(rollout_id)
+    candidate = steward.candidates.get(candidate_id)
+    persisted_status = str(persisted_rollout.get("status") or "")
+    runtime_status = str(
+        getattr(
+            getattr(runtime_rollout, "status", None),
+            "value",
+            getattr(runtime_rollout, "status", ""),
+        )
+        or ""
+    )
+    if (
+        str(persisted_rollout.get("steward_id") or "")
+        != str(steward.steward_id)
+        or runtime_rollout is None
+        or str(runtime_rollout.rollout_id) != str(rollout_id)
+        or str(runtime_rollout.worker_id) != str(worker_id)
+        or str(runtime_rollout.steward_id) != str(steward.steward_id)
+        or str(runtime_rollout.candidate_id) != str(candidate_id)
+        or runtime_status != persisted_status
+        or not _rollout_runtime_matches_persisted(
+            runtime_rollout, persisted_rollout
+        )
+        or candidate is None
+        or str(candidate.candidate_id) != str(candidate_id)
+        or str(candidate.worker_id) != str(worker_id)
+        or str(candidate.steward_id) != str(steward.steward_id)
+    ):
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(
+            409,
+            {
+                "code": "ROLLOUT_BINDING_INVALID",
+                "message": "persisted rollout, candidate, and steward runtime do not share one worker binding",
+            },
+        )
     from mas_core.worker_registry.steward import RolloutStatus
     try:
         target_status = RolloutStatus(req.target_status)
     except ValueError as exc:
         raise HTTPException(409, f"invalid rollout status: {req.target_status}") from exc
+    if target_status in {RolloutStatus.ROLLING_BACK, RolloutStatus.ROLLED_BACK}:
+        raise HTTPException(
+            409,
+            {
+                "code": "ROLLOUT_ROLLBACK_ENDPOINT_REQUIRED",
+                "message": "rollback stages and evidence must be committed through the atomic rollback route",
+            },
+        )
+    if req.sample_count is not None and req.sample_count < persisted_rollout.get(
+        "sample_count", 0
+    ):
+        raise HTTPException(
+            409,
+            {
+                "code": "ROLLOUT_SAMPLE_COUNT_REGRESSION",
+                "message": "rollout sample counts cannot move backwards",
+            },
+        )
     if target_status is RolloutStatus.ACTIVE:
-        candidate = steward.candidates.get(UUID(str(persisted_before["candidate_id"])))
-        if candidate is None:
-            raise HTTPException(409, "Rollout candidate is not present in the governed steward runtime")
-        promotion_checks = operational_promotion_checks(candidate.source_provenance)
+        worker = await storage.get_worker(worker_id)
+        if worker is None:
+            raise HTTPException(404, "Worker not found")
+        get_provenance = getattr(storage, "get_external_provenance_by_worker", None)
+        if not inspect.iscoroutinefunction(get_provenance):
+            raise HTTPException(409, "Persisted worker provenance is required for rollout promotion")
+        provenance_row = await get_provenance(worker_id)
+        if not isinstance(provenance_row, dict):
+            raise HTTPException(409, "Persisted worker provenance is required for rollout promotion")
+        expected_provenance_hash = str(provenance_row.get("provenance_hash") or "")
+        from mas_core.memory.storage import worker_identity_snapshot_for_rollout
+
+        expected_worker_identity = worker_identity_snapshot_for_rollout(worker)
+        first_party_source_state: dict[str, Any] | None = None
+        if _is_first_party_candidate(worker, candidate):
+            persisted_candidate = await storage.get_skill_bundle_candidate(candidate.candidate_id)
+            first_party_source_state = await _first_party_candidate_source_state(
+                storage,
+                worker_id=worker_id,
+                candidate_id=candidate.candidate_id,
+                candidate_row=persisted_candidate,
+                runtime_candidate=candidate,
+            )
+            worker = first_party_source_state["worker"]
+            if (
+                worker_identity_snapshot_for_rollout(worker) != expected_worker_identity
+                or first_party_source_state["provenance_hash"] != expected_provenance_hash
+            ):
+                raise HTTPException(
+                    409,
+                    {
+                        "code": "ROLLOUT_SOURCE_IDENTITY_CHANGED_DURING_PRECHECK",
+                        "message": "worker identity or persisted provenance changed during rollout precheck",
+                    },
+                )
+            rollout_provenance = first_party_source_state["provenance"]
+        else:
+            rollout_provenance = candidate.source_provenance
+        from mas_core.worker_registry.source_bound_security_scan import (
+            source_bound_security_scan_is_valid,
+            source_bound_security_scan_required,
+        )
+
+        scan_required = source_bound_security_scan_required(rollout_provenance, worker=worker)
+        scan_valid = rollout_provenance.security_scan_status == "passed"
+        if scan_required and first_party_source_state is None:
+            scan_valid = scan_valid and source_bound_security_scan_is_valid(
+                getattr(rollout_provenance, "source_bound_security_scan", None),
+                expected_worker_id=str(worker_id),
+                provenance=rollout_provenance,
+                current_worker=worker,
+            )
+        if not scan_valid:
+            raise HTTPException(
+                409,
+                {
+                    "code": "SECURITY_SCAN_EVIDENCE_REQUIRED",
+                    "message": "rollout promotion requires the persisted source-bound scan for this exact candidate",
+                },
+            )
+        promotion_checks = operational_promotion_checks(
+            rollout_provenance,
+            worker_id=str(worker_id),
+            current_worker=worker,
+        )
         failed_checks = [name for name, passed in promotion_checks.items() if not passed]
         if failed_checks:
             raise HTTPException(
@@ -10175,17 +13337,43 @@ async def advance_steward_rollout(worker_id: UUID, rollout_id: UUID, req: Rollou
                 },
             )
     try:
-        rollout = steward.advance_rollout(rollout_id, target_status, sample_count=req.sample_count, metrics=req.comparison_metrics)
+        # Keep the cached persisted view unchanged while the transition is
+        # being validated and committed. A failed DB write must not expose a
+        # canary count or stage that never became durable.
+        draft_steward = copy.deepcopy(steward)
+        rollout = draft_steward.advance_rollout(
+            rollout_id,
+            target_status,
+            sample_count=req.sample_count,
+            metrics=req.comparison_metrics,
+        )
     except Exception as exc:
         raise HTTPException(409, str(exc)) from exc
     if rollout.status.value == "ACTIVE":
-        activated = await storage.activate_rollout_atomically(
-            rollout_id=rollout_id,
-            worker_id=worker_id,
-            steward_id=steward.steward_id,
-            candidate_id=rollout.candidate_id,
-            completed_at=rollout.completed_at,
-        )
+        try:
+            activated = await storage.activate_rollout_atomically(
+                rollout_id=rollout_id,
+                worker_id=worker_id,
+                steward_id=steward.steward_id,
+                candidate_id=rollout.candidate_id,
+                completed_at=rollout.completed_at,
+                expected_worker_identity=expected_worker_identity,
+                expected_provenance_hash=expected_provenance_hash,
+                expected_rollout_snapshot=persisted_rollout,
+                expected_candidate_snapshot=_governance_dict(candidate),
+                sample_count=rollout.sample_count,
+                comparison_metrics=rollout.comparison_metrics,
+                actor=actor,
+            )
+        except Exception as exc:
+            _worker_steward_runtimes.pop(str(worker_id), None)
+            raise HTTPException(
+                503,
+                {
+                    "code": "ROLLOUT_ACTIVATION_PERSISTENCE_FAILED",
+                    "message": "rollout activation could not be persisted",
+                },
+            ) from exc
         if activated is None:
             _worker_steward_runtimes.pop(str(worker_id), None)
             raise HTTPException(
@@ -10196,79 +13384,157 @@ async def advance_steward_rollout(worker_id: UUID, rollout_id: UUID, req: Rollou
         # cannot be selected for an older run and older in-flight runs retain
         # their control handle.
     else:
-        transitioned = await storage.transition_rollout(
-            rollout_id,
-            to_status=rollout.status.value,
-            actor="worker-rollout-approver",
-            expected_status=str(persisted_before["status"]),
-            sample_count=rollout.sample_count,
-            comparison_metrics=rollout.comparison_metrics,
-            completed_at=rollout.completed_at,
-            evidence={"target_status": req.target_status},
-        )
+        try:
+            transitioned = await storage.transition_rollout(
+                rollout_id,
+                worker_id=worker_id,
+                steward_id=steward.steward_id,
+                candidate_id=rollout.candidate_id,
+                to_status=rollout.status.value,
+                actor=actor,
+                expected_status=persisted_status,
+                sample_count=rollout.sample_count,
+                comparison_metrics=rollout.comparison_metrics,
+                completed_at=rollout.completed_at,
+                evidence={"target_status": req.target_status},
+                expected_rollout_snapshot=persisted_rollout,
+            )
+        except Exception as exc:
+            _worker_steward_runtimes.pop(str(worker_id), None)
+            raise HTTPException(
+                503,
+                {
+                    "code": "ROLLOUT_TRANSITION_PERSISTENCE_FAILED",
+                    "message": "rollout transition could not be persisted",
+                },
+            ) from exc
         if transitioned is None:
             _worker_steward_runtimes.pop(str(worker_id), None)
             raise HTTPException(409, "Rollout transition lost its compare-and-set lock")
+    # Publish only the state that the durable transition accepted.
+    steward.rollouts[rollout_id] = rollout
+    if rollout.status.value == "ACTIVE":
+        steward.active_bundle = draft_steward.active_bundle
+        steward.active_adapter = draft_steward.active_adapter
+        steward.provenance = draft_steward.provenance
+        steward.candidates[candidate_id] = draft_steward.candidates[candidate_id]
     return rollout.model_dump(mode="json")
 
 
 @app.post("/capabilities/workers/{worker_id}/steward/rollouts/{rollout_id}/rollback")
-async def rollback_steward_rollout(worker_id: UUID, rollout_id: UUID, req: RollbackRequest) -> dict[str, Any]:
+async def rollback_steward_rollout(
+    worker_id: UUID,
+    rollout_id: UUID,
+    req: RollbackRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _require_operator_identity(request)
+    actor = _authenticated_principal(request)
     storage = _storage()
     steward = await _steward_runtime(storage, worker_id)
     if steward is None:
         raise HTTPException(404, "Dedicated Steward Agent not found")
+    if str(steward.worker_id) != str(worker_id):
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(404, "Dedicated Steward Agent not found")
+    persisted_before = await storage.get_rollout_record(rollout_id)
+    if persisted_before is None:
+        raise HTTPException(404, "Persisted rollout not found")
+    persisted = _governance_dict(persisted_before)
+    if (
+        str(persisted.get("id") or "") != str(rollout_id)
+        or str(persisted.get("worker_id") or "") != str(worker_id)
+    ):
+        raise HTTPException(404, "Persisted rollout not found")
     try:
-        rollout = steward.rollback(rollout_id, reason=req.reason)
-    except Exception as exc:
-        raise HTTPException(409, str(exc)) from exc
-    await storage.update_rollout_record(rollout_id, status=rollout.status.value, rollback_reason=req.reason, completed_at=rollout.completed_at)
-    current_candidate = await storage.get_skill_bundle_candidate(rollout.candidate_id)
-    previous_rollouts = [
-        row for row in await storage.list_rollout_records(worker_id)
-        if str(row.get("id")) != str(rollout_id) and str(row.get("status")) == "ACTIVE"
-    ]
-    previous_rollout = previous_rollouts[-1] if previous_rollouts else None
-    previous_candidate = await storage.get_skill_bundle_candidate(UUID(str(previous_rollout["candidate_id"]))) if previous_rollout else None
-    previous_shell_id: UUID | None = None
-    if previous_candidate is not None:
-        try:
-            previous_shell_id = UUID(
-                str((previous_candidate.get("evidence_json") or {}).get("worker_shell_version_id"))
-            )
-        except (TypeError, ValueError):
-            raise HTTPException(
-                409,
-                "The previous rollout has no governed WorkerShell snapshot and cannot be restored",
-            ) from None
-    if current_candidate is not None:
-        if current_candidate.get("adapter_id"):
-            await storage.update_runtime_adapter(current_candidate["adapter_id"], status="superseded")
-        await storage.update_skill_bundle(current_candidate["skill_bundle_id"], status="SUPERSEDED")
-    if previous_candidate is not None:
-        if previous_candidate.get("adapter_id"):
-            await storage.update_runtime_adapter(previous_candidate["adapter_id"], status="active", conformance_status="passed")
-        await storage.update_skill_bundle(previous_candidate["skill_bundle_id"], status="APPROVED")
-        await storage.set_worker_governed_versions(worker_id, active_shell_version_id=previous_shell_id, active_adapter_id=previous_candidate.get("adapter_id"), active_skill_bundle_id=previous_candidate.get("skill_bundle_id"))
-        await storage.set_steward_active_versions(steward.steward_id, active_skill_bundle_id=previous_candidate.get("skill_bundle_id"), active_adapter_id=previous_candidate.get("adapter_id"))
-        target_candidate_id = UUID(str(previous_candidate["id"]))
-    else:
-        await storage.set_worker_governed_versions(worker_id, active_shell_version_id=None, active_adapter_id=None, active_skill_bundle_id=None)
-        await storage.set_steward_active_versions(steward.steward_id, active_skill_bundle_id=None, active_adapter_id=None)
-        await storage.update_steward(steward.steward_id, status="DEGRADED")
-        await storage.update_worker_status(worker_id, status="INACTIVE")
-        target_candidate_id = None
-    await storage.create_rollback_record(
-        rollout_id=rollout_id,
-        worker_id=worker_id,
-        reason=req.reason,
-        triggered_by="operator",
-        from_candidate_id=rollout.candidate_id,
-        target_candidate_id=target_candidate_id,
+        candidate_id = UUID(str(persisted.get("candidate_id") or ""))
+    except (TypeError, ValueError):
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(
+            409,
+            {
+                "code": "ROLLOUT_ROLLBACK_BINDING_INVALID",
+                "message": "persisted rollout is not bound to a governed candidate",
+            },
+        ) from None
+    runtime_rollout = steward.rollouts.get(rollout_id)
+    candidate = steward.candidates.get(candidate_id)
+    persisted_status = str(persisted.get("status") or "")
+    runtime_status = str(
+        getattr(
+            getattr(runtime_rollout, "status", None),
+            "value",
+            getattr(runtime_rollout, "status", ""),
+        )
+        or ""
     )
-    # Keep cached immutable adapters alive for runs pinned before the
-    # rollback; new dispatches resolve the restored active pointer instead.
-    return rollout.model_dump(mode="json")
+    if (
+        str(persisted.get("steward_id") or "") != str(steward.steward_id)
+        or runtime_rollout is None
+        or str(runtime_rollout.rollout_id) != str(rollout_id)
+        or str(runtime_rollout.worker_id) != str(worker_id)
+        or str(runtime_rollout.steward_id) != str(steward.steward_id)
+        or str(runtime_rollout.candidate_id) != str(candidate_id)
+        or runtime_status != persisted_status
+        or candidate is None
+        or str(candidate.candidate_id) != str(candidate_id)
+        or str(candidate.worker_id) != str(worker_id)
+        or str(candidate.steward_id) != str(steward.steward_id)
+    ):
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(
+            409,
+            {
+                "code": "ROLLOUT_ROLLBACK_BINDING_INVALID",
+                "message": "persisted rollout, candidate, and steward runtime do not share one worker binding",
+            },
+        )
+    from datetime import UTC, datetime
+
+    completed_at = datetime.now(tz=UTC)
+    try:
+        rollback_result = await storage.rollback_rollout_atomically(
+            rollout_id=rollout_id,
+            worker_id=worker_id,
+            steward_id=steward.steward_id,
+            candidate_id=candidate_id,
+            expected_status=persisted_status,
+            reason=req.reason,
+            triggered_by=actor,
+            completed_at=completed_at,
+        )
+    except Exception as exc:
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(
+            503,
+            {
+                "code": "ROLLOUT_ROLLBACK_PERSISTENCE_FAILED",
+                "message": "rollout rollback could not be persisted",
+            },
+        ) from exc
+    if rollback_result is None:
+        _worker_steward_runtimes.pop(str(worker_id), None)
+        raise HTTPException(
+            409,
+            {
+                "code": "ROLLOUT_ROLLBACK_STATE_CHANGED",
+                "message": "rollout or its worker bindings changed before rollback could be committed",
+            },
+        )
+    # Durable pointers and evidence are authoritative after rollback. Discard
+    # the process-local candidate/adapter cache so the next access rehydrates
+    # exactly what the transaction restored.
+    _worker_steward_runtimes.pop(str(worker_id), None)
+    durable_rollout = rollback_result.get("rollout")
+    if not isinstance(durable_rollout, dict):
+        raise HTTPException(
+            503,
+            {
+                "code": "ROLLOUT_ROLLBACK_RESULT_INVALID",
+                "message": "rollback committed but its durable result could not be read",
+            },
+        )
+    return durable_rollout
 
 
 def _model_profile_from_row(row: dict[str, Any]) -> Any:
@@ -10288,6 +13554,7 @@ def _model_profile_from_row(row: dict[str, Any]) -> Any:
         except ValueError:
             privacy_class = PrivacyClass.INTERNAL
         versions.append(ModelProfileVersion(
+            **({"id": str(raw["id"])} if raw.get("id") is not None else {}),
             version=str(raw["version"]),
             provider_id=str(raw["provider_id"]),
             exact_model_id=str(raw["exact_model_id"]),
@@ -10511,7 +13778,11 @@ async def _attach_governance_model_snapshot(
 
 
 @app.post("/model-profiles", status_code=201)
-async def create_model_profile(req: ModelProfileCreateRequest) -> dict[str, Any]:
+async def create_model_profile(
+    req: ModelProfileCreateRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _require_operator_identity(request)
     storage = _storage()
     from mas_core.llm_gateway import ModelProfile, ModelProfileStatus
 
@@ -10541,7 +13812,20 @@ async def create_model_profile(req: ModelProfileCreateRequest) -> dict[str, Any]
 
 
 @app.post("/model-overrides", status_code=201)
-async def create_model_override(req: ModelOverrideCreateRequest) -> dict[str, Any]:
+async def create_model_override(
+    req: ModelOverrideCreateRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _require_operator_identity(request)
+    principal = _authenticated_principal(request)
+    return await _create_model_override(req, requested_by=principal)
+
+
+async def _create_model_override(
+    req: ModelOverrideCreateRequest,
+    *,
+    requested_by: str,
+) -> dict[str, Any]:
     storage = _storage()
     if await storage.get_project(req.project_id) is None:
         raise HTTPException(404, "Project not found")
@@ -10549,7 +13833,7 @@ async def create_model_override(req: ModelOverrideCreateRequest) -> dict[str, An
         raise HTTPException(404, "Requested Model Profile not found")
     override = await storage.create_model_override_request(
         project_id=req.project_id,
-        requested_by=req.requested_by,
+        requested_by=requested_by,
         requested_profile_id=req.requested_profile_id,
         reason=req.reason,
         scope=req.scope,
@@ -10561,7 +13845,10 @@ async def create_model_override(req: ModelOverrideCreateRequest) -> dict[str, An
 async def decide_model_override(
     override_id: UUID,
     req: ModelOverrideDecisionRequest,
+    request: Request,
 ) -> dict[str, Any]:
+    _require_operator_identity(request)
+    principal = _authenticated_principal(request)
     storage = _storage()
     override = await storage.get_model_override_request(override_id)
     if override is None:
@@ -10572,7 +13859,7 @@ async def decide_model_override(
         scope_type="model_override_request",
         scope_id=override_id,
         decision=req.decision,
-        decided_by=req.decided_by,
+        decided_by=principal,
         reason=req.reason,
         evidence=req.evidence,
         expires_at=req.expires_at,
@@ -10580,7 +13867,7 @@ async def decide_model_override(
     updated = await storage.update_model_override_request(
         override_id,
         status=req.decision,
-        decided_by=req.decided_by,
+        decided_by=principal,
         decision=req.decision,
         expires_at=req.expires_at,
     )
@@ -10590,7 +13877,12 @@ async def decide_model_override(
 
 
 @app.post("/model-profiles/{profile_id}/versions", status_code=201)
-async def add_model_profile_version(profile_id: str, req: ModelProfileVersionRequest) -> dict[str, Any]:
+async def add_model_profile_version(
+    profile_id: str,
+    req: ModelProfileVersionRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _require_operator_identity(request)
     from mas_core.llm_gateway import ModelProfileStatus, ModelProfileVersion, PrivacyClass
 
     storage = _storage()
@@ -10634,7 +13926,7 @@ async def add_model_profile_version(profile_id: str, req: ModelProfileVersionReq
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     try:
-        await storage.create_model_profile_version(
+        stored_version = await storage.create_model_profile_version(
             profile_id=UUID(str(profile_row["id"])),
             version=version.version,
             provider_id=version.provider_id,
@@ -10667,7 +13959,47 @@ async def add_model_profile_version(profile_id: str, req: ModelProfileVersionReq
         )
     except (ValueError, sa.exc.IntegrityError) as exc:
         raise HTTPException(409, str(exc)) from exc
-    return version.model_dump(mode="json")
+    return {
+        **version.model_dump(mode="json"),
+        "id": str(stored_version["id"]),
+    }
+
+
+@app.post("/model-profiles/{profile_id}/versions/{version_id}/activate")
+async def activate_model_profile_version(
+    profile_id: str,
+    version_id: UUID,
+    req: ModelProfileVersionActivationRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Approve one exact draft version through the operator governance path."""
+
+    _require_operator_identity(request)
+    principal = _authenticated_principal(request)
+    try:
+        activation = await _storage().activate_model_profile_version(
+            logical_profile_id=profile_id,
+            version_id=version_id,
+            decided_by=principal,
+            reason=req.reason,
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if activation is None:
+        raise HTTPException(404, "Draft model profile version not found")
+
+    profile = activation["profile"]
+    version = activation["version"]
+    return {
+        "profile_id": profile["logical_profile_id"],
+        "profile_status": profile["status"],
+        "version_id": str(version["id"]),
+        "version": version["version"],
+        "version_status": version["status"],
+        "decision": "APPROVED",
+        "already_approved": bool(activation.get("already_approved")),
+        "approval_record": _serialize(activation["approval_record"]),
+    }
 
 
 @app.get("/model-profiles")
@@ -10822,6 +14154,162 @@ def _executive_action_envelope(
     }
 
 
+def _executive_form_field_from_model(
+    model: type[BaseModel],
+    *,
+    name: str,
+    label: str,
+    control: Literal["select", "text", "textarea", "number"],
+    option_source: Literal["projects", "workers", "model_profiles"] | None = None,
+    help_text: str | None = None,
+) -> ExecutiveActionFormField:
+    """Project a bounded form descriptor from the canonical Pydantic schema."""
+
+    schema = model.model_json_schema()
+    properties = schema.get("properties")
+    if not isinstance(properties, dict) or not isinstance(properties.get(name), dict):
+        raise RuntimeError(f"executive form field {name!r} is absent from {model.__name__}")
+    property_schema = properties[name]
+    constraint_schema = property_schema
+    alternatives = property_schema.get("anyOf")
+    if isinstance(alternatives, list):
+        constraint_schema = next(
+            (item for item in alternatives if isinstance(item, dict) and item.get("type") != "null"),
+            property_schema,
+        )
+    minimum = constraint_schema.get("exclusiveMinimum", constraint_schema.get("minimum"))
+    maximum = constraint_schema.get("maximum")
+    return ExecutiveActionFormField(
+        name=name,
+        label=label,
+        control=control,
+        required=name in schema.get("required", []),
+        max_length=property_schema.get("maxLength"),
+        minimum=float(minimum) if isinstance(minimum, (int, float)) else None,
+        maximum=float(maximum) if isinstance(maximum, (int, float)) else None,
+        option_source=option_source,
+        help_text=help_text,
+    )
+
+
+def _executive_action_catalogue() -> ExecutiveActionCatalogueResponse:
+    if set(PRIVILEGED_ACTION_PAYLOAD_FIELDS) != set(PRIVILEGED_ACTIONS):
+        raise RuntimeError("privileged action policy and request-field catalogue are out of sync")
+
+    cfo_fields = [
+        _executive_form_field_from_model(
+            ExecutiveCFOModelOverrideRequest,
+            name="project_id",
+            label="Project",
+            control="select",
+            option_source="projects",
+        ),
+        _executive_form_field_from_model(
+            ExecutiveCFOModelOverrideRequest,
+            name="requested_profile_id",
+            label="Model Profile",
+            control="select",
+            option_source="model_profiles",
+        ),
+        _executive_form_field_from_model(
+            ExecutiveCFOModelOverrideRequest,
+            name="reason",
+            label="Reason",
+            control="textarea",
+        ),
+    ]
+    cto_fields = [
+        _executive_form_field_from_model(
+            ExecutiveCTOWorkerRunDispatchRequest,
+            name="worker_id",
+            label="Worker",
+            control="select",
+            option_source="workers",
+        ),
+        _executive_form_field_from_model(
+            ExecutiveCTOWorkerRunDispatchRequest,
+            name="idempotency_key",
+            label="Idempotency key",
+            control="text",
+            help_text="Keep the same key when retrying this request.",
+        ),
+        _executive_form_field_from_model(
+            ExecutiveCTOWorkerRunDispatchRequest,
+            name="task_type",
+            label="Task type",
+            control="text",
+        ),
+        _executive_form_field_from_model(
+            ExecutiveCTOWorkerRunDispatchRequest,
+            name="prompt",
+            label="Task instructions",
+            control="textarea",
+            help_text="Instructions are sent to the selected worker as its prompt. Maximum 20,000 characters.",
+        ),
+        _executive_form_field_from_model(
+            ExecutiveCTOWorkerRunDispatchRequest,
+            name="project_id",
+            label="Project (optional)",
+            control="select",
+            option_source="projects",
+        ),
+        _executive_form_field_from_model(
+            ExecutiveCTOWorkerRunDispatchRequest,
+            name="budget_usd",
+            label="Maximum run cost (USD, optional)",
+            control="number",
+        ),
+        _executive_form_field_from_model(
+            ExecutiveCTOWorkerRunDispatchRequest,
+            name="timeout_seconds",
+            label="Execution timeout (seconds, optional)",
+            control="number",
+        ),
+    ]
+
+    action_options: list[ExecutivePrivilegedActionOption] = []
+    for action, policy in sorted(PRIVILEGED_ACTIONS.items()):
+        fields = [
+            ExecutiveActionFormField(
+                name=str(field["name"]),
+                label=str(field["label"]),
+                control=field["type"],
+                required=bool(field.get("required", False)),
+                max_length=int(field["max_length"]),
+            )
+            for field in PRIVILEGED_ACTION_PAYLOAD_FIELDS[action]
+        ]
+        action_options.append(
+            ExecutivePrivilegedActionOption(
+                action=action,
+                label=str(policy.get("label") or action.replace(".", " · ").replace("_", " ").title()),
+                risk=str(policy.get("risk", "unknown")),
+                requires_approval=bool(policy.get("require_approval", False)),
+                fields=fields,
+            )
+        )
+    return ExecutiveActionCatalogueResponse(
+        schema_version="aiat.executive-actions.catalogue.v1",
+        cfo_model_override_fields=cfo_fields,
+        cto_worker_run_fields=cto_fields,
+        ceo_privileged_actions=action_options,
+    )
+
+
+@app.get(
+    "/executive/actions/catalogue",
+    response_model=ExecutiveActionCatalogueResponse,
+)
+async def executive_action_catalogue(request: Request) -> ExecutiveActionCatalogueResponse:
+    """Return bounded operator-form fields from request schemas and policy."""
+
+    _require_executive_write_principal(request)
+    try:
+        return _executive_action_catalogue()
+    except RuntimeError as exc:
+        raise HTTPException(500, "executive action request catalogue is inconsistent") from exc
+
+
 @app.post("/executive/actions/cfo/model-overrides", status_code=201)
 async def executive_cfo_model_override(
     req: ExecutiveCFOModelOverrideRequest,
@@ -10830,14 +14318,15 @@ async def executive_cfo_model_override(
     """Create a durable CFO model-override request for human decision."""
 
     principal = _require_executive_write_principal(request)
-    result = await create_model_override(
+    result = await _create_model_override(
         ModelOverrideCreateRequest(
             project_id=req.project_id,
             requested_by=req.requested_by,
             requested_profile_id=req.requested_profile_id,
             reason=req.reason,
-            scope=req.scope,
-        )
+            scope={},
+        ),
+        requested_by=principal,
     )
     override_id = result.get("id")
     safe_result = {
@@ -10856,7 +14345,7 @@ async def executive_cfo_model_override(
     return _executive_action_envelope(
         role="cfo",
         action="request_model_override",
-        requested_by=req.requested_by,
+        requested_by=principal,
         authenticated_principal=principal,
         result=safe_result,
         evidence={
@@ -10875,7 +14364,7 @@ async def executive_cto_worker_run(
     """Dispatch one governed CTO worker run through the canonical route."""
 
     principal = _require_executive_write_principal(request)
-    dispatch_result = await dispatch_worker_run(req.dispatch)
+    dispatch_result = await dispatch_worker_run(req.dispatch.to_worker_dispatch_request())
     # Worker outputs/events may contain project data. The executive action
     # surface returns only durable identifiers and routing state; callers can
     # use the normal run/status/evidence endpoints with their existing grants.
@@ -10916,10 +14405,13 @@ async def executive_ceo_privileged_action(
     result = await request_privileged_action(
         PrivilegedActionRequest(
             action=req.action,
-            actor_id=req.requested_by,
-            actor_role="ceo",
+            # Request-body attribution is retained for API compatibility, but
+            # persisted audit identity must come from the authenticated key.
+            actor_id=principal,
+            actor_role=principal,
             payload=req.payload,
-        )
+        ),
+        request=request,
     )
     safe_result = {
         key: result.get(key)
@@ -10929,7 +14421,7 @@ async def executive_ceo_privileged_action(
     return _executive_action_envelope(
         role="ceo",
         action="request_privileged_action",
-        requested_by=req.requested_by,
+        requested_by=principal,
         authenticated_principal=principal,
         result=safe_result,
         evidence={
@@ -10977,7 +14469,37 @@ async def _enforce_company_dispatch_grants(
     if project_id is None:
         return None
     project = await storage.get_project(project_id)
-    if project is None or not project.get("company_id"):
+    if project is None:
+        raise HTTPException(
+            404,
+            {
+                "code": "PROJECT_NOT_FOUND",
+                "message": "The selected project does not exist",
+                "project_id": str(project_id),
+            },
+        )
+    project_state = str(project.get("state") or "").upper()
+    if project_state not in DISPATCHABLE_PROJECT_STATES:
+        if project_state in TERMINAL_PROJECT_STATES:
+            raise HTTPException(
+                409,
+                {
+                    "code": "PROJECT_TERMINAL",
+                    "message": "Worker Runs cannot be dispatched for a terminal project",
+                    "project_id": str(project_id),
+                    "state": project_state,
+                },
+            )
+        raise HTTPException(
+            409,
+            {
+                "code": "PROJECT_NOT_DISPATCHABLE",
+                "message": "The selected project is not in a dispatchable workflow state",
+                "project_id": str(project_id),
+                "state": project_state or "UNKNOWN",
+            },
+        )
+    if not project.get("company_id"):
         return None
     company_id = UUID(str(project["company_id"]))
     list_assignments = getattr(storage, "list_company_worker_assignments", None)
@@ -11004,6 +14526,14 @@ async def _enforce_company_dispatch_grants(
             {
                 "code": "COMPANY_ASSIGNMENT_REQUIRED",
                 "message": "Worker has no active assignment for this company",
+            },
+        )
+    if bool(assignment.get("approval_required")):
+        raise HTTPException(
+            403,
+            {
+                "code": "COMPANY_ASSIGNMENT_APPROVAL_REQUIRED",
+                "message": "Worker assignment requires approval before dispatch",
             },
         )
     unapproved_tools = sorted(set(tool_grants) - set(assignment.get("tool_grants") or []))
@@ -11116,6 +14646,40 @@ async def _settle_worker_run_budgets(
             )
 
 
+async def _settle_host_queue_run_budgets(storage: Any, summary: Any) -> None:
+    """Settle durable run reservations after host-controller terminal state."""
+
+    list_reservations = getattr(storage, "list_budget_reservations", None)
+    if not inspect.iscoroutinefunction(list_reservations):
+        return
+    try:
+        run_id = UUID(str(summary.run_id))
+        run = await storage.get_worker_run(run_id)
+        reservations = await list_reservations(run_id=run_id, limit=100)
+    except Exception:
+        logger.exception("host_worker_budget_reconciliation_read_failed")
+        return
+    pending: list[tuple[UUID, str]] = []
+    for reservation in reservations:
+        try:
+            if str(reservation.get("state") or "").upper() != "RESERVED":
+                continue
+            pending.append(
+                (UUID(str(reservation["id"])), str(reservation.get("budget_key") or ""))
+            )
+        except (KeyError, TypeError, ValueError):
+            logger.warning("host_worker_budget_reservation_projection_invalid")
+    result_json = (run or {}).get("result_json")
+    usage = result_json.get("usage") if isinstance(result_json, dict) else None
+    actual_cost = usage.get("cost_usd") if isinstance(usage, dict) else None
+    await _settle_worker_run_budgets(
+        storage,
+        pending,
+        state=str(summary.state or "FAILED").upper(),
+        actual_cost_usd=actual_cost,
+    )
+
+
 async def _execute_queued_worker_run(
     *,
     controller: Any,
@@ -11126,6 +14690,7 @@ async def _execute_queued_worker_run(
     model_resolution_snapshot_id: UUID | None,
     lease_seconds: int,
     canonical_run_id: UUID,
+    attempt_count: int,
     budget_reservations: list[tuple[UUID, str]] | None = None,
 ) -> None:
     """Execute one claimed run in an application-owned background task."""
@@ -11139,12 +14704,56 @@ async def _execute_queued_worker_run(
     async def renew_lease() -> None:
         while True:
             await asyncio.sleep(max(5, lease_seconds // 3))
-            refreshed = await storage.heartbeat_worker_run(
-                run_id,
-                owner=owner,
-                lease_seconds=lease_seconds,
-            )
+            try:
+                refreshed = await storage.heartbeat_worker_run(
+                    run_id,
+                    owner=owner,
+                    attempt_count=attempt_count,
+                    lease_seconds=lease_seconds,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning(
+                    "queued_worker_run_heartbeat_failed",
+                    extra={"run_id": str(run_id), "error": type(exc).__name__},
+                )
+                refreshed = None
             if refreshed is None:
+                try:
+                    current = await storage.get_worker_run(run_id)
+                except Exception as exc:
+                    logger.warning(
+                        "queued_worker_run_state_read_after_heartbeat_loss_failed",
+                        extra={"run_id": str(run_id), "error": type(exc).__name__},
+                    )
+                    current = None
+                if current is not None and str(current.get("state") or "") in {
+                    "SUCCEEDED",
+                    "FAILED",
+                    "CANCELLED",
+                    "TIMED_OUT",
+                }:
+                    return
+                from mas_core.worker_contract import WorkerCancellation
+
+                try:
+                    cancellation = WorkerCancellation(
+                        run_id=run_id,
+                        reason="worker run claim or lease is no longer current",
+                        requested_by="worker-run-controller",
+                        force=True,
+                    )
+                    cancellation._execution_claim_fence = {
+                        "claim_owner": owner,
+                        "attempt_count": attempt_count,
+                    }
+                    await adapter.cancel(cancellation)
+                except Exception as exc:
+                    logger.warning(
+                        "queued_worker_run_cancel_after_heartbeat_loss_failed",
+                        extra={"run_id": str(run_id), "error": type(exc).__name__},
+                    )
                 return
 
     try:
@@ -11173,12 +14782,33 @@ async def _execute_queued_worker_run(
         if heartbeat_task is not None:
             heartbeat_task.cancel()
             await asyncio.gather(heartbeat_task, return_exceptions=True)
-        await _settle_worker_run_budgets(
-            storage,
-            budget_reservations or [],
-            state=outcome_state,
-            actual_cost_usd=actual_cost_usd,
-        )
+        try:
+            current = await storage.get_worker_run(run_id)
+        except Exception as exc:
+            logger.warning(
+                "queued_worker_run_budget_settlement_state_unavailable",
+                extra={"run_id": str(run_id), "error": type(exc).__name__},
+            )
+            current = None
+        current_attempt = int((current or {}).get("attempt_count") or 0)
+        current_state = str((current or {}).get("state") or "")
+        if (
+            current is not None
+            and current_attempt == attempt_count
+            and current_state == outcome_state
+            and current_state in {"SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT"}
+        ):
+            await _settle_worker_run_budgets(
+                storage,
+                budget_reservations or [],
+                state=current_state,
+                actual_cost_usd=actual_cost_usd,
+            )
+        elif budget_reservations:
+            logger.warning(
+                "queued_worker_run_budget_settlement_deferred",
+                extra={"run_id": str(run_id), "state": current_state or "UNKNOWN"},
+            )
         current = asyncio.current_task()
         if current is not None:
             app.state.worker_run_tasks.discard(current)
@@ -11186,11 +14816,149 @@ async def _execute_queued_worker_run(
 
 @app.post("/workers/runs", status_code=202)
 async def dispatch_worker_run(req: WorkerRunDispatchRequest) -> dict[str, Any]:
+    return await _dispatch_worker_run(req)
+
+
+def _worker_run_retry_context(req: WorkerRunDispatchRequest) -> dict[str, Any]:
+    """Retain policy inputs needed to re-resolve a later operator retry."""
+    values = req.model_dump(mode="json")
+    retained_fields = (
+        "requested_model_profile",
+        "capability_requirements",
+        "tool_grants",
+        "permission_requirements",
+        "workspace_mode",
+        "timeout_seconds",
+        "budget",
+        "checkpoint_policy",
+        "retry_policy",
+        "runtime_extensions",
+        "model_policy_layers",
+        "worker_required_model_capabilities",
+        "steward_required_model_capabilities",
+        "task_required_model_capabilities",
+        "adapter_required_model_capabilities",
+        "prompt_tokens",
+        "expected_output_tokens",
+        "budget_usd",
+        "model_override_request_id",
+        "model_override_approval_id",
+        "queue_priority",
+        "lease_seconds",
+    )
+    return {field: values.get(field) for field in retained_fields}
+
+
+async def _validate_worker_task_input_schema(
+    storage: AgentStorage,
+    *,
+    worker: Mapping[str, Any],
+    request: WorkerRunDispatchRequest,
+) -> None:
+    """Validate task input against schemas declared by this worker's capabilities.
+
+    Capability schemas are applied only when the task type or an explicit
+    capability requirement selects that worker-owned capability. Missing
+    schemas retain the generic WorkerRun input contract; callers cannot supply
+    their own schema or select a capability the worker does not own.
+    """
+
+    capability_ids = {str(value) for value in worker.get("capability_ids") or []}
+    if not capability_ids:
+        return
+    list_capabilities = getattr(storage, "list_capabilities", None)
+    if not inspect.iscoroutinefunction(list_capabilities):
+        raise HTTPException(
+            503,
+            {
+                "code": "WORKER_CAPABILITY_SCHEMA_UNAVAILABLE",
+                "message": "The selected worker capability input contract cannot be loaded.",
+            },
+        )
+
+    selected_names = {str(request.task_type).strip()}
+    for requirement in request.capability_requirements or []:
+        if hasattr(requirement, "model_dump"):
+            requirement = requirement.model_dump(mode="json")
+        if isinstance(requirement, dict) and requirement.get("name"):
+            selected_names.add(str(requirement["name"]).strip())
+
+    capabilities = await list_capabilities()
+    selected_schemas = [
+        capability.get("input_schema")
+        for capability in capabilities
+        if isinstance(capability, dict)
+        and str(capability.get("id")) in capability_ids
+        and str(capability.get("name") or "").strip() in selected_names
+        and capability.get("input_schema") is not None
+    ]
+    if not selected_schemas:
+        return
+
+    try:
+        from jsonschema.validators import validator_for
+    except ImportError as exc:
+        raise HTTPException(
+            503,
+            {
+                "code": "TASK_INPUT_SCHEMA_VALIDATOR_UNAVAILABLE",
+                "message": "The worker input contract validator is unavailable.",
+            },
+        ) from exc
+
+    def contains_remote_reference(value: Any) -> bool:
+        if isinstance(value, dict):
+            for keyword in ("$ref", "$dynamicRef", "$recursiveRef"):
+                ref = value.get(keyword)
+                if ref is not None and not str(ref).startswith("#"):
+                    return True
+            return any(contains_remote_reference(item) for item in value.values())
+        if isinstance(value, list):
+            return any(contains_remote_reference(item) for item in value)
+        return False
+
+    for schema in selected_schemas:
+        if not isinstance(schema, dict) or contains_remote_reference(schema):
+            raise HTTPException(
+                409,
+                {
+                    "code": "WORKER_TASK_INPUT_SCHEMA_INVALID",
+                    "message": "The selected worker capability has an invalid input schema.",
+                },
+            )
+        try:
+            validator_type = validator_for(schema)
+            validator_type.check_schema(schema)
+            is_valid = validator_type(schema).is_valid(request.task_input)
+        except Exception as exc:
+            raise HTTPException(
+                409,
+                {
+                    "code": "WORKER_TASK_INPUT_SCHEMA_INVALID",
+                    "message": "The selected worker capability has an invalid input schema.",
+                },
+            ) from exc
+        if not is_valid:
+            raise HTTPException(
+                422,
+                {
+                    "code": "WORKER_TASK_INPUT_SCHEMA_MISMATCH",
+                    "message": "Task input does not match the selected worker capability schema.",
+                },
+            )
+
+
+async def _dispatch_worker_run(
+    req: WorkerRunDispatchRequest,
+    *,
+    retry_of_run_id: UUID | None = None,
+    retry_metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     storage = _storage()
     worker = await storage.get_worker(req.worker_id)
     if worker is None:
         raise HTTPException(404, f"Worker {req.worker_id} not found")
-    if worker.get("status") not in {"ACTIVE", "DRAINING"}:
+    if worker.get("status") not in DISPATCHABLE_WORKER_STATUSES:
         raise HTTPException(409, "Worker is not active")
     company_id = await _enforce_company_dispatch_grants(
         storage=storage,
@@ -11199,9 +14967,40 @@ async def dispatch_worker_run(req: WorkerRunDispatchRequest) -> dict[str, Any]:
         tool_grants=req.tool_grants,
         permission_requirements=req.permission_requirements,
     )
-    adapter = await _certified_worker_adapter(storage, worker)
+    await _validate_worker_task_input_schema(storage, worker=worker, request=req)
+    from mas_core.worker_registry.execution_lineage import WorkerExecutionLineageError
+
+    try:
+        adapter = await _certified_worker_adapter(storage, worker)
+    except WorkerExecutionLineageError as exc:
+        raise HTTPException(
+            409,
+            {
+                "code": exc.reason_code.upper(),
+                "message": "The selected certified worker shell has no verifiable runtime configuration.",
+            },
+        ) from exc
     if adapter is None:
         raise HTTPException(409, "Worker has no certified runtime adapter registered with the control plane")
+    adapter_transport = str(getattr(adapter, "runtime_type", "") or "").strip().lower()
+    try:
+        requires_hardened_isolation = worker_requires_hardened_isolation(worker)
+    except WorkerIsolationPolicyError as exc:
+        raise HTTPException(
+            409,
+            {
+                "code": exc.reason_code.upper(),
+                "message": "The worker sandbox policy is invalid and cannot be evaluated safely.",
+            },
+        ) from exc
+    if requires_hardened_isolation and adapter_transport not in HARDENED_SANDBOX_TRANSPORTS:
+        if adapter_transport == "process":
+            code = "WORKER_SANDBOX_PROCESS_TRANSPORT_UNSUPPORTED"
+            message = "A direct process adapter cannot enforce this worker's required isolation."
+        else:
+            code = "WORKER_SANDBOX_TRANSPORT_UNVERIFIED"
+            message = "The worker adapter transport cannot enforce the required sandbox profile."
+        raise HTTPException(409, {"code": code, "message": message})
     from mas_core.worker_contract import CheckpointMode
 
     if (
@@ -11362,6 +15161,26 @@ async def dispatch_worker_run(req: WorkerRunDispatchRequest) -> dict[str, Any]:
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+    retry_context_json = _worker_run_retry_context(req)
+    if retry_metadata:
+        retry_context_json["operator_retry"] = retry_metadata
+    local_host_enabled = getattr(app.state, "local_host_queue_config", None) is not None
+    production_dispatch = os.getenv("MAS_ENVIRONMENT", "development").lower() in {
+        "production",
+        "prod",
+        "staging",
+    }
+    dispatch_mode = req.dispatch_mode or (
+        "queued" if local_host_enabled or production_dispatch else "inline"
+    )
+    if local_host_enabled and dispatch_mode != "queued":
+        raise HTTPException(
+            409,
+            {
+                "code": "LOCAL_HOST_REQUIRES_QUEUED_DISPATCH",
+                "message": "The configured local host queue accepts only host-scheduled queued runs.",
+            },
+        )
     controller = WorkerRunController(storage=storage)
     try:
         budget_reservations = await _reserve_worker_run_budgets(
@@ -11373,7 +15192,6 @@ async def dispatch_worker_run(req: WorkerRunDispatchRequest) -> dict[str, Any]:
         )
     except ValueError as exc:
         raise HTTPException(409, {"code": "BUDGET_EXCEEDED", "message": str(exc)}) from exc
-    dispatch_mode = req.dispatch_mode or ("queued" if os.getenv("MAS_ENVIRONMENT", "development").lower() in {"production", "prod", "staging"} else "inline")
     try:
         if dispatch_mode == "queued":
             queued = await storage.create_worker_run(
@@ -11390,10 +15208,46 @@ async def dispatch_worker_run(req: WorkerRunDispatchRequest) -> dict[str, Any]:
                 adapter_id=worker.get("active_adapter_id"),
                 steward_id=UUID(str((worker.get("adapter_config") or {}).get("steward_id"))) if (worker.get("adapter_config") or {}).get("steward_id") else None,
                 model_resolution_snapshot_id=model_resolution_snapshot_id,
+                retry_of_run_id=retry_of_run_id,
+                retry_context_json=retry_context_json,
                 state="QUEUED",
                 queue_priority=req.queue_priority,
             )
             canonical_run_id = UUID(str(queued["id"]))
+            if canonical_run_id != request.run_id:
+                # Another concurrent request with this idempotency key won
+                # the durable insert.  Budget reservation keys are also
+                # idempotent, so these rows may belong to the canonical
+                # request. Leave them for that execution to settle.
+                state = str(queued.get("state") or "QUEUED")
+                return {
+                    "run_id": str(canonical_run_id),
+                    "state": state,
+                    "dispatch_mode": "replay",
+                    "accepted": {"run_id": str(canonical_run_id), "idempotency_key": req.idempotency_key, "initial_state": state},
+                    "status_url": f"/workers/runs/{canonical_run_id}",
+                    "events_url": f"/workers/runs/{canonical_run_id}/events",
+                }
+            if local_host_enabled:
+                host_runtime = getattr(app.state, "local_host_queue_runtime", None)
+                if host_runtime is not None:
+                    try:
+                        await host_runtime.schedule_run(canonical_run_id)
+                    except Exception as exc:  # noqa: BLE001 - queue loop retries
+                        logger.info(
+                            "local_host_run_initial_placement_deferred",
+                            extra={"run_id": str(canonical_run_id), "error": type(exc).__name__},
+                        )
+                return {
+                    "run_id": str(queued["id"]),
+                    "state": str(queued.get("state") or "QUEUED"),
+                    "dispatch_mode": "queued",
+                    "accepted": {"run_id": str(queued["id"]), "idempotency_key": req.idempotency_key, "initial_state": str(queued.get("state") or "QUEUED")},
+                    "status_url": f"/workers/runs/{queued['id']}",
+                    "events_url": f"/workers/runs/{queued['id']}/events",
+                    "host_binding_url": f"/workers/runs/{queued['id']}/host-binding",
+                    "tool_effects_url": f"/workers/runs/{queued['id']}/tool-effects",
+                }
             claim = await storage.claim_worker_run(
                 owner=f"orchestrator-background:{canonical_run_id}",
                 lease_seconds=req.lease_seconds,
@@ -11410,6 +15264,7 @@ async def dispatch_worker_run(req: WorkerRunDispatchRequest) -> dict[str, Any]:
                         model_resolution_snapshot_id=model_resolution_snapshot_id,
                         lease_seconds=req.lease_seconds,
                         canonical_run_id=canonical_run_id,
+                        attempt_count=int(claim.get("attempt_count") or 0),
                         budget_reservations=budget_reservations,
                     )
                 )
@@ -11430,19 +15285,25 @@ async def dispatch_worker_run(req: WorkerRunDispatchRequest) -> dict[str, Any]:
             adapter_id=worker.get("active_adapter_id"),
             steward_id=UUID(str((worker.get("adapter_config") or {}).get("steward_id"))) if (worker.get("adapter_config") or {}).get("steward_id") else None,
             model_resolution_snapshot_id=model_resolution_snapshot_id,
+            retry_of_run_id=retry_of_run_id,
+            retry_context_json=retry_context_json,
         )
     except BaseException:
         await _settle_worker_run_budgets(storage, budget_reservations, state="FAILED")
         raise
-    await _settle_worker_run_budgets(
-        storage,
-        budget_reservations,
-        state=outcome.state,
-        actual_cost_usd=(outcome.result.usage.cost_usd if outcome.result is not None else None),
-    )
+    # A concurrent idempotent replay returns the already-canonical run ID.
+    # It must not settle reservations owned by the first execution attempt.
+    if outcome.run_id == request.run_id:
+        await _settle_worker_run_budgets(
+            storage,
+            budget_reservations,
+            state=outcome.state,
+            actual_cost_usd=(outcome.result.usage.cost_usd if outcome.result is not None else None),
+        )
     return {
         "run_id": str(outcome.run_id),
         "state": outcome.state,
+        "retry_of_run_id": str(retry_of_run_id) if retry_of_run_id is not None else None,
         "dispatch_mode": "inline",
         "accepted": outcome.accepted.model_dump(mode="json") if outcome.accepted else None,
         "result": outcome.result.model_dump(mode="json") if outcome.result else None,
@@ -11466,15 +15327,128 @@ async def recover_expired_worker_runs(limit: int = Query(default=100, ge=1, le=1
     return {"recovered": len(rows), "runs": [_serialize(row) for row in rows]}
 
 
+@app.get("/workers/host/local/health")
+async def local_host_queue_health(request: Request) -> dict[str, Any]:
+    _require_operator_identity(request)
+    runtime = getattr(request.app.state, "local_host_queue_runtime", None)
+    if runtime is None:
+        return {"enabled": False, "status": "DISABLED"}
+    return runtime.public_status()
+
+
+@app.get("/workers/runs/{run_id}/host-binding")
+async def get_worker_run_host_binding_api(run_id: UUID, request: Request) -> dict[str, Any]:
+    """Expose host placement evidence without WorkerRun/task payloads."""
+
+    _require_operator_identity(request)
+    storage = _storage()
+    run_reader = getattr(storage, "get_worker_run", None)
+    if not inspect.iscoroutinefunction(run_reader):
+        raise HTTPException(503, "worker-run persistence is unavailable")
+    if await run_reader(run_id) is None:
+        raise HTTPException(404, "Worker run not found")
+    from mas_core.worker_registry.run_host_binding import WorkerRunHostBindingService
+
+    binding = await WorkerRunHostBindingService(storage).get(run_id)
+    if binding is None:
+        return {"run_id": str(run_id), "binding_state": "UNBOUND", "host_binding": None}
+    public_fields = (
+        "schema_version",
+        "id",
+        "run_id",
+        "worker_id",
+        "host_uuid",
+        "host_id",
+        "host_plane",
+        "host_status",
+        "reservation_id",
+        "host_lease_generation",
+        "current_host_lease_generation",
+        "state",
+        "reservation_state",
+        "reservation_lease_valid",
+        "current_host_lease_valid",
+        "created_at",
+        "committed_at",
+        "released_at",
+    )
+    return {
+        "run_id": str(run_id),
+        "binding_state": str(binding.get("state") or "UNKNOWN"),
+        "host_binding": _serialize({key: binding.get(key) for key in public_fields}),
+    }
+
+
+@app.get("/workers/runs/{run_id}/tool-effects")
+async def get_worker_run_tool_effects_api(
+    run_id: UUID,
+    request: Request,
+    limit: int = Query(default=100, ge=1, le=1000),
+) -> dict[str, Any]:
+    """Expose durable mediated-effect evidence without request/response data."""
+
+    _require_operator_identity(request)
+    storage = _storage()
+    run_reader = getattr(storage, "get_worker_run", None)
+    if not inspect.iscoroutinefunction(run_reader):
+        raise HTTPException(503, "worker-run persistence is unavailable")
+    if await run_reader(run_id) is None:
+        raise HTTPException(404, "Worker run not found")
+    effects_reader = getattr(storage, "list_worker_tool_effects", None)
+    if not inspect.iscoroutinefunction(effects_reader):
+        raise HTTPException(503, "worker tool-effect evidence is unavailable")
+    try:
+        rows = await effects_reader(run_id, limit=limit)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    fields = (
+        "id",
+        "run_id",
+        "request_id",
+        "tool_name",
+        "request_sha256",
+        "state",
+        "response_success",
+        "created_at",
+        "updated_at",
+        "completed_at",
+    )
+    return {
+        "run_id": str(run_id),
+        "tool_effects": [
+            _serialize({key: row.get(key) for key in fields})
+            for row in rows
+            if isinstance(row, dict)
+        ],
+    }
+
+
 @app.post("/workers/runs/{run_id}/heartbeat")
-async def heartbeat_worker_run(run_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
+async def heartbeat_worker_run(
+    run_id: UUID,
+    payload: dict[str, Any],
+    request: Request,
+) -> dict[str, Any]:
+    # This endpoint extends a durable execution lease. Keep it on the internal
+    # service principal; operator, governance-agent, gateway, and worker keys
+    # are not host/executor credentials and must not be able to renew arbitrary
+    # runs by supplying a discovered run ID and claim tuple.
+    if getattr(request.state, "aiat_auth_principal", None) != "service":
+        raise HTTPException(403, "worker run heartbeat requires the service principal")
     owner = str(payload.get("owner") or "").strip()
     if not owner:
         raise HTTPException(422, "owner is required")
+    attempt_count = payload.get("attempt_count")
+    if isinstance(attempt_count, bool) or not isinstance(attempt_count, int) or attempt_count < 1:
+        raise HTTPException(422, "attempt_count must be a positive integer")
+    lease_seconds = payload.get("lease_seconds", 300)
+    if isinstance(lease_seconds, bool) or not isinstance(lease_seconds, int) or not 1 <= lease_seconds <= 300:
+        raise HTTPException(422, "lease_seconds must be an integer between 1 and 300")
     row = await _storage().heartbeat_worker_run(
         run_id,
         owner=owner,
-        lease_seconds=int(payload.get("lease_seconds") or 300),
+        attempt_count=attempt_count,
+        lease_seconds=lease_seconds,
     )
     if row is None:
         raise HTTPException(409, "run is not owned by this executor or is terminal")
@@ -11489,7 +15463,201 @@ async def get_worker_run_api(run_id: UUID) -> dict[str, Any]:
     row = await storage.get_worker_run(run_id)
     if row is None:
         raise HTTPException(404, "Worker run not found")
-    return _serialize(row)
+    response = _serialize(row)
+    get_retry = getattr(storage, "get_worker_run_retry", None)
+    if inspect.iscoroutinefunction(get_retry):
+        retry = await get_retry(run_id)
+        if retry is not None:
+            response["retry_run_id"] = str(retry["id"])
+            response["retry_run_state"] = str(retry.get("state") or "UNKNOWN")
+    return response
+
+
+@app.post("/workers/runs/{run_id}/retry", status_code=202)
+async def retry_worker_run_api(
+    run_id: UUID,
+    payload: WorkerRunRetryRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _require_operator_identity(request)
+    storage = _storage()
+    if not inspect.iscoroutinefunction(getattr(storage, "get_worker_run", None)):
+        raise HTTPException(503, "worker-run persistence is unavailable")
+    source = await storage.get_worker_run(run_id)
+    if source is None:
+        raise HTTPException(404, "Worker run not found")
+    if str(source.get("state") or "").upper() not in {"FAILED", "TIMED_OUT"}:
+        raise HTTPException(
+            409,
+            {
+                "code": "RUN_NOT_RETRYABLE",
+                "message": "Only FAILED or TIMED_OUT Worker Runs can be retried.",
+            },
+        )
+    worker_id = UUID(str(source["worker_id"]))
+    retry_idempotency_key = f"operator-retry:{run_id}:{payload.idempotency_key}"
+    find_by_key = getattr(storage, "get_worker_run_by_idempotency_key", None)
+    if not inspect.iscoroutinefunction(find_by_key):
+        raise HTTPException(503, "idempotent Worker Run retry persistence is unavailable")
+    existing = await find_by_key(
+        worker_id=worker_id,
+        idempotency_key=retry_idempotency_key,
+    )
+    if existing is not None:
+        if str(existing.get("retry_of_run_id") or "") != str(run_id):
+            raise HTTPException(
+                409,
+                {
+                    "code": "RETRY_IDEMPOTENCY_CONFLICT",
+                    "message": "The retry idempotency key is already used by another Worker Run.",
+                },
+            )
+        return {
+            "run_id": str(existing["id"]),
+            "state": str(existing.get("state") or "UNKNOWN"),
+            "retry_of_run_id": str(run_id),
+            "dispatch_mode": "replay",
+            "status_url": f"/workers/runs/{existing['id']}",
+        }
+    get_retry = getattr(storage, "get_worker_run_retry", None)
+    if inspect.iscoroutinefunction(get_retry):
+        existing_retry = await get_retry(run_id)
+        if existing_retry is not None:
+            raise HTTPException(
+                409,
+                {
+                    "code": "RUN_RETRY_ALREADY_CREATED",
+                    "message": "This Worker Run already has a canonical retry. Open that run to continue recovery.",
+                    "retry_run_id": str(existing_retry["id"]),
+                    "retry_run_state": str(existing_retry.get("state") or "UNKNOWN"),
+                },
+            )
+
+    if any(source.get(field) is not None for field in ("flow_id", "flow_instance_id", "flow_node_execution_id")):
+        raise HTTPException(
+            409,
+            {
+                "code": "RUN_RETRY_REQUIRES_FLOW_CONTROLLER",
+                "message": "Retry this flow task through the project Flow controls so FlowController can update its authoritative Worker Run binding.",
+            },
+        )
+    has_tool_effects = getattr(storage, "has_worker_tool_effects", None)
+    if not inspect.iscoroutinefunction(has_tool_effects):
+        raise HTTPException(503, "durable Worker Run effect inspection is unavailable")
+    if await has_tool_effects(run_id):
+        raise HTTPException(
+            409,
+            {
+                "code": "RUN_RETRY_EFFECTS_REVIEW_REQUIRED",
+                "message": "This run has durable mediated-tool effects. Review and reconcile those effects before creating a new run, to avoid repeating a consequential action.",
+            },
+        )
+
+    source_request = source.get("request_json")
+    if not isinstance(source_request, dict):
+        raise HTTPException(409, "Worker Run request data is unavailable for retry")
+    context = source.get("retry_context_json")
+    if not isinstance(context, dict):
+        context = {}
+    retained_fields = (
+        "requested_model_profile",
+        "capability_requirements",
+        "tool_grants",
+        "permission_requirements",
+        "workspace_mode",
+        "timeout_seconds",
+        "budget",
+        "checkpoint_policy",
+        "retry_policy",
+        "runtime_extensions",
+        "model_policy_layers",
+        "worker_required_model_capabilities",
+        "steward_required_model_capabilities",
+        "task_required_model_capabilities",
+        "adapter_required_model_capabilities",
+        "prompt_tokens",
+        "expected_output_tokens",
+        "budget_usd",
+        "model_override_request_id",
+        "model_override_approval_id",
+        "queue_priority",
+        "lease_seconds",
+    )
+    legacy_budget = source_request.get("budget")
+    legacy_budget = legacy_budget if isinstance(legacy_budget, dict) else {}
+    legacy_values: dict[str, Any] = {
+        "requested_model_profile": source_request.get("requested_model_profile"),
+        "capability_requirements": source_request.get("capability_requirements") or [],
+        "tool_grants": source_request.get("tool_grants") or [],
+        "permission_requirements": source_request.get("permission_requirements") or [],
+        "workspace_mode": source_request.get("workspace_mode") or "isolated",
+        "timeout_seconds": source_request.get("timeout_seconds"),
+        "budget": legacy_budget,
+        "checkpoint_policy": source_request.get("checkpoint_policy") or {},
+        "retry_policy": source_request.get("retry_policy") or {},
+        "runtime_extensions": source_request.get("extensions") or {},
+        "model_policy_layers": [],
+        "worker_required_model_capabilities": [],
+        "steward_required_model_capabilities": [],
+        "task_required_model_capabilities": [],
+        "adapter_required_model_capabilities": [],
+        "prompt_tokens": 0,
+        "expected_output_tokens": 0,
+        "budget_usd": legacy_budget.get("max_cost_usd"),
+        "model_override_request_id": None,
+        "model_override_approval_id": None,
+        "queue_priority": source.get("queue_priority", 0),
+        "lease_seconds": 300,
+    }
+    dispatch_values = {
+        field: context[field] if field in context else legacy_values[field]
+        for field in retained_fields
+    }
+    dispatch_values.update(
+        {
+            "worker_id": str(worker_id),
+            "idempotency_key": retry_idempotency_key,
+            "task_type": str(source.get("task_type") or source_request.get("task_type") or ""),
+            "task_input": source_request.get("task_input") or {},
+            "project_id": str(source["project_id"]) if source.get("project_id") else None,
+            "flow_id": str(source["flow_id"]) if source.get("flow_id") else None,
+            "flow_instance_id": str(source["flow_instance_id"]) if source.get("flow_instance_id") else None,
+            "flow_node_execution_id": source.get("flow_node_execution_id"),
+            "resolved_model_profile": None,
+            # Use the deployment's current dispatch mode; a past runtime mode
+            # is not a policy input and must not override current operations.
+            "dispatch_mode": None,
+        }
+    )
+    try:
+        retry_request = WorkerRunDispatchRequest.model_validate(dispatch_values)
+    except ValueError as exc:
+        raise HTTPException(
+            409,
+            {
+                "code": "RUN_RETRY_CONTEXT_INVALID",
+                "message": "Stored Worker Run inputs are no longer valid for retry.",
+            },
+        ) from exc
+    try:
+        return await _dispatch_worker_run(
+            retry_request,
+            retry_of_run_id=run_id,
+            retry_metadata={
+                "requested_by": "operator",
+                "reason": payload.reason,
+                "source_run_id": str(run_id),
+                "retry_request_key": payload.idempotency_key,
+            },
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            409,
+            {
+                "code": "RUN_RETRY_CONFLICT",
+                "message": "The Worker Run could not be retried because its state changed or persistence rejected the retry.",
+            },
+        ) from exc
 
 
 @app.get("/workers/runs/{run_id}/events")
@@ -11544,24 +15712,42 @@ async def _worker_run_control_adapter(
     if not run.get("adapter_id"):
         raise HTTPException(409, "This Worker Run has no pinned certified adapter")
     worker = await storage.get_worker(UUID(str(run["worker_id"])))
-    adapter = (
-        await _certified_worker_adapter(
-            storage,
-            worker,
-            adapter_id=run["adapter_id"],
-            allow_retired=True,
+    from mas_core.worker_registry.execution_lineage import WorkerExecutionLineageError
+
+    try:
+        adapter = (
+            await _certified_worker_adapter(
+                storage,
+                worker,
+                adapter_id=run["adapter_id"],
+                shell_version_id=run.get("worker_shell_version_id"),
+                allow_retired=True,
+            )
+            if worker is not None
+            else None
         )
-        if worker is not None
-        else None
-    )
+    except WorkerExecutionLineageError as exc:
+        raise HTTPException(
+            409,
+            {
+                "code": exc.reason_code.upper(),
+                "message": "The worker shell pinned to this run has no verifiable runtime configuration.",
+            },
+        ) from exc
     if adapter is None:
         raise HTTPException(409, "No certified adapter is registered for this run")
     return run, adapter
 
 
 @app.post("/workers/runs/{run_id}/pause")
-async def pause_worker_run(run_id: UUID, req: WorkerRunPauseRequest) -> dict[str, Any]:
+async def pause_worker_run(
+    run_id: UUID,
+    req: WorkerRunPauseRequest,
+    request: Request,
+) -> dict[str, Any]:
     """Pause a running worker only when its certified contract supports checkpoints."""
+    _require_operator_identity(request)
+    principal = _authenticated_principal(request)
     storage = _storage()
     _run, adapter = await _worker_run_control_adapter(storage, run_id)
     from mas_core.worker_contract import CheckpointMode, WorkerRunController, WorkerRunError
@@ -11601,7 +15787,7 @@ async def pause_worker_run(run_id: UUID, req: WorkerRunPauseRequest) -> dict[str
             run_id,
             adapter,
             reason=req.reason,
-            requested_by=req.requested_by,
+            requested_by=principal,
         )
     except WorkerRunError as exc:
         raise HTTPException(409, {"code": exc.code, "message": str(exc), "details": exc.details}) from exc
@@ -11611,8 +15797,14 @@ async def pause_worker_run(run_id: UUID, req: WorkerRunPauseRequest) -> dict[str
 
 
 @app.post("/workers/runs/{run_id}/resume")
-async def resume_worker_run(run_id: UUID, req: WorkerRunResumeRequest) -> dict[str, Any]:
+async def resume_worker_run(
+    run_id: UUID,
+    req: WorkerRunResumeRequest,
+    request: Request,
+) -> dict[str, Any]:
     """Resume a paused worker from an optional durable, resumable checkpoint."""
+    _require_operator_identity(request)
+    principal = _authenticated_principal(request)
     storage = _storage()
     _run, adapter = await _worker_run_control_adapter(storage, run_id)
     from mas_core.worker_contract import CheckpointMode, WorkerRunController, WorkerRunError
@@ -11650,7 +15842,7 @@ async def resume_worker_run(run_id: UUID, req: WorkerRunResumeRequest) -> dict[s
         row = await WorkerRunController(storage=storage).resume(
             run_id,
             adapter,
-            requested_by=req.requested_by,
+            requested_by=principal,
             checkpoint_id=req.checkpoint_id,
         )
     except WorkerRunError as exc:
@@ -11661,7 +15853,13 @@ async def resume_worker_run(run_id: UUID, req: WorkerRunResumeRequest) -> dict[s
 
 
 @app.post("/workers/runs/{run_id}/cancel")
-async def cancel_worker_run(run_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
+async def cancel_worker_run(
+    run_id: UUID,
+    req: WorkerRunCancelRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _require_operator_identity(request)
+    principal = _authenticated_principal(request)
     storage = _storage()
     row = await storage.get_worker_run(run_id)
     if row is None:
@@ -11675,10 +15873,11 @@ async def cancel_worker_run(run_id: UUID, payload: dict[str, Any]) -> dict[str, 
                 expected_state=str(row.get("state")),
                 error={
                     "code": "CANCELLED",
-                    "message": str(payload.get("reason") or "operator cancellation"),
+                    "message": req.reason,
                 },
-                actor=str(payload.get("requested_by") or "operator"),
+                actor=principal,
                 reason="cancelled before runtime activation",
+                allow_unfenced_cancel=True,
             )
             if cancelled is None:
                 raise HTTPException(409, "worker run state changed before cancellation")
@@ -11690,20 +15889,39 @@ async def cancel_worker_run(run_id: UUID, payload: dict[str, Any]) -> dict[str, 
             return _serialize(cancelled)
         raise HTTPException(409, "This Worker Run has no pinned certified adapter")
     worker = await storage.get_worker(UUID(str(row["worker_id"])))
-    adapter = (
-        await _certified_worker_adapter(
-            storage,
-            worker,
-            adapter_id=row["adapter_id"],
-            allow_retired=True,
+    from mas_core.worker_registry.execution_lineage import WorkerExecutionLineageError
+
+    try:
+        adapter = (
+            await _certified_worker_adapter(
+                storage,
+                worker,
+                adapter_id=row["adapter_id"],
+                shell_version_id=row.get("worker_shell_version_id"),
+                allow_retired=True,
+            )
+            if worker is not None
+            else None
         )
-        if worker is not None
-        else None
-    )
+    except WorkerExecutionLineageError as exc:
+        raise HTTPException(
+            409,
+            {
+                "code": exc.reason_code.upper(),
+                "message": "The worker shell pinned to this run has no verifiable runtime configuration.",
+            },
+        ) from exc
     if adapter is None:
         raise HTTPException(409, "No certified adapter is registered for this run")
     from mas_core.worker_contract import WorkerRunController
-    row = await WorkerRunController(storage=storage).cancel(run_id, adapter, reason=str(payload.get("reason") or "operator cancellation"), requested_by=str(payload.get("requested_by") or "operator"), force=bool(payload.get("force", False)))
+    row = await WorkerRunController(storage=storage).cancel(
+        run_id,
+        adapter,
+        reason=req.reason,
+        requested_by=principal,
+        force=req.force,
+        allow_unfenced_cancel=True,
+    )
     if row is None:
         raise HTTPException(404, "Worker run not found")
     list_reservations = getattr(storage, "list_budget_reservations", None)
@@ -11728,6 +15946,65 @@ async def list_flow_templates() -> dict[str, Any]:
     return flow_template_catalog()
 
 
+def _is_research_template_definition(definition_json: dict[str, Any] | None) -> bool:
+    metadata = definition_json.get("metadata") if isinstance(definition_json, dict) else None
+    return isinstance(metadata, dict) and metadata.get("template_id") == "research"
+
+
+async def _require_research_template_readiness(definition_json: dict[str, Any]) -> None:
+    """Keep Research Brief activation behind concrete governed task bindings."""
+
+    if not _is_research_template_definition(definition_json):
+        return
+
+    task_nodes = [
+        node
+        for node in definition_json.get("nodes", [])
+        if isinstance(node, dict) and node.get("type") == "task"
+    ]
+    if not task_nodes:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "RESEARCH_TEMPLATE_TASK_REQUIRED",
+                "message": "Research Brief needs at least one task node before activation",
+            },
+        )
+
+    missing: list[dict[str, str]] = []
+    for node in task_nodes:
+        config = node.get("config") if isinstance(node.get("config"), dict) else {}
+        node_id = str(node.get("id") or "")
+        if not str(config.get("worker_id") or "").strip():
+            missing.append({"node_id": node_id, "field": "worker_id"})
+            continue
+        model_mode = str(config.get("model_mode") or "aiat_gateway")
+        if model_mode != "none" and not str(config.get("model_profile_id") or "").strip():
+            missing.append({"node_id": node_id, "field": "model_profile_id"})
+
+    if missing:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "RESEARCH_TEMPLATE_BINDING_REQUIRED",
+                "message": "Bind a governed worker and any required Model Profile to every Research Brief task before activation",
+                "missing_bindings": missing,
+            },
+        )
+
+    readiness = await dry_run_flow(FlowDryRunRequest(definition_json=definition_json))
+    if not readiness.get("valid"):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "RESEARCH_TEMPLATE_NOT_READY",
+                "message": "Research Brief task bindings must pass governed worker and Model Profile readiness checks before activation",
+                "errors": readiness.get("errors", []),
+                "warnings": readiness.get("warnings", []),
+            },
+        )
+
+
 @app.post("/flows", status_code=201)
 async def create_flow(req: CreateFlowRequest) -> dict[str, Any]:
     """Create a new flow definition."""
@@ -11737,6 +16014,9 @@ async def create_flow(req: CreateFlowRequest) -> dict[str, Any]:
         definition = parse_flow_definition(req.definition_json)
     except FlowValidationError as e:
         raise HTTPException(400, f"Invalid flow definition: {e}")
+
+    if req.is_active:
+        await _require_research_template_readiness(req.definition_json)
 
     errors = validate_flow(definition)
     if errors:
@@ -12070,7 +16350,7 @@ async def dry_run_flow(req: FlowDryRunRequest) -> dict[str, Any]:
             continue
         worker_status = str(worker.get("status") or "")
         check["checks"]["worker_status"] = worker_status
-        if worker_status not in {"ACTIVE", "DRAINING"}:
+        if worker_status not in DISPATCHABLE_WORKER_STATUSES:
             check["ready"] = False
             errors.append({"code": "WORKER_NOT_ACTIVE", "node_id": node.id, "worker_id": policy.worker_id, "message": f"Worker is {worker_status or 'not active'}"})
 
@@ -12227,13 +16507,22 @@ async def create_flow_instance(req: CreateFlowInstanceRequest) -> dict[str, Any]
     if existing is not None:
         raise HTTPException(409, f"Project {req.project_id} already has an active flow instance")
 
-    instance = await storage.create_flow_instance(
-        flow_id=req.flow_id,
-        flow_version=flow["version"],
-        project_id=req.project_id,
-        task_id=req.task_id,
-        department_id=req.department_id,
-    )
+    try:
+        instance = await storage.create_flow_instance(
+            flow_id=req.flow_id,
+            flow_version=flow["version"],
+            project_id=req.project_id,
+            task_id=req.task_id,
+            department_id=req.department_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            409,
+            detail={
+                "code": "FLOW_PROJECT_CHANGED",
+                "message": "The project changed before the flow could be attached; reload and retry.",
+            },
+        ) from exc
 
     if project is not None:
         await storage.transition_project(
@@ -12311,6 +16600,7 @@ async def publish_flow(flow_id: UUID) -> dict[str, Any]:
     flow = await storage.get_flow(flow_id)
     if flow is None:
         raise HTTPException(404, f"Flow {flow_id} not found")
+    await _require_research_template_readiness(dict(flow.get("definition_json") or {}))
     published = await storage.update_flow(flow_id, is_active=True)
     if published is None:
         raise HTTPException(404, f"Flow {flow_id} not found")
@@ -12350,6 +16640,23 @@ async def update_flow(flow_id: UUID, req: UpdateFlowRequest) -> dict[str, Any]:
         definition_payload.setdefault("schema_version", definition.schema_version)
 
     storage = _storage()
+    existing_flow = None
+    if req.is_active is True or _is_research_template_definition(definition_payload):
+        existing_flow = await storage.get_flow(flow_id)
+        if existing_flow is None:
+            raise HTTPException(404, f"Flow {flow_id} not found")
+
+    effective_definition = definition_payload
+    if effective_definition is None and existing_flow is not None:
+        effective_definition = dict(existing_flow.get("definition_json") or {})
+    effective_active = (
+        req.is_active
+        if req.is_active is not None
+        else bool(existing_flow and existing_flow.get("is_active"))
+    )
+    if effective_active and _is_research_template_definition(effective_definition):
+        await _require_research_template_readiness(dict(effective_definition or {}))
+
     if req.definition_json is not None and inspect.iscoroutinefunction(getattr(storage, "list_flow_instances", None)):
         instances = await storage.list_flow_instances(flow_id=flow_id, limit=1000, offset=0)
         if any(instance.get("status") in {"COMPLETED", "FAILED", "CANCELLED"} for instance in instances):
@@ -12419,32 +16726,37 @@ async def flow_instance_action(instance_id: UUID, req: FlowInstanceActionRequest
     if instance is None:
         raise HTTPException(404, f"Flow instance {instance_id} not found")
 
+    # Starting or resuming a flow is new project work. Keep that authority
+    # bound to a live, nonterminal project; cancellation remains available as
+    # a safety action if legacy state left a flow active after project closure.
+    if req.action in {"start", "pause", "resume"}:
+        await _require_nonterminal_flow_project(storage, instance)
+
     flow = await storage.get_flow(instance["flow_id"])
     if flow is None:
         raise HTTPException(404, f"Flow {instance['flow_id']} not found")
 
     current_status = instance["status"]
-    active_node_ids = list(instance.get("active_node_ids") or [])
     context = dict(instance.get("context_json") or {})
 
-    async def _activate_node(node_id: str) -> None:
+    def _node_activation(node_id: str) -> dict[str, Any] | None:
         active_node = definition.get_node(node_id)
         if active_node is None:
-            return
-        await storage.create_flow_node_execution(
-            instance_id=instance_id,
-            node_id=active_node.id,
-            node_type=active_node.type.value,
-            node_label=active_node.label,
-            input_json=context,
-        )
+            return None
+        activation = {
+            "node_id": active_node.id,
+            "node_type": active_node.type.value,
+            "node_label": active_node.label,
+            "status": "RUNNING",
+            "input_json": context,
+        }
         if active_node.type == FlowNodeType.APPROVAL:
-            await storage.create_approval_gate(
-                project_id=instance["project_id"],
-                gate_type=active_node.config.get("approver_role")
+            activation["gate_type"] = (
+                active_node.config.get("approver_role")
                 or active_node.config.get("approver_user")
-                or active_node.label,
+                or active_node.label
             )
+        return activation
 
     if req.action == "start":
         if current_status != "NOT_STARTED":
@@ -12458,27 +16770,33 @@ async def flow_instance_action(instance_id: UUID, req: FlowInstanceActionRequest
             raise HTTPException(400, "Flow has no start node")
 
         now = datetime.now(tz=UTC)
-        await storage.update_flow_instance(
-            instance_id,
-            status="RUNNING",
-            active_node_ids=[start_nodes[0].id],
-            started_at=now,
+        start_node = start_nodes[0]
+        activation = _node_activation(start_node.id)
+        if activation is None:
+            raise HTTPException(503, "Flow start node could not be activated")
+        started_instance = await _transition_flow_instance(
+            storage,
+            instance,
+            expected_statuses={"NOT_STARTED"},
+            instance_updates={
+                "status": "RUNNING",
+                "active_node_ids": [start_node.id],
+                "started_at": now,
+            },
+            activations=[activation],
         )
-
-        await _activate_node(start_nodes[0].id)
-        started_instance = await storage.get_flow_instance(instance_id)
-        if started_instance is None:
-            raise HTTPException(404, f"Flow instance {instance_id} not found")
         return _serialize(started_instance)
 
     elif req.action == "pause":
         if current_status != "RUNNING":
             raise HTTPException(409, f"Instance is not RUNNING (current: {current_status})")
 
-        await storage.update_flow_instance(instance_id, status="PAUSED")
-        paused_instance = await storage.get_flow_instance(instance_id)
-        if paused_instance is None:
-            raise HTTPException(404, f"Flow instance {instance_id} not found")
+        paused_instance = await _transition_flow_instance(
+            storage,
+            instance,
+            expected_statuses={"RUNNING"},
+            instance_updates={"status": "PAUSED"},
+        )
         return _serialize(paused_instance)
 
     elif req.action == "resume":
@@ -12487,10 +16805,12 @@ async def flow_instance_action(instance_id: UUID, req: FlowInstanceActionRequest
                 409, f"Instance is not PAUSED or WAITING_APPROVAL (current: {current_status})"
             )
 
-        await storage.update_flow_instance(instance_id, status="RUNNING")
-        resumed_instance = await storage.get_flow_instance(instance_id)
-        if resumed_instance is None:
-            raise HTTPException(404, f"Flow instance {instance_id} not found")
+        resumed_instance = await _transition_flow_instance(
+            storage,
+            instance,
+            expected_statuses={"PAUSED", "WAITING_APPROVAL"},
+            instance_updates={"status": "RUNNING"},
+        )
         return _serialize(resumed_instance)
 
     elif req.action == "cancel":
@@ -12501,23 +16821,466 @@ async def flow_instance_action(instance_id: UUID, req: FlowInstanceActionRequest
         # active node can be resumed or mistaken for work still in flight.
         # Node-execution history remains available for the explicit retry
         # boundary, which supersedes prior attempts instead of deleting them.
-        await storage.update_flow_instance(
+        cancel = getattr(storage, "cancel_flow_instance", None)
+        if not inspect.iscoroutinefunction(cancel):
+            raise HTTPException(503, "Flow cancellation requires durable approval cleanup")
+        cancellation = await cancel(
             instance_id,
-            status="CANCELLED",
-            active_node_ids=[],
-            completed_at=datetime.now(tz=UTC),
+            expected_instance_snapshot=_flow_instance_snapshot(instance),
+            decided_by="system:flow_instance_cancel",
         )
-        cancelled_instance = await storage.get_flow_instance(instance_id)
-        if cancelled_instance is None:
+        if cancellation.get("outcome") == "not_found":
             raise HTTPException(404, f"Flow instance {instance_id} not found")
-        return _serialize(cancelled_instance)
+        if cancellation.get("outcome") == "legacy_gate_unresolved":
+            raise HTTPException(
+                409,
+                detail={
+                    "code": "LEGACY_FLOW_APPROVAL_GATE_UNRESOLVED",
+                    "message": "A pending legacy approval gate cannot be safely bound to this flow; resolve the exact project decision before cancelling.",
+                },
+            )
+        if cancellation.get("outcome") != "applied":
+            raise HTTPException(
+                409,
+                detail={
+                    "code": "FLOW_INSTANCE_CHANGED",
+                    "message": "The flow changed before cancellation; reload and retry.",
+                },
+            )
+        return _serialize(cancellation["instance"])
 
     else:
         raise HTTPException(400, f"Unknown action: {req.action}")
 
 
+def _flow_approval_status_and_value(decision: str) -> tuple[str, str]:
+    """Normalize the supported approval decision into gate and flow values."""
+    normalized = decision.strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "approve": ("APPROVED", "approved"),
+        "approved": ("APPROVED", "approved"),
+        "reject": ("REJECTED", "rejected"),
+        "rejected": ("REJECTED", "rejected"),
+        "edit": ("EDITS", "edit_requested"),
+        "edits": ("EDITS", "edit_requested"),
+        "edit_requested": ("EDITS", "edit_requested"),
+        "cancel": ("CANCELLED", "cancelled"),
+        "cancelled": ("CANCELLED", "cancelled"),
+        "canceled": ("CANCELLED", "cancelled"),
+    }
+    result = aliases.get(normalized)
+    if result is None:
+        raise HTTPException(422, "Approval decision must be approved, rejected, edit_requested, or cancelled")
+    return result
+
+
+def _flow_instance_snapshot(instance: dict[str, Any]) -> dict[str, Any]:
+    """Return the durable fields used to guard a precomputed flow transition."""
+    fields = (
+        "id",
+        "project_id",
+        "flow_id",
+        "flow_version",
+        "status",
+        "active_node_ids",
+        "context_json",
+        "updated_at",
+        "retry_count",
+    )
+    return {key: instance[key] for key in fields if key in instance}
+
+
+def _flow_node_execution_snapshot(execution: Mapping[str, Any]) -> dict[str, Any]:
+    """Bind a settlement to the exact durable active node attempt."""
+    required = ("id", "instance_id", "node_id", "status")
+    if any(key not in execution for key in required):
+        raise HTTPException(409, "Active flow node execution has an invalid snapshot")
+    fields = (
+        "id",
+        "instance_id",
+        "node_id",
+        "node_type",
+        "status",
+        "input_json",
+        "output_json",
+        "error",
+        "retry_count",
+        "started_at",
+        "completed_at",
+    )
+    return {key: execution[key] for key in fields if key in execution}
+
+
+async def _require_nonterminal_flow_project(
+    storage: AgentStorage,
+    instance: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    """Resolve and validate the canonical project before mutating its flow."""
+
+    raw_project_id = instance.get("project_id")
+    try:
+        project_id = UUID(str(raw_project_id))
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise HTTPException(
+            409,
+            detail={
+                "code": "FLOW_PROJECT_BINDING_INVALID",
+                "message": "Flow mutations require a valid persisted project binding.",
+            },
+        ) from exc
+
+    project = await storage.get_project(project_id)
+    if project is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+    if not isinstance(project, Mapping):
+        raise HTTPException(
+            503,
+            detail={
+                "code": "FLOW_PROJECT_STATE_UNAVAILABLE",
+                "message": "The flow's authoritative project state could not be verified.",
+            },
+        )
+    if str(project.get("id")) != str(project_id):
+        raise HTTPException(
+            409,
+            detail={
+                "code": "FLOW_PROJECT_BINDING_MISMATCH",
+                "message": "The flow's project binding does not match the persisted project.",
+            },
+        )
+
+    raw_state = str(project.get("state") or "").upper()
+    try:
+        state = ProjectState(raw_state)
+    except ValueError as exc:
+        raise HTTPException(
+            503,
+            detail={
+                "code": "FLOW_PROJECT_STATE_UNAVAILABLE",
+                "message": "The flow's authoritative project state is invalid.",
+            },
+        ) from exc
+    if state.value in TERMINAL_PROJECT_STATES:
+        raise HTTPException(
+            409,
+            detail={
+                "code": "PROJECT_TERMINAL",
+                "message": "Flow execution cannot change for a terminal project.",
+                "project_id": str(project_id),
+                "state": state.value,
+            },
+        )
+    return project
+
+
+async def _transition_flow_instance(
+    storage: AgentStorage,
+    instance: Mapping[str, Any],
+    *,
+    expected_statuses: set[str],
+    instance_updates: dict[str, Any],
+    activations: list[dict[str, Any]] | None = None,
+    execution_updates: list[dict[str, Any]] | None = None,
+    project_event: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """CAS a flow status and its node executions in one storage transaction."""
+
+    transition = getattr(storage, "activate_flow_nodes", None)
+    if not inspect.iscoroutinefunction(transition):
+        raise HTTPException(503, "Flow status transitions require durable compare-and-set storage")
+    instance_id = UUID(str(instance["id"]))
+    result = await transition(
+        instance_id,
+        expected_statuses=expected_statuses,
+        expected_active_node_ids=[str(value) for value in (instance.get("active_node_ids") or [])],
+        expected_instance_snapshot=_flow_instance_snapshot(dict(instance)),
+        instance_updates=instance_updates,
+        activations=activations or [],
+        execution_updates=execution_updates,
+        project_event=project_event,
+    )
+    outcome = result.get("outcome")
+    if outcome == "not_found":
+        raise HTTPException(404, f"Flow instance {instance_id} not found")
+    if outcome == "project_terminal":
+        raise HTTPException(
+            409,
+            detail={
+                "code": "PROJECT_TERMINAL",
+                "message": "Flow execution cannot change for a terminal project.",
+            },
+        )
+    if outcome in {"project_not_found", "project_state_unavailable"}:
+        raise HTTPException(
+            409,
+            detail={
+                "code": "FLOW_PROJECT_STATE_UNAVAILABLE",
+                "message": "The flow's authoritative project state could not be verified.",
+            },
+        )
+    if outcome in {"project_not_dispatchable"}:
+        raise HTTPException(
+            409,
+            detail={
+                "code": "PROJECT_NOT_DISPATCHABLE",
+                "message": "The selected project is not in a dispatchable workflow state.",
+            },
+        )
+    if outcome != "applied":
+        raise HTTPException(
+            409,
+            detail={
+                "code": "FLOW_INSTANCE_CHANGED",
+                "message": "The flow changed before this action; reload and retry.",
+            },
+        )
+    updated = result.get("instance")
+    if not isinstance(updated, dict):
+        raise HTTPException(503, "Flow status transition could not be read back")
+    return updated
+
+
+async def _resolve_bound_flow_approval(
+    gate: dict[str, Any],
+    *,
+    project_id: UUID,
+    actor_id: str,
+    gate_status: str,
+    flow_decision: str,
+    justification: str | None = None,
+    human_input: dict[str, Any] | None = None,
+    output: dict[str, Any] | None = None,
+    expected_instance_id: UUID | None = None,
+) -> dict[str, Any]:
+    """Close one exact flow gate and durably advance its bound node execution."""
+    from datetime import UTC, datetime
+
+    from mas_core.workflow import FlowNodeType, get_next_nodes, parse_flow_definition
+
+    storage = _storage()
+    gate_id = gate.get("id")
+    if gate_id is None or gate.get("project_id") != project_id:
+        raise HTTPException(404, "Approval gate not found for this project")
+    execution_id = gate.get("flow_node_execution_id")
+    if execution_id is None:
+        raise HTTPException(409, "Approval gate is not bound to a flow node execution")
+
+    execution = await storage.get_flow_node_execution(int(execution_id))
+    if execution is None:
+        raise HTTPException(409, "Approval gate flow execution is no longer available")
+    instance_id = execution.get("instance_id")
+    if expected_instance_id is not None and instance_id != expected_instance_id:
+        raise HTTPException(409, "Approval gate is bound to a different flow instance")
+    instance = await storage.get_flow_instance(instance_id)
+    if instance is None or instance.get("project_id") != project_id:
+        raise HTTPException(409, "Approval gate flow instance does not belong to this project")
+    await _require_nonterminal_flow_project(storage, instance)
+    flow = await storage.get_flow(instance["flow_id"])
+    if flow is None:
+        raise HTTPException(404, f"Flow {instance['flow_id']} not found")
+
+    definition = parse_flow_definition(flow["definition_json"])
+    node_id = str(execution.get("node_id") or "")
+    node = definition.get_node(node_id)
+    if (
+        node is None
+        or node.type != FlowNodeType.APPROVAL
+        or execution.get("node_type") != FlowNodeType.APPROVAL.value
+    ):
+        raise HTTPException(409, "Approval gate is not bound to an approval node")
+
+    now = datetime.now(tz=UTC)
+    current_context = dict(instance.get("context_json") or {})
+    updated_context = dict(current_context)
+    if output:
+        updated_context.update(output)
+    updated_context["approval"] = flow_decision
+    updated_context["last_approval_decision"] = flow_decision
+    updated_context["last_safe_node_id"] = node_id
+
+    all_executions = await storage.list_flow_node_executions(
+        instance_id=instance_id,
+        limit=1000,
+    )
+    historically_completed = {
+        str(item["node_id"])
+        for item in all_executions
+        if str(item.get("status", "")).upper() == "COMPLETED"
+    }
+    historically_completed.add(node_id)
+    active_node_ids = list(instance.get("active_node_ids") or [])
+    already_active = set(active_node_ids) - {node_id}
+    traversal = get_next_nodes(
+        definition,
+        historically_completed,
+        set(),
+        context=updated_context,
+    )
+    new_nodes = [
+        candidate
+        for candidate in traversal.node_ids
+        if candidate not in historically_completed and candidate not in already_active
+    ]
+    if (
+        flow_decision != "cancelled"
+        and not new_nodes
+        and traversal.is_blocked
+        and not already_active
+    ):
+        raise HTTPException(
+            409,
+            "Approval decision has no matching next flow node; the gate remains pending",
+        )
+
+    next_status = "RUNNING"
+    next_active = list(already_active)
+    completed_at: datetime | None = None
+    activated_executions: list[dict[str, Any]] = []
+    if flow_decision == "cancelled":
+        next_status = "CANCELLED"
+        next_active = []
+        completed_at = now
+    elif not new_nodes and not traversal.is_blocked:
+        end_nodes = definition.get_end_nodes()
+        all_ends_done = all(end.id in historically_completed for end in end_nodes)
+        if not already_active and all_ends_done:
+            next_status = "COMPLETED"
+            next_active = []
+            completed_at = now
+    else:
+        next_nodes = [definition.get_node(candidate) for candidate in new_nodes]
+        if next_nodes and all(
+            candidate is not None and candidate.type == FlowNodeType.END
+            for candidate in next_nodes
+        ):
+            next_status = (
+                "FAILED"
+                if any(
+                    candidate is not None
+                    and ("fail" in candidate.label.lower() or "fail" in candidate.id.lower())
+                    for candidate in next_nodes
+                )
+                else "COMPLETED"
+            )
+            next_active = []
+            completed_at = now
+            for candidate in next_nodes:
+                if candidate is None:
+                    continue
+                activated_executions.append(
+                    {
+                        "node_id": candidate.id,
+                        "node_type": candidate.type.value,
+                        "node_label": candidate.label,
+                        "status": "COMPLETED" if next_status == "COMPLETED" else "FAILED",
+                        "input_json": updated_context,
+                        "output_json": updated_context,
+                        "error": "Reached failed terminal node"
+                        if next_status == "FAILED"
+                        else None,
+                    }
+                )
+        else:
+            next_active = list(already_active | set(new_nodes))
+            for candidate in next_nodes:
+                if candidate is None:
+                    continue
+                entry = {
+                    "node_id": candidate.id,
+                    "node_type": candidate.type.value,
+                    "node_label": candidate.label,
+                    "status": "RUNNING",
+                    "input_json": updated_context,
+                }
+                if candidate.type == FlowNodeType.APPROVAL:
+                    entry["gate_type"] = (
+                        candidate.config.get("approver_role")
+                        or candidate.config.get("approver_user")
+                        or candidate.label
+                    )
+                activated_executions.append(entry)
+
+    execution_output = dict(output or updated_context)
+    execution_output.update(
+        {
+            "approval": flow_decision,
+            "last_approval_decision": flow_decision,
+        }
+    )
+    result = await storage.resolve_flow_approval_gate(
+        gate_id,
+        project_id=project_id,
+        instance_id=instance_id,
+        execution_id=int(execution_id),
+        node_id=node_id,
+        status=gate_status,
+        decided_by=actor_id,
+        justification=justification,
+        human_input=human_input,
+        execution_output=execution_output,
+        instance_updates={
+            "status": next_status,
+            "active_node_ids": next_active,
+            "context_json": updated_context,
+            "completed_at": completed_at,
+        },
+        activated_executions=activated_executions,
+        expected_instance_snapshot=_flow_instance_snapshot(instance),
+    )
+    if result.get("outcome") == "not_found":
+        raise HTTPException(404, "Approval gate not found for this project")
+    if result.get("outcome") == "stale_instance":
+        raise HTTPException(
+            409,
+            detail={
+                "code": "FLOW_INSTANCE_CHANGED",
+                "message": "The flow changed while this approval was being resolved; reload and retry.",
+            },
+        )
+    if result.get("outcome") not in {"applied", "already_applied"}:
+        raise HTTPException(409, "Approval gate or bound flow execution is no longer active")
+
+    resolved_instance = result.get("instance")
+    if resolved_instance is None:
+        raise HTTPException(503, "Resolved flow instance could not be reloaded")
+
+    # A process may stop after the atomic transition and before dispatching a
+    # newly activated worker. Replaying this exact gate decision re-enters the
+    # existing idempotent WorkerRun dispatch path for still-active task nodes.
+    resolved_active = set(resolved_instance.get("active_node_ids") or [])
+    for activated_id in result.get("activated_node_ids") or []:
+        if activated_id not in resolved_active:
+            continue
+        activated_node = definition.get_node(activated_id)
+        if (
+            activated_node is not None
+            and activated_node.type == FlowNodeType.TASK
+            and activated_node.config.get("worker_id")
+        ):
+            await _apply_flow_node_action(
+                instance_id,
+                FlowNodeActionRequest(node_id=activated_id, action="advance"),
+            )
+            resolved_instance = await storage.get_flow_instance(instance_id) or resolved_instance
+    return _serialize(resolved_instance)
+
+
 @app.post("/flows/instances/{instance_id}/node-action")
-async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dict[str, Any]:
+async def flow_node_action(
+    instance_id: UUID,
+    req: FlowNodeActionRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Perform a flow action, enforcing operator identity for approvals."""
+    return await _apply_flow_node_action(instance_id, req, request=request)
+
+
+async def _apply_flow_node_action(
+    instance_id: UUID,
+    req: FlowNodeActionRequest,
+    *,
+    request: Request | None = None,
+) -> dict[str, Any]:
     """Perform an action on a node within a flow instance."""
     from datetime import UTC, datetime
 
@@ -12528,10 +17291,7 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
     if instance is None:
         raise HTTPException(404, f"Flow instance {instance_id} not found")
 
-    if instance["status"] not in ("RUNNING", "WAITING_APPROVAL"):
-        raise HTTPException(
-            409, f"Instance is not RUNNING or WAITING_APPROVAL (current: {instance['status']})"
-        )
+    await _require_nonterminal_flow_project(storage, instance)
 
     flow = await storage.get_flow(instance["flow_id"])
     if flow is None:
@@ -12544,6 +17304,76 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
 
     active_node_ids = list(instance.get("active_node_ids") or [])
     current_context = dict(instance.get("context_json") or {})
+
+    if node.type == FlowNodeType.APPROVAL:
+        if request is not None:
+            _require_operator_identity(request)
+            if req.action != "complete":
+                raise HTTPException(
+                    400,
+                    "Approval nodes can only be completed by an operator decision",
+                )
+        elif req.decision is not None or req.approved is not None:
+            raise HTTPException(
+                409,
+                "Internal flow actions cannot submit an approval decision",
+            )
+
+        if req.decision is not None or req.approved is not None:
+            raw_decision = req.decision
+            if raw_decision is None:
+                raw_decision = "approved" if req.approved else "rejected"
+            gate_status, flow_decision = _flow_approval_status_and_value(raw_decision)
+            executions = await storage.list_flow_node_executions(
+                instance_id=instance_id,
+                node_id=req.node_id,
+                limit=1000,
+            )
+            active_execution = next(
+                (
+                    execution
+                    for execution in reversed(executions)
+                    if execution.get("node_type") == FlowNodeType.APPROVAL.value
+                    and str(execution.get("status", "")).upper() == "RUNNING"
+                ),
+                None,
+            )
+            if active_execution is None:
+                active_execution = next(
+                    (
+                        execution
+                        for execution in reversed(executions)
+                        if execution.get("node_type") == FlowNodeType.APPROVAL.value
+                    ),
+                    None,
+                )
+            if active_execution is None:
+                raise HTTPException(409, "Approval node has no durable execution to decide")
+            gate = await storage.get_approval_gate_for_flow_execution(
+                int(active_execution["id"])
+            )
+            if gate is None:
+                raise HTTPException(409, "Approval execution has no bound approval gate")
+            return await _resolve_bound_flow_approval(
+                gate,
+                project_id=instance["project_id"],
+                actor_id=(
+                    _authenticated_principal(request)
+                    if request is not None
+                    else "system"
+                ),
+                gate_status=gate_status,
+                flow_decision=flow_decision,
+                justification=(req.output or {}).get("comments"),
+                human_input=(req.output or {}).get("edits"),
+                output=req.output,
+                expected_instance_id=instance_id,
+            )
+
+    if instance["status"] not in ("RUNNING", "WAITING_APPROVAL"):
+        raise HTTPException(
+            409, f"Instance is not RUNNING or WAITING_APPROVAL (current: {instance['status']})"
+        )
     if req.node_id not in active_node_ids:
         raise HTTPException(409, f"Node {req.node_id} is not currently active")
 
@@ -12555,24 +17385,30 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
             raise HTTPException(404, f"Flow instance {instance_id} not found")
         return refreshed_instance
 
-    async def _activate_node(node_id: str, context_json: dict[str, Any]) -> None:
+    def _node_activation(
+        node_id: str, context_json: dict[str, Any]
+    ) -> dict[str, Any] | None:
         next_node = definition.get_node(node_id)
         if next_node is None:
-            return
-        await storage.create_flow_node_execution(
-            instance_id=instance_id,
-            node_id=node_id,
-            node_type=next_node.type.value,
-            node_label=next_node.label,
-            input_json=context_json,
-        )
+            return None
+        activation: dict[str, Any] = {
+            "node_id": node_id,
+            "node_type": next_node.type.value,
+            "node_label": next_node.label,
+            "status": "RUNNING",
+            "input_json": context_json,
+        }
         if next_node.type == FlowNodeType.APPROVAL:
-            await storage.create_approval_gate(
-                project_id=instance["project_id"],
-                gate_type=next_node.config.get("approver_role")
+            activation["gate_type"] = (
+                next_node.config.get("approver_role")
                 or next_node.config.get("approver_user")
-                or next_node.label,
             )
+            if activation["gate_type"] is None:
+                activation["gate_type"] = next_node.label
+        return activation
+
+    authoritative_task_output: dict[str, Any] | None = None
+    active_execution: Mapping[str, Any] | None = None
 
     # Task nodes are completed only by a terminal Worker Run.  ``advance`` is
     # the sole operator/API action for a task: it creates the run from the
@@ -12589,6 +17425,7 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
         execution = executions[-1] if executions else None
         if execution is None:
             raise HTTPException(409, "Task node has no running execution to dispatch or settle")
+        active_execution = execution
 
         if req.action == "advance":
             from mas_core.workflow.worker_policy import TaskNodePolicy
@@ -12611,10 +17448,14 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
                     worker_id=worker_id,
                     idempotency_key=f"flow:{instance_id}:node-execution:{execution['id']}",
                     task_type=policy.task_type or policy.action or node.id,
-                    task_input={
-                        "flow_context": current_context,
-                        "flow_node": {"id": node.id, "label": node.label},
-                    },
+                    task_input=(
+                        dict(policy.task_input)
+                        if policy.task_input is not None
+                        else {
+                            "flow_context": current_context,
+                            "flow_node": {"id": node.id, "label": node.label},
+                        }
+                    ),
                     project_id=instance["project_id"],
                     flow_id=instance["flow_id"],
                     flow_instance_id=instance_id,
@@ -12647,7 +17488,7 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
                 output = result.get("output")
                 normalized_output = output if isinstance(output, dict) else {"worker_output": output}
                 normalized_output["worker_run_id"] = dispatch["run_id"]
-                return await flow_node_action(
+                return await _apply_flow_node_action(
                     instance_id,
                     FlowNodeActionRequest(
                         node_id=req.node_id,
@@ -12670,11 +17511,15 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
                     state=dispatch_state,
                     dispatch_mode=dispatch.get("dispatch_mode"),
                 )
-                await storage.update_flow_instance(
-                    instance_id,
-                    status="RUNNING",
-                    active_node_ids=active_node_ids,
-                    context_json=pending_context,
+                await _transition_flow_instance(
+                    storage,
+                    instance,
+                    expected_statuses={"RUNNING", "WAITING_APPROVAL"},
+                    instance_updates={
+                        "status": "RUNNING",
+                        "active_node_ids": active_node_ids,
+                        "context_json": pending_context,
+                    },
                 )
                 return _serialize(await _get_refreshed_instance())
             if dispatch_class == "unknown":
@@ -12683,7 +17528,7 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
                     f"Worker Run returned unknown non-terminal state {dispatch_state or '<missing>'}; flow task remains unresolved",
                 )
             error = (result.get("error") or {}).get("message") or f"Worker Run ended {dispatch_state}"
-            return await flow_node_action(
+            return await _apply_flow_node_action(
                 instance_id,
                 FlowNodeActionRequest(
                     node_id=req.node_id,
@@ -12705,6 +17550,9 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
             or worker_run.get("flow_node_execution_id") != execution["id"]
         ):
             raise HTTPException(409, "Worker Run is not bound to this active flow node execution")
+        expected_worker_id = str(node.config.get("worker_id") or "").strip().lower()
+        if str(worker_run.get("worker_id") or "").strip().lower() != expected_worker_id:
+            raise HTTPException(409, "Worker Run is not bound to this task's governed worker")
         expected_run_states = {
             "complete": frozenset({"SUCCEEDED"}),
             # Cancellation is a terminal non-success outcome and therefore
@@ -12718,11 +17566,62 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
                 409,
                 f"Task node action {req.action} requires Worker Run state in {sorted(expected_run_states)}",
             )
+        if req.action == "complete":
+            persisted_result = worker_run.get("result_json")
+            if (
+                not isinstance(persisted_result, dict)
+                or persisted_result.get("success") is not True
+                or str(persisted_result.get("run_id") or "").strip().lower()
+                != str(req.worker_run_id).lower()
+                or str(persisted_result.get("worker_id") or "").strip().lower()
+                != expected_worker_id
+            ):
+                raise HTTPException(
+                    409,
+                    "Worker Run has no matching successful persisted result",
+                )
+            persisted_output = persisted_result.get("output")
+            authoritative_task_output = (
+                dict(persisted_output)
+                if isinstance(persisted_output, dict)
+                else {"worker_output": persisted_output}
+            )
+            authoritative_task_output["worker_run_id"] = str(req.worker_run_id)
+
+    if active_execution is None and req.action in {"complete", "fail", "timeout"}:
+        running_executions = await storage.list_flow_node_executions(
+            instance_id=instance_id,
+            node_id=req.node_id,
+            status="RUNNING",
+            limit=1000,
+        )
+        active_execution = running_executions[-1] if running_executions else None
+
+    def _execution_settlement(values: dict[str, Any]) -> list[dict[str, Any]]:
+        if active_execution is None:
+            return []
+        return [
+            {
+                "expected": _flow_node_execution_snapshot(active_execution),
+                "values": values,
+            }
+        ]
 
     if req.action == "complete":
         updated_context = dict(current_context)
-        if req.output:
-            updated_context.update(req.output)
+        task_output = req.output
+        if node.type == FlowNodeType.TASK and node.config.get("worker_id"):
+            # The durable WorkerResult is the only source of task output. The
+            # request body identifies the terminal action, but cannot replace
+            # or decorate the result that downstream nodes see.
+            if authoritative_task_output is None:
+                raise HTTPException(
+                    409,
+                    "Worker Run has no matching successful persisted result",
+                )
+            task_output = authoritative_task_output
+        if task_output:
+            updated_context.update(task_output)
 
         # A governed task's pending asynchronous binding is consumed only by
         # its authoritative terminal Worker Run.  Remove that one node entry
@@ -12736,11 +17635,15 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
                 decision = "approved" if req.approved else "rejected"
 
             if not decision:
-                await storage.update_flow_instance(
-                    instance_id,
-                    status="WAITING_APPROVAL",
-                    active_node_ids=active_node_ids,
-                    context_json=updated_context,
+                await _transition_flow_instance(
+                    storage,
+                    instance,
+                    expected_statuses={"RUNNING", "WAITING_APPROVAL"},
+                    instance_updates={
+                        "status": "WAITING_APPROVAL",
+                        "active_node_ids": active_node_ids,
+                        "context_json": updated_context,
+                    },
                 )
                 return _serialize(await _get_refreshed_instance())
 
@@ -12749,22 +17652,6 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
 
         if node.type != FlowNodeType.END:
             updated_context["last_safe_node_id"] = req.node_id
-
-        executions = await storage.list_flow_node_executions(
-            instance_id=instance_id, node_id=req.node_id, limit=1
-        )
-        if executions:
-            await storage.update_flow_node_execution(
-                executions[0]["id"],
-                status="COMPLETED",
-                output_json=req.output or updated_context,
-                completed_at=now,
-            )
-
-        # Remove completed node from active set; track it separately for traversal
-        remaining_active = set(active_node_ids)
-        remaining_active.discard(req.node_id)
-        new_active = list(remaining_active)
 
         # Build the full historically-completed set (needed for join nodes)
         all_executions = await storage.list_flow_node_executions(
@@ -12787,6 +17674,13 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
             for nid in next_result.node_ids
             if nid not in historically_completed and nid not in already_active
         ]
+        execution_updates = _execution_settlement(
+            {
+                "status": "COMPLETED",
+                "output_json": task_output or updated_context,
+                "completed_at": now,
+            }
+        )
         if not new_nodes and not next_result.is_blocked:
             # Check if an end node was just completed
             end_nodes = definition.get_end_nodes()
@@ -12796,37 +17690,57 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
                     if "fail" in node.label.lower() or "fail" in node.id.lower()
                     else "COMPLETED"
                 )
-                await storage.update_flow_instance(
-                    instance_id,
-                    status=terminal_status,
-                    active_node_ids=[],
-                    completed_at=now,
-                    context_json=updated_context,
+                await _transition_flow_instance(
+                    storage,
+                    instance,
+                    expected_statuses={"RUNNING", "WAITING_APPROVAL"},
+                    instance_updates={
+                        "status": terminal_status,
+                        "active_node_ids": [],
+                        "completed_at": now,
+                        "context_json": updated_context,
+                    },
+                    execution_updates=execution_updates,
                 )
             elif not already_active:
                 # No more nodes to run and no active work remaining — check if all end nodes done
                 all_ends_done = all(n.id in historically_completed for n in end_nodes)
                 if all_ends_done:
-                    await storage.update_flow_instance(
-                        instance_id,
-                        status="COMPLETED",
-                        active_node_ids=[],
-                        completed_at=now,
-                        context_json=updated_context,
+                    await _transition_flow_instance(
+                        storage,
+                        instance,
+                        expected_statuses={"RUNNING", "WAITING_APPROVAL"},
+                        instance_updates={
+                            "status": "COMPLETED",
+                            "active_node_ids": [],
+                            "completed_at": now,
+                            "context_json": updated_context,
+                        },
+                        execution_updates=execution_updates,
                     )
                 else:
                     # Still waiting for parallel branches — stay RUNNING
-                    await storage.update_flow_instance(
-                        instance_id,
-                        active_node_ids=list(already_active),
-                        context_json=updated_context,
+                    await _transition_flow_instance(
+                        storage,
+                        instance,
+                        expected_statuses={"RUNNING", "WAITING_APPROVAL"},
+                        instance_updates={
+                            "active_node_ids": list(already_active),
+                            "context_json": updated_context,
+                        },
+                        execution_updates=execution_updates,
                     )
             else:
                 # Other branches still active — just remove this node from active
-                await storage.update_flow_instance(
-                    instance_id,
-                    active_node_ids=list(already_active),
-                    context_json=updated_context,
+                await _transition_flow_instance(
+                    storage,
+                    instance,
+                    expected_statuses={"RUNNING", "WAITING_APPROVAL"},
+                    instance_updates={
+                        "active_node_ids": list(already_active),
+                        "context_json": updated_context,
+                    },
+                    execution_updates=execution_updates,
                 )
         else:
             terminal_nodes = [definition.get_node(nid) for nid in new_nodes]
@@ -12841,47 +17755,52 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
                     )
                     else "COMPLETED"
                 )
-                for terminal_node in terminal_nodes:
-                    if terminal_node is None:
-                        continue
-                    await storage.create_flow_node_execution(
-                        instance_id=instance_id,
-                        node_id=terminal_node.id,
-                        node_type=terminal_node.type.value,
-                        node_label=terminal_node.label,
-                        input_json=updated_context,
-                    )
-                    latest_terminal_execution = await storage.list_flow_node_executions(
-                        instance_id=instance_id,
-                        node_id=terminal_node.id,
-                        limit=1,
-                    )
-                    if latest_terminal_execution:
-                        await storage.update_flow_node_execution(
-                            latest_terminal_execution[0]["id"],
-                            status="COMPLETED" if terminal_status == "COMPLETED" else "FAILED",
-                            output_json=updated_context,
-                            error="Reached failed terminal node"
-                            if terminal_status == "FAILED"
-                            else None,
-                            completed_at=now,
-                        )
-                await storage.update_flow_instance(
-                    instance_id,
-                    active_node_ids=[],
-                    context_json=updated_context,
-                    status=terminal_status,
-                    completed_at=now,
+                terminal_activations = [
+                    {
+                        "node_id": terminal_node.id,
+                        "node_type": terminal_node.type.value,
+                        "node_label": terminal_node.label,
+                        "status": "COMPLETED" if terminal_status == "COMPLETED" else "FAILED",
+                        "input_json": updated_context,
+                        "output_json": updated_context,
+                        "error": "Reached failed terminal node"
+                        if terminal_status == "FAILED"
+                        else None,
+                    }
+                    for terminal_node in terminal_nodes
+                    if terminal_node is not None
+                ]
+                await _transition_flow_instance(
+                    storage,
+                    instance,
+                    expected_statuses={"RUNNING", "WAITING_APPROVAL"},
+                    instance_updates={
+                        "active_node_ids": [],
+                        "context_json": updated_context,
+                        "status": terminal_status,
+                        "completed_at": now,
+                    },
+                    activations=terminal_activations,
+                    execution_updates=execution_updates,
                 )
             else:
-                for nid in new_nodes:
-                    await _activate_node(nid, updated_context)
                 merged_active = list(already_active | set(new_nodes))
-                await storage.update_flow_instance(
-                    instance_id,
-                    active_node_ids=merged_active,
-                    context_json=updated_context,
-                    status="RUNNING",
+                activations = [
+                    activation
+                    for nid in new_nodes
+                    if (activation := _node_activation(nid, updated_context)) is not None
+                ]
+                await _transition_flow_instance(
+                    storage,
+                    instance,
+                    expected_statuses={"RUNNING", "WAITING_APPROVAL"},
+                    instance_updates={
+                        "active_node_ids": merged_active,
+                        "context_json": updated_context,
+                        "status": "RUNNING",
+                    },
+                    activations=activations,
+                    execution_updates=execution_updates,
                 )
                 # A task is executable only through its Worker Run.  Control
                 # nodes remain event/approval driven, while each newly active
@@ -12893,7 +17812,7 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
                         and next_node.type == FlowNodeType.TASK
                         and next_node.config.get("worker_id")
                     ):
-                        await flow_node_action(
+                        await _apply_flow_node_action(
                             instance_id,
                             FlowNodeActionRequest(node_id=nid, action="advance"),
                         )
@@ -12901,42 +17820,27 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
         return _serialize(await _get_refreshed_instance())
 
     elif req.action == "fail":
-        executions = await storage.list_flow_node_executions(
-            instance_id=instance_id, node_id=req.node_id, limit=1
-        )
-        if executions:
-            await storage.update_flow_node_execution(
-                executions[0]["id"],
-                status="FAILED",
-                error=req.error,
-                completed_at=now,
-            )
-
         failure_context = dict(current_context)
         if node.type == FlowNodeType.TASK and node.config.get("worker_id"):
             failure_context = clear_worker_run_binding(failure_context, node_id=node.id)
         if req.error:
             failure_context["last_error"] = req.error
-        await storage.update_flow_instance(
-            instance_id,
-            status="FAILED",
-            active_node_ids=[],
-            context_json=failure_context,
+        await _transition_flow_instance(
+            storage,
+            instance,
+            expected_statuses={"RUNNING", "WAITING_APPROVAL"},
+            instance_updates={
+                "status": "FAILED",
+                "active_node_ids": [],
+                "context_json": failure_context,
+            },
+            execution_updates=_execution_settlement(
+                {"status": "FAILED", "error": req.error, "completed_at": now}
+            ),
         )
         return _serialize(await _get_refreshed_instance())
 
     elif req.action == "timeout":
-        executions = await storage.list_flow_node_executions(
-            instance_id=instance_id, node_id=req.node_id, limit=1
-        )
-        if executions:
-            await storage.update_flow_node_execution(
-                executions[0]["id"],
-                status="FAILED",
-                error=req.error or "Timed out",
-                completed_at=now,
-            )
-
         escalate_to = node.config.get("escalate_to_team") or node.config.get("escalate_to_agent")
         timeout_context = dict(current_context)
         timeout_context["last_error"] = req.error or "Timed out"
@@ -12944,33 +17848,38 @@ async def flow_node_action(instance_id: UUID, req: FlowNodeActionRequest) -> dic
         if node.type == FlowNodeType.TASK and node.config.get("worker_id"):
             timeout_context = clear_worker_run_binding(timeout_context, node_id=node.id)
 
-        await storage.update_flow_instance(
-            instance_id,
-            status="FAILED",
-            active_node_ids=[],
-            context_json=timeout_context,
-        )
-
+        project_event = None
         if escalate_to:
-            await storage.escalate_flow_instance(
-                instance_id,
-                str(escalate_to),
-                req.error or f"Node {req.node_id} timed out",
+            project_event = {
+                "event": "flow_node_escalated",
+                "triggered_by": "system",
+                "payload": {
+                    "instance_id": str(instance_id),
+                    "node_id": req.node_id,
+                    "escalated_to": str(escalate_to),
+                    "reason": req.error or f"Node {req.node_id} timed out",
+                },
+            }
+        timeout_updates: dict[str, Any] = {
+            "status": "FAILED",
+            "active_node_ids": [],
+            "context_json": timeout_context,
+        }
+        if escalate_to:
+            timeout_updates["escalated_to"] = str(escalate_to)
+            timeout_updates["escalation_reason"] = (
+                req.error or f"Node {req.node_id} timed out"
             )
-            project = await storage.get_project(instance["project_id"])
-            if project is not None:
-                await storage.transition_project(
-                    instance["project_id"],
-                    new_state=project["state"],
-                    event="flow_node_escalated",
-                    triggered_by="system",
-                    payload={
-                        "instance_id": str(instance_id),
-                        "node_id": req.node_id,
-                        "escalated_to": str(escalate_to),
-                        "reason": req.error or f"Node {req.node_id} timed out",
-                    },
-                )
+        await _transition_flow_instance(
+            storage,
+            instance,
+            expected_statuses={"RUNNING", "WAITING_APPROVAL"},
+            instance_updates=timeout_updates,
+            execution_updates=_execution_settlement(
+                {"status": "FAILED", "error": req.error or "Timed out", "completed_at": now}
+            ),
+            project_event=project_event,
+        )
 
         return _serialize(await _get_refreshed_instance())
 
@@ -13005,6 +17914,7 @@ async def override_flow_instance(instance_id: UUID, req: FlowOverrideRequest) ->
     instance = await storage.get_flow_instance(instance_id)
     if instance is None:
         raise HTTPException(404, f"Flow instance {instance_id} not found")
+    await _require_nonterminal_flow_project(storage, instance)
     if instance.get("status") in {"COMPLETED", "FAILED", "CANCELLED"}:
         raise HTTPException(409, "Terminal flow instances are immutable; use an explicit recovery action")
 
@@ -13057,6 +17967,7 @@ async def switch_flow_instance(instance_id: UUID, req: dict[str, Any]) -> dict[s
     instance = await storage.get_flow_instance(instance_id)
     if instance is None:
         raise HTTPException(404, f"Flow instance {instance_id} not found")
+    await _require_nonterminal_flow_project(storage, instance)
     if instance.get("status") in {"COMPLETED", "FAILED", "CANCELLED"}:
         raise HTTPException(409, "Terminal flow instances are immutable; retry/recovery must be explicit")
 
@@ -13077,10 +17988,19 @@ async def switch_flow_instance(instance_id: UUID, req: dict[str, Any]) -> dict[s
         raise HTTPException(404, f"Flow {new_flow_uuid} not found")
 
     updated = await storage.switch_flow_instance(
-        instance_id, new_flow_uuid, preserve_context=preserve_context
+        instance_id,
+        new_flow_uuid,
+        preserve_context=preserve_context,
+        expected_instance_snapshot=_flow_instance_snapshot(instance),
     )
     if updated is None:
-        raise HTTPException(404, "Failed to switch flow instance")
+        raise HTTPException(
+            409,
+            detail={
+                "code": "FLOW_INSTANCE_CHANGED",
+                "message": "The project or flow changed before the switch; reload and retry.",
+            },
+        )
 
     project = await storage.get_project(instance["project_id"])
     if project is not None:
@@ -13117,6 +18037,7 @@ async def migrate_flow_instance(instance_id: UUID, req: FlowMigrationRequest) ->
     instance = await storage.get_flow_instance(instance_id)
     if instance is None:
         raise HTTPException(404, f"Flow instance {instance_id} not found")
+    await _require_nonterminal_flow_project(storage, instance)
     if instance.get("status") in {"COMPLETED", "FAILED", "CANCELLED"}:
         raise HTTPException(409, "Terminal flow instances are immutable; use an explicit recovery action")
 
@@ -13248,9 +18169,16 @@ async def migrate_flow_instance(instance_id: UUID, req: FlowMigrationRequest) ->
         active_node_ids=mapped_active_node_ids,
         preserve_context=req.preserve_context,
         migration_record=migration_record,
+        expected_instance_snapshot=_flow_instance_snapshot(instance),
     )
     if updated is None:
-        raise HTTPException(404, f"Flow instance {instance_id} not found")
+        raise HTTPException(
+            409,
+            detail={
+                "code": "FLOW_INSTANCE_CHANGED",
+                "message": "The project or flow changed before migration; reload and retry.",
+            },
+        )
 
     project = await storage.get_project(instance["project_id"])
     if project is not None:
@@ -13272,6 +18200,7 @@ async def update_flow_instance_context(instance_id: UUID, req: dict[str, Any]) -
     instance = await storage.get_flow_instance(instance_id)
     if instance is None:
         raise HTTPException(404, f"Flow instance {instance_id} not found")
+    await _require_nonterminal_flow_project(storage, instance)
     if instance.get("status") in {"COMPLETED", "FAILED", "CANCELLED"}:
         raise HTTPException(409, "Terminal flow instances are immutable")
 
@@ -13279,9 +18208,14 @@ async def update_flow_instance_context(instance_id: UUID, req: dict[str, Any]) -
     if not context_updates:
         raise HTTPException(400, "context is required")
 
-    updated = await storage.update_flow_instance_context(instance_id, context_updates)
-    if updated is None:
-        raise HTTPException(404, "Failed to update context")
+    updated_context = dict(instance.get("context_json") or {})
+    updated_context.update(context_updates)
+    updated = await _transition_flow_instance(
+        storage,
+        instance,
+        expected_statuses={str(instance.get("status") or "").upper()},
+        instance_updates={"context_json": updated_context},
+    )
 
     return _serialize(updated)
 
@@ -13294,6 +18228,7 @@ async def escalate_flow_instance(instance_id: UUID, req: dict[str, Any]) -> dict
     instance = await storage.get_flow_instance(instance_id)
     if instance is None:
         raise HTTPException(404, f"Flow instance {instance_id} not found")
+    await _require_nonterminal_flow_project(storage, instance)
     if instance.get("status") in {"COMPLETED", "FAILED", "CANCELLED"}:
         raise HTTPException(409, "Terminal flow instances cannot be escalated")
 
@@ -13303,9 +18238,15 @@ async def escalate_flow_instance(instance_id: UUID, req: dict[str, Any]) -> dict
 
     reason = req.get("reason")
 
-    updated = await storage.escalate_flow_instance(instance_id, escalate_to, reason)
-    if updated is None:
-        raise HTTPException(404, "Failed to escalate")
+    escalation_updates: dict[str, Any] = {"escalated_to": escalate_to}
+    if reason is not None:
+        escalation_updates["escalation_reason"] = reason
+    updated = await _transition_flow_instance(
+        storage,
+        instance,
+        expected_statuses={str(instance.get("status") or "").upper()},
+        instance_updates=escalation_updates,
+    )
 
     return _serialize(updated)
 
@@ -13320,6 +18261,7 @@ async def retry_flow_instance(instance_id: UUID) -> dict[str, Any]:
     instance = await storage.get_flow_instance(instance_id)
     if instance is None:
         raise HTTPException(404, f"Flow instance {instance_id} not found")
+    await _require_nonterminal_flow_project(storage, instance)
 
     if instance["status"] not in ("FAILED", "CANCELLED"):
         raise HTTPException(409, f"Instance is not in FAILED or CANCELLED state")
@@ -13335,42 +18277,49 @@ async def retry_flow_instance(instance_id: UUID) -> dict[str, Any]:
     if isinstance(last_safe_node_id, str) and definition.get_node(last_safe_node_id) is not None:
         retry_count = int(instance.get("retry_count") or 0) + 1
         restored_node = definition.get_node(last_safe_node_id)
-        supersede = getattr(storage, "supersede_flow_node_executions", None)
-        if not inspect.iscoroutinefunction(supersede):
-            raise HTTPException(
-                503,
-                "Flow retry requires evidence-preserving node-execution storage",
-            )
-        await supersede(instance_id)
-        await storage.update_flow_instance(
-            instance_id,
-            status="RUNNING",
-            active_node_ids=[last_safe_node_id],
-            retry_count=retry_count,
-            started_at=None,
-            completed_at=None,
-        )
         if restored_node is not None:
-            await storage.create_flow_node_execution(
-                instance_id=instance_id,
-                node_id=restored_node.id,
-                node_type=restored_node.type.value,
-                node_label=restored_node.label,
-                input_json=context_json,
-            )
+            activation = {
+                "node_id": restored_node.id,
+                "node_type": restored_node.type.value,
+                "node_label": restored_node.label,
+                "status": "RUNNING",
+                "input_json": context_json,
+            }
             if restored_node.type.value == "approval":
-                await storage.create_approval_gate(
-                    project_id=instance["project_id"],
-                    gate_type=restored_node.config.get("approver_role")
+                activation["gate_type"] = (
+                    restored_node.config.get("approver_role")
                     or restored_node.config.get("approver_user")
-                    or restored_node.label,
+                    or restored_node.label
+                )
+            activation_result = await storage.activate_flow_nodes(
+                instance_id,
+                expected_statuses={"FAILED", "CANCELLED"},
+                expected_active_node_ids=list(instance.get("active_node_ids") or []),
+                expected_instance_snapshot=_flow_instance_snapshot(instance),
+                instance_updates={
+                    "status": "RUNNING",
+                    "active_node_ids": [last_safe_node_id],
+                    "retry_count": retry_count,
+                    "started_at": None,
+                    "completed_at": None,
+                },
+                activations=[activation],
+                supersede_existing=True,
+            )
+            if activation_result.get("outcome") != "applied":
+                raise HTTPException(
+                    409,
+                    detail={
+                        "code": "FLOW_INSTANCE_CHANGED",
+                        "message": "The flow changed before retry activation; reload and retry.",
+                    },
                 )
             if restored_node.type.value == "task" and restored_node.config.get("worker_id"):
                 # Safe retry of a governed task must re-enter the same
                 # authoritative Worker Run path as normal traversal.  Legacy
                 # team/action-only tasks intentionally keep their manual
                 # compatibility behavior until an operator migrates them.
-                return await flow_node_action(
+                return await _apply_flow_node_action(
                     instance_id,
                     FlowNodeActionRequest(node_id=restored_node.id, action="advance"),
                 )
@@ -13379,9 +18328,18 @@ async def retry_flow_instance(instance_id: UUID) -> dict[str, Any]:
             raise HTTPException(404, "Failed to retry instance")
         return _serialize(restored_instance)
 
-    updated = await storage.retry_flow_instance(instance_id)
+    updated = await storage.retry_flow_instance(
+        instance_id,
+        expected_instance_snapshot=_flow_instance_snapshot(instance),
+    )
     if updated is None:
-        raise HTTPException(404, "Failed to retry instance")
+        raise HTTPException(
+            409,
+            detail={
+                "code": "FLOW_INSTANCE_CHANGED",
+                "message": "The flow changed before retry; reload and retry.",
+            },
+        )
 
     return _serialize(updated)
 
@@ -13836,14 +18794,21 @@ class PrivilegedApprovalRequest(BaseModel):
 
 
 @app.post("/ceo/privileged-action")
-async def request_privileged_action(req: PrivilegedActionRequest) -> dict[str, Any]:
+async def request_privileged_action(
+    req: PrivilegedActionRequest,
+    request: Request,
+) -> dict[str, Any]:
     """Request a privileged (Layer 2) action — gated through approval policy."""
+    principal = _require_executive_write_principal(request)
     gate = _priv_gate()
     await gate.ensure_tables()
     result = await gate.check(
         req.action,
-        actor_id=req.actor_id,
-        actor_role=req.actor_role,
+        # Keep the body fields for compatibility, but never trust them as
+        # audit identity. Only configured executive-write credentials may
+        # create a privileged-action request.
+        actor_id=principal,
+        actor_role=principal,
         payload=req.payload,
     )
     return result
@@ -13851,14 +18816,19 @@ async def request_privileged_action(req: PrivilegedActionRequest) -> dict[str, A
 
 @app.post("/ceo/privileged-action/{record_id}/approve")
 async def approve_privileged_action(
-    record_id: str, req: PrivilegedApprovalRequest
+    record_id: str,
+    req: PrivilegedApprovalRequest,
+    request: Request,
 ) -> dict[str, Any]:
     """Human approval or rejection of a pending privileged action."""
+    _require_operator_identity(request)
     gate = _priv_gate()
     await gate.ensure_tables()
     ok = await gate.approve(
         record_id,
-        decided_by=req.decided_by,
+        # ``decided_by`` remains accepted for API compatibility, but the
+        # durable audit actor must come from the authenticated principal.
+        decided_by=_authenticated_principal(request),
         approved=req.approved,
         reason=req.reason,
     )
@@ -13868,8 +18838,9 @@ async def approve_privileged_action(
 
 
 @app.get("/ceo/privileged-actions/pending")
-async def list_pending_privileged_actions() -> list[dict[str, Any]]:
+async def list_pending_privileged_actions(request: Request) -> list[dict[str, Any]]:
     """List privileged action requests awaiting human approval."""
+    _require_operator_identity(request)
     gate = _priv_gate()
     await gate.ensure_tables()
     rows = await gate.list_pending()
@@ -13877,8 +18848,12 @@ async def list_pending_privileged_actions() -> list[dict[str, Any]]:
 
 
 @app.get("/ceo/privileged-actions/audit")
-async def privileged_actions_audit(limit: int = 100) -> list[dict[str, Any]]:
+async def privileged_actions_audit(
+    request: Request,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
     """Return full privileged ops audit log."""
+    _require_operator_identity(request)
     gate = _priv_gate()
     await gate.ensure_tables()
     rows = await gate.audit_log(limit=limit)
@@ -13892,6 +18867,7 @@ class OperatorToCeoRequest(BaseModel):
     context_confirmation_token: UUID | None = None
     request_id: UUID | None = None
     async_mode: bool = False
+    project_start_mode: Literal["start_immediately", "prepare_only"] = "start_immediately"
 
     @field_validator("message")
     @classmethod
@@ -14821,9 +19797,15 @@ async def _find_project_for_ceo_text(
     return (matches[0], False) if len(matches) == 1 else (None, len(matches) > 1)
 
 
-async def _handle_ceo_project_intent(instruction: str) -> dict[str, Any] | None:
+async def _handle_ceo_project_intent(
+    instruction: str,
+    *,
+    principal: str | None = None,
+    project_start_mode: Literal["start_immediately", "prepare_only"] = "start_immediately",
+    project_create_idempotency_key: str | None = None,
+) -> dict[str, Any] | None:
     lowered = instruction.lower()
-    if "project" not in lowered:
+    if "project" not in lowered and not _is_ceo_project_work_request(instruction):
         return None
 
     # A CSO veto is a recoverable security workflow, not a normal human
@@ -14884,13 +19866,14 @@ async def _handle_ceo_project_intent(instruction: str) -> dict[str, Any] | None:
             }
 
         project_id = UUID(str(project["id"]))
-        restored = await transition_project(
+        restored = await _execute_project_transition(
             project_id,
             TransitionRequest(
                 event=WorkflowEvent.BLOCKER_RESOLVED.value,
                 actor_id="human_operator",
                 context={"reason": reason, "resolution": "security_remediation_verified"},
             ),
+            actor_id=principal or "operator",
         )
         restored_state = str(restored.get("next_state") or "")
         revision_event = {
@@ -14914,7 +19897,7 @@ async def _handle_ceo_project_intent(instruction: str) -> dict[str, Any] | None:
                 ],
             }
 
-        revised = await transition_project(
+        revised = await _execute_project_transition(
             project_id,
             TransitionRequest(
                 event=revision_event,
@@ -14925,6 +19908,7 @@ async def _handle_ceo_project_intent(instruction: str) -> dict[str, Any] | None:
                     "revision_requested": True,
                 },
             ),
+            actor_id=principal or "operator",
         )
         updated = await storage.get_project(project_id)
         return {
@@ -15007,13 +19991,14 @@ async def _handle_ceo_project_intent(instruction: str) -> dict[str, Any] | None:
                 "trace": ["parsed_document_revision_intent", "checked_authoritative_project_state"],
             }
 
-        revised = await transition_project(
+        revised = await _execute_project_transition(
             UUID(str(project["id"])),
             TransitionRequest(
                 event=revision_event,
                 actor_id="human_operator",
                 context={"reason": reason, "revision_requested": True},
             ),
+            actor_id=principal or "operator",
         )
         updated = await storage.get_project(UUID(str(project["id"])))
         return {
@@ -15108,7 +20093,7 @@ async def _handle_ceo_project_intent(instruction: str) -> dict[str, Any] | None:
                 "trace": ["parsed_project_decision_intent", "required_decision_justification"],
             }
 
-        result = await submit_decision(
+        result = await _submit_project_decision(
             project_id,
             DecisionRequest(
                 decision=decision,
@@ -15116,6 +20101,7 @@ async def _handle_ceo_project_intent(instruction: str) -> dict[str, Any] | None:
                 edits={"request": comments} if decision == "EDITS" and comments else None,
                 decided_by="human_operator",
             ),
+            actor_id=principal or "human_operator",
         )
         updated_project = await storage.get_project(project_id)
         selected_gate = pending[0]
@@ -15222,32 +20208,66 @@ async def _handle_ceo_project_intent(instruction: str) -> dict[str, Any] | None:
             ),
         )
 
-    if any(word in lowered for word in ("create", "new", "start", "initialize", "init")):
-        name = _extract_named_text(instruction, "CEO Chat Project")
+    prepare_project_requested = (
+        project_start_mode == "prepare_only"
+        and _is_ceo_project_create_intent(instruction)
+    )
+    if _is_ceo_project_work_request(instruction) or any(
+        word in lowered for word in ("create", "new", "start", "initialize", "init")
+    ) or prepare_project_requested:
+        if principal != "operator":
+            raise HTTPException(403, "CEO project creation requires an operator credential")
+        name = _extract_named_text(
+            instruction,
+            _infer_ceo_project_name(instruction) or "CEO Chat Project",
+        )
         description = _extract_description_text(instruction)
-        project = await create_project(
+        project_brief = ProjectContextSeedRequest(
+            item_type="TEXT",
+            name="CEO project brief",
+            content_text=instruction.strip(),
+            tags=["project-brief", "ceo-chat"],
+        )
+        prepared_only = project_start_mode == "prepare_only"
+        project = await _create_project_for_principal(
             CreateProjectRequest(
                 name=name,
                 description=description,
-                human_requester="human_operator",
+                start_immediately=not prepared_only,
+                idempotency_key=project_create_idempotency_key,
+                initial_context=[project_brief],
+            ),
+            principal=principal,
+        )
+        if prepared_only:
+            response = (
+                f"I prepared project `{project.get('name')}` with ID `{project.get('id')}`. "
+                f"It is in `{project.get('state')}` and no feasibility or workflow work was started. "
+                "The brief is saved in project context. Start it later from Project Detail when you are ready."
             )
-        )
-        response = (
-            f"I created project `{project.get('name')}` with ID `{project.get('id')}`. "
-            f"Current state is `{project.get('state')}`. I also queued the CEO feasibility "
-            "directive so the operating workflow can move through departments, reviews, "
-            "approvals, artifacts, and audit state."
-        )
+        else:
+            response = (
+                f"I created project `{project.get('name')}` with ID `{project.get('id')}`. "
+                f"Current state is `{project.get('state')}`. I also queued the CEO feasibility "
+                "directive so the operating workflow can move through departments, reviews, "
+                "approvals, artifacts, and audit state."
+            )
         return {
             "type": "project_create",
-            "status": "created",
+            "status": "prepared" if prepared_only else "created",
             "project": project,
             "response": response,
             "trace": [
                 "parsed_project_creation_intent",
                 "created_project_record",
-                "attempted_initial_workflow_transition",
-                "published_start_feasibility_directive",
+                *(
+                    ["prepared_project_without_workflow_transition"]
+                    if prepared_only
+                    else [
+                        "attempted_initial_workflow_transition",
+                        "published_start_feasibility_directive",
+                    ]
+                ),
             ],
         }
 
@@ -15706,6 +20726,8 @@ async def _handle_ceo_company_intent(instruction: str) -> dict[str, Any] | None:
 async def _handle_ceo_worker_intent(
     instruction: str,
     context_worker_id: UUID | None = None,
+    *,
+    principal: str | None = None,
 ) -> dict[str, Any] | None:
     lowered = instruction.lower()
     lifecycle_requested = re.search(
@@ -15954,7 +20976,13 @@ async def _handle_ceo_worker_intent(
     elif re.search(r"\bactivate\b", lowered):
         action = "ACTIVATE"
     if action:
-        updated = await transition_worker_status(worker_id, WorkerStatusTransition(action=action))
+        if principal is None:
+            raise HTTPException(403, "canonical mutation requires an operator credential")
+        updated = await _transition_worker_status_for_principal(
+            worker_id,
+            WorkerStatusTransition(action=action),
+            principal=principal,
+        )
         return {
             "type": "worker_status_transition",
             "status": "transitioned",
@@ -16073,6 +21101,8 @@ def _ceo_operator_intent_is_api_owned(
                 _extract_uuid_from_text(instruction) is not None
                 or _extract_project_status_query(instruction) is not None
             )
+    if _is_ceo_project_work_request(instruction):
+        return True
     if any(token in lowered for token in ("company", "org", "organization", "department", "departments", "dept", "dep", "graph")):
         return True
     if "hire" not in lowered and any(
@@ -16116,10 +21146,74 @@ def _ceo_operator_intent_is_api_owned(
     )
 
 
+def _is_ceo_project_work_request(instruction: str) -> bool:
+    """Recognize artifact-building requests that should enter project control."""
+    verb = re.search(
+        r"\b(?:create|build|develop|implement|write|make|produce|prototype)\b",
+        instruction,
+        flags=re.IGNORECASE,
+    )
+    if verb is None:
+        return False
+
+    first_target = re.split(
+        r"\b(?:and|then|while)\b|[.;]",
+        instruction[verb.end() :],
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+    if re.search(
+        r"\b(?:department|team|worker|agent|candidate|company|organization|organisation|"
+        r"credential|account|password)\s*$",
+        first_target,
+        flags=re.IGNORECASE,
+    ):
+        return False
+
+    return bool(
+        re.search(
+            r"\b(?:app|application|program|script|service|website|api|package|library|"
+            r"software|tool|code|module|report|document|research|prototype|feature|workflow)\b",
+            instruction,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _is_ceo_project_create_intent(instruction: str) -> bool:
+    """Recognize project-creation requests independent of the chosen start mode."""
+    lowered = instruction.lower()
+    if _is_ceo_project_work_request(instruction):
+        return True
+    return "project" in lowered and re.search(
+        r"\b(?:create|new|initialize|init|prepare)\b", lowered
+    ) is not None
+
+
+def _infer_ceo_project_name(instruction: str) -> str | None:
+    """Derive a concise title from a natural build request when none is named."""
+    match = re.search(
+        r"\b(?:create|build|develop|implement|write|make|produce|prototype)\s+"
+        r"(?:a|an|the)\s+(.+?)"
+        r"(?:\s+(?:that|which|with|including|for|to)\b|[.;]|$)",
+        instruction,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    name = re.sub(r"\s+", " ", match.group(1)).strip(" \t\r\n\"'.,;:")
+    name = re.sub(r"^(?:new|simple|small)\s+", "", name, flags=re.IGNORECASE) or name
+    return name[:200] or None
+
+
 async def _handle_ceo_operator_intent(
     instruction: str,
     context_worker_id: UUID | None = None,
     context_confirmation_token: UUID | None = None,
+    *,
+    principal: str,
+    project_start_mode: Literal["start_immediately", "prepare_only"] = "start_immediately",
+    project_create_idempotency_key: str | None = None,
 ) -> dict[str, Any] | None:
     confirmation = await _handle_ceo_confirmation_intent(
         instruction,
@@ -16143,11 +21237,19 @@ async def _handle_ceo_operator_intent(
         (_handle_ceo_worker_intent, True),
     )
     for handler, accepts_worker_context in handlers:
-        action = (
-            await handler(instruction, context_worker_id)
-            if accepts_worker_context
-            else await handler(instruction)
-        )
+        if handler is _handle_ceo_project_intent:
+            action = await _handle_ceo_project_intent(
+                instruction,
+                principal=principal,
+                project_start_mode=project_start_mode,
+                project_create_idempotency_key=project_create_idempotency_key,
+            )
+        elif handler is _handle_ceo_worker_intent:
+            action = await handler(instruction, context_worker_id, principal=principal)
+        elif accepts_worker_context:
+            action = await handler(instruction, context_worker_id)
+        else:
+            action = await handler(instruction)
         if action is not None:
             return action
     return None
@@ -16196,16 +21298,20 @@ async def _store_new_ceo_command(
     *,
     message_id: str,
     instruction: str,
+    principal: str,
     context_worker_id: UUID | None,
     context_confirmation_token: UUID | None,
+    project_start_mode: Literal["start_immediately", "prepare_only"] = "start_immediately",
 ) -> tuple[dict[str, Any], bool]:
     record = {
         "request_id": message_id,
         "instruction": instruction,
+        "principal": principal,
         "context_worker_id": str(context_worker_id) if context_worker_id else None,
         "context_confirmation_token": (
             str(context_confirmation_token) if context_confirmation_token else None
         ),
+        "project_start_mode": project_start_mode,
         "status": "PENDING",
         "created_at": datetime.now(tz=UTC).isoformat(),
         "updated_at": datetime.now(tz=UTC).isoformat(),
@@ -16387,6 +21493,16 @@ async def _recover_ceo_commands(storage: AgentStorage) -> None:
             continue
         status = record.get("status")
         message_id = str(record.get("request_id") or key.removeprefix(_CEO_COMMAND_PREFIX))
+        principal = str(record.get("principal") or "").lower()
+        if principal != "operator":
+            logger.error("Refusing to recover CEO command without operator provenance")
+            continue
+        project_start_mode = str(
+            record.get("project_start_mode") or "start_immediately"
+        )
+        if project_start_mode not in {"start_immediately", "prepare_only"}:
+            logger.error("Refusing to recover CEO command with invalid project start mode")
+            continue
         if status == "RUNNING":
             recovered = await _transition_ceo_command(
                 storage,
@@ -16411,6 +21527,8 @@ async def _recover_ceo_commands(storage: AgentStorage) -> None:
                 else None
             ),
             message_id=message_id,
+            principal=principal,
+            project_start_mode=project_start_mode,
         )
         task_group = app.state.ceo_command_task_group
         if task_group is None:
@@ -16428,6 +21546,8 @@ async def _process_ceo_operator_intent(
     context_worker_id: UUID | None,
     context_confirmation_token: UUID | None,
     message_id: str,
+    principal: str,
+    project_start_mode: Literal["start_immediately", "prepare_only"] = "start_immediately",
 ) -> None:
     """Run an API-owned CEO command after the chat request has been accepted."""
     storage: AgentStorage | None = app.state.storage
@@ -16451,6 +21571,9 @@ async def _process_ceo_operator_intent(
             instruction,
             context_worker_id,
             context_confirmation_token,
+            principal=principal,
+            project_start_mode=project_start_mode,
+            project_create_idempotency_key=message_id,
         )
         if action is None:
             await _publish_ceo_chat_response(
@@ -16509,6 +21632,7 @@ async def _process_ceo_operator_intent(
 async def operator_send_to_ceo(
     req: OperatorToCeoRequest,
     background_tasks: BackgroundTasks,
+    request: Request,
     x_api_key: str | None = Header(None),
     authorization: str | None = Header(None),
 ) -> dict[str, Any]:
@@ -16519,16 +21643,25 @@ async def operator_send_to_ceo(
     message_id = str(req.request_id or uuid4())
     instruction = req.message.strip()
     stream_instruction = _ceo_stream_instruction(instruction)
+    prepare_project_request = (
+        req.project_start_mode == "prepare_only"
+        and _is_ceo_project_create_intent(instruction)
+    )
     payload = {
         "action": "HUMAN_DIRECTIVE",
         "instruction": stream_instruction,
         "source": "ceo_chat",
     }
+    if req.project_start_mode == "prepare_only":
+        payload["project_start_mode"] = "prepare_only"
     api_owned = _ceo_operator_intent_is_api_owned(
         instruction,
         req.context_worker_id,
         req.context_confirmation_token,
-    )
+    ) or prepare_project_request
+    principal = _authenticated_principal(request)
+    if api_owned:
+        _require_operator_identity(request)
     durable_record: dict[str, Any] | None = None
     if api_owned and req.async_mode:
         storage: AgentStorage | None = app.state.storage
@@ -16538,18 +21671,24 @@ async def operator_send_to_ceo(
             storage,
             message_id=message_id,
             instruction=instruction,
+            principal=principal,
             context_worker_id=req.context_worker_id,
             context_confirmation_token=req.context_confirmation_token,
+            project_start_mode=req.project_start_mode,
         )
         expected_identity = (
             instruction,
+            principal,
             str(req.context_worker_id) if req.context_worker_id else None,
             str(req.context_confirmation_token) if req.context_confirmation_token else None,
+            req.project_start_mode,
         )
         stored_identity = (
             durable_record.get("instruction"),
+            durable_record.get("principal"),
             durable_record.get("context_worker_id"),
             durable_record.get("context_confirmation_token"),
+            durable_record.get("project_start_mode") or "start_immediately",
         )
         if stored_identity != expected_identity:
             raise HTTPException(409, "request_id is already bound to a different CEO command")
@@ -16636,6 +21775,8 @@ async def operator_send_to_ceo(
                 context_worker_id=req.context_worker_id,
                 context_confirmation_token=req.context_confirmation_token,
                 message_id=message_id,
+                principal=principal,
+                project_start_mode=req.project_start_mode,
             )
         else:
             background_tasks.add_task(
@@ -16656,6 +21797,9 @@ async def operator_send_to_ceo(
         instruction,
         req.context_worker_id,
         req.context_confirmation_token,
+        principal=principal,
+        project_start_mode=req.project_start_mode,
+        project_create_idempotency_key=message_id,
     )
     if action is not None:
         background_tasks.add_task(
@@ -18495,6 +23639,42 @@ async def create_inbound_priority_canary_plan(
         "status": stored["status"], "created_at": stored["created_at"], "expires_at": stored["expires_at"],
         "permitted_action": f"On {req.external_issue_id}, the mapped human may change provider priority from {provider_priority} to {target_priority} once after explicit approval and arming; canonical priority is expected to move from {canonical_priority} to {target_priority}.",
         "rollback_operations": plan.rollback_operations,
+    }
+
+
+@app.get("/integrations/inbound-canaries")
+async def list_inbound_canary_plans(
+    request: Request,
+    connection_id: Annotated[UUID | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 100,
+) -> dict[str, Any]:
+    """List a bounded set of persisted canary summaries for operator inspection."""
+    _integration_operator(request)
+    rows = await _storage().list_pm_inbound_canary_plans(
+        connection_id=connection_id,
+        limit=limit + 1,
+    )
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    fields = (
+        "id",
+        "connection_id",
+        "binding_id",
+        "project_id",
+        "external_issue_id",
+        "status",
+        "current_priority",
+        "target_priority",
+        "created_at",
+        "expires_at",
+    )
+    return {
+        "plans": [
+            _serialize({"plan_id": row["id"], **{field: row.get(field) for field in fields[1:]}})
+            for row in rows
+        ],
+        "limit": limit,
+        "has_more": has_more,
     }
 
 
@@ -21124,3 +26304,11 @@ async def list_canonical_issue_links(
 from orchestrator_api.project_evidence_routes import router as project_evidence_router
 
 app.include_router(project_evidence_router)
+
+# Added after all routes and HTTP middleware so the maintenance boundary wraps
+# the complete control plane and can reject WebSockets before route dispatch.
+app.add_middleware(
+    StartupMaintenanceMiddleware,
+    app_state=app.state,
+    router=app.router,
+)

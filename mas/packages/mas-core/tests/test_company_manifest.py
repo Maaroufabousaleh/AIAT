@@ -3,7 +3,11 @@ from pathlib import Path
 import pytest
 import yaml
 
-from mas_core.company_manifest import CompanyManifestError, compile_company_manifest
+from mas_core.company_manifest import (
+    CompanyManifestError,
+    compile_company_manifest,
+    validate_external_worker_assignment_approvals,
+)
 
 
 def _default_manifest() -> dict:
@@ -116,3 +120,101 @@ def test_company_manifest_persists_milestone_evidence_policy_overrides() -> None
     assert canonical["evidence_policy"]["milestone_policies"]["implementation"]["requirements"] == {
         "required_artifact_kinds": ["deployment"]
     }
+
+
+def _single_worker_manifest(*, approval_required: bool | None = None) -> dict:
+    assignment = {"worker_id": "worker", "department_id": "dept"}
+    if approval_required is not None:
+        assignment["approval_required"] = approval_required
+    return {
+        "slug": "approval-policy-test",
+        "name": "Approval Policy Test",
+        "ceo_worker_id": "worker",
+        "departments": [
+            {"id": "dept", "name": "Department", "chief_worker_id": "worker", "worker_ids": ["worker"]}
+        ],
+        "worker_assignments": [assignment],
+        "policy": {
+            "require_human_approval_for_external_workers": True,
+            "default_sandbox_profile": "sandboxed",
+        },
+    }
+
+
+def test_external_worker_company_policy_requires_assignment_approval() -> None:
+    manifest, _digest, canonical = compile_company_manifest(_single_worker_manifest())
+
+    assert canonical["policy"] == {
+        "require_human_approval_for_external_workers": True,
+        "default_sandbox_profile": "sandboxed",
+    }
+    with pytest.raises(CompanyManifestError, match="external worker assignment 'worker'.*explicitly set approval_required"):
+        validate_external_worker_assignment_approvals(
+            manifest,
+            {"worker": {"source_repo": "https://example.invalid/worker"}},
+        )
+
+
+def test_external_worker_company_policy_accepts_explicit_pending_approval() -> None:
+    manifest, _digest, _canonical = compile_company_manifest(
+        _single_worker_manifest(approval_required=True)
+    )
+
+    validate_external_worker_assignment_approvals(
+        manifest,
+        {"worker": {"source_repo": "https://example.invalid/worker"}},
+    )
+
+
+def test_external_worker_approval_cannot_be_applied_by_system_actor() -> None:
+    manifest, _digest, _canonical = compile_company_manifest(
+        _single_worker_manifest(approval_required=False)
+    )
+
+    with pytest.raises(CompanyManifestError, match="approval must be applied by the operator"):
+        validate_external_worker_assignment_approvals(
+            manifest,
+            {"worker": {"source_repo": "https://example.invalid/worker"}},
+            approving_actor="system-bootstrap",
+        )
+
+
+def test_external_worker_company_policy_accepts_explicit_operator_approval_value() -> None:
+    manifest, _digest, _canonical = compile_company_manifest(
+        _single_worker_manifest(approval_required=False)
+    )
+
+    validate_external_worker_assignment_approvals(
+        manifest,
+        {"worker": {"source_repo": "https://example.invalid/worker"}},
+        approving_actor="operator",
+    )
+
+
+def test_external_worker_company_policy_preserves_local_assignment_behavior() -> None:
+    manifest, _digest, _canonical = compile_company_manifest(_single_worker_manifest())
+
+    validate_external_worker_assignment_approvals(
+        manifest,
+        {
+            "worker": {
+                "source_repo": None,
+                "adapter_config": {"execution_policy": {"trust": "trusted"}},
+            }
+        },
+    )
+
+
+def test_external_worker_company_policy_rejects_unavailable_provenance() -> None:
+    manifest, _digest, _canonical = compile_company_manifest(_single_worker_manifest())
+
+    with pytest.raises(CompanyManifestError, match="source provenance is unavailable"):
+        validate_external_worker_assignment_approvals(manifest, {"worker": {}})
+
+
+def test_company_policy_approval_flag_requires_a_boolean() -> None:
+    raw = _single_worker_manifest()
+    raw["policy"]["require_human_approval_for_external_workers"] = "true"
+
+    with pytest.raises(CompanyManifestError, match="require_human_approval_for_external_workers"):
+        compile_company_manifest(raw)

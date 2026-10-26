@@ -38,6 +38,7 @@ from ..protocols.enums import (
 )
 from ..protocols.envelope import MessageEnvelope
 from .admin import AdminAgent
+from .budget import BudgetExhausted, BudgetTracker
 from .tool_catalog import tool_definitions_for_agent
 
 if TYPE_CHECKING:
@@ -410,6 +411,15 @@ class CSuiteAgent(AdminAgent):
                     project_id=project_id,
                     tools=tools,
                 )
+            except BudgetExhausted:
+                logger.info(
+                    "ceo_human_directive_budget_exhausted",
+                    extra=self._log_extra(specialization=self._specialization),
+                )
+                response_text = (
+                    "I couldn't process that request because its AIAT task budget is "
+                    "exhausted or its deadline has passed."
+                )
             except Exception as exc:
                 logger.warning(
                     "ceo_human_directive_llm_failed",
@@ -455,6 +465,13 @@ class CSuiteAgent(AdminAgent):
         requested_model = self._governed_request_model(
             None if binding is not None else self.config.llm_model
         )
+        budget = self._budget
+        if budget is None:
+            budget = BudgetTracker()
+            self._budget = budget
+        # This one-turn operator path is deliberately separate from think(),
+        # but it must enforce the same envelope budget before dispatch.
+        budget.check_before_llm_call()
         try:
             if self.config.llm_use_fallback and binding is None:
                 response = await self._llm.chat_completion_with_fallback(
@@ -486,6 +503,20 @@ class CSuiteAgent(AdminAgent):
                 completion_tokens=response.usage.completion_tokens,
                 cost_usd=response.usage.estimated_cost_usd,
             )
+            try:
+                budget.consume_llm_call(
+                    tokens_in=response.usage.prompt_tokens,
+                    tokens_out=response.usage.completion_tokens,
+                    cost_usd=response.usage.estimated_cost_usd,
+                )
+            except BudgetExhausted:
+                # The completed response remains useful to the operator. The
+                # tracker records the overage and blocks any later call in
+                # this invocation, matching AgentBase.think() semantics.
+                logger.warning(
+                    "ceo_human_directive_budget_exhausted_after_call",
+                    extra=self._log_extra(specialization=self._specialization),
+                )
         finally:
             if llm_started_here:
                 await self._llm.stop()

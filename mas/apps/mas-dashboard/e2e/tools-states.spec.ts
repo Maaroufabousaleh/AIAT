@@ -113,6 +113,171 @@ test("tools catalogue retains the last known state when a refresh fails", async 
   await expect(page.getByText("tools-e2e-read", { exact: true })).toBeVisible();
 });
 
+test("tools catalogue ignores an older refresh response after a newer refresh", async ({
+  page,
+}) => {
+  let refreshRequestCount = 0;
+  let readyForRefresh = false;
+  let releaseFirstResponse: (() => void) | undefined;
+  let firstResponseFulfilled: (() => void) | undefined;
+  const firstResponse = new Promise<void>((resolve) => {
+    releaseFirstResponse = resolve;
+  });
+  const firstFulfilled = new Promise<void>((resolve) => {
+    firstResponseFulfilled = resolve;
+  });
+
+  await page.route("**/api/tools", async (route) => {
+    if (!readyForRefresh) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(TOOLS_FIXTURE),
+      });
+      return;
+    }
+    refreshRequestCount += 1;
+    if (refreshRequestCount === 1) {
+      await firstResponse;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ...TOOLS_FIXTURE,
+          tools: [{ ...TOOLS_FIXTURE.tools[0], name: "tools-stale-refresh" }],
+        }),
+      });
+      firstResponseFulfilled?.();
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ...TOOLS_FIXTURE,
+        tools: [{ ...TOOLS_FIXTURE.tools[0], name: "tools-fresh-manual" }],
+      }),
+    });
+  });
+
+  await authenticate(page, "/tools");
+  await expect(page.getByText("tools-e2e-read", { exact: true })).toBeVisible();
+
+  readyForRefresh = true;
+  await page.getByRole("button", { name: "Refresh tools" }).click();
+  await expect.poll(() => refreshRequestCount).toBe(1);
+  await page.getByRole("button", { name: "Refresh tools" }).click();
+  await expect.poll(() => refreshRequestCount).toBe(2);
+  await expect(
+    page.getByText("tools-fresh-manual", { exact: true }),
+  ).toBeVisible();
+
+  releaseFirstResponse?.();
+  await firstFulfilled;
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+  await expect(
+    page.getByText("tools-stale-refresh", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByText("tools-fresh-manual", { exact: true }),
+  ).toBeVisible();
+});
+
+test("tools catalogue preserves a deliberate collapse-all choice across refresh", async ({
+  page,
+}) => {
+  let reads = 0;
+  let refreshRequested = false;
+  await page.route("**/api/tools", async (route) => {
+    reads += 1;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ...TOOLS_FIXTURE,
+        tools: [
+          ...TOOLS_FIXTURE.tools,
+          {
+            name: "web-e2e-search",
+            description: "Search the approved local fixture index",
+            group: "Web / HTTP",
+          },
+        ],
+        health: { tools_registered: refreshRequested ? 3 : 2 },
+      }),
+    });
+  });
+
+  await authenticate(page, "/tools");
+  const generalGroup = page.locator("#group-header-General");
+  await expect(generalGroup).toHaveAttribute("aria-expanded", "true");
+  const webGroup = page.getByRole("button", { name: /Web \/ HTTP/ });
+
+  await page.getByRole("button", { name: "Collapse all groups" }).click();
+  await expect(generalGroup).toHaveAttribute("aria-expanded", "false");
+  await expect(webGroup).toHaveAttribute("aria-expanded", "false");
+
+  const readsBeforeRefresh = reads;
+  refreshRequested = true;
+  await page.getByRole("button", { name: "Refresh tools" }).click();
+  await expect.poll(() => reads).toBe(readsBeforeRefresh + 1);
+  await expect(page.getByText(/3 registered tools/)).toBeVisible();
+  await expect(generalGroup).toHaveAttribute("aria-expanded", "false");
+});
+
+test("tools catalogue recognizes newly added groups when showing expand or collapse all", async ({
+  page,
+}) => {
+  let showReplacementGroups = false;
+  const initialGroups = {
+    tools: [
+      { name: "general-read", description: "Read general metadata", group: "General" },
+      { name: "file-read", description: "Read a file", group: "File System" },
+    ],
+    health: { tools_registered: 2 },
+  };
+  const replacementGroups = {
+    tools: [
+      { name: "general-read", description: "Read general metadata", group: "General" },
+      { name: "code-check", description: "Run a local check", group: "Code Execution" },
+    ],
+    health: { tools_registered: 2 },
+  };
+
+  await page.route("**/api/tools", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(showReplacementGroups ? replacementGroups : initialGroups),
+    });
+  });
+
+  await authenticate(page, "/tools");
+  await expect(page.locator("#group-header-General")).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+  await expect(page.locator("#group-header-File-System")).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+
+  showReplacementGroups = true;
+  await page.getByRole("button", { name: "Refresh tools" }).click();
+  const expandAll = page.getByRole("button", { name: "Expand all groups" });
+  await expect(expandAll).toBeVisible();
+  await expandAll.click();
+  await expect(page.locator("#group-header-Code-Execution")).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+});
+
 test("tools catalogue access denial on first load hides catalogue controls", async ({
   page,
 }) => {

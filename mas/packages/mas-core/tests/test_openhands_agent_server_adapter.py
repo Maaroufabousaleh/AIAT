@@ -223,6 +223,10 @@ async def test_certification_rotates_pinned_server_redacted_grant_readback(tmp_p
     calls: list[str] = []
     current_grant = "**********"
     run = request(workspace=tmp_path / "workspace")
+    run._execution_claim_fence = {
+        "claim_owner": "host-executor-claim",
+        "attempt_count": 4,
+    }
 
     async def handler(http_request: httpx.Request) -> httpx.Response:
         nonlocal current_grant
@@ -249,6 +253,8 @@ async def test_certification_rotates_pinned_server_redacted_grant_readback(tmp_p
             assert verified.worker_id == "coding-worker-openhands-candidate"
             assert verified.run_id == run.run_id
             assert verified.tool_names == frozenset(run.tool_grants)
+            assert verified.claim_owner == "host-executor-claim"
+            assert verified.attempt_count == 4
             return httpx.Response(201, json={})
         raise AssertionError(f"unexpected network call: {http_request.method} {http_request.url}")
 

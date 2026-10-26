@@ -1,0 +1,62 @@
+{
+  "checked_at": "2026-10-03T00:11:34.188207+00:00",
+  "emitted_output_file_count": 6,
+  "execution_policy": {
+    "dependency_install_lifecycle_executed": false,
+    "external_module_resolution": false,
+    "source_code_executed": false,
+    "temporary_outputs_cleaned": true
+  },
+  "exit_code": 0,
+  "input_file_count": 6,
+  "input_paths": [
+    "packages/opencode/src/lsp/server.ts",
+    "packages/core/src/effect/keyed-mutex.ts",
+    "packages/core/src/util/effect-flock.ts",
+    "packages/opencode/src/server/routes/instance/httpapi/public.ts",
+    "packages/plugin/src/tui.ts",
+    "packages/tui/src/plugin/slots.tsx"
+  ],
+  "invocation": [
+    "npm",
+    "exec",
+    "--yes",
+    "--package=bun@1.3.14",
+    "--",
+    "bun",
+    "build",
+    "<exact-source>/packages/opencode/src/lsp/server.ts",
+    "<exact-source>/packages/core/src/effect/keyed-mutex.ts",
+    "<exact-source>/packages/core/src/util/effect-flock.ts",
+    "<exact-source>/packages/opencode/src/server/routes/instance/httpapi/public.ts",
+    "<exact-source>/packages/plugin/src/tui.ts",
+    "<exact-source>/packages/tui/src/plugin/slots.tsx",
+    "--outdir",
+    "<temporary-output>",
+    "--external",
+    "*",
+    "--target",
+    "bun"
+  ],
+  "limitation": "This confirms TypeScript/TSX parsing and transpilation only. It is not a security scan and does not substitute for Semgrep rule coverage; three runtime-reachable files remain a security coverage gate.",
+  "payload_free": true,
+  "programme_scope": "personal-internal-only",
+  "schema_version": "aiat.opencode-parser-compensation.v1",
+  "secret_values_retained": false,
+  "source": {
+    "commit": "826d9ad46a22bef0294998e08daa3c4904fea28f",
+    "release": "1.18.21",
+    "repository": "https://github.com/anomalyco/opencode.git",
+    "source_archive_sha256": "77b8cee43c3f74d94ad4651c375ec02bcd55a20aff06f9aac8e7be59c70811a0",
+    "source_snapshot_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/source-snapshot.tar.xz",
+    "source_snapshot_sha256": "e338f0fc18145f7fc0ac848da5593ae77ea63adbd5f1d386ca8d82151a280370"
+  },
+  "source_snippets_retained": false,
+  "status": "pass_scoped_parser_check",
+  "stderr_line_count": 0,
+  "tool": {
+    "name": "Bun",
+    "version": "1.3.14",
+    "version_source": "exact candidate package.json packageManager field"
+  }
+}

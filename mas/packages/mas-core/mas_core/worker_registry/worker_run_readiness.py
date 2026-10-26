@@ -19,10 +19,19 @@ from typing import Any
 from mas_core.sandbox_policy import (
     HARDENED_SANDBOX_CLASSES,
     SUPPORTED_SANDBOX_PROFILES,
+    WorkerIsolationPolicyError,
     canonical_sandbox_class,
+    worker_requires_hardened_isolation,
+)
+
+from .execution_lineage import (
+    worker_execution_transport_supported,
+    worker_shell_execution_lineage_blocker,
 )
 
 WORKER_RUN_READINESS_SCHEMA = "aiat.worker-run-readiness.v1"
+# DRAINING workers may finish queued work, but cannot accept newly dispatched runs.
+DISPATCHABLE_WORKER_STATUSES = frozenset({"ACTIVE"})
 
 # These are the project states in which a governed worker task can be
 # selected.  Terminal, security-blocked, and failed projects must be resumed
@@ -48,6 +57,7 @@ DISPATCHABLE_PROJECT_STATES = frozenset(
 TERMINAL_PROJECT_STATES = frozenset({"COMPLETED", "ARCHIVED", "FAILED"})
 VALID_SANDBOX_PROFILES = SUPPORTED_SANDBOX_PROFILES
 HARDENED_SANDBOX_PROFILES = HARDENED_SANDBOX_CLASSES
+HARDENED_SANDBOX_TRANSPORTS = frozenset({"oci", "wasmtime"})
 REQUIRED_BUDGETS = ("max_concurrent_runs", "max_cost_usd")
 REQUIRED_WORKER_POINTERS = (
     "active_shell_version_id",
@@ -58,6 +68,15 @@ REQUIRED_WORKER_POINTERS = (
 
 def _text(value: Any) -> str:
     return str(value or "").strip()
+
+
+
+def canonical_worker_adapter_transport(value: Any) -> str:
+    """Normalize accepted adapter aliases to the runtime's canonical type."""
+
+    transport = _text(value).lower()
+    return "wasmtime" if transport == "wasm" else transport
+
 
 
 def _decimal(value: Any) -> Decimal | None:
@@ -101,6 +120,173 @@ def _profile_status(
     return False, 0, None
 
 
+def worker_run_project_scope_blocker(
+    *,
+    run: Mapping[str, Any],
+    request: Mapping[str, Any],
+    project: Mapping[str, Any] | None,
+    assignments: Iterable[Any] = (),
+) -> str | None:
+    """Return a blocker when a queued run's current project grants are stale.
+
+    The caller supplies rows read at the execution boundary.  Storage claim
+    code calls this while holding the project and assignment row locks; the
+    host consumer also uses it before resolving an adapter so revoked work
+    cannot reach a runtime.
+    """
+
+    run_project_id = _text(run.get("project_id"))
+    request_project_id = _text(request.get("project_id"))
+    if run_project_id != request_project_id:
+        return "worker_request_scope_mismatch"
+    if not run_project_id:
+        return None
+    if project is None or _text(project.get("id")) != run_project_id:
+        return "project_not_found"
+    project_state = str(project.get("state") or "").upper()
+    if project_state not in DISPATCHABLE_PROJECT_STATES:
+        if project_state in TERMINAL_PROJECT_STATES:
+            return "project_terminal"
+        return "project_not_dispatchable"
+    company_id = _text(project.get("company_id"))
+    if not company_id:
+        return None
+
+    worker_id = _text(run.get("worker_id"))
+    if not worker_id:
+        return "worker_identity_invalid"
+    matching = [
+        item
+        for item in assignments
+        if isinstance(item, Mapping) and _text(item.get("worker_id")) == worker_id
+    ]
+    if not matching:
+        return "company_assignment_required"
+    if len(matching) != 1:
+        return "company_assignment_ambiguous"
+    assignment = matching[0]
+    if str(assignment.get("status")) != "ACTIVE":
+        return "company_assignment_required"
+    if bool(assignment.get("approval_required")):
+        return "company_assignment_approval_required"
+
+    requested_tools = request.get("tool_grants", [])
+    requested_permissions = request.get("permission_requirements", [])
+    assigned_tools = assignment.get("tool_grants", [])
+    assigned_permissions = assignment.get("permission_grants", [])
+    if any(
+        not isinstance(values, list)
+        or any(not isinstance(value, str) for value in values)
+        for values in (
+            requested_tools,
+            requested_permissions,
+            assigned_tools,
+            assigned_permissions,
+        )
+    ):
+        return "worker_run_grants_invalid"
+    if not set(requested_tools).issubset(assigned_tools) or not set(
+        requested_permissions
+    ).issubset(assigned_permissions):
+        return "company_assignment_grant_exceeded"
+    return None
+
+
+
+def worker_run_registry_blocker(
+    *,
+    run: Mapping[str, Any],
+    worker: Mapping[str, Any] | None,
+    shell: Mapping[str, Any] | None,
+    adapter: Mapping[str, Any] | None,
+    skill_bundle: Mapping[str, Any] | None,
+) -> str | None:
+    """Return a blocker when a queued run's worker pins are no longer eligible.
+
+    Storage calls this while locking the worker and pinned registry rows at the
+    claim boundary. The host queue uses the same predicates before resolving
+    the adapter, so a changed status cannot pass one boundary and fail another.
+    """
+
+    worker_id = _text(run.get("worker_id"))
+    if not worker_id:
+        return "run_worker_id_invalid"
+    if worker is None or _text(worker.get("id")) != worker_id:
+        return "worker_identity_mismatch"
+    if _text(worker.get("status")).upper() not in {"ACTIVE", "DRAINING"}:
+        return "worker_not_active"
+    if _text(worker.get("evaluation_status")).lower() != "approved":
+        return "worker_evaluation_not_approved"
+
+    shell_id = _text(run.get("worker_shell_version_id"))
+    if not shell_id:
+        return "worker_shell_pin_missing_or_invalid"
+    if (
+        shell is None
+        or _text(shell.get("id")) != shell_id
+        or _text(shell.get("worker_id")) != worker_id
+        or _text(shell.get("status")).lower() not in {"active", "superseded"}
+    ):
+        return "worker_shell_pin_not_eligible"
+
+    adapter_id = _text(run.get("adapter_id"))
+    if not adapter_id:
+        return "worker_adapter_pin_missing_or_invalid"
+    if (
+        adapter is None
+        or _text(adapter.get("id")) != adapter_id
+        or _text(adapter.get("worker_id")) != worker_id
+        or _text(adapter.get("status")).lower() not in {"active", "superseded"}
+        or _text(adapter.get("conformance_status")).lower() != "passed"
+    ):
+        return "worker_adapter_pin_not_eligible"
+
+    transport = canonical_worker_adapter_transport(adapter.get("transport_type"))
+    if not transport:
+        return "worker_adapter_transport_missing"
+    try:
+        requires_hardened_isolation = worker_requires_hardened_isolation(worker)
+    except WorkerIsolationPolicyError as exc:
+        return exc.reason_code
+    if requires_hardened_isolation:
+        if transport == "process":
+            return "worker_sandbox_process_transport_unsupported"
+        if transport not in HARDENED_SANDBOX_TRANSPORTS:
+            return "worker_sandbox_transport_unverified"
+
+    if not worker_execution_transport_supported(transport):
+        return "worker_adapter_transport_unverified"
+
+    lineage_blocker = worker_shell_execution_lineage_blocker(
+        shell=shell,
+        adapter=adapter,
+        worker_id=worker_id,
+        adapter_id=adapter_id,
+    )
+    if lineage_blocker is not None:
+        return lineage_blocker
+
+    raw_skill_bundle_id = run.get("skill_bundle_id")
+    if raw_skill_bundle_id is not None:
+        skill_bundle_id = _text(raw_skill_bundle_id)
+        if not skill_bundle_id:
+            return "worker_skill_pin_invalid"
+        if (
+            skill_bundle is None
+            or _text(skill_bundle.get("id")) != skill_bundle_id
+            or _text(skill_bundle.get("worker_id")) != worker_id
+            or _text(skill_bundle.get("status")).upper()
+            not in {"APPROVED", "SUPERSEDED"}
+            or (
+                _text(run.get("steward_id"))
+                and _text(skill_bundle.get("steward_id"))
+                != _text(run.get("steward_id"))
+            )
+        ):
+            return "worker_skill_pin_not_eligible"
+    return None
+
+
 def evaluate_worker_run_readiness(
     *,
     worker: Mapping[str, Any] | None,
@@ -131,6 +317,9 @@ def evaluate_worker_run_readiness(
     requested_profile = _text(requested_model_profile_id)
     blockers: list[dict[str, str]] = []
     fetch_status = {str(key): "blocked" for key in (fetch_errors or {})}
+    sandbox_hardening_required = bool(require_sandbox)
+    sandbox_transport = ""
+    sandbox_transport_status = "not_checked"
 
     if fetch_errors:
         for key, reason in sorted(fetch_errors.items()):
@@ -149,10 +338,30 @@ def evaluate_worker_run_readiness(
         blockers.append(_blocker("worker_not_found", "the selected worker was not returned by the control plane"))
     else:
         fetch_status.setdefault("worker", "observed")
+        sandbox_transport = canonical_worker_adapter_transport(
+            worker.get("transport_type") or worker.get("adapter_type")
+        )
+        try:
+            worker_hardening_required = worker_requires_hardened_isolation(worker)
+            sandbox_hardening_required = bool(require_sandbox) or worker_hardening_required
+        except WorkerIsolationPolicyError as exc:
+            sandbox_hardening_required = True
+            if exc.reason_code != "worker_sandbox_profile_invalid":
+                blockers.append(
+                    _blocker(
+                        "worker_isolation_policy_invalid",
+                        "the worker's sandbox and execution policy could not be evaluated safely",
+                    )
+                )
         if _text(worker.get("id")) and _text(worker.get("id")) != selected_worker_id:
             blockers.append(_blocker("worker_selection_mismatch", "the returned worker ID differs from the selected worker ID"))
-        if worker_status not in {"ACTIVE", "DRAINING"}:
-            blockers.append(_blocker("worker_not_active", "the selected worker must be ACTIVE or DRAINING"))
+        if worker_status not in DISPATCHABLE_WORKER_STATUSES:
+            blockers.append(
+                _blocker(
+                    "worker_not_active",
+                    "new Worker Runs require an ACTIVE worker; DRAINING workers finish already-dispatched work",
+                )
+            )
         if not _text(worker.get("version_pin")):
             blockers.append(_blocker("worker_version_pin_missing", "the worker has no immutable source/runtime version pin"))
         if _text(worker.get("evaluation_status")).lower() != "approved":
@@ -172,8 +381,33 @@ def evaluate_worker_run_readiness(
             sandbox_class = None
             blockers.append(_blocker("sandbox_profile_invalid", "the worker has no recognized sandbox profile"))
         else:
-            if require_sandbox and sandbox_class not in HARDENED_SANDBOX_PROFILES:
+            if (
+                sandbox_hardening_required
+                and sandbox_class is not None
+                and sandbox_class not in HARDENED_SANDBOX_PROFILES
+            ):
                 blockers.append(_blocker("sandbox_profile_not_hardened", "the selected run requires gVisor/runsc or Kata VM isolation"))
+
+        if not sandbox_hardening_required:
+            sandbox_transport_status = "observed" if sandbox_transport else "not_checked"
+        elif sandbox_transport == "process":
+            sandbox_transport_status = "blocked"
+            blockers.append(
+                _blocker(
+                    "worker_sandbox_process_transport_unsupported",
+                    "a direct process adapter cannot enforce the required worker isolation",
+                )
+            )
+        elif sandbox_transport in HARDENED_SANDBOX_TRANSPORTS:
+            sandbox_transport_status = "declared"
+        else:
+            sandbox_transport_status = "not_checked"
+            blockers.append(
+                _blocker(
+                    "worker_sandbox_transport_unverified",
+                    "the worker transport is missing or cannot be verified to enforce required isolation",
+                )
+            )
 
         if health is not None:
             health_status = _text(health.get("health_status")).lower()
@@ -263,7 +497,8 @@ def evaluate_worker_run_readiness(
         else:
             budget_status[budget_key] = "available"
     fetch_status.setdefault("budgets", "observed")
-    fetch_status.setdefault("model_profiles", "observed")
+    if require_model_backed:
+        fetch_status.setdefault("model_profiles", "observed")
 
     sandbox_profile = _text(worker.get("sandbox_profile")).lower() if worker else "missing"
     try:
@@ -303,7 +538,9 @@ def evaluate_worker_run_readiness(
                 "profile": sandbox_profile,
                 "class": sandbox_class,
                 "runtime_status": "not_checked",
-                "hardened_required": bool(require_sandbox),
+                "hardened_required": sandbox_hardening_required,
+                "transport": sandbox_transport or None,
+                "transport_status": sandbox_transport_status,
             },
             "health": {"status": health_status},
             "identity": {"status": "not_checked"},
@@ -312,18 +549,26 @@ def evaluate_worker_run_readiness(
         },
         "fetch_status": fetch_status,
         "blockers": blockers,
-        "scope": "read-only selected model-backed worker-run readiness; no activation, identity provisioning, budget reservation, dispatch, or payload access",
+        "scope": (
+            "read-only selected model-backed worker-run readiness"
+            if require_model_backed
+            else "read-only selected non-model worker-run readiness"
+        ) + "; no activation, identity provisioning, budget reservation, dispatch, or payload access",
     }
     return report
 
 
 __all__ = [
     "DISPATCHABLE_PROJECT_STATES",
+    "DISPATCHABLE_WORKER_STATUSES",
     "HARDENED_SANDBOX_PROFILES",
     "REQUIRED_BUDGETS",
     "REQUIRED_WORKER_POINTERS",
     "TERMINAL_PROJECT_STATES",
     "VALID_SANDBOX_PROFILES",
     "WORKER_RUN_READINESS_SCHEMA",
+    "canonical_worker_adapter_transport",
     "evaluate_worker_run_readiness",
+    "worker_run_project_scope_blocker",
+    "worker_run_registry_blocker",
 ]

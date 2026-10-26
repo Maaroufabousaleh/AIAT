@@ -39,6 +39,8 @@ class OpenCodeToolGrant:
     tool_names: frozenset[str]
     expires_at: int
     grant_id: str
+    claim_owner: str | None = None
+    attempt_count: int = 0
 
 
 def _b64_encode(value: bytes) -> str:
@@ -56,6 +58,8 @@ def issue_opencode_tool_grant(
     run_id: UUID,
     project_id: UUID | None,
     tool_names: Iterable[str],
+    claim_owner: str | None = None,
+    attempt_count: int = 0,
     ttl_seconds: int = 300,
     now: int | None = None,
 ) -> str:
@@ -70,6 +74,11 @@ def issue_opencode_tool_grant(
         raise OpenCodeToolGrantError("OpenCode tool bridge requires a worker id")
     if not 1 <= ttl_seconds <= _MAX_TTL_SECONDS:
         raise OpenCodeToolGrantError("OpenCode tool bridge TTL is out of bounds")
+    if claim_owner is None:
+        if attempt_count != 0:
+            raise OpenCodeToolGrantError("unclaimed OpenCode grants must use attempt zero")
+    elif not claim_owner.strip() or attempt_count < 1:
+        raise OpenCodeToolGrantError("claimed OpenCode grants require an owner and positive attempt")
     issued_at = int(time.time()) if now is None else int(now)
     payload = {
         "purpose": _PURPOSE,
@@ -77,6 +86,8 @@ def issue_opencode_tool_grant(
         "run_id": str(run_id),
         "project_id": str(project_id) if project_id else None,
         "tool_names": sorted({str(name).strip() for name in tool_names if str(name).strip()}),
+        "claim_owner": claim_owner.strip() if claim_owner is not None else None,
+        "attempt_count": attempt_count,
         "exp": issued_at + ttl_seconds,
         "jti": secrets.token_urlsafe(16),
     }
@@ -106,10 +117,16 @@ def verify_opencode_tool_grant(
         tool_names = frozenset(str(name).strip() for name in payload["tool_names"] if str(name).strip())
         expires_at = int(payload["exp"])
         grant_id = str(payload["jti"])
+        claim_owner = str(payload["claim_owner"]).strip() if payload.get("claim_owner") is not None else None
+        attempt_count = int(payload.get("attempt_count", 0))
     except (KeyError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise OpenCodeToolGrantError("invalid OpenCode tool bridge grant") from exc
     if payload.get("purpose") != _PURPOSE or not worker_id or not grant_id:
         raise OpenCodeToolGrantError("invalid OpenCode tool bridge grant")
+    if (claim_owner is None and attempt_count != 0) or (
+        claim_owner is not None and (not claim_owner or attempt_count < 1)
+    ):
+        raise OpenCodeToolGrantError("invalid OpenCode tool bridge claim fence")
     current = int(time.time()) if now is None else int(now)
     if expires_at <= current or expires_at - current > _MAX_TTL_SECONDS:
         raise OpenCodeToolGrantError("expired OpenCode tool bridge grant")
@@ -120,4 +137,6 @@ def verify_opencode_tool_grant(
         tool_names=tool_names,
         expires_at=expires_at,
         grant_id=grant_id,
+        claim_owner=claim_owner,
+        attempt_count=attempt_count,
     )

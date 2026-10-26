@@ -1,0 +1,263 @@
+{
+  "schema_version": "aiat.opencode-partial-security-review.v1",
+  "programme_scope": "personal-internal-only",
+  "reviewed_at": "2026-10-12",
+  "candidate": {
+    "release": "1.18.21",
+    "source_revision": "826d9ad46a22bef0294998e08daa3c4904fea28f",
+    "source_snapshot_sha256": "e338f0fc18145f7fc0ac848da5593ae77ea63adbd5f1d386ca8d82151a280370",
+    "aiat_candidate_evidence_commit": "6d90398d34b0020075653ea82b9faf8e63085c02"
+  },
+  "policy": {
+    "partial_dispositions_only": true,
+    "does_not_close_review_groups": true,
+    "does_not_change_scan_or_activation_gate": true,
+    "raw_source_context_or_secret_values_retained": false
+  },
+  "evidence": {
+    "primary_semgrep": {
+      "scan_id": "opencode-1.18.21-semgrep-2026-10-02",
+      "result_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/semgrep.json",
+      "result_sha256": "bcc70a2a32f1330179ce5d63f24e8a9582b8f89b98637a69ce1c469c6ac0a235"
+    },
+    "transpiled_semgrep": {
+      "scan_id": "opencode-1.18.21-semgrep-transpiled-typescript-2026-10-03",
+      "result_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/semgrep-transpiled-typescript.json",
+      "result_sha256": "a85aa8ad0c72b25ac01056569a3018692080f4b1d2671e9d884e506df16b94f8",
+      "prior_review_artifact_ref": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/transpiled-semgrep-findings-review.json",
+      "prior_review_artifact_sha256": "7297c5617a2bea724701f78af20625006f6965e64c43feaa593c8ab1d7b07fef"
+    },
+    "exact_source_snapshot_sha256": null
+  },
+  "partial_dispositions": [
+    {
+      "scan_id": "opencode-1.18.21-semgrep-2026-10-02",
+      "rule_id": "javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp",
+      "classification": "TEST_OR_FIXTURE_ONLY",
+      "finding_count": 10,
+      "findings": [
+        {
+          "scanner_record_ordinal": 18,
+          "rule_id": "javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp",
+          "severity": "WARNING",
+          "source_path": "packages/app/e2e/performance/timeline/session-timeline-stream-probe.ts",
+          "source_line": 247
+        },
+        {
+          "scanner_record_ordinal": 19,
+          "rule_id": "javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp",
+          "severity": "WARNING",
+          "source_path": "packages/app/e2e/performance/timeline/session-timeline-stream-probe.ts",
+          "source_line": 359
+        },
+        {
+          "scanner_record_ordinal": 20,
+          "rule_id": "javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp",
+          "severity": "WARNING",
+          "source_path": "packages/app/e2e/regression/cross-server-tab-close.spec.ts",
+          "source_line": 36
+        },
+        {
+          "scanner_record_ordinal": 21,
+          "rule_id": "javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp",
+          "severity": "WARNING",
+          "source_path": "packages/app/e2e/regression/cross-server-tab-close.spec.ts",
+          "source_line": 65
+        },
+        {
+          "scanner_record_ordinal": 22,
+          "rule_id": "javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp",
+          "severity": "WARNING",
+          "source_path": "packages/app/e2e/regression/cross-server-tab-close.spec.ts",
+          "source_line": 65
+        },
+        {
+          "scanner_record_ordinal": 23,
+          "rule_id": "javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp",
+          "severity": "WARNING",
+          "source_path": "packages/app/e2e/regression/tab-navigate-mousedown.spec.ts",
+          "source_line": 40
+        },
+        {
+          "scanner_record_ordinal": 24,
+          "rule_id": "javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp",
+          "severity": "WARNING",
+          "source_path": "packages/app/e2e/regression/tab-navigate-mousedown.spec.ts",
+          "source_line": 42
+        },
+        {
+          "scanner_record_ordinal": 25,
+          "rule_id": "javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp",
+          "severity": "WARNING",
+          "source_path": "packages/app/e2e/regression/tab-navigate-mousedown.spec.ts",
+          "source_line": 70
+        },
+        {
+          "scanner_record_ordinal": 26,
+          "rule_id": "javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp",
+          "severity": "WARNING",
+          "source_path": "packages/app/e2e/regression/tab-navigate-mousedown.spec.ts",
+          "source_line": 70
+        },
+        {
+          "scanner_record_ordinal": 27,
+          "rule_id": "javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp",
+          "severity": "WARNING",
+          "source_path": "packages/app/e2e/smoke/session-timeline.spec.ts",
+          "source_line": 717
+        }
+      ],
+      "justification": "Every listed source location is under packages/app/e2e/, in E2E probes/specs. These records are test code, not shipped application runtime. Other regexp findings remain unreviewed in the open primary Semgrep group."
+    },
+    {
+      "scan_id": "opencode-1.18.21-semgrep-2026-10-02",
+      "rule_id": "javascript.lang.security.audit.spawn-shell-true.spawn-shell-true",
+      "classification": "OUT_OF_AIAT_SERVER_SERVING_PATH; NOT_A_GLOBAL_FALSE_POSITIVE",
+      "finding_count": 1,
+      "findings": [
+        {
+          "scanner_record_ordinal": 319,
+          "rule_id": "javascript.lang.security.audit.spawn-shell-true.spawn-shell-true",
+          "severity": "ERROR",
+          "source_path": "packages/tui/src/editor.ts",
+          "source_line": 36
+        }
+      ],
+      "justification": "The location is packages/tui/src/editor.ts, an interactive TUI editor path using VISUAL/EDITOR. It is not the AIAT server-serving worker path. The code does use shell=true on Windows, so this finding is not dismissed for TUI deployments."
+    },
+    {
+      "scan_id": "opencode-1.18.21-semgrep-2026-10-02",
+      "rule_id": "javascript.lang.security.detect-child-process.detect-child-process",
+      "classification": "FALSE_POSITIVE_FOR_SHELL_INJECTION; EXECUTABLE_TARGET_BOUNDARY_REMAINS",
+      "finding_count": 2,
+      "findings": [
+        {
+          "scanner_record_ordinal": 28,
+          "rule_id": "javascript.lang.security.detect-child-process.detect-child-process",
+          "severity": "ERROR",
+          "source_path": "packages/cli/bin/lildax.cjs",
+          "source_line": 11
+        },
+        {
+          "scanner_record_ordinal": 127,
+          "rule_id": "javascript.lang.security.detect-child-process.detect-child-process",
+          "severity": "ERROR",
+          "source_path": "packages/opencode/bin/opencode",
+          "source_line": 11
+        }
+      ],
+      "justification": "Both records are package entrypoint wrappers calling spawn(target, process.argv.slice(2), {stdio:\"inherit\"}) without shell interpretation. This rule flags child-process use, not an injection. The wrapper also supports OPENCODE_BIN_PATH and a package-local cached binary; deployment must bound that executable target, so this classification does not waive the broader row."
+    },
+    {
+      "scan_id": "opencode-1.18.21-semgrep-2026-10-02",
+      "rule_id": "javascript.lang.security.audit.spawn-shell-true.spawn-shell-true",
+      "classification": "NEEDS_OPERATOR_SECURITY_DECISION",
+      "finding_count": 2,
+      "findings": [
+        {
+          "scanner_record_ordinal": 49,
+          "rule_id": "javascript.lang.security.audit.spawn-shell-true.spawn-shell-true",
+          "severity": "ERROR",
+          "source_path": "packages/core/src/cross-spawn-spawner.ts",
+          "source_line": 374
+        },
+        {
+          "scanner_record_ordinal": 303,
+          "rule_id": "javascript.lang.security.audit.spawn-shell-true.spawn-shell-true",
+          "severity": "ERROR",
+          "source_path": "packages/opencode/src/util/process.ts",
+          "source_line": 115
+        }
+      ],
+      "justification": "These runtime paths forward shell configuration to child-process launch and support the intended shell tool. The candidate evidence does not prove AIAT-specific sandbox, command, or environment containment for this exact image. Retain both for security disposition.",
+      "next_action": "Confirm exact deployment environment, gVisor boundary, allowed mounts/environment, and command mediation; otherwise require a fixed upstream candidate."
+    },
+    {
+      "scan_id": "opencode-1.18.21-semgrep-transpiled-typescript-2026-10-03",
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "classification": "SAFE_BY_DESIGN_FOR_INSPECTED_IN_TREE_CALLERS_ONLY",
+      "finding_count": 4,
+      "findings": [
+        {
+          "finding_id": "586633457cabefb3f2cfd15d3d29401fd232407c132cfa7a05aedac160ede7cd",
+          "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+          "severity": "WARNING",
+          "source_path": "packages/core/src/util/effect-flock.ts",
+          "source_line": 172,
+          "classification": "SAFE_BY_DESIGN_FOR_INSPECTED_IN_TREE_CALLERS_ONLY",
+          "disposition": "partial; finding group remains open",
+          "evidence": [
+            "EffectFlock defaults dir to the fixed global state lock root; lock basename is Hash.fast(key)+\".lock\".",
+            "Inspected production call sites pass no optional dir: packages/core/src/npm.ts:82; packages/core/src/repository-cache.ts:149,231; packages/opencode/src/mcp/auth.ts:73,81.",
+            "The exported acquire/withLock interfaces still accept an optional dir; external/dynamic caller reachability and containment are not established."
+          ],
+          "next_action": "Resolve public API/plugin trust scope or obtain upstream containment fix; retain the review row open meanwhile."
+        },
+        {
+          "finding_id": "0632076e8a4542fdf8c372b3e1bdb8f6ab924500f4dbeb348ae4703a29cc6927",
+          "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+          "severity": "WARNING",
+          "source_path": "packages/core/src/util/effect-flock.ts",
+          "source_line": 173,
+          "classification": "SAFE_BY_DESIGN_FOR_INSPECTED_IN_TREE_CALLERS_ONLY",
+          "disposition": "partial; finding group remains open",
+          "evidence": [
+            "EffectFlock defaults dir to the fixed global state lock root; lock basename is Hash.fast(key)+\".lock\".",
+            "Inspected production call sites pass no optional dir: packages/core/src/npm.ts:82; packages/core/src/repository-cache.ts:149,231; packages/opencode/src/mcp/auth.ts:73,81.",
+            "The exported acquire/withLock interfaces still accept an optional dir; external/dynamic caller reachability and containment are not established."
+          ],
+          "next_action": "Resolve public API/plugin trust scope or obtain upstream containment fix; retain the review row open meanwhile."
+        },
+        {
+          "finding_id": "f6a9d2c990f14189b4da523fa369a32aa60cdffeca05e8b607027f2fa5b384a0",
+          "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+          "severity": "WARNING",
+          "source_path": "packages/core/src/util/effect-flock.ts",
+          "source_line": 257,
+          "classification": "SAFE_BY_DESIGN_FOR_INSPECTED_IN_TREE_CALLERS_ONLY",
+          "disposition": "partial; finding group remains open",
+          "evidence": [
+            "EffectFlock defaults dir to the fixed global state lock root; lock basename is Hash.fast(key)+\".lock\".",
+            "Inspected production call sites pass no optional dir: packages/core/src/npm.ts:82; packages/core/src/repository-cache.ts:149,231; packages/opencode/src/mcp/auth.ts:73,81.",
+            "The exported acquire/withLock interfaces still accept an optional dir; external/dynamic caller reachability and containment are not established."
+          ],
+          "next_action": "Resolve public API/plugin trust scope or obtain upstream containment fix; retain the review row open meanwhile."
+        },
+        {
+          "finding_id": "d01b9516cd9d6d6ebee85a33862c4058fb5edf4507dc79f8618e08160ee1095a",
+          "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+          "severity": "WARNING",
+          "source_path": "packages/core/src/util/effect-flock.ts",
+          "source_line": 257,
+          "classification": "SAFE_BY_DESIGN_FOR_INSPECTED_IN_TREE_CALLERS_ONLY",
+          "disposition": "partial; finding group remains open",
+          "evidence": [
+            "EffectFlock defaults dir to the fixed global state lock root; lock basename is Hash.fast(key)+\".lock\".",
+            "Inspected production call sites pass no optional dir: packages/core/src/npm.ts:82; packages/core/src/repository-cache.ts:149,231; packages/opencode/src/mcp/auth.ts:73,81.",
+            "The exported acquire/withLock interfaces still accept an optional dir; external/dynamic caller reachability and containment are not established."
+          ],
+          "next_action": "Resolve public API/plugin trust scope or obtain upstream containment fix; retain the review row open meanwhile."
+        }
+      ],
+      "justification": "The current source callers inspected do not pass the optional lock directory; this supports only the in-tree call graph and does not disposition the exported optional-dir API or the aggregate path-join findings.",
+      "next_action": "Resolve external/plugin reachability or obtain an upstream containment fix; keep the review group open."
+    }
+  ],
+  "still_open": [
+    {
+      "scan_id": "opencode-1.18.21-semgrep-2026-10-02",
+      "finding_records_not_classified_by_this_partial_review": 313,
+      "reason": "Aggregate path-join, workflow, prototype, build/runtime, TLS, and other rule locations were not all individually source-reviewed; no blanket waiver is made."
+    },
+    {
+      "scan_id": "opencode-1.18.21-semgrep-transpiled-typescript-2026-10-03",
+      "finding_records_still_open": 4,
+      "reason": "EffectFlock optional-dir export and external/dynamic caller scope remain unresolved."
+    },
+    {
+      "scan_id": "opencode-1.18.21-trufflehog-2026-10-02",
+      "finding_records_still_open": 53,
+      "reason": "All unique detections remain unverified (zero verified); classification as examples/fixtures is not proof that no live credential exists."
+    }
+  ]
+}

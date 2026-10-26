@@ -9,6 +9,7 @@ data, not a second execution engine: runtime behaviour still lives in
 
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -17,6 +18,9 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from mas_core.workflow.flow_engine import FlowNodeType
+
+
+TASK_INPUT_MAX_BYTES = 64 * 1024
 
 
 NODE_SCHEMA_VERSION = "1.0"
@@ -73,6 +77,14 @@ _NODE_SCHEMAS: dict[str, dict[str, Any]] = {
                 "type": "string",
                 "widget": "text",
                 "description": "Stable task type passed to the worker contract.",
+            },
+            {
+                "name": "task_input",
+                "label": "Task input (JSON object)",
+                "type": "object",
+                "widget": "json",
+                "max_bytes": TASK_INPUT_MAX_BYTES,
+                "description": "Bounded task-specific JSON passed to the governed worker; project/run authority stays in the Worker Run envelope.",
             },
             {
                 "name": "model_mode",
@@ -332,6 +344,19 @@ def validate_node_config_schema(node_type: FlowNodeType | str, config: dict[str,
                     errors.append(f"'{field_name}' items must be {item_type}")
         if expected == "object" and field.get("min_properties") is not None and len(value) < field["min_properties"]:
             errors.append(f"'{field_name}' must contain at least {field['min_properties']} entr(y/ies)")
+        if expected == "object" and field.get("max_bytes") is not None:
+            try:
+                encoded = json.dumps(
+                    value,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    allow_nan=False,
+                ).encode("utf-8")
+            except (TypeError, ValueError):
+                errors.append(f"'{field_name}' must contain JSON-compatible values")
+            else:
+                if len(encoded) > int(field["max_bytes"]):
+                    errors.append(f"'{field_name}' must not exceed {field['max_bytes']} UTF-8 bytes")
 
     required_any = list(schema.get("required_any") or [])
     if required_any and not any(config.get(field) not in (None, "") for field in required_any):

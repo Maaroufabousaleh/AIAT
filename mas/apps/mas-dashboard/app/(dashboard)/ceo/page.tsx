@@ -1,8 +1,10 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { clsx } from "clsx";
 import {
+  ArrowUpRight,
   Brain,
   Check,
   Copy,
@@ -403,6 +405,14 @@ export default function CeoPage() {
         }
         actions={!accessDenied ? (
           <>
+            <Link
+              href="/ceo/chat"
+              aria-label="Open CEO Command"
+              className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-cyan-400/30 bg-cyan-400/10 px-3 py-1.5 text-xs font-semibold text-cyan-200 transition-colors hover:border-cyan-300/50 hover:bg-cyan-400/15 hover:text-cyan-100"
+            >
+              <ArrowUpRight size={13} aria-hidden="true" />
+              Open CEO Command
+            </Link>
             <button
               type="button"
               onClick={() => setGroupByCycle((g) => !g)}

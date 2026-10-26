@@ -12,7 +12,8 @@ hardened sandbox.
 
 from __future__ import annotations
 
-from typing import Final, Literal
+from collections.abc import Mapping
+from typing import Any, Final, Literal
 
 CanonicalSandboxClass = Literal["trusted", "sandboxed", "vm_isolated"]
 SandboxProfileName = Literal[
@@ -87,7 +88,9 @@ def runtime_implements_sandbox(runtime: object, value: object) -> bool:
     ``kata-qemu``.  The policy class remains ``vm_isolated`` and the logical
     required runtime remains ``kata``; this predicate keeps those names
     distinct while allowing the discovered runtime to flow through host
-    registration, placement, and OCI dispatch.
+    registration, placement, and OCI dispatch.  Kata also satisfies a
+    ``sandboxed`` minimum because it is stronger than the normal runsc target;
+    a stronger runtime may satisfy a floor, but a weaker runtime may not.
     """
 
     try:
@@ -99,7 +102,87 @@ def runtime_implements_sandbox(runtime: object, value: object) -> bool:
         return runtime_name == "kata" or (
             runtime_name.startswith("kata-") and len(runtime_name) > len("kata-")
         )
+    if sandbox_class == "sandboxed":
+        # Kata is a stronger host implementation than the normal runsc
+        # target.  A workload whose minimum floor is sandboxed may therefore
+        # be placed on Kata when the format-aware host resolver prefers it;
+        # the inverse downgrade (runsc/runc for vm_isolated) is never allowed.
+        return runtime_name == "runsc" or runtime_name == "kata" or (
+            runtime_name.startswith("kata-") and len(runtime_name) > len("kata-")
+        )
     return runtime_name == SANDBOX_CLASS_RUNTIME[sandbox_class]
+
+
+class WorkerIsolationPolicyError(ValueError):
+    """A worker record contains an invalid sandbox or execution policy."""
+
+    def __init__(self, reason_code: str) -> None:
+        super().__init__(reason_code)
+        self.reason_code = reason_code
+
+
+def worker_requires_hardened_isolation(worker: Mapping[str, Any]) -> bool:
+    """Resolve the isolation floor used by host and API dispatch boundaries.
+
+    Source-backed and explicitly external workers remain untrusted even when
+    older rows omit or contradict their sandbox declaration. Invalid local
+    policy metadata fails closed with a stable reason code.
+    """
+
+    if not isinstance(worker, Mapping):
+        raise WorkerIsolationPolicyError("worker_identity_invalid")
+
+    raw_adapter_config = worker.get("adapter_config")
+    if raw_adapter_config is None:
+        adapter_config: Mapping[str, Any] = {}
+    elif isinstance(raw_adapter_config, Mapping):
+        adapter_config = raw_adapter_config
+    else:
+        raise WorkerIsolationPolicyError("worker_execution_policy_invalid")
+    raw_legacy_manifest = adapter_config.get("legacy_manifest")
+    if raw_legacy_manifest is None:
+        legacy_manifest: Mapping[str, Any] = {}
+    elif isinstance(raw_legacy_manifest, Mapping):
+        legacy_manifest = raw_legacy_manifest
+    else:
+        raise WorkerIsolationPolicyError("worker_execution_policy_invalid")
+    source_repo = str(worker.get("source_repo") or "").strip()
+    runtime_tiers = {
+        str(value or "").strip().lower()
+        for value in (
+            worker.get("runtime_tier"),
+            adapter_config.get("runtime_tier"),
+            legacy_manifest.get("runtime_tier"),
+        )
+    }
+    # Treat conflicting runtime metadata conservatively: any persisted or
+    # manifest-backed external declaration makes the worker untrusted.
+    external = "external" in runtime_tiers or source_repo not in {"", "local"}
+    try:
+        sandbox_class = canonical_sandbox_class(
+            str(worker.get("sandbox_profile") or "trusted")
+        )
+    except ValueError as exc:
+        raise WorkerIsolationPolicyError("worker_sandbox_profile_invalid") from exc
+    raw_policy = adapter_config.get("execution_policy")
+    if raw_policy is None:
+        from mas_core.execution_policy import WorkloadExecutionPolicy
+
+        policy = WorkloadExecutionPolicy()
+    else:
+        if not isinstance(raw_policy, Mapping):
+            raise WorkerIsolationPolicyError("worker_execution_policy_invalid")
+        try:
+            from mas_core.execution_policy import WorkloadExecutionPolicy
+
+            policy = WorkloadExecutionPolicy.model_validate(raw_policy)
+        except (TypeError, ValueError) as exc:
+            raise WorkerIsolationPolicyError("worker_execution_policy_invalid") from exc
+    return (
+        external
+        or sandbox_class != "trusted"
+        or policy.effective_minimum_isolation(external=external) != "trusted"
+    )
 
 
 __all__ = [
@@ -111,8 +194,10 @@ __all__ = [
     "SANDBOX_PROFILE_ALIASES",
     "SUPPORTED_SANDBOX_PROFILES",
     "SandboxProfileName",
+    "WorkerIsolationPolicyError",
     "canonical_sandbox_class",
     "is_hardened_sandbox",
     "required_runtime_for_sandbox",
     "runtime_implements_sandbox",
+    "worker_requires_hardened_isolation",
 ]

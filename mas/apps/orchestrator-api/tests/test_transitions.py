@@ -17,6 +17,8 @@ from mas_core.workflow import (
 )
 from mas_core.workflow.states import ProjectState
 
+OPERATOR_HEADERS = {"X-API-Key": "test-operator-key"}
+
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 
@@ -32,7 +34,7 @@ def _make_controller_ok(prior: ProjectState, event: WorkflowEvent, next_s: Proje
         prior_state=prior,
         event=event,
         next_state=next_s,
-        actor_id="test_actor",
+        actor_id="operator",
         context={},
     )
     ctrl = MagicMock()
@@ -78,15 +80,44 @@ async def test_transition_valid_event(client):
 
     resp = await client.post(
         f"/projects/{PROJECT_ID}/transition",
-        json={"event": "project_created", "actor_id": "test_actor", "context": {}},
+        json={"event": "project_created", "actor_id": "forged-human", "context": {}},
+        headers=OPERATOR_HEADERS,
     )
     assert resp.status_code == 200
     data = resp.json()
     assert data["prior_state"] == "INIT"
     assert data["event"] == "project_created"
     assert data["next_state"] == "FEASIBILITY_CHECK"
-    assert data["actor_id"] == "test_actor"
+    assert data["actor_id"] == "operator"
     assert data["project_id"] == str(PROJECT_ID)
+    assert ctrl.transition.await_args.kwargs["actor_id"] == "operator"
+
+
+@pytest.mark.anyio
+async def test_transition_requires_operator_and_ignores_body_actor(client, monkeypatch):
+    """Service and worker credentials cannot forge a human transition actor."""
+    monkeypatch.setenv("AIAT_WORKER_API_KEY", "test-worker-key")
+    project = _fake_project("INIT")
+    storage = _make_storage(project=project)
+    ctrl = _make_controller_ok(
+        ProjectState.INIT, WorkflowEvent.PROJECT_CREATED, ProjectState.FEASIBILITY_CHECK
+    )
+    _patch_state(storage, ctrl)
+    payload = {"event": "project_created", "actor_id": "human", "context": {}}
+
+    service_response = await client.post(
+        f"/projects/{PROJECT_ID}/transition", json=payload
+    )
+    worker_response = await client.post(
+        f"/projects/{PROJECT_ID}/transition",
+        json=payload,
+        headers={"X-API-Key": "test-worker-key"},
+    )
+
+    assert service_response.status_code == 403
+    assert worker_response.status_code == 403
+    storage.get_project.assert_not_awaited()
+    ctrl.transition.assert_not_awaited()
 
 
 @pytest.mark.anyio
@@ -106,6 +137,7 @@ async def test_transition_with_context(client):
             "actor_id": "cto",
             "context": {"doc_id": "abc-123"},
         },
+        headers=OPERATOR_HEADERS,
     )
     assert resp.status_code == 200
 
@@ -122,6 +154,7 @@ async def test_transition_project_not_found(client):
     resp = await client.post(
         f"/projects/{PROJECT_ID}/transition",
         json={"event": "project_created", "actor_id": "human"},
+        headers=OPERATOR_HEADERS,
     )
     assert resp.status_code == 404
 
@@ -139,6 +172,7 @@ async def test_transition_unknown_event(client):
     resp = await client.post(
         f"/projects/{PROJECT_ID}/transition",
         json={"event": "not_a_real_event", "actor_id": "actor"},
+        headers=OPERATOR_HEADERS,
     )
     assert resp.status_code == 400
     assert "Unknown workflow event" in resp.json()["detail"]
@@ -158,6 +192,7 @@ async def test_transition_invalid_transition_returns_409(client):
     resp = await client.post(
         f"/projects/{PROJECT_ID}/transition",
         json={"event": "cdr_submitted", "actor_id": "actor"},
+        headers=OPERATOR_HEADERS,
     )
     assert resp.status_code == 409
     assert "Invalid transition" in resp.json()["detail"]
@@ -174,6 +209,7 @@ async def test_transition_stale_state_returns_409(client):
     resp = await client.post(
         f"/projects/{PROJECT_ID}/transition",
         json={"event": "project_created", "actor_id": "actor"},
+        headers=OPERATOR_HEADERS,
     )
     assert resp.status_code == 409
     assert "Stale state conflict" in resp.json()["detail"]
@@ -212,6 +248,7 @@ async def test_transition_no_storage_returns_503(client):
     resp = await client.post(
         f"/projects/{PROJECT_ID}/transition",
         json={"event": "project_created", "actor_id": "human"},
+        headers=OPERATOR_HEADERS,
     )
     assert resp.status_code == 503
 
@@ -225,5 +262,6 @@ async def test_transition_invalid_uuid_returns_422(client):
     resp = await client.post(
         "/projects/not-a-uuid/transition",
         json={"event": "project_created", "actor_id": "human"},
+        headers=OPERATOR_HEADERS,
     )
     assert resp.status_code == 422

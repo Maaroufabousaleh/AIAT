@@ -121,6 +121,61 @@ def _normalize_metadata(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
     return dict(metadata)
 
 
+def _normalize_execution_metadata(
+    metadata: dict[str, Any],
+    *,
+    sandbox_runtime: str,
+    advertise_sandbox_runtime: bool,
+) -> None:
+    """Normalize host execution capabilities without treating metadata as proof.
+
+    Host registration stores the operator/certification projection in the
+    existing JSON metadata column.  The live bootstrap and readiness checks
+    remain responsible for proving that a reported runtime actually works.
+    """
+
+    explicit_capability_fields = any(
+        key in metadata
+        for key in (
+            "execution_runtimes",
+            "runtime_capabilities",
+            "workload_formats",
+            "execution_formats",
+            "kvm_available",
+            "wasmtime_available",
+            "remote_vm_available",
+        )
+    )
+    raw_runtimes = metadata.get("execution_runtimes") or metadata.get("runtime_capabilities") or ()
+    if isinstance(raw_runtimes, str):
+        raw_runtimes = (raw_runtimes,)
+    runtimes = {str(value).strip().lower() for value in raw_runtimes if str(value).strip()}
+    if advertise_sandbox_runtime:
+        runtimes.add(sandbox_runtime)
+    metadata["execution_runtimes"] = sorted(runtimes)
+
+    raw_formats = metadata.get("workload_formats") or metadata.get("execution_formats") or ()
+    if isinstance(raw_formats, str):
+        raw_formats = (raw_formats,)
+    formats = {str(value).strip().lower() for value in raw_formats if str(value).strip()}
+    if runtimes & {"runc", "runsc", "kata"}:
+        formats.update({"oci", "linux"})
+    if metadata.get("wasmtime_available") or "wasmtime" in runtimes:
+        formats.add("wasm")
+    metadata["workload_formats"] = sorted(formats)
+    metadata["kvm_available"] = bool(metadata.get("kvm_available", False))
+    metadata["wasmtime_available"] = bool(
+        metadata.get("wasmtime_available", "wasmtime" in runtimes)
+    )
+    metadata["remote_vm_available"] = bool(
+        metadata.get("remote_vm_available", "remote_vm" in runtimes)
+    )
+    metadata["gvisor_platform"] = str(metadata.get("gvisor_platform") or "systrap")
+    metadata["execution_capabilities_advertised"] = bool(
+        explicit_capability_fields or advertise_sandbox_runtime
+    )
+
+
 def _normalize_sandbox_runtime(value: str | None, *, sandbox_profile: str) -> str:
     """Resolve the host runtime without making it a worker policy class."""
 
@@ -196,6 +251,12 @@ def public_host_row(row: Mapping[str, Any], *, now: datetime | None = None) -> d
     except ValueError:
         sandbox_class = "invalid"
     metadata = dict(row.get("metadata") or {})
+    execution_runtimes = metadata.get("execution_runtimes") or metadata.get("runtime_capabilities") or []
+    if isinstance(execution_runtimes, str):
+        execution_runtimes = [execution_runtimes]
+    workload_formats = metadata.get("workload_formats") or metadata.get("execution_formats") or []
+    if isinstance(workload_formats, str):
+        workload_formats = [workload_formats]
     return {
         "id": row.get("id"),
         "host_id": str(row.get("host_id") or ""),
@@ -206,6 +267,18 @@ def public_host_row(row: Mapping[str, Any], *, now: datetime | None = None) -> d
         "sandbox_profile": sandbox_profile,
         "sandbox_class": sandbox_class,
         "sandbox_runtime": str(metadata.get("sandbox_runtime") or ""),
+        "execution_runtimes": sorted({str(value).strip().lower() for value in execution_runtimes if str(value).strip()}),
+        "workload_formats": sorted({str(value).strip().lower() for value in workload_formats if str(value).strip()}),
+        "kvm_available": bool(metadata.get("kvm_available", False)),
+        "wasmtime_available": bool(metadata.get("wasmtime_available", False)),
+        "remote_vm_available": bool(metadata.get("remote_vm_available", False)),
+        "gvisor_platform": str(metadata.get("gvisor_platform") or "systrap"),
+        "execution_capabilities_advertised": bool(
+            metadata.get(
+                "execution_capabilities_advertised",
+                any(key in metadata for key in ("execution_runtimes", "runtime_capabilities")),
+            )
+        ),
         "isolation_mode": str(row.get("isolation_mode") or ""),
         "capacity": dict(row.get("capacity") or {}),
         "priority": int(row.get("priority") or 0),
@@ -229,6 +302,13 @@ def host_snapshot_row(row: Mapping[str, Any], *, now: datetime | None = None) ->
             "sandbox_runtimes": [public["sandbox_runtime"]]
             if public["sandbox_runtime"]
             else [],
+            "execution_runtimes": public["execution_runtimes"],
+            "workload_formats": public["workload_formats"],
+            "kvm_available": public["kvm_available"],
+            "wasmtime_available": public["wasmtime_available"],
+            "remote_vm_available": public["remote_vm_available"],
+            "gvisor_platform": public["gvisor_platform"],
+            "execution_capabilities_advertised": public["execution_capabilities_advertised"],
             "isolation_modes": [public["isolation_mode"]],
         }
     )
@@ -271,6 +351,12 @@ class WorkerHostRegistry:
         normalized_capabilities = _normalize_capabilities(capabilities)
         normalized_capacity = _normalize_capacity(capacity)
         normalized_metadata = _normalize_metadata(metadata)
+        advertise_sandbox_runtime = bool(
+            sandbox_runtime
+            or normalized_metadata.get("sandbox_runtime")
+            or normalized_metadata.get("execution_runtimes")
+            or normalized_metadata.get("runtime_capabilities")
+        )
         # The profile is the AIAT policy class. The runtime is a host
         # implementation detail (runc, runsc, or Kata); a Kata VMM such as
         # Firecracker belongs in separate host metadata, not this field.
@@ -278,6 +364,11 @@ class WorkerHostRegistry:
         normalized_metadata["sandbox_runtime"] = _normalize_sandbox_runtime(
             sandbox_runtime or normalized_metadata.get("sandbox_runtime"),
             sandbox_profile=canonical_profile,
+        )
+        _normalize_execution_metadata(
+            normalized_metadata,
+            sandbox_runtime=normalized_metadata["sandbox_runtime"],
+            advertise_sandbox_runtime=advertise_sandbox_runtime,
         )
         digest = token_sha256(registration_token)
         now = datetime.now(tz=UTC)

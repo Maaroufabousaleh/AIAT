@@ -83,13 +83,31 @@ def test_steward_and_candidate_technical_evidence_fail_closed() -> None:
     report = evaluate_worker_steward_readiness(**inputs)
     codes = {item["code"] for item in report["blockers"]}
     assert report["status"] == "blocked"
-    assert "steward_not_ready" in codes
     assert "security_scan_not_passed" in codes
     assert "candidate_stage_not_certifiable" in codes
     assert "documentation_snapshot_missing" in codes
     assert "capability_snapshot_missing" in codes
     assert "runtime_adapter_hash_missing" in codes
     assert not any("license" in code or "licence" in code for code in codes)
+
+
+def test_provisioning_steward_is_certifiable_but_suspended_steward_is_not() -> None:
+    inputs = _inputs()
+    steward = dict(inputs["steward"])
+    steward["status"] = "PROVISIONING"
+    inputs["steward"] = steward
+
+    report = evaluate_worker_steward_readiness(**inputs)
+    assert report["status"] == "pass"
+    assert report["checks"]["steward"]["ready"] is False
+    assert report["checks"]["steward"]["certifiable"] is True
+
+    steward["status"] = "SUSPENDED"
+    report = evaluate_worker_steward_readiness(**inputs)
+    assert report["status"] == "blocked"
+    assert {item["code"] for item in report["blockers"]} == {
+        "steward_state_blocks_certification"
+    }
 
 
 def test_approved_candidate_requires_passed_certification_record() -> None:

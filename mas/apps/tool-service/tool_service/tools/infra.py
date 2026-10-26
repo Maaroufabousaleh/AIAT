@@ -20,7 +20,7 @@ from mas_tools_sdk.groups import ToolGroup
 from ..config import get_settings
 from ._orch_client import orch_delete, orch_patch, orch_post
 from .adapters import _run_process, _workspace_cwd
-from .file import _safe_workspace_path
+from .file import _resolve_project_id, _safe_workspace_path
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +123,8 @@ class InfraProvisionTool(BaseTool):
         config = dict(kwargs.get("config") or {})
         if not resource:
             raise ValueError("resource is required")
-        cwd = _workspace_cwd(str(kwargs.get("project_id") or ""), str(config.pop("cwd", ".")))
+        project_id = _resolve_project_id(kwargs)
+        cwd = _workspace_cwd(project_id, str(config.pop("cwd", ".")))
         # A project-scoped workspace is created lazily.  Subprocess creation
         # requires its cwd to exist, and the adapter is responsible for
         # creating any files beneath it.
@@ -154,9 +155,10 @@ class CICDConfigureTool(BaseTool):
             raise ValueError("config.workflow must be a GitHub Actions workflow containing jobs")
 
         relative_path = str(config.get("path") or f".github/workflows/{pipeline}.yml")
+        project_id = _resolve_project_id(kwargs)
         output_path = _safe_workspace_path(
             relative_path,
-            project_id=str(kwargs.get("project_id") or ""),
+            project_id=project_id,
         )
         output_path.parent.mkdir(parents=True, exist_ok=True)
         content = yaml.safe_dump(workflow, sort_keys=False)
@@ -183,7 +185,8 @@ class MonitoringSetupTool(BaseTool):
     async def execute(self, **kwargs: Any) -> Any:
         rules = kwargs.get("rules", [])
         config = dict(kwargs.get("config") or {})
-        cwd = _workspace_cwd(str(kwargs.get("project_id") or ""), str(config.pop("cwd", ".")))
+        project_id = _resolve_project_id(kwargs)
+        cwd = _workspace_cwd(project_id, str(config.pop("cwd", ".")))
         cwd.mkdir(parents=True, exist_ok=True)
         return await _run_configured_adapter(
             "TOOL_MONITORING_SETUP_COMMAND",
@@ -250,6 +253,7 @@ class InfraReadySignalTool(BaseTool):
         project_id = str(kwargs.get("project_id") or kwargs.get("target") or "").strip()
         if not project_id:
             raise ValueError("project_id is required")
+        context = kwargs.get("_aiat_context")
         transition = await orch_post(
             f"/projects/{project_id}/transition",
             {
@@ -257,6 +261,8 @@ class InfraReadySignalTool(BaseTool):
                 "actor_id": str(kwargs.get("actor_id") or "devops_eng"),
                 "context": {"sprint_id": kwargs.get("sprint_id")},
             },
+            context=context,
+            principal="operator",
         )
         return {
             "project_id": project_id,
@@ -274,7 +280,7 @@ class BlobUploadTool(BaseTool):
     idempotent = False
 
     async def execute(self, **kwargs: Any) -> Any:
-        project_id = kwargs.get("project_id", "default")
+        project_id = _resolve_project_id(kwargs, default="default")
         key = kwargs.get("key", "")
         content = kwargs.get("content", "")
         content_type = kwargs.get("content_type", "text/plain")
@@ -312,7 +318,7 @@ class BlobDownloadTool(BaseTool):
     cache_ttl_seconds = 0
 
     async def execute(self, **kwargs: Any) -> Any:
-        project_id = kwargs.get("project_id", "default")
+        project_id = _resolve_project_id(kwargs, default="default")
         key = kwargs.get("key", "")
 
         if not key:
@@ -348,7 +354,7 @@ class BlobListTool(BaseTool):
     cache_ttl_seconds = 0
 
     async def execute(self, **kwargs: Any) -> Any:
-        project_id = kwargs.get("project_id", "default")
+        project_id = _resolve_project_id(kwargs, default="default")
         prefix = kwargs.get("prefix", "")
 
         blob = await get_blob_client()
@@ -376,7 +382,7 @@ class BlobDeleteTool(BaseTool):
     idempotent = False
 
     async def execute(self, **kwargs: Any) -> Any:
-        project_id = kwargs.get("project_id", "default")
+        project_id = _resolve_project_id(kwargs, default="default")
         key = kwargs.get("key", "")
 
         if not key:

@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "source_revision": "95f2139edefb4656a6c5d1f46f31a24212509100",
+  "mode": "isolated local dashboard; external provider dispatch disabled",
+  "status": "PASS",
+  "passed": 105,
+  "failed": 0,
+  "skipped": 2,
+  "flaky": 0,
+  "total": 107,
+  "duration_ms": 35358.418999999994,
+  "report_sha256": "cf5eac5742fd9c2ce6a50dafb1113589d094a548ab5b9f4c395e1fefab5efeee",
+  "excluded_specs": [
+    "ceo-chat.spec.ts (live CEO dispatch)",
+    "hiring-board.spec.ts (worker evaluation and CEO approval interaction)",
+    "flow-builder.spec.ts (live workflow mutations)",
+    "flow-runtime-test2.spec.ts (live workflow state mutations)"
+  ],
+  "excluded_test_titles": [],
+  "provider_dispatch_enabled": false,
+  "raw_payload_retained": false,
+  "project_workspace_create_test_included": true
+}

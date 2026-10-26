@@ -13,10 +13,12 @@ Tests for Projects CRUD endpoints:
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from conftest import PROJECT_ID, _fake_project
+
+OPERATOR_HEADERS = {"X-API-Key": "test-operator-key"}
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -79,6 +81,7 @@ async def test_create_project_happy_path(client):
         resp = await client.post(
             "/projects",
             json={"name": "My Project", "description": "test", "human_requester": "alice"},
+            headers=OPERATOR_HEADERS,
         )
 
     assert resp.status_code == 201
@@ -92,7 +95,9 @@ async def test_create_project_happy_path(client):
 async def test_create_project_without_storage(client):
     """POST /projects returns 503 when storage is unavailable."""
     _patch_state(None)
-    resp = await client.post("/projects", json={"name": "X"})
+    resp = await client.post(
+        "/projects", json={"name": "X"}, headers=OPERATOR_HEADERS
+    )
     assert resp.status_code == 503
 
 
@@ -116,39 +121,304 @@ async def test_create_project_minimal_payload(client):
         )
         mock_http.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        resp = await client.post("/projects", json={"name": "Minimal"})
+        resp = await client.post(
+            "/projects", json={"name": "Minimal"}, headers=OPERATOR_HEADERS
+        )
 
     assert resp.status_code == 201
 
 
 @pytest.mark.anyio
-async def test_create_project_retries_feasibility_when_router_rejects(client):
-    """A rejected initial directive is retained for state-scoped delivery retry."""
-    storage = _make_storage(project=_fake_project("FEASIBILITY_CHECK"))
+async def test_create_project_can_remain_prepared_without_starting_ceo_work(client):
+    """An operator can create a project before queuing provider-backed work."""
+    project = _fake_project("INIT")
+    storage = _make_storage(project=project)
     ctrl = _make_controller()
     _patch_state(storage, ctrl)
+    provision_workspace = AsyncMock()
 
     with (
         patch(
             "orchestrator_api.main._publish_router_envelope",
-            new=AsyncMock(return_value=False),
+            new=AsyncMock(return_value=True),
         ) as publish,
-        patch("orchestrator_api.main._schedule_stage_directive_retry") as schedule_retry,
+        patch(
+            "orchestrator_api.main._invoke_project_repository_tool",
+            new=provision_workspace,
+        ),
     ):
         resp = await client.post(
             "/projects",
-            json={"name": "Retry me", "description": "Router may be unavailable"},
+            json={
+                "name": "Prepared project",
+                "start_immediately": False,
+                "workspace": {"mode": "none"},
+            },
+            headers=OPERATOR_HEADERS,
         )
 
     assert resp.status_code == 201
-    publish.assert_awaited_once()
-    directive = publish.await_args.args[0]
-    assert directive["payload"]["action"] == "START_FEASIBILITY"
-    assert directive["payload"]["project_name"] == "Retry me"
-    assert directive["payload"]["description"] == "Router may be unavailable"
-    schedule_retry.assert_called_once_with(
-        str(PROJECT_ID), "FEASIBILITY_CHECK", directive
+    assert resp.json()["id"] == str(project["id"])
+    assert resp.json()["state"] == project["state"] == "INIT"
+    storage.create_project.assert_awaited_once()
+    assert storage.create_project.await_args.kwargs["created_by"] == "operator"
+    assert storage.create_project.await_args.kwargs["human_requester"] == "operator"
+    ctrl.transition.assert_not_awaited()
+    publish.assert_not_awaited()
+    provision_workspace.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_project_create_idempotency_replays_same_record_and_rejects_key_reuse(client):
+    """Retries return one project, while a reused key cannot change its payload."""
+    projects = {}
+    storage = MagicMock()
+
+    async def create_project(**kwargs):
+        project_id = kwargs["project_id"]
+        if project_id in projects:
+            raise RuntimeError("duplicate project id")
+        project = {
+            "id": project_id,
+            "name": kwargs["name"],
+            "description": kwargs["description"],
+            "state": "INIT",
+            "created_by": kwargs["created_by"],
+            "config": kwargs["config"],
+        }
+        projects[project_id] = project
+        return project
+
+    storage.create_project = AsyncMock(side_effect=create_project)
+    storage.get_project = AsyncMock(side_effect=lambda project_id: projects.get(project_id))
+    storage.create_flow_instance = AsyncMock()
+    _patch_state(storage, _make_controller())
+    payload = {
+        "name": "One project despite retries",
+        "description": "Stable operation identity",
+        "start_immediately": False,
+        "idempotency_key": "worker-run-42:project.create:call-7",
+    }
+
+    first = await client.post("/projects", json=payload, headers=OPERATOR_HEADERS)
+    replay = await client.post("/projects", json=payload, headers=OPERATOR_HEADERS)
+    conflict = await client.post(
+        "/projects",
+        json={**payload, "name": "Different project"},
+        headers=OPERATOR_HEADERS,
     )
+
+    assert first.status_code == 201
+    assert replay.status_code == 201
+    assert first.json()["id"] == replay.json()["id"]
+    assert conflict.status_code == 409
+    assert storage.create_project.await_count == 1
+
+
+@pytest.mark.anyio
+async def test_create_project_rejects_service_and_worker_before_side_effects(
+    client, monkeypatch
+):
+    """Only the operator may trigger provider-backed CEO work."""
+    monkeypatch.setenv("AIAT_WORKER_API_KEY", "test-worker-key")
+    storage = _make_storage()
+    ctrl = _make_controller()
+    _patch_state(storage, ctrl)
+    provision = AsyncMock()
+
+    with (
+        patch("orchestrator_api.main._invoke_project_repository_tool", provision),
+        patch(
+            "orchestrator_api.main._publish_router_envelope",
+            new=AsyncMock(return_value=True),
+        ) as publish,
+    ):
+        service_response = await client.post(
+            "/projects",
+            json={
+                "name": "Unauthorized service project",
+                "workspace": {"mode": "init"},
+            },
+            headers={"X-API-Key": "test-mas-key"},
+        )
+        worker_response = await client.post(
+            "/projects",
+            json={
+                "name": "Unauthorized worker project",
+                "workspace": {"mode": "init"},
+            },
+            headers={"X-API-Key": "test-worker-key"},
+        )
+        worker_draft_response = await client.post(
+            "/projects",
+            json={
+                "name": "Unauthorized worker draft",
+                "start_immediately": False,
+                "workspace": {"mode": "none"},
+            },
+            headers={"X-API-Key": "test-worker-key"},
+        )
+
+    assert service_response.status_code == 403
+    assert worker_response.status_code == 403
+    assert worker_draft_response.status_code == 403
+    storage.create_project.assert_not_awaited()
+    ctrl.transition.assert_not_awaited()
+    provision.assert_not_awaited()
+    publish.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_governed_service_can_create_prepared_project_only(client):
+    """The CEO project tool may create a draft without starting provider work."""
+    storage = _make_storage(project=_fake_project("INIT"))
+    ctrl = _make_controller()
+    _patch_state(storage, ctrl)
+
+    with patch(
+        "orchestrator_api.main._publish_router_envelope",
+        new=AsyncMock(return_value=True),
+    ) as publish:
+        response = await client.post(
+            "/projects",
+            json={
+                "name": "CEO prepared project",
+                "start_immediately": False,
+                "workspace": {"mode": "none"},
+            },
+        )
+
+    assert response.status_code == 201
+    assert response.json()["state"] == "INIT"
+    assert storage.create_project.await_args.kwargs["created_by"] == "service"
+    ctrl.transition.assert_not_awaited()
+    publish.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_create_project_uses_transition_publisher_for_one_durable_start(client):
+    """The workflow outbox owns the initial CEO directive delivery and replay."""
+    from mas_core.workflow import WorkflowEvent, WorkflowTransitionResult
+    from mas_core.workflow.states import ProjectState
+
+    project = _fake_project("FEASIBILITY_CHECK", name="Started project")
+    storage = _make_storage(project=project)
+    ctrl = _make_controller(
+        WorkflowTransitionResult(
+            project_id=str(PROJECT_ID),
+            prior_state=ProjectState.INIT,
+            event=WorkflowEvent.PROJECT_CREATED,
+            next_state=ProjectState.FEASIBILITY_CHECK,
+            actor_id="human",
+            context={},
+            transition_id=UUID("00000000-0000-4000-a000-000000000043"),
+        )
+    )
+    _patch_state(storage, ctrl)
+
+    with patch(
+        "orchestrator_api.main._publish_router_envelope",
+        new=AsyncMock(return_value=True),
+    ) as publish:
+        resp = await client.post(
+            "/projects",
+            json={"name": "Started project"},
+            headers=OPERATOR_HEADERS,
+        )
+
+    assert resp.status_code == 201
+    ctrl.transition.assert_awaited_once()
+    context = ctrl.transition.await_args.kwargs["context"]
+    assert context == {"name": "Started project", "description": None}
+    assert ctrl.transition.await_args.kwargs["actor_id"] == "operator"
+    assert storage.create_project.await_args.kwargs["created_by"] == "operator"
+    # The real WorkflowController invokes the durable transition publisher.
+    # The route must not send a second directive with a new message identity.
+    publish.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_start_prepared_project_transitions_with_durable_directive_intent(client):
+    """Starting a prepared project records its durable directive intent."""
+    from mas_core.workflow import WorkflowEvent, WorkflowTransitionResult
+    from mas_core.workflow.states import ProjectState
+
+    project = _fake_project("INIT", name="Prepared project")
+    storage = _make_storage(project=project)
+    ctrl = _make_controller(
+        WorkflowTransitionResult(
+            project_id=str(PROJECT_ID),
+            prior_state=ProjectState.INIT,
+            event=WorkflowEvent.PROJECT_CREATED,
+            next_state=ProjectState.FEASIBILITY_CHECK,
+            actor_id="operator",
+            context={},
+            transition_id=UUID("00000000-0000-4000-a000-000000000042"),
+        )
+    )
+    _patch_state(storage, ctrl)
+
+    resp = await client.post(
+        f"/projects/{PROJECT_ID}/start",
+        headers={"X-API-Key": "test-operator-key"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "project_id": str(PROJECT_ID),
+        "state": "FEASIBILITY_CHECK",
+        "status": "started",
+        "directive_delivery": "durably_queued",
+    }
+    ctrl.transition.assert_awaited_once()
+    transition = ctrl.transition.await_args.kwargs
+    assert transition["current_state"].value == "INIT"
+    assert transition["event"].value == "project_created"
+    assert transition["context"]["name"] == "Prepared project"
+
+
+@pytest.mark.anyio
+async def test_start_prepared_project_is_idempotent_after_transition(client):
+    """A repeated start cannot emit a second actionable CEO directive."""
+    project = _fake_project("FEASIBILITY_CHECK", name="Already started")
+    storage = _make_storage(project=project)
+    ctrl = _make_controller()
+    _patch_state(storage, ctrl)
+
+    with patch(
+        "orchestrator_api.main._publish_router_envelope",
+        new=AsyncMock(return_value=True),
+    ) as publish:
+        resp = await client.post(
+            f"/projects/{PROJECT_ID}/start",
+            headers={"X-API-Key": "test-operator-key"},
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "already_started"
+    ctrl.transition.assert_not_awaited()
+    publish.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_start_prepared_project_requires_operator_credentials(client, monkeypatch):
+    """Worker and service credentials cannot trigger provider-backed work."""
+    from orchestrator_api.main import app
+
+    monkeypatch.setenv("AIAT_WORKER_API_KEY", "test-worker-key")
+    app.state.storage = _make_storage(project=_fake_project("INIT"))
+    ctrl = _make_controller()
+    app.state.controller = ctrl
+
+    service_response = await client.post(f"/projects/{PROJECT_ID}/start")
+    worker_response = await client.post(
+        f"/projects/{PROJECT_ID}/start",
+        headers={"X-API-Key": "test-worker-key"},
+    )
+
+    assert service_response.status_code == 403
+    assert worker_response.status_code == 403
+    ctrl.transition.assert_not_awaited()
 
 
 @pytest.mark.anyio
@@ -181,13 +451,14 @@ async def test_create_project_persists_initial_context_and_flow(client):
                     }
                 ],
             },
+            headers=OPERATOR_HEADERS,
         )
 
     assert resp.status_code == 201
     request = storage.create_project.await_args.kwargs
     assert request["name"] == "Context-rich project"
     assert request["initial_context"][0]["item_type"] == "TEXT"
-    assert request["initial_context"][0]["created_by"] == "human"
+    assert request["initial_context"][0]["created_by"] == "operator"
     assert request["config"]["repository_url"].endswith("/repo")
 
 
@@ -223,6 +494,7 @@ async def test_create_project_provisions_managed_git_workspace(client):
                 "name": "Git project",
                 "workspace": {"mode": "init", "branch": "main"},
             },
+            headers=OPERATOR_HEADERS,
         )
 
     assert resp.status_code == 201
@@ -585,6 +857,190 @@ async def test_project_evidence_policy_selection_is_persisted(client):
         PROJECT_ID,
         config={"evidence_policy": {"policy_id": "software_delivery", "version": "1.0", "requirements": {}}},
     )
+
+
+def _completion_transition_controller():
+    from mas_core.workflow import WorkflowEvent, WorkflowTransitionResult
+    from mas_core.workflow.states import ProjectState
+
+    controller = MagicMock()
+    controller.transition = AsyncMock(
+        return_value=WorkflowTransitionResult(
+            project_id=str(PROJECT_ID),
+            prior_state=ProjectState.KPI_PERSISTENCE,
+            event=WorkflowEvent.KPI_SAVED,
+            next_state=ProjectState.COMPLETED,
+            actor_id="operator",
+            context={},
+        )
+    )
+    return controller
+
+
+def _completion_evidence_storage(project, *, audit_events=()):
+    storage = _make_storage(project=project)
+    storage.get_flow_instance_by_project = AsyncMock(return_value=None)
+    storage.list_documents = AsyncMock(return_value=[])
+    storage.list_artifacts = AsyncMock(return_value=[])
+    storage.list_approval_gates = AsyncMock(return_value=[])
+    storage.list_worker_runs = AsyncMock(return_value=[])
+    storage.get_project_repository_record = AsyncMock(return_value=None)
+    storage.get_project_history = AsyncMock(return_value=list(audit_events))
+    return storage
+
+
+@pytest.mark.anyio
+async def test_project_completion_requires_persisted_software_delivery_evidence(client):
+    project = _fake_project("KPI_PERSISTENCE")
+    project["config"] = {
+        "evidence_policy": {
+            "policy_id": "software_delivery",
+            "version": "1.0",
+            "requirements": {},
+        }
+    }
+    storage = _completion_evidence_storage(project)
+    controller = _completion_transition_controller()
+    _patch_state(storage, controller)
+
+    response = await client.post(
+        f"/projects/{PROJECT_ID}/transition",
+        json={
+            "event": "kpi_saved",
+            "actor_id": "forged-actor",
+            # Transition context cannot override the persisted evidence policy
+            # or claim that the evidence checks have passed.
+            "context": {
+                "evidence_policy": {"policy_id": "manual"},
+                "evidence_status": "complete",
+            },
+        },
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "PROJECT_EVIDENCE_INCOMPLETE"
+    assert detail["policy_id"] == "software_delivery"
+    assert detail["policy_version"] == "1.0"
+    assert detail["evidence_status"] == "incomplete"
+    assert detail["failed_check_names"] == [
+        "flow_terminal",
+        "documents_exist",
+        "required_document_types",
+        "document_bodies_retrievable",
+        "artifacts_registered",
+        "repository_known",
+        "terminal_audit_present",
+    ]
+    assert detail["failed_check_count"] == len(detail["failed_check_names"])
+    assert detail["failed_check_names_truncated"] is False
+    controller.transition.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_project_completion_allows_complete_manual_evidence_policy(client):
+    project = _fake_project("KPI_PERSISTENCE")
+    project["revision"] = 7
+    project["config"] = {
+        "evidence_policy": {"policy_id": "manual", "version": "1.0", "requirements": {}}
+    }
+    storage = _completion_evidence_storage(
+        project,
+        audit_events=[{"id": "history-1", "to_state": "KPI_PERSISTENCE"}],
+    )
+    controller = _completion_transition_controller()
+    _patch_state(storage, controller)
+
+    response = await client.post(
+        f"/projects/{PROJECT_ID}/transition",
+        json={"event": "kpi_saved", "actor_id": "ignored-body-actor", "context": {}},
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["next_state"] == "COMPLETED"
+    controller.transition.assert_awaited_once()
+    assert controller.transition.await_args.kwargs["actor_id"] == "operator"
+    assert controller.transition.await_args.kwargs["completion_policy"] == {
+        "requires_flow_terminal": False,
+        "allow_active_runs": False,
+    }
+    assert controller.transition.await_args.kwargs["expected_revision"] == 7
+    storage.get_project_history.assert_awaited_once_with(PROJECT_ID)
+
+
+@pytest.mark.anyio
+async def test_project_completion_rejects_an_active_optional_flow(client):
+    project = _fake_project("KPI_PERSISTENCE")
+    project["config"] = {
+        "evidence_policy": {"policy_id": "manual", "version": "1.0", "requirements": {}}
+    }
+    storage = _completion_evidence_storage(
+        project,
+        audit_events=[{"id": "history-1", "to_state": "KPI_PERSISTENCE"}],
+    )
+    storage.get_flow_instance_by_project = AsyncMock(
+        return_value={"id": uuid4(), "project_id": PROJECT_ID, "status": "RUNNING"}
+    )
+    controller = _completion_transition_controller()
+    _patch_state(storage, controller)
+
+    response = await client.post(
+        f"/projects/{PROJECT_ID}/transition",
+        json={"event": "kpi_saved", "actor_id": "ignored-body-actor", "context": {}},
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "PROJECT_EVIDENCE_INCOMPLETE"
+    assert response.json()["detail"]["failed_check_names"] == ["flow_not_active"]
+    controller.transition.assert_not_awaited()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("flow_status", ["FAILED", "CANCELLED"])
+async def test_project_completion_requires_successful_required_flow(client, flow_status):
+    project = _fake_project("KPI_PERSISTENCE")
+    project["config"] = {
+        "evidence_policy": {
+            "policy_id": "software_delivery",
+            "version": "1.0",
+            "requirements": {},
+        }
+    }
+    storage = _completion_evidence_storage(
+        project,
+        audit_events=[{"id": "history-1", "to_state": "KPI_PERSISTENCE"}],
+    )
+    storage.get_flow_instance_by_project = AsyncMock(
+        return_value={"id": uuid4(), "project_id": PROJECT_ID, "status": flow_status}
+    )
+    storage.list_documents = AsyncMock(
+        return_value=[
+            {"id": uuid4(), "doc_type": kind, "blob_key": f"projects/{kind}.md"}
+            for kind in ("PDR", "CDR", "RR")
+        ]
+    )
+    storage.list_artifacts = AsyncMock(
+        return_value=[{"id": uuid4(), "kind": "test-report", "metadata": {"project_id": str(PROJECT_ID)}}]
+    )
+    storage.get_project_repository_record = AsyncMock(
+        return_value={"id": uuid4(), "initialized": True, "adapter_health": "ok"}
+    )
+    controller = _completion_transition_controller()
+    _patch_state(storage, controller)
+
+    response = await client.post(
+        f"/projects/{PROJECT_ID}/transition",
+        json={"event": "kpi_saved", "actor_id": "ignored-body-actor", "context": {}},
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "PROJECT_EVIDENCE_INCOMPLETE"
+    assert response.json()["detail"]["failed_check_names"] == ["flow_terminal"]
+    controller.transition.assert_not_awaited()
 
 
 @pytest.mark.anyio

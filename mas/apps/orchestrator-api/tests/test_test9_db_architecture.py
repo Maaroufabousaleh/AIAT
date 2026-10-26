@@ -19,6 +19,7 @@ import pytest
 # ---------------------------------------------------------------------------
 
 MIGRATIONS_DIR = Path(__file__).parents[3] / "migrations" / "versions"
+OPERATOR_HEADERS = {"X-API-Key": "test-operator-key"}
 
 
 def _all_migration_tables() -> list[str]:
@@ -148,7 +149,11 @@ async def test_create_project_returns_row(client):
     storage.transition_project = AsyncMock(return_value=_fake_project("PENDING", pid))
     _patch(storage)
 
-    r = await client.post("/projects", json={"name": "Arch Test Project"})
+    r = await client.post(
+        "/projects",
+        headers={"X-API-Key": "test-operator-key"},
+        json={"name": "Arch Test Project"},
+    )
     assert r.status_code == 201
     data = r.json()
     assert "id" in data
@@ -218,6 +223,7 @@ async def test_state_transition_via_controller_endpoint(client):
     r = await client.post(
         f"/projects/{pid}/transition",
         json={"event": "project_created", "actor_id": "human"},
+        headers=OPERATOR_HEADERS,
     )
     assert r.status_code in (200, 202)
     data = r.json()
@@ -277,6 +283,7 @@ async def test_document_status_follows_authoritative_transition(
             "actor_id": "agent",
             "context": {"document_id": str(document_id), "doc_type": doc_type},
         },
+        headers=OPERATOR_HEADERS,
     )
 
     assert response.status_code == 200
@@ -327,6 +334,7 @@ async def test_transition_unknown_project_404(client):
     r = await client.post(
         f"/projects/{uuid4()}/transition",
         json={"event": "start", "actor_id": "human"},
+        headers=OPERATOR_HEADERS,
     )
     assert r.status_code == 404
 

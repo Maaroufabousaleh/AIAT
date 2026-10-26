@@ -55,6 +55,16 @@ def test_external_default_workers_cover_steward_candidate_matrix_and_rollback_co
     assert report["schema_version"] == "aiat.worker-steward-contract-check.v1"
     assert report["status"] == "pass"
     assert report["external_worker_count"] == 2
+    assert report["integration_candidate_count"] == 1
+    assert report["integration_candidates"] == [
+        {
+            "worker_id": "aiat_deterministic_file_worker",
+            "source_revision": "1855a75fb17243d8298b84468372e7a6e496da46",
+            "certification_status": "pending",
+            "security_scan_status": "pending",
+            "status": "pending_governance",
+        }
+    ]
     assert all(row["status"] == "pass" for row in report["rows"])
     assert all(
         row["real_security_scan_status"] == "findings_review_required"

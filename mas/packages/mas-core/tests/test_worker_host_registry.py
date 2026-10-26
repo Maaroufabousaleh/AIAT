@@ -67,6 +67,28 @@ def test_host_snapshot_projection_exposes_placement_profiles() -> None:
     assert row["lease_generation"] == 7
 
 
+def test_host_snapshot_projection_exposes_format_aware_capabilities() -> None:
+    row = host_snapshot_row(
+        _row(
+            metadata={
+                "provider": "local",
+                "sandbox_runtime": "kata",
+                "execution_runtimes": ["runc", "runsc", "kata", "wasmtime"],
+                "workload_formats": ["oci", "linux", "wasm"],
+                "kvm_available": True,
+                "wasmtime_available": True,
+                "gvisor_platform": "systrap",
+            }
+        )
+    )
+
+    assert row["execution_runtimes"] == ["kata", "runc", "runsc", "wasmtime"]
+    assert row["workload_formats"] == ["linux", "oci", "wasm"]
+    assert row["kvm_available"] is True
+    assert row["wasmtime_available"] is True
+    assert row["gvisor_platform"] == "systrap"
+
+
 def test_expired_host_lease_is_invalid_without_status_mutation() -> None:
     row = public_host_row(_row(lease_expires_at=datetime.now(tz=UTC) - timedelta(seconds=1)))
 

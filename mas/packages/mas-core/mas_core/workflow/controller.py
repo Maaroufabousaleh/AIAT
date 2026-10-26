@@ -13,7 +13,7 @@ compatibility with all existing tests.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Mapping
 from dataclasses import dataclass
 from inspect import Parameter, isawaitable, signature
 from typing import TYPE_CHECKING, Any
@@ -190,6 +190,8 @@ class WorkflowController:
         event: WorkflowEvent,
         actor_id: str,
         context: dict[str, Any] | None = None,
+        completion_policy: Mapping[str, Any] | None = None,
+        expected_revision: int | None = None,
     ) -> WorkflowTransitionResult:
         """Execute a workflow transition.
 
@@ -231,16 +233,23 @@ class WorkflowController:
             if concrete_target in {ProjectState.FAILED, ProjectState.SECURITY_BLOCKED}:
                 failed_from_state = str(current_state)
 
+            transition_kwargs: dict[str, Any] = {
+                "new_state": str(concrete_target),
+                "event": event.value,
+                "triggered_by": actor_id,
+                "payload": ctx if ctx else None,
+                "failure_reason": failure_reason,
+                "failed_from_state": failed_from_state,
+                "expected_state": str(current_state),
+                "transition_id": transition_id,
+            }
+            if completion_policy is not None:
+                transition_kwargs["completion_policy"] = dict(completion_policy)
+            if expected_revision is not None:
+                transition_kwargs["expected_revision"] = expected_revision
             updated = await self._storage.transition_project(
                 pid,
-                new_state=str(concrete_target),
-                event=event.value,
-                triggered_by=actor_id,
-                payload=ctx if ctx else None,
-                failure_reason=failure_reason,
-                failed_from_state=failed_from_state,
-                expected_state=str(current_state),
-                transition_id=transition_id,
+                **transition_kwargs,
             )
 
             if updated is None:

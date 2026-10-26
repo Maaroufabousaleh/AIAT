@@ -1,0 +1,131 @@
+{
+  "build_invocation": [
+    "npm",
+    "exec",
+    "--ignore-scripts",
+    "--yes",
+    "--package=bun@1.3.14",
+    "--",
+    "bun",
+    "build",
+    "<candidate-source>/packages/opencode/src/lsp/server.ts",
+    "<candidate-source>/packages/core/src/effect/keyed-mutex.ts",
+    "<candidate-source>/packages/core/src/util/effect-flock.ts",
+    "<candidate-source>/packages/opencode/src/server/routes/instance/httpapi/public.ts",
+    "<candidate-source>/packages/plugin/src/tui.ts",
+    "<candidate-source>/packages/tui/src/plugin/slots.tsx",
+    "--outdir",
+    "<temporary-output>",
+    "--external",
+    "*",
+    "--target",
+    "bun",
+    "--sourcemap=external"
+  ],
+  "bun_version": "1.3.14",
+  "candidate_source_executed": false,
+  "checked_at": "2026-10-03T02:47:17.267573+00:00",
+  "deduplicated_rule_location_count": 3,
+  "dependency_install_lifecycle_executed": false,
+  "emitted_file_sha256": {
+    "effect-flock.js": "23c155b4385345c2d97873907822f4a9ba485d680bd75803c7d7dabf84998227",
+    "keyed-mutex.js": "f08e82478d6cfd6ee3c1ad2b081ae362c7f492cab8db8b7ed01b816ee8d3dfa5",
+    "public.js": "eb409ca54ede5c98cebdce2e16181e57632759df6e270541e11c514fea3c0f74",
+    "server.js": "b2540034e5c209863ea105e085a8ef79134d428493aae7e1f340e4a61b2da20e",
+    "slots.js": "8224cc32ccb28015a2e3d6bb820040a37606b47f5fcc3ad5fdfce61f73060ed7",
+    "tui.js": "5b7bebc76b84d977edfbbc6a2e8a20de79379ef02dd5ce56d553d793a9430cbe"
+  },
+  "external_module_resolution": false,
+  "finding_source_locations": [
+    {
+      "generated_column": 34,
+      "generated_file": "effect-flock.js",
+      "generated_line": 100,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "source_column": 38,
+      "source_line": 172,
+      "source_map_applied": true,
+      "source_path": "packages/core/src/util/effect-flock.ts"
+    },
+    {
+      "generated_column": 39,
+      "generated_file": "effect-flock.js",
+      "generated_line": 101,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "source_column": 43,
+      "source_line": 173,
+      "source_map_applied": true,
+      "source_path": "packages/core/src/util/effect-flock.ts"
+    },
+    {
+      "generated_column": 34,
+      "generated_file": "effect-flock.js",
+      "generated_line": 147,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "source_column": 36,
+      "source_line": 257,
+      "source_map_applied": true,
+      "source_path": "packages/core/src/util/effect-flock.ts"
+    },
+    {
+      "generated_column": 43,
+      "generated_file": "effect-flock.js",
+      "generated_line": 147,
+      "rule_id": "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal",
+      "source_column": 45,
+      "source_line": 257,
+      "source_map_applied": true,
+      "source_path": "packages/core/src/util/effect-flock.ts"
+    }
+  ],
+  "findings_by_source_path": {
+    "packages/core/src/util/effect-flock.ts": 4
+  },
+  "payloads_retained": false,
+  "raw_result_bytes": 10133,
+  "raw_result_path": "mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/semgrep-transpiled-typescript.json",
+  "raw_result_sha256": "a85aa8ad0c72b25ac01056569a3018692080f4b1d2671e9d884e506df16b94f8",
+  "rule_counts": {
+    "javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal": 4
+  },
+  "runtime_reachable_parser_error_paths": [],
+  "runtime_reachable_paths": [
+    "packages/core/src/effect/keyed-mutex.ts",
+    "packages/core/src/util/effect-flock.ts",
+    "packages/opencode/src/server/routes/instance/httpapi/public.ts"
+  ],
+  "scanned_transpiled_file_count": 6,
+  "scanner_error_count": 1,
+  "scanner_error_source_paths": [
+    "packages/opencode/src/lsp/server.ts"
+  ],
+  "scanner_output_sanitized": true,
+  "schema_version": "aiat.opencode-transpiled-semgrep-coverage.v1",
+  "scope": "Semgrep security scan of Bun-transpiled executable code from six exact TypeScript paths; findings remain open",
+  "secret_values_retained": false,
+  "semgrep_exit_code": 0,
+  "semgrep_invocation": [
+    "semgrep",
+    "--config",
+    "auto",
+    "--json",
+    "--no-git-ignore",
+    "<transpiled-source>/keyed-mutex.js",
+    "<transpiled-source>/effect-flock.js",
+    "<transpiled-source>/server.js",
+    "<transpiled-source>/public.js",
+    "<transpiled-source>/tui.js",
+    "<transpiled-source>/slots.js"
+  ],
+  "semgrep_version": "1.168.0",
+  "severity_counts": {
+    "WARNING": 4
+  },
+  "status": "blocked",
+  "transpiled_semgrep_finding_count": 4,
+  "upstream_source": {
+    "commit": "826d9ad46a22bef0294998e08daa3c4904fea28f",
+    "snapshot_ref": "source-snapshot.tar.xz",
+    "snapshot_sha256": "e338f0fc18145f7fc0ac848da5593ae77ea63adbd5f1d386ca8d82151a280370"
+  }
+}

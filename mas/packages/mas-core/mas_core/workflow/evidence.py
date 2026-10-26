@@ -508,13 +508,33 @@ def evaluate_project_evidence(
     checks: list[EvidenceCheck] = []
     refs: dict[str, list[str]] = {}
 
+    flow_status = str((flow_instance or {}).get("status", "")).upper()
+    flow_quiescent = flow_instance is None or flow_status in {
+        "NOT_STARTED",
+        "COMPLETED",
+        "FAILED",
+        "CANCELLED",
+    }
+    checks.append(
+        EvidenceCheck(
+            name="flow_not_active",
+            required=True,
+            passed=flow_quiescent,
+            reason=None if flow_quiescent else "an attached flow is still active or has an unknown status",
+            evidence_refs=[str(flow_instance.get("id"))] if flow_instance else [],
+        )
+    )
+
     active_runs = [run for run in worker_runs if str(run.get("state", "")).upper() not in {"SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT"}]
     checks.append(EvidenceCheck(name="worker_runs_terminal", required=not policy.allow_active_runs, passed=policy.allow_active_runs or not active_runs, reason="active worker runs remain" if active_runs else None, evidence_refs=[str(run.get("id")) for run in active_runs]))
 
     if policy.requires_flow_terminal:
-        passed = flow_instance is not None and str(flow_instance.get("status", "")).upper() in {"COMPLETED", "FAILED", "CANCELLED"}
+        # This check gates successful project completion, not merely whether
+        # the flow can no longer advance. Failed and cancelled flows need
+        # recovery or an explicit project failure/archive decision.
+        passed = flow_instance is not None and flow_status == "COMPLETED"
         refs["flow"] = [str(flow_instance.get("id"))] if flow_instance else []
-        checks.append(EvidenceCheck(name="flow_terminal", required=True, passed=passed, reason=None if passed else "required flow is not terminal", evidence_refs=refs["flow"]))
+        checks.append(EvidenceCheck(name="flow_terminal", required=True, passed=passed, reason=None if passed else "required flow has not completed successfully", evidence_refs=refs["flow"]))
     if policy.requires_documents:
         refs["documents"] = [str(doc.get("id")) for doc in documents]
         checks.append(EvidenceCheck(name="documents_exist", required=True, passed=bool(documents), reason=None if documents else "required documents are missing", evidence_refs=refs["documents"]))

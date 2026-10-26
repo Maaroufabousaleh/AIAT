@@ -3,9 +3,10 @@
 The host scheduler already selects a worker-plane host and creates a durable
 capacity reservation.  This service adds the missing authority edge: one
 Worker Run is bound to that reservation, with the host lease generation copied
-into a separate immutable assignment record.  Assignment settlement is
-idempotent and owner-bound.  The service does not invoke a worker runtime or a
-provider; live execution remains a later dispatch boundary.
+into a separate immutable assignment record. Assignment settlement is
+idempotent; executor release is additionally bound to the exact observed
+assignment. The service does not invoke a worker runtime or a provider; live
+execution remains a later dispatch boundary.
 """
 
 from __future__ import annotations
@@ -45,6 +46,45 @@ class RunHostBindingRecoveryRejected(RuntimeError):
     def __init__(self, reason_code: str) -> None:
         super().__init__(reason_code)
         self.reason_code = reason_code
+
+
+@dataclass(frozen=True, slots=True)
+class RunHostBindingIdentity:
+    """Immutable assignment identity used to fence host-side settlement."""
+
+    binding_id: UUID
+    reservation_id: UUID
+    host_uuid: UUID
+    host_lease_generation: int
+
+    @classmethod
+    def from_binding(cls, binding: Mapping[str, Any]) -> RunHostBindingIdentity:
+        """Capture the exact assignment fields needed for a release CAS."""
+
+        try:
+            binding_id = UUID(str(binding.get("id")))
+            reservation_id = UUID(str(binding.get("reservation_id")))
+            host_uuid = UUID(str(binding.get("host_uuid", binding.get("host_id"))))
+            generation_value = binding.get("host_lease_generation")
+            if isinstance(generation_value, bool):
+                raise ValueError
+            generation = int(generation_value)
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise RunHostBindingRejected("run_host_binding_release_fence_invalid") from exc
+        if generation < 1:
+            raise RunHostBindingRejected("run_host_binding_release_fence_invalid")
+        return cls(
+            binding_id=binding_id,
+            reservation_id=reservation_id,
+            host_uuid=host_uuid,
+            host_lease_generation=generation,
+        )
+
+    def matches(self, binding: Mapping[str, Any]) -> bool:
+        try:
+            return self.from_binding(binding) == self
+        except RunHostBindingRejected:
+            return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,7 +213,7 @@ class WorkerRunHostBindingService:
         if assignment_key is not None:
             query = query.where(t.worker_run_host_bindings.c.assignment_key == assignment_key)
         if for_update:
-            query = query.with_for_update()
+            query = query.with_for_update(of=t.worker_run_host_bindings)
         row = (await connection.execute(query)).mappings().first()
         if row is None:
             return None
@@ -212,6 +252,112 @@ class WorkerRunHostBindingService:
         async with self._storage.engine.connect() as connection:
             row = await self._fetch(connection, run_id=normalized)
         return public_run_host_binding(row) if row else None
+
+    async def list_queued_committed_for_host(
+        self,
+        host_id: str,
+        *,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """List payload-free queued bindings eligible for one exact host.
+
+        This is a host-consumer read boundary: callers receive run and binding
+        identity, never the Worker Run request or result payload.  The SQL
+        predicate rechecks the current host lease and generation so a stale
+        host process cannot discover work after fencing.
+        """
+
+        host_key = str(host_id or "").strip()
+        if not host_key:
+            raise ValueError("host_id is required")
+        if isinstance(limit, bool):
+            raise ValueError("limit must be between 1 and 1000")
+        try:
+            bounded_limit = int(limit)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("limit must be between 1 and 1000") from exc
+        if bounded_limit < 1 or bounded_limit > 1000:
+            raise ValueError("limit must be between 1 and 1000")
+
+        from ..memory import models as t
+
+        now = self._now()
+        query = (
+            sa.select(
+                t.worker_run_host_bindings.c.id,
+                t.worker_run_host_bindings.c.run_id,
+                t.worker_run_host_bindings.c.worker_id,
+                t.worker_run_host_bindings.c.host_id,
+                t.worker_run_host_bindings.c.reservation_id,
+                t.worker_run_host_bindings.c.host_lease_generation,
+                t.worker_run_host_bindings.c.assignment_key,
+                t.worker_run_host_bindings.c.owner,
+                t.worker_run_host_bindings.c.state,
+                t.worker_run_host_bindings.c.created_at,
+                t.worker_run_host_bindings.c.committed_at,
+                t.worker_run_host_bindings.c.released_at,
+                t.worker_hosts.c.host_id.label("host_key"),
+                t.worker_hosts.c.host_plane,
+                t.worker_hosts.c.status.label("host_status"),
+                t.worker_hosts.c.lease_generation.label("current_host_lease_generation"),
+                t.worker_hosts.c.lease_expires_at.label("current_host_lease_expires_at"),
+                t.worker_host_reservations.c.state.label("reservation_state"),
+            )
+            .select_from(
+                t.worker_run_host_bindings.join(
+                    t.worker_hosts,
+                    t.worker_hosts.c.id == t.worker_run_host_bindings.c.host_id,
+                )
+                .join(
+                    t.worker_host_reservations,
+                    t.worker_host_reservations.c.id
+                    == t.worker_run_host_bindings.c.reservation_id,
+                )
+                .join(
+                    t.worker_runs,
+                    t.worker_runs.c.id == t.worker_run_host_bindings.c.run_id,
+                )
+            )
+            .where(
+                sa.and_(
+                    t.worker_hosts.c.host_id == host_key,
+                    t.worker_hosts.c.host_plane == "worker",
+                    t.worker_hosts.c.status == "READY",
+                    t.worker_hosts.c.lease_expires_at.is_not(None),
+                    t.worker_hosts.c.lease_expires_at > now,
+                    t.worker_run_host_bindings.c.host_lease_generation
+                    == t.worker_hosts.c.lease_generation,
+                    t.worker_run_host_bindings.c.state == "COMMITTED",
+                    t.worker_host_reservations.c.state == "COMMITTED",
+                    t.worker_runs.c.state == "QUEUED",
+                )
+            )
+            .order_by(
+                t.worker_run_host_bindings.c.created_at.asc(),
+                t.worker_run_host_bindings.c.id.asc(),
+            )
+            .limit(bounded_limit)
+        )
+        async with self._storage.engine.connect() as connection:
+            rows = (await connection.execute(query)).mappings().all()
+        results: list[dict[str, Any]] = []
+        for row in rows:
+            values = dict(row)
+            lease_expires_at = values.get("current_host_lease_expires_at")
+            if isinstance(lease_expires_at, datetime) and lease_expires_at.tzinfo is None:
+                lease_expires_at = lease_expires_at.replace(tzinfo=UTC)
+            values["current_host_lease_valid"] = (
+                values.get("host_status") == "READY"
+                and isinstance(lease_expires_at, datetime)
+                and lease_expires_at > now
+            )
+            values["reservation_lease_valid"] = None
+            # Binding metadata is caller supplied and is not part of the host
+            # queue contract. The query omits it and the projection rejects it
+            # defensively if a test double or future query adds it back.
+            values.pop("metadata", None)
+            results.append(public_run_host_binding(values))
+        return results
 
     async def assign(self, request: RunHostBindingRequest) -> dict[str, Any]:
         run_id, worker_id, assignment_key, owner = request.validate()
@@ -326,7 +472,7 @@ class WorkerRunHostBindingService:
         return result
 
     async def _settle(self, run_id: UUID | str, *, owner: str, target: str) -> dict[str, Any]:
-        if target not in {"COMMITTED", "RELEASED"}:
+        if target != "COMMITTED":
             raise ValueError("unsupported run-host binding transition")
         try:
             normalized_run_id = run_id if isinstance(run_id, UUID) else UUID(str(run_id))
@@ -342,16 +488,10 @@ class WorkerRunHostBindingService:
             raise PermissionError("run-host binding owner mismatch")
         state = str(existing.get("state") or "")
         reservation_state = str(existing.get("reservation_state") or "")
-        reservation_settled = reservation_state == target or (
-            target == "RELEASED" and reservation_state in {"RELEASED", "EXPIRED"}
-        )
+        reservation_settled = reservation_state == target
         if state == target and reservation_settled:
             return {**existing, "idempotent_replay": True}
-        transitionable = (
-            state == "ASSIGNED"
-            or state == target
-            or (target == "RELEASED" and state == "COMMITTED")
-        )
+        transitionable = state == "ASSIGNED" or state == target
         if not transitionable:
             raise RunHostBindingRejected("run_host_binding_not_transitionable")
         reservation_id = existing.get("reservation_id")
@@ -363,8 +503,7 @@ class WorkerRunHostBindingService:
         async with self._storage.engine.begin() as connection:
             # Reservation and binding settlement share this transaction.  If
             # an earlier process committed only one side, this retry repairs
-            # the safe, owner-bound state instead of leaving a permanent
-            # ASSIGNED/COMMITTED split.
+            # the owner-bound assignment instead of leaving it split.
             await self._ledger.transition_in_transaction(
                 connection,
                 reservation_id,
@@ -385,16 +524,7 @@ class WorkerRunHostBindingService:
             if locked_state == target:
                 idempotent_replay = True
             else:
-                state_clause = (
-                    t.worker_run_host_bindings.c.state == "ASSIGNED"
-                    if target == "COMMITTED"
-                    else t.worker_run_host_bindings.c.state.in_(
-                        ("ASSIGNED", "COMMITTED")
-                    )
-                )
-                if target == "COMMITTED" and locked_state != "ASSIGNED":
-                    raise RunHostBindingRejected("run_host_binding_not_transitionable")
-                if target == "RELEASED" and locked_state not in {"ASSIGNED", "COMMITTED"}:
+                if locked_state != "ASSIGNED":
                     raise RunHostBindingRejected("run_host_binding_not_transitionable")
                 result = await connection.execute(
                     t.worker_run_host_bindings.update()
@@ -402,13 +532,12 @@ class WorkerRunHostBindingService:
                         sa.and_(
                             t.worker_run_host_bindings.c.run_id == normalized_run_id,
                             t.worker_run_host_bindings.c.owner == actor,
-                            state_clause,
+                            t.worker_run_host_bindings.c.state == "ASSIGNED",
                         )
                     )
                     .values(
                         state=target,
-                        committed_at=now if target == "COMMITTED" else None,
-                        released_at=now if target == "RELEASED" else None,
+                        committed_at=now,
                     )
                 )
                 if result.rowcount != 1:
@@ -422,8 +551,140 @@ class WorkerRunHostBindingService:
     async def commit(self, run_id: UUID | str, *, owner: str) -> dict[str, Any]:
         return await self._settle(run_id, owner=owner, target="COMMITTED")
 
-    async def release(self, run_id: UUID | str, *, owner: str) -> dict[str, Any]:
-        return await self._settle(run_id, owner=owner, target="RELEASED")
+    async def release(
+        self,
+        run_id: UUID | str,
+        *,
+        owner: str,
+        expected_identity: RunHostBindingIdentity,
+        expected_claim_owner: str | None = None,
+        expected_attempt_count: int | None = None,
+    ) -> dict[str, Any]:
+        """Release only the exact assignment observed by its executor.
+
+        Host-loss reassignment updates a binding row in place and may preserve
+        its owner.  Binding ID alone is therefore insufficient: the
+        reservation, host, and generation are all compared under the binding
+        row lock before touching either durable record.
+        """
+
+        try:
+            normalized_run_id = run_id if isinstance(run_id, UUID) else UUID(str(run_id))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("run_id must be a UUID") from exc
+        actor = str(owner or "").strip()
+        if not actor:
+            raise ValueError("owner is required")
+        if not isinstance(expected_identity, RunHostBindingIdentity):
+            raise RunHostBindingRejected("run_host_binding_release_fence_invalid")
+        if (expected_claim_owner is None) != (expected_attempt_count is None):
+            raise RunHostBindingRejected("run_host_binding_execution_fence_invalid")
+        claim_owner = str(expected_claim_owner or "").strip()
+        fenced_attempt_count: int | None = None
+        if expected_claim_owner is not None:
+            if not claim_owner or isinstance(expected_attempt_count, bool):
+                raise RunHostBindingRejected("run_host_binding_execution_fence_invalid")
+            try:
+                fenced_attempt_count = int(expected_attempt_count or 0)
+            except (TypeError, ValueError) as exc:
+                raise RunHostBindingRejected(
+                    "run_host_binding_execution_fence_invalid"
+                ) from exc
+            if fenced_attempt_count < 1:
+                raise RunHostBindingRejected("run_host_binding_execution_fence_invalid")
+
+        from ..memory import models as t
+
+        now = self._now()
+        async with self._storage.engine.begin() as connection:
+            locked = await self._fetch(
+                connection,
+                run_id=normalized_run_id,
+                for_update=True,
+            )
+            if locked is None:
+                raise RunHostBindingRejected("run_host_binding_not_found")
+            if str(locked.get("owner")) != actor:
+                raise PermissionError("run-host binding owner mismatch")
+            if not expected_identity.matches(locked):
+                raise RunHostBindingRejected("run_host_binding_release_fence_mismatch")
+            if expected_claim_owner is not None:
+                execution = (
+                    await connection.execute(
+                        sa.select(
+                            t.worker_runs.c.claim_owner,
+                            t.worker_runs.c.attempt_count,
+                        )
+                        .where(t.worker_runs.c.id == normalized_run_id)
+                        .with_for_update()
+                    )
+                ).mappings().first()
+                if (
+                    execution is None
+                    or str(execution.get("claim_owner") or "") != claim_owner
+                    or int(execution.get("attempt_count") or 0)
+                    != fenced_attempt_count
+                ):
+                    raise RunHostBindingRejected(
+                        "run_host_binding_execution_fence_mismatch"
+                    )
+
+            locked_state = str(locked.get("state") or "")
+            reservation_state = str(locked.get("reservation_state") or "")
+            reservation_settled = reservation_state in {"RELEASED", "EXPIRED"}
+            if locked_state == "RELEASED" and reservation_settled:
+                idempotent_replay = True
+            else:
+                if locked_state not in {"ASSIGNED", "COMMITTED", "RELEASED"}:
+                    raise RunHostBindingRejected("run_host_binding_not_transitionable")
+
+                # Verify the exact locked binding before this call so a stale
+                # executor cannot release a replacement reservation that
+                # reused the same run and owner.
+                await self._ledger.transition_in_transaction(
+                    connection,
+                    expected_identity.reservation_id,
+                    owner=actor,
+                    target="RELEASED",
+                    now=now,
+                )
+                if locked_state == "RELEASED":
+                    # Repair a one-sided prior settlement without changing the
+                    # already-released binding row.
+                    idempotent_replay = True
+                else:
+                    result = await connection.execute(
+                        t.worker_run_host_bindings.update()
+                        .where(
+                            sa.and_(
+                                t.worker_run_host_bindings.c.id
+                                == expected_identity.binding_id,
+                                t.worker_run_host_bindings.c.run_id
+                                == normalized_run_id,
+                                t.worker_run_host_bindings.c.owner == actor,
+                                t.worker_run_host_bindings.c.reservation_id
+                                == expected_identity.reservation_id,
+                                t.worker_run_host_bindings.c.host_id
+                                == expected_identity.host_uuid,
+                                t.worker_run_host_bindings.c.host_lease_generation
+                                == expected_identity.host_lease_generation,
+                                t.worker_run_host_bindings.c.state.in_(
+                                    ("ASSIGNED", "COMMITTED")
+                                ),
+                            )
+                        )
+                        .values(state="RELEASED", released_at=now)
+                    )
+                    if result.rowcount != 1:
+                        raise RunHostBindingRejected(
+                            "run_host_binding_settlement_conflict"
+                        )
+                    idempotent_replay = False
+
+        result = await self.get(normalized_run_id)
+        if result is None:
+            raise RunHostBindingRejected("run_host_binding_not_readable")
+        return {**result, "idempotent_replay": idempotent_replay}
 
     async def reassign_after_host_loss(
         self,

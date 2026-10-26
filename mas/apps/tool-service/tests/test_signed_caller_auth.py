@@ -225,6 +225,156 @@ async def test_production_route_reuses_signed_body_for_model_validation(
 
 
 @pytest.mark.anyio
+async def test_signed_worker_cannot_claim_orchestrator_role_before_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mas_core.protocols.enums import AgentRole
+    from mas_tools_sdk.base import BaseTool
+    from mas_tools_sdk.groups import ToolGroup
+
+    private_key = Ed25519PrivateKey.generate()
+    public_key = base64.b64encode(private_key.public_key().public_bytes_raw()).decode()
+    monkeypatch.setenv("MAS_ENVIRONMENT", "production")
+    settings = Settings(
+        redis_password="not-the-default",
+        minio_secret_key="not-the-default",
+        pgbouncer_dsn="postgresql://db.example/mas",
+        tool_secret="route-test-secret-that-is-at-least-32-characters",
+        aiat_tool_caller_public_keys_json=json.dumps({"worker-1": public_key}),
+    )
+
+    class ReplayStore:
+        async def consume_signature_nonce(self, *_args) -> bool:
+            return True
+
+    calls = []
+
+    class OrchestratorOnlySpyTool(BaseTool):
+        name = "test.orchestrator_only"
+        group = ToolGroup.KPI_UTILITY
+        allowed_roles = [AgentRole.ORCHESTRATOR]
+
+        async def execute(self, **kwargs):
+            calls.append(kwargs)
+            return {"invoked": True}
+
+    app = FastAPI()
+    registry = ToolRegistry(settings)
+    registry.register(OrchestratorOnlySpyTool())
+    app.state.settings = settings
+    app.state.tool_grant_store = ReplayStore()
+    app.state.registry = registry
+    app.include_router(router)
+
+    payload = {
+        "agent_id": "worker-1",
+        "sender_role": "orchestrator",
+        "tool_name": "test.orchestrator_only",
+        "kwargs": {},
+    }
+    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
+    timestamp = str(int(time.time()))
+    nonce = str(uuid4())
+    canonical = "\n".join(
+        (
+            "aiat.tool.v1", "POST", "/tools/execute", timestamp, nonce,
+            hashlib.sha256(raw).hexdigest(),
+        )
+    ).encode()
+    headers = {
+        "Authorization": f"Bearer {settings.tool_secret}",
+        "Content-Type": "application/json",
+        "X-AIAT-Signature-Version": "aiat.tool.v1",
+        "X-AIAT-Client-ID": "worker-1",
+        "X-AIAT-Timestamp": timestamp,
+        "X-AIAT-Nonce": nonce,
+        "X-AIAT-Signature": base64.b64encode(private_key.sign(canonical)).decode(),
+    }
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="https://tool-service"
+    ) as client:
+        response = await client.post("/tools/execute", content=raw, headers=headers)
+
+    assert calls == []
+    assert response.status_code == 403
+
+
+@pytest.mark.anyio
+async def test_signed_worker_path_route_cannot_claim_orchestrator_role_before_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mas_core.protocols.enums import AgentRole
+    from mas_tools_sdk.base import BaseTool
+    from mas_tools_sdk.groups import ToolGroup
+
+    private_key = Ed25519PrivateKey.generate()
+    public_key = base64.b64encode(private_key.public_key().public_bytes_raw()).decode()
+    monkeypatch.setenv("MAS_ENVIRONMENT", "production")
+    settings = Settings(
+        redis_password="not-the-default",
+        minio_secret_key="not-the-default",
+        pgbouncer_dsn="postgresql://db.example/mas",
+        tool_secret="route-test-secret-that-is-at-least-32-characters",
+        aiat_tool_caller_public_keys_json=json.dumps({"worker-1": public_key}),
+    )
+
+    class ReplayStore:
+        async def consume_signature_nonce(self, *_args) -> bool:
+            return True
+
+    calls = []
+
+    class OrchestratorOnlySpyTool(BaseTool):
+        name = "test.orchestrator_only"
+        group = ToolGroup.KPI_UTILITY
+        allowed_roles = [AgentRole.ORCHESTRATOR]
+
+        async def execute(self, **kwargs):
+            calls.append(kwargs)
+            return {"invoked": True}
+
+    app = FastAPI()
+    registry = ToolRegistry(settings)
+    registry.register(OrchestratorOnlySpyTool())
+    app.state.settings = settings
+    app.state.tool_grant_store = ReplayStore()
+    app.state.registry = registry
+    app.include_router(router)
+
+    path = "/tools/test.orchestrator_only/run"
+    payload = {
+        "agent_id": "worker-1",
+        "sender_role": "orchestrator",
+        "kwargs": {},
+    }
+    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
+    timestamp = str(int(time.time()))
+    nonce = str(uuid4())
+    canonical = "\n".join(
+        (
+            "aiat.tool.v1", "POST", path, timestamp, nonce,
+            hashlib.sha256(raw).hexdigest(),
+        )
+    ).encode()
+    headers = {
+        "Authorization": f"Bearer {settings.tool_secret}",
+        "Content-Type": "application/json",
+        "X-AIAT-Signature-Version": "aiat.tool.v1",
+        "X-AIAT-Client-ID": "worker-1",
+        "X-AIAT-Timestamp": timestamp,
+        "X-AIAT-Nonce": nonce,
+        "X-AIAT-Signature": base64.b64encode(private_key.sign(canonical)).decode(),
+    }
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="https://tool-service"
+    ) as client:
+        response = await client.post(path, content=raw, headers=headers)
+
+    assert response.status_code == 403
+    assert calls == []
+
+
+@pytest.mark.anyio
 async def test_browser_identity_and_signature_nonce_are_durable_in_postgres() -> None:
     dsn = os.getenv("TEST_CORE_DATABASE_DSN")
     if not dsn:

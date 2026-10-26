@@ -22,6 +22,7 @@ from mas_core.workflow.states import ProjectState
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 GATE_ID = uuid.uuid4()
+OPERATOR_HEADERS = {"X-API-Key": "test-operator-key"}
 
 
 def _fake_gate() -> dict:
@@ -33,7 +34,13 @@ def _fake_gate() -> dict:
     }
 
 
-def _make_storage(project=None, gate=None, pending_gates=None, decision_result=None):
+def _make_storage(
+    project=None,
+    gate=None,
+    pending_gates=None,
+    decision_gates=None,
+    decision_result=None,
+):
     """Return a mock storage with approval_gate query support."""
     storage = MagicMock()
     storage.get_project = AsyncMock(return_value=project)
@@ -59,6 +66,29 @@ def _make_storage(project=None, gate=None, pending_gates=None, decision_result=N
         call_count[0] += 1
         if pending_gates is not None:
             return gates_result
+        if decision_gates is not None:
+            filters = {}
+            for criterion in getattr(query, "_where_criteria", ()):
+                column = getattr(getattr(criterion, "left", None), "name", None)
+                value = getattr(getattr(criterion, "right", None), "value", None)
+                if column in {"id", "project_id", "status"}:
+                    filters[column] = value
+            candidates = [dict(row) for row in decision_gates]
+            if "project_id" in filters:
+                candidates = [
+                    row for row in candidates if row["project_id"] == filters["project_id"]
+                ]
+            if "id" in filters:
+                candidates = [row for row in candidates if row["id"] == filters["id"]]
+            if "status" in filters:
+                candidates = [
+                    row for row in candidates if row["status"] == filters["status"]
+                ]
+            decision_result_proxy = MagicMock()
+            decision_result_proxy.mappings.return_value.first.return_value = (
+                candidates[0] if candidates else None
+            )
+            return decision_result_proxy
         return gate_result
 
     mock_conn.execute = mock_execute
@@ -133,7 +163,139 @@ async def test_pending_decisions_empty(client):
     assert resp.json() == []
 
 
+@pytest.mark.anyio
+async def test_project_decision_inbox_requires_operator_identity(client):
+    """The global decision inbox is not available to the shared service key."""
+    storage = MagicMock()
+    storage.list_pending_project_decisions = AsyncMock(return_value=[])
+    _patch_state(storage)
+
+    response = await client.get("/approvals/project-decisions")
+
+    assert response.status_code == 403
+    storage.list_pending_project_decisions.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_project_decision_inbox_returns_bounded_context_and_cursor(client):
+    from datetime import UTC, datetime
+
+    created_at = datetime(2026, 10, 7, 12, 0, tzinfo=UTC)
+    gate_ids = [uuid.uuid4(), uuid.uuid4(), uuid.uuid4()]
+    rows = [
+        {
+            "id": gate_id,
+            "project_id": PROJECT_ID,
+            "project_name": "Alpha project",
+            "project_state": "HUMAN_APPROVAL",
+            "company_id": uuid.UUID("00000000-0000-4000-a000-000000000099"),
+            "gate_type": "human_approval",
+            "status": "PENDING",
+            "created_at": created_at,
+        }
+        for gate_id in gate_ids
+    ]
+    storage = MagicMock()
+    storage.list_pending_project_decisions = AsyncMock(return_value=rows)
+    _patch_state(storage)
+
+    response = await client.get(
+        "/approvals/project-decisions?limit=2",
+        headers={"X-API-Key": "test-operator-key"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["items"]) == 2
+    assert body["items"][0] == {
+        "id": str(gate_ids[0]),
+        "project_id": str(PROJECT_ID),
+        "project_name": "Alpha project",
+        "project_state": "HUMAN_APPROVAL",
+        "company_id": "00000000-0000-4000-a000-000000000099",
+        "gate_type": "human_approval",
+        "status": "PENDING",
+        "created_at": created_at.isoformat().replace("+00:00", "Z"),
+    }
+    assert body["next_cursor"]
+    storage.list_pending_project_decisions.assert_awaited_once_with(
+        limit=3,
+        cursor=None,
+    )
+    assert "human_input" not in body["items"][0]
+    assert "justification" not in body["items"][0]
+
+    storage.list_pending_project_decisions.reset_mock()
+    storage.list_pending_project_decisions.return_value = [rows[2]]
+    next_response = await client.get(
+        f"/approvals/project-decisions?limit=2&cursor={body['next_cursor']}",
+        headers={"X-API-Key": "test-operator-key"},
+    )
+    assert next_response.status_code == 200
+    assert next_response.json()["next_cursor"] is None
+    storage.list_pending_project_decisions.assert_awaited_once_with(
+        limit=3,
+        cursor=(created_at, gate_ids[1]),
+    )
+
+
+@pytest.mark.anyio
+async def test_project_decision_inbox_validates_cursor_and_page_size(client):
+    storage = MagicMock()
+    storage.list_pending_project_decisions = AsyncMock(return_value=[])
+    _patch_state(storage)
+    headers = {"X-API-Key": "test-operator-key"}
+
+    invalid_cursor = await client.get(
+        "/approvals/project-decisions?cursor=not-a-cursor", headers=headers
+    )
+    oversized_page = await client.get(
+        "/approvals/project-decisions?limit=101", headers=headers
+    )
+
+    assert invalid_cursor.status_code == 400
+    assert oversized_page.status_code == 422
+    storage.list_pending_project_decisions.assert_not_awaited()
+
+
 # ── POST /projects/{id}/decisions — happy paths ───────────────────────────────
+
+
+@pytest.mark.anyio
+async def test_submit_decision_requires_operator_before_storage(client):
+    """The shared service key cannot record human approval decisions."""
+    storage = _make_storage(project=_fake_project("HUMAN_APPROVAL"), gate=_fake_gate())
+    controller = _make_controller()
+    _patch_state(storage, controller)
+
+    response = await client.post(
+        f"/projects/{PROJECT_ID}/decisions",
+        json={"decision": "APPROVED", "decided_by": "operator"},
+    )
+
+    assert response.status_code == 403
+    storage.get_project.assert_not_awaited()
+    storage.decide_approval_gate.assert_not_awaited()
+    controller.transition.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_submit_decision_rejects_unsupported_value_before_storage(client):
+    """Unsupported decision values fail validation before durable mutation."""
+    storage = _make_storage(project=_fake_project("HUMAN_APPROVAL"), gate=_fake_gate())
+    controller = _make_controller()
+    _patch_state(storage, controller)
+
+    response = await client.post(
+        f"/projects/{PROJECT_ID}/decisions",
+        json={"decision": "ARCHIVE_PROJECT", "decided_by": "forged"},
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert response.status_code == 422
+    storage.get_project.assert_not_awaited()
+    storage.decide_approval_gate.assert_not_awaited()
+    controller.transition.assert_not_awaited()
 
 
 @pytest.mark.anyio
@@ -148,13 +310,365 @@ async def test_submit_decision_approved(client):
 
     resp = await client.post(
         f"/projects/{PROJECT_ID}/decisions",
-        json={"decision": "APPROVED", "comments": "Looks good", "decided_by": "alice"},
+        json={"decision": " approved ", "comments": "Looks good", "decided_by": "alice"},
+        headers=OPERATOR_HEADERS,
     )
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "transitioned"
     assert "gate_id" in data
     assert "next_state" in data
+    storage.decide_approval_gate.assert_awaited_once()
+    assert storage.decide_approval_gate.await_args.kwargs["status"] == "APPROVED"
+    assert storage.decide_approval_gate.await_args.kwargs["decided_by"] == "operator"
+    assert ctrl.transition.await_args.kwargs["actor_id"] == "operator"
+
+
+@pytest.mark.anyio
+async def test_submit_decision_changes_only_the_requested_gate(client):
+    """An explicit gate ID targets that gate even when a newer gate is pending."""
+    project = _fake_project("HUMAN_APPROVAL")
+    requested_gate = {
+        "id": uuid.uuid4(),
+        "project_id": PROJECT_ID,
+        "status": "PENDING",
+        "created_at": NOW_ISO,
+    }
+    newer_gate = {
+        "id": uuid.uuid4(),
+        "project_id": PROJECT_ID,
+        "status": "PENDING",
+        "created_at": "2026-01-02T00:00:00+00:00",
+    }
+    gates = [newer_gate, requested_gate]
+    storage = _make_storage(project=project, decision_gates=gates)
+
+    async def decide_gate(gate_id, *, status, **_kwargs):
+        selected = next(row for row in gates if row["id"] == gate_id)
+        if selected["status"] != "PENDING":
+            return False
+        selected["status"] = status
+        return True
+
+    storage.decide_approval_gate = AsyncMock(side_effect=decide_gate)
+    controller = _make_controller()
+    _patch_state(storage, controller)
+
+    response = await client.post(
+        f"/projects/{PROJECT_ID}/decisions",
+        json={
+            "decision": "APPROVED",
+            "gate_id": str(requested_gate["id"]),
+            "decided_by": "alice",
+        },
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["gate_id"] == str(requested_gate["id"])
+    assert requested_gate["status"] == "APPROVED"
+    assert newer_gate["status"] == "PENDING"
+    storage.decide_approval_gate.assert_awaited_once()
+    assert storage.decide_approval_gate.await_args.args[0] == requested_gate["id"]
+
+
+@pytest.mark.anyio
+async def test_submit_exact_legacy_flow_gate_binds_then_resolves_flow_once(client):
+    """A uniquely recoverable legacy gate enters the canonical flow resolver."""
+    gate = {
+        **_fake_gate(),
+        "gate_type": "human",
+        "flow_node_execution_id": None,
+    }
+    project = _fake_project("INIT")
+    storage = _make_storage(project=project, decision_gates=[gate])
+    execution_id = 41
+    instance_id = uuid.uuid4()
+    flow_id = uuid.uuid4()
+    bound_gate = {**gate, "flow_node_execution_id": execution_id}
+    resolved_instance = {
+        "id": instance_id,
+        "flow_id": flow_id,
+        "project_id": PROJECT_ID,
+        "status": "COMPLETED",
+        "active_node_ids": [],
+        "context_json": {"approval": "approved"},
+    }
+    storage.bind_legacy_flow_approval_gate = AsyncMock(
+        return_value={"outcome": "bound", "gate": bound_gate}
+    )
+    storage.get_flow_node_execution = AsyncMock(
+        return_value={
+            "id": execution_id,
+            "instance_id": instance_id,
+            "node_id": "approval",
+            "node_type": "approval",
+            "status": "RUNNING",
+        }
+    )
+    storage.get_flow_instance = AsyncMock(return_value={
+        **resolved_instance,
+        "status": "RUNNING",
+        "active_node_ids": ["approval"],
+        "flow_id": flow_id,
+    })
+    storage.get_flow = AsyncMock(
+        return_value={
+            "id": flow_id,
+            "version": 1,
+            "definition_json": {
+                "nodes": [
+                    {"id": "start", "type": "start", "label": "Start", "config": {}},
+                    {
+                        "id": "approval",
+                        "type": "approval",
+                        "label": "Approval",
+                        "config": {"approver_user": "human"},
+                    },
+                    {"id": "done", "type": "end", "label": "Done", "config": {}},
+                ],
+                "edges": [
+                    {"id": "e1", "source": "start", "target": "approval"},
+                    {"id": "e2", "source": "approval", "target": "done"},
+                ],
+            },
+        }
+    )
+    storage.list_flow_node_executions = AsyncMock(
+        return_value=[
+            {
+                "id": execution_id,
+                "node_id": "approval",
+                "node_type": "approval",
+                "status": "RUNNING",
+            }
+        ]
+    )
+    storage.resolve_flow_approval_gate = AsyncMock(
+        return_value={
+            "outcome": "applied",
+            "instance": resolved_instance,
+            "activated_node_ids": [],
+        }
+    )
+    controller = _make_controller()
+    _patch_state(storage, controller)
+
+    response = await client.post(
+        f"/projects/{PROJECT_ID}/decisions",
+        json={"gate_id": str(gate["id"]), "decision": "APPROVED"},
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["flow_instance_id"] == str(instance_id)
+    storage.bind_legacy_flow_approval_gate.assert_awaited_once_with(
+        gate["id"], project_id=PROJECT_ID
+    )
+    storage.resolve_flow_approval_gate.assert_awaited_once()
+    storage.decide_approval_gate.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_ambiguous_legacy_flow_gate_is_not_decided(client):
+    gate = {
+        **_fake_gate(),
+        "gate_type": "human",
+        "flow_node_execution_id": None,
+    }
+    storage = _make_storage(
+        project=_fake_project("INIT"),
+        decision_gates=[gate],
+    )
+    storage.bind_legacy_flow_approval_gate = AsyncMock(
+        return_value={"outcome": "ambiguous"}
+    )
+    controller = _make_controller()
+    _patch_state(storage, controller)
+
+    response = await client.post(
+        f"/projects/{PROJECT_ID}/decisions",
+        json={"gate_id": str(gate["id"]), "decision": "APPROVED"},
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "AMBIGUOUS_LEGACY_FLOW_APPROVAL_BINDING"
+    storage.bind_legacy_flow_approval_gate.assert_awaited_once()
+    storage.decide_approval_gate.assert_not_awaited()
+    controller.transition.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_unbound_legacy_gate_without_id_cannot_fall_through_generic_decision(client):
+    """A gate left pending by fail-closed cancellation still requires flow binding."""
+    gate = {
+        **_fake_gate(),
+        "gate_type": "human",
+        "flow_node_execution_id": None,
+    }
+    storage = _make_storage(project=_fake_project("INIT"), decision_gates=[gate])
+    storage.bind_legacy_flow_approval_gate = AsyncMock(
+        return_value={"outcome": "ambiguous"}
+    )
+    controller = _make_controller()
+    _patch_state(storage, controller)
+
+    response = await client.post(
+        f"/projects/{PROJECT_ID}/decisions",
+        json={"decision": "APPROVED"},
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "AMBIGUOUS_LEGACY_FLOW_APPROVAL_BINDING"
+    storage.bind_legacy_flow_approval_gate.assert_awaited_once_with(
+        gate["id"], project_id=PROJECT_ID
+    )
+    storage.decide_approval_gate.assert_not_awaited()
+    controller.transition.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_unmatched_legacy_project_gate_remains_generic(client):
+    gate = {
+        **_fake_gate(),
+        "gate_type": "feasibility",
+        "flow_node_execution_id": None,
+    }
+    storage = _make_storage(
+        project=_fake_project("HUMAN_APPROVAL"),
+        decision_gates=[gate],
+    )
+    storage.bind_legacy_flow_approval_gate = AsyncMock(
+        return_value={"outcome": "generic", "gate": gate}
+    )
+    controller = _make_controller()
+    _patch_state(storage, controller)
+
+    response = await client.post(
+        f"/projects/{PROJECT_ID}/decisions",
+        json={"gate_id": str(gate["id"]), "decision": "APPROVED"},
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert response.status_code == 200
+    storage.bind_legacy_flow_approval_gate.assert_awaited_once()
+    storage.decide_approval_gate.assert_awaited_once()
+    controller.transition.assert_awaited_once()
+
+
+@pytest.mark.anyio
+async def test_submit_decision_with_foreign_gate_id_fails_without_fallback(client):
+    """A gate belonging to another project cannot select this project's gate."""
+    project = _fake_project("HUMAN_APPROVAL")
+    pending_gate = _fake_gate()
+    foreign_gate = {
+        "id": uuid.uuid4(),
+        "project_id": uuid.uuid4(),
+        "status": "PENDING",
+        "created_at": NOW_ISO,
+    }
+    storage = _make_storage(
+        project=project,
+        decision_gates=[foreign_gate, pending_gate],
+    )
+    controller = _make_controller()
+    _patch_state(storage, controller)
+
+    response = await client.post(
+        f"/projects/{PROJECT_ID}/decisions",
+        json={
+            "decision": "APPROVED",
+            "gate_id": str(foreign_gate["id"]),
+            "decided_by": "alice",
+        },
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert response.status_code == 404
+    assert "not found for this project" in response.json()["detail"]
+    storage.decide_approval_gate.assert_not_awaited()
+    controller.transition.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_submit_decision_with_stale_gate_id_fails_without_fallback(client):
+    """A resolved requested gate returns conflict instead of deciding another gate."""
+    project = _fake_project("HUMAN_APPROVAL")
+    stale_gate = {
+        "id": uuid.uuid4(),
+        "project_id": PROJECT_ID,
+        "status": "APPROVED",
+        "created_at": NOW_ISO,
+    }
+    other_pending_gate = {
+        "id": uuid.uuid4(),
+        "project_id": PROJECT_ID,
+        "status": "PENDING",
+        "created_at": "2026-01-02T00:00:00+00:00",
+    }
+    storage = _make_storage(
+        project=project,
+        decision_gates=[other_pending_gate, stale_gate],
+    )
+    controller = _make_controller()
+    _patch_state(storage, controller)
+
+    response = await client.post(
+        f"/projects/{PROJECT_ID}/decisions",
+        json={
+            "decision": "APPROVED",
+            "gate_id": str(stale_gate["id"]),
+            "decided_by": "alice",
+        },
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert response.status_code == 409
+    assert "no longer pending" in response.json()["detail"]
+    storage.decide_approval_gate.assert_not_awaited()
+    controller.transition.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_submit_decision_without_gate_id_keeps_newest_pending_compatibility(client):
+    """Legacy callers without gate_id retain the prior newest-pending behavior."""
+    project = _fake_project("HUMAN_APPROVAL")
+    newest_gate = {
+        "id": uuid.uuid4(),
+        "project_id": PROJECT_ID,
+        "status": "PENDING",
+        "created_at": "2026-01-02T00:00:00+00:00",
+    }
+    older_gate = {
+        "id": uuid.uuid4(),
+        "project_id": PROJECT_ID,
+        "status": "PENDING",
+        "created_at": NOW_ISO,
+    }
+    storage = _make_storage(
+        project=project,
+        decision_gates=[newest_gate, older_gate],
+    )
+    storage.bind_legacy_flow_approval_gate = AsyncMock(
+        return_value={"outcome": "generic", "gate": newest_gate}
+    )
+    _patch_state(storage, _make_controller())
+
+    response = await client.post(
+        f"/projects/{PROJECT_ID}/decisions",
+        json={"decision": "APPROVED", "decided_by": "alice"},
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["gate_id"] == str(newest_gate["id"])
+    storage.bind_legacy_flow_approval_gate.assert_awaited_once_with(
+        newest_gate["id"], project_id=PROJECT_ID
+    )
+    storage.decide_approval_gate.assert_awaited_once()
+    assert storage.decide_approval_gate.await_args.args[0] == newest_gate["id"]
 
 
 @pytest.mark.anyio
@@ -169,6 +683,7 @@ async def test_submit_decision_rejects_gate_cancelled_by_racing_transition(clien
     resp = await client.post(
         f"/projects/{PROJECT_ID}/decisions",
         json={"decision": "APPROVED", "decided_by": "alice"},
+        headers=OPERATOR_HEADERS,
     )
 
     assert resp.status_code == 409
@@ -198,6 +713,7 @@ async def test_submit_decision_rejected(client):
     resp = await client.post(
         f"/projects/{PROJECT_ID}/decisions",
         json={"decision": "REJECTED", "comments": "Not viable", "decided_by": "alice"},
+        headers=OPERATOR_HEADERS,
     )
     assert resp.status_code == 200
     data = resp.json()
@@ -228,6 +744,7 @@ async def test_submit_decision_edits(client):
             "edits": {"section": "budget", "value": "50k"},
             "decided_by": "alice",
         },
+        headers=OPERATOR_HEADERS,
     )
     assert resp.status_code == 200
 
@@ -252,6 +769,7 @@ async def test_submit_decision_cancelled(client):
     resp = await client.post(
         f"/projects/{PROJECT_ID}/decisions",
         json={"decision": "CANCELLED", "decided_by": "alice"},
+        headers=OPERATOR_HEADERS,
     )
     assert resp.status_code == 200
 
@@ -266,6 +784,7 @@ async def test_submit_decision_project_not_found(client):
     resp = await client.post(
         f"/projects/{PROJECT_ID}/decisions",
         json={"decision": "APPROVED", "decided_by": "alice"},
+        headers=OPERATOR_HEADERS,
     )
     assert resp.status_code == 404
 
@@ -278,6 +797,7 @@ async def test_submit_decision_no_pending_gate(client):
     resp = await client.post(
         f"/projects/{PROJECT_ID}/decisions",
         json={"decision": "APPROVED", "decided_by": "alice"},
+        headers=OPERATOR_HEADERS,
     )
     assert resp.status_code == 404
 
@@ -296,6 +816,7 @@ async def test_submit_decision_invalid_transition_still_records(client):
     resp = await client.post(
         f"/projects/{PROJECT_ID}/decisions",
         json={"decision": "APPROVED", "decided_by": "alice"},
+        headers=OPERATOR_HEADERS,
     )
     assert resp.status_code == 200
     data = resp.json()
@@ -325,5 +846,6 @@ async def test_submit_decision_no_storage_returns_503(client):
     resp = await client.post(
         f"/projects/{PROJECT_ID}/decisions",
         json={"decision": "APPROVED", "decided_by": "alice"},
+        headers=OPERATOR_HEADERS,
     )
     assert resp.status_code == 503

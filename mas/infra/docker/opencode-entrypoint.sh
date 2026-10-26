@@ -11,6 +11,7 @@ umask 077
 cat > "${OPENCODE_CONFIG}" <<EOF
 {
   "\$schema": "https://opencode.ai/config.json",
+  "snapshot": false,
   "provider": {
     "aiat": {
       "npm": "@ai-sdk/openai-compatible",

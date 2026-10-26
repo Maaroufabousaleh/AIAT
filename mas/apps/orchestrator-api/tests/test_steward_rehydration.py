@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 
-from mas_core.worker_registry.steward import ExternalProvenance, ExternalWorkerSteward, StewardStatus
+from mas_core.worker_registry.steward import (
+    CandidateIntakeStatus,
+    ExternalProvenance,
+    ExternalWorkerSteward,
+    StewardStatus,
+)
 
 
 class _RehydrationStorage:
@@ -134,3 +141,86 @@ async def test_steward_runtime_fails_closed_on_unknown_active_pointer() -> None:
         assert runtime.active_adapter is None
     finally:
         main._worker_steward_runtimes.pop(str(worker_id), None)
+
+
+@pytest.mark.anyio
+async def test_steward_certification_blocks_before_unreviewed_candidate_execution(
+    monkeypatch,
+) -> None:
+    from orchestrator_api import main
+    from starlette.requests import Request
+
+    from mas_core.worker_contract import conformance as conformance_module
+    from mas_core.worker_registry import runtime_adapters
+
+    worker_id = uuid4()
+    steward = ExternalWorkerSteward(
+        worker_id=str(worker_id),
+        steward_id=uuid4(),
+        provenance=ExternalProvenance(
+            canonical_source_repository="https://example.invalid/local-worker",
+            exact_release="1.0.0",
+            transport_type="http",
+            security_scan_status="pending",
+        ),
+        status=StewardStatus.READY,
+    )
+    candidate = steward.generate_candidate(
+        semantic_version="1.0.0",
+        adapter_version="1.0.0",
+        upstream_compatibility_range="==1.0.0",
+    )
+    for status in (
+        CandidateIntakeStatus.SOURCE_REVIEW,
+        CandidateIntakeStatus.SECURITY_REVIEW,
+        CandidateIntakeStatus.INTERFACE_RESEARCH,
+        CandidateIntakeStatus.GENERATED,
+        CandidateIntakeStatus.CERTIFYING,
+    ):
+        steward.advance_candidate(candidate.candidate_id, status)
+
+    storage = MagicMock()
+    storage.get_worker = AsyncMock(
+        return_value={
+            "adapter_config": {},
+            "sandbox_profile": "trusted",
+            "version_pin": "1.0.0",
+        }
+    )
+    storage.create_compatibility_matrix = AsyncMock()
+    storage.create_certification_run = AsyncMock()
+    storage.get_skill_bundle_candidate = AsyncMock(return_value=None)
+    monkeypatch.setattr(main, "_storage", lambda: storage)
+    monkeypatch.setattr(main, "_steward_runtime", AsyncMock(return_value=steward))
+
+    adapter_for_transport = MagicMock(side_effect=AssertionError("unreviewed candidate must not execute"))
+    monkeypatch.setattr(
+        runtime_adapters,
+        "adapter_for_transport",
+        adapter_for_transport,
+    )
+
+    conformance_runner = MagicMock(side_effect=AssertionError("unreviewed candidate must not execute"))
+    monkeypatch.setattr(
+        conformance_module,
+        "ConformanceRunner",
+        conformance_runner,
+    )
+
+    operator_request = Request({"type": "http", "headers": []})
+    operator_request.state.aiat_auth_principal = "operator"
+    with pytest.raises(HTTPException) as exc_info:
+        await main.certify_steward_candidate(
+            worker_id,
+            candidate.candidate_id,
+            main.CandidateCertificationRequest(),
+            operator_request,
+        )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail["code"] == "SECURITY_SCAN_EVIDENCE_REQUIRED"
+    storage.create_compatibility_matrix.assert_not_awaited()
+    storage.create_certification_run.assert_not_awaited()
+    adapter_for_transport.assert_not_called()
+    conformance_runner.assert_not_called()
+    assert steward.compatibility_matrices == []

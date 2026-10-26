@@ -209,3 +209,26 @@ test("credentials access denial after a successful read retains metadata without
   await expect(credentials.getByRole("checkbox")).toHaveCount(0);
   await expect(credentials.getByRole("button", { name: /Copy placeholder|Delete / })).toHaveCount(0);
 });
+
+test("single credential deletion encodes names that contain URL syntax", async ({ page }) => {
+  const name = "OPENAI/KEY?scope=team#active";
+  let deletePath = "";
+  await page.route("**/api/credentials**", async (route) => {
+    if (route.request().method() === "DELETE") {
+      deletePath = new URL(route.request().url()).pathname;
+      await route.fulfill({ status: 204 });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([{ ...CREDENTIALS_FIXTURE[0], name, placeholder: `<${name}>` }]),
+    });
+  });
+  page.on("dialog", (dialog) => dialog.accept());
+
+  await authenticate(page, "/credentials");
+  await expect(page.getByText(name, { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: `Delete ${name}` }).click();
+  await expect.poll(() => deletePath).toBe(`/api/credentials/${encodeURIComponent(name)}`);
+});

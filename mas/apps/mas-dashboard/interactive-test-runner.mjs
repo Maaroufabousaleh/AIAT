@@ -46,7 +46,7 @@ const testSuites = [
           await page.waitForTimeout(1000);
 
           log('  Filling worker ID...');
-          await page.getByPlaceholder('my_worker_1').fill('test-worker-' + Date.now());
+          await page.getByPlaceholder('my_worker_1').fill('aiat_e2e_worker_interactive_' + Date.now());
 
           log('  Filling worker name...');
           await page.getByPlaceholder('My Worker Agent').fill('Test Worker Agent');

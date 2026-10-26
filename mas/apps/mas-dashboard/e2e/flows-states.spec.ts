@@ -205,3 +205,40 @@ test("flows list enters the same denied state when deletion loses authorization"
   await expect(page.getByRole("link", { name: "New Flow" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Refresh flows" })).toHaveCount(0);
 });
+
+test("flows list reports an interrupted delete and lets the operator refresh", async ({ page }) => {
+  let deleteAttempts = 0;
+  let reads = 0;
+
+  await page.route("**/api/flows**", async (route) => {
+    const request = route.request();
+    if (request.method() === "DELETE") {
+      deleteAttempts += 1;
+      await route.abort("failed");
+      return;
+    }
+
+    reads += 1;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(FLOW_FIXTURE),
+    });
+  });
+
+  await authenticate(page, "/flows");
+  await expect(page.getByRole("link", { name: "flows-e2e-retained", exact: true })).toBeVisible();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Delete flow flows-e2e-retained v1" }).click();
+
+  await expect(page.getByText(/Could not reach AIAT while deleting this flow/)).toBeVisible();
+  await expect(page.getByText("flows-e2e-retained", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Refresh flows" })).toBeEnabled();
+  expect(deleteAttempts).toBe(1);
+
+  await page.getByRole("button", { name: "Refresh flows" }).click();
+  await expect(page.getByRole("button", { name: "Refresh flows" })).toBeEnabled();
+  await expect(page.getByText("flows-e2e-retained", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Could not reach AIAT while deleting this flow/)).toHaveCount(0);
+  expect(reads).toBe(2);
+});

@@ -17,6 +17,23 @@ External project-management and source-control systems are governed collaboratio
 - Canonical issue create/get/update/comment/link APIs and tools.
 - Source-control installation, branch, pull request, review comment, check, commit, run credential, and evidence APIs.
 - Dedicated PM gateway and dashboard integration views.
+- The integration operator view now supports connection-scoped reconciliation,
+  conflict disposition with an operator note, bounded recent inbound-canary
+  summary listing, selected-plan detail lookup, and current outbox/reconciliation
+  state. `GET /integrations/inbound-canaries` is operator-authorized and omits
+  digests and operation payloads; detail inspection remains plan-ID based. Its
+  actions remain behind the operator API identity and integration policy; the
+  UI does not infer missing provider state.
+- Project Detail's provider-discovery surface filters bindings by the selected
+  project and connection, shows provisioning details and blockers, links to
+  the owning project, and retries through the existing canonical action. Shared
+  DLQ review is linked without claiming that queue entries are connection
+  attributed. The focused mocked source-built Playwright coverage passes 3/3;
+  this does not contact or certify a live provider.
+- The PM setup form can retry its project-list read independently after a
+  transient failure. The retry repeats only the bounded projects GET; a focused
+  mocked E2E proves 503-to-success recovery, no integration refresh, and no
+  mutations (1/1, `182fb110`).
 - A reusable `aiat.provider-conformance.v1` fixture runner for disposable
   adapters. It exercises capability/health/configuration, canonical project and
   work-item projection, idempotent replay, cursor-bearing change listing,
@@ -110,7 +127,9 @@ or used to infer current provider state.
   status classifier, built-in declaration/readiness fixture, and deterministic
   YouTrack/GitHub mocked HTTP fixture are implemented, but live provider
   evidence remains.
-- Finish dashboard drill-down for lifecycle plans, evidence, actor maps, canaries, dispositions, and reconciliation diffs.
+- Extend mapping and dead-letter collection discovery when the API exposes
+  canonical collection endpoints. Recent canary plans are now listed, while
+  detail inspection and mapping evidence remain tied to the selected plan.
 - Keep the older `Docs/PM_Platform_*` material linked as historical design and
   approval provenance; current status and certification truth remain in the
   feature and `mas/docs/PM_ACTIVE_*` records.

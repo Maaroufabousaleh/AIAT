@@ -80,6 +80,7 @@ export default function FlowsPage() {
 
   const requestRefresh = () => {
     if (loading || accessDenied) return;
+    setBulkError("");
     void load();
   };
 
@@ -98,6 +99,10 @@ export default function FlowsPage() {
         return;
       }
       await load();
+    } catch {
+      setBulkError(
+        "Could not reach AIAT while deleting this flow. Refresh the list to verify its status before trying again.",
+      );
     } finally {
       setDeleting(null);
     }

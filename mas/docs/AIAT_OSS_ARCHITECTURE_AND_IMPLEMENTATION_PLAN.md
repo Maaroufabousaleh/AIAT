@@ -911,6 +911,54 @@ This mapping is deliberately fail-closed. External workers require
 configured for Kata; it never falls back to `runsc` or runc. Trusted execution
 is never used as a compatibility fallback for an external worker.
 
+### Format-aware host capability selection
+
+The policy class is a security floor; it is not a request for a particular
+hypervisor or a universal runtime choice. New worker manifests may carry an
+`execution` policy with `trust`, workload `formats`, `minimum_isolation`, and
+runtime preferences. The central resolver in
+[`mas_core/execution_policy.py`](../packages/mas-core/mas_core/execution_policy.py)
+then evaluates the certified capabilities of the selected host:
+
+```text
+trusted AIAT infrastructure                    -> runc
+untrusted WASM artifact + Wasmtime             -> Wasmtime
+untrusted OCI/Linux + local KVM + Kata         -> Kata/runtime-rs
+untrusted OCI/Linux + no local KVM              -> gVisor/runsc systrap
+hostile or VM-required + local KVM              -> Kata/runtime-rs
+hostile or VM-required + no local KVM           -> advertised remote VM only
+required target unavailable                     -> UNSCHEDULABLE
+```
+
+Wasmtime is format-specific and is not an automatic fallback for arbitrary
+Linux binaries or OCI images. A host's `kata` VMM/profile, such as QEMU,
+Dragonball, Cloud Hypervisor, or a future Kata-backed Firecracker selection,
+is host configuration only; worker manifests request `vm_isolated`, never a
+VMM name. A remote VM is selected only when the host explicitly advertises
+that capability. No untrusted workload silently falls back to runc, and a
+VM-required workload does not silently fall back to gVisor.
+
+The corresponding manifest shape is intentionally declarative:
+
+```yaml
+execution:
+  trust: untrusted
+  formats: [oci, linux]
+  preferred_runtime: [kata, runsc]
+  minimum_isolation: sandboxed
+  gvisor_compatible: true
+  remote_vm_allowed: true
+```
+
+The host registry stores execution capabilities in its existing metadata
+projection (`execution_runtimes`, `kvm_available`, `wasmtime_available`,
+`remote_vm_available`, `workload_formats`, and `gvisor_platform`). These values
+are placement inputs, not certification by themselves; the host bootstrap and
+runtime readiness evidence must prove the advertised runtime. This lets a
+no-KVM Contabo-style host remain development-usable with gVisor while a KVM
+host adds Kata without changing worker policy, APIs, hiring, governance, or
+workflow semantics.
+
 The host owns the concrete VMM choice. A host registration may advertise
 metadata such as:
 

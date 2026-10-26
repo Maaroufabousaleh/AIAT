@@ -1,8 +1,39 @@
 # P0 Release Integrity Status
 
-**Updated:** 2026-09-19
+**Updated:** 2026-10-10
 
-## Current working-tree release snapshot — 2026-09-19
+## Product-development update — 2026-10-07
+
+The development branch added model-version approval, operator WorkerRun
+controls, project activity and issue management views, a unified approval
+inbox, PM project-provider discovery, and legacy-flow migration UI. The bounded
+project-decision inbox endpoint is read-only; decisions still use the owning
+project authority. The core migration graph now has the single source head
+`0048_worker_run_retry_lineage`; the latest retained local Compose database
+report is at `0045_worker_tool_effects`, so no live migration application is
+claimed in this product run. The release-ledger and live-stack figures below
+remain evidence from their stated dates and are not current certification for
+the current source head. Release status remains **NO-RELEASE**; no provider
+dispatch or native-Linux claim was made.
+
+## Current local integration update — 2026-10-10
+
+The WSL2 stack and authenticated APIs are healthy, and the source/live database
+migration head is `0048_worker_run_retry_lineage`. The retained
+[`network_boundary_live_current.json`](../../mas/docs/provenance/network_boundary_live_current.json)
+was generated at source revision `8146ea10e136047c0069c68f3af014cf6fb653b0`
+and reports PASS: orchestrator connectivity 4/4; runsc approved gateways 2/2
+and protected-service denials 4/4; TeamRunner containers 11/11; TeamRunner
+approved gateways 44/44; protected/external denials 66/66; storage-health
+probes 11/11; no checker errors. Authenticated `/health`, `/projects`, and
+`/capabilities/workers` return HTTP 200, with 39 worker manifests.
+
+This is local WSL development evidence. It does not certify a native Linux
+host, run an OpenCode project task, authorize an external model call, or change
+the release decision. The retained release-ledger aggregate below is dated
+2026-10-02 and has not yet incorporated this network refresh.
+
+## Historical local working-tree release snapshot — 2026-09-19
 
 The current static release ledger remains **NO-RELEASE** because release
 evidence is intentionally broader than local development. The authenticated
@@ -15,6 +46,20 @@ boundary pass for development. Remaining blocked rows are native-host,
 deployment-image, operator/provider/observability, runtime-catalogue, and
 selected live-worker evidence gates. Direct Firecracker is superseded and
 self-improvement remains deferred; neither is an ordinary development blocker.
+
+## Historical working-tree verification — 2026-10-02
+
+The checks below were refreshed on WSL2 against code revision `c84cddf09e8997ed9b54762887f59548b2c99e7a` with preserved untracked files and generated temporary evidence; they are not clean-candidate or native-Linux evidence.
+
+- Static release ledger: **61 pass, 0 fail, 0 blocked, 3 not-in-scope**, with 2 pending evidence items; the canonical result remains `NO-RELEASE`.
+- Authenticated local-Compose live ledger: **80 pass, 1 fail, 3 blocked, 5 not-in-scope** across 89 checks, with 4 pending items; the canonical result remains `NO-RELEASE`. The one failure is the live runner network matrix because all 11 team-runner containers are stopped while provider dispatch is unauthorized. The current sanitized report is [`release_ledger_live_current.json`](../../mas/docs/provenance/release_ledger_live_current.json).
+- Source and live Postgres migration heads both pass at `0045_worker_tool_effects`.
+- Digest-pinned WSL gVisor smoke passes. Optional Kata smoke also passes and reports a guest kernel distinct from the WSL host kernel. Neither result is native-Linux certification.
+- The dedicated `aiat-wsl` Docker daemon is separate from Docker Desktop's `default` daemon. The original east-west TCP timeouts occurred on the correct `aiat-wsl` daemon despite valid network endpoints, DNS, routes, and ARP; recreating only the AIAT Compose bridge through the canonical wrapper (`down` without `-v`, then normal startup) restored service connectivity and preserved all nine persistent volumes. Docker Desktop `default` caused separate published-port collisions when the wrong profile was used; it was not the cause of the original bridge outage. The privileged forwarding rule could not be inspected. Authenticated `/health`, `/projects`, and `/capabilities/workers` return HTTP 200 (0 projects, 39 workers). Secret-safe evidence is [`local_compose_connectivity_evidence.json`](../../mas/docs/provenance/local_compose_connectivity_evidence.json).
+- The independent control-plane probe passes 4/4 TCP connections from orchestrator to Redis, Postgres, PgBouncer, and tool-service. The retained 2026-10-01 11-runner matrix passes all 44 approved-gateway probes, 66 protected/external denials, and 11 storage-health probes. The current runner checker found all 11 team-runner containers missing and performed no per-runner probes; no fresh live runner-boundary PASS is claimed.
+- The full Python suite passes 3,216 tests, skips 17, and has 0 failures; two existing `AsyncMock` warnings remain. Evidence is [`python_suite_local_current.json`](../../mas/docs/provenance/python_suite_local_current.json).
+- Dashboard lint, typecheck, build, and auth tests pass. The safe local Playwright run reports 105 passed, 2 skipped, 0 failed; it includes one disposable project workspace create/detail path with exact-name cleanup. CEO chat, hiring, and live flow mutation specs remain excluded while external provider dispatch is unauthorized. No provider request was dispatched.
+- Native release preflight is blocked because the host is WSL2, the worktree is dirty, and production image-reference inputs are unset. No release or provider PASS is inferred.
 
 ## Current integrated status — 2026-09-09
 
@@ -207,8 +252,8 @@ Provider-managed KMS/SSE is release-required but still operator-target
   local WSL tool state. The candidate workflow now self-provisions exact
   Semgrep/TruffleHog/SkillSpector/Syft inputs with checksums and explicit
   installation, execution, finding, and SBOM failure classes. The historical
-  316-finding OpenCode run is `FAILED_UNREPRODUCIBLE` and is not remediation
-  input.
+  unreproducible OpenCode scan is `FAILED_UNREPRODUCIBLE`; no scalar counts
+  from it are current remediation input.
 - Current continuation refresh (`57504a7`, aggregate evidence `cb290ff`) runs the static ledger at 63/63
   pass and the corrected configured Compose aggregation at 76 pass/0 fail/5 blocked
   across 81 checks (`23:57:08Z`, canonical host-loopback), with four pending evidence items and
@@ -291,9 +336,10 @@ Provider-managed KMS/SSE is release-required but still operator-target
   (`8ed53df`). The security review register/checker (`23e908e`) now proves
   complete rule-count coverage and owner/next-action metadata for the exact
   scan while retaining `technical_gate_status: blocked`; follow-up `0ddbcc8`
-  binds the register to the retained exact-source reproduction certificate,
-  source commit, 316 findings, 55 parser/engine errors, and its payload-free
-  retention boundary. The release decision
+  binds the register to the current retained exact-source scanner artifacts,
+  source commit, and payload-free retention boundary. The old v1.17.13 scan
+  has no retained raw results or source snapshot, so its scalar counts are not
+  used. The release decision
   remains `NO-RELEASE` because live evidence, two pending worker security
   reviews, and a clean worktree are still absent. The workflow-control fixture
   extension (`9972b3b`) also passes deterministic cancellation, escalation,
@@ -418,20 +464,18 @@ Provider-managed KMS/SSE is release-required but still operator-target
   external key custody/rotation, clean-host bootstrap, and disaster recovery
   remain independent operator gates.
 - The security/adversarial-isolation rerun at 2026-08-18T23:26:40Z passes the
-  secret-safe review-register contract (316 findings, 54 engine warnings,
+  secret-safe review-register contract,
   one explicitly open operator review), scanner aliases, 39-worker sandbox
   declaration, and the 11-runner live WSL2 network matrix; focused security,
   sandbox, and network regressions pass 29/29. The technical security gate
   remains blocked pending the operator's finding dispositions, and native
   `runsc`/host smoke evidence remains separate.
-- The exact-source Semgrep reproduction (`fc0b9e9`) against OpenCode
-  `10c894bdeef3618f5666fb506ef7f9491bb964d8` reproduces 316 findings with
-  Semgrep 1.168.0; its scalar certificate is
-  [`security_scan_reproduction_local.json`](../../mas/docs/provenance/security_scan_reproduction_local.json).
-  The reproduction also reports 55 parser/engine errors, so the technical gate
-  remains blocked rather than being upgraded from the historical review. The
-  AIAT-side OpenCode workspace/grant/sandbox boundary regression passes; no
-  upstream finding is treated as resolved without an operator disposition.
+- The older OpenCode v1.17.13/Semgrep record is `FAILED_UNREPRODUCIBLE`: its raw
+  findings and exact source snapshot were not retained. Its scalar count fields
+  have been removed from current machine-readable evidence and are not used as
+  remediation input. The v1.18.21 candidate is retained separately. The latest
+  scanner execution has no unexplained errors; the security gate remains blocked
+  on unresolved finding-review dispositions.
 - The remaining live-gate probes were rerun after correcting the test harness
   before the later email certification: outbound mail was blocked only for
   operator-owned relay credentials and a safe recipient, while self-improvement
@@ -613,12 +657,20 @@ single frozen commit before production claims are made.
 
 - `coding_worker` and `tester` now declare `evaluation_status: pending` and
   `certification_status: pending`. The historical OpenCode v1.17.13 scan is
-  recorded as `FAILED_UNREPRODUCIBLE` because its raw findings and source
-  snapshot were not retained; its 316/54 counts are not remediation input. A
-  fresh pinned v1.18.21 candidate retains exact commit/image provenance and a
-  passing AIAT boundary probe, but its technical gate remains blocked until
-  the configured scanners and SBOM tool run. The candidate report is linked
-  from the manifests; no worker activation is claimed.
+  `FAILED_UNREPRODUCIBLE`; its scalar counts are excluded from active finding
+  totals, while both worker manifests still reference that unreproducible row
+  and remain pending in worker reconciliation. The fresh v1.18.21 candidate retains exact commit/image provenance,
+  an xz-compressed source snapshot, sanitized per-scanner JSON and hashes,
+  tool versions/invocations, a CycloneDX SBOM, and a passing AIAT boundary
+  probe. The current r4 review contains 383 primary findings, 7 same-source
+  Semgrep carry-forward findings, 119 normalized CI records, and 4
+  Bun-transpiled Semgrep records (513 active review records; not a
+  unique-vulnerability count). All three AIAT-serving TypeScript paths were
+  scanned without parser errors; four path-join candidates at three source
+  locations remain open. One parser error remains on non-AIAT-serving LSP
+  source. Six review rows remain open. Two runtime process-launch findings
+  also need review. No confirmed AIAT-owned defect or worker activation is
+  claimed.
 - `scripts/check_worker_reconciliation.py` (runtime catalogue/checker group
   `80e0ca3`) validates all 39 manifests against
   the shared runtime catalogue, transport/isolation contract, default company
@@ -658,18 +710,25 @@ single frozen commit before production claims are made.
   response normalization, health, and shutdown. It does not prove provider
   configuration, model-backed canary, sandbox, live worker execution, or
   rollback; the default production MCP pin remains `1.23.3`.
-- `mas/docs/provenance/security_scan_evidence.yaml` records the exact
-  OpenCode `v1.17.13` historical run as `FAILED_UNREPRODUCIBLE`; its raw
-  findings and source snapshot were not retained, so the scalar counts are
-  not remediation instructions. The replacement v1.18.21 candidate is
-  [`provenance/opencode-candidate/2026-08-21-v1.18.21/candidate-certification.json`](../../mas/docs/provenance/opencode-candidate/2026-08-21-v1.18.21/candidate-certification.json)
-  and remains blocked until its configured scanner/SBOM evidence is complete.
+- `mas/docs/provenance/security_scan_evidence.yaml` keeps the v1.17.13
+  `FAILED_UNREPRODUCIBLE` row historical and outside active review totals. The
+  latest v1.18.21 r4 candidate package is
+  [`provenance/opencode-candidate/2026-10-02-v1.18.21-r4/candidate-certification.json`](../../mas/docs/provenance/opencode-candidate/2026-10-02-v1.18.21-r4/candidate-certification.json).
+  It retains 383 current primary findings, 7 same-source Semgrep
+  carry-forward findings, 119 normalized CI supplements, and 4 transpiled
+  Semgrep records (513 active review records). The primary scan has zero
+  execution errors and six explained TypeScript parser gaps. The transpiled
+  scan covers all three AIAT-serving paths without parser errors and retains
+  four path-join findings at three locations for review; one parser error
+  remains on non-AIAT-serving LSP source. Tool provisioning, SkillSpector, and
+  SBOM pass. Six review rows remain open and the technical gate remains blocked.
 - `mas/docs/provenance/security_scan_review.yaml` and
-  `scripts/check_security_scan_review.py` (`23e908e`) preserve the historical
-  triage register while pointing the next review at the reproducible v1.18.21
-  candidate. The checker reports a coherent register as static `pass` but
-  preserves `technical_gate_status: blocked`; it never waives findings or
-  consults licence metadata as a gate.
+  `scripts/check_security_scan_review.py` validate the current per-scanner
+  review rows. The checker reports 513 active scanner records attached to
+  retained exact-source results and preserves `technical_gate_status:
+  blocked`; the unreproducible historical scan contributes no count. Six
+  findings-review rows remain open. The register does not waive findings or
+  consult licence metadata as a gate.
 - `scripts/check_worker_steward_contract.py` runs the actual steward domain for
   each externally sourced default worker through immutable candidate,
   compatibility-matrix, shadow/read-only-canary promotion, regression blocking,
@@ -954,7 +1013,7 @@ single frozen commit before production claims are made.
 
 ### Local object-store evidence
 
-- The persisted MinIO `mas_agent` IAM secret was reconciled safely after local
+- The persisted MinIO `[redacted local object-store identifier]` IAM secret was reconciled safely after local
   environment rotation without touching object data. The private-network
   conformance probe now passes all 8/8 scoped cases, and the same-provider
   backup/restore rehearsal passes two disposable objects with manifest parity
@@ -1118,7 +1177,7 @@ single frozen commit before production claims are made.
 | External-account action policy and mail correlation | PASS (static/API/unit, preparatory P1) | Commits `f577675`, `cfafe38`, `2d21a2f`, `aab6285`, and `2d04b30`; `PYTHONPATH=apps/identity-service uv run --isolated pytest apps/identity-service/tests/test_identity_service.py apps/identity-service/tests/test_provider_adapters.py -q`; versioned action taxonomy, closure human-approval/session-revocation path, safe delivery-attempt trace/span persistence, normalized provider-event migration `0003_mail_edge_observations`, exact raw-body Resend/Svix verification, provider-facing ingress, and local in-memory plus rebuilt Compose/Postgres ingress certificates pass; secret-safe evidence is [`../../mas/docs/provenance/mail_edge_postgres_ingress_certification.json`](../../mas/docs/provenance/mail_edge_postgres_ingress_certification.json). The default Cloudflare/Resend identity certification, including configured callback/delivery, selected worker correlation, and cleanup, is recorded in [`../../Docs/AIAT_Email_Identity_Live_Certification.md`](../../Docs/AIAT_Email_Identity_Live_Certification.md); broader outage, optional-profile, and complete mail-edge evidence remain open |
 | Production image contract | PASS (static + SBOM schema); BLOCKED (live) | Commits `42b03a3` and `2804a9f` add CycloneDX structure, unique inventory/ref identity, checked-in build-recipe, bounded digest/lock, and repository-contained artifact-path validation; `uv run --isolated pytest packages/mas-core/tests/test_image_provenance_runner.py -q` (8 passed) and `uv run --isolated python scripts/check_image_provenance.py --json` pass the static contract. `--live --require-sbom --json` exits 2 because deployment-supplied immutable `*_IMAGE_REF` values and release artifacts are absent; no SBOM licence field is used as a gate |
 | Operator runtime/CLI pin contract | PASS (static; host-only entries explicit unavailable) | `uv run --isolated python scripts/check_operator_pins.py --json` verifies exact production CLI/dependency declarations and records explicit reasons for unavailable host, optional, and deployment-supplied capabilities; no licence metadata is a gate |
-| Worker manifest/runtime/provenance reconciliation | PASS (static + authenticated local live binding; OpenCode technical gate blocked) | `uv run --isolated python scripts/check_worker_reconciliation.py --json` validates 39 manifests; the authenticated local `--live --json` run (evidence refreshed 2026-08-11 in `180f9e0`) matches all 39 persisted defaults with zero missing rows or binding mismatches, retained at [`provenance/worker_reconciliation_live.json`](../../mas/docs/provenance/worker_reconciliation_live.json). Coding/tester rows remain pending the fresh pinned OpenCode v1.18.21 scanner/SBOM gate; the historical unreproducible counts are not remediation input, host package availability is advisory, and Compose import readiness is recorded separately |
+| Worker manifest/runtime/provenance reconciliation | PASS (static + current authenticated local live binding; activation still blocked by security gate) | The 2026-10-02 read-only reconciliation matches all 39 persisted `/capabilities/workers` entries with zero missing, mismatched, duplicate, or untracked-active rows. This proves binding/catalogue alignment only; coding/tester remain non-activatable until their exact-source scanner coverage/findings pass review. |
 | Team-runner manifest identity bindings | static/unit | PASS | Commit `d9b1262`; `uv run --isolated pytest packages/mas-core/tests/test_team_worker_manifest_refs.py apps/team-runner/tests/test_team_config.py -q` and `uv run --isolated python scripts/check_team_worker_manifest_refs.py --json` reconcile 11 team files and 39 exact agent→manifest IDs; no registration/activation mutation and licence metadata remains informational |
 | Team-runner startup manifest enforcement | unit/startup contract | PASS | Commit `569231f`; `uv run --isolated pytest apps/team-runner/tests/test_team_config.py apps/team-runner/tests/test_shutdown.py -q` verifies production-style mounted-manifest reconciliation, fail-closed missing references, exact `AgentConfig` propagation, and health metadata; startup remains read-only and does not register or activate workers |
 | Default worker implementation bindings | PASS (static); BLOCKED (live without operator environment) | `uv run --isolated pytest packages/mas-core/tests/test_default_worker_bindings.py -q`; `uv run --isolated python scripts/check_default_worker_bindings.py --json` reconciles all 15 documented default worker slots across department, runtime, transport, isolation, runtime-catalogue support, runtime/integration adapter entrypoints, capability, adapter configuration, and required tools. `--live --json` is fail-closed and does not mutate runtime state; licence metadata remains informational only |
@@ -1151,8 +1210,8 @@ single frozen commit before production claims are made.
 | Worker certification matrix | PASS (deterministic static/unit) | Commit `a62ddb7`; `uv run --isolated pytest packages/mas-core/tests/test_worker_certification_matrix.py -q` and `uv run --isolated python scripts/generate_worker_certification_matrix.py --check`; 39 rows record exact runtime imports, transports, adapter versions, and pending evidence without claiming live certification; the regression checks generated-artifact parity, exact manifest coverage, and metadata-only licence handling |
 | Default runtime adapter conformance | PASS (adapter fixture + Compose package/lifecycle and exact lock-parity probe; worker certification open) | `uv run --isolated pytest packages/mas-core/tests/test_runtime_adapter_conformance.py -q`; `docker exec mas-orchestrator-api-1 python /app/scripts/check_runtime_adapter_conformance.py --live --json` passes actual LangGraph/CrewAI adapter classes with locked LangGraph `0.6.11` and CrewAI `1.6.1`, without model/tool/provider/project calls; evidence is [`mas/docs/provenance/runtime_adapter_conformance_live.json`](../../mas/docs/provenance/runtime_adapter_conformance_live.json). Sandbox, canary, live-run, and rollback remain open |
 | Runtime benchmark readiness | PASS (fresh local dependency dry-run; certification boundary remains open) | Checker/test group `ad31793`; `uv run --isolated pytest packages/mas-core/tests/test_runtime_benchmarks.py -q` and static mode pass. The authenticated local LangGraph/CrewAI dependency dry-run was refreshed 2026-08-11 in `3f15e28` and is retained at [`mas/docs/provenance/runtime_benchmarks_live.json`](../../mas/docs/provenance/runtime_benchmarks_live.json). Unavailable API/package/validation paths still return `blocked`/exit 2. This remains package benchmark evidence only, not a worker canary, project run, sandbox proof, or rollback result |
-| Network boundary contract | PASS (policy-backed static + refreshed local live); native release open | Contract `96fb71f`; `uv run --isolated python scripts/check_network_boundary.py --json` and `--live --json` consume `aiat.network-boundary-policy.v1`; all runners use only `workers`, protected data services and OpenCode are off that network, gateway reachability/storage health pass, and identity/forbidden-env/socket checks pass. Six focused tests also reject runner host-port publication and public `workers` networks. Secret-safe evidence is [`mas/docs/provenance/network_boundary_live.json`](../../mas/docs/provenance/network_boundary_live.json); native release-host denial/allow evidence remains open |
-| Sandbox runtime readiness | PASS (static contract + retained native Ubuntu gVisor certificate; local WSL probe blocked) | Commits `a24c554`, `2c098f5`, and retained workflow run `32541110299`; `uv run --isolated pytest packages/mas-core/tests/test_sandbox_runtime_readiness.py -q` and `uv run --isolated python scripts/check_sandbox_runtime_readiness.py --json` reconcile 39 manifests, 10 hardened external workers, and the OpenCode Compose runtime’s internal-only network, no host ports, non-root/read-only execution, cap-drop ALL, no-new-privileges, bounded CPU/memory/PIDs, and noexec/nosuid tmpfs. [`native_gvisor_certification_live.json`](../../mas/docs/provenance/native_gvisor_certification_live.json) records native Linux, `runsc` registration, digest-pinned smoke, sandbox, cleanup, and zero-residue PASS; the local WSL `--live --json` probe remains exit 2 because `runsc` is not registered there. No runc fallback is permitted; broader native-host, network-denial, canary, Firecracker, and upstream scan evidence remain separate |
+| Network boundary contract | PASS (static policy); PASS (control-plane TCP); INCOMPLETE (current runner matrix) | `aiat.network-boundary-policy.v1` remains the single matrix source. The current orchestrator probe passes Redis, Postgres, PgBouncer, and tool-service TCP (4/4). The retained 2026-10-01 runner certificate records 44/44 approved gateways, 66/66 protected/external denials, and 11/11 storage-health probes. The current invocation found all 11 team-runner containers missing and ran no per-runner probes. The initial degraded snapshot had 55/55 protected-service and 11/11 external-target denials but 0/44 approved gateways and 0/11 storage-health probes. Native release-host evidence remains separate; see [`network_boundary_live_current.json`](../../mas/docs/provenance/network_boundary_live_current.json). |
+| Sandbox runtime readiness | PASS (static contract; WSL2 runsc and Kata smokes; native Ubuntu certificate retained) | The checker and regression tests reconcile 39 manifests, 10 hardened external workers, and the OpenCode Compose runtime’s internal-only network, no host ports, non-root/read-only execution, cap-drop ALL, no-new-privileges, bounded CPU/memory/PIDs, and noexec/nosuid tmpfs. Current [`sandbox_runtime_readiness_live_current.json`](../../mas/docs/provenance/sandbox_runtime_readiness_live_current.json) records successful digest-pinned gVisor and Kata smokes using the local OpenCode runtime image; the Kata guest kernel is distinct from the WSL2 host kernel. [`native_gvisor_certification_live.json`](../../mas/docs/provenance/native_gvisor_certification_live.json) separately records native Linux, `runsc`, smoke, cleanup, and zero-residue PASS. No runc fallback is permitted; WSL evidence does not satisfy native-host release certification, and network-denial/canary evidence remains separate |
 | Tool-service image budget and dependency profile | PASS (static + local Linux probe); native release open | Contracts `b24ca0c` and `e6ee8b8`; `apps/tool-service/pyproject.toml` keeps Playwright in the opt-in `browser` extra, while `Dockerfile.tool-service` keeps browser/Docling/Semgrep in the separately budgeted `extensions` profile and pins uv `0.4.30`; `uv run --isolated pytest packages/mas-core/tests/test_image_budgets.py apps/tool-service/tests/test_default_shipped_tool_catalog.py -q` and `uv run --isolated python scripts/check_image_budgets.py --json` pass the checked-in ceilings. The local profile measurements remain in [`mas/docs/provenance/image_budgets_live.json`](../../mas/docs/provenance/image_budgets_live.json). Compressed archive, clean native-Linux build/pull, SBOM, and vulnerability evidence remain open |
 | API/protocol contract export | PASS (static/preparatory) | Commits `2860838`, `f8829d6`, `b3fca97`, `9a80c6c`, and `8f46ed1` regenerate/reconcile the checked-in artifacts; `uv run --isolated python scripts/check_api_contract.py --json` — 238 OpenAPI paths/137 schemas and checked-in `aiat.v1` protocol schema match runtime/provenance hashes, including the read-only system diagnostics route, native trace-evidence source, SLO/capacity, evidence-package, self-improvement outcome-action, artifact-bundle/read-back-action, bounded artifact/usage evidence-read fields, and typed read-only retention-plan response with legal-hold fields; `8f46ed1` specifically reconciles the runtime and checked-in `aiat_gateway` transport enum |
 | Python SDK contract generation | PASS (static/unit/preparatory) | Commits `2860838`, `f8829d6`, `b3fca97`, and `9a80c6c`; `uv run --isolated python scripts/generate_python_api.py --check`; `uv run --isolated pytest packages/mas-api-sdk/tests -q`; 137 models and 271 operations match OpenAPI, including the typed retention-plan legal-hold fields |
@@ -1170,7 +1229,7 @@ single frozen commit before production claims are made.
 | Durable flow-instance recovery evidence | PASS (local Compose Postgres; native/live recovery open) | Commit `1f20132`; `uv run --isolated pytest scripts/tests/test_check_flow_instance_recovery_postgres.py -q` plus Ruff pass, and the reserved checker reaches migration `0042_worker_run_host_binding`, preserves superseded retry history, preserves switch context while resetting execution authority, retries a cancelled instance, reopens Postgres, and cleans three projects/two flows/three instances with zero remaining rows. Evidence is [`flow_instance_recovery_postgres_evidence.json`](../../mas/docs/provenance/flow_instance_recovery_postgres_evidence.json); native watchdog, worker/provider canary, durable audit authority, UI, and cold-crash recovery remain open |
 | Governed asynchronous flow-task binding | PASS (deterministic contract fixture, preparatory P1) | `uv run --isolated pytest packages/mas-core/tests/test_flow_worker_binding.py packages/mas-core/tests/test_flow_retry_persistence.py apps/orchestrator-api/tests/test_flows.py -q`; `uv run --isolated python scripts/check_flow_worker_binding.py --json` proves queued/claimed/running Worker Runs keep their task active, terminal states settle, parallel bindings remain copy-on-write, safe retry re-enters governed dispatch, and unknown states fail closed; the API and no-safe-node storage fallback preserve prior executions as `SUPERSEDED`; live canary/recovery remains open |
 | Watchdog and safe-retry recovery semantics | PASS (deterministic controller fixture, preparatory P1) | Commit `9972b3b`; `uv run --isolated pytest packages/mas-core/tests/test_workflow_watchdog_recovery.py -q`; `uv run --isolated python scripts/check_workflow_watchdog_recovery.py --json` proves boot grace, downtime-aware timeout, watchdog failure transition, recorded-safe-state retry, terminal-state exclusion, explicit human cancellation, review-circuit escalation, node-timeout failure, and invalid-transition rejection without storage/worker mutation; native watchdog, storage-backed transition history, and cold-recovery remain open |
-| Docker/Compose live certification | PASS (refreshed local WSL2 runner matrix) / BLOCKED (native release host and broader service evidence) | The `43bee16` boundary plus policy contract `96fb71f` and current `check_network_boundary.py --live --json` run pass all 11 runners: named gateways are reachable, Redis/Postgres/PgBouncer/MinIO/OpenCode/unapproved egress are denied, control-plane storage health is true, no forbidden runner environment names or Docker sockets are present, and the result is retained at [`mas/docs/provenance/network_boundary_live.json`](../../mas/docs/provenance/network_boundary_live.json). Native-Linux identity/network/dashboard, provider-pair, backup/restore, and broader live probes remain open. |
+| Docker/Compose live certification | Local Compose/API and 2026-10-10 network matrix PASS; native release blocked | The dedicated `aiat-wsl` daemon is separate from Docker Desktop `default`; orchestrator DNS/TCP to Redis, Postgres, PgBouncer, and tool-service passes (4/4), and authenticated `/health`, `/projects`, `/capabilities/workers` return HTTP 200. The 2026-10-10 matrix reports 11/11 TeamRunners, 44/44 allowed gateway probes, 66/66 protected/external denials, and 11/11 storage-health probes. The original east-west timeouts cleared after recreating only the AIAT bridge; all nine persistent volumes remained. The live matrix artifact is scoped to source revision `8146ea10`; it is not native-Linux or exact-current-HEAD certification. Evidence: [`local_compose_connectivity_evidence.json`](../../mas/docs/provenance/local_compose_connectivity_evidence.json), [`network_boundary_live_current.json`](../../mas/docs/provenance/network_boundary_live_current.json). |
 | Evidence-policy scope resolution fixture | PASS (static/unit, preparatory P1) | `uv run --isolated pytest packages/mas-core/tests/test_evidence_policy_resolution.py -q`; `uv run --isolated python scripts/check_evidence_policy_resolution.py --json` passes seven precedence/fallback cases and explicitly reports `licence_metadata_is_gate: false`; `--live` remains blocked without an authenticated API scenario |
 | External-account action policy fixture | PASS (static/unit, preparatory P1) | `uv run --isolated pytest packages/mas-core/tests/test_external_account_action_policy.py -q`; `uv run --isolated python scripts/check_external_account_action_policy.py --json` reconciles all five action rules, four category dispositions, and fail-closed unknown action/category behavior without mutating identity/provider state; `--live` remains blocked until a provider-specific sandbox/outage scenario exists |
 | Built-in PM/SCM adapter declarations | PASS (static/unit/fixture; provider live open) | `uv run --isolated pytest packages/mas-core/tests/test_provider_adapter_declarations.py -q`; `uv run --isolated python scripts/check_provider_adapter_declarations.py --json` reconciles the real YouTrack adapter plus GitHub `pm`/`delivery`/`checks` profiles and bounded path guards with zero provider HTTP calls or mutations; provider-specific mock/live/outage/restore evidence remains open |
@@ -1179,10 +1238,10 @@ single frozen commit before production claims are made.
 | Outbound-mail lifecycle fixture | PASS (static/unit/fixture; default governed relay live-certified separately) | `uv run --isolated pytest packages/mas-core/tests/test_outbound_mail_lifecycle.py -q`; `uv run --isolated python scripts/check_outbound_mail_lifecycle.py --json` drives the actual `IdentityService` through approval pause, request/submission idempotency, definitive provider-failure retry, ambiguous-outage reconciliation hold, and secret-safe output without external relay calls; the bounded default Cloudflare/Resend live certification is recorded in [`../../Docs/AIAT_Email_Identity_Live_Certification.md`](../../Docs/AIAT_Email_Identity_Live_Certification.md) |
 | Self-improvement candidate detection | PASS (static/unit/fixture; live signal sources open) | Commit `4d8dddf`; `uv run --isolated pytest packages/mas-core/tests/test_improvement_candidates.py -q`; `uv run --isolated python scripts/check_self_improvement_candidates.py --json` reconciles defect, metric, upstream-update, cost, and operator-goal signals with deterministic deduplication/risk/budget mapping, conflicting-ID rejection, secret-safe metadata, and zero project/budget/credential/deployment side effects |
 | Self-improvement lifecycle persistence | PASS (local Compose Postgres certificate; live worker/provider boundary open) | Commit `10983c8`; `uv run --isolated pytest mas/scripts/tests/test_check_self_improvement_postgres_evidence.py -q` plus focused self-improvement/storage tests and Ruff pass. `docker exec mas-orchestrator-api-1 sh -lc 'python /tmp/check_self_improvement_postgres_evidence.py --json'` reaches migration `0036_native_trace_spans`, persists the canonical project and revisioned lifecycle through six technical gates, rejects a stale CAS snapshot, records human approval, verifies five checksum/size read-backs, promotes and exactly rolls back, persists a terminal outcome/history, reopens the durable row, and removes only the reserved project; evidence is [`provenance/self_improvement_postgres_evidence.json`](../../mas/docs/provenance/self_improvement_postgres_evidence.json). This is local control-plane evidence only; selected model-backed worker, provider callback, budget settlement, deployment, and live issue reconciliation remain open; licence metadata is informational only |
-| Machine-readable release ledger | PASS (64/64 static aggregation; native live-ledger gate `4d7a495`); BLOCKED/NO-RELEASE (current and configured live profiles) | `uv run --isolated python scripts/check_release_ledger.py --json` reports 64/64 static checks passing, including the checked-in migration-head guard alongside the bounded object-store lifecycle, OCI SSE/KMS contract fixture, fresh OpenCode candidate provenance/boundary contract, trace-retention execution checks, encrypted-backup and fresh-process restore checks, with `NO-RELEASE`; scalar summary is [`provenance/release_ledger_static_current.json`](../../mas/docs/provenance/release_ledger_static_current.json). The current authenticated local Compose sweep at 2026-09-15T12:11:27Z records 83 pass/6 blocked/0 fail across 89 checks with four pending items and is retained at [`provenance/release_ledger_live_compose_local_current.json`](../../mas/docs/provenance/release_ledger_live_compose_local_current.json). The migration-head live check is blocked because the host-side read-only DSN cannot reach the published port; the running local database remains at 0042 while source is 0045. Native preflight, image SBOM/scan artifacts, Firecracker/gVisor, provider/KMS target configuration, outbound mail, self-improvement source, and security-review children remain explicit; licence metadata remains non-gating. |
+| Machine-readable release ledger | PASS (61 pass/0 fail/0 blocked/3 N/A static); retained live snapshot FAIL (80 pass/1 fail/3 blocked/5 N/A); canonical decision remains `NO-RELEASE` | The retained live report is refreshed 2026-10-02 and has four pending items. Its runner-matrix failure is superseded by the separate 2026-10-10 network-matrix PASS above, but the aggregate ledger has not yet been rerun to incorporate that evidence. Three blocked checks in the retained report include native release environment, live tool trace, and production image provenance. The source/live migration head now reports `0048_worker_run_retry_lineage`; the report itself still reflects its older source/database snapshot. Static and live reports: [`release_ledger_static_current.json`](../../mas/docs/provenance/release_ledger_static_current.json) and [`release_ledger_live_current.json`](../../mas/docs/provenance/release_ledger_live_current.json). |
 | Release environment manifest | PASS (secret-safe static identity; refreshed policy input) | `uv run --isolated python scripts/check_release_environment.py --json` emits `aiat.release-environment.v1` with fifteen input hashes, including the network-boundary policy, security review register, tool identities, environment-presence flags, and a deterministic per-revision manifest digest without printing values or credentials. The report records the current branch, revision, changed-path count, and dirty state; its digest must be captured again for the eventual frozen release commit. |
-| Host-safe local Compose release-ledger sweep | BLOCKED/NO-RELEASE (83/89 pass, 6 blocked, 0 fail) | The latest authenticated sweep at `2026-09-15T12:11:27Z` against revision `0f068476db908ee43bbc52900bf421394a121e6c` uses `check_release_ledger.py --live --compose-local` with published loopback endpoints and process-provided operator/tool-service authentication; no credentials or payloads are retained. Its scalar summary is [`provenance/release_ledger_live_compose_local_current.json`](../../mas/docs/provenance/release_ledger_live_compose_local_current.json). Four pending evidence items remain. Current blockers are native-host/environment, database migration-head reachability, deployment-image provenance, Firecracker worker-pool readiness, outbound mail lifecycle, and operator-selected self-improvement scope; historical 79/85 wording above remains historical. |
-| Native release-host preflight | BLOCKED (current local WSL2 host) | The opt-in `uv run --isolated python scripts/check_release_environment.py --require-native-linux --json` check was refreshed at 2026-08-21T17:38:47Z against revision `2dbad30`. The current WSL2 result is retained at [`provenance/native_release_preflight.json`](../../mas/docs/provenance/native_release_preflight.json) with safe blockers for host identity, `runsc`, missing deployment-supplied immutable image refs, and dirty state. It is a prerequisite diagnostic only; native network, image/SBOM, scan, recovery, and provider evidence remain open, and licence metadata is non-gating. |
+| Previous host-safe local Compose release-ledger sweep | HISTORICAL (superseded by the 2026-09-30 result above) | The 2026-09-15 sweep against `0f068476db908ee43bbc52900bf421394a121e6c` remains at [`release_ledger_live_compose_local_current.json`](../../mas/docs/provenance/release_ledger_live_compose_local_current.json) for traceability only; do not use its former 83/89 count or blocker list as current evidence. |
+| Native release-host preflight | BLOCKED (current local WSL2 host; external native Linux and production refs required) | Refreshed 2026-10-02 against implementation candidate `8c569987`; [`provenance/native_release_preflight.json`](../../mas/docs/provenance/native_release_preflight.json) records WSL2 identity, a dirty working tree, and missing immutable refs for the ten required production images. Docker and `runsc` are available locally, but this is not native-host certification. |
 
 ## Still open before P0 exit
 

@@ -146,18 +146,27 @@ The dev overlay exposes Redis, Postgres, MinIO, message-router, tool-service,
 LiteLLM, OmniRoute, optional Prometheus platform metrics, pgAdmin, and
 RedisInsight ports:
 
+On WSL2, start the development host through the maintained bootstrap. It
+selects the dedicated `aiat-wsl` Docker Engine, checks every published
+development port, starts Compose, applies migrations, and runs bounded local
+readiness checks:
+
 ```bash
-docker compose \
-  -f infra/compose/docker-compose.yml \
-  -f infra/compose/docker-compose.dev.yml \
-  --env-file ../.env \
-  up -d --build
+mas/scripts/bootstrap-dev-host.sh --skip-tests
 ```
 
-The `infra/compose/mas.sh` wrapper supplies local `:dev` image names for this
-development overlay. Direct production Compose usage remains strict: provide
-the immutable image inputs from
-`infra/compose/production-image-lock.example.env` with real digests.
+For subsequent Compose operations, use the development wrapper from
+`mas/infra/compose`; it loads the local `.env` values literally and supplies
+development image defaults:
+
+```bash
+cd mas/infra/compose
+./mas.sh up -d
+```
+
+Direct production Compose usage remains strict: provide the immutable image
+inputs from `infra/compose/production-image-lock.example.env` with real
+digests.
 
 Useful local URLs:
 
