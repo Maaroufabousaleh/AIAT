@@ -963,8 +963,9 @@ async def test_complete_analysis_activates_approval_gate_and_audit_record(client
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("custom_task_input", [None, {"path": "brief.md", "content": "Research brief body"}])
 async def test_queued_governed_task_remains_active_until_worker_run_is_terminal(
-    client, monkeypatch
+    client, monkeypatch, custom_task_input
 ):
     """Async dispatch must not be converted into an immediate flow failure."""
 
@@ -988,9 +989,13 @@ async def test_queued_governed_task_remains_active_until_worker_run_is_terminal(
             "edges": [{"id": "e1", "source": "start", "target": "governed_task"}],
         },
     }
+    task_config = runtime_flow["definition_json"]["nodes"][1]["config"]
+    if custom_task_input is not None:
+        task_config["task_input"] = custom_task_input
+    prior_context = {"research": {"summary": "Source-backed findings for the report."}}
     initial_instance = {
         **_instance(active_node_ids=["governed_task"], status="RUNNING"),
-        "context_json": {},
+        "context_json": prior_context,
     }
     refreshed_instance = {
         **initial_instance,
@@ -1040,8 +1045,19 @@ async def test_queued_governed_task_remains_active_until_worker_run_is_terminal(
     assert response.json()["active_node_ids"] == ["governed_task"]
     assert response.json()["context_json"]["active_worker_runs"]["governed_task"]["run_id"] == str(run_id)
     dispatch.assert_awaited_once()
+    dispatched_request = dispatch.await_args.args[0]
+    if custom_task_input is None:
+        assert dispatched_request.task_input == {
+            "flow_context": prior_context,
+            "flow_node": {"id": "governed_task", "label": "Governed task"},
+        }
+    else:
+        assert dispatched_request.task_input == custom_task_input
     storage.activate_flow_nodes.assert_awaited_once()
-    assert storage.activate_flow_nodes.await_args.kwargs["instance_updates"]["context_json"] == refreshed_instance["context_json"]
+    assert storage.activate_flow_nodes.await_args.kwargs["instance_updates"]["context_json"] == {
+        **prior_context,
+        **refreshed_instance["context_json"],
+    }
     storage.update_flow_instance.assert_not_awaited()
 
 

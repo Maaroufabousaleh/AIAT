@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import json
 from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from mas_core.workflow.node_schema import TASK_INPUT_MAX_BYTES
+
+MAX_TASK_INPUT_BYTES = TASK_INPUT_MAX_BYTES
 
 
 class RetryStrategy(StrEnum):
@@ -71,6 +76,7 @@ class TaskNodePolicy(BaseModel):
     model_profile_id: str | None = None
     model_mode: str = "aiat_gateway"
     task_type: str | None = None
+    task_input: dict[str, Any] | None = None
     required_capabilities: tuple[str, ...] = ()
     permission_requirements: tuple[str, ...] = ()
     project_workspace_mode: str = "isolated"
@@ -99,6 +105,20 @@ class TaskNodePolicy(BaseModel):
             raise ValueError("model-governed task workers require model_profile_id")
         if self.model_mode == "none" and self.model_profile_id:
             raise ValueError("model_mode none does not allow a model_profile_id")
+        if self.task_input is not None:
+            try:
+                encoded_task_input = json.dumps(
+                    self.task_input,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    allow_nan=False,
+                ).encode("utf-8")
+            except (TypeError, ValueError) as exc:
+                raise ValueError("task_input must contain JSON-compatible values") from exc
+            if len(encoded_task_input) > MAX_TASK_INPUT_BYTES:
+                raise ValueError(
+                    f"task_input must not exceed {MAX_TASK_INPUT_BYTES} UTF-8 bytes"
+                )
         forbidden_raw = {"model", "model_id", "raw_model", "provider_model"}
         present = forbidden_raw & set(self.model_extra or {})
         if present:

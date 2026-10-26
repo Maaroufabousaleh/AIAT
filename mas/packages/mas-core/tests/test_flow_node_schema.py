@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from uuid import UUID
 
+import pytest
+
 from mas_core.workflow import (
     NODE_SCHEMA_VERSION,
     FlowNodeType,
@@ -12,6 +14,8 @@ from mas_core.workflow import (
     validate_flow,
     validate_node_config_schema,
 )
+from mas_core.workflow.node_schema import TASK_INPUT_MAX_BYTES
+from mas_core.workflow.worker_policy import MAX_TASK_INPUT_BYTES, TaskNodePolicy
 
 
 def test_node_catalog_is_versioned_and_covers_every_runtime_node_type() -> None:
@@ -41,6 +45,44 @@ def test_task_legacy_assignment_fields_are_marked_as_compatibility_metadata() ->
     assert task_fields["team_id"]["deprecated"] is True
     assert task_fields["action"]["deprecated"] is True
     assert task_fields["worker_id"].get("deprecated") is not True
+
+
+def test_task_node_policy_accepts_bounded_object_input_and_rejects_invalid_or_oversized_input() -> None:
+    valid = TaskNodePolicy.model_validate(
+        {
+            "worker_id": "00000000-0000-4000-a000-000000000701",
+            "model_mode": "none",
+            "task_type": "deterministic_file_generation",
+            "task_input": {"path": "brief.md", "content": "Research notes"},
+        }
+    )
+    assert valid.task_input == {"path": "brief.md", "content": "Research notes"}
+
+    with pytest.raises(ValueError, match="task_input must not exceed"):
+        TaskNodePolicy.model_validate(
+            {
+                "worker_id": "00000000-0000-4000-a000-000000000701",
+                "model_mode": "none",
+                "task_input": {"content": "x" * MAX_TASK_INPUT_BYTES},
+            }
+        )
+
+    with pytest.raises(ValueError, match="task_input must contain JSON-compatible values"):
+        TaskNodePolicy.model_validate(
+            {
+                "worker_id": "00000000-0000-4000-a000-000000000701",
+                "model_mode": "none",
+                "task_input": {"not_json": float("nan")},
+            }
+        )
+
+    errors = validate_node_config_schema(FlowNodeType.TASK, {"worker_id": "worker", "task_input": []})
+    assert "'task_input' must be object" in errors
+    oversized_errors = validate_node_config_schema(
+        FlowNodeType.TASK,
+        {"worker_id": "worker", "task_input": {"content": "x" * TASK_INPUT_MAX_BYTES}},
+    )
+    assert "'task_input' must not exceed 65536 UTF-8 bytes" in oversized_errors
 
 
 def test_flow_definition_defaults_and_persists_node_schema_version() -> None:

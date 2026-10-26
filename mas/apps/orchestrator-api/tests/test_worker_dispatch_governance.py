@@ -628,6 +628,173 @@ def _patch_storage(storage) -> None:
 
 
 @pytest.mark.anyio
+async def test_selected_worker_capability_schema_validates_task_input_before_admission(
+    client, monkeypatch
+) -> None:
+    import orchestrator_api.main as main
+
+    capability_id = uuid4()
+
+    class CapabilitySchemaStorage(_DispatchStorage):
+        def __init__(self) -> None:
+            super().__init__()
+            self.created_runs: list[dict[str, object]] = []
+
+        async def get_worker(self, worker_id):
+            worker = await super().get_worker(worker_id)
+            if worker is not None:
+                worker["capability_ids"] = [capability_id]
+            return worker
+
+        async def list_capabilities(self):
+            return [
+                {
+                    "id": capability_id,
+                    "name": "research.collect",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string", "minLength": 1},
+                            "limit": {"type": "integer", "minimum": 1, "maximum": 5},
+                        },
+                        "required": ["query"],
+                        "additionalProperties": False,
+                    },
+                }
+            ]
+
+        async def create_worker_run(self, **kwargs):
+            self.created_runs.append(kwargs)
+            return await super().create_worker_run(**kwargs)
+
+    storage = CapabilitySchemaStorage()
+    _patch_storage(storage)
+    adapter_factory = AsyncMock(return_value=_Adapter())
+    monkeypatch.setattr(main, "_certified_worker_adapter", adapter_factory)
+
+    invalid = await client.post(
+        "/workers/runs",
+        json={
+            "worker_id": str(WORKER_ID),
+            "idempotency_key": "invalid-research-input",
+            "task_type": "research.collect",
+            "task_input": {"query": 7, "unexpected": True},
+            "dispatch_mode": "queued",
+        },
+    )
+
+    assert invalid.status_code == 422, invalid.text
+    assert invalid.json()["detail"]["code"] == "WORKER_TASK_INPUT_SCHEMA_MISMATCH"
+    assert storage.created_runs == []
+    assert storage.snapshots == []
+    assert storage.reservations == []
+    adapter_factory.assert_not_awaited()
+
+    valid = await client.post(
+        "/workers/runs",
+        json={
+            "worker_id": str(WORKER_ID),
+            "idempotency_key": "valid-research-input",
+            "task_type": "research.collect",
+            "task_input": {"query": "AIAT project evidence", "limit": 3},
+            "dispatch_mode": "queued",
+        },
+    )
+
+    assert valid.status_code == 202, valid.text
+    assert storage.created_runs[0]["request"]["task_input"] == {  # type: ignore[index]
+        "query": "AIAT project evidence",
+        "limit": 3,
+    }
+    adapter_factory.assert_awaited_once()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("reference_keyword", ["$ref", "$dynamicRef", "$recursiveRef"])
+async def test_worker_input_schema_rejects_remote_references_before_admission(
+    client, monkeypatch, reference_keyword: str
+) -> None:
+    import orchestrator_api.main as main
+
+    capability_id = uuid4()
+
+    class RemoteSchemaStorage(_DispatchStorage):
+        async def get_worker(self, worker_id):
+            worker = await super().get_worker(worker_id)
+            if worker is not None:
+                worker["capability_ids"] = [capability_id]
+            return worker
+
+        async def list_capabilities(self):
+            return [
+                {
+                    "id": capability_id,
+                    "name": "research.collect",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"query": {reference_keyword: "https://schemas.example/query"}},
+                    },
+                }
+            ]
+
+    storage = RemoteSchemaStorage()
+    _patch_storage(storage)
+    adapter_factory = AsyncMock(return_value=_Adapter())
+    monkeypatch.setattr(main, "_certified_worker_adapter", adapter_factory)
+
+    response = await client.post(
+        "/workers/runs",
+        json={
+            "worker_id": str(WORKER_ID),
+            "idempotency_key": f"remote-schema-{reference_keyword}",
+            "task_type": "research.collect",
+            "task_input": {"query": "bounded"},
+            "dispatch_mode": "queued",
+        },
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "WORKER_TASK_INPUT_SCHEMA_INVALID"
+    assert storage.reservations == []
+    adapter_factory.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_worker_input_schema_reader_unavailable_fails_closed_before_admission(
+    client, monkeypatch
+) -> None:
+    import orchestrator_api.main as main
+
+    class MissingCapabilityReaderStorage(_DispatchStorage):
+        async def get_worker(self, worker_id):
+            worker = await super().get_worker(worker_id)
+            if worker is not None:
+                worker["capability_ids"] = [uuid4()]
+            return worker
+
+    storage = MissingCapabilityReaderStorage()
+    _patch_storage(storage)
+    adapter_factory = AsyncMock(return_value=_Adapter())
+    monkeypatch.setattr(main, "_certified_worker_adapter", adapter_factory)
+
+    response = await client.post(
+        "/workers/runs",
+        json={
+            "worker_id": str(WORKER_ID),
+            "idempotency_key": "missing-capability-schema-reader",
+            "task_type": "research.collect",
+            "task_input": {"query": "bounded"},
+            "dispatch_mode": "queued",
+        },
+    )
+
+    assert response.status_code == 503, response.text
+    assert response.json()["detail"]["code"] == "WORKER_CAPABILITY_SCHEMA_UNAVAILABLE"
+    assert storage.reservations == []
+    adapter_factory.assert_not_awaited()
+
+
+@pytest.mark.anyio
 async def test_non_llm_dispatch_keeps_policy_snapshot_out_of_model_attribution(
     monkeypatch,
 ) -> None:

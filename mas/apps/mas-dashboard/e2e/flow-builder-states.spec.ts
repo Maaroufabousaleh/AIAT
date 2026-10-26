@@ -374,13 +374,23 @@ test("Research Brief requires bindings, validates, and attaches to a project", a
   await page.getByRole("button", { name: "Configure Research assignment" }).click();
   await page.getByTestId("task-worker-select").first().selectOption("00000000-0000-4000-a000-000000000701");
   await page.getByTestId("task-model-profile-select").first().selectOption("approved-research-profile");
+  await page.getByTestId("task-type-input").fill("research.collect");
+  await page.getByTestId("task-input-json").fill(JSON.stringify({ query: "AIAT workflow evidence", limit: 3 }, null, 2));
   await expect(page.getByTestId("research-template-binding-checklist")).toContainText("Write report");
   await expect(page.getByTestId("research-template-binding-checklist")).not.toContainText("Research: governed worker required");
 
   await page.getByRole("button", { name: "Configure Write report assignment" }).click();
   await page.getByTestId("task-worker-select").first().selectOption("00000000-0000-4000-a000-000000000701");
   await page.getByTestId("task-model-profile-select").first().selectOption("approved-research-profile");
+  await page.getByTestId("task-type-input").fill("document.write");
+  await expect(page.getByText(/preceding flow context/)).toBeVisible();
   await expect(page.getByTestId("research-template-bindings-complete")).toBeVisible();
+  await page.getByTestId("task-input-json").fill("{");
+  await page.getByTestId("flow-dry-run-button").click();
+  await expect(page.getByRole("alert")).toContainText("Enter valid JSON");
+  expect(dryRunRequests).toBe(0);
+  await page.getByTestId("task-input-clear").click();
+  await expect(page.getByTestId("task-input-json")).toHaveValue("");
   await page.getByTestId("flow-dry-run-button").click();
   await expect(page.getByTestId("flow-dry-run-result")).toBeVisible();
   expect(dryRunRequests).toBe(1);
@@ -402,6 +412,12 @@ test("Research Brief requires bindings, validates, and attaches to a project", a
     expect(task.config.model_profile_id).toBe("approved-research-profile");
     expect(task.config.team_id).toBeUndefined();
   }
+  expect(tasks[0].config).toEqual(expect.objectContaining({
+    task_type: "research.collect",
+    task_input: { query: "AIAT workflow evidence", limit: 3 },
+  }));
+  expect(tasks[1].config.task_type).toBe("document.write");
+  expect(tasks[1].config.task_input).toBeUndefined();
   expect(dryRunPayload).toEqual(expect.objectContaining({ definition_json: taskCreatePayloads[0].definition_json }));
 
   await page.goto("/projects");

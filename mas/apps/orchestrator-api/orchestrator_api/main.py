@@ -185,6 +185,7 @@ from mas_core.workflow import (
     should_watchdog_fire,
 )
 from mas_core.workflow.states import ProjectState
+from mas_core.workflow.node_schema import TASK_INPUT_MAX_BYTES
 
 VALID_SANDBOX_PROFILES = set(SUPPORTED_SANDBOX_PROFILES)
 HARDENED_SANDBOX_PROFILES = set(HARDENED_SANDBOX_CLASSES)
@@ -2163,6 +2164,22 @@ class WorkerRunDispatchRequest(BaseModel):
     dispatch_mode: Literal["queued", "inline"] | None = None
     queue_priority: int = Field(default=0, ge=-100, le=100)
     lease_seconds: int = Field(default=300, ge=30, le=86_400)
+
+    @field_validator("task_input")
+    @classmethod
+    def bounded_json_task_input(cls, value: dict[str, Any]) -> dict[str, Any]:
+        try:
+            encoded = json.dumps(
+                value,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+        except (TypeError, ValueError) as exc:
+            raise ValueError("task_input must contain JSON-compatible values") from exc
+        if len(encoded) > TASK_INPUT_MAX_BYTES:
+            raise ValueError(f"task_input must not exceed {TASK_INPUT_MAX_BYTES} UTF-8 bytes")
+        return value
 
 
 EXECUTIVE_ACTION_SCHEMA = "aiat.executive-action.v1"
@@ -14832,6 +14849,105 @@ def _worker_run_retry_context(req: WorkerRunDispatchRequest) -> dict[str, Any]:
     return {field: values.get(field) for field in retained_fields}
 
 
+async def _validate_worker_task_input_schema(
+    storage: AgentStorage,
+    *,
+    worker: Mapping[str, Any],
+    request: WorkerRunDispatchRequest,
+) -> None:
+    """Validate task input against schemas declared by this worker's capabilities.
+
+    Capability schemas are applied only when the task type or an explicit
+    capability requirement selects that worker-owned capability. Missing
+    schemas retain the generic WorkerRun input contract; callers cannot supply
+    their own schema or select a capability the worker does not own.
+    """
+
+    capability_ids = {str(value) for value in worker.get("capability_ids") or []}
+    if not capability_ids:
+        return
+    list_capabilities = getattr(storage, "list_capabilities", None)
+    if not inspect.iscoroutinefunction(list_capabilities):
+        raise HTTPException(
+            503,
+            {
+                "code": "WORKER_CAPABILITY_SCHEMA_UNAVAILABLE",
+                "message": "The selected worker capability input contract cannot be loaded.",
+            },
+        )
+
+    selected_names = {str(request.task_type).strip()}
+    for requirement in request.capability_requirements or []:
+        if hasattr(requirement, "model_dump"):
+            requirement = requirement.model_dump(mode="json")
+        if isinstance(requirement, dict) and requirement.get("name"):
+            selected_names.add(str(requirement["name"]).strip())
+
+    capabilities = await list_capabilities()
+    selected_schemas = [
+        capability.get("input_schema")
+        for capability in capabilities
+        if isinstance(capability, dict)
+        and str(capability.get("id")) in capability_ids
+        and str(capability.get("name") or "").strip() in selected_names
+        and capability.get("input_schema") is not None
+    ]
+    if not selected_schemas:
+        return
+
+    try:
+        from jsonschema.validators import validator_for
+    except ImportError as exc:
+        raise HTTPException(
+            503,
+            {
+                "code": "TASK_INPUT_SCHEMA_VALIDATOR_UNAVAILABLE",
+                "message": "The worker input contract validator is unavailable.",
+            },
+        ) from exc
+
+    def contains_remote_reference(value: Any) -> bool:
+        if isinstance(value, dict):
+            for keyword in ("$ref", "$dynamicRef", "$recursiveRef"):
+                ref = value.get(keyword)
+                if ref is not None and not str(ref).startswith("#"):
+                    return True
+            return any(contains_remote_reference(item) for item in value.values())
+        if isinstance(value, list):
+            return any(contains_remote_reference(item) for item in value)
+        return False
+
+    for schema in selected_schemas:
+        if not isinstance(schema, dict) or contains_remote_reference(schema):
+            raise HTTPException(
+                409,
+                {
+                    "code": "WORKER_TASK_INPUT_SCHEMA_INVALID",
+                    "message": "The selected worker capability has an invalid input schema.",
+                },
+            )
+        try:
+            validator_type = validator_for(schema)
+            validator_type.check_schema(schema)
+            is_valid = validator_type(schema).is_valid(request.task_input)
+        except Exception as exc:
+            raise HTTPException(
+                409,
+                {
+                    "code": "WORKER_TASK_INPUT_SCHEMA_INVALID",
+                    "message": "The selected worker capability has an invalid input schema.",
+                },
+            ) from exc
+        if not is_valid:
+            raise HTTPException(
+                422,
+                {
+                    "code": "WORKER_TASK_INPUT_SCHEMA_MISMATCH",
+                    "message": "Task input does not match the selected worker capability schema.",
+                },
+            )
+
+
 async def _dispatch_worker_run(
     req: WorkerRunDispatchRequest,
     *,
@@ -14851,6 +14967,7 @@ async def _dispatch_worker_run(
         tool_grants=req.tool_grants,
         permission_requirements=req.permission_requirements,
     )
+    await _validate_worker_task_input_schema(storage, worker=worker, request=req)
     from mas_core.worker_registry.execution_lineage import WorkerExecutionLineageError
 
     try:
@@ -17331,10 +17448,14 @@ async def _apply_flow_node_action(
                     worker_id=worker_id,
                     idempotency_key=f"flow:{instance_id}:node-execution:{execution['id']}",
                     task_type=policy.task_type or policy.action or node.id,
-                    task_input={
-                        "flow_context": current_context,
-                        "flow_node": {"id": node.id, "label": node.label},
-                    },
+                    task_input=(
+                        dict(policy.task_input)
+                        if policy.task_input is not None
+                        else {
+                            "flow_context": current_context,
+                            "flow_node": {"id": node.id, "label": node.label},
+                        }
+                    ),
                     project_id=instance["project_id"],
                     flow_id=instance["flow_id"],
                     flow_instance_id=instance_id,
