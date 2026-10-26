@@ -587,7 +587,7 @@ async def test_retry_non_failed_instance_returns_400(client):
 async def test_analysis_timeout_escalates_to_ceo_team_and_logs_history(client):
     """
     POST /flows/instances/{id}/node-action {action: timeout, node_id: analysis}
-    → escalate_flow_instance called with exec_ceo
+    → instance/execution failure and escalation history are persisted atomically
     → project history event flow_node_escalated with escalated_to=exec_ceo
     """
     flow = _flow_row()
@@ -607,11 +607,22 @@ async def test_analysis_timeout_escalates_to_ceo_team_and_logs_history(client):
     storage.get_flow_instance = AsyncMock(side_effect=[initial, escalated])
     storage.get_flow = AsyncMock(return_value=flow)
     storage.list_flow_node_executions = AsyncMock(
-        return_value=[{"id": 8, "node_id": "analysis", "status": "RUNNING"}]
+        return_value=[
+            {
+                "id": 8,
+                "instance_id": INST_ID,
+                "node_id": "analysis",
+                "node_type": "task",
+                "status": "RUNNING",
+            }
+        ]
     )
     storage.update_flow_node_execution = AsyncMock(return_value={"id": 8})
     storage.update_flow_instance = AsyncMock(return_value=escalated)
     storage.escalate_flow_instance = AsyncMock(return_value=escalated)
+    storage.activate_flow_nodes = AsyncMock(
+        return_value={"outcome": "applied", "instance": escalated}
+    )
     storage.get_project = AsyncMock(return_value=_project_row())
     storage.transition_project = AsyncMock(return_value=_project_row())
     _patch(storage)
@@ -622,13 +633,20 @@ async def test_analysis_timeout_escalates_to_ceo_team_and_logs_history(client):
     )
     assert resp.status_code == 200
     assert resp.json()["escalated_to"] == "exec_ceo"
-    storage.escalate_flow_instance.assert_awaited_once_with(
-        INST_ID, "exec_ceo", "Analysis timed out"
-    )
-    _, kwargs = storage.transition_project.await_args
-    assert kwargs["event"] == "flow_node_escalated"
-    assert kwargs["payload"]["escalated_to"] == "exec_ceo"
-    assert kwargs["payload"]["node_id"] == "analysis"
+    storage.activate_flow_nodes.assert_awaited_once()
+    _, kwargs = storage.activate_flow_nodes.await_args
+    assert kwargs["expected_statuses"] == {"RUNNING", "WAITING_APPROVAL"}
+    assert kwargs["instance_updates"]["status"] == "FAILED"
+    assert kwargs["instance_updates"]["escalated_to"] == "exec_ceo"
+    assert kwargs["execution_updates"][0]["expected"]["instance_id"] == INST_ID
+    assert kwargs["execution_updates"][0]["values"]["status"] == "FAILED"
+    assert kwargs["project_event"]["event"] == "flow_node_escalated"
+    assert kwargs["project_event"]["payload"]["escalated_to"] == "exec_ceo"
+    assert kwargs["project_event"]["payload"]["node_id"] == "analysis"
+    storage.update_flow_node_execution.assert_not_awaited()
+    storage.update_flow_instance.assert_not_awaited()
+    storage.escalate_flow_instance.assert_not_awaited()
+    storage.transition_project.assert_not_awaited()
 
 
 @pytest.mark.anyio
@@ -774,7 +792,22 @@ async def test_approval_gate_complete_without_decision_transitions_to_waiting(cl
         ]
     )
     storage.get_flow = AsyncMock(return_value=_flow_row())
+    storage.list_flow_node_executions = AsyncMock(
+        return_value=[
+            {
+                "id": 3,
+                "instance_id": INST_ID,
+                "node_id": "approval_gate",
+                "node_type": "approval",
+                "status": "RUNNING",
+            }
+        ]
+    )
     storage.update_flow_instance = AsyncMock(return_value=waiting)
+    storage.update_flow_node_execution = AsyncMock()
+    storage.activate_flow_nodes = AsyncMock(
+        return_value={"outcome": "applied", "instance": waiting}
+    )
     _patch(storage)
 
     resp = await client.post(
@@ -784,6 +817,13 @@ async def test_approval_gate_complete_without_decision_transitions_to_waiting(cl
     )
     assert resp.status_code == 200
     assert resp.json()["status"] == "WAITING_APPROVAL"
+    storage.activate_flow_nodes.assert_awaited_once()
+    _, kwargs = storage.activate_flow_nodes.await_args
+    assert kwargs["instance_updates"]["status"] == "WAITING_APPROVAL"
+    assert kwargs["instance_updates"]["active_node_ids"] == ["approval_gate"]
+    assert kwargs["execution_updates"] is None
+    storage.update_flow_instance.assert_not_awaited()
+    storage.update_flow_node_execution.assert_not_awaited()
 
 
 # ── 11. Read-back: instance state verified through GET route ──────────────────
@@ -929,17 +969,44 @@ async def test_full_flow_sequence_create_attach_start_approve_read_back(client):
     )
     storage.list_flow_node_executions = AsyncMock(
         side_effect=[
-            [{"id": 1, "node_id": "start", "status": "RUNNING"}],  # complete start
             [
-                {"node_id": "start", "status": "COMPLETED"},
-                {"node_id": "analysis", "status": "RUNNING"},
+                {
+                    "id": 1,
+                    "instance_id": INST_ID,
+                    "node_id": "start",
+                    "status": "RUNNING",
+                }
+            ],  # complete start
+            [
+                {"instance_id": INST_ID, "node_id": "start", "status": "COMPLETED"},
+                {"instance_id": INST_ID, "node_id": "analysis", "status": "RUNNING"},
             ],  # post complete start
-            [{"id": 2, "node_id": "analysis", "status": "RUNNING"}],  # complete analysis
-            [{"node_id": "analysis", "status": "COMPLETED"}],  # post complete analysis
-            [{"id": 3, "node_id": "approval_gate", "status": "RUNNING"}],  # complete approval
             [
-                {"node_id": "analysis", "status": "COMPLETED"},
-                {"node_id": "approval_gate", "status": "COMPLETED"},
+                {
+                    "id": 2,
+                    "instance_id": INST_ID,
+                    "node_id": "analysis",
+                    "status": "RUNNING",
+                }
+            ],  # complete analysis
+            [
+                {"instance_id": INST_ID, "node_id": "analysis", "status": "COMPLETED"}
+            ],  # post complete analysis
+            [
+                {
+                    "id": 3,
+                    "instance_id": INST_ID,
+                    "node_id": "approval_gate",
+                    "status": "RUNNING",
+                }
+            ],  # complete approval
+            [
+                {"instance_id": INST_ID, "node_id": "analysis", "status": "COMPLETED"},
+                {
+                    "instance_id": INST_ID,
+                    "node_id": "approval_gate",
+                    "status": "COMPLETED",
+                },
             ],  # post complete approval
         ]
     )
