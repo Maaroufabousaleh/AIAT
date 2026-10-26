@@ -409,3 +409,117 @@ test("saved Research Brief drafts cannot be activated or versioned before worker
   expect(updateRequests).toBe(0);
   expect(versionCreateRequests).toBe(0);
 });
+
+test("existing flow editor retains and gates invalid task input until a valid edit is saved", async ({ page }) => {
+  const flowId = "flow-editor-task-input";
+  const initialFlow = {
+    ...FLOW_FIXTURE,
+    id: flowId,
+    name: "Task input editor flow",
+    is_active: false,
+    definition_json: {
+      schema_version: "aiat.flow-node-schemas.v1.0",
+      nodes: [
+        { id: "start", type: "start", label: "Start", config: {}, position: { x: 80, y: 80 } },
+        {
+          id: "research",
+          type: "task",
+          label: "Research",
+          config: {
+            team_id: "legacy-team",
+            action: "research.collect",
+            task_type: "research.collect",
+            task_input: { query: "original query" },
+          },
+          position: { x: 280, y: 80 },
+        },
+        { id: "end", type: "end", label: "End", config: {}, position: { x: 480, y: 80 } },
+      ],
+      edges: [
+        { id: "start-research", source: "start", target: "research" },
+        { id: "research-end", source: "research", target: "end" },
+      ],
+    },
+  };
+  let currentFlow = initialFlow;
+  const updatePayloads: Record<string, unknown>[] = [];
+  let updateRequests = 0;
+  let versionCreateRequests = 0;
+  let migrationDryRunRequests = 0;
+
+  await page.route("**/api/**", async (route) => {
+    const request = route.request();
+    const { pathname } = new URL(request.url());
+    const method = request.method();
+    const fulfill = (body: unknown, status = 200) => route.fulfill({
+      status,
+      contentType: "application/json",
+      body: JSON.stringify(body),
+    });
+
+    if (pathname === "/api/workers" && method === "GET") return fulfill([]);
+    if (pathname === "/api/governance/model-profiles" && method === "GET") return fulfill([]);
+    if (pathname === `/api/flows/${flowId}` && method === "GET") return fulfill(currentFlow);
+    if (pathname === `/api/flows/${flowId}` && method === "PUT") {
+      updateRequests += 1;
+      const updatePayload = request.postDataJSON() as Record<string, unknown>;
+      updatePayloads.push(updatePayload);
+      currentFlow = {
+        ...currentFlow,
+        ...updatePayload,
+        updated_at: "2026-10-26T12:00:00Z",
+      } as typeof initialFlow;
+      return fulfill(currentFlow);
+    }
+    if (pathname === "/api/flows" && method === "POST") {
+      versionCreateRequests += 1;
+      return fulfill({ ...currentFlow, id: "unexpected-new-version" }, 201);
+    }
+    if (pathname === `/api/flows/${flowId}/migrate-legacy-tasks` && method === "POST") {
+      migrationDryRunRequests += 1;
+      return fulfill({ status: "dry_run", valid: true, changed: false });
+    }
+    return fulfill({ error: "unhandled test route" }, 404);
+  });
+
+  await authenticate(page, `/flows/${flowId}`);
+  await expect(page.getByTestId("flow-name-input")).toHaveValue("Task input editor flow");
+  await page.locator(".react-flow__node").nth(1).click();
+  const taskInput = page.getByTestId("task-input-json");
+  await expect(taskInput).toHaveValue('{\n  "query": "original query"\n}');
+
+  const invalidDraft = '{"nested":[{"value":1e999}]}';
+  await taskInput.fill(invalidDraft);
+  await expect(page.getByText("Task input numbers must be finite", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Close node config panel" }).click();
+  await expect(taskInput).toHaveCount(0);
+  await page.locator(".react-flow__node").nth(1).click();
+  await expect(taskInput).toHaveValue(invalidDraft);
+
+  const validationMessage = "Correct the JSON task input for Research before validating or saving this flow";
+  await page.getByTestId("flow-save-button").click();
+  await expect(page.getByText(validationMessage, { exact: true })).toBeVisible();
+  await page.getByTestId("flow-save-version-button").click();
+  await expect(page.getByText(validationMessage, { exact: true })).toBeVisible();
+  await page.getByTestId("legacy-migration-preview-button").click();
+  await expect(page.getByText(validationMessage, { exact: true })).toBeVisible();
+  expect(updateRequests).toBe(0);
+  expect(versionCreateRequests).toBe(0);
+  expect(migrationDryRunRequests).toBe(0);
+
+  await page.getByTestId("task-input-clear").click();
+  await expect(taskInput).toHaveValue("");
+  await taskInput.fill('{"query":"corrected query"}');
+  await expect(page.getByText("Task input numbers must be finite", { exact: true })).toHaveCount(0);
+
+  const updateResponse = page.waitForResponse(
+    (response) => response.url().endsWith(`/api/flows/${flowId}`) && response.request().method() === "PUT",
+  );
+  await page.getByTestId("flow-save-button").click();
+  expect((await updateResponse).status()).toBe(200);
+  expect(updateRequests).toBe(1);
+  const definition = updatePayloads[0]?.definition_json as { nodes: Array<{ id: string; config: Record<string, unknown> }> };
+  expect(definition.nodes.find((node) => node.id === "research")?.config.task_input).toEqual({ query: "corrected query" });
+  expect(versionCreateRequests).toBe(0);
+  expect(migrationDryRunRequests).toBe(0);
+});

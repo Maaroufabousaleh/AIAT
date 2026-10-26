@@ -122,6 +122,8 @@ export default function FlowEditorPage() {
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const [showConfig, setShowConfig] = useState(false);
   const [nodeConfig, setNodeConfig] = useState<Record<string, unknown>>({});
+  const [taskInputDrafts, setTaskInputDrafts] = useState<Record<string, string>>({});
+  const [taskInputErrors, setTaskInputErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   // Save status indicator: 'idle' (no changes), 'dirty' (unsaved), 'saving', 'saved', 'error'
   const [saveStatus, setSaveStatus] = useState<"idle" | "dirty" | "saving" | "saved" | "error">("idle");
@@ -161,6 +163,11 @@ export default function FlowEditorPage() {
   const hasReadContextRef = useRef(false);
 
   const isNew = id === "new";
+
+  const invalidTaskInputNode = nodes.find((node) => taskInputErrors[node.id]);
+  const taskInputFlowError = invalidTaskInputNode
+    ? `Correct the JSON task input for ${String(invalidTaskInputNode.data.label || "this task")} before validating or saving this flow`
+    : null;
 
   const isResearchTemplate = flowMetadata.template_id === "research";
   const researchActivationError = useMemo((): string | null => {
@@ -209,6 +216,10 @@ export default function FlowEditorPage() {
 
   const runLegacyMigration = async (dryRun: boolean) => {
     if (!currentFlow || accessDenied || legacyMigrationBusy || saveStatus === "dirty" || saving) return;
+    if (taskInputFlowError) {
+      setValidationError(taskInputFlowError);
+      return;
+    }
     setLegacyMigrationBusy(true);
     setLegacyMigrationError(null);
     try {
@@ -322,6 +333,8 @@ export default function FlowEditorPage() {
       setSelectedNode(null);
       setShowConfig(false);
       setNodeConfig({});
+      setTaskInputDrafts({});
+      setTaskInputErrors({});
       setRawSwitchCases("");
       setHistory([]);
       setRedoStack([]);
@@ -376,6 +389,8 @@ export default function FlowEditorPage() {
     }));
     setNodes(flowNodes);
     setEdges(flowEdges);
+    setTaskInputDrafts({});
+    setTaskInputErrors({});
     setSaveStatus("saved");
     setLastSavedAt(new Date(flow.updated_at));
     hasFlowRef.current = true;
@@ -564,6 +579,30 @@ export default function FlowEditorPage() {
     }
   }, [accessDenied, selectedNode, setNodes]);
 
+  const updateTaskInputDraft = useCallback((draft: string, error: string | null) => {
+    if (!selectedNode) return;
+    setTaskInputDrafts((current) => ({ ...current, [selectedNode.id]: draft }));
+    setTaskInputErrors((current) => {
+      const next = { ...current };
+      if (error) next[selectedNode.id] = error;
+      else delete next[selectedNode.id];
+      return next;
+    });
+  }, [selectedNode]);
+
+  const clearTaskInput = useCallback(() => {
+    if (!selectedNode) return;
+    setTaskInputDrafts((current) => ({ ...current, [selectedNode.id]: "" }));
+    setTaskInputErrors((current) => {
+      const next = { ...current };
+      delete next[selectedNode.id];
+      return next;
+    });
+    const next = { ...nodeConfig };
+    delete next.task_input;
+    updateNodeConfig(next);
+  }, [nodeConfig, selectedNode, updateNodeConfig]);
+
   const switchCases = useMemo(() => (
     nodeConfig.switch_cases && typeof nodeConfig.switch_cases === "object" && !Array.isArray(nodeConfig.switch_cases)
       ? (nodeConfig.switch_cases as Record<string, string>)
@@ -598,6 +637,16 @@ export default function FlowEditorPage() {
 
   const deleteSelectedNode = useCallback(() => {
     if (!accessDenied && selectedNode) {
+      setTaskInputDrafts((current) => {
+        const next = { ...current };
+        delete next[selectedNode.id];
+        return next;
+      });
+      setTaskInputErrors((current) => {
+        const next = { ...current };
+        delete next[selectedNode.id];
+        return next;
+      });
       setNodes((nds) => nds.filter((n) => n.id !== selectedNode.id));
       setEdges((eds) => eds.filter((e) => e.source !== selectedNode.id && e.target !== selectedNode.id));
       setSelectedNode(null);
@@ -608,6 +657,7 @@ export default function FlowEditorPage() {
   }, [accessDenied, selectedNode, setNodes, setEdges]);
 
   const validateFlow = useCallback((): string | null => {
+    if (taskInputFlowError) return taskInputFlowError;
     if (!name.trim()) return "Flow name is required";
     if (nodes.length === 0) return "Flow must have at least one node";
     
@@ -618,7 +668,7 @@ export default function FlowEditorPage() {
     if (endNodes.length === 0) return "Flow must have at least one end node";
     
     return null;
-  }, [name, nodes]);
+  }, [name, nodes, taskInputFlowError]);
 
   const handleSave = async () => {
     if (accessDenied) return;
@@ -1316,6 +1366,10 @@ export default function FlowEditorPage() {
               governedWorkers={governedWorkers}
               modelProfiles={modelProfiles}
               governanceLoading={governanceLoading}
+              taskInputDraft={taskInputDrafts[selectedNode.id] ?? (nodeConfig.task_input === undefined ? "" : JSON.stringify(nodeConfig.task_input, null, 2))}
+              taskInputError={taskInputErrors[selectedNode.id] ?? null}
+              onTaskInputDraftChange={updateTaskInputDraft}
+              onClearTaskInput={clearTaskInput}
             />
             {governanceLoadError && (
               <div className="rounded-md border border-amber-800/70 bg-amber-950/20 p-2 text-xs text-amber-200" role="status">
