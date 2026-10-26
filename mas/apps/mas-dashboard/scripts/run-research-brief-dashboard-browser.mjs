@@ -479,10 +479,60 @@ async function main() {
     await page.getByRole("button", { name: "kpi saved", exact: true }).click();
     await page.getByTestId("project-evidence-incomplete-detail").waitFor({ state: "visible" });
     const missingNames = await page.getByTestId("project-evidence-incomplete-detail").innerText();
-    if (!/documents[\s_]exist/.test(missingNames)) throw new Error("missing_document_gate_documents_check_missing");
-    if (!/document[\s_]bodies[\s_]retrievable/.test(missingNames)) {
-      throw new Error("missing_document_gate_bodies_check_missing");
+    if (!/required[\s_]document[\s_]types/.test(missingNames)) {
+      throw new Error("missing_report_document_gate_not_enforced");
     }
+    const incompleteEvidence = await readJsonInPage(page, `/api/projects/${projectId}/evidence`);
+    if (incompleteEvidence.status !== 200 || incompleteEvidence.body.status !== "incomplete") {
+      throw new Error("missing_report_document_evidence_state_invalid");
+    }
+    const incompleteChecks = Object.fromEntries(
+      incompleteEvidence.body.checks.map((check) => [check.name, check.passed]),
+    );
+    if (
+      incompleteChecks.documents_exist !== true ||
+      incompleteChecks.document_bodies_retrievable !== true
+    ) {
+      throw new Error("legacy_document_evidence_was_not_retrievable");
+    }
+    if (incompleteChecks.required_document_types !== false) {
+      throw new Error("missing_report_document_gate_check_not_failed");
+    }
+
+    await page.getByTestId("project-tab-context").click();
+    currentStage = "legacy_text_document_download";
+    const legacyTextDownload = page.getByRole("button", { name: "Download LEGACY_TEXT v1" });
+    await legacyTextDownload.waitFor({ state: "visible" });
+    const legacyTextEvent = page.waitForEvent("download", { timeout: 10_000 }).catch(() => null);
+    await legacyTextDownload.click();
+    const legacyTextFile = await legacyTextEvent;
+    if (!legacyTextFile) throw new Error("legacy_text_document_download_missing");
+    if (legacyTextFile.suggestedFilename() !== "legacy_text-v1.txt") {
+      throw new Error("legacy_text_document_filename_invalid");
+    }
+    const legacyTextPath = await legacyTextFile.path();
+    assert.ok(legacyTextPath);
+    assert.equal(
+      await readFile(legacyTextPath, "utf8"),
+      "Legacy inline project note without a stored checksum.",
+    );
+
+    currentStage = "legacy_blob_document_download";
+    const legacyBlobDownload = page.getByRole("button", { name: "Download LEGACY_BLOB v1" });
+    await legacyBlobDownload.waitFor({ state: "visible" });
+    const legacyBlobEvent = page.waitForEvent("download", { timeout: 10_000 }).catch(() => null);
+    await legacyBlobDownload.click();
+    const legacyBlobFile = await legacyBlobEvent;
+    if (!legacyBlobFile) throw new Error("legacy_blob_document_download_missing");
+    if (legacyBlobFile.suggestedFilename() !== "legacy_blob-v1.md") {
+      throw new Error("legacy_blob_document_filename_invalid");
+    }
+    const legacyBlobPath = await legacyBlobFile.path();
+    assert.ok(legacyBlobPath);
+    assert.deepEqual(
+      await readFile(legacyBlobPath),
+      Buffer.from("# Legacy blob document without a stored checksum\n"),
+    );
 
     currentStage = "register_project_document";
     await page.getByTestId("project-tab-workspace").click();
@@ -516,6 +566,37 @@ async function main() {
     const documentSha = createHash("sha256").update(documentBytes).digest("hex");
     assert.equal(documentSha, reportArtifact.sha256);
 
+    currentStage = "document_digest_mismatch_rejected";
+    const documentDownloadUrl = `**/api/projects/${projectId}/documents/${reportDocument.id}/download`;
+    const mismatchedDigest = `${reportArtifact.sha256[0] === "0" ? "1" : "0"}${reportArtifact.sha256.slice(1)}`;
+    await page.route(documentDownloadUrl, (route) => route.fulfill({
+      status: 200,
+      headers: {
+        "Content-Type": "text/markdown; charset=utf-8",
+        "X-AIAT-Document-SHA256": mismatchedDigest,
+      },
+      body: documentBytes,
+    }));
+    const mismatchedHeaderDownload = page.waitForEvent("download", { timeout: 500 }).catch(() => null);
+    await reportDocumentDownload.click();
+    await page.getByText("Document metadata did not match the downloaded content.", { exact: true }).waitFor();
+    if (await mismatchedHeaderDownload) throw new Error("mismatched_document_header_was_downloaded");
+    await page.unroute(documentDownloadUrl);
+
+    await page.route(documentDownloadUrl, (route) => route.fulfill({
+      status: 200,
+      headers: {
+        "Content-Type": "text/markdown; charset=utf-8",
+        "X-AIAT-Document-SHA256": reportArtifact.sha256,
+      },
+      body: Buffer.from("tampered registered document body"),
+    }));
+    const mismatchedBodyDownload = page.waitForEvent("download", { timeout: 500 }).catch(() => null);
+    await reportDocumentDownload.click();
+    await page.getByText("Downloaded document checksum did not match its declared digest.", { exact: true }).waitFor();
+    if (await mismatchedBodyDownload) throw new Error("mismatched_document_body_was_downloaded");
+    await page.unroute(documentDownloadUrl);
+
     currentStage = "complete_evidence_gated_project";
     await page.getByTestId("project-tab-evidence").click();
     await page.getByRole("heading", { name: "Completion Evidence" }).waitFor({ state: "visible" });
@@ -526,7 +607,15 @@ async function main() {
       throw new Error("completed_project_evidence_not_complete");
     }
     await page.getByTestId("project-tab-workflow").click();
+    const completionTransition = page.waitForResponse(
+      (response) =>
+        response.url() === `${baseUrl}/api/projects/${projectId}/transition` &&
+        response.request().method() === "POST",
+      { timeout: 10_000 },
+    );
     await page.getByRole("button", { name: "kpi saved", exact: true }).click();
+    const completionResponse = await completionTransition;
+    if (!completionResponse.ok()) throw new Error("project_completion_transition_rejected");
     await page.getByText("COMPLETED", { exact: true }).first().waitFor({ state: "visible" });
     const finalProject = await readJsonInPage(page, `/api/projects/${projectId}`);
     if (finalProject.status !== 200) throw new Error("completed_project_readback_unavailable");
@@ -557,6 +646,9 @@ async function main() {
         "missing_document_blocks_project_completion",
         "verified_artifact_registered_as_project_document",
         "registered_document_download_checksum",
+        "legacy_inline_document_download_without_digest",
+        "legacy_blob_document_download_without_digest",
+        "mismatched_document_digests_rejected",
         "evidence_gated_project_completion",
         "external_origins_blocked",
       ],

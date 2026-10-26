@@ -1253,24 +1253,30 @@ export default function ProjectDetailPage() {
             : `Could not download this document (HTTP ${response.status}).`,
         );
       }
-      const expectedDigest = item.blob_sha256?.toLowerCase();
-      const responseDigest = response.headers
-        .get("x-aiat-document-sha256")
-        ?.toLowerCase();
+      const hasStoredDigest =
+        item.blob_sha256 !== undefined && item.blob_sha256 !== null && item.blob_sha256 !== "";
+      const expectedDigest =
+        typeof item.blob_sha256 === "string" ? item.blob_sha256.trim().toLowerCase() : "";
+      const responseDigestHeader = response.headers.get("x-aiat-document-sha256");
+      const hasResponseDigest = responseDigestHeader !== null && responseDigestHeader !== "";
+      const responseDigest = responseDigestHeader?.trim().toLowerCase() || "";
       if (
-        !expectedDigest ||
-        !SHA256_PATTERN.test(expectedDigest) ||
-        responseDigest !== expectedDigest
+        (hasStoredDigest && !SHA256_PATTERN.test(expectedDigest)) ||
+        (hasResponseDigest && !SHA256_PATTERN.test(responseDigest)) ||
+        (hasStoredDigest && responseDigest !== expectedDigest)
       ) {
         throw new Error("Document metadata did not match the downloaded content.");
       }
       const blob = await response.blob();
-      const digestBytes = await crypto.subtle.digest("SHA-256", await blob.arrayBuffer());
-      const actualDigest = Array.from(new Uint8Array(digestBytes), (byte) =>
-        byte.toString(16).padStart(2, "0"),
-      ).join("");
-      if (actualDigest !== expectedDigest) {
-        throw new Error("Downloaded document checksum did not match its registered metadata.");
+      const digestToVerify = hasStoredDigest ? expectedDigest : hasResponseDigest ? responseDigest : "";
+      if (digestToVerify) {
+        const digestBytes = await crypto.subtle.digest("SHA-256", await blob.arrayBuffer());
+        const actualDigest = Array.from(new Uint8Array(digestBytes), (byte) =>
+          byte.toString(16).padStart(2, "0"),
+        ).join("");
+        if (actualDigest !== digestToVerify) {
+          throw new Error("Downloaded document checksum did not match its declared digest.");
+        }
       }
       const contentType = (response.headers.get("content-type") ?? "")
         .split(";", 1)[0]

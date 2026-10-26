@@ -37,6 +37,12 @@ REPORT_WORKER_ID = UUID("50000000-0000-4000-8000-000000000505")
 RESEARCH_CAPABILITY_ID = UUID("50000000-0000-4000-8000-000000000506")
 REPORT_CAPABILITY_ID = UUID("50000000-0000-4000-8000-000000000507")
 COMPANY_ID = UUID("50000000-0000-4000-8000-000000000508")
+LEGACY_TEXT_DOCUMENT_ID = UUID("50000000-0000-4000-8000-000000000509")
+LEGACY_BLOB_DOCUMENT_ID = UUID("50000000-0000-4000-8000-000000000510")
+LEGACY_TEXT_CONTENT = "Legacy inline project note without a stored checksum."
+LEGACY_BLOB_CONTENT = b"# Legacy blob document without a stored checksum\n"
+LEGACY_BLOB_BUCKET = "synthetic-research-brief"
+LEGACY_BLOB_KEY = f"{PROJECT_ID}/legacy/legacy-brief.md"
 
 
 def _flow_definition() -> dict[str, Any]:
@@ -94,6 +100,7 @@ class _ResearchBriefStorage:
         research_output: dict[str, Any],
         report_tool_outcome: str = "success",
         require_report_document: bool = False,
+        include_legacy_documents: bool = False,
     ) -> None:
         now = datetime.now(UTC)
         self.research_output = deepcopy(research_output)
@@ -122,6 +129,7 @@ class _ResearchBriefStorage:
                             "requires_flow_terminal": True,
                             "requires_artifacts": True,
                             "requires_documents": True,
+                            "required_document_types": ["RESEARCH_BRIEF"],
                             "requires_document_bodies": True,
                         },
                     }
@@ -224,6 +232,33 @@ class _ResearchBriefStorage:
         self.approval_gates: list[dict[str, Any]] = []
         self.project_history: list[dict[str, Any]] = []
         self.blob_objects: dict[tuple[str, str], bytes] = {}
+        if include_legacy_documents:
+            self.documents.extend(
+                [
+                    {
+                        "id": LEGACY_TEXT_DOCUMENT_ID,
+                        "project_id": PROJECT_ID,
+                        "doc_type": "LEGACY_TEXT",
+                        "version": 1,
+                        "content_text": LEGACY_TEXT_CONTENT,
+                        "created_by": "test-operator",
+                        "status": "DRAFT",
+                        "created_at": now,
+                    },
+                    {
+                        "id": LEGACY_BLOB_DOCUMENT_ID,
+                        "project_id": PROJECT_ID,
+                        "doc_type": "LEGACY_BLOB",
+                        "version": 1,
+                        "blob_bucket": LEGACY_BLOB_BUCKET,
+                        "blob_key": LEGACY_BLOB_KEY,
+                        "created_by": "test-operator",
+                        "status": "DRAFT",
+                        "created_at": now,
+                    },
+                ]
+            )
+            self.blob_objects[(LEGACY_BLOB_BUCKET, LEGACY_BLOB_KEY)] = LEGACY_BLOB_CONTENT
         self.tool_dispatches: list[dict[str, Any]] = []
         self.adapter_tool_responses: dict[UUID, dict[str, Any]] = {}
         self.report_inputs: dict[UUID, dict[str, Any]] = {}
@@ -1959,6 +1994,7 @@ def test_research_brief_dashboard_browser_uses_real_bff_and_verified_project_evi
             "sources": [{"evidence_id": "source-1", "label": "Synthetic source"}],
         },
         require_report_document=True,
+        include_legacy_documents=True,
     )
     workspace_root = tmp_path / "browser-worker-workspace"
     api_url, stop_api = _start_test_api(monkeypatch, storage, workspace_root=workspace_root)
@@ -2002,7 +2038,7 @@ def test_research_brief_dashboard_browser_uses_real_bff_and_verified_project_evi
             f"attempt-{metadata['worker_run_attempt']}/reports/research-brief.md"
         )
         assert artifact["sha256"] == browser_result["artifact_sha256"]
-        document = storage.documents[0]
+        document = next(row for row in storage.documents if row["doc_type"] == "RESEARCH_BRIEF")
         assert document["project_id"] == PROJECT_ID
         assert document["doc_type"] == "RESEARCH_BRIEF"
         assert document["blob_key"] == metadata["blob_key"]
@@ -2018,6 +2054,7 @@ def test_research_brief_dashboard_browser_uses_real_bff_and_verified_project_evi
         assert evidence["body"]["status"] == "complete"
         checks = {check["name"]: check["passed"] for check in evidence["body"]["checks"]}
         assert checks["documents_exist"] is True
+        assert checks["required_document_types"] is True
         assert checks["document_bodies_retrievable"] is True
         assert checks["artifacts_registered"] is True
         assert checks["flow_terminal"] is True
