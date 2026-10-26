@@ -6,6 +6,7 @@ import ts from "typescript";
 
 const dashboardRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const instanceId = "50000000-0000-4000-8000-000000000501";
+const projectId = "50000000-0000-4000-8000-000000000503";
 const apiDestination = new URL(process.env.ORCHESTRATOR_URL ?? "");
 if (
   apiDestination.protocol !== "http:" ||
@@ -84,40 +85,154 @@ const instanceRoute = compileTypeScript(
   },
 );
 
-async function invoke(route, method, payload) {
-  const request = new Request(`http://dashboard.test/api/flows/instances/${instanceId}/node-action`, {
+const flowActionRoute = compileTypeScript(
+  path.join(dashboardRoot, "app", "api", "flows", "instances", "[id]", "action", "route.ts"),
+  (specifier) => {
+    if (specifier === "next/server") return nextServer;
+    if (specifier === "@/lib/orchestrator") return orchestrator;
+    throw new Error(`Unexpected flow-action BFF dependency: ${specifier}`);
+  },
+);
+
+const runRoute = compileTypeScript(
+  path.join(dashboardRoot, "app", "api", "governance", "runs", "[run_id]", "route.ts"),
+  (specifier) => {
+    if (specifier === "next/server") return nextServer;
+    if (specifier === "@/lib/orchestrator") return orchestrator;
+    throw new Error(`Unexpected WorkerRun BFF dependency: ${specifier}`);
+  },
+);
+
+const runResourceRoute = compileTypeScript(
+  path.join(dashboardRoot, "app", "api", "governance", "runs", "[run_id]", "[resource]", "route.ts"),
+  (specifier) => {
+    if (specifier === "next/server") return nextServer;
+    if (specifier === "@/lib/orchestrator") return orchestrator;
+    throw new Error(`Unexpected WorkerRun-resource BFF dependency: ${specifier}`);
+  },
+);
+
+const projectRoute = compileTypeScript(
+  path.join(dashboardRoot, "app", "api", "projects", "[id]", "route.ts"),
+  (specifier) => {
+    if (specifier === "next/server") return nextServer;
+    if (specifier === "@/lib/orchestrator") return orchestrator;
+    throw new Error(`Unexpected project BFF dependency: ${specifier}`);
+  },
+);
+
+const projectEvidenceRoute = compileTypeScript(
+  path.join(dashboardRoot, "app", "api", "projects", "[id]", "evidence", "route.ts"),
+  (specifier) => {
+    if (specifier === "next/server") return nextServer;
+    if (specifier === "@/lib/orchestrator") return orchestrator;
+    throw new Error(`Unexpected project-evidence BFF dependency: ${specifier}`);
+  },
+);
+
+const projectArtifactsRoute = compileTypeScript(
+  path.join(dashboardRoot, "app", "api", "projects", "[id]", "artifacts", "route.ts"),
+  (specifier) => {
+    if (specifier === "next/server") return nextServer;
+    if (specifier === "@/lib/orchestrator") return orchestrator;
+    throw new Error(`Unexpected project-artifacts BFF dependency: ${specifier}`);
+  },
+);
+
+const projectTransitionRoute = compileTypeScript(
+  path.join(dashboardRoot, "app", "api", "projects", "[id]", "transition", "route.ts"),
+  (specifier) => {
+    if (specifier === "next/server") return nextServer;
+    if (specifier === "@/lib/orchestrator") return orchestrator;
+    throw new Error(`Unexpected project-transition BFF dependency: ${specifier}`);
+  },
+);
+
+async function invoke(route, method, routePath, payload, params = {}) {
+  const request = new Request(`http://dashboard.test${routePath}`, {
     method,
     headers: payload === undefined ? {} : { "content-type": "application/json" },
     body: payload === undefined ? undefined : JSON.stringify(payload),
   });
-  const response = await route(
-    request,
-    { params: Promise.resolve({ id: instanceId }) },
-  );
+  const response = await route(request, { params: Promise.resolve(params) });
   return { status: response.status, body: await response.json() };
+}
+
+function checkedRunId(value) {
+  if (typeof value !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
+    throw new Error("A synthetic WorkerRun UUID is required");
+  }
+  return value;
 }
 
 const mode = process.argv[2];
 let result;
-if (mode === "advance-research") {
-  result = await invoke(nodeAction.POST, "POST", { node_id: "research", action: "advance" });
-} else if (mode === "complete-research") {
-  const runId = process.argv[3];
-  if (!runId) throw new Error("complete-research requires the synthetic persisted WorkerRun ID");
-  result = await invoke(nodeAction.POST, "POST", {
+if (mode === "complete-research") {
+  const runId = checkedRunId(process.argv[3]);
+  result = await invoke(nodeAction.POST, "POST", `/api/flows/instances/${instanceId}/node-action`, {
     node_id: "research",
     action: "complete",
     worker_run_id: runId,
-  });
-} else if (mode === "read-instance") {
-  const request = new Request(`http://dashboard.test/api/flows/instances/${instanceId}`);
-  const response = await instanceRoute.GET(
-    request,
-    { params: Promise.resolve({ id: instanceId }) },
+  }, { id: instanceId });
+} else if (mode === "start-flow") {
+  result = await invoke(flowActionRoute.POST, "POST", `/api/flows/instances/${instanceId}/action`, { action: "start" }, { id: instanceId });
+} else if (mode === "complete-start") {
+  result = await invoke(nodeAction.POST, "POST", `/api/flows/instances/${instanceId}/node-action`, { node_id: "start", action: "complete" }, { id: instanceId });
+} else if (mode === "approve-review") {
+  result = await invoke(nodeAction.POST, "POST", `/api/flows/instances/${instanceId}/node-action`, { node_id: "review", action: "complete", decision: "approved" }, { id: instanceId });
+} else if (mode === "complete-report" || mode === "fail-report") {
+  const runId = checkedRunId(process.argv[3]);
+  result = await invoke(nodeAction.POST, "POST", `/api/flows/instances/${instanceId}/node-action`, {
+    node_id: "report",
+    action: mode === "complete-report" ? "complete" : "fail",
+    worker_run_id: runId,
+    ...(mode === "fail-report" ? { error: "The mediated report effect was not confirmed." } : {}),
+  }, { id: instanceId });
+} else if (mode === "wait-run") {
+  const runId = checkedRunId(process.argv[3]);
+  const deadline = Date.now() + 10_000;
+  let observed;
+  do {
+    observed = await invoke(
+      runRoute.GET,
+      "GET",
+      `/api/governance/runs/${encodeURIComponent(runId)}`,
+      undefined,
+      { run_id: runId },
+    );
+    const state = String(observed.body?.state ?? "").toUpperCase();
+    if (observed.status !== 200 || ["SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT"].includes(state)) {
+      result = observed;
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  } while (Date.now() < deadline);
+  if (!result) throw new Error("Synthetic WorkerRun did not reach a terminal state in the bounded wait");
+} else if (mode === "read-run-resource") {
+  const runId = checkedRunId(process.argv[3]);
+  const resource = process.argv[4];
+  if (!["artifacts", "usage", "tool-effects"].includes(resource)) throw new Error("Unsupported WorkerRun read resource");
+  result = await invoke(
+    runResourceRoute.GET,
+    "GET",
+    `/api/governance/runs/${encodeURIComponent(runId)}/${resource}`,
+    undefined,
+    { run_id: runId, resource },
   );
-  result = { status: response.status, body: await response.json() };
+} else if (mode === "read-project-evidence") {
+  result = await invoke(projectEvidenceRoute.GET, "GET", `/api/projects/${projectId}/evidence`, undefined, { id: projectId });
+} else if (mode === "read-project-artifacts") {
+  result = await invoke(projectArtifactsRoute.GET, "GET", `/api/projects/${projectId}/artifacts`, undefined, { id: projectId });
+} else if (mode === "read-project") {
+  result = await invoke(projectRoute.GET, "GET", `/api/projects/${projectId}`, undefined, { id: projectId });
+} else if (mode === "transition-project") {
+  const event = process.argv[3];
+  if (!["all_sprints_done", "retrospective_done", "kpi_saved"].includes(event)) throw new Error("Unsupported synthetic project transition");
+  result = await invoke(projectTransitionRoute.POST, "POST", `/api/projects/${projectId}/transition`, { event }, { id: projectId });
+} else if (mode === "read-instance") {
+  result = await invoke(instanceRoute.GET, "GET", `/api/flows/instances/${instanceId}`, undefined, { id: instanceId });
 } else {
-  throw new Error("mode must be advance-research, complete-research, or read-instance");
+  throw new Error("Unsupported hermetic Research Brief BFF harness mode");
 }
 
 process.stdout.write(`${JSON.stringify(result)}\n`);
