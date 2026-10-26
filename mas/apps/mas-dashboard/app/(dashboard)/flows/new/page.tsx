@@ -86,23 +86,6 @@ function parseCsv(value: string): string[] {
   return value.split(",").map((entry) => entry.trim()).filter(Boolean);
 }
 
-function taskInputJsonError(value: string): string | null {
-  if (!value.trim()) return null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch {
-    return "Enter valid JSON before validating or saving this flow";
-  }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return "Task input must be a JSON object";
-  }
-  if (new TextEncoder().encode(JSON.stringify(parsed)).byteLength > 64 * 1024) {
-    return "Task input must not exceed 64 KiB";
-  }
-  return null;
-}
-
 function isAccessDeniedStatus(status: number): boolean {
   return status === 401 || status === 403;
 }
@@ -502,23 +485,15 @@ export default function NewFlowPage() {
     return null;
   }, [appliedTemplateId, nodes]);
 
-  const updateTaskInputDraft = (value: string) => {
+  const updateTaskInputDraft = (value: string, error: string | null) => {
     if (!selectedNode) return;
     setTaskInputDrafts((current) => ({ ...current, [selectedNode.id]: value }));
-    const error = taskInputJsonError(value);
     setTaskInputErrors((current) => {
       const next = { ...current };
       if (error) next[selectedNode.id] = error;
       else delete next[selectedNode.id];
       return next;
     });
-    if (!value.trim()) {
-      const next = { ...nodeConfig };
-      delete next.task_input;
-      updateNodeConfig(next);
-    } else if (!error) {
-      updateNodeConfig({ ...nodeConfig, task_input: JSON.parse(value) as Record<string, unknown> });
-    }
   };
 
   const clearTaskInput = () => {
@@ -1087,6 +1062,10 @@ export default function NewFlowPage() {
               governedWorkers={governedWorkers}
               modelProfiles={modelProfiles}
               governanceLoading={governanceLoading}
+              taskInputDraft={taskInputDrafts[selectedNode.id] ?? (nodeConfig.task_input === undefined ? "" : JSON.stringify(nodeConfig.task_input, null, 2))}
+              taskInputError={taskInputErrors[selectedNode.id] ?? null}
+              onTaskInputDraftChange={updateTaskInputDraft}
+              onClearTaskInput={clearTaskInput}
             />
             {governanceLoadError && (
               <div className="rounded-md border border-amber-800/70 bg-amber-950/20 p-2 text-xs text-amber-200" role="status">
@@ -1175,24 +1154,6 @@ export default function NewFlowPage() {
                 <div>
                   <label className="block text-xs text-slate-500 mb-1">Task Type</label>
                   <input value={(nodeConfig.task_type as string) || ""} onChange={(e) => updateNodeConfig({ ...nodeConfig, task_type: e.target.value })} placeholder="code_review" data-testid="task-type-input" className="w-full bg-slate-900/70 border border-slate-700 hover:border-slate-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 rounded-md px-2.5 py-1.5 text-sm text-white placeholder-slate-500 transition-colors" />
-                </div>
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label htmlFor="task-input-json" className="block text-xs text-slate-500">Task Input (JSON object)</label>
-                    <button type="button" onClick={clearTaskInput} data-testid="task-input-clear" className="text-xs text-slate-400 hover:text-white">Clear</button>
-                  </div>
-                  <textarea
-                    id="task-input-json"
-                    aria-label="Task input JSON"
-                    value={taskInputDrafts[selectedNode.id] ?? (nodeConfig.task_input === undefined ? "" : JSON.stringify(nodeConfig.task_input, null, 2))}
-                    onChange={(event) => updateTaskInputDraft(event.target.value)}
-                    data-testid="task-input-json"
-                    placeholder='{"query": "..."}'
-                    spellCheck={false}
-                    className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-xs text-white h-28 font-mono"
-                  />
-                  <p className="mt-1 text-xxs text-slate-500">Optional task-specific JSON passed to the governed Worker Run. Leave blank to pass the preceding flow context (`flow_context`) to this worker. Project and run identity remain in AIAT’s dispatch envelope. Maximum 64 KiB.</p>
-                  {taskInputErrors[selectedNode.id] && <div className="text-xs text-red-400 mt-1" role="alert">{taskInputErrors[selectedNode.id]}</div>}
                 </div>
                 <div>
                   <label className="block text-xs text-slate-500 mb-1">Required Capabilities</label>

@@ -374,23 +374,35 @@ test("Research Brief requires bindings, validates, and attaches to a project", a
   await page.getByRole("button", { name: "Configure Research assignment" }).click();
   await page.getByTestId("task-worker-select").first().selectOption("00000000-0000-4000-a000-000000000701");
   await page.getByTestId("task-model-profile-select").first().selectOption("approved-research-profile");
-  await page.getByTestId("task-type-input").fill("research.collect");
-  await page.getByTestId("task-input-json").fill(JSON.stringify({ query: "AIAT workflow evidence", limit: 3 }, null, 2));
+  await page.getByTestId("task-type-input").first().fill("research.collect");
+  await page.getByTestId("task-input-json").first().fill(JSON.stringify({ query: "AIAT workflow evidence", limit: 3 }, null, 2));
   await expect(page.getByTestId("research-template-binding-checklist")).toContainText("Write report");
   await expect(page.getByTestId("research-template-binding-checklist")).not.toContainText("Research: governed worker required");
 
   await page.getByRole("button", { name: "Configure Write report assignment" }).click();
   await page.getByTestId("task-worker-select").first().selectOption("00000000-0000-4000-a000-000000000701");
   await page.getByTestId("task-model-profile-select").first().selectOption("approved-research-profile");
-  await page.getByTestId("task-type-input").fill("document.write");
+  await page.getByTestId("task-type-input").first().fill("document.write");
   await expect(page.getByText(/preceding flow context/)).toBeVisible();
   await expect(page.getByTestId("research-template-bindings-complete")).toBeVisible();
-  await page.getByTestId("task-input-json").fill("{");
+  await page.getByTestId("task-input-json").first().fill("{");
+  await expect(page.getByText("Enter valid JSON before leaving this field", { exact: true })).toBeVisible();
   await page.getByTestId("flow-dry-run-button").click();
-  await expect(page.getByRole("alert")).toContainText("Enter valid JSON");
+  await expect(
+    page.getByText("Correct the JSON task input for Write report before validating or saving", { exact: true }),
+  ).toBeVisible();
   expect(dryRunRequests).toBe(0);
-  await page.getByTestId("task-input-clear").click();
-  await expect(page.getByTestId("task-input-json")).toHaveValue("");
+  await page.getByTestId("task-input-json").first().fill('{"nested":[{"value":1e999}]}');
+  await expect(page.getByText("Task input numbers must be finite", { exact: true })).toBeVisible();
+  await page.getByTestId("flow-dry-run-button").click();
+  await expect(page.getByText("Task input numbers must be finite", { exact: true })).toBeVisible();
+  expect(dryRunRequests).toBe(0);
+  await page.getByTestId("task-input-json").first().fill(JSON.stringify({ payload: "x".repeat(65536) }));
+  await expect(page.getByText("JSON input must not exceed 65536 bytes", { exact: true })).toBeVisible();
+  await page.getByTestId("flow-dry-run-button").click();
+  expect(dryRunRequests).toBe(0);
+  await page.getByTestId("task-input-clear").first().click();
+  await expect(page.getByTestId("task-input-json").first()).toHaveValue("");
   await page.getByTestId("flow-dry-run-button").click();
   await expect(page.getByTestId("flow-dry-run-result")).toBeVisible();
   expect(dryRunRequests).toBe(1);
@@ -439,7 +451,8 @@ test("Research Brief requires bindings, validates, and attaches to a project", a
   }));
 
   await page.getByRole("link", { name: "Research Brief setup project", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Research Brief setup project" })).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}$`), { timeout: 15000 });
+  await expect(page.getByRole("heading", { name: "Research Brief setup project" })).toBeVisible({ timeout: 15000 });
   await page.getByTestId("project-tab-flow").click();
   await expect(page.getByTestId("flow-start-button")).toBeVisible();
   await expect(page.getByText("NOT_STARTED", { exact: true }).first()).toBeVisible();
