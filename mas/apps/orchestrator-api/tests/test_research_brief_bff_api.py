@@ -88,7 +88,13 @@ def _flow_definition() -> dict[str, Any]:
 
 
 class _ResearchBriefStorage:
-    def __init__(self, *, research_output: dict[str, Any], report_tool_outcome: str = "success") -> None:
+    def __init__(
+        self,
+        *,
+        research_output: dict[str, Any],
+        report_tool_outcome: str = "success",
+        require_report_document: bool = False,
+    ) -> None:
         now = datetime.now(UTC)
         self.research_output = deepcopy(research_output)
         self.report_tool_outcome = report_tool_outcome
@@ -107,7 +113,22 @@ class _ResearchBriefStorage:
             "state": "IN_PROGRESS",
             "company_id": COMPANY_ID,
             "revision": 0,
-            "config": {"evidence_policy": "operations"},
+            "config": {
+                "evidence_policy": (
+                    {
+                        "policy_id": "research_delivery",
+                        "version": "1.0",
+                        "requirements": {
+                            "requires_flow_terminal": True,
+                            "requires_artifacts": True,
+                            "requires_documents": True,
+                            "requires_document_bodies": True,
+                        },
+                    }
+                    if require_report_document
+                    else "operations"
+                ),
+            },
             "created_by": "test-operator",
             "created_at": now,
             "updated_at": now,
@@ -199,6 +220,7 @@ class _ResearchBriefStorage:
         self.worker_usage: dict[UUID, list[dict[str, Any]]] = {}
         self.project_usage_events: list[dict[str, Any]] = []
         self.artifacts: list[dict[str, Any]] = []
+        self.documents: list[dict[str, Any]] = []
         self.approval_gates: list[dict[str, Any]] = []
         self.project_history: list[dict[str, Any]] = []
         self.blob_objects: dict[tuple[str, str], bytes] = {}
@@ -209,9 +231,65 @@ class _ResearchBriefStorage:
         self._next_execution_id = 1
         self._next_artifact_id = 1
         self._next_snapshot_id = 1
+        self.engine = _InMemoryApprovalEngine(self)
 
     async def get_project(self, project_id: UUID) -> dict[str, Any] | None:
         return deepcopy(self.project) if project_id == PROJECT_ID else None
+
+    async def list_task_logs(self, **_kwargs: Any) -> list[dict[str, Any]]:
+        return []
+
+    async def list_workers(self) -> list[dict[str, Any]]:
+        return [deepcopy(worker) for worker in self.workers.values()]
+
+    async def list_issues(self, **_kwargs: Any) -> list[dict[str, Any]]:
+        return []
+
+    async def list_project_context(
+        self,
+        project_id: UUID,
+        *,
+        item_type: str | None = None,
+        tags: list[str] | None = None,
+        include_document_revisions: bool = False,
+    ) -> list[dict[str, Any]]:
+        if item_type and item_type.upper() != "DOCUMENT":
+            return []
+        from mas_core.memory.storage import document_to_context_item
+
+        documents = [row for row in self.documents if row["project_id"] == project_id]
+        if not include_document_revisions:
+            latest_by_lineage: dict[str, dict[str, Any]] = {}
+            for document in documents:
+                lineage_id = str(document.get("lineage_id") or document["id"])
+                current = latest_by_lineage.get(lineage_id)
+                if current is None or int(document.get("version") or 1) >= int(current.get("version") or 1):
+                    latest_by_lineage[lineage_id] = document
+            documents = list(latest_by_lineage.values())
+        items = [document_to_context_item(document) for document in documents]
+        if tags:
+            requested_tags = {tag.strip().lower() for tag in tags if tag.strip()}
+            items = [
+                item
+                for item in items
+                if requested_tags.intersection(str(tag).lower() for tag in item.get("tags") or [])
+            ]
+        return sorted(items, key=lambda item: str(item.get("created_at") or ""), reverse=True)
+
+    async def get_project_repository_record(self, _project_id: UUID) -> None:
+        return None
+
+    async def get_project_usage(self, _project_id: UUID) -> dict[str, Any]:
+        return {
+            "available": True,
+            "llm_calls": 0,
+            "tool_calls": 0,
+            "failed_calls": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "total_cost_usd": 0.0,
+        }
 
     async def list_company_worker_assignments(self, company_id: UUID) -> list[dict[str, Any]]:
         if company_id != COMPANY_ID:
@@ -722,8 +800,63 @@ class _ResearchBriefStorage:
     async def list_artifacts(self, *, limit: int = 100) -> list[dict[str, Any]]:
         return deepcopy(self.artifacts[:limit])
 
-    async def list_documents(self, project_id: UUID) -> list[dict[str, Any]]:
-        return []
+    async def list_documents(
+        self,
+        project_id: UUID,
+        *,
+        doc_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        rows = [row for row in self.documents if row["project_id"] == project_id]
+        if doc_type is not None:
+            rows = [row for row in rows if row["doc_type"] == doc_type]
+        return deepcopy(rows)
+
+    async def create_document(
+        self,
+        *,
+        project_id: UUID,
+        doc_type: str,
+        created_by: str,
+        blob_bucket: str,
+        blob_key: str,
+        blob_sha256: str,
+    ) -> dict[str, Any]:
+        existing = next(
+            (
+                row
+                for row in self.documents
+                if row["project_id"] == project_id
+                and row["doc_type"] == doc_type
+                and row["blob_bucket"] == blob_bucket
+                and row["blob_key"] == blob_key
+                and row["blob_sha256"] == blob_sha256
+            ),
+            None,
+        )
+        if existing is not None:
+            return deepcopy(existing)
+        row = {
+            "id": uuid4(),
+            "project_id": project_id,
+            "doc_type": doc_type,
+            "version": 1,
+            "created_by": created_by,
+            "blob_bucket": blob_bucket,
+            "blob_key": blob_key,
+            "blob_sha256": blob_sha256,
+            "status": "DRAFT",
+            "created_at": datetime.now(UTC),
+        }
+        self.documents.append(row)
+        return deepcopy(row)
+
+    async def get_document(self, document_id: UUID) -> dict[str, Any] | None:
+        row = next((item for item in self.documents if item["id"] == document_id), None)
+        return deepcopy(row) if row else None
+
+    async def get_artifact(self, artifact_id: int) -> dict[str, Any] | None:
+        row = next((item for item in self.artifacts if item["id"] == artifact_id), None)
+        return deepcopy(row) if row else None
 
     async def get_project_history(self, project_id: UUID, *, limit: int = 100) -> list[dict[str, Any]]:
         return deepcopy([row for row in self.project_history if row["project_id"] == project_id][-limit:])
@@ -803,6 +936,7 @@ class _ResearchBriefStorage:
     def _snapshot_matches(current: dict[str, Any], expected: dict[str, Any]) -> bool:
         return all(current.get(field) == value for field, value in expected.items())
 
+
     async def transition_project(
         self,
         project_id: UUID,
@@ -849,10 +983,56 @@ class _ResearchBriefStorage:
         return deepcopy(self.project)
 
 
+class _InMemoryApprovalEngine:
+    """Small SQLAlchemy connection substitute for the real pending-gate route."""
+
+    def __init__(self, storage: _ResearchBriefStorage) -> None:
+        self.storage = storage
+
+    def connect(self) -> _InMemoryApprovalConnection:
+        return _InMemoryApprovalConnection(self.storage)
+
+
+class _InMemoryApprovalConnection:
+    def __init__(self, storage: _ResearchBriefStorage) -> None:
+        self.storage = storage
+
+    async def __aenter__(self) -> _InMemoryApprovalConnection:
+        return self
+
+    async def __aexit__(self, *_exc_info: Any) -> None:
+        return None
+
+    async def execute(self, _query: Any) -> _InMemoryApprovalResult:
+        rows = [
+            deepcopy(gate)
+            for gate in self.storage.approval_gates
+            if gate.get("project_id") == self.storage.project["id"]
+            and gate.get("status") == "PENDING"
+        ]
+        rows.sort(key=lambda row: row["created_at"])
+        return _InMemoryApprovalResult(rows)
+
+
+class _InMemoryApprovalResult:
+    def __init__(self, rows: list[dict[str, Any]]) -> None:
+        self.rows = rows
+
+    def mappings(self) -> _InMemoryApprovalResult:
+        return self
+
+    def all(self) -> list[dict[str, Any]]:
+        return self.rows
+
+    def first(self) -> dict[str, Any] | None:
+        return self.rows[0] if self.rows else None
+
+
 class _InMemoryBlobClient:
     def __init__(self, objects: dict[tuple[str, str], bytes], *, bucket: str) -> None:
         self.objects = objects
         self.bucket = bucket
+        self.client = self
 
     async def connect(self) -> None:
         return None
@@ -881,6 +1061,41 @@ class _InMemoryBlobClient:
 
     async def delete(self, reference: Any) -> None:
         self.objects.pop((reference.bucket, reference.key), None)
+
+    async def get_object(self, *, Bucket: str, Key: str) -> dict[str, Any]:
+        content = self.objects.get((Bucket, Key))
+        if content is None:
+            raise FileNotFoundError("synthetic object is unavailable")
+        return {"Body": _InMemoryBlobBody(content), "ContentLength": len(content)}
+
+    async def download_by_key(
+        self,
+        project_id: str,
+        key: str,
+        *,
+        bucket: str | None = None,
+    ) -> bytes:
+        content = self.objects.get((bucket or self.bucket, f"{project_id}/{key}"))
+        if content is None:
+            raise FileNotFoundError("synthetic object is unavailable")
+        return content
+
+    async def close(self) -> None:
+        return None
+
+
+class _InMemoryBlobBody:
+    def __init__(self, content: bytes) -> None:
+        self.content = content
+        self.offset = 0
+
+    async def read(self, size: int = -1) -> bytes:
+        if self.offset >= len(self.content):
+            return b""
+        end = len(self.content) if size < 0 else min(len(self.content), self.offset + size)
+        chunk = self.content[self.offset : end]
+        self.offset = end
+        return chunk
 
     async def close(self) -> None:
         return None
@@ -938,6 +1153,7 @@ def _node_environment(api_url: str, node_path: str, dashboard_root: Path) -> dic
         "PATH": node_path,
         "ORCHESTRATOR_URL": api_url,
         "AIAT_OPERATOR_API_KEY": API_KEY,
+        "JWT_SECRET": "synthetic-research-brief-dashboard-session-secret",
     }
     for name in ("SYSTEMROOT", "WINDIR", "TEMP", "TMP"):
         value = os.environ.get(name)
@@ -984,6 +1200,109 @@ def _run_bff(
         check=False,
     )
     assert completed.returncode == 0, "BFF harness process failed"
+    return json.loads(completed.stdout)
+
+
+def _run_dashboard_browser(
+    *,
+    api_url: str,
+    node_path: str,
+    dashboard_root: Path,
+    project_id: UUID,
+) -> dict[str, Any]:
+    destination = urlsplit(api_url)
+    assert (
+        destination.scheme == "http"
+        and destination.hostname == "127.0.0.1"
+        and destination.port is not None
+        and 32768 <= destination.port <= 65535
+        and not destination.username
+        and not destination.password
+        and destination.path == ""
+        and not destination.query
+        and not destination.fragment
+    ), "the dashboard browser harness must reject non-loopback destinations"
+    script = dashboard_root / "scripts" / "run-research-brief-dashboard-browser.mjs"
+    command = [node_path, str(script), str(project_id)]
+    environment = _node_environment(api_url, node_path, dashboard_root)
+    working_directory: Path | None = dashboard_root
+
+    # WSL's packaged Node may be older than the dashboard's pinned Next release.
+    # When Windows Node is reachable through WSL interop, use it with converted
+    # local paths and a minimal Windows-only environment instead of inheriting
+    # the WSL environment or silently skipping the real browser path.
+    if os.name != "nt" and Path(node_path).name.lower() in {"node", "nodejs"}:
+        windows_node = shutil.which("node.exe")
+        wslpath = shutil.which("wslpath")
+        if windows_node and wslpath:
+            version = subprocess.run(
+                [node_path, "--version"], capture_output=True, text=True, timeout=5, check=False
+            )
+            version_text = version.stdout.strip().lstrip("v") if version.returncode == 0 else ""
+            node_major = int(version_text.split(".", 1)[0]) if version_text.split(".", 1)[0].isdigit() else 0
+            if node_major < 20:
+                def windows_path(path: Path) -> str:
+                    converted = subprocess.run(
+                        [wslpath, "-w", str(path)],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                        check=False,
+                    )
+                    assert converted.returncode == 0 and converted.stdout.strip()
+                    return converted.stdout.strip()
+
+                powershell = shutil.which("powershell.exe")
+                assert powershell is not None, "Windows temp directory lookup is unavailable"
+                temporary_directory = subprocess.run(
+                    [
+                        powershell,
+                        "-NoProfile",
+                        "-NonInteractive",
+                        "-Command",
+                        "[IO.Path]::GetTempPath()",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+                assert temporary_directory.returncode == 0
+                windows_temp = temporary_directory.stdout.strip().rstrip("\\/")
+                windows_node_path = windows_path(Path(windows_node))
+                windows_node_directory = windows_node_path.rsplit(chr(92), 1)[0]
+                windows_dashboard = windows_path(dashboard_root)
+                windows_script = windows_path(script)
+                environment = {
+                    "PATH": f"{windows_node_directory};C:\\Windows\\System32",
+                    "SYSTEMROOT": "C:\\Windows",
+                    "WINDIR": "C:\\Windows",
+                    "TEMP": windows_temp,
+                    "TMP": windows_temp,
+                    "NODE_ENV": "development",
+                    "NEXT_TELEMETRY_DISABLED": "1",
+                    "ORCHESTRATOR_URL": api_url,
+                    "AIAT_OPERATOR_API_KEY": API_KEY,
+                    "JWT_SECRET": "synthetic-research-brief-dashboard-session-secret",
+                    "NODE_PATH": f"{windows_dashboard}\\node_modules",
+                    "WSLENV": (
+                        "PATH:SYSTEMROOT:WINDIR:TEMP:TMP:NODE_ENV:NEXT_TELEMETRY_DISABLED:"
+                        "ORCHESTRATOR_URL:AIAT_OPERATOR_API_KEY:JWT_SECRET:NODE_PATH"
+                    ),
+                }
+                command = [windows_node, windows_script, str(project_id)]
+                working_directory = None
+
+    completed = subprocess.run(
+        command,
+        cwd=working_directory,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=240,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr.strip() or "dashboard browser harness failed"
     return json.loads(completed.stdout)
 
 
@@ -1046,9 +1365,10 @@ def _start_test_api(
     *,
     workspace_root: Path,
 ):
-    from orchestrator_api import main
+    from orchestrator_api import artifact_content, main
     from orchestrator_api.artifact_content import make_opencode_artifact_registrar
 
+    from mas_core.memory import blob as blob_module
     from mas_core.worker_contract import (
         AdapterContext,
         ModelMode,
@@ -1102,6 +1422,26 @@ def _start_test_api(
         assert secret_key == "synthetic-object-store-secret"
         assert bucket == "synthetic-research-brief"
         return _InMemoryBlobClient(storage.blob_objects, bucket=bucket)
+
+    monkeypatch.setattr(
+        blob_module,
+        "BlobClient",
+        lambda endpoint, *, access_key, secret_key, bucket="mas-agents": blob_client_factory(
+            endpoint,
+            access_key=access_key,
+            secret_key=secret_key,
+            bucket=bucket,
+        ),
+    )
+
+    monkeypatch.setattr(
+        artifact_content,
+        "new_artifact_blob_client",
+        lambda **_kwargs: _InMemoryBlobClient(
+            storage.blob_objects,
+            bucket="synthetic-research-brief",
+        ),
+    )
 
     async def synthetic_worker(run_request: Any, runtime: Any) -> WorkerResult:
         if run_request.task_type == "research.collect":
@@ -1600,5 +1940,86 @@ def test_research_brief_bff_controller_tool_evidence_and_project_completion(
             assert final_failed_names == sorted(expected_failed_evidence)
         else:
             assert final_evidence["body"]["status"] == "complete"
+    finally:
+        stop_api()
+
+
+def test_research_brief_dashboard_browser_uses_real_bff_and_verified_project_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Exercise the actual dashboard against the hermetic API/controller fixture."""
+
+    node_path, dashboard_root = _node_and_dashboard()
+    if not (dashboard_root / "node_modules" / "playwright").exists():
+        pytest.skip("dashboard Playwright runtime is not installed")
+    storage = _ResearchBriefStorage(
+        research_output={
+            "research_summary": "Synthetic findings persisted by the test fixture.",
+            "sources": [{"evidence_id": "source-1", "label": "Synthetic source"}],
+        },
+        require_report_document=True,
+    )
+    workspace_root = tmp_path / "browser-worker-workspace"
+    api_url, stop_api = _start_test_api(monkeypatch, storage, workspace_root=workspace_root)
+    try:
+        browser_result = _run_dashboard_browser(
+            api_url=api_url,
+            node_path=node_path,
+            dashboard_root=dashboard_root,
+            project_id=PROJECT_ID,
+        )
+
+        assert browser_result["project_id"] == str(PROJECT_ID)
+        assert browser_result["project_status"] == "COMPLETED"
+        assert browser_result["flow_status"] == "COMPLETED"
+        assert browser_result["evidence_status"] == "complete"
+        assert len(storage.admissions) == 2
+        assert [row["task_type"] for row in storage.admissions] == [
+            "research.collect",
+            "research.report",
+        ]
+        assert all(row["state"] == "SUCCEEDED" for row in storage.worker_runs.values())
+
+        report_run_id = UUID(str(browser_result["report_run_id"]))
+        report_run = storage.worker_runs[report_run_id]
+        assert report_run["project_id"] == PROJECT_ID
+        assert storage.report_inputs[report_run_id]["flow_context"]["worker_run_id"] == str(
+            browser_result["research_run_id"]
+        )
+        effects = storage.worker_tool_effects[
+            (report_run_id, f"research-brief-report:{report_run_id}")
+        ]
+        assert effects["state"] == "COMPLETED"
+        assert len(storage.artifacts) == 1
+        artifact = storage.artifacts[0]
+        metadata = artifact["metadata"]
+        assert metadata["project_id"] == str(PROJECT_ID)
+        assert metadata["worker_run_id"] == str(report_run_id)
+        assert metadata["worker_run_attempt"] == browser_result["artifact_attempt"]
+        assert metadata["blob_key"] == (
+            f"{PROJECT_ID}/worker-runs/{report_run_id}/"
+            f"attempt-{metadata['worker_run_attempt']}/reports/research-brief.md"
+        )
+        assert artifact["sha256"] == browser_result["artifact_sha256"]
+        document = storage.documents[0]
+        assert document["project_id"] == PROJECT_ID
+        assert document["doc_type"] == "RESEARCH_BRIEF"
+        assert document["blob_key"] == metadata["blob_key"]
+        assert document["blob_sha256"] == artifact["sha256"]
+
+        evidence = _run_bff(
+            mode="read-project-evidence",
+            api_url=api_url,
+            node_path=node_path,
+            dashboard_root=dashboard_root,
+        )
+        assert evidence["status"] == 200
+        assert evidence["body"]["status"] == "complete"
+        checks = {check["name"]: check["passed"] for check in evidence["body"]["checks"]}
+        assert checks["documents_exist"] is True
+        assert checks["document_bodies_retrievable"] is True
+        assert checks["artifacts_registered"] is True
+        assert checks["flow_terminal"] is True
     finally:
         stop_api()

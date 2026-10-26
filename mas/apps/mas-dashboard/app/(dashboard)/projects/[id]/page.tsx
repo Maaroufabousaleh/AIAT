@@ -208,6 +208,7 @@ interface ContextItem {
   size_bytes?: number;
   blob_bucket?: string;
   blob_key?: string;
+  blob_sha256?: string;
   url?: string;
   content_text?: string;
   metadata?: Record<string, unknown>;
@@ -347,6 +348,7 @@ interface WorkspaceSummary {
     metadata?: {
       project_id?: string;
       worker_run_id?: string;
+      worker_run_attempt?: number;
       blob_bucket?: string;
       blob_key?: string;
       blob_sha256?: string;
@@ -412,8 +414,16 @@ function hasDownloadableArtifactContent(
     return false;
   }
 
-  return metadata.blob_key ===
-    `${projectId}/worker-runs/${metadata.worker_run_id}/${path}`;
+  const attempt = metadata.worker_run_attempt;
+  const expectedRunPrefix = `${projectId.toLowerCase()}/worker-runs/${metadata.worker_run_id}/`;
+  if (attempt === undefined) {
+    return metadata.blob_key === `${expectedRunPrefix}${path}`;
+  }
+  return (
+    Number.isSafeInteger(attempt) &&
+    (attempt ?? 0) > 0 &&
+    metadata.blob_key === `${expectedRunPrefix}attempt-${attempt}/${path}`
+  );
 }
 
 interface ProjectWorkerRun {
@@ -889,6 +899,12 @@ export default function ProjectDetailPage() {
     artifactId: number;
     message: string;
   } | null>(null);
+  const [artifactEvidenceRegistrationId, setArtifactEvidenceRegistrationId] =
+    useState<number | null>(null);
+  const [artifactEvidenceRegistrationError, setArtifactEvidenceRegistrationError] =
+    useState<{ artifactId: number; message: string } | null>(null);
+  const [artifactEvidenceRegistrationNotice, setArtifactEvidenceRegistrationNotice] =
+    useState<{ artifactId: number; message: string } | null>(null);
   const documentPreviewRequestId = useRef(0);
   const [evidence, setEvidence] = useState<ProjectEvidence | null>(null);
   const [evidencePackage, setEvidencePackage] =
@@ -1237,7 +1253,25 @@ export default function ProjectDetailPage() {
             : `Could not download this document (HTTP ${response.status}).`,
         );
       }
+      const expectedDigest = item.blob_sha256?.toLowerCase();
+      const responseDigest = response.headers
+        .get("x-aiat-document-sha256")
+        ?.toLowerCase();
+      if (
+        !expectedDigest ||
+        !SHA256_PATTERN.test(expectedDigest) ||
+        responseDigest !== expectedDigest
+      ) {
+        throw new Error("Document metadata did not match the downloaded content.");
+      }
       const blob = await response.blob();
+      const digestBytes = await crypto.subtle.digest("SHA-256", await blob.arrayBuffer());
+      const actualDigest = Array.from(new Uint8Array(digestBytes), (byte) =>
+        byte.toString(16).padStart(2, "0"),
+      ).join("");
+      if (actualDigest !== expectedDigest) {
+        throw new Error("Downloaded document checksum did not match its registered metadata.");
+      }
       const contentType = (response.headers.get("content-type") ?? "")
         .split(";", 1)[0]
         .trim()
@@ -1302,7 +1336,31 @@ export default function ProjectDetailPage() {
         );
       }
 
+      const expectedDigest = artifact.sha256?.toLowerCase();
+      const responseDigest = response.headers
+        .get("x-aiat-artifact-sha256")
+        ?.toLowerCase();
+      const responseSize = response.headers.get("x-aiat-artifact-size");
+      if (
+        !expectedDigest ||
+        responseDigest !== expectedDigest ||
+        !responseSize ||
+        !/^\d{1,10}$/.test(responseSize) ||
+        Number(responseSize) !== artifact.size_bytes
+      ) {
+        throw new Error("Artifact metadata did not match the downloaded content.");
+      }
       const blob = await response.blob();
+      if (blob.size !== artifact.size_bytes) {
+        throw new Error("Downloaded artifact size did not match its registered metadata.");
+      }
+      const digestBytes = await crypto.subtle.digest("SHA-256", await blob.arrayBuffer());
+      const actualDigest = Array.from(new Uint8Array(digestBytes), (byte) =>
+        byte.toString(16).padStart(2, "0"),
+      ).join("");
+      if (actualDigest !== expectedDigest) {
+        throw new Error("Downloaded artifact checksum did not match its registered metadata.");
+      }
       const disposition = response.headers.get("content-disposition") ?? "";
       const providedFilename = disposition.match(
         /^attachment;\s*filename="([a-zA-Z0-9][a-zA-Z0-9._-]{0,99})"$/i,
@@ -1520,6 +1578,46 @@ export default function ProjectDetailPage() {
       if (isCurrentProjectLoad()) setWorkspaceLoading(false);
     }
   }, [handleAccessDenied, id]);
+
+  async function handleRegisterResearchBriefEvidence(
+    artifact: WorkspaceSummary["artifacts"][number],
+  ) {
+    if (!hasDownloadableArtifactContent(artifact, id) || artifact.id === undefined) return;
+    setArtifactEvidenceRegistrationId(artifact.id);
+    setArtifactEvidenceRegistrationError(null);
+    setArtifactEvidenceRegistrationNotice(null);
+    try {
+      const response = await fetch(`/api/projects/${encodeURIComponent(id)}/documents`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ artifact_id: artifact.id }),
+      });
+      if (handleDeniedResponse(response)) return;
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(
+          payload && typeof payload.error === "string"
+            ? payload.error
+            : `Project evidence registration failed (HTTP ${response.status}).`,
+        );
+      }
+      setArtifactEvidenceRegistrationNotice({
+        artifactId: artifact.id,
+        message: "Research Brief registered as project evidence.",
+      });
+      await Promise.all([loadWorkspace(), loadEvidence()]);
+    } catch (error) {
+      setArtifactEvidenceRegistrationError({
+        artifactId: artifact.id,
+        message:
+          error instanceof Error
+            ? error.message
+            : "Project evidence registration failed. Refresh the project and try again.",
+      });
+    } finally {
+      setArtifactEvidenceRegistrationId(null);
+    }
+  }
 
   async function loadOlderProjectWorkerRuns() {
     const loadGeneration = projectWorkerRunsLoadGenerationRef.current;
@@ -3797,6 +3895,41 @@ export default function ProjectDetailPage() {
                               )}
                             </div>
                           )}
+                          {artifact.path === "reports/research-brief.md" &&
+                            hasDownloadableArtifactContent(artifact, id) && (
+                              <div className="mt-2">
+                                <button
+                                  type="button"
+                                  data-testid={`register-research-brief-evidence-${artifact.id}`}
+                                  aria-label="Register Research Brief as project evidence"
+                                  onClick={() => void handleRegisterResearchBriefEvidence(artifact)}
+                                  disabled={artifactEvidenceRegistrationId === artifact.id}
+                                  className="inline-flex min-h-11 items-center rounded-md border border-emerald-700/60 px-3 py-2 text-xs font-medium text-emerald-200 hover:bg-emerald-950/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 disabled:cursor-wait disabled:opacity-50"
+                                >
+                                  {artifactEvidenceRegistrationId === artifact.id
+                                    ? "Verifying report…"
+                                    : "Register report as project evidence"}
+                                </button>
+                                {artifactEvidenceRegistrationError && artifactEvidenceRegistrationError.artifactId === artifact.id && (
+                                  <p
+                                    role="alert"
+                                    data-testid="research-brief-evidence-registration-error"
+                                    className="mt-2 text-xs text-rose-300"
+                                  >
+                                    {artifactEvidenceRegistrationError.message}
+                                  </p>
+                                )}
+                                {artifactEvidenceRegistrationNotice && artifactEvidenceRegistrationNotice.artifactId === artifact.id && (
+                                  <p
+                                    role="status"
+                                    data-testid="research-brief-evidence-registration-success"
+                                    className="mt-2 text-xs text-emerald-200"
+                                  >
+                                    {artifactEvidenceRegistrationNotice.message}
+                                  </p>
+                                )}
+                              </div>
+                            )}
                         </div>
                       );
                     })

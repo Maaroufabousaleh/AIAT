@@ -18,6 +18,7 @@
     "test:issue-bff": "node --test scripts/test-project-issue-bff.test.mjs",
     "test:project-transition-bff": "node --test scripts/test-project-transition-bff.test.mjs",
     "test:project-document-bff": "node --test scripts/test-project-document-bff.test.mjs",
+    "test:research-brief-evidence-bff": "node --test scripts/test-project-research-brief-evidence-bff.test.mjs",
     "test:legacy-auth-helpers": "node --test scripts/test-legacy-auth-helpers.test.mjs"
   },
   "dependencies": {
