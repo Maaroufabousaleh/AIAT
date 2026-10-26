@@ -637,7 +637,7 @@ async def test_non_llm_dispatch_keeps_policy_snapshot_out_of_model_attribution(
 
     class ProjectDispatchStorage(_DispatchStorage):
         async def get_project(self, project_id):
-            return {"id": project_id, "company_id": None}
+            return {"id": project_id, "state": "IN_PROGRESS", "company_id": None}
 
         async def list_company_worker_assignments(self, _company_id):
             return []
@@ -796,6 +796,7 @@ async def test_external_process_dispatch_is_blocked_before_run_or_budget_writes(
     assert storage.run_creations == []
     assert controller_instances == []
 
+
 @pytest.mark.anyio
 @pytest.mark.parametrize("dispatch_mode", ["inline", "queued"])
 @pytest.mark.parametrize(
@@ -877,13 +878,165 @@ async def test_external_unverified_transport_is_blocked_before_run_or_budget_wri
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("project_state", ["COMPLETED", "FAILED", "ARCHIVED"])
+async def test_terminal_project_cannot_create_worker_run(
+    client, monkeypatch, project_state: str
+) -> None:
+    import orchestrator_api.main as main
+
+    class TerminalProjectStorage(_DispatchStorage):
+        async def get_project(self, project_id):
+            return {"id": project_id, "state": project_state, "company_id": None}
+
+    storage = TerminalProjectStorage()
+    _patch_storage(storage)
+    adapter_factory = AsyncMock(return_value=_Adapter())
+    monkeypatch.setattr(main, "_certified_worker_adapter", adapter_factory)
+
+    response = await client.post(
+        "/workers/runs",
+        json={
+            "worker_id": str(WORKER_ID),
+            "idempotency_key": f"terminal-project-{project_state.lower()}",
+            "task_type": "test.run",
+            "project_id": str(PROJECT_ID),
+            "dispatch_mode": "queued",
+        },
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == {
+        "code": "PROJECT_TERMINAL",
+        "message": "Worker Runs cannot be dispatched for a terminal project",
+        "project_id": str(PROJECT_ID),
+        "state": project_state,
+    }
+    assert storage.snapshots == []
+    assert storage.reservations == []
+    adapter_factory.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_non_dispatchable_project_cannot_create_worker_run(client, monkeypatch) -> None:
+    import orchestrator_api.main as main
+
+    class NonDispatchableProjectStorage(_DispatchStorage):
+        async def get_project(self, project_id):
+            return {"id": project_id, "state": "SECURITY_BLOCKED", "company_id": None}
+
+    storage = NonDispatchableProjectStorage()
+    _patch_storage(storage)
+    adapter_factory = AsyncMock(return_value=_Adapter())
+    monkeypatch.setattr(main, "_certified_worker_adapter", adapter_factory)
+
+    response = await client.post(
+        "/workers/runs",
+        json={
+            "worker_id": str(WORKER_ID),
+            "idempotency_key": "security-blocked-project",
+            "task_type": "test.run",
+            "project_id": str(PROJECT_ID),
+            "dispatch_mode": "queued",
+        },
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == {
+        "code": "PROJECT_NOT_DISPATCHABLE",
+        "message": "The selected project is not in a dispatchable workflow state",
+        "project_id": str(PROJECT_ID),
+        "state": "SECURITY_BLOCKED",
+    }
+    assert storage.snapshots == []
+    assert storage.reservations == []
+    adapter_factory.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_missing_selected_project_cannot_create_worker_run(client, monkeypatch) -> None:
+    import orchestrator_api.main as main
+
+    class MissingProjectStorage(_DispatchStorage):
+        async def get_project(self, _project_id):
+            return None
+
+    storage = MissingProjectStorage()
+    _patch_storage(storage)
+    adapter_factory = AsyncMock(return_value=_Adapter())
+    monkeypatch.setattr(main, "_certified_worker_adapter", adapter_factory)
+
+    response = await client.post(
+        "/workers/runs",
+        json={
+            "worker_id": str(WORKER_ID),
+            "idempotency_key": "missing-selected-project",
+            "task_type": "test.run",
+            "project_id": str(PROJECT_ID),
+            "dispatch_mode": "queued",
+        },
+    )
+
+    assert response.status_code == 404, response.text
+    assert response.json()["detail"] == {
+        "code": "PROJECT_NOT_FOUND",
+        "message": "The selected project does not exist",
+        "project_id": str(PROJECT_ID),
+    }
+    assert storage.snapshots == []
+    assert storage.reservations == []
+    adapter_factory.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_draining_worker_cannot_accept_a_new_worker_run(client, monkeypatch) -> None:
+    import orchestrator_api.main as main
+
+    class DrainingWorkerStorage(_DispatchStorage):
+        def __init__(self):
+            super().__init__()
+            self.created_runs = []
+
+        async def get_worker(self, worker_id):
+            worker = await super().get_worker(worker_id)
+            if worker is not None:
+                worker["status"] = "DRAINING"
+            return worker
+
+        async def create_worker_run(self, **kwargs):
+            self.created_runs.append(kwargs)
+            return await super().create_worker_run(**kwargs)
+
+    storage = DrainingWorkerStorage()
+    _patch_storage(storage)
+    adapter_factory = AsyncMock(return_value=_Adapter())
+    monkeypatch.setattr(main, "_certified_worker_adapter", adapter_factory)
+
+    response = await client.post(
+        "/workers/runs",
+        json={
+            "worker_id": str(WORKER_ID),
+            "idempotency_key": "draining-worker-new-run",
+            "task_type": "test.run",
+            "dispatch_mode": "queued",
+        },
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == "Worker is not active"
+    assert storage.created_runs == []
+    assert storage.snapshots == []
+    assert storage.reservations == []
+    adapter_factory.assert_not_awaited()
+
+
+@pytest.mark.anyio
 async def test_company_dispatch_rejects_grants_outside_active_assignment(
     client, monkeypatch
 ) -> None:
     class CompanyStorage(_DispatchStorage):
         async def get_project(self, project_id):
             assert project_id == PROJECT_ID
-            return {"id": project_id, "company_id": COMPANY_ID}
+            return {"id": project_id, "state": "IN_PROGRESS", "company_id": COMPANY_ID}
 
         async def list_company_worker_assignments(self, company_id):
             assert company_id == COMPANY_ID
@@ -932,7 +1085,7 @@ async def test_company_dispatch_rejects_assignment_pending_approval(client, monk
 
         async def get_project(self, project_id):
             assert project_id == PROJECT_ID
-            return {"id": project_id, "company_id": COMPANY_ID}
+            return {"id": project_id, "state": "IN_PROGRESS", "company_id": COMPANY_ID}
 
         async def list_company_worker_assignments(self, company_id):
             assert company_id == COMPANY_ID
@@ -990,7 +1143,7 @@ async def test_company_dispatch_accepts_active_assignment_without_pending_approv
 
         async def get_project(self, project_id):
             assert project_id == PROJECT_ID
-            return {"id": project_id, "company_id": COMPANY_ID}
+            return {"id": project_id, "state": "IN_PROGRESS", "company_id": COMPANY_ID}
 
         async def list_company_worker_assignments(self, company_id):
             assert company_id == COMPANY_ID

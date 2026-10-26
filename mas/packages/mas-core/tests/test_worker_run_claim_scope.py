@@ -264,6 +264,179 @@ async def test_claim_rechecks_project_and_assignment_before_any_write(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("project_state", ["COMPLETED", "SECURITY_BLOCKED"])
+async def test_new_worker_run_locks_project_and_rejects_nondispatchable_state(
+    project_state: str,
+) -> None:
+    statements: list[object] = []
+
+    async def execute(statement: object) -> _Result:
+        statements.append(statement)
+        sql = str(statement)
+        if "FROM worker_runs" in sql:
+            return _Result()
+        if "FROM projects" in sql:
+            return _Result([{"id": PROJECT_ID, "state": project_state}])
+        raise AssertionError("worker or run writes must not be reached for stale project state")
+
+    connection = MagicMock()
+    connection.execute = AsyncMock(side_effect=execute)
+    transaction = MagicMock()
+    transaction.__aenter__ = AsyncMock(return_value=connection)
+    transaction.__aexit__ = AsyncMock(return_value=False)
+    engine = MagicMock()
+    engine.begin.return_value = transaction
+    storage = AgentStorage.__new__(AgentStorage)
+    storage._engine = engine
+
+    with pytest.raises(ValueError, match="project state changed before WorkerRun dispatch"):
+        await storage.create_worker_run(
+            run_id=RUN_ID,
+            worker_id=WORKER_ID,
+            idempotency_key="project-state-race",
+            task_type="test",
+            request={"worker_id": str(WORKER_ID), "project_id": str(PROJECT_ID)},
+            project_id=PROJECT_ID,
+        )
+
+    assert len(statements) == 2
+    assert "FROM worker_runs" in str(statements[0])
+    assert "FROM projects" in str(statements[1])
+    assert "FOR UPDATE" in str(statements[1]).upper()
+
+
+@pytest.mark.asyncio
+async def test_worker_run_idempotency_recheck_does_not_lock_after_project() -> None:
+    statements: list[object] = []
+    run_select_count = 0
+    concurrent_run = {
+        "id": UUID("00000000-0000-4000-a000-000000000909"),
+        "worker_id": WORKER_ID,
+        "project_id": PROJECT_ID,
+        "idempotency_key": "same-request",
+        "state": "QUEUED",
+    }
+
+    async def execute(statement: object) -> _Result:
+        nonlocal run_select_count
+        statements.append(statement)
+        sql = str(statement)
+        if "FROM worker_runs" in sql and sql.lstrip().startswith("SELECT"):
+            run_select_count += 1
+            return _Result([] if run_select_count == 1 else [concurrent_run])
+        if "FROM projects" in sql:
+            return _Result([{"id": PROJECT_ID, "state": "IN_PROGRESS"}])
+        if "FROM worker_registry" in sql:
+            return _Result([_worker(active_skill_bundle_id=None)])
+        raise AssertionError("an existing idempotent run should return before writes")
+
+    connection = MagicMock()
+    connection.execute = AsyncMock(side_effect=execute)
+    transaction = MagicMock()
+    transaction.__aenter__ = AsyncMock(return_value=connection)
+    transaction.__aexit__ = AsyncMock(return_value=False)
+    engine = MagicMock()
+    engine.begin.return_value = transaction
+    storage = AgentStorage.__new__(AgentStorage)
+    storage._engine = engine
+
+    result = await storage.create_worker_run(
+        run_id=RUN_ID,
+        worker_id=WORKER_ID,
+        idempotency_key="same-request",
+        task_type="test",
+        request={"worker_id": str(WORKER_ID), "project_id": str(PROJECT_ID)},
+        project_id=PROJECT_ID,
+    )
+
+    assert result == concurrent_run
+    sql = [str(statement) for statement in statements]
+    assert "FOR UPDATE" in sql[0].upper()  # lookup before acquiring project
+    project_index = next(i for i, value in enumerate(sql) if "FROM projects" in value)
+    worker_index = next(i for i, value in enumerate(sql) if "FROM worker_registry" in value)
+    recheck_index = max(i for i, value in enumerate(sql) if "FROM worker_runs" in value)
+    assert "FOR UPDATE" in sql[project_index].upper()
+    assert "FOR UPDATE" in sql[worker_index].upper()
+    assert project_index < worker_index < recheck_index
+    assert "FOR UPDATE" not in sql[recheck_index].upper()
+
+
+@pytest.mark.asyncio
+async def test_retry_lookup_does_not_lock_claimable_existing_retry() -> None:
+    statements: list[object] = []
+    worker_run_select_count = 0
+    existing_retry = {
+        "id": UUID("00000000-0000-4000-a000-000000000910"),
+        "worker_id": WORKER_ID,
+        "project_id": PROJECT_ID,
+        "idempotency_key": "retry-request",
+        "retry_of_run_id": UUID("00000000-0000-4000-a000-000000000911"),
+        "state": "QUEUED",
+    }
+
+    async def execute(statement: object) -> _Result:
+        nonlocal worker_run_select_count
+        statements.append(statement)
+        sql = str(statement)
+        if "FROM worker_runs" in sql and sql.lstrip().startswith("SELECT"):
+            worker_run_select_count += 1
+            if worker_run_select_count == 1:
+                return _Result([])
+            if worker_run_select_count == 2:
+                return _Result(
+                    [
+                        {
+                            "id": existing_retry["retry_of_run_id"],
+                            "worker_id": WORKER_ID,
+                            "state": "FAILED",
+                        }
+                    ]
+                )
+            if worker_run_select_count == 3:
+                return _Result([existing_retry])
+            raise AssertionError("unexpected worker-run lookup")
+        if "FROM projects" in sql:
+            return _Result([{"id": PROJECT_ID, "state": "IN_PROGRESS"}])
+        if "FROM worker_registry" in sql:
+            return _Result([_worker(active_skill_bundle_id=None)])
+        raise AssertionError("the existing retry should return before writes")
+
+    connection = MagicMock()
+    connection.execute = AsyncMock(side_effect=execute)
+    transaction = MagicMock()
+    transaction.__aenter__ = AsyncMock(return_value=connection)
+    transaction.__aexit__ = AsyncMock(return_value=False)
+    engine = MagicMock()
+    engine.begin.return_value = transaction
+    storage = AgentStorage.__new__(AgentStorage)
+    storage._engine = engine
+
+    result = await storage.create_worker_run(
+        run_id=RUN_ID,
+        worker_id=WORKER_ID,
+        idempotency_key="retry-request",
+        task_type="test",
+        request={"worker_id": str(WORKER_ID), "project_id": str(PROJECT_ID)},
+        project_id=PROJECT_ID,
+        retry_of_run_id=existing_retry["retry_of_run_id"],
+    )
+
+    assert result == existing_retry
+    sql = [str(statement) for statement in statements]
+    worker_run_indexes = [
+        i for i, value in enumerate(sql)
+        if "FROM worker_runs" in value and value.lstrip().startswith("SELECT")
+    ]
+    project_index = next(i for i, value in enumerate(sql) if "FROM projects" in value)
+    worker_index = next(i for i, value in enumerate(sql) if "FROM worker_registry" in value)
+    initial_index, source_index, retry_index = worker_run_indexes
+    assert initial_index < project_index < worker_index < source_index < retry_index
+    assert "FOR UPDATE" in sql[initial_index].upper()
+    assert "FOR UPDATE" in sql[source_index].upper()  # terminal retry source
+    assert "FOR UPDATE" not in sql[retry_index].upper()  # may be claimed concurrently
+
+
+@pytest.mark.asyncio
 async def test_claim_locks_current_scope_before_persisting_claim() -> None:
     storage, statements = _storage_for_claim()
 

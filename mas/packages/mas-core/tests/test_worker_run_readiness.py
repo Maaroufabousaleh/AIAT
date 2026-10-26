@@ -93,6 +93,19 @@ def test_inactive_worker_terminal_project_and_missing_immutable_records_block() 
     assert "project_terminal" in codes
 
 
+def test_draining_worker_blocks_readiness_for_a_new_run() -> None:
+    inputs = _inputs()
+    worker = dict(inputs["worker"])
+    worker["status"] = "DRAINING"
+    inputs["worker"] = worker
+
+    report = evaluate_worker_run_readiness(**inputs)
+
+    codes = {item["code"] for item in report["blockers"]}
+    assert report["status"] == "blocked"
+    assert "worker_not_active" in codes
+
+
 def test_source_backed_worker_requires_hardened_sandbox_by_default() -> None:
     inputs = _inputs()
     worker = dict(inputs["worker"])

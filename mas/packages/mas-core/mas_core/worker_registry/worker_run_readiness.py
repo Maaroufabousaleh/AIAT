@@ -30,6 +30,8 @@ from .execution_lineage import (
 )
 
 WORKER_RUN_READINESS_SCHEMA = "aiat.worker-run-readiness.v1"
+# DRAINING workers may finish queued work, but cannot accept newly dispatched runs.
+DISPATCHABLE_WORKER_STATUSES = frozenset({"ACTIVE"})
 
 # These are the project states in which a governed worker task can be
 # selected.  Terminal, security-blocked, and failed projects must be resumed
@@ -353,8 +355,13 @@ def evaluate_worker_run_readiness(
                 )
         if _text(worker.get("id")) and _text(worker.get("id")) != selected_worker_id:
             blockers.append(_blocker("worker_selection_mismatch", "the returned worker ID differs from the selected worker ID"))
-        if worker_status not in {"ACTIVE", "DRAINING"}:
-            blockers.append(_blocker("worker_not_active", "the selected worker must be ACTIVE or DRAINING"))
+        if worker_status not in DISPATCHABLE_WORKER_STATUSES:
+            blockers.append(
+                _blocker(
+                    "worker_not_active",
+                    "new Worker Runs require an ACTIVE worker; DRAINING workers finish already-dispatched work",
+                )
+            )
         if not _text(worker.get("version_pin")):
             blockers.append(_blocker("worker_version_pin_missing", "the worker has no immutable source/runtime version pin"))
         if _text(worker.get("evaluation_status")).lower() != "approved":
@@ -553,6 +560,7 @@ def evaluate_worker_run_readiness(
 
 __all__ = [
     "DISPATCHABLE_PROJECT_STATES",
+    "DISPATCHABLE_WORKER_STATUSES",
     "HARDENED_SANDBOX_PROFILES",
     "REQUIRED_BUDGETS",
     "REQUIRED_WORKER_POINTERS",

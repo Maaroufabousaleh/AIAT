@@ -75,6 +75,8 @@ async def test_compatible_migration_preserves_active_node_and_records_transition
 
     assert response.status_code == 200
     assert storage.migrate_flow_instance.await_args.kwargs["active_node_ids"] == ["task"]
+    assert storage.migrate_flow_instance.await_args.kwargs["expected_instance_snapshot"]["id"] == INSTANCE_ID
+    assert storage.migrate_flow_instance.await_args.kwargs["expected_instance_snapshot"]["active_node_ids"] == ["task"]
     assert storage.migrate_flow_instance.await_args.kwargs["migration_record"]["actor_id"] == "operator"
     assert storage.transition_project.await_args.kwargs["event"] == "flow_migrated"
 
@@ -133,6 +135,7 @@ async def test_graph_rewrite_requires_explicit_mapping_and_is_audited(client):
     assert mapped.status_code == 200
     kwargs = storage.migrate_flow_instance.await_args.kwargs
     assert kwargs["active_node_ids"] == ["review"]
+    assert kwargs["expected_instance_snapshot"]["active_node_ids"] == ["task"]
     assert kwargs["migration_record"]["graph_rewrite"] is True
 
 

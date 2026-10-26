@@ -14,6 +14,12 @@ OPERATOR_HEADERS = {"X-API-Key": "test-operator-key"}
 def _patch_state(storage) -> None:
     from orchestrator_api.main import app
 
+    if not isinstance(storage.get_project, AsyncMock):
+        storage.get_project = AsyncMock(return_value={"id": PROJECT_ID, "state": "IN_PROGRESS"})
+    elif storage.get_project.side_effect is None and isinstance(
+        storage.get_project.return_value, AsyncMock
+    ):
+        storage.get_project.return_value = {"id": PROJECT_ID, "state": "IN_PROGRESS"}
     app.state.storage = storage
 
 
@@ -274,6 +280,8 @@ async def test_compatible_flow_migration_preserves_active_nodes_and_history(clie
     assert kwargs["active_node_ids"] == ["feasibility_review"]
     assert kwargs["migration_record"]["from_flow_version"] == 1
     assert kwargs["migration_record"]["to_flow_version"] == 2
+    assert kwargs["expected_instance_snapshot"]["id"] == FLOW_INSTANCE_ID
+    assert kwargs["expected_instance_snapshot"]["active_node_ids"] == ["feasibility_review"]
     storage.transition_project.assert_awaited_once()
     assert storage.transition_project.await_args.kwargs["event"] == "flow_migrated"
 
@@ -352,6 +360,7 @@ async def test_graph_rewrite_migration_requires_explicit_mapping_and_preserves_h
     assert kwargs["migration_record"]["graph_rewrite"] is True
     assert kwargs["migration_record"]["active_node_mapping"] == {"feasibility_review": "review"}
     assert kwargs["migration_record"]["preserved_active_node_ids"] == ["feasibility_review"]
+    assert kwargs["expected_instance_snapshot"]["active_node_ids"] == ["feasibility_review"]
 
 
 @pytest.mark.anyio
@@ -458,18 +467,16 @@ async def test_create_flow_instance_records_assignment_audit(client):
 
 @pytest.mark.anyio
 async def test_start_flow_instance_uses_custom_flow_definition(client):
+    initial_instance = _instance(active_node_ids=[], status="NOT_STARTED")
+    initial_instance["active_node_ids"] = []
+    started_instance = _instance(active_node_ids=["intake"], status="RUNNING")
     storage = MagicMock()
-    storage.get_flow_instance = AsyncMock(
-        side_effect=[
-            _instance(active_node_ids=[], status="NOT_STARTED"),
-            _instance(active_node_ids=["intake"], status="RUNNING"),
-        ]
-    )
+    storage.get_flow_instance = AsyncMock(return_value=initial_instance)
+    storage.get_project = AsyncMock(return_value={"id": PROJECT_ID, "state": "IN_PROGRESS"})
     storage.get_flow = AsyncMock(return_value=_flow())
-    storage.update_flow_instance = AsyncMock(
-        return_value=_instance(active_node_ids=["intake"], status="RUNNING")
+    storage.activate_flow_nodes = AsyncMock(
+        return_value={"outcome": "applied", "instance": started_instance, "executions": [{"id": 8}]}
     )
-    storage.create_flow_node_execution = AsyncMock(return_value={"id": 1})
     _patch_state(storage)
 
     response = await client.post(
@@ -479,10 +486,192 @@ async def test_start_flow_instance_uses_custom_flow_definition(client):
 
     assert response.status_code == 200
     assert response.json()["active_node_ids"] == ["intake"]
-    storage.update_flow_instance.assert_awaited_once()
-    _, kwargs = storage.create_flow_node_execution.await_args
-    assert kwargs["node_id"] == "intake"
-    assert kwargs["node_label"] == "Intake"
+    storage.activate_flow_nodes.assert_awaited_once()
+    kwargs = storage.activate_flow_nodes.await_args.kwargs
+    assert kwargs["expected_statuses"] == {"NOT_STARTED"}
+    assert kwargs["expected_active_node_ids"] == []
+    assert kwargs["expected_instance_snapshot"]["status"] == "NOT_STARTED"
+    assert kwargs["instance_updates"]["status"] == "RUNNING"
+    assert kwargs["activations"][0]["node_id"] == "intake"
+    assert kwargs["activations"][0]["node_label"] == "Intake"
+    storage.update_flow_instance.assert_not_called()
+    storage.create_flow_node_execution.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_start_flow_instance_rejects_terminal_project_before_flow_write(client):
+    storage = MagicMock()
+    storage.get_flow_instance = AsyncMock(
+        return_value=_instance(active_node_ids=[], status="NOT_STARTED")
+    )
+    storage.get_project = AsyncMock(return_value={"id": PROJECT_ID, "state": "COMPLETED"})
+    storage.activate_flow_nodes = AsyncMock()
+    _patch_state(storage)
+
+    response = await client.post(
+        f"/flows/instances/{FLOW_INSTANCE_ID}/action",
+        json={"action": "start"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "PROJECT_TERMINAL"
+    storage.get_flow.assert_not_called()
+    storage.activate_flow_nodes.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_start_flow_instance_rechecks_project_at_atomic_activation_boundary(client):
+    storage = MagicMock()
+    storage.get_flow_instance = AsyncMock(
+        return_value=_instance(active_node_ids=[], status="NOT_STARTED")
+    )
+    storage.get_project = AsyncMock(return_value={"id": PROJECT_ID, "state": "IN_PROGRESS"})
+    storage.get_flow = AsyncMock(return_value=_flow())
+    storage.activate_flow_nodes = AsyncMock(return_value={"outcome": "project_terminal"})
+    _patch_state(storage)
+
+    response = await client.post(
+        f"/flows/instances/{FLOW_INSTANCE_ID}/action",
+        json={"action": "start"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "PROJECT_TERMINAL"
+    storage.activate_flow_nodes.assert_awaited_once()
+    storage.update_flow_instance.assert_not_called()
+    storage.create_flow_node_execution.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_start_flow_rejects_nondispatchable_project_at_atomic_activation(client):
+    storage = MagicMock()
+    storage.get_flow_instance = AsyncMock(
+        return_value=_instance(active_node_ids=[], status="NOT_STARTED")
+    )
+    storage.get_project = AsyncMock(return_value={"id": PROJECT_ID, "state": "IN_PROGRESS"})
+    storage.get_flow = AsyncMock(return_value=_flow())
+    storage.activate_flow_nodes = AsyncMock(return_value={"outcome": "project_not_dispatchable"})
+    _patch_state(storage)
+
+    response = await client.post(
+        f"/flows/instances/{FLOW_INSTANCE_ID}/action",
+        json={"action": "start"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "PROJECT_NOT_DISPATCHABLE"
+    storage.activate_flow_nodes.assert_awaited_once()
+    storage.update_flow_instance.assert_not_called()
+    storage.create_flow_node_execution.assert_not_called()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("action", "flow_status"),
+    [("start", "NOT_STARTED"), ("resume", "PAUSED"), ("pause", "RUNNING")],
+)
+async def test_terminal_project_blocks_flow_execution_actions(client, action, flow_status):
+    storage = MagicMock()
+    storage.get_flow_instance = AsyncMock(
+        return_value=_instance(active_node_ids=[], status=flow_status)
+    )
+    storage.get_project = AsyncMock(return_value={"id": PROJECT_ID, "state": "COMPLETED"})
+    storage.get_flow = AsyncMock()
+    storage.activate_flow_nodes = AsyncMock()
+    _patch_state(storage)
+
+    response = await client.post(
+        f"/flows/instances/{FLOW_INSTANCE_ID}/action",
+        json={"action": action},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "PROJECT_TERMINAL"
+    storage.get_flow.assert_not_awaited()
+    storage.activate_flow_nodes.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_node_action_rejects_terminal_project_before_dispatch(client, monkeypatch):
+    from orchestrator_api import main
+
+    instance = _instance(active_node_ids=["governed_task"], status="RUNNING")
+    instance["context_json"] = {
+        "active_worker_runs": {},
+    }
+    storage = MagicMock()
+    storage.get_flow_instance = AsyncMock(return_value=instance)
+    storage.get_project = AsyncMock(return_value={"id": PROJECT_ID, "state": "ARCHIVED"})
+    storage.get_flow = AsyncMock()
+    storage.list_flow_node_executions = AsyncMock()
+    storage.update_flow_instance = AsyncMock()
+    storage.activate_flow_nodes = AsyncMock()
+    _patch_state(storage)
+    dispatch = AsyncMock()
+    monkeypatch.setattr(main, "dispatch_worker_run", dispatch)
+
+    response = await client.post(
+        f"/flows/instances/{FLOW_INSTANCE_ID}/node-action",
+        json={"node_id": "governed_task", "action": "advance"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "PROJECT_TERMINAL"
+    storage.get_flow.assert_not_awaited()
+    storage.list_flow_node_executions.assert_not_awaited()
+    storage.update_flow_instance.assert_not_awaited()
+    storage.activate_flow_nodes.assert_not_awaited()
+    dispatch.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_node_activation_rechecks_project_before_task_dispatch(client, monkeypatch):
+    from orchestrator_api import main
+
+    instance = _instance(active_node_ids=["intake"], status="RUNNING")
+    flow = _flow()
+    worker_id = str(uuid4())
+    flow["definition_json"] = {
+        "nodes": [
+            {"id": "intake", "type": "start", "label": "Intake", "config": {}},
+            {
+                "id": "governed_task",
+                "type": "task",
+                "label": "Governed task",
+                "config": {"worker_id": worker_id, "task_type": "implementation"},
+            },
+            {"id": "done", "type": "end", "label": "Done", "config": {}},
+        ],
+        "edges": [
+            {"id": "start-task", "source": "intake", "target": "governed_task"},
+            {"id": "task-end", "source": "governed_task", "target": "done"},
+        ],
+    }
+    storage = MagicMock()
+    storage.get_flow_instance = AsyncMock(return_value=instance)
+    storage.get_project = AsyncMock(return_value={"id": PROJECT_ID, "state": "IN_PROGRESS"})
+    storage.get_flow = AsyncMock(return_value=flow)
+    storage.list_flow_node_executions = AsyncMock(
+        side_effect=[
+            [{"id": 51, "node_id": "intake", "status": "RUNNING"}],
+            [{"id": 51, "node_id": "intake", "status": "COMPLETED"}],
+        ]
+    )
+    storage.update_flow_node_execution = AsyncMock(return_value={"id": 51})
+    storage.activate_flow_nodes = AsyncMock(return_value={"outcome": "project_terminal"})
+    _patch_state(storage)
+    dispatch = AsyncMock()
+    monkeypatch.setattr(main, "dispatch_worker_run", dispatch)
+
+    response = await client.post(
+        f"/flows/instances/{FLOW_INSTANCE_ID}/node-action",
+        json={"node_id": "intake", "action": "complete"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "PROJECT_TERMINAL"
+    storage.activate_flow_nodes.assert_awaited_once()
+    dispatch.assert_not_awaited()
 
 
 @pytest.mark.anyio
@@ -537,6 +726,9 @@ async def test_switch_flow_instance_records_audit_event(client):
     )
 
     assert response.status_code == 200
+    switch_kwargs = storage.switch_flow_instance.await_args.kwargs
+    assert switch_kwargs["expected_instance_snapshot"]["id"] == FLOW_INSTANCE_ID
+    assert switch_kwargs["expected_instance_snapshot"]["status"] == "RUNNING"
     storage.transition_project.assert_awaited_once()
     _, kwargs = storage.transition_project.await_args
     assert kwargs["event"] == "flow_switched"

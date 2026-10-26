@@ -13,7 +13,7 @@ Tests for Projects CRUD endpoints:
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from conftest import PROJECT_ID, _fake_project
@@ -941,6 +941,7 @@ async def test_project_completion_requires_persisted_software_delivery_evidence(
 @pytest.mark.anyio
 async def test_project_completion_allows_complete_manual_evidence_policy(client):
     project = _fake_project("KPI_PERSISTENCE")
+    project["revision"] = 7
     project["config"] = {
         "evidence_policy": {"policy_id": "manual", "version": "1.0", "requirements": {}}
     }
@@ -961,7 +962,85 @@ async def test_project_completion_allows_complete_manual_evidence_policy(client)
     assert response.json()["next_state"] == "COMPLETED"
     controller.transition.assert_awaited_once()
     assert controller.transition.await_args.kwargs["actor_id"] == "operator"
+    assert controller.transition.await_args.kwargs["completion_policy"] == {
+        "requires_flow_terminal": False,
+        "allow_active_runs": False,
+    }
+    assert controller.transition.await_args.kwargs["expected_revision"] == 7
     storage.get_project_history.assert_awaited_once_with(PROJECT_ID)
+
+
+@pytest.mark.anyio
+async def test_project_completion_rejects_an_active_optional_flow(client):
+    project = _fake_project("KPI_PERSISTENCE")
+    project["config"] = {
+        "evidence_policy": {"policy_id": "manual", "version": "1.0", "requirements": {}}
+    }
+    storage = _completion_evidence_storage(
+        project,
+        audit_events=[{"id": "history-1", "to_state": "KPI_PERSISTENCE"}],
+    )
+    storage.get_flow_instance_by_project = AsyncMock(
+        return_value={"id": uuid4(), "project_id": PROJECT_ID, "status": "RUNNING"}
+    )
+    controller = _completion_transition_controller()
+    _patch_state(storage, controller)
+
+    response = await client.post(
+        f"/projects/{PROJECT_ID}/transition",
+        json={"event": "kpi_saved", "actor_id": "ignored-body-actor", "context": {}},
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "PROJECT_EVIDENCE_INCOMPLETE"
+    assert response.json()["detail"]["failed_check_names"] == ["flow_not_active"]
+    controller.transition.assert_not_awaited()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("flow_status", ["FAILED", "CANCELLED"])
+async def test_project_completion_requires_successful_required_flow(client, flow_status):
+    project = _fake_project("KPI_PERSISTENCE")
+    project["config"] = {
+        "evidence_policy": {
+            "policy_id": "software_delivery",
+            "version": "1.0",
+            "requirements": {},
+        }
+    }
+    storage = _completion_evidence_storage(
+        project,
+        audit_events=[{"id": "history-1", "to_state": "KPI_PERSISTENCE"}],
+    )
+    storage.get_flow_instance_by_project = AsyncMock(
+        return_value={"id": uuid4(), "project_id": PROJECT_ID, "status": flow_status}
+    )
+    storage.list_documents = AsyncMock(
+        return_value=[
+            {"id": uuid4(), "doc_type": kind, "blob_key": f"projects/{kind}.md"}
+            for kind in ("PDR", "CDR", "RR")
+        ]
+    )
+    storage.list_artifacts = AsyncMock(
+        return_value=[{"id": uuid4(), "kind": "test-report", "metadata": {"project_id": str(PROJECT_ID)}}]
+    )
+    storage.get_project_repository_record = AsyncMock(
+        return_value={"id": uuid4(), "initialized": True, "adapter_health": "ok"}
+    )
+    controller = _completion_transition_controller()
+    _patch_state(storage, controller)
+
+    response = await client.post(
+        f"/projects/{PROJECT_ID}/transition",
+        json={"event": "kpi_saved", "actor_id": "ignored-body-actor", "context": {}},
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "PROJECT_EVIDENCE_INCOMPLETE"
+    assert response.json()["detail"]["failed_check_names"] == ["flow_terminal"]
+    controller.transition.assert_not_awaited()
 
 
 @pytest.mark.anyio

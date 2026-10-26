@@ -39,6 +39,13 @@ OPERATOR_HEADERS = {"X-API-Key": "test-operator-key"}
 def _patch(storage) -> None:
     from orchestrator_api.main import app
 
+    if not isinstance(storage.get_project, AsyncMock):
+        storage.get_project = AsyncMock(
+            side_effect=lambda project_id: {
+                "id": str(project_id),
+                "state": "IN_PROGRESS",
+            }
+        )
     app.state.storage = storage
 
 
@@ -392,17 +399,22 @@ async def test_start_flow_instance_activates_start_node(client):
     started = _instance_row(active_node_ids=["start"], status="RUNNING")
 
     storage = MagicMock()
-    storage.get_flow_instance = AsyncMock(side_effect=[not_started, started])
+    storage.get_flow_instance = AsyncMock(return_value=not_started)
     storage.get_flow = AsyncMock(return_value=_flow_row())
-    storage.update_flow_instance = AsyncMock(return_value=started)
-    storage.create_flow_node_execution = AsyncMock(return_value={"id": 1})
+    storage.activate_flow_nodes = AsyncMock(
+        return_value={"outcome": "applied", "instance": started, "executions": [{"id": 1}]}
+    )
     _patch(storage)
 
     resp = await client.post(f"/flows/instances/{INST_ID}/action", json={"action": "start"})
     assert resp.status_code == 200
     assert resp.json()["active_node_ids"] == ["start"]
-    _, kwargs = storage.create_flow_node_execution.await_args
-    assert kwargs["node_id"] == "start"
+    kwargs = storage.activate_flow_nodes.await_args.kwargs
+    assert kwargs["expected_statuses"] == {"NOT_STARTED"}
+    assert kwargs["instance_updates"]["active_node_ids"] == ["start"]
+    assert kwargs["activations"][0]["node_id"] == "start"
+    storage.update_flow_instance.assert_not_called()
+    storage.create_flow_node_execution.assert_not_called()
 
 
 # ── 4. Approval decisions activate the bound next node ──────────────────────
@@ -900,17 +912,20 @@ async def test_full_flow_sequence_create_attach_start_approve_read_back(client):
     storage.get_flow_instance = AsyncMock(
         side_effect=[
             inst_not_started,  # start action: initial read
-            inst_started,  # start action: post-update read
-            inst_started,  # analysis complete: initial read
-            inst_analysis,  # analysis complete: post-update read — actually analysis is next
-            inst_analysis,  # approval complete: initial read
-            inst_approval,  # approval complete: post-update read
+            inst_started,  # complete start node: initial read
+            inst_analysis,  # complete start node: refreshed read
+            inst_analysis,  # complete analysis node: initial read
+            inst_approval,  # complete analysis node: refreshed read
         ]
     )
-    storage.update_flow_instance = AsyncMock(side_effect=[inst_started, inst_analysis])
+    storage.update_flow_instance = AsyncMock(return_value=inst_analysis)
     storage.create_flow_node_execution = AsyncMock(return_value={"id": 99})
     storage.activate_flow_nodes = AsyncMock(
-        return_value={"outcome": "applied", "instance": inst_approval, "executions": []}
+        side_effect=[
+            {"outcome": "applied", "instance": inst_started, "executions": [{"id": 99}]},
+            {"outcome": "applied", "instance": inst_analysis, "executions": [{"id": 100}]},
+            {"outcome": "applied", "instance": inst_approval, "executions": []},
+        ]
     )
     storage.list_flow_node_executions = AsyncMock(
         side_effect=[

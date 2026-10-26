@@ -141,7 +141,7 @@ class _RetryStorage:
         }
 
     async def get_project(self, project_id: UUID):
-        return {"id": project_id, "company_id": COMPANY_ID}
+        return {"id": project_id, "company_id": COMPANY_ID, "state": "IN_PROGRESS"}
 
     async def list_company_worker_assignments(self, company_id: UUID):
         assert company_id == COMPANY_ID

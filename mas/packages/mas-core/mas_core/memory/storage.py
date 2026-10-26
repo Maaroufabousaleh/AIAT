@@ -45,6 +45,8 @@ from ..observability.native_spans import build_native_trace_span
 from ..observability.tracing import current_span_id, current_trace_id, new_span_id
 from ..sandbox_policy import canonical_sandbox_class
 from ..worker_registry.worker_run_readiness import (
+    DISPATCHABLE_PROJECT_STATES,
+    TERMINAL_PROJECT_STATES,
     worker_run_project_scope_blocker,
     worker_run_registry_blocker,
 )
@@ -84,6 +86,32 @@ def _flow_instance_matches_snapshot(
         if actual != expected:
             return False
     return True
+
+
+async def _lock_project_for_work(
+    conn: Any,
+    project_id: UUID,
+    *,
+    dispatchable: bool = False,
+) -> dict[str, Any]:
+    """Lock the project row before admitting new project-bound work."""
+
+    project_row = (
+        await conn.execute(
+            t.projects.select().where(t.projects.c.id == project_id).with_for_update()
+        )
+    ).mappings().first()
+    if project_row is None:
+        return {"outcome": "project_not_found"}
+    project = dict(project_row)
+    state = str(project.get("state") or "").strip().upper()
+    if state in TERMINAL_PROJECT_STATES:
+        return {"outcome": "project_terminal", "project": project}
+    if dispatchable and state not in DISPATCHABLE_PROJECT_STATES:
+        return {"outcome": "project_not_dispatchable", "project": project}
+    if not state:
+        return {"outcome": "project_state_unavailable", "project": project}
+    return {"outcome": "allowed", "project": project}
 
 
 _ROLLOUT_WORKER_IDENTITY_FIELDS = (
@@ -1151,6 +1179,8 @@ class AgentStorage:
         failed_from_state: str | None = None,
         expected_state: str | None = None,
         transition_id: UUID | None = None,
+        completion_policy: Mapping[str, Any] | None = None,
+        expected_revision: int | None = None,
     ) -> dict[str, Any] | None:
         """Atomically update project state and append a history row.
 
@@ -1186,6 +1216,37 @@ class AgentStorage:
             # CAS guard — reject if the row state has moved since the caller
             # last read it.
             if expected_state is not None and from_state != expected_state:
+                return None
+            if expected_revision is not None and (
+                type(expected_revision) is not int
+                or current.get("revision") != expected_revision
+            ):
+                return None
+
+            # A terminal transition will cancel pending gates later in this
+            # transaction. Lock them before inspecting a flow instance so the
+            # order matches legacy gate binding (gate -> execution -> flow)
+            # and flow cancellation/retry (project -> gate -> execution ->
+            # flow). Otherwise completion could hold the flow while waiting
+            # for a gate whose binder is waiting for that same flow.
+            if new_state == "COMPLETED":
+                await conn.execute(
+                    t.approval_gates.select()
+                    .where(t.approval_gates.c.project_id == project_id)
+                    .where(t.approval_gates.c.status == "PENDING")
+                    .order_by(t.approval_gates.c.id.asc())
+                    .with_for_update()
+                )
+
+            # Evidence is assembled before this transaction so the operator
+            # gets useful failed-check details. Recheck the mutable execution
+            # facts that can race project completion while holding the same
+            # project-row lock used by flow activation and run creation.
+            if new_state == "COMPLETED" and not await self._completion_work_is_quiescent(
+                conn,
+                project_id,
+                completion_policy=completion_policy,
+            ):
                 return None
 
             # Update project
@@ -1262,6 +1323,55 @@ class AgentStorage:
                 await self._enqueue_project_projections_tx(conn, dict(refreshed))
 
         return await self.get_project(project_id)
+
+    async def _completion_work_is_quiescent(
+        self,
+        conn: Any,
+        project_id: UUID,
+        *,
+        completion_policy: Mapping[str, Any] | None,
+    ) -> bool:
+        """Recheck flow and WorkerRun evidence under the locked project row."""
+
+        policy = completion_policy if isinstance(completion_policy, Mapping) else {}
+        requires_flow_terminal = policy.get("requires_flow_terminal", False)
+        allow_active_runs = policy.get("allow_active_runs", False)
+        if type(requires_flow_terminal) is not bool or type(allow_active_runs) is not bool:
+            return False
+
+        flow_row = (
+            await conn.execute(
+                t.flow_instances.select()
+                .where(t.flow_instances.c.project_id == project_id)
+                .order_by(t.flow_instances.c.updated_at.desc())
+                .limit(1)
+                .with_for_update()
+            )
+        ).mappings().first()
+        flow_status = str((flow_row or {}).get("status") or "").upper()
+        quiescent_flow_statuses = {"NOT_STARTED", "COMPLETED", "FAILED", "CANCELLED"}
+        if flow_row is not None and flow_status not in quiescent_flow_statuses:
+            return False
+        if requires_flow_terminal and (flow_row is None or flow_status != "COMPLETED"):
+            return False
+
+        if not allow_active_runs:
+            # WorkerRun claim admission locks a queued run before its project
+            # row. Keep this completion-side probe non-locking: any queued or
+            # claimed row is already nonterminal and blocks completion, while
+            # avoiding a WorkerRun -> project / project -> WorkerRun lock cycle.
+            active_run = (
+                await conn.execute(
+                    t.worker_runs.select()
+                    .with_only_columns(t.worker_runs.c.id)
+                    .where(t.worker_runs.c.project_id == project_id)
+                    .where(t.worker_runs.c.state.notin_(TERMINAL_WORKER_RUN_STATES))
+                    .limit(1)
+                )
+            ).first()
+            if active_run is not None:
+                return False
+        return True
 
     async def list_project_transition_outbox(
         self,
@@ -2208,6 +2318,37 @@ class AgentStorage:
             "started_at": now,
         }
         async with self.engine.begin() as conn:
+            instance_hint = (
+                await conn.execute(
+                    t.flow_instances.select()
+                    .with_only_columns(t.flow_instances.c.project_id)
+                    .where(t.flow_instances.c.id == instance_id)
+                )
+            ).mappings().first()
+            if instance_hint is None:
+                raise ValueError("flow instance is unavailable for node activation")
+            project_result = await _lock_project_for_work(
+                conn,
+                instance_hint["project_id"],
+            )
+            if project_result["outcome"] != "allowed":
+                raise ValueError("project state changed before flow node activation")
+            instance_row = (
+                await conn.execute(
+                    t.flow_instances.select()
+                    .where(t.flow_instances.c.id == instance_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            instance = dict(instance_row) if instance_row is not None else None
+            if (
+                instance is None
+                or instance.get("project_id") != instance_hint["project_id"]
+                or instance_hint["project_id"] != project_id
+                or str(instance.get("status") or "").upper()
+                not in {"RUNNING", "WAITING_APPROVAL"}
+            ):
+                raise ValueError("flow instance changed before node activation")
             result = await conn.execute(
                 t.flow_node_executions.insert()
                 .values(**execution_values)
@@ -2252,12 +2393,39 @@ class AgentStorage:
         """
         now = datetime.now(tz=UTC)
         async with self.engine.begin() as conn:
+            # Project state is the shared serialization boundary for flow
+            # activation and project completion. Read the immutable binding,
+            # then lock the project before any gate/execution/instance rows.
+            instance_hint = (
+                await conn.execute(
+                    t.flow_instances.select()
+                    .with_only_columns(
+                        t.flow_instances.c.id,
+                        t.flow_instances.c.project_id,
+                    )
+                    .where(t.flow_instances.c.id == instance_id)
+                )
+            ).mappings().first()
+            if instance_hint is None:
+                return {"outcome": "not_found"}
+            activates_work = str(instance_updates.get("status") or "").upper() in {
+                "RUNNING",
+                "WAITING_APPROVAL",
+            }
+            project_result = await _lock_project_for_work(
+                conn,
+                instance_hint["project_id"],
+                dispatchable=activates_work,
+            )
+            if project_result["outcome"] != "allowed":
+                return {"outcome": project_result["outcome"]}
+
             execution_ids: list[int] = []
             if supersede_existing:
-                # Retry lock order matches approval resolution:
-                # pending gate -> execution -> flow instance. This makes the
-                # terminal-state check and replacement activation one atomic
-                # winner among overlapping retries.
+                # The project row is always locked before this method enters
+                # the subordinate retry chain. Within that shared project
+                # boundary, lock pending gates -> executions -> flow instance
+                # to preserve the approval/flow serialization order.
                 execution_id_rows = await conn.execute(
                     t.flow_node_executions.select()
                     .with_only_columns(t.flow_node_executions.c.id)
@@ -2640,6 +2808,9 @@ class AgentStorage:
         """
         now = datetime.now(tz=UTC)
         async with self.engine.begin() as conn:
+            project_result = await _lock_project_for_work(conn, project_id)
+            if project_result["outcome"] != "allowed":
+                return {"outcome": project_result["outcome"]}
             gate_row = (
                 await conn.execute(
                     t.approval_gates.select()
@@ -8456,6 +8627,21 @@ class AgentStorage:
             "updated_at": now,
         }
         async with self.engine.begin() as conn:
+            project_result = await _lock_project_for_work(conn, project_id)
+            if project_result["outcome"] == "project_not_found":
+                raise ValueError("a persisted nonterminal project is required before creating a flow")
+            if project_result["outcome"] != "allowed":
+                raise ValueError("a terminal project cannot receive a flow")
+            existing_instance = (
+                await conn.execute(
+                    t.flow_instances.select()
+                    .where(t.flow_instances.c.project_id == project_id)
+                    .limit(1)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if existing_instance is not None:
+                raise ValueError("project already has a flow instance")
             await conn.execute(t.flow_instances.insert().values(**values))
         return values
 
@@ -8526,6 +8712,26 @@ class AgentStorage:
             updates["escalation_reason"] = escalation_reason
 
         async with self.engine.begin() as conn:
+            introduces_active_work = (
+                str(status or "").upper() in {"RUNNING", "WAITING_APPROVAL", "PAUSED"}
+                or bool(active_node_ids)
+            )
+            if introduces_active_work:
+                instance_hint = (
+                    await conn.execute(
+                        t.flow_instances.select()
+                        .with_only_columns(t.flow_instances.c.project_id)
+                        .where(t.flow_instances.c.id == instance_id)
+                    )
+                ).mappings().first()
+                if instance_hint is None:
+                    return None
+                project_result = await _lock_project_for_work(
+                    conn,
+                    instance_hint["project_id"],
+                )
+                if project_result["outcome"] != "allowed":
+                    return None
             await conn.execute(
                 t.flow_instances.update()
                 .where(t.flow_instances.c.id == instance_id)
@@ -8567,6 +8773,14 @@ class AgentStorage:
                 if current_row is None:
                     return {"outcome": "not_found"}
                 snapshot = dict(current_row)
+
+            project_result = await _lock_project_for_work(conn, snapshot["project_id"])
+            if project_result["outcome"] == "project_not_found":
+                return {"outcome": "project_not_found"}
+            # Cancellation is the deliberate safety exception for a terminal
+            # project. Keep the project lock, but do not deny it.
+            if project_result["outcome"] not in {"allowed", "project_terminal"}:
+                return {"outcome": project_result["outcome"]}
 
             active_node_ids = [str(node_id) for node_id in (snapshot.get("active_node_ids") or [])]
             project_id = snapshot.get("project_id")
@@ -8784,6 +8998,36 @@ class AgentStorage:
             "started_at": now,
         }
         async with self.engine.begin() as conn:
+            instance_hint = (
+                await conn.execute(
+                    t.flow_instances.select()
+                    .with_only_columns(t.flow_instances.c.project_id)
+                    .where(t.flow_instances.c.id == instance_id)
+                )
+            ).mappings().first()
+            if instance_hint is None:
+                raise ValueError("flow instance is unavailable for node activation")
+            project_result = await _lock_project_for_work(
+                conn,
+                instance_hint["project_id"],
+            )
+            if project_result["outcome"] != "allowed":
+                raise ValueError("project state changed before flow node activation")
+            instance_row = (
+                await conn.execute(
+                    t.flow_instances.select()
+                    .where(t.flow_instances.c.id == instance_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            instance = dict(instance_row) if instance_row is not None else None
+            if (
+                instance is None
+                or instance.get("project_id") != instance_hint["project_id"]
+                or str(instance.get("status") or "").upper()
+                not in {"RUNNING", "WAITING_APPROVAL"}
+            ):
+                raise ValueError("flow instance changed before node activation")
             result = await conn.execute(
                 t.flow_node_executions.insert()
                 .values(**values)
@@ -8936,24 +9180,53 @@ class AgentStorage:
         instance_id: UUID,
         new_flow_id: UUID,
         preserve_context: bool = True,
+        *,
+        expected_instance_snapshot: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         """Switch a flow instance to a different flow definition.
 
         The instance will be reset to NOT_STARTED state with the new flow.
         If preserve_context is True, the existing context is kept.
         """
-        instance = await self.get_flow_instance(instance_id)
-        if instance is None:
-            return None
-
         new_flow = await self.get_flow(new_flow_id)
         if new_flow is None:
             return None
 
-        current_context = instance.get("context_json") if preserve_context else {}
-
         now = datetime.now(tz=UTC)
         async with self.engine.begin() as conn:
+            instance_hint = (
+                await conn.execute(
+                    t.flow_instances.select()
+                    .with_only_columns(t.flow_instances.c.project_id)
+                    .where(t.flow_instances.c.id == instance_id)
+                )
+            ).mappings().first()
+            if instance_hint is None:
+                return None
+            project_result = await _lock_project_for_work(
+                conn,
+                instance_hint["project_id"],
+            )
+            if project_result["outcome"] != "allowed":
+                return None
+            instance_row = (
+                await conn.execute(
+                    t.flow_instances.select()
+                    .where(t.flow_instances.c.id == instance_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if instance_row is None:
+                return None
+            instance = dict(instance_row)
+            if (
+                instance.get("project_id") != instance_hint["project_id"]
+                or str(instance.get("status") or "").upper()
+                in {"COMPLETED", "FAILED", "CANCELLED"}
+                or not _flow_instance_matches_snapshot(instance, expected_instance_snapshot)
+            ):
+                return None
+            current_context = instance.get("context_json") if preserve_context else {}
             await conn.execute(
                 t.flow_instances.update()
                 .where(t.flow_instances.c.id == instance_id)
@@ -9024,6 +9297,21 @@ class AgentStorage:
         """
         now = datetime.now(tz=UTC)
         async with self.engine.begin() as conn:
+            instance_hint = (
+                await conn.execute(
+                    t.flow_instances.select()
+                    .with_only_columns(t.flow_instances.c.project_id)
+                    .where(t.flow_instances.c.id == instance_id)
+                )
+            ).mappings().first()
+            if instance_hint is None:
+                return None
+            project_result = await _lock_project_for_work(
+                conn,
+                instance_hint["project_id"],
+            )
+            if project_result["outcome"] != "allowed":
+                return None
             execution_id_rows = await conn.execute(
                 t.flow_node_executions.select()
                 .with_only_columns(t.flow_node_executions.c.id)
@@ -9176,6 +9464,7 @@ class AgentStorage:
         active_node_ids: list[str],
         preserve_context: bool = True,
         migration_record: dict[str, Any] | None = None,
+        expected_instance_snapshot: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         """Migrate a running instance while retaining compatible executions.
 
@@ -9185,18 +9474,47 @@ class AgentStorage:
         it never deletes historical node executions.
         """
 
-        instance = await self.get_flow_instance(instance_id)
-        if instance is None:
-            return None
         new_flow = await self.get_flow(new_flow_id)
         if new_flow is None:
             return None
 
-        context_json = dict(instance.get("context_json") or {}) if preserve_context else {}
-        if migration_record:
-            context_json["last_flow_migration"] = migration_record
         now = datetime.now(tz=UTC)
         async with self.engine.begin() as conn:
+            instance_hint = (
+                await conn.execute(
+                    t.flow_instances.select()
+                    .with_only_columns(t.flow_instances.c.project_id)
+                    .where(t.flow_instances.c.id == instance_id)
+                )
+            ).mappings().first()
+            if instance_hint is None:
+                return None
+            project_result = await _lock_project_for_work(
+                conn,
+                instance_hint["project_id"],
+            )
+            if project_result["outcome"] != "allowed":
+                return None
+            instance_row = (
+                await conn.execute(
+                    t.flow_instances.select()
+                    .where(t.flow_instances.c.id == instance_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if instance_row is None:
+                return None
+            instance = dict(instance_row)
+            if (
+                instance.get("project_id") != instance_hint["project_id"]
+                or str(instance.get("status") or "").upper()
+                in {"COMPLETED", "FAILED", "CANCELLED"}
+                or not _flow_instance_matches_snapshot(instance, expected_instance_snapshot)
+            ):
+                return None
+            context_json = dict(instance.get("context_json") or {}) if preserve_context else {}
+            if migration_record:
+                context_json["last_flow_migration"] = migration_record
             await conn.execute(
                 t.flow_instances.update()
                 .where(t.flow_instances.c.id == instance_id)
@@ -12419,6 +12737,14 @@ class AgentStorage:
             existing = (await conn.execute(t.worker_runs.select().where(sa.and_(t.worker_runs.c.worker_id == worker_id, t.worker_runs.c.idempotency_key == idempotency_key)).with_for_update())).mappings().first()
             if existing:
                 return dict(existing)
+            if project_id is not None:
+                project_result = await _lock_project_for_work(
+                    conn,
+                    project_id,
+                    dispatchable=True,
+                )
+                if project_result["outcome"] != "allowed":
+                    raise ValueError("project state changed before WorkerRun dispatch")
             worker = (
                 await conn.execute(
                     t.worker_registry.select()
@@ -12429,6 +12755,10 @@ class AgentStorage:
             if worker is None:
                 raise ValueError("worker registry record is required before creating a durable run")
             if retry_of_run_id is not None:
+                # The worker row above serializes retry creation for this worker.
+                # The source must be terminal; keep the existing-retry lookup
+                # non-locking because a queued retry claimant locks WorkerRun
+                # before the project row.
                 source = (
                     await conn.execute(
                         t.worker_runs.select()
@@ -12446,7 +12776,6 @@ class AgentStorage:
                     await conn.execute(
                         t.worker_runs.select()
                         .where(t.worker_runs.c.retry_of_run_id == retry_of_run_id)
-                        .with_for_update()
                     )
                 ).mappings().first()
                 if existing_retry is not None:
@@ -12472,7 +12801,10 @@ class AgentStorage:
                     raise ValueError("skill bundle pin must belong to the selected steward")
             # Recheck after acquiring the per-worker serialization lock: an
             # identical idempotent request may have committed while this
-            # transaction waited for the worker row.
+            # transaction waited for the worker row. Keep this lookup
+            # non-locking because claim_worker_run locks WorkerRun before the
+            # project; taking a WorkerRun lock here would invert that order
+            # while this transaction already holds the project and worker.
             existing = (
                 await conn.execute(
                     t.worker_runs.select()
@@ -12482,7 +12814,6 @@ class AgentStorage:
                             t.worker_runs.c.idempotency_key == idempotency_key,
                         )
                     )
-                    .with_for_update()
                 )
             ).mappings().first()
             if existing:

@@ -99,6 +99,150 @@ def _legacy_rows(*, instance_count: int = 1, execution_count: int = 1):
 
 
 @pytest.mark.anyio
+async def test_flow_activation_locks_project_before_any_activation_and_rejects_terminal() -> None:
+    project_id = uuid4()
+    instance_id = uuid4()
+    storage, execute, _ = _storage_with_results(
+        [
+            _Result(first={"id": instance_id, "project_id": project_id}),
+            _Result(first={"id": project_id, "state": "COMPLETED"}),
+        ]
+    )
+
+    result = await storage.activate_flow_nodes(
+        instance_id,
+        expected_statuses={"NOT_STARTED"},
+        instance_updates={"status": "RUNNING", "active_node_ids": ["task"]},
+        activations=[
+            {
+                "node_id": "task",
+                "node_type": "task",
+                "node_label": "Task",
+                "status": "RUNNING",
+            }
+        ],
+    )
+
+    assert result == {"outcome": "project_terminal"}
+    assert execute.await_count == 2
+    hint_sql = str(execute.await_args_list[0].args[0]).upper()
+    project_lock_sql = str(execute.await_args_list[1].args[0]).upper()
+    assert "FROM FLOW_INSTANCES" in hint_sql
+    assert "FROM PROJECTS" in project_lock_sql and "FOR UPDATE" in project_lock_sql
+
+
+@pytest.mark.anyio
+async def test_flow_activation_rejects_security_blocked_project_under_the_same_lock() -> None:
+    project_id = uuid4()
+    instance_id = uuid4()
+    storage, execute, _ = _storage_with_results(
+        [
+            _Result(first={"id": instance_id, "project_id": project_id}),
+            _Result(first={"id": project_id, "state": "SECURITY_BLOCKED"}),
+        ]
+    )
+
+    result = await storage.activate_flow_nodes(
+        instance_id,
+        expected_statuses={"NOT_STARTED"},
+        instance_updates={"status": "RUNNING", "active_node_ids": ["task"]},
+        activations=[
+            {
+                "node_id": "task",
+                "node_type": "task",
+                "node_label": "Task",
+                "status": "RUNNING",
+            }
+        ],
+    )
+
+    assert result == {"outcome": "project_not_dispatchable"}
+    assert execute.await_count == 2
+    project_lock_sql = str(execute.await_args_list[1].args[0]).upper()
+    assert "FROM PROJECTS" in project_lock_sql and "FOR UPDATE" in project_lock_sql
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("mutation", ["switch_flow_instance", "migrate_flow_instance"])
+async def test_flow_definition_mutation_rechecks_project_state_under_lock(mutation: str) -> None:
+    project_id = uuid4()
+    instance_id = uuid4()
+    new_flow_id = uuid4()
+    storage, execute, _ = _storage_with_results(
+        [
+            _Result(first={"project_id": project_id}),
+            _Result(first={"id": project_id, "state": "COMPLETED"}),
+        ]
+    )
+    storage.get_flow = AsyncMock(return_value={"id": new_flow_id, "version": 2})
+
+    method = getattr(storage, mutation)
+    kwargs = (
+        {"active_node_ids": ["task"], "migration_record": {"to_flow_id": str(new_flow_id)}}
+        if mutation == "migrate_flow_instance"
+        else {}
+    )
+    result = await method(
+        instance_id,
+        new_flow_id,
+        expected_instance_snapshot={"id": instance_id, "project_id": project_id},
+        **kwargs,
+    )
+
+    assert result is None
+    assert execute.await_count == 2
+    assert "FROM FLOW_INSTANCES" in str(execute.await_args_list[0].args[0]).upper()
+    project_lock_sql = str(execute.await_args_list[1].args[0]).upper()
+    assert "FROM PROJECTS" in project_lock_sql and "FOR UPDATE" in project_lock_sql
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("mutation", ["switch_flow_instance", "migrate_flow_instance"])
+async def test_flow_definition_mutation_rejects_stale_snapshot_without_writes(mutation: str) -> None:
+    project_id = uuid4()
+    instance_id = uuid4()
+    new_flow_id = uuid4()
+    current_instance = {
+        "id": instance_id,
+        "project_id": project_id,
+        "flow_id": uuid4(),
+        "flow_version": 1,
+        "status": "RUNNING",
+        "active_node_ids": ["advanced-task"],
+        "context_json": {},
+        "retry_count": 0,
+    }
+    storage, execute, _ = _storage_with_results(
+        [
+            _Result(first={"project_id": project_id}),
+            _Result(first={"id": project_id, "state": "IN_PROGRESS"}),
+            _Result(first=current_instance),
+        ]
+    )
+    storage.get_flow = AsyncMock(return_value={"id": new_flow_id, "version": 2})
+    method = getattr(storage, mutation)
+    kwargs = (
+        {"active_node_ids": ["task"], "migration_record": {"to_flow_id": str(new_flow_id)}}
+        if mutation == "migrate_flow_instance"
+        else {}
+    )
+
+    result = await method(
+        instance_id,
+        new_flow_id,
+        expected_instance_snapshot={
+            **current_instance,
+            "active_node_ids": ["stale-task"],
+        },
+        **kwargs,
+    )
+
+    assert result is None
+    assert execute.await_count == 3
+    assert "FOR UPDATE" in str(execute.await_args_list[2].args[0]).upper()
+
+
+@pytest.mark.anyio
 async def test_legacy_flow_gate_binds_only_unique_active_execution_and_replays():
     project_id, gate_id, gate, instances, executions, flow = _legacy_rows()
     bound = {**gate, "flow_node_execution_id": executions[0]["id"]}
@@ -199,6 +343,8 @@ async def test_approval_activation_failure_rolls_back_transaction_before_instanc
     }
     storage, execute, tx_exit = _storage_with_results(
         [
+            _Result(first={"id": instance_id, "project_id": project_id}),
+            _Result(first={"id": project_id, "state": "IN_PROGRESS"}),
             _Result(first=instance),
             _Result(),
             _Result(first=(100,)),
@@ -231,7 +377,7 @@ async def test_approval_activation_failure_rolls_back_transaction_before_instanc
             ],
         )
 
-    assert execute.await_count == 4
+    assert execute.await_count == 6
     assert tx_exit.await_args.args[0] is RuntimeError
 
 
@@ -245,6 +391,7 @@ async def test_flow_approval_rejects_stale_sibling_snapshot_without_mutation():
     execution_id = 81
     storage, execute, _ = _storage_with_results(
         [
+            _Result(first={"id": project_id, "state": "IN_PROGRESS"}),
             _Result(
                 first={
                     "id": gate_id,
@@ -299,7 +446,7 @@ async def test_flow_approval_rejects_stale_sibling_snapshot_without_mutation():
     )
 
     assert result["outcome"] == "stale_instance"
-    assert execute.await_count == 3
+    assert execute.await_count == 4
 
 
 @pytest.mark.anyio
@@ -338,6 +485,8 @@ async def test_approval_retry_atomically_supersedes_old_gate_and_activates_repla
     insert_execution = _Result(first=(99,))
     storage, execute, _ = _storage_with_results(
         [
+            _Result(first={"id": instance_id, "project_id": project_id}),
+            _Result(first={"id": project_id, "state": "IN_PROGRESS"}),
             _Result(rows=[(41,)]),
             _Result(rows=[old_gate]),
             _Result(rows=[old_execution]),
@@ -382,11 +531,11 @@ async def test_approval_retry_atomically_supersedes_old_gate_and_activates_repla
     assert result["outcome"] == "applied"
     assert result["instance"] == retried_instance
     assert result["executions"][0]["id"] == 99
-    locked_tables = [str(execute.await_args_list[index].args[0]).upper() for index in (1, 2, 3)]
+    locked_tables = [str(execute.await_args_list[index].args[0]).upper() for index in (3, 4, 5)]
     assert "APPROVAL_GATES" in locked_tables[0] and "FOR UPDATE" in locked_tables[0]
     assert "FLOW_NODE_EXECUTIONS" in locked_tables[1] and "FOR UPDATE" in locked_tables[1]
     assert "FLOW_INSTANCES" in locked_tables[2] and "FOR UPDATE" in locked_tables[2]
-    assert execute.await_count == 10
+    assert execute.await_count == 12
 
 
 @pytest.mark.anyio
@@ -405,6 +554,8 @@ async def test_overlapping_retry_loser_cannot_supersede_new_active_execution():
     }
     storage, execute, _ = _storage_with_results(
         [
+            _Result(first={"id": instance_id, "project_id": project_id}),
+            _Result(first={"id": project_id, "state": "IN_PROGRESS"}),
             _Result(rows=[(52,)]),
             _Result(rows=[gate]),
             _Result(rows=[execution]),
@@ -429,7 +580,7 @@ async def test_overlapping_retry_loser_cannot_supersede_new_active_execution():
     )
 
     assert result["outcome"] == "conflict"
-    assert execute.await_count == 4
+    assert execute.await_count == 6
 
 
 @pytest.mark.anyio
@@ -466,6 +617,7 @@ async def test_cancel_flow_instance_closes_pending_bound_gate_in_same_transactio
     }
     storage, execute, _ = _storage_with_results(
         [
+            _Result(first={"id": project_id, "state": "COMPLETED"}),
             _Result(
                 first={
                     "id": flow_id,
@@ -517,7 +669,7 @@ async def test_cancel_flow_instance_closes_pending_bound_gate_in_same_transactio
     assert result["outcome"] == "applied"
     assert result["instance"]["status"] == "CANCELLED"
     assert result["cancelled_gate_ids"] == [gate["id"]]
-    assert execute.await_count == 11
+    assert execute.await_count == 12
 
 
 @pytest.mark.anyio
@@ -541,6 +693,7 @@ async def test_cancel_flow_fails_closed_on_matching_legacy_unbound_approval_gate
     }
     storage, execute, _ = _storage_with_results(
         [
+            _Result(first={"id": project_id, "state": "IN_PROGRESS"}),
             _Result(
                 first={
                     "id": flow_id,
@@ -580,7 +733,7 @@ async def test_cancel_flow_fails_closed_on_matching_legacy_unbound_approval_gate
         "outcome": "legacy_gate_unresolved",
         "pending_legacy_gate_count": 1,
     }
-    assert execute.await_count == 3
+    assert execute.await_count == 4
 
 
 @pytest.mark.anyio
@@ -589,6 +742,7 @@ async def test_retry_without_safe_node_atomically_closes_pending_gate_and_supers
     gate = {"id": uuid4(), "flow_node_execution_id": 71, "status": "PENDING"}
     failed_instance = {
         "id": instance_id,
+        "project_id": uuid4(),
         "status": "FAILED",
         "active_node_ids": [],
         "retry_count": 1,
@@ -601,6 +755,8 @@ async def test_retry_without_safe_node_atomically_closes_pending_gate_and_supers
     }
     storage, execute, _ = _storage_with_results(
         [
+            _Result(first={"id": instance_id, "project_id": failed_instance["project_id"]}),
+            _Result(first={"id": failed_instance["project_id"], "state": "IN_PROGRESS"}),
             _Result(rows=[(71,)]),
             _Result(rows=[gate]),
             _Result(rows=[{"id": 71, "status": "RUNNING"}]),
@@ -623,4 +779,4 @@ async def test_retry_without_safe_node_atomically_closes_pending_gate_and_supers
     )
 
     assert result == retried_instance
-    assert execute.await_count == 8
+    assert execute.await_count == 10

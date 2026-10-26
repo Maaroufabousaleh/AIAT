@@ -38,6 +38,65 @@ def test_evidence_policy_checks_required_artifact_kinds() -> None:
     assert "coverage" in (check.reason or "")
 
 
+@pytest.mark.parametrize("status", ["RUNNING", "WAITING_APPROVAL", "PAUSED", "UNKNOWN"])
+def test_project_completion_requires_attached_flow_to_be_quiescent(status: str) -> None:
+    from mas_core.workflow import EvidencePolicy, evaluate_project_evidence
+
+    result = evaluate_project_evidence(
+        project_id="project-1",
+        policy=EvidencePolicy(policy_id="manual", version="1.0"),
+        project={"id": "project-1"},
+        flow_instance={"id": "flow-1", "status": status},
+    )
+
+    check = next(item for item in result.checks if item.name == "flow_not_active")
+    assert check.required is True
+    assert check.passed is False
+    assert check.evidence_refs == ["flow-1"]
+
+
+@pytest.mark.parametrize("status", ["FAILED", "CANCELLED", "NOT_STARTED"])
+def test_required_flow_must_complete_successfully(status: str) -> None:
+    from mas_core.workflow import EvidencePolicy, evaluate_project_evidence
+
+    result = evaluate_project_evidence(
+        project_id="project-1",
+        policy=EvidencePolicy(
+            policy_id="release",
+            version="1.0",
+            requires_flow_terminal=True,
+            requires_approvals_closed=False,
+            requires_audit=False,
+        ),
+        project={"id": "project-1"},
+        flow_instance={"id": "flow-1", "status": status},
+    )
+
+    check = next(item for item in result.checks if item.name == "flow_terminal")
+    assert check.required is True
+    assert check.passed is False
+
+
+def test_required_flow_completion_passes_only_for_completed_flow() -> None:
+    from mas_core.workflow import EvidencePolicy, evaluate_project_evidence
+
+    result = evaluate_project_evidence(
+        project_id="project-1",
+        policy=EvidencePolicy(
+            policy_id="release",
+            version="1.0",
+            requires_flow_terminal=True,
+            requires_approvals_closed=False,
+            requires_audit=False,
+        ),
+        project={"id": "project-1"},
+        flow_instance={"id": "flow-1", "status": "COMPLETED"},
+    )
+
+    check = next(item for item in result.checks if item.name == "flow_terminal")
+    assert check.passed is True
+
+
 def test_evidence_package_groups_sources_without_turning_notices_into_gates() -> None:
     from mas_core.workflow import (
         EvidencePolicy,

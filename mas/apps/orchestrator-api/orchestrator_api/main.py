@@ -158,7 +158,12 @@ from mas_core.worker_registry.runtime_catalog import (
     RUNTIME_REQUIRED_PACKAGES,
 )
 from mas_core.worker_registry.steward import CompatibilityMatrix, operational_promotion_checks
-from mas_core.worker_registry.worker_run_readiness import HARDENED_SANDBOX_TRANSPORTS
+from mas_core.worker_registry.worker_run_readiness import (
+    DISPATCHABLE_PROJECT_STATES,
+    DISPATCHABLE_WORKER_STATUSES,
+    HARDENED_SANDBOX_TRANSPORTS,
+    TERMINAL_PROJECT_STATES,
+)
 from mas_core.workflow import (
     GateName,
     ImprovementArtifactBundle,
@@ -511,9 +516,6 @@ def _worker_risk_labels(worker: dict[str, Any]) -> set[str]:
 def _is_medium_or_dual_use_worker(worker: dict[str, Any]) -> bool:
     """Deprecated: use is_medium_or_dual_use_worker from mas_core.worker_registry._risk_utils."""
     return is_medium_or_dual_use_worker(worker)
-
-
-TERMINAL_PROJECT_STATES = {"COMPLETED", "ARCHIVED", "FAILED"}
 
 
 def _decode_json_config(raw: str | None, fallback: Any) -> Any:
@@ -6088,8 +6090,12 @@ async def _execute_project_transition(
     # persisted on the project (or its resolved flow/company scope) passes.
     # Request context is deliberately not consulted here: it is descriptive
     # transition data, not a source of policy or evidence authority.
+    completion_policy: dict[str, bool] | None = None
     if resolve_transition(current_state, event) == ProjectState.COMPLETED:
-        evidence = await _build_project_evidence(project_id, storage)
+        evidence_project, evidence, _evidence_sources, policy = await _collect_project_evidence(
+            project_id,
+            storage,
+        )
         if not evidence.can_complete:
             failed_check_names = [
                 check.name for check in evidence.checks if check.required and not check.passed
@@ -6109,14 +6115,28 @@ async def _execute_project_transition(
                     > max_failed_check_names,
                 },
             )
+        completion_policy = {
+            "requires_flow_terminal": policy.requires_flow_terminal,
+            "allow_active_runs": policy.allow_active_runs,
+        }
+        evidence_project_revision = evidence_project.get("revision")
+    else:
+        evidence_project_revision = None
 
     try:
+        transition_kwargs: dict[str, Any] = {
+            "project_id": str(project_id),
+            "current_state": current_state,
+            "event": event,
+            "actor_id": actor_id,
+            "context": req.context,
+        }
+        if completion_policy is not None:
+            transition_kwargs["completion_policy"] = completion_policy
+            if type(evidence_project_revision) is int:
+                transition_kwargs["expected_revision"] = evidence_project_revision
         result = await _controller().transition(
-            project_id=str(project_id),
-            current_state=current_state,
-            event=event,
-            actor_id=actor_id,
-            context=req.context,
+            **transition_kwargs,
         )
         # The controller has committed the state transition at this point;
         # keep aggregate metrics aligned even if a later evidence/approval
@@ -14432,7 +14452,37 @@ async def _enforce_company_dispatch_grants(
     if project_id is None:
         return None
     project = await storage.get_project(project_id)
-    if project is None or not project.get("company_id"):
+    if project is None:
+        raise HTTPException(
+            404,
+            {
+                "code": "PROJECT_NOT_FOUND",
+                "message": "The selected project does not exist",
+                "project_id": str(project_id),
+            },
+        )
+    project_state = str(project.get("state") or "").upper()
+    if project_state not in DISPATCHABLE_PROJECT_STATES:
+        if project_state in TERMINAL_PROJECT_STATES:
+            raise HTTPException(
+                409,
+                {
+                    "code": "PROJECT_TERMINAL",
+                    "message": "Worker Runs cannot be dispatched for a terminal project",
+                    "project_id": str(project_id),
+                    "state": project_state,
+                },
+            )
+        raise HTTPException(
+            409,
+            {
+                "code": "PROJECT_NOT_DISPATCHABLE",
+                "message": "The selected project is not in a dispatchable workflow state",
+                "project_id": str(project_id),
+                "state": project_state or "UNKNOWN",
+            },
+        )
+    if not project.get("company_id"):
         return None
     company_id = UUID(str(project["company_id"]))
     list_assignments = getattr(storage, "list_company_worker_assignments", None)
@@ -14792,7 +14842,7 @@ async def _dispatch_worker_run(
     worker = await storage.get_worker(req.worker_id)
     if worker is None:
         raise HTTPException(404, f"Worker {req.worker_id} not found")
-    if worker.get("status") not in {"ACTIVE", "DRAINING"}:
+    if worker.get("status") not in DISPATCHABLE_WORKER_STATUSES:
         raise HTTPException(409, "Worker is not active")
     company_id = await _enforce_company_dispatch_grants(
         storage=storage,
@@ -16183,7 +16233,7 @@ async def dry_run_flow(req: FlowDryRunRequest) -> dict[str, Any]:
             continue
         worker_status = str(worker.get("status") or "")
         check["checks"]["worker_status"] = worker_status
-        if worker_status not in {"ACTIVE", "DRAINING"}:
+        if worker_status not in DISPATCHABLE_WORKER_STATUSES:
             check["ready"] = False
             errors.append({"code": "WORKER_NOT_ACTIVE", "node_id": node.id, "worker_id": policy.worker_id, "message": f"Worker is {worker_status or 'not active'}"})
 
@@ -16340,13 +16390,22 @@ async def create_flow_instance(req: CreateFlowInstanceRequest) -> dict[str, Any]
     if existing is not None:
         raise HTTPException(409, f"Project {req.project_id} already has an active flow instance")
 
-    instance = await storage.create_flow_instance(
-        flow_id=req.flow_id,
-        flow_version=flow["version"],
-        project_id=req.project_id,
-        task_id=req.task_id,
-        department_id=req.department_id,
-    )
+    try:
+        instance = await storage.create_flow_instance(
+            flow_id=req.flow_id,
+            flow_version=flow["version"],
+            project_id=req.project_id,
+            task_id=req.task_id,
+            department_id=req.department_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            409,
+            detail={
+                "code": "FLOW_PROJECT_CHANGED",
+                "message": "The project changed before the flow could be attached; reload and retry.",
+            },
+        ) from exc
 
     if project is not None:
         await storage.transition_project(
@@ -16550,12 +16609,17 @@ async def flow_instance_action(instance_id: UUID, req: FlowInstanceActionRequest
     if instance is None:
         raise HTTPException(404, f"Flow instance {instance_id} not found")
 
+    # Starting or resuming a flow is new project work. Keep that authority
+    # bound to a live, nonterminal project; cancellation remains available as
+    # a safety action if legacy state left a flow active after project closure.
+    if req.action in {"start", "pause", "resume"}:
+        await _require_nonterminal_flow_project(storage, instance)
+
     flow = await storage.get_flow(instance["flow_id"])
     if flow is None:
         raise HTTPException(404, f"Flow {instance['flow_id']} not found")
 
     current_status = instance["status"]
-    active_node_ids = list(instance.get("active_node_ids") or [])
     context = dict(instance.get("context_json") or {})
 
     def _node_activation(node_id: str) -> dict[str, Any] | None:
@@ -16591,48 +16655,31 @@ async def flow_instance_action(instance_id: UUID, req: FlowInstanceActionRequest
         now = datetime.now(tz=UTC)
         start_node = start_nodes[0]
         activation = _node_activation(start_node.id)
-        if activation is not None and activation.get("gate_type") is not None:
-            activation_result = await storage.activate_flow_nodes(
-                instance_id,
-                expected_statuses={"NOT_STARTED"},
-                expected_active_node_ids=active_node_ids,
-                instance_updates={
-                    "status": "RUNNING",
-                    "active_node_ids": [start_node.id],
-                    "started_at": now,
-                },
-                activations=[activation],
-            )
-            if activation_result.get("outcome") != "applied":
-                raise HTTPException(409, "Flow instance changed before approval activation")
-        else:
-            await storage.update_flow_instance(
-                instance_id,
-                status="RUNNING",
-                active_node_ids=[start_node.id],
-                started_at=now,
-            )
-            if activation is not None:
-                await storage.create_flow_node_execution(
-                    instance_id=instance_id,
-                    node_id=activation["node_id"],
-                    node_type=activation["node_type"],
-                    node_label=activation["node_label"],
-                    input_json=activation["input_json"],
-                )
-        started_instance = await storage.get_flow_instance(instance_id)
-        if started_instance is None:
-            raise HTTPException(404, f"Flow instance {instance_id} not found")
+        if activation is None:
+            raise HTTPException(503, "Flow start node could not be activated")
+        started_instance = await _transition_flow_instance(
+            storage,
+            instance,
+            expected_statuses={"NOT_STARTED"},
+            instance_updates={
+                "status": "RUNNING",
+                "active_node_ids": [start_node.id],
+                "started_at": now,
+            },
+            activations=[activation],
+        )
         return _serialize(started_instance)
 
     elif req.action == "pause":
         if current_status != "RUNNING":
             raise HTTPException(409, f"Instance is not RUNNING (current: {current_status})")
 
-        await storage.update_flow_instance(instance_id, status="PAUSED")
-        paused_instance = await storage.get_flow_instance(instance_id)
-        if paused_instance is None:
-            raise HTTPException(404, f"Flow instance {instance_id} not found")
+        paused_instance = await _transition_flow_instance(
+            storage,
+            instance,
+            expected_statuses={"RUNNING"},
+            instance_updates={"status": "PAUSED"},
+        )
         return _serialize(paused_instance)
 
     elif req.action == "resume":
@@ -16641,10 +16688,12 @@ async def flow_instance_action(instance_id: UUID, req: FlowInstanceActionRequest
                 409, f"Instance is not PAUSED or WAITING_APPROVAL (current: {current_status})"
             )
 
-        await storage.update_flow_instance(instance_id, status="RUNNING")
-        resumed_instance = await storage.get_flow_instance(instance_id)
-        if resumed_instance is None:
-            raise HTTPException(404, f"Flow instance {instance_id} not found")
+        resumed_instance = await _transition_flow_instance(
+            storage,
+            instance,
+            expected_statuses={"PAUSED", "WAITING_APPROVAL"},
+            instance_updates={"status": "RUNNING"},
+        )
         return _serialize(resumed_instance)
 
     elif req.action == "cancel":
@@ -16724,6 +16773,131 @@ def _flow_instance_snapshot(instance: dict[str, Any]) -> dict[str, Any]:
     return {key: instance[key] for key in fields if key in instance}
 
 
+async def _require_nonterminal_flow_project(
+    storage: AgentStorage,
+    instance: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    """Resolve and validate the canonical project before mutating its flow."""
+
+    raw_project_id = instance.get("project_id")
+    try:
+        project_id = UUID(str(raw_project_id))
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise HTTPException(
+            409,
+            detail={
+                "code": "FLOW_PROJECT_BINDING_INVALID",
+                "message": "Flow mutations require a valid persisted project binding.",
+            },
+        ) from exc
+
+    project = await storage.get_project(project_id)
+    if project is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+    if not isinstance(project, Mapping):
+        raise HTTPException(
+            503,
+            detail={
+                "code": "FLOW_PROJECT_STATE_UNAVAILABLE",
+                "message": "The flow's authoritative project state could not be verified.",
+            },
+        )
+    if str(project.get("id")) != str(project_id):
+        raise HTTPException(
+            409,
+            detail={
+                "code": "FLOW_PROJECT_BINDING_MISMATCH",
+                "message": "The flow's project binding does not match the persisted project.",
+            },
+        )
+
+    raw_state = str(project.get("state") or "").upper()
+    try:
+        state = ProjectState(raw_state)
+    except ValueError as exc:
+        raise HTTPException(
+            503,
+            detail={
+                "code": "FLOW_PROJECT_STATE_UNAVAILABLE",
+                "message": "The flow's authoritative project state is invalid.",
+            },
+        ) from exc
+    if state.value in TERMINAL_PROJECT_STATES:
+        raise HTTPException(
+            409,
+            detail={
+                "code": "PROJECT_TERMINAL",
+                "message": "Flow execution cannot change for a terminal project.",
+                "project_id": str(project_id),
+                "state": state.value,
+            },
+        )
+    return project
+
+
+async def _transition_flow_instance(
+    storage: AgentStorage,
+    instance: Mapping[str, Any],
+    *,
+    expected_statuses: set[str],
+    instance_updates: dict[str, Any],
+    activations: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """CAS a flow status and its node executions in one storage transaction."""
+
+    transition = getattr(storage, "activate_flow_nodes", None)
+    if not inspect.iscoroutinefunction(transition):
+        raise HTTPException(503, "Flow status transitions require durable compare-and-set storage")
+    instance_id = UUID(str(instance["id"]))
+    result = await transition(
+        instance_id,
+        expected_statuses=expected_statuses,
+        expected_active_node_ids=[str(value) for value in (instance.get("active_node_ids") or [])],
+        expected_instance_snapshot=_flow_instance_snapshot(dict(instance)),
+        instance_updates=instance_updates,
+        activations=activations or [],
+    )
+    outcome = result.get("outcome")
+    if outcome == "not_found":
+        raise HTTPException(404, f"Flow instance {instance_id} not found")
+    if outcome == "project_terminal":
+        raise HTTPException(
+            409,
+            detail={
+                "code": "PROJECT_TERMINAL",
+                "message": "Flow execution cannot change for a terminal project.",
+            },
+        )
+    if outcome in {"project_not_found", "project_state_unavailable"}:
+        raise HTTPException(
+            409,
+            detail={
+                "code": "FLOW_PROJECT_STATE_UNAVAILABLE",
+                "message": "The flow's authoritative project state could not be verified.",
+            },
+        )
+    if outcome in {"project_not_dispatchable"}:
+        raise HTTPException(
+            409,
+            detail={
+                "code": "PROJECT_NOT_DISPATCHABLE",
+                "message": "The selected project is not in a dispatchable workflow state.",
+            },
+        )
+    if outcome != "applied":
+        raise HTTPException(
+            409,
+            detail={
+                "code": "FLOW_INSTANCE_CHANGED",
+                "message": "The flow changed before this action; reload and retry.",
+            },
+        )
+    updated = result.get("instance")
+    if not isinstance(updated, dict):
+        raise HTTPException(503, "Flow status transition could not be read back")
+    return updated
+
+
 async def _resolve_bound_flow_approval(
     gate: dict[str, Any],
     *,
@@ -16758,6 +16932,7 @@ async def _resolve_bound_flow_approval(
     instance = await storage.get_flow_instance(instance_id)
     if instance is None or instance.get("project_id") != project_id:
         raise HTTPException(409, "Approval gate flow instance does not belong to this project")
+    await _require_nonterminal_flow_project(storage, instance)
     flow = await storage.get_flow(instance["flow_id"])
     if flow is None:
         raise HTTPException(404, f"Flow {instance['flow_id']} not found")
@@ -16973,6 +17148,8 @@ async def _apply_flow_node_action(
     instance = await storage.get_flow_instance(instance_id)
     if instance is None:
         raise HTTPException(404, f"Flow instance {instance_id} not found")
+
+    await _require_nonterminal_flow_project(storage, instance)
 
     flow = await storage.get_flow(instance["flow_id"])
     if flow is None:
@@ -17426,41 +17603,17 @@ async def _apply_flow_node_action(
                     for nid in new_nodes
                     if (activation := _node_activation(nid, updated_context)) is not None
                 ]
-                includes_approval = any(
-                    activation.get("gate_type") is not None for activation in activations
+                await _transition_flow_instance(
+                    storage,
+                    instance,
+                    expected_statuses={"RUNNING", "WAITING_APPROVAL"},
+                    instance_updates={
+                        "active_node_ids": merged_active,
+                        "context_json": updated_context,
+                        "status": "RUNNING",
+                    },
+                    activations=activations,
                 )
-                if includes_approval:
-                    activation_result = await storage.activate_flow_nodes(
-                        instance_id,
-                        expected_statuses={"RUNNING", "WAITING_APPROVAL"},
-                        expected_active_node_ids=active_node_ids,
-                        instance_updates={
-                            "active_node_ids": merged_active,
-                            "context_json": updated_context,
-                            "status": "RUNNING",
-                        },
-                        activations=activations,
-                    )
-                    if activation_result.get("outcome") != "applied":
-                        raise HTTPException(
-                            409,
-                            "Flow instance changed before approval activation",
-                        )
-                else:
-                    for activation in activations:
-                        await storage.create_flow_node_execution(
-                            instance_id=instance_id,
-                            node_id=activation["node_id"],
-                            node_type=activation["node_type"],
-                            node_label=activation["node_label"],
-                            input_json=activation["input_json"],
-                        )
-                    await storage.update_flow_instance(
-                        instance_id,
-                        active_node_ids=merged_active,
-                        context_json=updated_context,
-                        status="RUNNING",
-                    )
                 # A task is executable only through its Worker Run.  Control
                 # nodes remain event/approval driven, while each newly active
                 # task immediately enters the governed dispatch lifecycle.
@@ -17583,6 +17736,7 @@ async def override_flow_instance(instance_id: UUID, req: FlowOverrideRequest) ->
     instance = await storage.get_flow_instance(instance_id)
     if instance is None:
         raise HTTPException(404, f"Flow instance {instance_id} not found")
+    await _require_nonterminal_flow_project(storage, instance)
     if instance.get("status") in {"COMPLETED", "FAILED", "CANCELLED"}:
         raise HTTPException(409, "Terminal flow instances are immutable; use an explicit recovery action")
 
@@ -17635,6 +17789,7 @@ async def switch_flow_instance(instance_id: UUID, req: dict[str, Any]) -> dict[s
     instance = await storage.get_flow_instance(instance_id)
     if instance is None:
         raise HTTPException(404, f"Flow instance {instance_id} not found")
+    await _require_nonterminal_flow_project(storage, instance)
     if instance.get("status") in {"COMPLETED", "FAILED", "CANCELLED"}:
         raise HTTPException(409, "Terminal flow instances are immutable; retry/recovery must be explicit")
 
@@ -17655,10 +17810,19 @@ async def switch_flow_instance(instance_id: UUID, req: dict[str, Any]) -> dict[s
         raise HTTPException(404, f"Flow {new_flow_uuid} not found")
 
     updated = await storage.switch_flow_instance(
-        instance_id, new_flow_uuid, preserve_context=preserve_context
+        instance_id,
+        new_flow_uuid,
+        preserve_context=preserve_context,
+        expected_instance_snapshot=_flow_instance_snapshot(instance),
     )
     if updated is None:
-        raise HTTPException(404, "Failed to switch flow instance")
+        raise HTTPException(
+            409,
+            detail={
+                "code": "FLOW_INSTANCE_CHANGED",
+                "message": "The project or flow changed before the switch; reload and retry.",
+            },
+        )
 
     project = await storage.get_project(instance["project_id"])
     if project is not None:
@@ -17695,6 +17859,7 @@ async def migrate_flow_instance(instance_id: UUID, req: FlowMigrationRequest) ->
     instance = await storage.get_flow_instance(instance_id)
     if instance is None:
         raise HTTPException(404, f"Flow instance {instance_id} not found")
+    await _require_nonterminal_flow_project(storage, instance)
     if instance.get("status") in {"COMPLETED", "FAILED", "CANCELLED"}:
         raise HTTPException(409, "Terminal flow instances are immutable; use an explicit recovery action")
 
@@ -17826,9 +17991,16 @@ async def migrate_flow_instance(instance_id: UUID, req: FlowMigrationRequest) ->
         active_node_ids=mapped_active_node_ids,
         preserve_context=req.preserve_context,
         migration_record=migration_record,
+        expected_instance_snapshot=_flow_instance_snapshot(instance),
     )
     if updated is None:
-        raise HTTPException(404, f"Flow instance {instance_id} not found")
+        raise HTTPException(
+            409,
+            detail={
+                "code": "FLOW_INSTANCE_CHANGED",
+                "message": "The project or flow changed before migration; reload and retry.",
+            },
+        )
 
     project = await storage.get_project(instance["project_id"])
     if project is not None:
@@ -17850,6 +18022,7 @@ async def update_flow_instance_context(instance_id: UUID, req: dict[str, Any]) -
     instance = await storage.get_flow_instance(instance_id)
     if instance is None:
         raise HTTPException(404, f"Flow instance {instance_id} not found")
+    await _require_nonterminal_flow_project(storage, instance)
     if instance.get("status") in {"COMPLETED", "FAILED", "CANCELLED"}:
         raise HTTPException(409, "Terminal flow instances are immutable")
 
@@ -17872,6 +18045,7 @@ async def escalate_flow_instance(instance_id: UUID, req: dict[str, Any]) -> dict
     instance = await storage.get_flow_instance(instance_id)
     if instance is None:
         raise HTTPException(404, f"Flow instance {instance_id} not found")
+    await _require_nonterminal_flow_project(storage, instance)
     if instance.get("status") in {"COMPLETED", "FAILED", "CANCELLED"}:
         raise HTTPException(409, "Terminal flow instances cannot be escalated")
 
@@ -17898,6 +18072,7 @@ async def retry_flow_instance(instance_id: UUID) -> dict[str, Any]:
     instance = await storage.get_flow_instance(instance_id)
     if instance is None:
         raise HTTPException(404, f"Flow instance {instance_id} not found")
+    await _require_nonterminal_flow_project(storage, instance)
 
     if instance["status"] not in ("FAILED", "CANCELLED"):
         raise HTTPException(409, f"Instance is not in FAILED or CANCELLED state")

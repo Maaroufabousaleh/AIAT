@@ -902,9 +902,19 @@ class TestAgentStorageCRUD:
         conn = engine._mock_conn
         returning = MagicMock()
         returning.first.return_value = (73,)
-        conn.execute = AsyncMock(side_effect=[returning, MagicMock()])
         project_id = uuid4()
         instance_id = uuid4()
+        def read_result(value):
+            return MagicMock(mappings=MagicMock(return_value=_mock_mappings([value])))
+        conn.execute = AsyncMock(
+            side_effect=[
+                read_result({"id": instance_id, "project_id": project_id}),
+                read_result({"id": project_id, "state": "IN_PROGRESS"}),
+                read_result({"id": instance_id, "project_id": project_id, "status": "RUNNING"}),
+                returning,
+                MagicMock(),
+            ]
+        )
 
         result = await storage.create_flow_approval_gate(
             project_id=project_id,
@@ -918,7 +928,7 @@ class TestAgentStorageCRUD:
         assert result["execution"]["id"] == 73
         assert result["gate"]["flow_node_execution_id"] == 73
         assert result["gate"]["project_id"] == project_id
-        assert conn.execute.await_count == 2
+        assert conn.execute.await_count == 5
 
     @pytest.mark.asyncio
     async def test_resolve_flow_approval_gate_atomically_records_decision_and_advance(self):
@@ -964,13 +974,13 @@ class TestAgentStorageCRUD:
                 "activated_node_ids": ["done"],
             },
         }
-        read_result = lambda value: MagicMock(
-            mappings=MagicMock(return_value=_mock_mappings([value]))
-        )
+        def read_result(value):
+            return MagicMock(mappings=MagicMock(return_value=_mock_mappings([value])))
         insert_result = MagicMock()
         insert_result.first.return_value = (101,)
         conn.execute = AsyncMock(
             side_effect=[
+                read_result({"id": project_id, "state": "IN_PROGRESS"}),
                 read_result(gate),
                 read_result(execution),
                 read_result(instance),
@@ -1015,7 +1025,7 @@ class TestAgentStorageCRUD:
         assert result["outcome"] == "applied"
         assert result["instance"]["status"] == "COMPLETED"
         assert result["activated_node_ids"] == ["done"]
-        assert conn.execute.await_count == 9
+        assert conn.execute.await_count == 10
 
     @pytest.mark.asyncio
     async def test_resolve_flow_approval_gate_replays_identical_decision_without_writes(self):
@@ -1046,7 +1056,12 @@ class TestAgentStorageCRUD:
             mappings=MagicMock(return_value=_mock_mappings([value]))
         )
         conn.execute = AsyncMock(
-            side_effect=[read_result(gate), read_result(execution), read_result(instance)]
+            side_effect=[
+                read_result({"id": project_id, "state": "IN_PROGRESS"}),
+                read_result(gate),
+                read_result(execution),
+                read_result(instance),
+            ]
         )
 
         result = await storage.resolve_flow_approval_gate(
@@ -1066,7 +1081,7 @@ class TestAgentStorageCRUD:
 
         assert result["outcome"] == "already_applied"
         assert result["activated_node_ids"] == ["done"]
-        assert conn.execute.await_count == 3
+        assert conn.execute.await_count == 4
 
     @pytest.mark.asyncio
     async def test_decide_approval_gate(self):
