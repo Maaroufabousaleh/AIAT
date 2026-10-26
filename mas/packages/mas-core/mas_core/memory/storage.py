@@ -88,6 +88,15 @@ def _flow_instance_matches_snapshot(
     return True
 
 
+def _flow_execution_matches_snapshot(
+    execution: Mapping[str, Any], snapshot: Mapping[str, Any] | None
+) -> bool:
+    """Compare the persisted execution fields used by a flow action."""
+    if snapshot is None:
+        return False
+    return all(execution.get(key) == expected for key, expected in snapshot.items())
+
+
 async def _lock_project_for_work(
     conn: Any,
     project_id: UUID,
@@ -2381,17 +2390,62 @@ class AgentStorage:
         expected_instance_snapshot: dict[str, Any] | None = None,
         instance_updates: dict[str, Any],
         activations: list[dict[str, Any]],
+        execution_updates: list[dict[str, Any]] | None = None,
+        project_event: dict[str, Any] | None = None,
         supersede_existing: bool = False,
         supersede_reason: str = "Superseded by explicit flow retry",
     ) -> dict[str, Any]:
-        """Atomically activate flow nodes and persist their execution records.
+        """Atomically transition a flow and its node execution records.
 
-        This is used when an activation includes approval nodes: the flow
-        instance must never advertise an active approval without its durable
-        execution and bound operator gate. All sibling nodes in that same
-        activation are written in the same transaction.
+        The project row is the lifecycle lock. Pending gates and execution
+        rows are then locked before the flow instance, matching approval,
+        cancellation, and completion paths. Existing node settlement,
+        instance context/status changes, new execution rows, and bound gates
+        commit together so a project-state race cannot leave a partial flow.
         """
         now = datetime.now(tz=UTC)
+        normalized_execution_updates: list[dict[str, Any]] = []
+        for item in execution_updates or []:
+            if not isinstance(item, Mapping):
+                raise ValueError("flow execution updates must be mappings")
+            expected = item.get("expected")
+            values = item.get("values")
+            if (
+                not isinstance(expected, Mapping)
+                or not isinstance(values, Mapping)
+                or isinstance(expected.get("id"), bool)
+                or not isinstance(expected.get("id"), int)
+                or expected.get("instance_id") != instance_id
+                or not expected.get("node_id")
+                or str(expected.get("status") or "").upper() not in {"RUNNING", "WAITING_APPROVAL"}
+                or not values
+                or set(values) - {"status", "output_json", "error", "completed_at"}
+                or str(values.get("status") or "").upper()
+                not in {"COMPLETED", "FAILED", "SKIPPED", "CANCELLED"}
+            ):
+                raise ValueError("flow execution update is invalid")
+            normalized_execution_updates.append(
+                {"expected": dict(expected), "values": dict(values)}
+            )
+        if len({item["expected"]["id"] for item in normalized_execution_updates}) != len(
+            normalized_execution_updates
+        ):
+            raise ValueError("flow execution updates must have unique identities")
+        expected_active_nodes = {
+            str(value) for value in (expected_active_node_ids or [])
+        }
+        if normalized_execution_updates and expected_active_node_ids is None:
+            raise ValueError("flow execution settlement requires an active-node snapshot")
+        if project_event is not None and (
+            not isinstance(project_event, Mapping)
+            or not project_event.get("event")
+            or not project_event.get("triggered_by")
+            or set(project_event) - {"event", "triggered_by", "payload", "transition_id"}
+        ):
+            raise ValueError("flow project event is invalid")
+        if supersede_existing and normalized_execution_updates:
+            raise ValueError("flow retry supersession cannot include node settlement updates")
+
         async with self.engine.begin() as conn:
             # Project state is the shared serialization boundary for flow
             # activation and project completion. Read the immutable binding,
@@ -2411,7 +2465,10 @@ class AgentStorage:
             activates_work = str(instance_updates.get("status") or "").upper() in {
                 "RUNNING",
                 "WAITING_APPROVAL",
-            }
+            } or any(
+                str(item.get("status") or "").upper() in {"RUNNING", "WAITING_APPROVAL"}
+                for item in activations
+            )
             project_result = await _lock_project_for_work(
                 conn,
                 instance_hint["project_id"],
@@ -2447,6 +2504,45 @@ class AgentStorage:
                         .order_by(t.flow_node_executions.c.id.asc())
                         .with_for_update()
                     )
+            elif normalized_execution_updates:
+                execution_ids = sorted(
+                    int(item["expected"]["id"])
+                    for item in normalized_execution_updates
+                )
+                pending_gates = (
+                    await conn.execute(
+                        t.approval_gates.select()
+                        .where(
+                            t.approval_gates.c.flow_node_execution_id.in_(execution_ids)
+                        )
+                        .where(t.approval_gates.c.status == "PENDING")
+                        .order_by(t.approval_gates.c.id.asc())
+                        .with_for_update()
+                    )
+                ).mappings().all()
+                if pending_gates:
+                    return {"outcome": "pending_approval_gate"}
+                execution_rows = (
+                    await conn.execute(
+                        t.flow_node_executions.select()
+                        .where(t.flow_node_executions.c.id.in_(execution_ids))
+                        .order_by(t.flow_node_executions.c.id.asc())
+                        .with_for_update()
+                    )
+                ).mappings().all()
+                executions_by_id = {int(row["id"]): dict(row) for row in execution_rows}
+                if set(executions_by_id) != set(execution_ids):
+                    return {"outcome": "stale_execution"}
+                for item in normalized_execution_updates:
+                    expected = item["expected"]
+                    current = executions_by_id.get(int(expected["id"]))
+                    if (
+                        current is None
+                        or current.get("instance_id") != instance_id
+                        or str(current.get("node_id") or "") not in expected_active_nodes
+                        or not _flow_execution_matches_snapshot(current, expected)
+                    ):
+                        return {"outcome": "stale_execution"}
             instance_row = (
                 await conn.execute(
                     t.flow_instances.select()
@@ -2457,6 +2553,8 @@ class AgentStorage:
             if instance_row is None:
                 return {"outcome": "not_found"}
             instance = dict(instance_row)
+            if instance.get("project_id") != instance_hint["project_id"]:
+                return {"outcome": "project_binding_changed"}
             if str(instance.get("status", "")).upper() not in {
                 str(status).upper() for status in expected_statuses
             }:
@@ -2467,6 +2565,20 @@ class AgentStorage:
                 str(value) for value in (instance.get("active_node_ids") or [])
             ) != set(str(value) for value in expected_active_node_ids):
                 return {"outcome": "conflict", "instance": instance}
+
+            for item in normalized_execution_updates:
+                expected = item["expected"]
+                result = await conn.execute(
+                    t.flow_node_executions.update()
+                    .where(t.flow_node_executions.c.id == expected["id"])
+                    .where(t.flow_node_executions.c.instance_id == instance_id)
+                    .where(t.flow_node_executions.c.status == expected["status"])
+                    .values(**item["values"])
+                )
+                if getattr(result, "rowcount", 1) != 1:
+                    raise RuntimeError(
+                        "flow node execution changed during atomic transition"
+                    )
 
             if supersede_existing and execution_ids:
                 await conn.execute(
@@ -2502,7 +2614,10 @@ class AgentStorage:
                 .values(**updates)
             )
             if getattr(changed, "rowcount", 1) != 1:
-                return {"outcome": "conflict", "instance": instance}
+                # Execution settlements and retry supersessions may already
+                # have run in this transaction. Raising forces the transaction
+                # manager to roll all those writes back with the CAS failure.
+                raise RuntimeError("flow instance changed during atomic transition")
 
             created_executions: list[dict[str, Any]] = []
             for item in activations:
@@ -2542,6 +2657,55 @@ class AgentStorage:
                             created_at=now,
                         )
                     )
+
+            if project_event is not None:
+                project = project_result["project"]
+                transition_id = project_event.get("transition_id") or uuid4()
+                event_payload = project_event.get("payload")
+                project_update = await conn.execute(
+                    t.projects.update()
+                    .where(t.projects.c.id == project["id"])
+                    .values(
+                        revision=t.projects.c.revision + 1,
+                        updated_at=now,
+                    )
+                )
+                if getattr(project_update, "rowcount", 1) != 1:
+                    raise RuntimeError("project changed during atomic flow event")
+                current_revision = project.get("revision")
+                projection_project = {
+                    **project,
+                    "revision": (
+                        int(current_revision) + 1
+                        if current_revision is not None
+                        else None
+                    ),
+                    "updated_at": now,
+                }
+                await conn.execute(
+                    t.project_state_history.insert().values(
+                        project_id=project["id"],
+                        from_state=project["state"],
+                        to_state=project["state"],
+                        event=project_event["event"],
+                        triggered_by=project_event["triggered_by"],
+                        payload=event_payload,
+                        transitioned_at=now,
+                    )
+                )
+                await conn.execute(
+                    t.project_transition_outbox.insert().values(
+                        id=transition_id,
+                        project_id=project["id"],
+                        from_state=project["state"],
+                        to_state=project["state"],
+                        event=project_event["event"],
+                        triggered_by=project_event["triggered_by"],
+                        payload=event_payload,
+                        created_at=now,
+                    )
+                )
+                await self._enqueue_project_projections_tx(conn, projection_project)
 
             updated_row = (
                 await conn.execute(
@@ -8688,6 +8852,7 @@ class AgentStorage:
         max_retries: int | None = None,
         escalated_to: str | None = None,
         escalation_reason: str | None = None,
+        expected_instance_snapshot: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         """Update a flow instance."""
         now = datetime.now(tz=UTC)
@@ -8712,33 +8877,49 @@ class AgentStorage:
             updates["escalation_reason"] = escalation_reason
 
         async with self.engine.begin() as conn:
-            introduces_active_work = (
-                str(status or "").upper() in {"RUNNING", "WAITING_APPROVAL", "PAUSED"}
-                or bool(active_node_ids)
-            )
-            if introduces_active_work:
-                instance_hint = (
-                    await conn.execute(
-                        t.flow_instances.select()
-                        .with_only_columns(t.flow_instances.c.project_id)
-                        .where(t.flow_instances.c.id == instance_id)
-                    )
-                ).mappings().first()
-                if instance_hint is None:
-                    return None
-                project_result = await _lock_project_for_work(
-                    conn,
-                    instance_hint["project_id"],
+            instance_hint = (
+                await conn.execute(
+                    t.flow_instances.select()
+                    .with_only_columns(t.flow_instances.c.project_id)
+                    .where(t.flow_instances.c.id == instance_id)
                 )
-                if project_result["outcome"] != "allowed":
-                    return None
-            await conn.execute(
+            ).mappings().first()
+            if instance_hint is None:
+                return None
+            project_result = await _lock_project_for_work(
+                conn,
+                instance_hint["project_id"],
+            )
+            if project_result["outcome"] != "allowed":
+                return None
+            instance_row = (
+                await conn.execute(
+                    t.flow_instances.select()
+                    .where(t.flow_instances.c.id == instance_id)
+                    .with_for_update()
+                )
+            ).mappings().first()
+            if instance_row is None:
+                return None
+            instance = dict(instance_row)
+            if (
+                instance.get("project_id") != instance_hint["project_id"]
+                or not _flow_instance_matches_snapshot(instance, expected_instance_snapshot)
+            ):
+                return None
+            changed = await conn.execute(
                 t.flow_instances.update()
                 .where(t.flow_instances.c.id == instance_id)
                 .values(**updates)
             )
-
-        return await self.get_flow_instance(instance_id)
+            if getattr(changed, "rowcount", 1) != 1:
+                raise RuntimeError("flow instance changed during guarded update")
+            updated_row = (
+                await conn.execute(
+                    t.flow_instances.select().where(t.flow_instances.c.id == instance_id)
+                )
+            ).mappings().first()
+            return dict(updated_row) if updated_row else None
 
     async def cancel_flow_instance(
         self,
@@ -8750,9 +8931,10 @@ class AgentStorage:
     ) -> dict[str, Any]:
         """Cancel an instance and its bound approval gates atomically.
 
-        Locks are acquired in gate -> execution -> instance order so an
-        operator decision racing cancellation cannot deadlock or leave an
-        actionable approval attached to a cancelled flow.
+        The project row is the shared lifecycle lock, followed by gate ->
+        execution -> instance. Cancellation still succeeds for a terminal
+        project's orphaned active flow; it simply participates in the same
+        serialization order as project completion and node activation.
         """
         from mas_core.workflow import parse_flow_definition
 
@@ -9173,6 +9355,7 @@ class AgentStorage:
         return await self.update_flow_instance(
             instance_id,
             context_json=current_context,
+            expected_instance_snapshot=instance,
         )
 
     async def switch_flow_instance(
@@ -9269,6 +9452,8 @@ class AgentStorage:
         instance_id: UUID,
         escalate_to: str,
         reason: str | None = None,
+        *,
+        expected_instance_snapshot: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         """Mark a flow instance as escalated."""
         instance = await self.get_flow_instance(instance_id)
@@ -9279,6 +9464,7 @@ class AgentStorage:
             instance_id,
             escalated_to=escalate_to,
             escalation_reason=reason,
+            expected_instance_snapshot=expected_instance_snapshot or instance,
         )
 
     async def retry_flow_instance(

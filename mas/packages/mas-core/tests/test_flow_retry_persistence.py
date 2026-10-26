@@ -41,8 +41,10 @@ def _storage_with_results(results):
 @pytest.mark.anyio
 async def test_retry_without_recorded_safe_node_supersedes_history() -> None:
     instance_id = uuid4()
+    project_id = uuid4()
     before = {
         "id": instance_id,
+        "project_id": project_id,
         "status": "FAILED",
         "active_node_ids": [],
         "retry_count": 2,
@@ -51,6 +53,8 @@ async def test_retry_without_recorded_safe_node_supersedes_history() -> None:
     after = {**before, "status": "NOT_STARTED", "retry_count": 3}
     storage, execute = _storage_with_results(
         [
+            _Result(first={"project_id": project_id}),
+            _Result(first={"id": project_id, "state": "IN_PROGRESS"}),
             _Result(rows=[(10,), (11,)]),
             _Result(rows=[]),
             _Result(rows=[{"id": 10}, {"id": 11}]),
@@ -72,20 +76,24 @@ async def test_retry_without_recorded_safe_node_supersedes_history() -> None:
     )
 
     assert result == after
-    assert execute.await_count == 7
+    assert execute.await_count == 9
 
 
 @pytest.mark.anyio
 async def test_overlapping_no_safe_node_retry_loses_after_instance_leaves_terminal_state() -> None:
     instance_id = uuid4()
+    project_id = uuid4()
     running = {
         "id": instance_id,
+        "project_id": project_id,
         "status": "RUNNING",
         "active_node_ids": ["approval"],
         "retry_count": 3,
     }
     storage, execute = _storage_with_results(
         [
+            _Result(first={"project_id": project_id}),
+            _Result(first={"id": project_id, "state": "IN_PROGRESS"}),
             _Result(rows=[]),
             _Result(first=running),
         ]
@@ -97,4 +105,4 @@ async def test_overlapping_no_safe_node_retry_loses_after_instance_leaves_termin
     )
 
     assert result is None
-    assert execute.await_count == 2
+    assert execute.await_count == 4

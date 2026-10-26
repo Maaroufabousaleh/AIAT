@@ -16773,6 +16773,27 @@ def _flow_instance_snapshot(instance: dict[str, Any]) -> dict[str, Any]:
     return {key: instance[key] for key in fields if key in instance}
 
 
+def _flow_node_execution_snapshot(execution: Mapping[str, Any]) -> dict[str, Any]:
+    """Bind a settlement to the exact durable active node attempt."""
+    required = ("id", "instance_id", "node_id", "status")
+    if any(key not in execution for key in required):
+        raise HTTPException(409, "Active flow node execution has an invalid snapshot")
+    fields = (
+        "id",
+        "instance_id",
+        "node_id",
+        "node_type",
+        "status",
+        "input_json",
+        "output_json",
+        "error",
+        "retry_count",
+        "started_at",
+        "completed_at",
+    )
+    return {key: execution[key] for key in fields if key in execution}
+
+
 async def _require_nonterminal_flow_project(
     storage: AgentStorage,
     instance: Mapping[str, Any],
@@ -16842,6 +16863,8 @@ async def _transition_flow_instance(
     expected_statuses: set[str],
     instance_updates: dict[str, Any],
     activations: list[dict[str, Any]] | None = None,
+    execution_updates: list[dict[str, Any]] | None = None,
+    project_event: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """CAS a flow status and its node executions in one storage transaction."""
 
@@ -16856,6 +16879,8 @@ async def _transition_flow_instance(
         expected_instance_snapshot=_flow_instance_snapshot(dict(instance)),
         instance_updates=instance_updates,
         activations=activations or [],
+        execution_updates=execution_updates,
+        project_event=project_event,
     )
     outcome = result.get("outcome")
     if outcome == "not_found":
@@ -17266,6 +17291,7 @@ async def _apply_flow_node_action(
         return activation
 
     authoritative_task_output: dict[str, Any] | None = None
+    active_execution: Mapping[str, Any] | None = None
 
     # Task nodes are completed only by a terminal Worker Run.  ``advance`` is
     # the sole operator/API action for a task: it creates the run from the
@@ -17282,6 +17308,7 @@ async def _apply_flow_node_action(
         execution = executions[-1] if executions else None
         if execution is None:
             raise HTTPException(409, "Task node has no running execution to dispatch or settle")
+        active_execution = execution
 
         if req.action == "advance":
             from mas_core.workflow.worker_policy import TaskNodePolicy
@@ -17363,11 +17390,15 @@ async def _apply_flow_node_action(
                     state=dispatch_state,
                     dispatch_mode=dispatch.get("dispatch_mode"),
                 )
-                await storage.update_flow_instance(
-                    instance_id,
-                    status="RUNNING",
-                    active_node_ids=active_node_ids,
-                    context_json=pending_context,
+                await _transition_flow_instance(
+                    storage,
+                    instance,
+                    expected_statuses={"RUNNING", "WAITING_APPROVAL"},
+                    instance_updates={
+                        "status": "RUNNING",
+                        "active_node_ids": active_node_ids,
+                        "context_json": pending_context,
+                    },
                 )
                 return _serialize(await _get_refreshed_instance())
             if dispatch_class == "unknown":
@@ -17436,6 +17467,25 @@ async def _apply_flow_node_action(
             )
             authoritative_task_output["worker_run_id"] = str(req.worker_run_id)
 
+    if active_execution is None and req.action in {"complete", "fail", "timeout"}:
+        running_executions = await storage.list_flow_node_executions(
+            instance_id=instance_id,
+            node_id=req.node_id,
+            status="RUNNING",
+            limit=1000,
+        )
+        active_execution = running_executions[-1] if running_executions else None
+
+    def _execution_settlement(values: dict[str, Any]) -> list[dict[str, Any]]:
+        if active_execution is None:
+            return []
+        return [
+            {
+                "expected": _flow_node_execution_snapshot(active_execution),
+                "values": values,
+            }
+        ]
+
     if req.action == "complete":
         updated_context = dict(current_context)
         task_output = req.output
@@ -17464,11 +17514,15 @@ async def _apply_flow_node_action(
                 decision = "approved" if req.approved else "rejected"
 
             if not decision:
-                await storage.update_flow_instance(
-                    instance_id,
-                    status="WAITING_APPROVAL",
-                    active_node_ids=active_node_ids,
-                    context_json=updated_context,
+                await _transition_flow_instance(
+                    storage,
+                    instance,
+                    expected_statuses={"RUNNING", "WAITING_APPROVAL"},
+                    instance_updates={
+                        "status": "WAITING_APPROVAL",
+                        "active_node_ids": active_node_ids,
+                        "context_json": updated_context,
+                    },
                 )
                 return _serialize(await _get_refreshed_instance())
 
@@ -17477,17 +17531,6 @@ async def _apply_flow_node_action(
 
         if node.type != FlowNodeType.END:
             updated_context["last_safe_node_id"] = req.node_id
-
-        executions = await storage.list_flow_node_executions(
-            instance_id=instance_id, node_id=req.node_id, limit=1
-        )
-        if executions:
-            await storage.update_flow_node_execution(
-                executions[0]["id"],
-                status="COMPLETED",
-                output_json=task_output or updated_context,
-                completed_at=now,
-            )
 
         # Build the full historically-completed set (needed for join nodes)
         all_executions = await storage.list_flow_node_executions(
@@ -17510,6 +17553,13 @@ async def _apply_flow_node_action(
             for nid in next_result.node_ids
             if nid not in historically_completed and nid not in already_active
         ]
+        execution_updates = _execution_settlement(
+            {
+                "status": "COMPLETED",
+                "output_json": task_output or updated_context,
+                "completed_at": now,
+            }
+        )
         if not new_nodes and not next_result.is_blocked:
             # Check if an end node was just completed
             end_nodes = definition.get_end_nodes()
@@ -17519,37 +17569,57 @@ async def _apply_flow_node_action(
                     if "fail" in node.label.lower() or "fail" in node.id.lower()
                     else "COMPLETED"
                 )
-                await storage.update_flow_instance(
-                    instance_id,
-                    status=terminal_status,
-                    active_node_ids=[],
-                    completed_at=now,
-                    context_json=updated_context,
+                await _transition_flow_instance(
+                    storage,
+                    instance,
+                    expected_statuses={"RUNNING", "WAITING_APPROVAL"},
+                    instance_updates={
+                        "status": terminal_status,
+                        "active_node_ids": [],
+                        "completed_at": now,
+                        "context_json": updated_context,
+                    },
+                    execution_updates=execution_updates,
                 )
             elif not already_active:
                 # No more nodes to run and no active work remaining — check if all end nodes done
                 all_ends_done = all(n.id in historically_completed for n in end_nodes)
                 if all_ends_done:
-                    await storage.update_flow_instance(
-                        instance_id,
-                        status="COMPLETED",
-                        active_node_ids=[],
-                        completed_at=now,
-                        context_json=updated_context,
+                    await _transition_flow_instance(
+                        storage,
+                        instance,
+                        expected_statuses={"RUNNING", "WAITING_APPROVAL"},
+                        instance_updates={
+                            "status": "COMPLETED",
+                            "active_node_ids": [],
+                            "completed_at": now,
+                            "context_json": updated_context,
+                        },
+                        execution_updates=execution_updates,
                     )
                 else:
                     # Still waiting for parallel branches — stay RUNNING
-                    await storage.update_flow_instance(
-                        instance_id,
-                        active_node_ids=list(already_active),
-                        context_json=updated_context,
+                    await _transition_flow_instance(
+                        storage,
+                        instance,
+                        expected_statuses={"RUNNING", "WAITING_APPROVAL"},
+                        instance_updates={
+                            "active_node_ids": list(already_active),
+                            "context_json": updated_context,
+                        },
+                        execution_updates=execution_updates,
                     )
             else:
                 # Other branches still active — just remove this node from active
-                await storage.update_flow_instance(
-                    instance_id,
-                    active_node_ids=list(already_active),
-                    context_json=updated_context,
+                await _transition_flow_instance(
+                    storage,
+                    instance,
+                    expected_statuses={"RUNNING", "WAITING_APPROVAL"},
+                    instance_updates={
+                        "active_node_ids": list(already_active),
+                        "context_json": updated_context,
+                    },
+                    execution_updates=execution_updates,
                 )
         else:
             terminal_nodes = [definition.get_node(nid) for nid in new_nodes]
@@ -17564,37 +17634,33 @@ async def _apply_flow_node_action(
                     )
                     else "COMPLETED"
                 )
-                for terminal_node in terminal_nodes:
-                    if terminal_node is None:
-                        continue
-                    await storage.create_flow_node_execution(
-                        instance_id=instance_id,
-                        node_id=terminal_node.id,
-                        node_type=terminal_node.type.value,
-                        node_label=terminal_node.label,
-                        input_json=updated_context,
-                    )
-                    latest_terminal_execution = await storage.list_flow_node_executions(
-                        instance_id=instance_id,
-                        node_id=terminal_node.id,
-                        limit=1,
-                    )
-                    if latest_terminal_execution:
-                        await storage.update_flow_node_execution(
-                            latest_terminal_execution[0]["id"],
-                            status="COMPLETED" if terminal_status == "COMPLETED" else "FAILED",
-                            output_json=updated_context,
-                            error="Reached failed terminal node"
-                            if terminal_status == "FAILED"
-                            else None,
-                            completed_at=now,
-                        )
-                await storage.update_flow_instance(
-                    instance_id,
-                    active_node_ids=[],
-                    context_json=updated_context,
-                    status=terminal_status,
-                    completed_at=now,
+                terminal_activations = [
+                    {
+                        "node_id": terminal_node.id,
+                        "node_type": terminal_node.type.value,
+                        "node_label": terminal_node.label,
+                        "status": "COMPLETED" if terminal_status == "COMPLETED" else "FAILED",
+                        "input_json": updated_context,
+                        "output_json": updated_context,
+                        "error": "Reached failed terminal node"
+                        if terminal_status == "FAILED"
+                        else None,
+                    }
+                    for terminal_node in terminal_nodes
+                    if terminal_node is not None
+                ]
+                await _transition_flow_instance(
+                    storage,
+                    instance,
+                    expected_statuses={"RUNNING", "WAITING_APPROVAL"},
+                    instance_updates={
+                        "active_node_ids": [],
+                        "context_json": updated_context,
+                        "status": terminal_status,
+                        "completed_at": now,
+                    },
+                    activations=terminal_activations,
+                    execution_updates=execution_updates,
                 )
             else:
                 merged_active = list(already_active | set(new_nodes))
@@ -17613,6 +17679,7 @@ async def _apply_flow_node_action(
                         "status": "RUNNING",
                     },
                     activations=activations,
+                    execution_updates=execution_updates,
                 )
                 # A task is executable only through its Worker Run.  Control
                 # nodes remain event/approval driven, while each newly active
@@ -17632,42 +17699,27 @@ async def _apply_flow_node_action(
         return _serialize(await _get_refreshed_instance())
 
     elif req.action == "fail":
-        executions = await storage.list_flow_node_executions(
-            instance_id=instance_id, node_id=req.node_id, limit=1
-        )
-        if executions:
-            await storage.update_flow_node_execution(
-                executions[0]["id"],
-                status="FAILED",
-                error=req.error,
-                completed_at=now,
-            )
-
         failure_context = dict(current_context)
         if node.type == FlowNodeType.TASK and node.config.get("worker_id"):
             failure_context = clear_worker_run_binding(failure_context, node_id=node.id)
         if req.error:
             failure_context["last_error"] = req.error
-        await storage.update_flow_instance(
-            instance_id,
-            status="FAILED",
-            active_node_ids=[],
-            context_json=failure_context,
+        await _transition_flow_instance(
+            storage,
+            instance,
+            expected_statuses={"RUNNING", "WAITING_APPROVAL"},
+            instance_updates={
+                "status": "FAILED",
+                "active_node_ids": [],
+                "context_json": failure_context,
+            },
+            execution_updates=_execution_settlement(
+                {"status": "FAILED", "error": req.error, "completed_at": now}
+            ),
         )
         return _serialize(await _get_refreshed_instance())
 
     elif req.action == "timeout":
-        executions = await storage.list_flow_node_executions(
-            instance_id=instance_id, node_id=req.node_id, limit=1
-        )
-        if executions:
-            await storage.update_flow_node_execution(
-                executions[0]["id"],
-                status="FAILED",
-                error=req.error or "Timed out",
-                completed_at=now,
-            )
-
         escalate_to = node.config.get("escalate_to_team") or node.config.get("escalate_to_agent")
         timeout_context = dict(current_context)
         timeout_context["last_error"] = req.error or "Timed out"
@@ -17675,33 +17727,38 @@ async def _apply_flow_node_action(
         if node.type == FlowNodeType.TASK and node.config.get("worker_id"):
             timeout_context = clear_worker_run_binding(timeout_context, node_id=node.id)
 
-        await storage.update_flow_instance(
-            instance_id,
-            status="FAILED",
-            active_node_ids=[],
-            context_json=timeout_context,
-        )
-
+        project_event = None
         if escalate_to:
-            await storage.escalate_flow_instance(
-                instance_id,
-                str(escalate_to),
-                req.error or f"Node {req.node_id} timed out",
+            project_event = {
+                "event": "flow_node_escalated",
+                "triggered_by": "system",
+                "payload": {
+                    "instance_id": str(instance_id),
+                    "node_id": req.node_id,
+                    "escalated_to": str(escalate_to),
+                    "reason": req.error or f"Node {req.node_id} timed out",
+                },
+            }
+        timeout_updates: dict[str, Any] = {
+            "status": "FAILED",
+            "active_node_ids": [],
+            "context_json": timeout_context,
+        }
+        if escalate_to:
+            timeout_updates["escalated_to"] = str(escalate_to)
+            timeout_updates["escalation_reason"] = (
+                req.error or f"Node {req.node_id} timed out"
             )
-            project = await storage.get_project(instance["project_id"])
-            if project is not None:
-                await storage.transition_project(
-                    instance["project_id"],
-                    new_state=project["state"],
-                    event="flow_node_escalated",
-                    triggered_by="system",
-                    payload={
-                        "instance_id": str(instance_id),
-                        "node_id": req.node_id,
-                        "escalated_to": str(escalate_to),
-                        "reason": req.error or f"Node {req.node_id} timed out",
-                    },
-                )
+        await _transition_flow_instance(
+            storage,
+            instance,
+            expected_statuses={"RUNNING", "WAITING_APPROVAL"},
+            instance_updates=timeout_updates,
+            execution_updates=_execution_settlement(
+                {"status": "FAILED", "error": req.error or "Timed out", "completed_at": now}
+            ),
+            project_event=project_event,
+        )
 
         return _serialize(await _get_refreshed_instance())
 
@@ -18030,9 +18087,14 @@ async def update_flow_instance_context(instance_id: UUID, req: dict[str, Any]) -
     if not context_updates:
         raise HTTPException(400, "context is required")
 
-    updated = await storage.update_flow_instance_context(instance_id, context_updates)
-    if updated is None:
-        raise HTTPException(404, "Failed to update context")
+    updated_context = dict(instance.get("context_json") or {})
+    updated_context.update(context_updates)
+    updated = await _transition_flow_instance(
+        storage,
+        instance,
+        expected_statuses={str(instance.get("status") or "").upper()},
+        instance_updates={"context_json": updated_context},
+    )
 
     return _serialize(updated)
 
@@ -18055,9 +18117,15 @@ async def escalate_flow_instance(instance_id: UUID, req: dict[str, Any]) -> dict
 
     reason = req.get("reason")
 
-    updated = await storage.escalate_flow_instance(instance_id, escalate_to, reason)
-    if updated is None:
-        raise HTTPException(404, "Failed to escalate")
+    escalation_updates: dict[str, Any] = {"escalated_to": escalate_to}
+    if reason is not None:
+        escalation_updates["escalation_reason"] = reason
+    updated = await _transition_flow_instance(
+        storage,
+        instance,
+        expected_statuses={str(instance.get("status") or "").upper()},
+        instance_updates=escalation_updates,
+    )
 
     return _serialize(updated)
 

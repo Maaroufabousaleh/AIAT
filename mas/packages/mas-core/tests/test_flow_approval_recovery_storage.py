@@ -9,9 +9,10 @@ from mas_core.memory.storage import AgentStorage
 
 
 class _Result:
-    def __init__(self, *, first=None, rows=None):
+    def __init__(self, *, first=None, rows=None, rowcount: int = 1):
         self._first = first
         self._rows = list(rows or [])
+        self.rowcount = rowcount
 
     def mappings(self):
         return self
@@ -160,6 +161,224 @@ async def test_flow_activation_rejects_security_blocked_project_under_the_same_l
     assert execute.await_count == 2
     project_lock_sql = str(execute.await_args_list[1].args[0]).upper()
     assert "FROM PROJECTS" in project_lock_sql and "FOR UPDATE" in project_lock_sql
+
+
+@pytest.mark.anyio
+async def test_flow_node_settlement_rechecks_terminal_project_before_any_write() -> None:
+    project_id = uuid4()
+    instance_id = uuid4()
+    execution = {
+        "id": 23,
+        "instance_id": instance_id,
+        "node_id": "work",
+        "node_type": "task",
+        "status": "RUNNING",
+    }
+    storage, execute, _ = _storage_with_results(
+        [
+            _Result(first={"id": instance_id, "project_id": project_id}),
+            _Result(first={"id": project_id, "state": "COMPLETED"}),
+        ]
+    )
+
+    result = await storage.activate_flow_nodes(
+        instance_id,
+        expected_statuses={"RUNNING"},
+        expected_active_node_ids=["work"],
+        instance_updates={"status": "COMPLETED", "active_node_ids": []},
+        activations=[],
+        execution_updates=[
+            {
+                "expected": execution,
+                "values": {"status": "COMPLETED", "completed_at": "now"},
+            }
+        ],
+    )
+
+    assert result == {"outcome": "project_terminal"}
+    assert execute.await_count == 2
+    assert "FOR UPDATE" in str(execute.await_args_list[1].args[0]).upper()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"context_json": {"late": True}},
+        {"escalated_to": "exec_ceo", "escalation_reason": "late"},
+        {"status": "COMPLETED", "active_node_ids": []},
+    ],
+)
+async def test_generic_flow_instance_update_locks_project_before_context_escalation_or_terminal_write(
+    updates: dict[str, object],
+) -> None:
+    project_id = uuid4()
+    instance_id = uuid4()
+    storage, execute, _ = _storage_with_results(
+        [
+            _Result(first={"project_id": project_id}),
+            _Result(first={"id": project_id, "state": "COMPLETED"}),
+        ]
+    )
+
+    result = await storage.update_flow_instance(instance_id, **updates)
+
+    assert result is None
+    assert execute.await_count == 2
+    assert "FROM FLOW_INSTANCES" in str(execute.await_args_list[0].args[0]).upper()
+    project_lock = str(execute.await_args_list[1].args[0]).upper()
+    assert "FROM PROJECTS" in project_lock
+    assert "FOR UPDATE" in project_lock
+
+
+@pytest.mark.anyio
+async def test_flow_node_settlement_rolls_back_if_locked_instance_cas_write_fails() -> None:
+    project_id = uuid4()
+    instance_id = uuid4()
+    execution = {
+        "id": 24,
+        "instance_id": instance_id,
+        "node_id": "work",
+        "node_type": "task",
+        "status": "RUNNING",
+    }
+    instance = {
+        "id": instance_id,
+        "project_id": project_id,
+        "flow_id": uuid4(),
+        "flow_version": 1,
+        "status": "RUNNING",
+        "active_node_ids": ["work"],
+        "context_json": {},
+        "updated_at": "before",
+        "retry_count": 0,
+    }
+    storage, execute, tx_exit = _storage_with_results(
+        [
+            _Result(first={"id": instance_id, "project_id": project_id}),
+            _Result(first={"id": project_id, "state": "IN_PROGRESS"}),
+            _Result(rows=[]),  # no pending approval gate
+            _Result(rows=[execution]),
+            _Result(first=instance),
+            _Result(),  # settle the node execution
+            _Result(rowcount=0),  # force the locked flow instance update to lose
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match="flow instance changed"):
+        await storage.activate_flow_nodes(
+            instance_id,
+            expected_statuses={"RUNNING"},
+            expected_active_node_ids=["work"],
+            expected_instance_snapshot={
+                "id": instance_id,
+                "project_id": project_id,
+                "status": "RUNNING",
+                "active_node_ids": ["work"],
+                "context_json": {},
+                "updated_at": "before",
+                "retry_count": 0,
+            },
+            instance_updates={"status": "FAILED", "active_node_ids": []},
+            activations=[],
+            execution_updates=[
+                {
+                    "expected": execution,
+                    "values": {"status": "FAILED", "error": "test", "completed_at": "now"},
+                }
+            ],
+        )
+
+    assert execute.await_count == 7
+    assert "FOR UPDATE" in str(execute.await_args_list[1].args[0]).upper()
+    assert "FOR UPDATE" in str(execute.await_args_list[2].args[0]).upper()
+    assert "FOR UPDATE" in str(execute.await_args_list[3].args[0]).upper()
+    assert "FOR UPDATE" in str(execute.await_args_list[4].args[0]).upper()
+    assert "UPDATE FLOW_NODE_EXECUTIONS" in str(execute.await_args_list[5].args[0]).upper()
+    assert "UPDATE FLOW_INSTANCES" in str(execute.await_args_list[6].args[0]).upper()
+    assert tx_exit.await_args.args[0] is RuntimeError
+
+
+@pytest.mark.anyio
+async def test_timeout_project_event_preserves_revision_and_projection_in_atomic_write() -> None:
+    project_id = uuid4()
+    instance_id = uuid4()
+    execution = {
+        "id": 25,
+        "instance_id": instance_id,
+        "node_id": "work",
+        "node_type": "task",
+        "status": "RUNNING",
+    }
+    instance = {
+        "id": instance_id,
+        "project_id": project_id,
+        "flow_id": uuid4(),
+        "flow_version": 1,
+        "status": "RUNNING",
+        "active_node_ids": ["work"],
+        "context_json": {},
+        "retry_count": 0,
+    }
+    project = {
+        "id": project_id,
+        "state": "IN_PROGRESS",
+        "revision": 7,
+        "name": "Flow project",
+    }
+    updated_instance = {**instance, "status": "FAILED", "active_node_ids": []}
+    storage, execute, _ = _storage_with_results(
+        [
+            _Result(first={"id": instance_id, "project_id": project_id}),
+            _Result(first=project),
+            _Result(rows=[]),
+            _Result(rows=[execution]),
+            _Result(first=instance),
+            _Result(),  # settle the node execution
+            _Result(),  # update the flow instance
+            _Result(),  # increment project revision
+            _Result(),  # append project history
+            _Result(),  # append transition outbox
+            _Result(first=updated_instance),
+        ]
+    )
+    storage._enqueue_project_projections_tx = AsyncMock(return_value=[])
+
+    result = await storage.activate_flow_nodes(
+        instance_id,
+        expected_statuses={"RUNNING"},
+        expected_active_node_ids=["work"],
+        expected_instance_snapshot=instance,
+        instance_updates={"status": "FAILED", "active_node_ids": []},
+        activations=[],
+        execution_updates=[
+            {
+                "expected": execution,
+                "values": {"status": "FAILED", "error": "Timed out"},
+            }
+        ],
+        project_event={
+            "event": "flow_node_escalated",
+            "triggered_by": "system",
+            "payload": {"instance_id": str(instance_id), "node_id": "work"},
+        },
+    )
+
+    assert result["outcome"] == "applied"
+    project_update = execute.await_args_list[7].args[0]
+    assert "UPDATE PROJECTS" in str(project_update).upper()
+    assert "PROJECTS.REVISION +" in str(project_update).upper()
+    history = execute.await_args_list[8].args[0]
+    outbox = execute.await_args_list[9].args[0]
+    assert "INSERT INTO PROJECT_STATE_HISTORY" in str(history).upper()
+    assert "INSERT INTO PROJECT_TRANSITION_OUTBOX" in str(outbox).upper()
+    history_values = history.compile().params
+    outbox_values = outbox.compile().params
+    assert history_values["from_state"] == history_values["to_state"] == "IN_PROGRESS"
+    assert outbox_values["from_state"] == outbox_values["to_state"] == "IN_PROGRESS"
+    storage._enqueue_project_projections_tx.assert_awaited_once()
+    projection = storage._enqueue_project_projections_tx.await_args.args[1]
+    assert projection["revision"] == 8
 
 
 @pytest.mark.anyio
