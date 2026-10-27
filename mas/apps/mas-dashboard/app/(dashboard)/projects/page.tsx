@@ -103,6 +103,7 @@ export default function ProjectsPage() {
   const flowsRef = useRef<Flow[] | null>(null);
   const companiesRef = useRef<Company[] | null>(null);
   const companyChoicesCurrentRef = useRef(false);
+  const loadGenerationRef = useRef(0);
   const hasReadContextRef = useRef(false);
   // Sort controls: which field to sort by and which direction.
   // Defaults to "Recently updated" — the most common intent on a project list.
@@ -123,8 +124,10 @@ export default function ProjectsPage() {
   };
 
   const handleAccessDenied = useCallback(() => {
+    loadGenerationRef.current += 1;
     const hadData = hasReadContextRef.current || projectsRef.current !== null || flowsRef.current !== null;
     setAccessDenied(true);
+    setLoading(false);
     setHasReadContext(hadData);
     setLoadError("");
     setLoadStale(false);
@@ -137,6 +140,8 @@ export default function ProjectsPage() {
 
   const load = useCallback(async () => {
     if (accessDenied) return;
+    const generation = ++loadGenerationRef.current;
+    const isCurrentLoad = () => loadGenerationRef.current === generation;
     const hadData = projectsRef.current !== null || flowsRef.current !== null;
     companyChoicesCurrentRef.current = false;
     setCompanyChoicesCurrent(false);
@@ -188,6 +193,7 @@ export default function ProjectsPage() {
         fetch("/api/flows?is_active=true&limit=1000", { cache: "no-store" }),
         companyLoad,
       ]);
+      if (!isCurrentLoad()) return;
       if (companyResult.kind === "loaded") {
         const nextCompanies = companyResult.companies;
         companiesRef.current = nextCompanies;
@@ -220,6 +226,7 @@ export default function ProjectsPage() {
         projRes.json(),
         flowRes.json(),
       ]);
+      if (!isCurrentLoad()) return;
       const nextProjects = Array.isArray(projData) ? projData : projData.projects ?? [];
       const nextFlows = Array.isArray(flowData) ? flowData : [];
       projectsRef.current = nextProjects;
@@ -230,6 +237,7 @@ export default function ProjectsPage() {
       setHasReadContext(true);
       setLoadStale(false);
     } catch (cause) {
+      if (!isCurrentLoad()) return;
       const status = cause instanceof Error ? (cause as HttpError).status : undefined;
       if (status === 401 || status === 403) {
         handleAccessDenied();
@@ -238,11 +246,16 @@ export default function ProjectsPage() {
       setLoadError(cause instanceof Error ? cause.message : String(cause));
       setLoadStale(hadData);
     } finally {
-      setLoading(false);
+      if (isCurrentLoad()) setLoading(false);
     }
   }, [accessDenied, handleAccessDenied]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+    return () => {
+      loadGenerationRef.current += 1;
+    };
+  }, [load]);
 
   function resetCreateForm() {
     setNewName("");

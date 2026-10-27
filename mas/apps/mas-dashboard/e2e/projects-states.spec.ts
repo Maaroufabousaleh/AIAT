@@ -484,6 +484,167 @@ test("stale company choices are discarded and creation recovers after a fresh re
   await expect(page.getByRole("heading", { name: "New Project" })).toHaveCount(0);
 });
 
+test("superseded refresh cannot replace newer project, flow, or company denial state", async ({ page }) => {
+  const initialProjects = [{ ...PROJECT_FIXTURE[0], name: "Initial project" }];
+  const olderProjects = [{ ...PROJECT_FIXTURE[0], id: "projects-e2e-older", name: "Older project response" }];
+  const latestProjects = [{ ...PROJECT_FIXTURE[0], id: "projects-e2e-latest", name: "Latest project response" }];
+  const initialFlows = [{ ...FLOW_FIXTURE[0], name: "Initial flow" }];
+  const olderFlows = [{ ...FLOW_FIXTURE[0], id: "projects-e2e-older-flow", name: "Older flow response" }];
+  const latestFlows = [{ ...FLOW_FIXTURE[0], id: "projects-e2e-latest-flow", name: "Latest flow response" }];
+  let projectCreates = 0;
+  let raceStarted = false;
+  let olderRelease: (() => void) | undefined;
+  const olderResponsesGate = new Promise<void>((resolve) => {
+    olderRelease = resolve;
+  });
+  const raceReads = { projects: 0, flows: 0, companies: 0 };
+
+  await page.route("**/api/projects**", async (route) => {
+    if (route.request().method() === "POST") {
+      projectCreates += 1;
+      await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ id: "unexpected-project" }) });
+      return;
+    }
+    if (!raceStarted) {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(initialProjects) });
+      return;
+    }
+    raceReads.projects += 1;
+    if (raceReads.projects === 1) {
+      await olderResponsesGate;
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(olderProjects) });
+      return;
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(latestProjects) });
+  });
+  await page.route("**/api/flows**", async (route) => {
+    if (!raceStarted) {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(initialFlows) });
+      return;
+    }
+    raceReads.flows += 1;
+    if (raceReads.flows === 1) {
+      await olderResponsesGate;
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(olderFlows) });
+      return;
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(latestFlows) });
+  });
+  await page.route("**/api/companies**", async (route) => {
+    if (!raceStarted) {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(COMPANY_FIXTURE) });
+      return;
+    }
+    raceReads.companies += 1;
+    if (raceReads.companies === 1) {
+      await olderResponsesGate;
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(COMPANY_FIXTURE) });
+      return;
+    }
+    await route.fulfill({ status: 403, contentType: "application/json", body: JSON.stringify({ detail: "Company access denied" }) });
+  });
+
+  await authenticate(page, "/projects");
+  await expect(page.getByRole("link", { name: "Initial project", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "New Project" }).click();
+  const initialCompanySelect = page.getByRole("combobox", { name: "Project company" });
+  await expect(initialCompanySelect).toBeEnabled();
+  await page.getByRole("button", { name: "Cancel" }).click();
+
+  raceStarted = true;
+  const olderResponses = Promise.all([
+    page.waitForResponse((response) => new URL(response.url()).pathname === "/api/projects" && response.request().method() === "GET"),
+    page.waitForResponse((response) => new URL(response.url()).pathname === "/api/flows" && response.request().method() === "GET"),
+    page.waitForResponse((response) => new URL(response.url()).pathname === "/api/companies" && response.request().method() === "GET"),
+  ]);
+  await page.getByRole("button", { name: "Refresh projects" }).click();
+  await expect.poll(() => Object.values(raceReads).every((count) => count === 1)).toBe(true);
+
+  const latestResponses = Promise.all([
+    page.waitForResponse((response) => new URL(response.url()).pathname === "/api/projects" && response.request().method() === "GET"),
+    page.waitForResponse((response) => new URL(response.url()).pathname === "/api/flows" && response.request().method() === "GET"),
+    page.waitForResponse((response) => new URL(response.url()).pathname === "/api/companies" && response.request().method() === "GET"),
+  ]);
+  await page.getByRole("button", { name: "Refresh projects" }).click();
+  await latestResponses;
+  await expect(page.getByRole("link", { name: "Latest project response", exact: true })).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: "Company access denied" })).toBeVisible();
+
+  await page.getByRole("button", { name: "New Project" }).click();
+  const companySelect = page.getByRole("combobox", { name: "Project company" });
+  await expect(companySelect).toBeDisabled();
+  await expect(companySelect).toHaveValue("");
+  const flowSelect = page.locator("form select").nth(1);
+  await expect(flowSelect).toContainText("Latest flow response");
+  await expect(flowSelect).not.toContainText("Older flow response");
+  await page.getByPlaceholder("my-project").fill("Must remain blocked");
+  await expect(page.getByRole("button", { name: "Create", exact: true })).toBeDisabled();
+  await page.locator("form").evaluate((form) => form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+  expect(projectCreates).toBe(0);
+
+  olderRelease?.();
+  await olderResponses;
+  await expect(page.getByRole("link", { name: "Latest project response", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Older project response", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("status").filter({ hasText: "Company access denied" })).toBeVisible();
+  await expect(companySelect).toBeDisabled();
+  await expect(flowSelect).toContainText("Latest flow response");
+  expect(projectCreates).toBe(0);
+});
+
+test("project access denial invalidates an older pending refresh", async ({ page }) => {
+  const initialProjects = [{ ...PROJECT_FIXTURE[0], name: "Retained after denial" }];
+  const staleProjects = [{ ...PROJECT_FIXTURE[0], id: "projects-e2e-stale", name: "Stale project response" }];
+  let raceStarted = false;
+  let projectReads = 0;
+  let olderRelease: (() => void) | undefined;
+  const olderResponseGate = new Promise<void>((resolve) => {
+    olderRelease = resolve;
+  });
+
+  await page.route("**/api/projects**", async (route) => {
+    if (!raceStarted) {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(initialProjects) });
+      return;
+    }
+    projectReads += 1;
+    if (projectReads === 1) {
+      await olderResponseGate;
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(staleProjects) });
+      return;
+    }
+    await route.fulfill({ status: 403, contentType: "application/json", body: JSON.stringify({ detail: "Project access denied" }) });
+  });
+  await page.route("**/api/flows**", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(FLOW_FIXTURE) });
+  });
+  await page.route("**/api/companies**", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(COMPANY_FIXTURE) });
+  });
+
+  await authenticate(page, "/projects");
+  await expect(page.getByRole("link", { name: "Retained after denial", exact: true })).toBeVisible();
+  raceStarted = true;
+
+  const olderResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/projects" && response.request().method() === "GET");
+  await page.getByRole("button", { name: "Refresh projects" }).click();
+  await expect.poll(() => projectReads).toBe(1);
+  const deniedResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/projects" && response.status() === 403);
+  await page.getByRole("button", { name: "Refresh projects" }).click();
+  await deniedResponse;
+
+  await expect(page.getByRole("region", { name: "Projects access status" })).toBeVisible();
+  await expect(page.getByText("Retained after denial", { exact: true })).toBeVisible();
+  olderRelease?.();
+  await olderResponse;
+
+  await expect(page.getByRole("region", { name: "Projects access status" })).toBeVisible();
+  await expect(page.getByText("Retained after denial", { exact: true })).toBeVisible();
+  await expect(page.getByText("Stale project response", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Refresh projects" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "New Project" })).toHaveCount(0);
+});
+
 test("projects list fails closed when the initial project read is denied", async ({
   page,
 }) => {
