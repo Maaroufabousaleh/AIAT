@@ -21,6 +21,11 @@ const FLOW_FIXTURE = [
   },
 ];
 
+const COMPANY_FIXTURE = [
+  { id: "projects-e2e-company-001", name: "Alpha Company", slug: "alpha-company" },
+  { id: "projects-e2e-company-002", name: "Beta Company", slug: "beta-company" },
+];
+
 test("projects list retains the last known state when a refresh fails", async ({
   page,
 }) => {
@@ -49,6 +54,9 @@ test("projects list retains the last known state when a refresh fails", async ({
       contentType: "application/json",
       body: JSON.stringify(FLOW_FIXTURE),
     });
+  });
+  await page.route("**/api/companies**", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(COMPANY_FIXTURE) });
   });
 
   await authenticate(page, "/projects");
@@ -302,10 +310,20 @@ test("project creation can save a prepared project without starting CEO work", a
       body: JSON.stringify(FLOW_FIXTURE),
     });
   });
+  await page.route("**/api/companies**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(COMPANY_FIXTURE),
+    });
+  });
 
   await authenticate(page, "/projects");
   await page.getByRole("button", { name: "New Project" }).first().click();
   await page.getByPlaceholder("my-project").fill("Prepared alpha project");
+  const companySelect = page.getByRole("combobox", { name: "Project company" });
+  await expect(companySelect).toHaveValue(COMPANY_FIXTURE[0].id);
+  await companySelect.selectOption(COMPANY_FIXTURE[1].id);
   const startWork = page.getByRole("checkbox", {
     name: "Start CEO feasibility after creation",
   });
@@ -316,6 +334,9 @@ test("project creation can save a prepared project without starting CEO work", a
   await expect
     .poll(() => createRequest.body?.start_immediately)
     .toBe(false);
+  await expect
+    .poll(() => createRequest.body?.company_id)
+    .toBe(COMPANY_FIXTURE[1].id);
   await expect(
     page.getByRole("link", { name: "Prepared alpha project", exact: true }),
   ).toBeVisible();
@@ -352,6 +373,117 @@ test("project creation can save a prepared project without starting CEO work", a
   expect(startCalls).toBe(2);
 });
 
+test("company lookup failure leaves project views usable and blocks creation", async ({ page }) => {
+  let projectCreateCalls = 0;
+  await page.route("**/api/projects**", async (route) => {
+    if (route.request().method() === "POST") {
+      projectCreateCalls += 1;
+      await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({}) });
+      return;
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(PROJECT_FIXTURE) });
+  });
+  await page.route("**/api/flows**", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(FLOW_FIXTURE) });
+  });
+  await page.route("**/api/companies**", async (route) => {
+    await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ detail: "Company service unavailable" }) });
+  });
+
+  await authenticate(page, "/projects");
+
+  await expect(page.getByRole("link", { name: "projects-e2e-retained", exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Projects access status" })).toHaveCount(0);
+  await expect(page.getByRole("status").filter({ hasText: "Company choices unavailable" })).toBeVisible();
+  await page.getByRole("button", { name: "New Project" }).click();
+  await page.getByPlaceholder("my-project").fill("Should not be submitted");
+
+  await expect(page.locator("#new-project-company-status")).toContainText("Company choices could not be loaded");
+  await expect(page.getByRole("combobox", { name: "Project company" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Create", exact: true })).toBeDisabled();
+  await page.locator("form").evaluate((form) => form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+  expect(projectCreateCalls).toBe(0);
+});
+
+test("company permission denial is scoped to creation and does not hide project views", async ({ page }) => {
+  let projectCreateCalls = 0;
+  await page.route("**/api/projects**", async (route) => {
+    if (route.request().method() === "POST") projectCreateCalls += 1;
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(PROJECT_FIXTURE) });
+  });
+  await page.route("**/api/flows**", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(FLOW_FIXTURE) });
+  });
+  await page.route("**/api/companies**", async (route) => {
+    await route.fulfill({ status: 403, contentType: "application/json", body: JSON.stringify({ detail: "Company access denied" }) });
+  });
+
+  await authenticate(page, "/projects");
+
+  await expect(page.getByRole("link", { name: "projects-e2e-retained", exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Projects access status" })).toHaveCount(0);
+  await expect(page.getByRole("status").filter({ hasText: "Company access denied" })).toBeVisible();
+  await page.getByRole("button", { name: "New Project" }).click();
+  await expect(page.locator("#new-project-company-status")).toContainText("Access to company choices was denied");
+  await expect(page.getByRole("button", { name: "Create", exact: true })).toBeDisabled();
+  expect(projectCreateCalls).toBe(0);
+});
+
+test("stale company choices are discarded and creation recovers after a fresh retry", async ({ page }) => {
+  const projectCreateBodies: Record<string, unknown>[] = [];
+  let companyReads = 0;
+  await page.route("**/api/projects**", async (route) => {
+    if (route.request().method() === "POST") {
+      projectCreateBodies.push(route.request().postDataJSON() as Record<string, unknown>);
+      await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ id: "projects-e2e-created" }) });
+      return;
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(PROJECT_FIXTURE) });
+  });
+  await page.route("**/api/flows**", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(FLOW_FIXTURE) });
+  });
+  await page.route("**/api/companies**", async (route) => {
+    companyReads += 1;
+    if (companyReads === 2) {
+      await route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ detail: "Company session expired" }) });
+      return;
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(COMPANY_FIXTURE) });
+  });
+
+  await authenticate(page, "/projects");
+  await page.getByRole("button", { name: "New Project" }).click();
+  const companySelect = page.getByRole("combobox", { name: "Project company" });
+  await companySelect.selectOption(COMPANY_FIXTURE[1].id);
+  await page.getByRole("button", { name: "Cancel" }).click();
+
+  await page.getByRole("button", { name: "Refresh projects" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Company access denied" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "projects-e2e-retained", exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Projects access status" })).toHaveCount(0);
+  await page.getByRole("button", { name: "New Project" }).click();
+  await expect(companySelect).toBeDisabled();
+  await expect(companySelect).toHaveValue("");
+  await page.getByPlaceholder("my-project").fill("Stale company project");
+  await expect(page.getByRole("button", { name: "Create", exact: true })).toBeDisabled();
+  await page.locator("form").evaluate((form) => form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+  expect(projectCreateBodies).toHaveLength(0);
+
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await page.getByRole("button", { name: "Retry company choices" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Company access denied" })).toHaveCount(0);
+  await page.getByRole("button", { name: "New Project" }).click();
+  await expect(companySelect).toBeEnabled();
+  await companySelect.selectOption(COMPANY_FIXTURE[1].id);
+  await page.getByPlaceholder("my-project").fill("Recovered company project");
+  await page.getByRole("button", { name: "Create", exact: true }).click();
+
+  await expect.poll(() => projectCreateBodies.length).toBe(1);
+  expect(projectCreateBodies[0].company_id).toBe(COMPANY_FIXTURE[1].id);
+  await expect(page.getByRole("heading", { name: "New Project" })).toHaveCount(0);
+});
+
 test("projects list fails closed when the initial project read is denied", async ({
   page,
 }) => {
@@ -368,6 +500,9 @@ test("projects list fails closed when the initial project read is denied", async
       contentType: "application/json",
       body: JSON.stringify(FLOW_FIXTURE),
     });
+  });
+  await page.route("**/api/companies**", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(COMPANY_FIXTURE) });
   });
 
   await authenticate(page, "/projects");
@@ -409,6 +544,9 @@ test("projects list preserves retained rows but hides controls after read denial
       contentType: "application/json",
       body: JSON.stringify(FLOW_FIXTURE),
     });
+  });
+  await page.route("**/api/companies**", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(COMPANY_FIXTURE) });
   });
 
   await authenticate(page, "/projects");
@@ -452,6 +590,9 @@ test("projects list enters the same denied state when deletion loses authorizati
       contentType: "application/json",
       body: JSON.stringify(FLOW_FIXTURE),
     });
+  });
+  await page.route("**/api/companies**", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(COMPANY_FIXTURE) });
   });
 
   await authenticate(page, "/projects");

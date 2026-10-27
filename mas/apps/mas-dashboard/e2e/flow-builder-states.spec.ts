@@ -346,6 +346,13 @@ test("Research Brief requires bindings, validates, and attaches to a project", a
       body: JSON.stringify(createdProject ? [createdProject] : []),
     });
   });
+  await page.route("**/api/companies**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([{ id: "flow-builder-company", name: "Flow Builder Company", slug: "flow-builder-company" }]),
+    });
+  });
   await page.route("**/api/governance/runs**", async (route) => {
     await route.fulfill({
       status: 200,
@@ -439,7 +446,7 @@ test("Research Brief requires bindings, validates, and attaches to a project", a
     name: "Start CEO feasibility after creation",
   });
   await startWork.uncheck();
-  await page.locator("select").last().selectOption("research-flow-created");
+  await page.locator("form").getByRole("combobox").nth(1).selectOption("research-flow-created");
   await page.getByRole("button", { name: "Create", exact: true }).click();
 
   await expect(page.getByRole("link", { name: "Research Brief setup project", exact: true })).toBeVisible();

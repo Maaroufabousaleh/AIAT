@@ -9,6 +9,7 @@ const WORKER_ID = "50000000-0000-4000-8000-000000000004";
 const RESEARCH_RUN_ID = "50000000-0000-4000-8000-000000000005";
 const APPROVAL_ID = "50000000-0000-4000-8000-000000000006";
 const REPORT_RUN_ID = "50000000-0000-4000-8000-000000000007";
+const COMPANY_ID = "50000000-0000-4000-8000-000000000008";
 
 type FlowFixtureNode = {
   id: string;
@@ -156,6 +157,9 @@ test("Research Brief template runs through Project Detail review and evidence", 
         schema_version: "aiat.flow-template.v1",
         templates: [RESEARCH_TEMPLATE],
       });
+    }
+    if (pathname === "/api/companies" && method === "GET") {
+      return fulfill(route, [{ id: COMPANY_ID, name: "Research Company", slug: "research-company" }]);
     }
     if (pathname === "/api/flows/dry-run" && method === "POST") {
       const body = request.postDataJSON() as Record<string, unknown>;
@@ -497,7 +501,7 @@ test("Research Brief template runs through Project Detail review and evidence", 
   await page.getByRole("button", { name: "New Project" }).first().click();
   await page.getByPlaceholder("my-project").fill("Research Brief integration project");
   await page.getByRole("checkbox", { name: "Start CEO feasibility after creation" }).check();
-  await page.locator("select").last().selectOption(FLOW_ID);
+  await page.locator("form").getByRole("combobox").nth(1).selectOption(FLOW_ID);
   const projectResponse = page.waitForResponse(
     (response) => response.url().endsWith("/api/projects") && response.request().method() === "POST",
   );
@@ -507,6 +511,7 @@ test("Research Brief template runs through Project Detail review and evidence", 
   expect(projectCreateRequests[0]).toEqual(expect.objectContaining({
     name: "Research Brief integration project",
     flow_id: FLOW_ID,
+    company_id: COMPANY_ID,
     start_immediately: true,
   }));
   await page.getByRole("link", { name: "Open Research Brief integration project" }).click();

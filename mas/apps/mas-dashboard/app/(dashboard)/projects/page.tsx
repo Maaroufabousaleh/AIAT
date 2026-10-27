@@ -74,6 +74,9 @@ export default function ProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [flows, setFlows] = useState<Flow[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
+  const [companyChoicesCurrent, setCompanyChoicesCurrent] = useState(false);
+  const [companyLoadError, setCompanyLoadError] = useState("");
+  const [companyAccessDenied, setCompanyAccessDenied] = useState(false);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<string>("non-archived");
   const [showCreate, setShowCreate] = useState(false);
@@ -99,6 +102,7 @@ export default function ProjectsPage() {
   const projectsRef = useRef<Project[] | null>(null);
   const flowsRef = useRef<Flow[] | null>(null);
   const companiesRef = useRef<Company[] | null>(null);
+  const companyChoicesCurrentRef = useRef(false);
   const hasReadContextRef = useRef(false);
   // Sort controls: which field to sort by and which direction.
   // Defaults to "Recently updated" — the most common intent on a project list.
@@ -119,7 +123,7 @@ export default function ProjectsPage() {
   };
 
   const handleAccessDenied = useCallback(() => {
-    const hadData = hasReadContextRef.current || projectsRef.current !== null || flowsRef.current !== null || companiesRef.current !== null;
+    const hadData = hasReadContextRef.current || projectsRef.current !== null || flowsRef.current !== null;
     setAccessDenied(true);
     setHasReadContext(hadData);
     setLoadError("");
@@ -133,41 +137,96 @@ export default function ProjectsPage() {
 
   const load = useCallback(async () => {
     if (accessDenied) return;
-    const hadData = projectsRef.current !== null || flowsRef.current !== null || companiesRef.current !== null;
+    const hadData = projectsRef.current !== null || flowsRef.current !== null;
+    companyChoicesCurrentRef.current = false;
+    setCompanyChoicesCurrent(false);
+    setCompanyLoadError("");
+    setCompanyAccessDenied(false);
     if (!hadData) setLoading(true);
     setLoadError("");
     try {
-      const [projRes, flowRes, companyRes] = await Promise.all([
+      const companyLoad = (async (): Promise<
+        | { kind: "loaded"; companies: Company[] }
+        | { kind: "unavailable"; message: string; accessDenied: boolean }
+      > => {
+        try {
+          const response = await fetch("/api/companies", { cache: "no-store" });
+          if (!response.ok) {
+            return {
+              kind: "unavailable",
+              message: response.status === 401 || response.status === 403
+                ? "Access to company choices was denied. Projects and flows remain available, but project creation is disabled until access is restored."
+                : "Company choices could not be loaded. Projects and flows remain available, but project creation is disabled until company access is restored.",
+              accessDenied: response.status === 401 || response.status === 403,
+            };
+          }
+          const data: unknown = await response.json();
+          if (!Array.isArray(data) || data.some((company) => (
+            !company ||
+            typeof company !== "object" ||
+            typeof company.id !== "string" ||
+            typeof company.name !== "string" ||
+            typeof company.slug !== "string"
+          ))) {
+            return {
+              kind: "unavailable",
+              message: "Company choices could not be loaded because the control plane returned invalid data. Projects and flows remain available, but project creation is disabled.",
+              accessDenied: false,
+            };
+          }
+          return { kind: "loaded", companies: data as Company[] };
+        } catch {
+          return {
+            kind: "unavailable",
+            message: "Company choices could not be loaded. Projects and flows remain available, but project creation is disabled until company access is restored.",
+            accessDenied: false,
+          };
+        }
+      })();
+      const [projRes, flowRes, companyResult] = await Promise.all([
         fetch("/api/projects?limit=1000", { cache: "no-store" }),
         fetch("/api/flows?is_active=true&limit=1000", { cache: "no-store" }),
-        fetch("/api/companies", { cache: "no-store" }),
+        companyLoad,
       ]);
-      if (!projRes.ok || !flowRes.ok || !companyRes.ok) {
-        const denied = [projRes, flowRes, companyRes].find((response) => response.status === 401 || response.status === 403);
-        const error = new Error("Project, flow, or company data are unavailable from the control plane") as HttpError;
+      if (companyResult.kind === "loaded") {
+        const nextCompanies = companyResult.companies;
+        companiesRef.current = nextCompanies;
+        companyChoicesCurrentRef.current = true;
+        setCompanies(nextCompanies);
+        setCompanyChoicesCurrent(true);
+        setCompanyLoadError("");
+        setCompanyAccessDenied(false);
+        setSelectedCompanyId((current) => (
+          current && nextCompanies.some((company) => company.id === current)
+            ? current
+            : nextCompanies[0]?.id ?? ""
+        ));
+      } else {
+        companiesRef.current = [];
+        companyChoicesCurrentRef.current = false;
+        setCompanies([]);
+        setCompanyChoicesCurrent(false);
+        setCompanyLoadError(companyResult.message);
+        setCompanyAccessDenied(companyResult.accessDenied);
+        setSelectedCompanyId("");
+      }
+      if (!projRes.ok || !flowRes.ok) {
+        const denied = [projRes, flowRes].find((response) => response.status === 401 || response.status === 403);
+        const error = new Error("Project or flow data are unavailable from the control plane") as HttpError;
         error.status = denied?.status;
         throw error;
       }
-      const [projData, flowData, companyData] = await Promise.all([
+      const [projData, flowData] = await Promise.all([
         projRes.json(),
         flowRes.json(),
-        companyRes.json(),
       ]);
       const nextProjects = Array.isArray(projData) ? projData : projData.projects ?? [];
       const nextFlows = Array.isArray(flowData) ? flowData : [];
-      const nextCompanies = Array.isArray(companyData) ? companyData : [];
       projectsRef.current = nextProjects;
       flowsRef.current = nextFlows;
-      companiesRef.current = nextCompanies;
       hasReadContextRef.current = true;
       setProjects(nextProjects);
       setFlows(nextFlows);
-      setCompanies(nextCompanies);
-      setSelectedCompanyId((current) => (
-        current && nextCompanies.some((company: Company) => company.id === current)
-          ? current
-          : nextCompanies[0]?.id ?? ""
-      ));
       setHasReadContext(true);
       setLoadStale(false);
     } catch (cause) {
@@ -201,6 +260,13 @@ export default function ProjectsPage() {
   async function handleCreate(e: FormEvent) {
     if (accessDenied) return;
     e.preventDefault();
+    if (
+      !companyChoicesCurrentRef.current ||
+      !companiesRef.current?.some((company) => company.id === selectedCompanyId)
+    ) {
+      setError(companyLoadError || "Choose a company from the current company list before creating a project.");
+      return;
+    }
     setCreating(true);
     setError("");
     try {
@@ -456,6 +522,26 @@ export default function ProjectsPage() {
           )}
         >
           {loadStale ? `${loadError}. The latest project refresh failed; retained projects remain visible.` : loadError}
+        </ErrorBanner>
+      )}
+
+      {!accessDenied && companyLoadError && (
+        <ErrorBanner
+          tone="warning"
+          title={companyAccessDenied ? "Company access denied" : "Company choices unavailable"}
+          action={(
+            <button type="button" onClick={() => void load()} disabled={loading} className="rounded border border-current px-2.5 py-1 text-xs font-medium hover:bg-white/10 disabled:opacity-50">
+              Retry company choices
+            </button>
+          )}
+        >
+          {companyLoadError}
+        </ErrorBanner>
+      )}
+
+      {!accessDenied && companyChoicesCurrent && companies.length === 0 && !companyLoadError && (
+        <ErrorBanner tone="warning" title="No companies available">
+          Projects and flows remain available, but a company must be available before creating a project.
         </ErrorBanner>
       )}
 
@@ -807,8 +893,9 @@ export default function ProjectsPage() {
                   aria-label="Project company"
                   value={selectedCompanyId}
                   onChange={(event) => setSelectedCompanyId(event.target.value)}
+                  aria-describedby="new-project-company-status"
                   required
-                  disabled={companies.length === 0}
+                  disabled={!companyChoicesCurrent || companies.length === 0}
                   className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 >
                   <option value="">Select a company</option>
@@ -816,7 +903,17 @@ export default function ProjectsPage() {
                     <option key={company.id} value={company.id}>{company.name} · {company.slug}</option>
                   ))}
                 </select>
-                {companies.length === 0 && <p className="mt-1 text-xs text-amber-200">A company must be available before creating a project.</p>}
+                <p
+                  id="new-project-company-status"
+                  role={companyLoadError ? "alert" : "status"}
+                  className="mt-1 text-xs text-amber-200"
+                >
+                  {companyLoadError || (!companyChoicesCurrent
+                    ? "Company choices are being refreshed. Project creation is unavailable until the refresh completes."
+                    : companies.length === 0
+                      ? "A company must be available before creating a project."
+                      : "Select a current company for this project.")}
+                </p>
               </div>
               {error && <ErrorBanner tone="error">{error}</ErrorBanner>}
               <div className="flex gap-2 pt-1">
@@ -832,7 +929,7 @@ export default function ProjectsPage() {
                 </button>
                 <button
                   type="submit"
-                  disabled={creating || !newName.trim() || !selectedCompanyId}
+                  disabled={creating || !newName.trim() || !companyChoicesCurrent || !selectedCompanyId || !companies.some((company) => company.id === selectedCompanyId)}
                   className="flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors"
                 >
                   {creating ? "Creating…" : "Create"}
