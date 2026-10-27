@@ -37,6 +37,8 @@ REPORT_WORKER_ID = UUID("50000000-0000-4000-8000-000000000505")
 RESEARCH_CAPABILITY_ID = UUID("50000000-0000-4000-8000-000000000506")
 REPORT_CAPABILITY_ID = UUID("50000000-0000-4000-8000-000000000507")
 COMPANY_ID = UUID("50000000-0000-4000-8000-000000000508")
+DEFAULT_COMPANY_ID = UUID("00000000-0000-4000-8000-000000000001")
+MODEL_PROFILE_ID = "research-approved-fixture"
 LEGACY_TEXT_DOCUMENT_ID = UUID("50000000-0000-4000-8000-000000000509")
 LEGACY_BLOB_DOCUMENT_ID = UUID("50000000-0000-4000-8000-000000000510")
 LEGACY_TEXT_CONTENT = "Legacy inline project note without a stored checksum."
@@ -265,7 +267,7 @@ class _ResearchBriefStorage:
         self.report_contents: dict[UUID, str] = {}
         self._next_execution_id = 1
         self._next_artifact_id = 1
-        self._next_snapshot_id = 1
+        self.model_snapshots: list[dict[str, Any]] = []
         self.engine = _InMemoryApprovalEngine(self)
 
     async def get_project(self, project_id: UUID) -> dict[str, Any] | None:
@@ -471,9 +473,30 @@ class _ResearchBriefStorage:
 
     async def create_model_resolution_snapshot(self, **kwargs: Any) -> dict[str, Any]:
         snapshot = deepcopy(kwargs.get("snapshot"))
-        row = {"id": self._next_snapshot_id, "project_id": kwargs.get("project_id"), "snapshot": snapshot}
-        self._next_snapshot_id += 1
-        return row
+        snapshot_id = snapshot.get("snapshot_id")
+        row = {
+            "id": UUID(str(snapshot_id)) if snapshot_id is not None else uuid4(),
+            "project_id": kwargs.get("project_id"),
+            "provider_id": snapshot.get("provider_id"),
+            "exact_model_id": snapshot.get("exact_model_id"),
+            "snapshot": snapshot,
+        }
+        self.model_snapshots.append(deepcopy(row))
+        return deepcopy(row)
+
+    async def get_model_resolution_snapshot(
+        self,
+        snapshot_id: UUID,
+        *,
+        project_id: UUID | None = None,
+    ) -> dict[str, Any] | None:
+        row = next(
+            (item for item in self.model_snapshots if item["id"] == snapshot_id),
+            None,
+        )
+        if row is None or (row["project_id"] is not None and row["project_id"] != project_id):
+            return None
+        return deepcopy(row)
 
     async def create_worker_run(self, **kwargs: Any) -> dict[str, Any]:
         existing = next(
@@ -1018,6 +1041,386 @@ class _ResearchBriefStorage:
         return deepcopy(self.project)
 
 
+class _UiCreatedResearchBriefStorage(_ResearchBriefStorage):
+    """The same persisted test port, left empty for real UI/API creation."""
+
+    def __init__(self, *, research_output: dict[str, Any]) -> None:
+        super().__init__(
+            research_output=research_output,
+            require_report_document=True,
+            include_legacy_documents=True,
+        )
+        self.flow = None
+        self.project = None
+        self.instance = None
+        self.model_governed = True
+        for worker_id, capability_id, name in (
+            (RESEARCH_WORKER_ID, RESEARCH_CAPABILITY_ID, "Research specialist"),
+            (REPORT_WORKER_ID, REPORT_CAPABILITY_ID, "Report specialist"),
+        ):
+            worker = self.workers[worker_id]
+            worker.update(
+                {
+                    "name": name,
+                    "worker_id": str(worker_id),
+                    "model_mode": "aiat_gateway",
+                    "model_profile_id": MODEL_PROFILE_ID,
+                    "capability_names": [
+                        capability["name"]
+                        for capability in self.capabilities
+                        if capability["id"] == capability_id
+                    ],
+                }
+            )
+        # The browser creates this company through the production endpoint.
+        # Its generated ID is retained by the SQLAlchemy-shaped fake below.
+        self.companies: dict[UUID, dict[str, Any]] = {}
+        self.created_company_id: UUID | None = None
+        self.company_manifest: dict[str, Any] | None = None
+        self.company_manifest_versions: list[dict[str, Any]] = []
+        self.project_context_items: list[dict[str, Any]] = []
+        self.model_profiles = [
+            {
+                "logical_profile_id": MODEL_PROFILE_ID,
+                "purpose": "research",
+                "status": "approved",
+                "versions": [
+                    {
+                        "version": "v1",
+                        "provider_id": "local-fixture",
+                        "exact_model_id": "deterministic-fixture",
+                        "status": "approved",
+                        "capabilities": ["tool_calling", "streaming"],
+                        "constraints_json": {"tool_calling": True, "streaming": True},
+                    }
+                ],
+                "approved_provider_ids": ["local-fixture"],
+                "required_capabilities": ["tool_calling", "streaming"],
+            }
+        ]
+
+    async def get_company(self, company_id: UUID) -> dict[str, Any] | None:
+        company = self.companies.get(company_id)
+        return deepcopy(company) if company else None
+
+    async def get_company_by_slug(self, slug: str) -> dict[str, Any] | None:
+        company = next((row for row in self.companies.values() if row["slug"] == slug), None)
+        return deepcopy(company) if company else None
+
+    async def list_companies(self, *, status: str | None = None) -> list[dict[str, Any]]:
+        rows = list(self.companies.values())
+        if status is not None:
+            rows = [row for row in rows if row.get("status") == status]
+        return deepcopy(rows)
+
+    async def get_company_manifest(self, company_id: UUID, *, version: int | None = None) -> dict[str, Any] | None:
+        if company_id != self.created_company_id:
+            return None
+        if version is None:
+            return deepcopy(self.company_manifest)
+        return next(
+            (deepcopy(row) for row in self.company_manifest_versions if row["manifest_version"] == version),
+            None,
+        )
+
+    async def list_company_manifest_versions(
+        self, company_id: UUID, *, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        if company_id != self.created_company_id:
+            return []
+        return deepcopy(list(reversed(self.company_manifest_versions[-limit:])))
+
+    async def get_company_read_model(self, company_id: UUID) -> dict[str, Any]:
+        company = await self.get_company(company_id)
+        if company is None:
+            return {"company": None, "manifest": None, "departments": [], "assignments": [], "budgets": []}
+        manifest = deepcopy(self.company_manifest)
+        return {
+            "company": company,
+            "manifest": manifest,
+            "departments": await self.list_company_departments(company_id),
+            "assignments": await self.list_company_worker_assignments(company_id),
+            "budgets": await self.list_company_budgets(company_id),
+        }
+
+    async def list_company_departments(self, company_id: UUID) -> list[dict[str, Any]]:
+        if company_id != self.created_company_id or self.company_manifest is None:
+            return []
+        manifest = self.company_manifest["manifest_json"]
+        return [
+            {"company_id": company_id, **deepcopy(row)}
+            for row in manifest.get("departments", [])
+        ]
+
+    async def list_company_worker_assignments(self, company_id: UUID) -> list[dict[str, Any]]:
+        if company_id != self.created_company_id or self.company_manifest is None:
+            return []
+        return [
+            {"company_id": company_id, **deepcopy(row)}
+            for row in self.company_manifest["manifest_json"].get("worker_assignments", [])
+        ]
+
+    async def list_company_budgets(self, company_id: UUID) -> list[dict[str, Any]]:
+        if company_id != self.created_company_id or self.company_manifest is None:
+            return []
+        return [
+            {"company_id": company_id, "budget_key": key, "limit_value": value}
+            for key, value in self.company_manifest["manifest_json"].get("budgets", {}).items()
+        ]
+
+    async def list_budget_reservations(
+        self, *, company_id: UUID | None = None, run_id: UUID | None = None, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        return []
+
+    async def get_budget_state(self, company_id: UUID, budget_key: str) -> dict[str, Any]:
+        row = next(
+            (row for row in await self.list_company_budgets(company_id) if row["budget_key"] == budget_key),
+            None,
+        )
+        limit = row["limit_value"] if row is not None else 0
+        return {
+            "company_id": company_id,
+            "budget_key": budget_key,
+            "configured": row is not None,
+            "limit": limit,
+            "used": 0,
+            "available": limit,
+            "currency": "USD",
+            "period": "lifetime",
+        }
+
+    async def apply_company_manifest(
+        self,
+        *,
+        company_id: UUID,
+        manifest: Any,
+        digest: str,
+        canonical: dict[str, Any],
+        source: str,
+        actor: str,
+        expected_manifest_version: int | None = None,
+        compiler_version: str = "aiat-company-compiler/1",
+    ) -> dict[str, Any]:
+        if company_id not in self.companies:
+            raise ValueError("company does not exist")
+        current_version = len(self.company_manifest_versions)
+        if expected_manifest_version is not None and expected_manifest_version != current_version:
+            raise ValueError("COMPANY_MANIFEST_VERSION_CONFLICT")
+        now = datetime.now(UTC)
+        record = {
+            "id": uuid4(),
+            "company_id": company_id,
+            "manifest_version": current_version + 1,
+            "digest": digest,
+            "manifest_json": deepcopy(canonical),
+            "status": "ACTIVE",
+            "source": source,
+            "compiled_by": actor,
+            "compiled_at": now,
+            "created_at": now,
+            "compiler_version": compiler_version,
+        }
+        self.company_manifest_versions.append(record)
+        self.company_manifest = deepcopy(record)
+        self.companies[company_id]["active_manifest_version_id"] = record["id"]
+        self.companies[company_id]["updated_at"] = now
+        return await self.get_company_read_model(company_id)
+
+    async def get_model_profile(self, logical_profile_id: str) -> dict[str, Any] | None:
+        profile = next(
+            (row for row in self.model_profiles if row["logical_profile_id"] == logical_profile_id),
+            None,
+        )
+        return deepcopy(profile) if profile else None
+
+    async def list_model_profiles(self) -> list[dict[str, Any]]:
+        return deepcopy(self.model_profiles)
+
+    async def list_workers(
+        self, *, team_id: str | None = None, status: str | None = None
+    ) -> list[dict[str, Any]]:
+        rows = list(self.workers.values())
+        if team_id is not None:
+            rows = [row for row in rows if row.get("team_id") == team_id]
+        if status is not None:
+            rows = [row for row in rows if row.get("status") == status]
+        return [deepcopy(row) for row in rows]
+
+    async def get_active_runtime_adapter(self, worker_id: UUID) -> dict[str, Any] | None:
+        if worker_id not in self.workers:
+            return None
+        return {
+            "id": self.workers[worker_id]["active_adapter_id"],
+            "worker_id": worker_id,
+            "status": "active",
+            "conformance_status": "passed",
+            "capabilities_json": {
+                "checkpoint_mode": "native",
+                "tool_mode": "aiat_mediated",
+                "model_mode": "aiat_gateway",
+                "capability_names": list(self.workers[worker_id].get("capability_names") or []),
+            },
+        }
+
+    async def create_flow(
+        self,
+        *,
+        name: str,
+        description: str | None,
+        definition_json: dict[str, Any],
+        created_by: str | None = None,
+        is_active: bool = False,
+        version: int = 1,
+    ) -> dict[str, Any]:
+        self.flow = {
+            "id": FLOW_ID,
+            "name": name,
+            "description": description,
+            "version": version,
+            "is_active": is_active,
+            "created_by": created_by or "test-operator",
+            "created_at": datetime.now(UTC),
+            "definition_json": deepcopy(definition_json),
+        }
+        return deepcopy(self.flow)
+
+    async def list_flows(
+        self, *, is_active: bool | None = None, limit: int = 100, offset: int = 0
+    ) -> list[dict[str, Any]]:
+        rows = [self.flow] if self.flow is not None else []
+        if is_active is not None:
+            rows = [row for row in rows if row["is_active"] is is_active]
+        return deepcopy(rows[offset : offset + limit])
+
+    async def create_project(
+        self,
+        *,
+        name: str,
+        description: str | None,
+        created_by: str,
+        human_requester: str | None = None,
+        company_id: UUID,
+        config: dict[str, Any] | None = None,
+        initial_context: list[dict[str, Any]] | None = None,
+        project_id: UUID | None = None,
+        **_kwargs: Any,
+    ) -> dict[str, Any]:
+        if project_id not in {None, PROJECT_ID}:
+            raise AssertionError("the hermetic project store accepts only its declared test identity")
+        if company_id not in self.companies:
+            raise ValueError("company does not exist")
+        now = datetime.now(UTC)
+        self.project = {
+            "id": PROJECT_ID,
+            "name": name,
+            "description": description,
+            "state": "INIT",
+            "company_id": company_id,
+            "revision": 0,
+            "config": deepcopy(config or {}),
+            "created_by": created_by,
+            "created_at": now,
+            "updated_at": now,
+        }
+        self.project_context_items = deepcopy(initial_context or [])
+        return deepcopy(self.project)
+
+    async def list_projects(
+        self, *, state: str | None = None, limit: int = 100, offset: int = 0, **_kwargs: Any
+    ) -> list[dict[str, Any]]:
+        rows = [self.project] if self.project is not None else []
+        if state is not None:
+            rows = [row for row in rows if row["state"] == state]
+        return deepcopy(rows[offset : offset + limit])
+
+    async def update_project_config(
+        self, project_id: UUID, *, config: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        if self.project is None or project_id != PROJECT_ID:
+            return None
+        self.project["config"] = deepcopy(config)
+        self.project["revision"] += 1
+        self.project["updated_at"] = datetime.now(UTC)
+        return deepcopy(self.project)
+
+    async def create_flow_instance(
+        self,
+        *,
+        flow_id: UUID,
+        flow_version: int,
+        project_id: UUID,
+        task_id: UUID | None = None,
+        department_id: UUID | None = None,
+    ) -> dict[str, Any]:
+        if self.instance is not None or self.project is None or project_id != PROJECT_ID:
+            raise ValueError("a persisted project without an existing flow instance is required")
+        now = datetime.now(UTC)
+        self.instance = {
+            "id": INSTANCE_ID,
+            "project_id": project_id,
+            "flow_id": flow_id,
+            "flow_version": flow_version,
+            "status": "NOT_STARTED",
+            "active_node_ids": [],
+            "context_json": {},
+            "created_at": now,
+            "started_at": None,
+            "updated_at": now,
+            "retry_count": 0,
+        }
+        return deepcopy(self.instance)
+
+    async def create_approval_gate(self, *, project_id: UUID, gate_type: str) -> dict[str, Any]:
+        existing = next(
+            (
+                row
+                for row in self.approval_gates
+                if row.get("project_id") == project_id
+                and row.get("gate_type") == gate_type
+                and row.get("status") == "PENDING"
+                and row.get("flow_node_execution_id") is None
+            ),
+            None,
+        )
+        if existing is not None:
+            return deepcopy(existing)
+        row = {
+            "id": uuid4(),
+            "project_id": project_id,
+            "gate_type": gate_type,
+            "status": "PENDING",
+            "flow_node_execution_id": None,
+            "created_at": datetime.now(UTC),
+            "decided_by": None,
+        }
+        self.approval_gates.append(row)
+        return deepcopy(row)
+
+    async def decide_approval_gate(
+        self,
+        gate_id: UUID,
+        *,
+        status: str,
+        decided_by: str,
+        justification: str | None = None,
+        human_input: dict[str, Any] | None = None,
+    ) -> bool:
+        gate = next((row for row in self.approval_gates if row["id"] == gate_id), None)
+        if gate is None or gate["status"] != "PENDING":
+            return False
+        gate.update(
+            {
+                "status": status,
+                "decided_by": decided_by,
+                "justification": justification,
+                "human_input": deepcopy(human_input),
+                "decided_at": datetime.now(UTC),
+            }
+        )
+        return True
+
+
 class _InMemoryApprovalEngine:
     """Small SQLAlchemy connection substitute for the real pending-gate route."""
 
@@ -1025,6 +1428,9 @@ class _InMemoryApprovalEngine:
         self.storage = storage
 
     def connect(self) -> _InMemoryApprovalConnection:
+        return _InMemoryApprovalConnection(self.storage)
+
+    def begin(self) -> _InMemoryApprovalConnection:
         return _InMemoryApprovalConnection(self.storage)
 
 
@@ -1038,11 +1444,29 @@ class _InMemoryApprovalConnection:
     async def __aexit__(self, *_exc_info: Any) -> None:
         return None
 
-    async def execute(self, _query: Any) -> _InMemoryApprovalResult:
+    async def execute(self, query: Any) -> _InMemoryApprovalResult:
+        table = getattr(query, "table", None)
+        if getattr(table, "name", None) == "companies":
+            params = dict(query.compile().params)
+            company_id = UUID(str(params["id"]))
+            row = {
+                key: params.get(key)
+                for key in (
+                    "id", "slug", "name", "description", "status", "created_by",
+                    "created_at", "updated_at",
+                )
+            }
+            row["id"] = company_id
+            row["active_manifest_version_id"] = None
+            self.storage.companies[company_id] = row
+            if isinstance(self.storage, _UiCreatedResearchBriefStorage):
+                self.storage.created_company_id = company_id
+            return _InMemoryApprovalResult([])
         rows = [
             deepcopy(gate)
             for gate in self.storage.approval_gates
-            if gate.get("project_id") == self.storage.project["id"]
+            if self.storage.project is not None
+            and gate.get("project_id") == self.storage.project["id"]
             and gate.get("status") == "PENDING"
         ]
         rows.sort(key=lambda row: row["created_at"])
@@ -1183,6 +1607,59 @@ class _FakeToolServiceClient:
             "duration_ms": 1.0,
         }
 
+def test_company_dispatch_grants_ignore_named_manifest_assignments() -> None:
+    from fastapi import HTTPException
+    from orchestrator_api import main
+
+    class AssignmentStorage:
+        def __init__(self, assignments: list[dict[str, Any]]) -> None:
+            self.assignments = assignments
+
+        async def get_project(self, project_id: UUID) -> dict[str, Any] | None:
+            assert project_id == PROJECT_ID
+            return {"id": PROJECT_ID, "company_id": COMPANY_ID, "state": "IN_PROGRESS"}
+
+        async def list_company_worker_assignments(self, company_id: UUID) -> list[dict[str, Any]]:
+            assert company_id == COMPANY_ID
+            return deepcopy(self.assignments)
+
+    async def verify() -> None:
+        grants = {
+            "company.manage": True,
+            "approval_required": False,
+            "status": "ACTIVE",
+            "tool_grants": ["file_write"],
+            "permission_grants": ["project.write"],
+        }
+        named_ceo = {"worker_id": "ceo", **grants}
+        research_assignment = {"worker_id": str(RESEARCH_WORKER_ID), **grants}
+
+        matched_company = await main._enforce_company_dispatch_grants(
+            storage=AssignmentStorage([named_ceo, research_assignment]),
+            project_id=PROJECT_ID,
+            worker_id=RESEARCH_WORKER_ID,
+            tool_grants=["file_write"],
+            permission_requirements=["project.write"],
+        )
+        assert matched_company == COMPANY_ID
+
+        try:
+            await main._enforce_company_dispatch_grants(
+                storage=AssignmentStorage([named_ceo]),
+                project_id=PROJECT_ID,
+                worker_id=RESEARCH_WORKER_ID,
+                tool_grants=[],
+                permission_requirements=[],
+            )
+        except HTTPException as exc:
+            assert exc.status_code == 403
+            assert exc.detail["code"] == "COMPANY_ASSIGNMENT_REQUIRED"
+        else:
+            raise AssertionError("a named CEO alias must not grant a UUID worker dispatch")
+
+    asyncio.run(verify())
+
+
 def _node_environment(api_url: str, node_path: str, dashboard_root: Path) -> dict[str, str]:
     environment = {
         "PATH": node_path,
@@ -1243,7 +1720,8 @@ def _run_dashboard_browser(
     api_url: str,
     node_path: str,
     dashboard_root: Path,
-    project_id: UUID,
+    project_id: UUID | None,
+    create_assets: bool = False,
 ) -> dict[str, Any]:
     destination = urlsplit(api_url)
     assert (
@@ -1258,7 +1736,9 @@ def _run_dashboard_browser(
         and not destination.fragment
     ), "the dashboard browser harness must reject non-loopback destinations"
     script = dashboard_root / "scripts" / "run-research-brief-dashboard-browser.mjs"
-    command = [node_path, str(script), str(project_id)]
+    command = [node_path, str(script), str(project_id or "")]
+    if create_assets:
+        command.append("--create-assets")
     environment = _node_environment(api_url, node_path, dashboard_root)
     working_directory: Path | None = dashboard_root
 
@@ -1325,7 +1805,9 @@ def _run_dashboard_browser(
                         "ORCHESTRATOR_URL:AIAT_OPERATOR_API_KEY:JWT_SECRET:NODE_PATH"
                     ),
                 }
-                command = [windows_node, windows_script, str(project_id)]
+                command = [windows_node, windows_script, str(project_id or "")]
+                if create_assets:
+                    command.append("--create-assets")
                 working_directory = None
 
     completed = subprocess.run(
@@ -1479,13 +1961,22 @@ def _start_test_api(
     )
 
     async def synthetic_worker(run_request: Any, runtime: Any) -> WorkerResult:
+        def usage(**values: Any) -> WorkerUsage:
+            if getattr(storage, "model_governed", False):
+                return WorkerUsage(
+                    **values,
+                    provider="local-fixture",
+                    exact_model_id="deterministic-fixture",
+                )
+            return WorkerUsage(**values)
+
         if run_request.task_type == "research.collect":
             return WorkerResult(
                 run_id=run_request.run_id,
                 worker_id=run_request.worker_id,
                 success=True,
                 output=deepcopy(storage.research_output),
-                usage=WorkerUsage(prompt_tokens=5, completion_tokens=9, duration_ms=2.0),
+                usage=usage(prompt_tokens=5, completion_tokens=9, duration_ms=2.0),
             )
 
         if run_request.task_type != "research.report":
@@ -1504,7 +1995,7 @@ def _start_test_api(
                     terminal=True,
                     category="cancellation",
                 ),
-                usage=WorkerUsage(prompt_tokens=1, duration_ms=1.0),
+                usage=usage(prompt_tokens=1, duration_ms=1.0),
             )
         flow_context = task_input.get("flow_context")
         if not isinstance(flow_context, dict):
@@ -1545,7 +2036,7 @@ def _start_test_api(
                 "research_worker_run_id": flow_context.get("worker_run_id"),
                 "source_evidence_ids": [source["evidence_id"] for source in sources],
             },
-            usage=WorkerUsage(prompt_tokens=7, completion_tokens=12, duration_ms=3.0),
+            usage=usage(prompt_tokens=7, completion_tokens=12, duration_ms=3.0),
         )
 
     async def certified_fixture_adapter(_storage: Any, worker: dict[str, Any], **_kwargs: Any):
@@ -1565,14 +2056,40 @@ def _start_test_api(
             worker_id=str(worker["id"]),
             capabilities=WorkerCapabilities(
                 tool_mode=ToolMode.AIAT_MEDIATED,
-                model_mode=ModelMode.NONE,
+                model_mode=(
+                    ModelMode.AIAT_GATEWAY
+                    if getattr(storage, "model_governed", False)
+                    else ModelMode.NONE
+                ),
                 capability_names=list(worker.get("capability_names") or []),
             ),
             context=context,
             runtime_version="synthetic-test-adapter",
         )
 
+    async def synthetic_project_repository_tool(
+        *,
+        project_id: UUID,
+        operation: str,
+        repository_url: str | None = None,
+        branch: str | None = None,
+        remote_name: str = "origin",
+    ) -> dict[str, Any]:
+        if repository_url is not None or operation not in {"init", "status"}:
+            raise AssertionError("the hermetic project fixture supports only synthetic init and status")
+        project_workspace = workspace_root / "project-workspaces" / str(project_id)
+        if operation == "init":
+            project_workspace.mkdir(parents=True, exist_ok=True)
+        return {
+            "workspace_path": str(project_workspace),
+            "branch": branch or "main",
+            "remote_name": remote_name,
+            "initialized": True,
+            "git_initialized": True,
+        }
+
     monkeypatch.setattr(main, "_certified_worker_adapter", certified_fixture_adapter)
+    monkeypatch.setattr(main, "_invoke_project_repository_tool", synthetic_project_repository_tool)
     tool_service = _FakeToolServiceClient(storage, workspace_root)
     monkeypatch.setattr(main, "_tool_service_client", lambda: tool_service)
 
@@ -2058,5 +2575,129 @@ def test_research_brief_dashboard_browser_uses_real_bff_and_verified_project_evi
         assert checks["document_bodies_retrievable"] is True
         assert checks["artifacts_registered"] is True
         assert checks["flow_terminal"] is True
+    finally:
+        stop_api()
+
+
+def test_research_brief_dashboard_creates_company_bound_flow_and_project(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Create the company, manifest, active flow, and project through real UI/API routes."""
+
+    node_path, dashboard_root = _node_and_dashboard()
+    if not (dashboard_root / "node_modules" / "playwright").exists():
+        pytest.skip("dashboard Playwright runtime is not installed")
+    storage = _UiCreatedResearchBriefStorage(
+        research_output={
+            "research_summary": "Synthetic findings persisted by the test fixture.",
+            "sources": [{"evidence_id": "source-1", "label": "Synthetic source"}],
+        }
+    )
+    workspace_root = tmp_path / "browser-worker-workspace"
+    api_url, stop_api = _start_test_api(monkeypatch, storage, workspace_root=workspace_root)
+    try:
+        try:
+            browser_result = _run_dashboard_browser(
+                api_url=api_url,
+                node_path=node_path,
+                dashboard_root=dashboard_root,
+                project_id=None,
+                create_assets=True,
+            )
+        except AssertionError as exc:
+            execution_summary = [
+                {
+                    "node_id": row.get("node_id"),
+                    "status": row.get("status"),
+                    "error_code": (row.get("error") or {}).get("code")
+                    if isinstance(row.get("error"), dict)
+                    else None,
+                }
+                for row in storage.executions
+            ]
+            run_summary = [
+                {
+                    "task_type": row.get("task_type"),
+                    "state": row.get("state"),
+                    "error_code": (row.get("error_json") or {}).get("code")
+                    if isinstance(row.get("error_json"), dict)
+                    else None,
+                }
+                for row in storage.worker_runs.values()
+            ]
+            synthetic_state = {
+                "project_state": (storage.project or {}).get("state"),
+                "flow_instance_status": (storage.instance or {}).get("status"),
+                "active_node_ids": (storage.instance or {}).get("active_node_ids"),
+                "company_assignments": len(
+                    ((storage.company_manifest or {}).get("manifest_json") or {}).get("worker_assignments", [])
+                ),
+                "executions": execution_summary,
+                "runs": run_summary,
+            }
+            raise AssertionError(
+                f"{exc}; synthetic_state={json.dumps(synthetic_state, sort_keys=True)}"
+            ) from exc
+
+        company_id = UUID(str(browser_result["company_id"]))
+        assert storage.created_company_id == company_id
+        assert storage.companies[company_id]["slug"] == "hermetic-research-brief"
+        assert storage.company_manifest is not None
+        assert storage.company_manifest["status"] == "ACTIVE"
+        assert storage.company_manifest["manifest_version"] == 1
+        assignments = storage.company_manifest["manifest_json"]["worker_assignments"]
+        assert {row["worker_id"] for row in assignments if row["status"] == "ACTIVE"} >= {
+            str(RESEARCH_WORKER_ID),
+            str(REPORT_WORKER_ID),
+        }
+
+        assert storage.flow is not None
+        assert storage.flow["is_active"] is True
+        task_nodes = [
+            node for node in storage.flow["definition_json"]["nodes"] if node["type"] == "task"
+        ]
+        task_bindings = {node["config"]["task_type"]: node["config"] for node in task_nodes}
+        assert task_bindings["research.collect"]["worker_id"] == str(RESEARCH_WORKER_ID)
+        assert task_bindings["research.report"]["worker_id"] == str(REPORT_WORKER_ID)
+        assert task_bindings["research.collect"]["model_profile_id"] == MODEL_PROFILE_ID
+        assert task_bindings["research.report"]["model_profile_id"] == MODEL_PROFILE_ID
+
+        assert storage.project is not None
+        assert storage.project["id"] == PROJECT_ID
+        assert storage.project["company_id"] == company_id
+        company_policy = storage.company_manifest["manifest_json"]["evidence_policy"]["default_policy"]
+        assert storage.project["config"]["evidence_policy"] == {
+            "policy_id": company_policy["policy_id"],
+            "version": company_policy["version"],
+            "requirements": company_policy["requirements"],
+        }
+        assert browser_result["project_id"] == str(PROJECT_ID)
+        assert browser_result["project_status"] == "COMPLETED"
+        assert browser_result["flow_status"] == "COMPLETED"
+        assert browser_result["evidence_status"] == "complete"
+        assert browser_result["assignment_gate"] == {
+            "company_id": str(company_id),
+            "status": 403,
+            "blocker": "COMPANY_ASSIGNMENT_REQUIRED",
+        }
+
+        # The pre-manifest probe was rejected before admission and before any
+        # model-resolution snapshot. Only the two authorized flow tasks ran.
+        assert [row["task_type"] for row in storage.admissions] == [
+            "research.collect",
+            "research.report",
+        ]
+        assert len(storage.model_snapshots) == 2
+        assert all(row["state"] == "SUCCEEDED" for row in storage.worker_runs.values())
+
+        report_run_id = UUID(str(browser_result["report_run_id"]))
+        report_run = storage.worker_runs[report_run_id]
+        assert report_run["project_id"] == PROJECT_ID
+        report_input = storage.report_inputs[report_run_id]
+        assert report_input["flow_context"]["worker_run_id"] == str(browser_result["research_run_id"])
+        assert report_input["flow_context"]["research_summary"] == storage.research_output["research_summary"]
+        assert browser_result["document_id"]
+        assert browser_result["artifact_sha256"]
     finally:
         stop_api()

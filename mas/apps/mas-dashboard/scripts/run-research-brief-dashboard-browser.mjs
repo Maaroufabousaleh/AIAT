@@ -11,12 +11,17 @@ import { chromium } from "playwright";
 
 const dashboardRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const apiUrl = process.env.ORCHESTRATOR_URL ?? "";
-const projectId = process.argv[2] ?? "";
+let projectId = process.argv[2] ?? "";
+const createAssets = process.argv[3] === "--create-assets";
+const researchWorkerId = "50000000-0000-4000-8000-000000000504";
+const reportWorkerId = "50000000-0000-4000-8000-000000000505";
+const modelProfileId = "research-approved-fixture";
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const syntheticApiKey = "synthetic-research-brief-operator-key";
 const syntheticJwtSecret = "synthetic-research-brief-dashboard-session-secret";
 const reportPath = "reports/research-brief.md";
 const timeoutMs = 20_000;
+let flowNodeIds = { start: "start", research: "research", review: "review", report: "report", end: "end" };
 
 function validateDestination() {
   let parsed;
@@ -35,7 +40,7 @@ function validateDestination() {
     parsed.pathname !== "/" ||
     parsed.search ||
     parsed.hash ||
-    !uuidPattern.test(projectId)
+    (!createAssets && !uuidPattern.test(projectId))
   ) {
     throw new Error("destination_must_be_ephemeral_loopback_with_project_uuid");
   }
@@ -197,6 +202,433 @@ async function refreshFlowRun(page, nodeId) {
   throw new Error(`ui_did_not_refresh_${nodeId}_terminal_run`);
 }
 
+async function apiRequest(pathname, { method = "GET", body } = {}) {
+  const target = new URL(pathname.replace(/^\//, ""), `${apiOrigin}/`);
+  if (target.origin !== apiOrigin) throw new Error("api_destination_escape_rejected");
+  const response = await fetch(target, {
+    method,
+    headers: {
+      "x-api-key": syntheticApiKey,
+      ...(body === undefined ? {} : { "content-type": "application/json" }),
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  return { status: response.status, body: await response.json().catch(() => null) };
+}
+
+async function createCompanyThroughDashboard(page, baseUrl, setStage = () => {}) {
+  const name = "Hermetic Research Brief";
+  const slug = "hermetic-research-brief";
+  setStage("ui_company_page");
+  const companyListResponse = page.waitForResponse(
+    (response) => response.url() === `${baseUrl}/api/companies` && response.request().method() === "GET",
+  );
+  await page.goto(`${baseUrl}/companies`, { waitUntil: "domcontentloaded" });
+  if (!(await companyListResponse).ok()) throw new Error("company_list_load_rejected");
+  setStage("ui_company_open_form");
+  await page.getByRole("button", { name: /New company/ }).click();
+  setStage("ui_company_form_ready");
+  await page.getByRole("heading", { name: "Create company", exact: true }).waitFor({ state: "visible" });
+  setStage("ui_company_fill_name");
+  await page.locator('input[placeholder="AIAT Research"]').fill(name);
+  setStage("ui_company_fill_slug");
+  await page.locator('input[placeholder="aiat-research"]').fill(slug);
+  setStage("ui_company_fill_description");
+  await page.locator('textarea[placeholder="What this company is responsible for"]').fill("Synthetic UI/API journey fixture company");
+  const createResponsePromise = page.waitForResponse(
+    (response) => response.url() === `${baseUrl}/api/companies` && response.request().method() === "POST",
+  );
+  setStage("ui_company_submit");
+  const companyForm = page.locator("form").filter({ has: page.locator('input[placeholder="AIAT Research"]') });
+  await companyForm.getByRole("button", { name: "Create company", exact: true }).click();
+  const createResponse = await createResponsePromise;
+  setStage("ui_company_created_readback");
+  if (createResponse.status() !== 201) throw new Error("company_create_rejected");
+  const created = await createResponse.json();
+  const companyId = String(created?.id ?? "");
+  if (!uuidPattern.test(companyId)) throw new Error("company_identity_not_returned");
+  const manifest = {
+    schema_version: "1",
+    slug,
+    name,
+    description: "Synthetic UI/API journey fixture company",
+    ceo_worker_id: "ceo",
+    timezone: "UTC",
+    model_policy: {
+      allowed_profile_ids: [modelProfileId],
+      default_profile_id: modelProfileId,
+      require_exact_profile: true,
+      allow_gateway_failover: false,
+    },
+    evidence_policy: {
+      require_checksums: true,
+      require_approval_records: true,
+      default_policy: {
+        policy_id: "research_delivery",
+        version: "1.0",
+        requirements: {
+          requires_flow_terminal: true,
+          requires_artifacts: true,
+          requires_documents: true,
+          required_document_types: ["RESEARCH_BRIEF"],
+          requires_document_bodies: true,
+        },
+      },
+    },
+    departments: [
+      { id: "exec_ceo", name: "CEO Office", chief_worker_id: "ceo", worker_ids: ["ceo"] },
+      { id: "research", name: "Research", chief_worker_id: null, worker_ids: [researchWorkerId, reportWorkerId] },
+    ],
+    worker_assignments: [
+      {
+        worker_id: "ceo", department_id: "exec_ceo", status: "ACTIVE", tool_grants: [],
+        permission_grants: ["company.manage", "approval.decide"], budget: {}, approval_required: false, metadata: {},
+      },
+      {
+        worker_id: researchWorkerId, department_id: "research", status: "ACTIVE", tool_grants: [],
+        permission_grants: [], model_profile_id: modelProfileId, budget: {}, approval_required: false, metadata: {},
+      },
+      {
+        worker_id: reportWorkerId, department_id: "research", status: "ACTIVE", tool_grants: ["file_write"],
+        permission_grants: ["project.write"], model_profile_id: modelProfileId, budget: {}, approval_required: false, metadata: {},
+      },
+    ],
+    budgets: {},
+    policy: {},
+  };
+  return { companyId, slug, name, manifest };
+}
+
+async function applyCompanyAssignmentsThroughDashboard(page, baseUrl, companyId, manifest, setStage = () => {}) {
+  setStage("ui_manifest_page");
+  const companyListResponse = page.waitForResponse(
+    (response) => response.url() === `${baseUrl}/api/companies` && response.request().method() === "GET",
+  );
+  await page.goto(`${baseUrl}/companies`, { waitUntil: "domcontentloaded" });
+  if (!(await companyListResponse).ok()) throw new Error("company_list_load_rejected");
+  setStage("ui_manifest_company_ready");
+  await page.getByText("Hermetic Research Brief", { exact: true }).first().waitFor({ state: "visible" });
+  const advancedManifest = page.locator("#company-manifest-json");
+  const details = page.locator("details").filter({ has: advancedManifest });
+  setStage("ui_manifest_open_editor");
+  if (!(await advancedManifest.isVisible())) await details.locator("summary").click();
+  await advancedManifest.waitFor({ state: "visible" });
+  setStage("ui_manifest_fill_editor");
+  await advancedManifest.fill(JSON.stringify(manifest, null, 2));
+  setStage("ui_manifest_validate");
+  const validatePromise = page.waitForResponse(
+    (response) => response.url() === `${baseUrl}/api/companies/${companyId}/manifest/validate` && response.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "Validate manifest" }).click();
+  const validation = await validatePromise;
+  setStage("ui_manifest_validation_response");
+  if (!validation.ok()) throw new Error("company_manifest_validation_rejected");
+  setStage("ui_manifest_apply");
+  const applyPromise = page.waitForResponse(
+    (response) => response.url() === `${baseUrl}/api/companies/${companyId}/manifest/apply` && response.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "Apply validated manifest" }).click();
+  const applied = await applyPromise;
+  setStage("ui_manifest_apply_response");
+  if (!applied.ok()) throw new Error("company_manifest_apply_rejected");
+  setStage("ui_manifest_readback");
+  const readback = await readJsonInPage(page, `/api/companies/${companyId}`);
+  const assignments = readback.body?.assignments ?? [];
+  if (readback.status !== 200 || !assignments.some((row) => row.worker_id === researchWorkerId && row.status === "ACTIVE") || !assignments.some((row) => row.worker_id === reportWorkerId && row.status === "ACTIVE")) {
+    throw new Error("active_company_worker_assignments_not_persisted");
+  }
+}
+
+async function selectCompanyEvidencePolicyForProjectThroughDashboard(
+  page,
+  companyId,
+  projectId,
+  setStage = () => {},
+) {
+  setStage("ui_company_manifest_policy_readback");
+  const history = await readJsonInPage(page, `/api/companies/${companyId}/manifest/history`);
+  const activeManifest = Array.isArray(history.body)
+    ? history.body.find((row) => row.status === "ACTIVE") ?? history.body[0]
+    : null;
+  const selection = activeManifest?.manifest_json?.evidence_policy?.default_policy;
+  if (
+    history.status !== 200 ||
+    !selection ||
+    typeof selection.policy_id !== "string" ||
+    typeof selection.version !== "string" ||
+    !selection.requirements ||
+    typeof selection.requirements !== "object" ||
+    Array.isArray(selection.requirements)
+  ) {
+    throw new Error("active_company_evidence_policy_unavailable");
+  }
+
+  // The Research template selects the built-in `research` policy, which has
+  // higher precedence than a company default. Explicitly select the persisted
+  // company policy at project scope for this delivery contract.
+  setStage("ui_project_select_company_evidence_policy");
+  const result = await page.evaluate(async ({ projectId, policy }) => {
+    const response = await fetch(`/api/projects/${projectId}/evidence-policy`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        policy_id: policy.policy_id,
+        policy_version: policy.version,
+        requirements: policy.requirements,
+        scope: "project",
+      }),
+    });
+    return { status: response.status, body: await response.json().catch(() => null) };
+  }, { projectId, policy: selection });
+  if (result.status !== 200) throw new Error("project_evidence_policy_selection_rejected");
+
+  setStage("ui_project_evidence_policy_readback");
+  const projectRead = await readJsonInPage(page, `/api/projects/${projectId}`);
+  const persisted = projectRead.body?.config?.evidence_policy;
+  if (
+    projectRead.status !== 200 ||
+    persisted?.policy_id !== selection.policy_id ||
+    persisted?.version !== selection.version ||
+    JSON.stringify(persisted?.requirements) !== JSON.stringify(selection.requirements)
+  ) {
+    throw new Error("project_evidence_policy_selection_not_persisted");
+  }
+}
+
+async function createBoundResearchFlowThroughDashboard(page, baseUrl, setStage = () => {}) {
+  const visibleTestId = (testId) => page.locator(`[data-testid="${testId}"]:visible`);
+  setStage("ui_flow_page");
+  const workersResponsePromise = page.waitForResponse(
+    (response) => response.url() === `${baseUrl}/api/workers` && response.request().method() === "GET",
+  );
+  const profilesResponsePromise = page.waitForResponse(
+    (response) => response.url() === `${baseUrl}/api/governance/model-profiles` && response.request().method() === "GET",
+  );
+  await page.goto(`${baseUrl}/flows/new`, { waitUntil: "domcontentloaded" });
+  const [workersResponse, profilesResponse] = await Promise.all([
+    workersResponsePromise,
+    profilesResponsePromise,
+  ]);
+  setStage("ui_flow_catalogues_loaded");
+  if (!workersResponse.ok() || !profilesResponse.ok()) throw new Error("governed_flow_catalogue_load_rejected");
+  setStage("ui_flow_template_ready");
+  await page.getByTestId("template-research").waitFor({ state: "visible" });
+  setStage("ui_flow_apply_template");
+  await page.getByTestId("template-research").click();
+
+  async function bindTask(label, workerId, taskType, input, { toolGrants = "", permissions = "" } = {}) {
+    const taskStage = taskType.replace(/[^a-z0-9]+/g, "_");
+    setStage(`ui_flow_find_${taskStage}_node`);
+    const taskNode = page.locator(".react-flow__node").filter({ hasText: label }).first();
+    await taskNode.waitFor({ state: "visible" });
+    setStage(`ui_flow_select_${taskStage}_node`);
+    await taskNode.click();
+    setStage(`ui_flow_bind_${taskStage}_worker`);
+    const workerSelect = visibleTestId("task-worker-select");
+    const workerSelectCount = await workerSelect.count();
+    if (workerSelectCount !== 1) throw new Error(`worker_select_count_${workerSelectCount}`);
+    const workerOptionPresent = await workerSelect.evaluate(
+      (element, id) => Array.from(element.options).some((option) => option.value === id),
+      workerId,
+    );
+    if (!workerOptionPresent) throw new Error("configured_worker_not_in_catalogue");
+    await workerSelect.selectOption(workerId);
+    setStage(`ui_flow_bind_${taskStage}_profile`);
+    await visibleTestId("task-model-profile-select").selectOption(modelProfileId);
+    setStage(`ui_flow_bind_${taskStage}_type`);
+    await visibleTestId("task-type-input").fill(taskType);
+    setStage(`ui_flow_bind_${taskStage}_input`);
+    if (input === undefined) {
+      await visibleTestId("task-input-clear").click();
+    } else {
+      await visibleTestId("task-input-json").fill(JSON.stringify(input, null, 2));
+    }
+    setStage(`ui_flow_bind_${taskStage}_tools`);
+    await visibleTestId("task-tool-grants-input").fill(toolGrants);
+    setStage(`ui_flow_bind_${taskStage}_permissions`);
+    await visibleTestId("task-permissions-input").fill(permissions);
+  }
+
+  await bindTask("Research", researchWorkerId, "research.collect", {
+    query: "AIAT Research Brief project creation and governed execution",
+  });
+  await bindTask("Write report", reportWorkerId, "research.report", undefined, {
+    toolGrants: "file_write",
+    permissions: "project.write",
+  });
+  setStage("ui_flow_name");
+  await page.getByLabel("Flow name").fill("Hermetic Research Brief Journey");
+  const dryRunPromise = page.waitForResponse(
+    (response) => response.url() === `${baseUrl}/api/flows/dry-run` && response.request().method() === "POST",
+  );
+  await page.getByTestId("flow-dry-run-button").click();
+  const dryRunResponse = await dryRunPromise;
+  setStage("ui_flow_dry_run_checked");
+  if (!dryRunResponse.ok() || (await dryRunResponse.json()).valid !== true) {
+    throw new Error("research_flow_readiness_rejected");
+  }
+  await page.getByLabel("Activate flow on save").check();
+  const savePromise = page.waitForResponse(
+    (response) => response.url() === `${baseUrl}/api/flows` && response.request().method() === "POST",
+  );
+  await page.getByTestId("flow-save-button").click();
+  const saveResponse = await savePromise;
+  setStage("ui_flow_save_response");
+  if (saveResponse.status() !== 201) throw new Error("research_flow_create_rejected");
+  const savedFlow = await saveResponse.json();
+  const flowId = String(savedFlow?.id ?? "");
+  if (!uuidPattern.test(flowId) || savedFlow.is_active !== true) throw new Error("active_research_flow_not_persisted");
+  const flowRead = await readJsonInPage(page, `/api/flows/${flowId}`);
+  setStage("ui_flow_readback");
+  if (flowRead.status !== 200) throw new Error("saved_flow_readback_unavailable");
+  const nodes = flowRead.body?.definition_json?.nodes ?? [];
+  const research = nodes.find((node) => node.type === "task" && node.config?.task_type === "research.collect");
+  const review = nodes.find((node) => node.type === "approval");
+  const report = nodes.find((node) => node.type === "task" && node.config?.task_type === "research.report");
+  const start = nodes.find((node) => node.type === "start");
+  const end = nodes.find((node) => node.type === "end");
+  if (![research, review, report, start, end].every(Boolean)) throw new Error("saved_research_flow_topology_invalid");
+  if (research.config.worker_id !== researchWorkerId || report.config.worker_id !== reportWorkerId) {
+    throw new Error("saved_research_flow_worker_bindings_invalid");
+  }
+  if (Object.hasOwn(report.config, "task_input")) {
+    throw new Error("saved_report_task_must_use_flow_context_fallback");
+  }
+  if (research.config.model_profile_id !== modelProfileId || report.config.model_profile_id !== modelProfileId) {
+    throw new Error("saved_research_flow_model_bindings_invalid");
+  }
+  return {
+    flowId,
+    nodeIds: { start: start.id, research: research.id, review: review.id, report: report.id, end: end.id },
+  };
+}
+
+async function createProjectThroughDashboard(page, baseUrl, companyId, flowId, setStage = () => {}) {
+  setStage("ui_project_page");
+  const projectsResponsePromise = page.waitForResponse(
+    (response) => response.url().startsWith(`${baseUrl}/api/projects?`) && response.request().method() === "GET",
+  );
+  const flowsResponsePromise = page.waitForResponse(
+    (response) => response.url().startsWith(`${baseUrl}/api/flows?`) && response.request().method() === "GET",
+  );
+  const companiesResponsePromise = page.waitForResponse(
+    (response) => response.url() === `${baseUrl}/api/companies` && response.request().method() === "GET",
+  );
+  await page.goto(`${baseUrl}/projects`, { waitUntil: "domcontentloaded" });
+  const [projectsResponse, flowsResponse, companiesResponse] = await Promise.all([
+    projectsResponsePromise,
+    flowsResponsePromise,
+    companiesResponsePromise,
+  ]);
+  if (!projectsResponse.ok() || !flowsResponse.ok() || !companiesResponse.ok()) {
+    throw new Error("project_create_catalogue_load_rejected");
+  }
+  setStage("ui_project_open_form");
+  await page.getByRole("button", { name: "New Project", exact: true }).first().click();
+  const projectForm = page.locator("form").filter({ has: page.getByPlaceholder("my-project") });
+  setStage("ui_project_fill_name");
+  await page.getByPlaceholder("my-project").fill("Hermetic Research Brief Project");
+  setStage("ui_project_fill_goal");
+  await projectForm.locator("textarea").nth(0).fill("Research a bounded topic and produce an evidence-backed brief.");
+  setStage("ui_project_fill_context");
+  await projectForm.locator("textarea").nth(1).fill("Use only the synthetic findings supplied by the test adapter.");
+  const startImmediately = projectForm.getByLabel("Start CEO feasibility after creation");
+  setStage("ui_project_prepare_without_start");
+  if (await startImmediately.isChecked()) await startImmediately.uncheck();
+  setStage("ui_project_workspace_mode");
+  await projectForm.locator("select").nth(0).selectOption("init");
+  setStage("ui_project_attach_flow");
+  await projectForm.locator("select").nth(1).selectOption(flowId);
+  setStage("ui_project_select_company");
+  const companySelect = projectForm.locator("#new-project-company");
+  await companySelect.locator(`option[value="${companyId}"]`).waitFor({ state: "attached" });
+  await companySelect.selectOption(companyId);
+  const createPromise = page.waitForResponse(
+    (response) => response.url() === `${baseUrl}/api/projects` && response.request().method() === "POST",
+  );
+  setStage("ui_project_submit");
+  await projectForm.getByRole("button", { name: "Create", exact: true }).click();
+  const response = await createPromise;
+  setStage("ui_project_created_readback");
+  if (response.status() !== 201) throw new Error("project_create_rejected");
+  const project = await response.json();
+  const id = String(project?.id ?? "");
+  if (!uuidPattern.test(id) || String(project.company_id) !== companyId) throw new Error("company_scoped_project_not_persisted");
+
+  return id;
+}
+
+async function advanceProjectToExecution(page) {
+  const start = await page.evaluate(async (path) => {
+    const response = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    return { status: response.status, body: await response.json().catch(() => null) };
+  }, `/api/projects/${projectId}/start`);
+  if (start.status !== 200) throw new Error("project_start_rejected");
+
+  async function transition(event) {
+    const result = await page.evaluate(async ({ path, eventName }) => {
+      const response = await fetch(path, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ event: eventName }),
+      });
+      return { status: response.status, body: await response.json().catch(() => null) };
+    }, { path: `/api/projects/${projectId}/transition`, eventName: event });
+    if (result.status !== 200) throw new Error(`project_transition_${event}_rejected`);
+  }
+
+  async function approveProjectGate() {
+    const pending = await readJsonInPage(page, `/api/projects/${projectId}/decisions`);
+    if (pending.status !== 200 || !Array.isArray(pending.body)) throw new Error("project_review_gate_unavailable");
+    const gate = pending.body.find((row) => row.status === "PENDING" && row.flow_node_execution_id == null);
+    if (!gate) throw new Error("project_review_gate_not_pending");
+    const decision = await page.evaluate(async ({ path, gateId }) => {
+      const response = await fetch(path, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ gate_id: gateId, decision: "APPROVED", comments: "Synthetic operator decision for isolated test" }),
+      });
+      return { status: response.status, body: await response.json().catch(() => null) };
+    }, { path: `/api/projects/${projectId}/decisions`, gateId: gate.id });
+    if (decision.status !== 200) throw new Error("project_review_decision_rejected");
+  }
+
+  await transition("all_reviews_in");
+  await approveProjectGate();
+  await transition("pdr_submitted");
+  await transition("all_reviews_in");
+  await transition("cdr_submitted");
+  await transition("cdr_presented");
+  await approveProjectGate();
+  await transition("rr_submitted");
+  await transition("sprints_created");
+  await transition("infra_ready");
+  const projectRead = await readJsonInPage(page, `/api/projects/${projectId}`);
+  if (projectRead.status !== 200 || projectRead.body.state !== "IN_PROGRESS") {
+    throw new Error("project_not_in_dispatchable_state");
+  }
+}
+
+async function verifyAssignmentGateBeforeRun(companyId) {
+  const denied = await apiRequest("/workers/runs", {
+    method: "POST",
+    body: {
+      worker_id: researchWorkerId,
+      idempotency_key: "research-brief-assignment-gate-probe",
+      task_type: "research.collect",
+      task_input: { query: "company assignment gate probe" },
+      project_id: projectId,
+      dispatch_mode: "inline",
+    },
+  });
+  const detail = denied.body?.detail;
+  if (denied.status !== 403 || detail?.code !== "COMPANY_ASSIGNMENT_REQUIRED") {
+    throw new Error("company_assignment_gate_not_enforced");
+  }
+  return { company_id: companyId, status: denied.status, blocker: detail.code };
+}
+
 async function main() {
   let temporaryRoot;
   let server;
@@ -255,6 +687,40 @@ async function main() {
     const page = await context.newPage();
     page.setDefaultTimeout(timeoutMs);
 
+    let companyId = null;
+    let flowId = null;
+    let assignmentGate = null;
+    if (createAssets) {
+      currentStage = "ui_create_company";
+      const company = await createCompanyThroughDashboard(page, baseUrl, (stage) => { currentStage = stage; });
+      companyId = company.companyId;
+      currentStage = "ui_create_and_bind_research_flow";
+      const flow = await createBoundResearchFlowThroughDashboard(page, baseUrl, (stage) => { currentStage = stage; });
+      flowId = flow.flowId;
+      flowNodeIds = flow.nodeIds;
+      currentStage = "ui_create_company_scoped_project";
+      projectId = await createProjectThroughDashboard(page, baseUrl, companyId, flowId, (stage) => { currentStage = stage; });
+      currentStage = "project_lifecycle_start";
+      await page.goto(`${baseUrl}/projects/${projectId}`, { waitUntil: "domcontentloaded" });
+      await advanceProjectToExecution(page);
+      currentStage = "company_assignment_negative_gate";
+      assignmentGate = await verifyAssignmentGateBeforeRun(companyId);
+      currentStage = "ui_apply_company_worker_assignments";
+      await applyCompanyAssignmentsThroughDashboard(
+        page,
+        baseUrl,
+        companyId,
+        company.manifest,
+        (stage) => { currentStage = stage; },
+      );
+      await selectCompanyEvidencePolicyForProjectThroughDashboard(
+        page,
+        companyId,
+        projectId,
+        (stage) => { currentStage = stage; },
+      );
+    }
+
     currentStage = "load_project";
     const projectUrl = `${baseUrl}/projects/${projectId}`;
     await page.goto(projectUrl, { waitUntil: "domcontentloaded" });
@@ -266,13 +732,46 @@ async function main() {
     await page.getByTestId("flow-start-button").click();
     await page.getByTestId("current-node-label").waitFor({ state: "visible" });
     assert.equal((await page.getByTestId("current-node-label").innerText()).trim(), "Start");
+    const startNodeActionPromise = page.waitForResponse(
+      (response) => response.url().includes("/node-action") && response.request().method() === "POST",
+    );
     await page.getByTestId("complete-node-button").click();
+    const startNodeActionResponse = await startNodeActionPromise;
+    if (!startNodeActionResponse.ok()) {
+      const actionBody = await startNodeActionResponse.json().catch(() => null);
+      const actionCode = [
+        actionBody?.detail?.code,
+        actionBody?.detail?.error_code,
+        actionBody?.code,
+        actionBody?.error_code,
+      ].find((value) => typeof value === "string" && /^[A-Z0-9_]+$/.test(value));
+      throw new Error(`research_start_node_action_http_${startNodeActionResponse.status()}_${actionCode?.toLowerCase() ?? "unknown"}`);
+    }
+
+    currentStage = "research_run_activation";
+    const researchActivation = await page.waitForFunction((nodeId) => {
+      const visible = (element) => Boolean(element && element.getClientRects().length);
+      const run = Array.from(document.querySelectorAll('[data-testid^="active-worker-run-"]'))
+        .find((element) => element.getAttribute("data-testid") === `active-worker-run-${nodeId}`);
+      if (visible(run)) return "run";
+      const dispatch = document.querySelector('[data-testid="dispatch-worker-run-button"]');
+      if (visible(dispatch)) return "dispatch";
+      return null;
+    }, flowNodeIds.research, { timeout: timeoutMs });
+    if (researchActivation === "dispatch") {
+      const researchDispatchResponsePromise = page.waitForResponse(
+        (response) => response.url().includes("/node-action") && response.request().method() === "POST",
+      );
+      await page.getByTestId("dispatch-worker-run-button").click();
+      const researchDispatchResponse = await researchDispatchResponsePromise;
+      if (!researchDispatchResponse.ok()) throw new Error("research_worker_run_dispatch_rejected");
+    }
 
     currentStage = "research_run";
-    await page.getByTestId("active-worker-run-research").waitFor({ state: "visible" });
+    await page.getByTestId(`active-worker-run-${flowNodeIds.research}`).waitFor({ state: "visible" });
     const researchRun = await waitForRun(page, "research.collect");
-    await refreshFlowRun(page, "research");
-    await page.getByTestId("apply-worker-run-research").click();
+    await refreshFlowRun(page, flowNodeIds.research);
+    await page.getByTestId(`apply-worker-run-${flowNodeIds.research}`).click();
 
     currentStage = "operator_review_wait";
     try {
@@ -294,7 +793,7 @@ async function main() {
           ? decisionBody.decisions
           : [];
       const activeApproval = executions.find(
-        (execution) => execution.node_id === "review" && execution.node_type === "approval" && execution.status === "RUNNING",
+        (execution) => execution.node_id === flowNodeIds.review && execution.node_type === "approval" && execution.status === "RUNNING",
       );
       if (!activeApproval) throw new Error("operator_review_execution_not_active");
       const pendingGate = decisions.find(
@@ -313,7 +812,7 @@ async function main() {
 
     currentStage = "report_run_active_wait";
     try {
-      await page.getByTestId("active-worker-run-report").waitFor({ state: "visible" });
+      await page.getByTestId(`active-worker-run-${flowNodeIds.report}`).waitFor({ state: "visible" });
     } catch {
       const instanceResponse = await readJsonInPage(page, `/api/projects/${projectId}/flow-instance`);
       const executionsResponse = instanceResponse.body?.id
@@ -324,9 +823,9 @@ async function main() {
         `/api/governance/runs?project_id=${encodeURIComponent(projectId)}&limit=50&offset=0`,
       );
       const activeReport = Array.isArray(instanceResponse.body?.active_node_ids)
-        && instanceResponse.body.active_node_ids.includes("report");
+        && instanceResponse.body.active_node_ids.includes(flowNodeIds.report);
       const reportExecution = Array.isArray(executionsResponse.body)
-        && executionsResponse.body.some((row) => row.node_id === "report" && row.status === "RUNNING");
+        && executionsResponse.body.some((row) => row.node_id === flowNodeIds.report && row.status === "RUNNING");
       const reportRun = Array.isArray(runResponse.body)
         && runResponse.body.some((row) => row.task_type === "research.report");
       throw new Error(
@@ -336,9 +835,9 @@ async function main() {
     currentStage = "report_run_wait";
     const reportRun = await waitForRun(page, "research.report");
     currentStage = "report_run_refresh";
-    await refreshFlowRun(page, "report");
+    await refreshFlowRun(page, flowNodeIds.report);
     currentStage = "report_run_apply_enabled_check";
-    const applyReportButton = page.getByTestId("apply-worker-run-report");
+    const applyReportButton = page.getByTestId(`apply-worker-run-${flowNodeIds.report}`);
     if (!(await applyReportButton.isEnabled())) throw new Error("report_apply_button_disabled");
     await applyReportButton.scrollIntoViewIfNeeded();
     currentStage = "report_run_apply_hit_test";
@@ -625,6 +1124,11 @@ async function main() {
     process.stdout.write(`${JSON.stringify({
       browser: "system-chrome-or-local-playwright",
       project_id: projectId,
+      company_id: companyId,
+      flow_id: flowId,
+      assignment_gate: assignmentGate,
+      research_worker_id: researchWorkerId,
+      report_worker_id: reportWorkerId,
       flow_status: "COMPLETED",
       project_status: finalProject.body.state,
       research_run_id: researchRun.id,

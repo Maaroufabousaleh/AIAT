@@ -14512,14 +14512,18 @@ async def _enforce_company_dispatch_grants(
             },
         )
     assignments = await list_assignments(company_id)
-    assignment = next(
-        (
-            item
-            for item in assignments
-            if UUID(str(item["worker_id"])) == worker_id
-        ),
-        None,
-    )
+    assignment = None
+    for item in assignments:
+        try:
+            assignment_worker_id = UUID(str(item.get("worker_id")))
+        except (AttributeError, TypeError, ValueError):
+            # Company manifests support stable named identities for built-in
+            # roles such as ``ceo``. Those entries cannot grant a UUID-backed
+            # worker run; ignore them while looking for the exact worker ID.
+            continue
+        if assignment_worker_id == worker_id:
+            assignment = item
+            break
     if assignment is None or str(assignment.get("status")) != "ACTIVE":
         raise HTTPException(
             403,

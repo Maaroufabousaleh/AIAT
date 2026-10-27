@@ -40,6 +40,12 @@ interface Flow {
   version: number;
 }
 
+interface Company {
+  id: string;
+  name: string;
+  slug: string;
+}
+
 // Available sort columns for the projects table.
 type SortKey = "name" | "state" | "created_at" | "updated_at";
 type SortDir = "asc" | "desc";
@@ -67,6 +73,7 @@ function projectActionError(detail: unknown, fallback: string) {
 export default function ProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [flows, setFlows] = useState<Flow[]>([]);
+  const [companies, setCompanies] = useState<Company[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<string>("non-archived");
   const [showCreate, setShowCreate] = useState(false);
@@ -80,6 +87,7 @@ export default function ProjectsPage() {
   const [newGitBranch, setNewGitBranch] = useState("");
   const [newTags, setNewTags] = useState("");
   const [selectedFlowId, setSelectedFlowId] = useState<string>("");
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string>("");
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
   const [loadStale, setLoadStale] = useState(false);
@@ -90,6 +98,7 @@ export default function ProjectsPage() {
   const [hasReadContext, setHasReadContext] = useState(false);
   const projectsRef = useRef<Project[] | null>(null);
   const flowsRef = useRef<Flow[] | null>(null);
+  const companiesRef = useRef<Company[] | null>(null);
   const hasReadContextRef = useRef(false);
   // Sort controls: which field to sort by and which direction.
   // Defaults to "Recently updated" — the most common intent on a project list.
@@ -110,7 +119,7 @@ export default function ProjectsPage() {
   };
 
   const handleAccessDenied = useCallback(() => {
-    const hadData = hasReadContextRef.current || projectsRef.current !== null || flowsRef.current !== null;
+    const hadData = hasReadContextRef.current || projectsRef.current !== null || flowsRef.current !== null || companiesRef.current !== null;
     setAccessDenied(true);
     setHasReadContext(hadData);
     setLoadError("");
@@ -124,28 +133,41 @@ export default function ProjectsPage() {
 
   const load = useCallback(async () => {
     if (accessDenied) return;
-    const hadData = projectsRef.current !== null || flowsRef.current !== null;
+    const hadData = projectsRef.current !== null || flowsRef.current !== null || companiesRef.current !== null;
     if (!hadData) setLoading(true);
     setLoadError("");
     try {
-      const [projRes, flowRes] = await Promise.all([
+      const [projRes, flowRes, companyRes] = await Promise.all([
         fetch("/api/projects?limit=1000", { cache: "no-store" }),
         fetch("/api/flows?is_active=true&limit=1000", { cache: "no-store" }),
+        fetch("/api/companies", { cache: "no-store" }),
       ]);
-      if (!projRes.ok || !flowRes.ok) {
-        const denied = [projRes, flowRes].find((response) => response.status === 401 || response.status === 403);
-        const error = new Error("Project and flow data are unavailable from the control plane") as HttpError;
+      if (!projRes.ok || !flowRes.ok || !companyRes.ok) {
+        const denied = [projRes, flowRes, companyRes].find((response) => response.status === 401 || response.status === 403);
+        const error = new Error("Project, flow, or company data are unavailable from the control plane") as HttpError;
         error.status = denied?.status;
         throw error;
       }
-      const [projData, flowData] = await Promise.all([projRes.json(), flowRes.json()]);
+      const [projData, flowData, companyData] = await Promise.all([
+        projRes.json(),
+        flowRes.json(),
+        companyRes.json(),
+      ]);
       const nextProjects = Array.isArray(projData) ? projData : projData.projects ?? [];
       const nextFlows = Array.isArray(flowData) ? flowData : [];
+      const nextCompanies = Array.isArray(companyData) ? companyData : [];
       projectsRef.current = nextProjects;
       flowsRef.current = nextFlows;
+      companiesRef.current = nextCompanies;
       hasReadContextRef.current = true;
       setProjects(nextProjects);
       setFlows(nextFlows);
+      setCompanies(nextCompanies);
+      setSelectedCompanyId((current) => (
+        current && nextCompanies.some((company: Company) => company.id === current)
+          ? current
+          : nextCompanies[0]?.id ?? ""
+      ));
       setHasReadContext(true);
       setLoadStale(false);
     } catch (cause) {
@@ -232,6 +254,7 @@ export default function ProjectsPage() {
             remote_name: "origin",
           },
           flow_id: selectedFlowId || undefined,
+          company_id: selectedCompanyId || undefined,
           initial_context: initialContext,
         }),
       });
@@ -777,6 +800,24 @@ export default function ProjectsPage() {
                   </p>
                 </div>
               )}
+              <div>
+                <label className="block text-sm text-slate-300 mb-1.5" htmlFor="new-project-company">Company</label>
+                <select
+                  id="new-project-company"
+                  aria-label="Project company"
+                  value={selectedCompanyId}
+                  onChange={(event) => setSelectedCompanyId(event.target.value)}
+                  required
+                  disabled={companies.length === 0}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                >
+                  <option value="">Select a company</option>
+                  {companies.map((company) => (
+                    <option key={company.id} value={company.id}>{company.name} · {company.slug}</option>
+                  ))}
+                </select>
+                {companies.length === 0 && <p className="mt-1 text-xs text-amber-200">A company must be available before creating a project.</p>}
+              </div>
               {error && <ErrorBanner tone="error">{error}</ErrorBanner>}
               <div className="flex gap-2 pt-1">
                 <button
@@ -791,7 +832,7 @@ export default function ProjectsPage() {
                 </button>
                 <button
                   type="submit"
-                  disabled={creating || !newName.trim()}
+                  disabled={creating || !newName.trim() || !selectedCompanyId}
                   className="flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors"
                 >
                   {creating ? "Creating…" : "Create"}
