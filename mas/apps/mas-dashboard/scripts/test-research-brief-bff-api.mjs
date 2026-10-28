@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import ts from "typescript";
 
 const dashboardRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -43,6 +44,9 @@ function compileTypeScript(sourcePath, injectedRequire) {
     Response,
     URL,
     URLSearchParams,
+    TextDecoder,
+    TextEncoder,
+    AbortSignal,
     setTimeout,
     clearTimeout,
   }, { filename: sourcePath });
@@ -94,6 +98,15 @@ const flowActionRoute = compileTypeScript(
   },
 );
 
+const flowRetryRoute = compileTypeScript(
+  path.join(dashboardRoot, "app", "api", "flows", "instances", "[id]", "retry", "route.ts"),
+  (specifier) => {
+    if (specifier === "next/server") return nextServer;
+    if (specifier === "@/lib/orchestrator") return orchestrator;
+    throw new Error(`Unexpected flow-retry BFF dependency: ${specifier}`);
+  },
+);
+
 const runRoute = compileTypeScript(
   path.join(dashboardRoot, "app", "api", "governance", "runs", "[run_id]", "route.ts"),
   (specifier) => {
@@ -139,6 +152,16 @@ const projectArtifactsRoute = compileTypeScript(
   },
 );
 
+const projectDocumentsRoute = compileTypeScript(
+  path.join(dashboardRoot, "app", "api", "projects", "[id]", "documents", "route.ts"),
+  (specifier) => {
+    if (specifier === "next/server") return nextServer;
+    if (specifier === "node:crypto") return { createHash };
+    if (specifier === "@/lib/orchestrator") return orchestrator;
+    throw new Error(`Unexpected project-documents BFF dependency: ${specifier}`);
+  },
+);
+
 const projectTransitionRoute = compileTypeScript(
   path.join(dashboardRoot, "app", "api", "projects", "[id]", "transition", "route.ts"),
   (specifier) => {
@@ -176,6 +199,8 @@ if (mode === "complete-research") {
   }, { id: instanceId });
 } else if (mode === "start-flow") {
   result = await invoke(flowActionRoute.POST, "POST", `/api/flows/instances/${instanceId}/action`, { action: "start" }, { id: instanceId });
+} else if (mode === "retry-flow") {
+  result = await invoke(flowRetryRoute.POST, "POST", `/api/flows/instances/${instanceId}/retry`, undefined, { id: instanceId });
 } else if (mode === "complete-start") {
   result = await invoke(nodeAction.POST, "POST", `/api/flows/instances/${instanceId}/node-action`, { node_id: "start", action: "complete" }, { id: instanceId });
 } else if (mode === "approve-review") {
@@ -208,6 +233,34 @@ if (mode === "complete-research") {
     await new Promise((resolve) => setTimeout(resolve, 25));
   } while (Date.now() < deadline);
   if (!result) throw new Error("Synthetic WorkerRun did not reach a terminal state in the bounded wait");
+} else if (mode === "read-run") {
+  const runId = checkedRunId(process.argv[3]);
+  result = await invoke(
+    runRoute.GET,
+    "GET",
+    `/api/governance/runs/${encodeURIComponent(runId)}`,
+    undefined,
+    { run_id: runId },
+  );
+} else if (mode === "cancel-run") {
+  const runId = checkedRunId(process.argv[3]);
+  result = await invoke(
+    runResourceRoute.POST,
+    "POST",
+    `/api/governance/runs/${encodeURIComponent(runId)}/cancel`,
+    { reason: "Synthetic operator cancellation for isolated integration test" },
+    { run_id: runId, resource: "cancel" },
+  );
+} else if (mode === "register-report-document") {
+  const artifactId = Number(process.argv[3]);
+  if (!Number.isSafeInteger(artifactId) || artifactId < 1) throw new Error("A synthetic artifact ID is required");
+  result = await invoke(
+    projectDocumentsRoute.POST,
+    "POST",
+    `/api/projects/${projectId}/documents`,
+    { artifact_id: artifactId },
+    { id: projectId },
+  );
 } else if (mode === "read-run-resource") {
   const runId = checkedRunId(process.argv[3]);
   const resource = process.argv[4];

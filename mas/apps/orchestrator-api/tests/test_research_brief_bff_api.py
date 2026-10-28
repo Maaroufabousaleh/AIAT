@@ -513,6 +513,10 @@ class _ResearchBriefStorage:
         row = {
             "id": kwargs["run_id"],
             "worker_id": kwargs["worker_id"],
+            "worker_shell_version_id": kwargs.get("worker_shell_version_id"),
+            "adapter_id": kwargs.get("adapter_id"),
+            "steward_id": kwargs.get("steward_id"),
+            "model_resolution_snapshot_id": kwargs.get("model_resolution_snapshot_id"),
             "idempotency_key": kwargs["idempotency_key"],
             "project_id": kwargs["project_id"],
             "flow_id": kwargs["flow_id"],
@@ -534,6 +538,13 @@ class _ResearchBriefStorage:
         self.worker_events[row["id"]] = []
         self.worker_artifacts[row["id"]] = []
         self.worker_usage[row["id"]] = []
+        return deepcopy(row)
+
+    async def request_worker_run_cancel(self, run_id: UUID) -> dict[str, Any] | None:
+        row = self.worker_runs.get(run_id)
+        if row is None:
+            return None
+        row["cancel_requested_at"] = datetime.now(UTC)
         return deepcopy(row)
 
     async def claim_worker_run(self, *, owner: str, lease_seconds: int, run_id: UUID) -> dict[str, Any] | None:
@@ -930,6 +941,9 @@ class _ResearchBriefStorage:
         activations: list[dict[str, Any]],
         execution_updates: list[dict[str, Any]] | None = None,
         project_event: dict[str, Any] | None = None,
+        supersede_existing: bool = False,
+        supersede_reason: str = "Superseded by explicit flow retry",
+        **_kwargs: Any,
     ) -> dict[str, Any]:
         if instance_id != INSTANCE_ID:
             return {"outcome": "not_found"}
@@ -953,6 +967,32 @@ class _ResearchBriefStorage:
         for update in execution_updates or []:
             row = next(item for item in self.executions if item["id"] == update["expected"]["id"])
             row.update(deepcopy(update["values"]))
+        if supersede_existing:
+            execution_ids = {
+                row["id"] for row in self.executions if row["instance_id"] == instance_id
+            }
+            for gate in self.approval_gates:
+                if (
+                    gate.get("flow_node_execution_id") in execution_ids
+                    and gate.get("status") == "PENDING"
+                ):
+                    gate.update(
+                        {
+                            "status": "CANCELLED",
+                            "decided_by": "system:flow_retry",
+                            "justification": supersede_reason,
+                            "decided_at": datetime.now(UTC),
+                        }
+                    )
+            for execution in self.executions:
+                if execution["instance_id"] == instance_id and execution["status"] != "SUPERSEDED":
+                    execution.update(
+                        {
+                            "status": "SUPERSEDED",
+                            "error": execution.get("error") or supersede_reason,
+                            "completed_at": execution.get("completed_at") or datetime.now(UTC),
+                        }
+                    )
         created: list[dict[str, Any]] = []
         for activation in activations:
             created.append(self._new_execution(instance_id, activation))
@@ -1660,11 +1700,17 @@ def test_company_dispatch_grants_ignore_named_manifest_assignments() -> None:
     asyncio.run(verify())
 
 
-def _node_environment(api_url: str, node_path: str, dashboard_root: Path) -> dict[str, str]:
+def _node_environment(
+    api_url: str,
+    node_path: str,
+    dashboard_root: Path,
+    *,
+    operator_key: str = API_KEY,
+) -> dict[str, str]:
     environment = {
         "PATH": node_path,
         "ORCHESTRATOR_URL": api_url,
-        "AIAT_OPERATOR_API_KEY": API_KEY,
+        "AIAT_OPERATOR_API_KEY": operator_key,
         "JWT_SECRET": "synthetic-research-brief-dashboard-session-secret",
     }
     for name in ("SYSTEMROOT", "WINDIR", "TEMP", "TMP"):
@@ -1684,6 +1730,7 @@ def _run_bff(
     dashboard_root: Path,
     run_id: UUID | None = None,
     extra_args: tuple[str, ...] = (),
+    operator_key: str = API_KEY,
 ) -> dict[str, Any]:
     destination = urlsplit(api_url)
     assert (
@@ -1705,7 +1752,7 @@ def _run_bff(
     completed = subprocess.run(
         arguments,
         cwd=dashboard_root,
-        env=_node_environment(api_url, node_path, dashboard_root),
+        env=_node_environment(api_url, node_path, dashboard_root, operator_key=operator_key),
         capture_output=True,
         text=True,
         timeout=15,
@@ -1912,6 +1959,15 @@ def _start_test_api(
     monkeypatch.setenv("MAS_ENVIRONMENT", "production")
 
     app = main.app
+    previous_runtime_caches = (
+        dict(main._worker_steward_runtimes),
+        dict(main._worker_adapter_runtimes),
+    )
+    # Each isolated API instance gets fresh process-local runtime caches. These
+    # caches are not authoritative, and a prior synthetic workspace must not be
+    # reused by a later browser journey in this same pytest process.
+    main._worker_steward_runtimes.clear()
+    main._worker_adapter_runtimes.clear()
     previous = {
         "storage": getattr(app.state, "storage", None),
         "controller": getattr(app.state, "controller", None),
@@ -2130,6 +2186,10 @@ def _start_test_api(
                     delattr(app.state, key)
             else:
                 setattr(app.state, key, value)
+        main._worker_steward_runtimes.clear()
+        main._worker_steward_runtimes.update(previous_runtime_caches[0])
+        main._worker_adapter_runtimes.clear()
+        main._worker_adapter_runtimes.update(previous_runtime_caches[1])
 
     return f"http://127.0.0.1:{port}", stop
 
@@ -2492,6 +2552,172 @@ def test_research_brief_bff_controller_tool_evidence_and_project_completion(
             assert final_failed_names == sorted(expected_failed_evidence)
         else:
             assert final_evidence["body"]["status"] == "complete"
+    finally:
+        stop_api()
+
+
+def test_research_brief_bff_cancellation_and_flow_retry_recover_authoritative_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Operator cancellation, denied actions, and flow retry use persisted controller state."""
+
+    node_path, dashboard_root = _node_and_dashboard()
+    storage = _ResearchBriefStorage(
+        research_output={
+            "research_summary": "Synthetic findings persisted by the test fixture.",
+            "sources": [{"evidence_id": "source-1", "label": "Synthetic source"}],
+        },
+        require_report_document=True,
+        include_legacy_documents=True,
+    )
+    workspace_root = tmp_path / "cancel-retry-worker-workspace"
+    api_url, stop_api = _start_test_api(monkeypatch, storage, workspace_root=workspace_root)
+
+    def call(
+        mode: str,
+        *,
+        run_id: UUID | None = None,
+        extra_args: tuple[str, ...] = (),
+        operator_key: str = API_KEY,
+    ) -> dict[str, Any]:
+        return _run_bff(
+            mode=mode,
+            api_url=api_url,
+            node_path=node_path,
+            dashboard_root=dashboard_root,
+            run_id=run_id,
+            extra_args=extra_args,
+            operator_key=operator_key,
+        )
+
+    try:
+        started = call("start-flow")
+        assert started["status"] == 200
+        start_settlement = call("complete-start")
+        assert start_settlement["status"] == 200
+        research_run_id = UUID(str(storage.admissions[0]["id"]))
+        research_terminal = call("wait-run", run_id=research_run_id)
+        assert research_terminal["status"] == 200
+        assert research_terminal["body"]["state"] == "SUCCEEDED"
+        assert call("complete-research", run_id=research_run_id)["status"] == 200
+        assert storage.instance["active_node_ids"] == ["review"]
+
+        # Holding the report in the existing host queue keeps this operator
+        # action deterministic without starting an adapter or worker process.
+        from orchestrator_api import main as api_main
+
+        assert api_main.app.state.storage is storage
+        api_main.app.state.local_host_queue_config = object()
+        assert call("approve-review")["status"] == 200
+        assert len(storage.admissions) == 2
+        cancelled_report = storage.admissions[1]
+        cancelled_run_id = UUID(str(cancelled_report["id"]))
+        assert cancelled_report["task_type"] == "research.report"
+
+        queued_status = call("read-run", run_id=cancelled_run_id)
+        assert queued_status["status"] == 200
+        assert queued_status["body"]["state"] == "QUEUED"
+
+        denied_cancel = call(
+            "cancel-run",
+            run_id=cancelled_run_id,
+            operator_key="synthetic-invalid-operator-key",
+        )
+        assert denied_cancel["status"] == 401, denied_cancel
+        assert storage.worker_runs[cancelled_run_id]["state"] == "QUEUED"
+        assert storage.worker_runs[cancelled_run_id]["cancel_requested_at"] is None
+        assert storage.tool_dispatches == []
+
+        cancelled = call("cancel-run", run_id=cancelled_run_id)
+        assert cancelled["status"] == 200
+        assert cancelled["body"]["state"] == "CANCELLED"
+        repeated_cancel = call("cancel-run", run_id=cancelled_run_id)
+        assert repeated_cancel["status"] == 200
+        assert repeated_cancel["body"]["state"] == "CANCELLED"
+        assert storage.worker_runs[cancelled_run_id]["state"] == "CANCELLED"
+
+        failed_flow = call("fail-report", run_id=cancelled_run_id)
+        assert failed_flow["status"] == 200
+        assert failed_flow["body"]["status"] == "FAILED"
+        assert storage.instance["active_node_ids"] == []
+        assert storage.worker_runs[cancelled_run_id]["state"] == "CANCELLED"
+        assert storage.worker_tool_effects == {}
+        assert storage.worker_artifacts[cancelled_run_id] == []
+        assert storage.worker_usage[cancelled_run_id] == []
+        assert storage.project["state"] == "IN_PROGRESS"
+
+        incomplete = call("read-project-evidence")
+        assert incomplete["status"] == 200
+        assert incomplete["body"]["status"] == "incomplete"
+        failed_checks = {
+            check["name"]
+            for check in incomplete["body"]["checks"]
+            if check["required"] and not check["passed"]
+        }
+        assert {"flow_terminal", "artifacts_registered"} <= failed_checks
+
+        assert call("transition-project", extra_args=("all_sprints_done",))["status"] == 200
+        assert call("transition-project", extra_args=("retrospective_done",))["status"] == 200
+        blocked_completion = call("transition-project", extra_args=("kpi_saved",))
+        assert blocked_completion["status"] == 409
+        assert blocked_completion["body"]["detail"]["code"] == "PROJECT_EVIDENCE_INCOMPLETE"
+        assert storage.project["state"] == "KPI_PERSISTENCE"
+
+        retried_flow = call("retry-flow")
+        assert retried_flow["status"] == 200, retried_flow
+        assert retried_flow["body"]["status"] == "RUNNING"
+        assert retried_flow["body"]["retry_count"] == 1
+        assert retried_flow["body"]["active_node_ids"] == ["review"]
+        assert len(storage.admissions) == 2
+
+        duplicate_retry = call("retry-flow")
+        assert duplicate_retry["status"] == 409
+        assert len(storage.admissions) == 2
+
+        # After the retry's fresh review decision, the normal asynchronous
+        # controller path executes and persists a new report attempt.
+        api_main.app.state.local_host_queue_config = None
+        assert call("approve-review")["status"] == 200
+        assert len(storage.admissions) == 3
+        recovered_report_id = UUID(str(storage.admissions[2]["id"]))
+        assert recovered_report_id != cancelled_run_id
+        recovered_terminal = call("wait-run", run_id=recovered_report_id)
+        assert recovered_terminal["status"] == 200
+        assert recovered_terminal["body"]["state"] == "SUCCEEDED"
+        assert call("complete-report", run_id=recovered_report_id)["status"] == 200
+        assert storage.instance["status"] == "COMPLETED"
+
+        registered_document = call(
+            "register-report-document",
+            extra_args=(str(storage.artifacts[0]["id"]),),
+        )
+        assert registered_document["status"] == 201
+        assert registered_document["body"]["doc_type"] == "RESEARCH_BRIEF"
+        assert registered_document["body"]["project_id"] == str(PROJECT_ID)
+        assert registered_document["body"]["blob_sha256"] == storage.artifacts[0]["sha256"]
+
+        recovered_evidence = call("read-project-evidence")
+        assert recovered_evidence["status"] == 200
+        failed_recovered_checks = [
+            check["name"]
+            for check in recovered_evidence["body"]["checks"]
+            if check["required"] and not check["passed"]
+        ]
+        assert recovered_evidence["body"]["status"] == "complete", failed_recovered_checks
+        assert all(row["state"] in {"SUCCEEDED", "CANCELLED"} for row in storage.worker_runs.values())
+        assert storage.worker_runs[cancelled_run_id]["state"] == "CANCELLED"
+        assert storage.worker_runs[recovered_report_id]["state"] == "SUCCEEDED"
+        assert len(storage.artifacts) == 1
+        assert storage.artifacts[0]["metadata"]["worker_run_id"] == str(recovered_report_id)
+        assert len(storage.documents) == 3  # two retained legacy documents plus one report
+
+        final_transition = call("transition-project", extra_args=("kpi_saved",))
+        assert final_transition["status"] == 200
+        assert storage.project["state"] == "COMPLETED"
+        final_project = call("read-project")
+        assert final_project["status"] == 200
+        assert final_project["body"]["state"] == "COMPLETED"
     finally:
         stop_api()
 
