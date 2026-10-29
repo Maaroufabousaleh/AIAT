@@ -225,6 +225,11 @@ class _ResearchBriefStorage:
         self.worker_runs: dict[UUID, dict[str, Any]] = {}
         self.admissions: list[dict[str, Any]] = []
         self.worker_events: dict[UUID, list[dict[str, Any]]] = {}
+        self.worker_run_transitions: dict[UUID, list[dict[str, Any]]] = {}
+        self.worker_run_read_failures: dict[UUID, tuple[int, int]] = {}
+        self.worker_run_read_counts: dict[UUID, int] = {}
+        self.worker_run_race_after_cancel: set[UUID] = set()
+        self.worker_run_read_races: dict[UUID, dict[str, int | float]] = {}
         self.worker_tool_effects: dict[tuple[UUID, str], dict[str, Any]] = {}
         self.worker_artifacts: dict[UUID, list[dict[str, Any]]] = {}
         self.worker_usage: dict[UUID, list[dict[str, Any]]] = {}
@@ -468,8 +473,83 @@ class _ResearchBriefStorage:
         }
 
     async def get_worker_run(self, run_id: UUID) -> dict[str, Any] | None:
+        read_count = self.worker_run_read_counts.get(run_id, 0) + 1
+        self.worker_run_read_counts[run_id] = read_count
+        race = self.worker_run_read_races.get(run_id)
+        if race is not None and read_count > int(race["denied_after"]):
+            from fastapi import HTTPException
+
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "SYNTHETIC_RUN_ACCESS_REVOKED",
+                    "message": "Synthetic read boundary for the isolated dashboard test.",
+                },
+            )
+        if race is not None and read_count == int(race["delayed_read"]):
+            # Hold one successful older read while the browser starts a newer
+            # request that receives the synthetic access revocation.
+            await asyncio.sleep(float(race["delay_seconds"]))
+        failure = self.worker_run_read_failures.get(run_id)
+        if failure is not None and read_count > failure[0]:
+            from fastapi import HTTPException
+
+            status_code = failure[1]
+            raise HTTPException(
+                status_code=status_code,
+                detail={
+                    "code": "SYNTHETIC_RUN_ACCESS_REVOKED" if status_code == 403 else "SYNTHETIC_RUN_READ_UNAVAILABLE",
+                    "message": "Synthetic read boundary for the isolated dashboard test.",
+                },
+            )
         row = self.worker_runs.get(run_id)
         return deepcopy(row) if row else None
+
+    async def list_worker_events(
+        self,
+        run_id: UUID,
+        *,
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        return deepcopy(self.worker_events.get(run_id, [])[offset : offset + limit])
+
+    async def list_worker_run_transitions(
+        self,
+        run_id: UUID,
+        *,
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        return deepcopy(self.worker_run_transitions.get(run_id, [])[:limit])
+
+    async def list_worker_checkpoints(self, run_id: UUID, *, limit: int = 100) -> list[dict[str, Any]]:
+        return []
+
+    async def get_worker_run_by_idempotency_key(
+        self,
+        *,
+        worker_id: UUID,
+        idempotency_key: str,
+    ) -> dict[str, Any] | None:
+        row = next(
+            (
+                item
+                for item in self.worker_runs.values()
+                if item["worker_id"] == worker_id and item.get("idempotency_key") == idempotency_key
+            ),
+            None,
+        )
+        return deepcopy(row) if row else None
+
+    async def get_worker_run_retry(self, run_id: UUID) -> dict[str, Any] | None:
+        row = next(
+            (item for item in self.worker_runs.values() if item.get("retry_of_run_id") == run_id),
+            None,
+        )
+        return deepcopy(row) if row else None
+
+    async def has_worker_tool_effects(self, run_id: UUID) -> bool:
+        return any(row.get("run_id") == run_id for row in self.worker_tool_effects.values())
 
     async def create_model_resolution_snapshot(self, **kwargs: Any) -> dict[str, Any]:
         snapshot = deepcopy(kwargs.get("snapshot"))
@@ -522,6 +602,8 @@ class _ResearchBriefStorage:
             "flow_id": kwargs["flow_id"],
             "flow_instance_id": kwargs["flow_instance_id"],
             "flow_node_execution_id": kwargs["flow_node_execution_id"],
+            "retry_of_run_id": kwargs.get("retry_of_run_id"),
+            "retry_context_json": deepcopy(kwargs.get("retry_context_json")),
             "task_type": kwargs["task_type"],
             "request_json": deepcopy(kwargs["request"]),
             "state": kwargs["state"],
@@ -536,6 +618,7 @@ class _ResearchBriefStorage:
         self.worker_runs[row["id"]] = row
         self.admissions.append(deepcopy(row))
         self.worker_events[row["id"]] = []
+        self.worker_run_transitions[row["id"]] = []
         self.worker_artifacts[row["id"]] = []
         self.worker_usage[row["id"]] = []
         return deepcopy(row)
@@ -634,7 +717,15 @@ class _ResearchBriefStorage:
             )
         ):
             return None
+        previous_state = str(row.get("state") or "")
         row["state"] = new_state
+        if new_state == "CANCELLED" and run_id in self.worker_run_race_after_cancel:
+            read_count = self.worker_run_read_counts.get(run_id, 0)
+            self.worker_run_read_races[run_id] = {
+                "delayed_read": read_count + 1,
+                "denied_after": read_count + 2,
+                "delay_seconds": 1.5,
+            }
         if result is not None:
             row["result_json"] = deepcopy(result)
         if error is not None:
@@ -655,6 +746,18 @@ class _ResearchBriefStorage:
                     "completed_at": datetime.now(UTC),
                     "claim_owner": None,
                     "lease_expires_at": None,
+                }
+            )
+        if previous_state != new_state:
+            self.worker_run_transitions.setdefault(run_id, []).append(
+                {
+                    "id": uuid4(),
+                    "run_id": run_id,
+                    "from_state": previous_state,
+                    "to_state": new_state,
+                    "actor": _kwargs.get("actor"),
+                    "reason": _kwargs.get("reason"),
+                    "created_at": datetime.now(UTC),
                 }
             )
         return deepcopy(row)
@@ -1769,6 +1872,7 @@ def _run_dashboard_browser(
     dashboard_root: Path,
     project_id: UUID | None,
     create_assets: bool = False,
+    runner_args: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     destination = urlsplit(api_url)
     assert (
@@ -1786,6 +1890,7 @@ def _run_dashboard_browser(
     command = [node_path, str(script), str(project_id or "")]
     if create_assets:
         command.append("--create-assets")
+    command.extend(runner_args)
     environment = _node_environment(api_url, node_path, dashboard_root)
     working_directory: Path | None = dashboard_root
 
@@ -1855,6 +1960,7 @@ def _run_dashboard_browser(
                 command = [windows_node, windows_script, str(project_id or "")]
                 if create_assets:
                     command.append("--create-assets")
+                command.extend(runner_args)
                 working_directory = None
 
     completed = subprocess.run(
@@ -2718,6 +2824,179 @@ def test_research_brief_bff_cancellation_and_flow_retry_recover_authoritative_st
         final_project = call("read-project")
         assert final_project["status"] == 200
         assert final_project["body"]["state"] == "COMPLETED"
+    finally:
+        stop_api()
+
+
+def test_worker_run_operator_browser_actions_use_real_bff_and_persisted_api_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Drive status, cancel, retry, stale refresh, and access revocation in the real UI."""
+
+    node_path, dashboard_root = _node_and_dashboard()
+    if not (dashboard_root / "node_modules" / "playwright").exists():
+        pytest.skip("dashboard Playwright runtime is not installed")
+    storage = _ResearchBriefStorage(
+        research_output={
+            "research_summary": "Synthetic findings persisted by the test fixture.",
+            "sources": [{"evidence_id": "source-1", "label": "Synthetic source"}],
+        }
+    )
+    run_ids = {
+        "cancel": uuid4(),
+        "retry": uuid4(),
+        "stale": uuid4(),
+        "revoked": uuid4(),
+        "race": uuid4(),
+    }
+
+    async def seed_runs() -> dict[str, dict[str, Any]]:
+        from mas_core.worker_contract import WorkerRunRequest
+
+        rows: dict[str, dict[str, Any]] = {}
+        for name, state in (
+            ("cancel", "QUEUED"),
+            ("retry", "FAILED"),
+            ("stale", "QUEUED"),
+            ("revoked", "QUEUED"),
+            ("race", "QUEUED"),
+        ):
+            run_id = run_ids[name]
+            request = WorkerRunRequest(
+                run_id=run_id,
+                idempotency_key=f"operator-browser-seed:{name}:{run_id}",
+                worker_id=str(RESEARCH_WORKER_ID),
+                task_type="research.collect",
+                task_input={"query": "synthetic operator action fixture"},
+                project_id=PROJECT_ID,
+            )
+            row = await storage.create_worker_run(
+                run_id=run_id,
+                worker_id=RESEARCH_WORKER_ID,
+                idempotency_key=request.idempotency_key,
+                task_type=request.task_type,
+                request=request.model_dump(mode="json"),
+                project_id=PROJECT_ID,
+                flow_id=None,
+                flow_instance_id=None,
+                flow_node_execution_id=None,
+                worker_shell_version_id=storage.workers[RESEARCH_WORKER_ID]["active_shell_version_id"],
+                adapter_id=(
+                    storage.workers[RESEARCH_WORKER_ID]["active_adapter_id"]
+                    if name == "retry"
+                    else None
+                ),
+                state=state,
+                retry_of_run_id=None,
+                retry_context_json=None,
+            )
+            if state == "FAILED":
+                storage.worker_runs[run_id].update(
+                    {
+                        "state": "FAILED",
+                        "result_json": {"success": False},
+                        "error_json": {
+                            "code": "SYNTHETIC_PREVIOUS_ATTEMPT_FAILED",
+                            "message": "Synthetic prior failure retained for retry review.",
+                        },
+                        "completed_at": datetime.now(UTC),
+                    }
+                )
+                row = deepcopy(storage.worker_runs[run_id])
+            rows[name] = deepcopy(row)
+
+        # Each initial detail view performs at most six read calls (including
+        # React development-mode effect replay). Later reads emulate a fresh
+        # service failure or revoked read grant without mutating the run.
+        storage.worker_run_read_failures[run_ids["stale"]] = (6, 503)
+        storage.worker_run_read_failures[run_ids["revoked"]] = (6, 403)
+        storage.worker_run_race_after_cancel.add(run_ids["race"])
+        return rows
+
+    seeded_rows = asyncio.run(seed_runs())
+    workspace_root = tmp_path / "worker-run-operator-browser-workspace"
+    api_url, stop_api = _start_test_api(monkeypatch, storage, workspace_root=workspace_root)
+    from orchestrator_api import main as api_main
+
+    # A configured-but-absent host runtime leaves retry admission QUEUED for
+    # operator readback; the test never schedules an adapter execution.
+    api_main.app.state.local_host_queue_config = object()
+    try:
+        browser_result = _run_dashboard_browser(
+            api_url=api_url,
+            node_path=node_path,
+            dashboard_root=dashboard_root,
+            project_id=PROJECT_ID,
+            runner_args=(
+                "--worker-run-operator-actions",
+                str(run_ids["cancel"]),
+                str(run_ids["retry"]),
+                str(run_ids["stale"]),
+                str(run_ids["revoked"]),
+                str(run_ids["race"]),
+            ),
+        )
+
+        cancelled = storage.worker_runs[run_ids["cancel"]]
+        assert cancelled["state"] == "CANCELLED"
+        assert cancelled["cancel_requested_at"] is not None
+        assert storage.worker_run_transitions[run_ids["cancel"]][-1]["to_state"] == "CANCELLED"
+        assert storage.worker_run_transitions[run_ids["cancel"]][-1]["actor"] == "operator"
+        assert browser_result["cancellation"] == {
+            "run_id": str(run_ids["cancel"]),
+            "state": "CANCELLED",
+        }
+
+        failed_source = storage.worker_runs[run_ids["retry"]]
+        assert failed_source["state"] == "FAILED"
+        assert failed_source["result_json"] == seeded_rows["retry"]["result_json"]
+        assert failed_source["error_json"] == seeded_rows["retry"]["error_json"]
+        retry_id = UUID(browser_result["retry"]["retry_run_id"])
+        retry_row = storage.worker_runs[retry_id]
+        assert retry_row["state"] == "QUEUED"
+        assert retry_row["retry_of_run_id"] == run_ids["retry"]
+        assert retry_row["idempotency_key"].startswith(f"operator-retry:{run_ids['retry']}:")
+        assert browser_result["retry"]["retry_state"] == "QUEUED"
+
+        assert browser_result["stale_refresh"] == {
+            "run_id": str(run_ids["stale"]),
+            "state": "QUEUED",
+            "actions_disabled": True,
+        }
+        assert browser_result["revoked_access"] == {
+            "run_id": str(run_ids["revoked"]),
+            "actions_hidden": True,
+        }
+        assert storage.worker_run_read_counts[run_ids["stale"]] > 6
+        assert storage.worker_run_read_counts[run_ids["revoked"]] > 6
+        assert storage.worker_runs[run_ids["stale"]]["state"] == "QUEUED"
+        assert storage.worker_runs[run_ids["revoked"]]["state"] == "QUEUED"
+        assert storage.worker_runs[run_ids["race"]]["state"] == "CANCELLED"
+        assert storage.worker_run_read_counts[run_ids["race"]] > int(
+            storage.worker_run_read_races[run_ids["race"]]["denied_after"]
+        )
+        assert storage.worker_run_transitions[run_ids["race"]][-1]["to_state"] == "CANCELLED"
+        assert browser_result["out_of_order_denial"] == {
+            "run_id": str(run_ids["race"]),
+            "access_denied_persisted": True,
+            "older_success_ignored": True,
+        }
+        assert len(storage.admissions) == 6  # five seeded rows plus one canonical retry
+        assert len(storage.worker_runs) == 6
+
+        # The fixture proves operator recovery without manufacturing project
+        # completion or successful worker evidence.
+        assert storage.project["state"] == "IN_PROGRESS"
+        assert storage.instance["status"] == "NOT_STARTED"
+        assert storage.artifacts == []
+        assert storage.worker_tool_effects == {}
+        assert all(not rows for rows in storage.worker_usage.values())
+        assert not getattr(storage, "project_usage_events", [])
+        assert not storage.worker_events[run_ids["cancel"]]
+        assert not storage.worker_events[run_ids["retry"]]
+        assert not storage.worker_events[run_ids["race"]]
+        assert api_url.startswith("http://127.0.0.1:")
     finally:
         stop_api()
 

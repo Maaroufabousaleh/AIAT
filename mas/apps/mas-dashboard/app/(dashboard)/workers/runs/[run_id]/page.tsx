@@ -299,6 +299,11 @@ function WorkerRunDetail({ runId }: { runId: string }) {
   const validRunId = UUID_PATTERN.test(runId);
   const [data, setData] = useState<RunEvidence | null>(null);
   const dataRef = useRef<RunEvidence | null>(null);
+  // A quiet post-action read can overlap a manual refresh. Only the newest
+  // request may publish state so an older success cannot undo a newer 403 or
+  // mark a newer request idle while it is still pending.
+  const loadRequestIdRef = useRef(0);
+  const toolEffectsRequestIdRef = useRef(0);
   const [toolEffects, setToolEffects] = useState<JsonRecord[]>([]);
   const [toolEffectsLoading, setToolEffectsLoading] = useState(true);
   const [toolEffectsError, setToolEffectsError] = useState("");
@@ -317,9 +322,13 @@ function WorkerRunDetail({ runId }: { runId: string }) {
   const [resumeCheckpointId, setResumeCheckpointId] = useState("");
 
   const loadToolEffects = useCallback(async () => {
+    const requestId = ++toolEffectsRequestIdRef.current;
+    const isCurrentRequest = () => toolEffectsRequestIdRef.current === requestId;
     if (!validRunId) {
-      setToolEffects([]);
-      setToolEffectsLoading(false);
+      if (isCurrentRequest()) {
+        setToolEffects([]);
+        setToolEffectsLoading(false);
+      }
       return;
     }
     setToolEffectsLoading(true);
@@ -328,21 +337,27 @@ function WorkerRunDetail({ runId }: { runId: string }) {
       const payload = asRecord(await readJson<unknown>(
         "/api/governance/runs/" + encodeURIComponent(runId) + "/tool-effects?limit=100",
       ));
-      setToolEffects(asRecords(payload.tool_effects));
+      if (isCurrentRequest()) setToolEffects(asRecords(payload.tool_effects));
     } catch (cause) {
-      setToolEffects([]);
-      setToolEffectsError(cause instanceof RunApiError && [401, 403].includes(cause.status)
-        ? "You are not authorized to view mediated tool-effect evidence."
-        : "Mediated tool-effect evidence could not be loaded.");
+      if (isCurrentRequest()) {
+        setToolEffects([]);
+        setToolEffectsError(cause instanceof RunApiError && [401, 403].includes(cause.status)
+          ? "You are not authorized to view mediated tool-effect evidence."
+          : "Mediated tool-effect evidence could not be loaded.");
+      }
     } finally {
-      setToolEffectsLoading(false);
+      if (isCurrentRequest()) setToolEffectsLoading(false);
     }
   }, [runId, validRunId]);
 
   const loadRun = useCallback(async (quiet = false): Promise<RunEvidence | null> => {
+    const requestId = ++loadRequestIdRef.current;
+    const isCurrentRequest = () => loadRequestIdRef.current === requestId;
     if (!validRunId) {
-      setLoadError("This Worker Run link does not contain a valid run ID.");
-      setLoading(false);
+      if (isCurrentRequest()) {
+        setLoadError("This Worker Run link does not contain a valid run ID.");
+        setLoading(false);
+      }
       return null;
     }
     void loadToolEffects();
@@ -366,6 +381,7 @@ function WorkerRunDetail({ runId }: { runId: string }) {
         usage: asRecords(usage),
         checkpoints: asRecords(checkpoints),
       };
+      if (!isCurrentRequest()) return dataRef.current;
       dataRef.current = next;
       setData(next);
       setStale(false);
@@ -381,6 +397,7 @@ function WorkerRunDetail({ runId }: { runId: string }) {
         : null);
       return next;
     } catch (cause) {
+      if (!isCurrentRequest()) return dataRef.current;
       if (cause instanceof RunApiError && [401, 403].includes(cause.status)) {
         setAccessDenied(true);
         setLoadError("The current operator identity is not authorized to read or change this Worker Run.");
@@ -400,12 +417,16 @@ function WorkerRunDetail({ runId }: { runId: string }) {
       }
       return dataRef.current;
     } finally {
-      setLoading(false);
+      if (isCurrentRequest()) setLoading(false);
     }
   }, [loadToolEffects, runId, validRunId]);
 
   useEffect(() => {
     void loadRun();
+    return () => {
+      loadRequestIdRef.current += 1;
+      toolEffectsRequestIdRef.current += 1;
+    };
   }, [loadRun]);
 
   const run = data?.run ?? {};

@@ -13,6 +13,7 @@ const dashboardRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)),
 const apiUrl = process.env.ORCHESTRATOR_URL ?? "";
 let projectId = process.argv[2] ?? "";
 const createAssets = process.argv[3] === "--create-assets";
+const workerRunOperatorMode = process.argv[3] === "--worker-run-operator-actions";
 const researchWorkerId = "50000000-0000-4000-8000-000000000504";
 const reportWorkerId = "50000000-0000-4000-8000-000000000505";
 const modelProfileId = "research-approved-fixture";
@@ -629,6 +630,124 @@ async function verifyAssignmentGateBeforeRun(companyId) {
   return { company_id: companyId, status: denied.status, blocker: detail.code };
 }
 
+async function runWorkerRunOperatorActions(page, baseUrl, runIds, setStage = () => {}) {
+  if (runIds.length !== 5 || runIds.some((id) => !uuidPattern.test(id))) {
+    throw new Error("worker_run_operator_fixture_ids_invalid");
+  }
+  const [cancelRunId, retryRunId, staleRunId, revokedRunId, raceRunId] = runIds;
+  page.on("dialog", (dialog) => dialog.accept());
+
+  async function openRun(runId, state) {
+    await page.goto(`${baseUrl}/workers/runs/${encodeURIComponent(runId)}`, { waitUntil: "domcontentloaded" });
+    await page.getByTestId("run-identity").waitFor({ state: "visible" });
+    await page.getByText(`State · ${state}`, { exact: true }).waitFor({ state: "visible" });
+  }
+
+  async function waitUntilIdle() {
+    await page.waitForFunction(() => {
+      const main = document.querySelector('main[aria-label="Worker Run detail"]');
+      return main?.getAttribute("aria-busy") === "false";
+    }, null, { timeout: timeoutMs });
+  }
+
+  setStage("operator_cancel_open");
+  await openRun(cancelRunId, "QUEUED");
+  setStage("operator_cancel_submit");
+  await page.getByRole("button", { name: "Cancel Worker Run", exact: true }).click();
+  await page.getByText("Cancellation confirmed. Worker Run state is CANCELLED.", { exact: true }).waitFor({ state: "visible" });
+  await page.getByText("State · CANCELLED", { exact: true }).waitFor({ state: "visible" });
+  setStage("operator_cancel_transition_evidence");
+  await page.getByTestId("run-transitions").getByText("QUEUED → CANCELLED · operator", { exact: true }).waitFor({ state: "visible" });
+
+  setStage("operator_retry_open");
+  await openRun(retryRunId, "FAILED");
+  setStage("operator_retry_submit");
+  await page.getByRole("button", { name: "Retry Worker Run", exact: true }).click();
+  await page.getByText(/^Retry created as QUEUED\./).waitFor({ state: "visible" });
+  const retryLink = page.locator('[aria-label="Retry lineage"] a').last();
+  const retryHref = await retryLink.getAttribute("href");
+  const createdRetryId = retryHref?.split("/").at(-1) ?? "";
+  if (!uuidPattern.test(createdRetryId)) throw new Error("worker_run_retry_link_missing");
+  setStage("operator_retry_link_click");
+  await retryLink.click();
+  setStage("operator_retry_detail_load");
+  await page.getByTestId("run-identity").waitFor({ state: "visible" });
+  setStage("operator_retry_status_readback");
+  await page.getByText("State · QUEUED", { exact: true }).waitFor({ state: "visible" });
+
+  setStage("operator_stale_open");
+  await openRun(staleRunId, "QUEUED");
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (await page.getByText("Operator actions are disabled until this Worker Run refreshes successfully.", { exact: true }).isVisible().catch(() => false)) break;
+    const refresh = page.getByRole("button", { name: "Refresh", exact: true });
+    if (await refresh.count() === 0) break;
+    setStage(`operator_stale_refresh_${attempt + 1}`);
+    await refresh.click();
+    await waitUntilIdle();
+  }
+  await page.getByText("Operator actions are disabled until this Worker Run refreshes successfully.", { exact: true }).waitFor({ state: "visible" });
+  const staleCancelButton = page.getByRole("button", { name: "Cancel Worker Run", exact: true });
+  if (!(await staleCancelButton.isDisabled())) throw new Error("stale_worker_run_action_remained_enabled");
+
+  setStage("operator_revoked_open");
+  await openRun(revokedRunId, "QUEUED");
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (await page.getByRole("region", { name: "Worker Run access status" }).isVisible().catch(() => false)) break;
+    const refresh = page.getByRole("button", { name: "Refresh", exact: true });
+    if (await refresh.count() === 0) break;
+    setStage(`operator_revoked_refresh_${attempt + 1}`);
+    await refresh.click();
+    await waitUntilIdle();
+  }
+  await page.getByRole("region", { name: "Worker Run access status" }).waitFor({ state: "visible" });
+  if (await page.getByRole("button", { name: "Cancel Worker Run", exact: true }).count() !== 0) {
+    throw new Error("revoked_worker_run_controls_remained_visible");
+  }
+
+  setStage("operator_out_of_order_open");
+  await openRun(raceRunId, "QUEUED");
+  const cancelResponsePromise = page.waitForResponse((response) => (
+    response.request().method() === "POST"
+    && response.url().endsWith(`/api/governance/runs/${raceRunId}/cancel`)
+  ));
+  setStage("operator_out_of_order_cancel_submit");
+  await page.getByRole("button", { name: "Cancel Worker Run", exact: true }).click();
+  const cancelResponse = await cancelResponsePromise;
+  if (!cancelResponse.ok()) throw new Error("synthetic_race_cancel_failed");
+  // The cancel response starts a quiet readback. Keep its older successful
+  // response in flight while the manual refresh receives the newer 403.
+  await page.waitForTimeout(100);
+  setStage("operator_out_of_order_refresh");
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  const accessStatus = page.getByRole("region", { name: "Worker Run access status" });
+  await accessStatus.waitFor({ state: "visible" });
+  await page.waitForTimeout(2000);
+  if (!(await accessStatus.isVisible())) throw new Error("older_worker_run_success_overwrote_newer_denial");
+  if (await page.getByTestId("run-identity").count() !== 0) {
+    throw new Error("run_data_reappeared_after_access_revocation");
+  }
+  if (await page.getByRole("button", { name: "Cancel Worker Run", exact: true }).count() !== 0) {
+    throw new Error("operator_control_reappeared_after_access_revocation");
+  }
+
+  return {
+    cancellation: { run_id: cancelRunId, state: "CANCELLED" },
+    retry: { source_run_id: retryRunId, source_state: "FAILED", retry_run_id: createdRetryId, retry_state: "QUEUED" },
+    stale_refresh: { run_id: staleRunId, state: "QUEUED", actions_disabled: true },
+    revoked_access: { run_id: revokedRunId, actions_hidden: true },
+    out_of_order_denial: { run_id: raceRunId, access_denied_persisted: true, older_success_ignored: true },
+    assertions: [
+      "real_worker_run_detail_page",
+      "real_next_bff_to_fastapi_cancel_and_retry",
+      "durable_cancelled_and_retry_lineage",
+      "persisted_worker_run_transition_history",
+      "stale_status_keeps_last_known_state_and_disables_actions",
+      "revoked_read_access_hides_worker_run_controls",
+      "newer_access_denial_wins_over_older_successful_read",
+    ],
+  };
+}
+
 async function main() {
   let temporaryRoot;
   let server;
@@ -686,6 +805,19 @@ async function main() {
     ]);
     const page = await context.newPage();
     page.setDefaultTimeout(timeoutMs);
+
+    if (workerRunOperatorMode) {
+      currentStage = "worker_run_operator_actions";
+      const runActionResult = await runWorkerRunOperatorActions(
+        page,
+        baseUrl,
+        process.argv.slice(4, 9),
+        (stage) => { currentStage = stage; },
+      );
+      if (blockedOrigins.length > 0) throw new Error("external_origin_blocked");
+      process.stdout.write(`${JSON.stringify(runActionResult)}\n`);
+      return;
+    }
 
     let companyId = null;
     let flowId = null;
