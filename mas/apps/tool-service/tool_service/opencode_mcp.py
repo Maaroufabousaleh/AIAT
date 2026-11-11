@@ -126,6 +126,8 @@ def create_opencode_mcp_app(parent: FastAPI):
                 request_sha256=request_sha256,
                 claim_owner=grant.claim_owner,
                 attempt_count=grant.attempt_count,
+                worker_id=grant.worker_id,
+                project_id=str(grant.project_id) if grant.project_id else None,
             )
         except Exception:
             return _error_response(
@@ -250,6 +252,8 @@ def create_opencode_mcp_app(parent: FastAPI):
                 run_id=grant.run_id,
                 claim_owner=grant.claim_owner,
                 attempt_count=grant.attempt_count,
+                worker_id=grant.worker_id,
+                project_id=str(grant.project_id) if grant.project_id else None,
             )
         except Exception:
             claim_current = False
@@ -321,13 +325,14 @@ def create_opencode_mcp_app(parent: FastAPI):
                 )
             return ambiguous.model_dump(mode="json", exclude_none=True)
 
+        outcome_state = "AMBIGUOUS" if response.error_code == "TOOL_AUDIT_OUTCOME_UNCERTAIN" else "COMPLETED"
         try:
             settled = await complete_effect(
                 effect["id"],
                 run_id=grant.run_id,
                 claim_owner=grant.claim_owner,
                 attempt_count=grant.attempt_count,
-                state="COMPLETED",
+                state=outcome_state,
                 response_json=response_json,
             )
         except Exception:
@@ -339,7 +344,7 @@ def create_opencode_mcp_app(parent: FastAPI):
             or settled.get("idempotency_key") != str(request_id)
             or settled.get("tool_name") != tool_name
             or settled.get("request_sha256") != request_sha256
-            or str(settled.get("state") or "").upper() != "COMPLETED"
+            or str(settled.get("state") or "").upper() != outcome_state
             or settled.get("response_json") != response_json
         ):
             return _error_response(

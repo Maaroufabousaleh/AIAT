@@ -69,10 +69,12 @@ class WorkerToolEffectRepository:
         run_id: UUID,
         claim_owner: str | None,
         attempt_count: int,
+        worker_id: str | None = None,
+        project_id: str | None = None,
     ) -> bool:
         row = await connection.fetchrow(
             """
-                SELECT id, state, claim_owner, attempt_count, lease_expires_at,
+                SELECT id, worker_id, project_id, state, claim_owner, attempt_count, lease_expires_at,
                        cancel_requested_at
                 FROM worker_runs
                 WHERE id = $1
@@ -80,6 +82,12 @@ class WorkerToolEffectRepository:
                 """,
             run_id,
         )
+        if worker_id is not None:
+            if row is None or str(row["worker_id"]) != worker_id:
+                return False
+            run_project = str(row["project_id"]) if row["project_id"] is not None else None
+            if run_project != project_id:
+                return False
         return self._claim_matches(
             row,
             claim_owner=claim_owner,
@@ -93,6 +101,8 @@ class WorkerToolEffectRepository:
         run_id: UUID,
         claim_owner: str | None,
         attempt_count: int,
+        worker_id: str | None = None,
+        project_id: str | None = None,
     ) -> bool:
         """Revalidate a run fence immediately before Tool Service dispatch."""
         async with self._pool.acquire() as connection, connection.transaction():
@@ -101,7 +111,17 @@ class WorkerToolEffectRepository:
                 run_id=run_id,
                 claim_owner=claim_owner,
                 attempt_count=attempt_count,
+                worker_id=worker_id,
+                project_id=project_id,
             )
+
+    async def validate_dispatch_effect(self, *, run_id: UUID, request_id: UUID, tool_name: str) -> bool:
+        """Require the controller's existing unresolved effect before direct dispatch."""
+        return bool(await self._pool.fetchval(
+            """SELECT EXISTS (SELECT 1 FROM worker_tool_effects
+               WHERE run_id=$1 AND request_id=$2 AND tool_name=$3 AND state='IN_FLIGHT')""",
+            run_id, request_id, tool_name,
+        ))
 
     async def begin_worker_tool_effect(
         self,
@@ -113,6 +133,8 @@ class WorkerToolEffectRepository:
         request_sha256: str,
         claim_owner: str | None = None,
         attempt_count: int = 0,
+        worker_id: str | None = None,
+        project_id: str | None = None,
     ) -> dict[str, Any]:
         """Reserve an effect before dispatch and classify any existing row."""
 
@@ -132,6 +154,8 @@ class WorkerToolEffectRepository:
                 run_id=run_id,
                 claim_owner=claim_owner,
                 attempt_count=attempt_count,
+                worker_id=worker_id,
+                project_id=project_id,
             )
             if not current_claim:
                 return {"disposition": "CLAIM_LOST"}
@@ -277,6 +301,47 @@ class ProjectUsageWriter:
     async def healthcheck(self) -> bool:
         """Return whether the backing Postgres pool can execute queries."""
         return bool(await self._pool.fetchval("SELECT 1"))
+
+    async def record_required_tool_audit(
+        self, *, project_id: UUID, run_id: UUID, actor: str, tool_name: str,
+        idempotency_key: UUID, status: str,
+    ) -> bool:
+        """Insert one mandatory audit phase; a duplicate intent is not permission to run."""
+        if status not in {"intent", "success", "uncertain", "forbidden"}:
+            raise ValueError("invalid mandatory audit status")
+        phase = status if status in {"intent", "forbidden"} else "outcome"
+        key = f"worker-tool-audit:{run_id}:{idempotency_key}:{phase}"
+        row = await self._pool.fetchrow(
+            """
+            INSERT INTO project_usage_events
+                (id, project_id, company_id, run_id, event_type, agent_id,
+                 tool_name, idempotency_key, status)
+            VALUES ($1, $2, (SELECT company_id FROM projects WHERE id = $2),
+                    $3, 'tool', $4, $5, $6, $7)
+            ON CONFLICT DO NOTHING RETURNING id
+            """,
+            uuid4(), project_id, run_id, actor, tool_name, key, status,
+        )
+        return row is not None
+
+    async def list_required_tool_audit_recovery(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        """Find unresolved intents without replaying any external side effect."""
+        if not 1 <= limit <= 1000:
+            raise ValueError("invalid recovery limit")
+        rows = await self._pool.fetch(
+            """
+            SELECT i.project_id, i.run_id, i.agent_id, i.tool_name,
+                   i.idempotency_key, i.occurred_at, o.status AS outcome
+            FROM project_usage_events AS i
+            LEFT JOIN project_usage_events AS o
+              ON o.idempotency_key = left(i.idempotency_key, -6) || 'outcome'
+            WHERE i.event_type = 'tool' AND i.status = 'intent'
+              AND i.idempotency_key LIKE 'worker-tool-audit:%:intent'
+              AND (o.id IS NULL OR o.status = 'uncertain')
+            ORDER BY i.occurred_at ASC LIMIT $1
+            """, limit,
+        )
+        return [dict(row) for row in rows]
 
     async def _record_native_tool_span(
         self,

@@ -256,6 +256,8 @@ async def test_new_signed_mcp_tool_call_is_journaled_before_dispatch() -> None:
     assert request.tool_kwargs == {"path": "README.md", "workspace_run_id": str(run_id)}
     row = next(iter(ledger.rows.values()))
     assert row["state"] == "COMPLETED"
+    assert row["worker_id"] == request.caller_id
+    assert row["project_id"] == request.project_id
     assert row["tool_name"] == "opencode.workspace_read"
     assert row["request_id"] == UUID(row["idempotency_key"])
     assert row["response_json"]["result"]["call"] == 1

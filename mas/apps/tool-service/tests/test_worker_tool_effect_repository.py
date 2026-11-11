@@ -55,7 +55,7 @@ class _Connection:
 
     async def fetchrow(self, query: str, *args: Any) -> dict[str, Any] | None:
         self.calls.append((query, args))
-        if query.lstrip().startswith("SELECT id, state, claim_owner"):
+        if "FROM worker_runs" in query:
             if self.worker_run is None:
                 return {
                     "id": args[0],
@@ -314,6 +314,42 @@ async def test_begin_rejects_reclaimed_attempt_before_effect_insert() -> None:
     assert effect["disposition"] == "CLAIM_LOST"
     assert len(connection.calls) == 1
     assert "FOR UPDATE" in connection.calls[0][0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mismatch", ["worker", "project"])
+async def test_effect_admission_rejects_cross_identity_or_project(mismatch: str) -> None:
+    inputs = _inputs()
+    worker_id, project_id = uuid4(), uuid4()
+    inputs.update({"claim_owner": "executor-a", "attempt_count": 1,
+                   "worker_id": str(uuid4() if mismatch == "worker" else worker_id),
+                   "project_id": str(uuid4() if mismatch == "project" else project_id)})
+    connection = _Connection(worker_run={
+        "id": inputs["run_id"], "worker_id": worker_id, "project_id": project_id,
+        "state": "RUNNING", "claim_owner": "executor-a", "attempt_count": 1,
+        "lease_expires_at": datetime.now(tz=UTC) + timedelta(minutes=2),
+    })
+    repository = WorkerToolEffectRepository(_Pool(connection))  # type: ignore[arg-type]
+    assert (await repository.begin_worker_tool_effect(**inputs))["disposition"] == "CLAIM_LOST"
+    assert not connection.rows
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mismatch", ["worker", "project", "none"])
+async def test_dispatch_claim_binds_worker_and_project(mismatch: str) -> None:
+    run_id, worker_id, project_id = uuid4(), uuid4(), uuid4()
+    connection = _Connection(worker_run={
+        "id": run_id, "worker_id": worker_id, "project_id": project_id,
+        "state": "RUNNING", "claim_owner": "executor-a", "attempt_count": 1,
+        "lease_expires_at": datetime.now(tz=UTC) + timedelta(minutes=2),
+    })
+    repository = WorkerToolEffectRepository(_Pool(connection))  # type: ignore[arg-type]
+    allowed = await repository.validate_worker_run_claim(
+        run_id=run_id, claim_owner="executor-a", attempt_count=1,
+        worker_id=str(uuid4() if mismatch == "worker" else worker_id),
+        project_id=str(uuid4() if mismatch == "project" else project_id),
+    )
+    assert allowed is (mismatch == "none")
 
 
 @pytest.mark.asyncio

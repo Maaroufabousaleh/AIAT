@@ -17,10 +17,15 @@ class _ClaimValidator:
     def __init__(self, current: bool) -> None:
         self.current = current
         self.calls: list[dict[str, object]] = []
+        self.effects: list[dict[str, object]] = []
 
     async def validate_worker_run_claim(self, **values: object) -> bool:
         self.calls.append(values)
         return self.current
+
+    async def validate_dispatch_effect(self, **values: object) -> bool:
+        self.effects.append(values)
+        return True
 
 
 class _Registry:
@@ -71,7 +76,8 @@ async def test_reclaimed_attempt_is_denied_before_registry_dispatch() -> None:
     assert response.error_code == "WORKER_RUN_CLAIM_LOST"
     assert response.worker_run_id == run_id
     assert validator.calls == [
-        {"run_id": run_id, "claim_owner": "executor-old", "attempt_count": 1}
+        {"run_id": run_id, "claim_owner": "executor-old", "attempt_count": 1,
+         "worker_id": "worker-1", "project_id": None}
     ]
     assert registry.requests == []
 
@@ -127,3 +133,28 @@ async def test_legacy_execute_endpoint_rejects_worker_scoped_requests() -> None:
     assert caught.value.status_code == 409
     assert validator.calls == []
     assert registry.requests == []
+
+
+@pytest.mark.asyncio
+async def test_production_dispatch_requires_delegate_and_reserved_effect() -> None:
+    validator, registry = _ClaimValidator(True), _Registry()
+    request = _request_context(validator, registry)
+    request.app.state.settings = SimpleNamespace(environment_is_production=True, tool_delegate_client_ids={"orchestrator"})
+    request.state.signed_caller_id = "worker-1"
+    request_id = uuid4()
+    body = ToolRunRequest(caller_id="worker-1", caller_role=AgentRole.WORKER,
+        worker_run_id=uuid4(), claim_owner="executor", claim_attempt_count=1,
+        tool_name="repository.read", audit_context={"tool_request_id": str(request_id)})
+    with pytest.raises(HTTPException) as denied:
+        await run_tool("repository.read", request, body, _auth=None)
+    assert denied.value.status_code == 403
+    assert not registry.requests
+    request.state.signed_caller_id = "orchestrator"
+    no_effect = body.model_copy(update={"audit_context": {}})
+    with pytest.raises(HTTPException) as missing:
+        await run_tool("repository.read", request, no_effect, _auth=None)
+    assert missing.value.status_code == 409
+    assert not registry.requests
+    result = await run_tool("repository.read", request, body, _auth=None)
+    assert result.success
+    assert validator.effects == [{"run_id": body.worker_run_id, "request_id": request_id, "tool_name": "repository.read"}]

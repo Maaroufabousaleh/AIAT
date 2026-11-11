@@ -391,6 +391,29 @@ async def test_claimed_success_does_not_query_effects_after_claim_is_lost() -> N
 
 
 @pytest.mark.asyncio
+async def test_unpersisted_tool_outcome_is_marked_ambiguous() -> None:
+    store = _EffectStore()
+    run_id = uuid4()
+    request = WorkerRunRequest(
+        run_id=run_id, idempotency_key="audit-uncertain", worker_id="worker-1",
+        task_type="tool-effect", tool_grants=["mail.send"],
+    )
+    tool_request = _request(run_id=run_id, key="audit-uncertain")
+    response = WorkerToolResponse(
+        request_id=tool_request.request_id, run_id=run_id, tool_name=tool_request.tool_name,
+        success=False, error={"code": "TOOL_AUDIT_OUTCOME_UNCERTAIN", "message": "reconcile"},
+    )
+    adapter = _DeliveryAdapter(AsyncMock(return_value=response))
+    await WorkerRunController(storage=store)._mediate_tool_request(
+        request, adapter,
+        WorkerEvent(run_id=run_id, worker_id=request.worker_id,
+                    event_type=EventType.TOOL_REQUEST, tool_request=tool_request),
+    )
+    assert store.rows[(run_id, tool_request.idempotency_key)]["state"] == "AMBIGUOUS"
+    assert adapter.responses[0].error.code == "TOOL_AUDIT_OUTCOME_UNCERTAIN"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("current_owner", "current_attempt", "lease_expires_at", "cancel_requested_at"),
     [

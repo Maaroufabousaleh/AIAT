@@ -60,6 +60,7 @@ class OpenCodeWorkspaceReadTool(BaseTool):
     group = ToolGroup.KPI_UTILITY
     description = "Read one UTF-8 file inside the current governed OpenCode run workspace."
     allowed_roles = _ALLOWED_ROLES
+    side_effect = False
     cache_ttl_seconds = 0
     max_concurrency = 10
 

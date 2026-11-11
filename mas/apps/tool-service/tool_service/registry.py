@@ -26,6 +26,7 @@ from mas_core.observability.metrics import (
 )
 from mas_core.policy.engine import CommunicationPolicy
 from mas_core.policy.tool_access import can_use_tool_with_metadata
+from mas_core.protocols.enums import AgentRole
 from mas_core.protocols.tool import ToolRequest, ToolResponse
 from mas_tools_sdk.manifest import TOOL_ALIASES, resolve_tool_name
 
@@ -69,7 +70,7 @@ class ToolRegistry:
         # Per-worker explicit tool-grant allowlist.
         # If a worker_id has an entry here, they may ONLY call the tools in
         # that set (in addition to passing role-based policy).
-        # If a worker_id is NOT in this dict, only role-based policy applies.
+        # Worker and sub-agent callers must have an explicit entry.
         self._worker_grants: dict[str, set[str]] = {}
 
         # In-memory ring buffer for tool-call audit records.
@@ -141,20 +142,20 @@ class ToolRegistry:
         return len(removed)
 
     def get_worker_grants(self, worker_id: str) -> list[str]:
-        """Return the explicit grant list for *worker_id* (empty = role-only)."""
+        """Return the explicit grant list for *worker_id* (empty denies worker calls)."""
         return sorted(self._worker_grants.get(worker_id, set()))
 
-    def _check_worker_grant(self, worker_id: str, tool_name: str) -> bool:
+    def _check_worker_grant(self, worker_id: str, tool_name: str, *, require_explicit: bool = True) -> bool:
         """Return True if the worker passes the per-worker grant gate.
 
-        If the worker has no explicit grants, this gate is open.
-        If the worker has explicit grants, the tool must be in the set.
+        Worker identities require explicit grants. Non-worker principals retain
+        role-based compatibility unless an explicit allowlist exists.
         """
         grants = self._worker_grants.get(worker_id)
         if tool_name.startswith("identity.") or tool_name.startswith("mail."):
             return grants is not None and tool_name in grants
         if grants is None:
-            return True
+            return not require_explicit
         return tool_name in grants
 
     # ------------------------------------------------------------------
@@ -222,6 +223,22 @@ class ToolRegistry:
                 "tool_usage_persistence_failed",
                 extra={"project_id": project_id, "tool": tool_name},
             )
+
+    async def _record_required_denial(self, request: ToolRequest, tool_name: str) -> bool:
+        """Persist a governed denial or report that the record was unavailable."""
+        if request.worker_run_id is None:
+            return True
+        try:
+            if not request.project_id or not request.idempotency_key or self._usage_storage is None:
+                return False
+            return await self._usage_storage.record_required_tool_audit(
+                project_id=UUID(request.project_id), run_id=request.worker_run_id,
+                actor=request.caller_id, tool_name=tool_name,
+                idempotency_key=request.idempotency_key, status="forbidden",
+            )
+        except Exception:
+            logger.exception("required_tool_denial_audit_unavailable")
+            return False
 
     def get_audit_log(
         self,
@@ -343,6 +360,8 @@ class ToolRegistry:
                     "reason": result,
                 },
             )
+            if not await self._record_required_denial(request, resolved_tool_name):
+                return self._error_response(request, error="Denied request could not be durably audited.", error_code="AUDIT_DENIAL_UNAVAILABLE")
             await self._record_audit(
                 actor=request.caller_id,
                 project_id=request.project_id,
@@ -362,7 +381,11 @@ class ToolRegistry:
             )
 
         # Per-worker grant gate (additional check on top of role policy)
-        if not self._check_worker_grant(request.caller_id, resolved_tool_name):
+        if not self._check_worker_grant(
+            request.caller_id,
+            resolved_tool_name,
+            require_explicit=request.caller_role in {AgentRole.WORKER, AgentRole.SUB_AGENT},
+        ):
             deny_msg = (
                 f"Worker '{request.caller_id}' does not have an explicit grant for '{tool_name}'."
             )
@@ -370,6 +393,8 @@ class ToolRegistry:
                 "tool_worker_grant_denied",
                 extra={"tool": resolved_tool_name, "caller_id": request.caller_id},
             )
+            if not await self._record_required_denial(request, resolved_tool_name):
+                return self._error_response(request, error="Denied request could not be durably audited.", error_code="AUDIT_DENIAL_UNAVAILABLE")
             await self._record_audit(
                 actor=request.caller_id,
                 project_id=request.project_id,
@@ -386,6 +411,18 @@ class ToolRegistry:
                 error=deny_msg,
                 error_code="FORBIDDEN",
                 circuit_state=self._breakers[resolved_tool_name].state,
+            )
+
+        if (
+            self._settings.environment_is_production
+            and request.caller_role in {AgentRole.WORKER, AgentRole.SUB_AGENT}
+            and tool.side_effect
+            and request.worker_run_id is None
+        ):
+            return self._error_response(
+                request,
+                error="Side-effecting worker tools require a claimed WorkerRun.",
+                error_code="WORKER_RUN_REQUIRED",
             )
 
         breaker = self._breakers[resolved_tool_name]
@@ -503,7 +540,7 @@ class ToolRegistry:
                 rate_limit_remaining=remaining,
                 rate_limit_reset_at=reset_at,
             )
-        if tool.idempotent and tool.cache_ttl_seconds > 0 and self._cache:
+        if tool.idempotent and (not tool.side_effect or request.worker_run_id is None) and tool.cache_ttl_seconds > 0 and self._cache:
             cached = await self._cache.get(resolved_tool_name, kwargs)
             if cached is not None:
                 duration = (time.monotonic() - t0) * 1000
@@ -540,6 +577,25 @@ class ToolRegistry:
                     span_id=request.span_id,
                 )
 
+        # Governed mutating calls require a durable intent before dispatch.
+        # The separate effect journal prevents automatic replay after an
+        # uncertain result; an existing audit intent also fails closed here.
+        mandatory_audit = request.worker_run_id is not None and tool.side_effect
+        if mandatory_audit:
+            try:
+                if not request.project_id or not request.idempotency_key or self._usage_storage is None:
+                    raise ValueError("project, request identity and audit storage are required")
+                inserted = await self._usage_storage.record_required_tool_audit(
+                    project_id=UUID(request.project_id), run_id=request.worker_run_id,
+                    actor=request.caller_id, tool_name=resolved_tool_name,
+                    idempotency_key=request.idempotency_key, status="intent",
+                )
+                if not inserted:
+                    raise ValueError("audit intent already exists")
+            except Exception:
+                logger.exception("required_tool_audit_intent_unavailable")
+                return self._error_response(request, error="Durable tool intent is unavailable or already exists.", error_code="AUDIT_INTENT_UNAVAILABLE", circuit_state=breaker.state)
+
         try:
             if resolved_tool_name in self._semaphores:
                 async with self._semaphores[resolved_tool_name]:
@@ -548,6 +604,19 @@ class ToolRegistry:
                 result_val = await self._execute_tool(tool, resolved_tool_name, kwargs)
             result_val = tool.validate_output(result_val)
         except Exception as exc:
+            if mandatory_audit:
+                try:
+                    persisted = await self._usage_storage.record_required_tool_audit(
+                        project_id=UUID(request.project_id), run_id=request.worker_run_id,
+                        actor=request.caller_id, tool_name=resolved_tool_name,
+                        idempotency_key=request.idempotency_key, status="uncertain",
+                    )
+                    if not persisted:
+                        raise ValueError("audit outcome already exists")
+                except Exception:
+                    logger.exception("required_tool_audit_outcome_unavailable")
+                    return self._error_response(request, error="Tool outcome requires reconciliation.", error_code="TOOL_AUDIT_OUTCOME_UNCERTAIN", circuit_state=breaker.state)
+                return self._error_response(request, error="Tool execution may have partially completed; reconciliation is required.", error_code="TOOL_AUDIT_OUTCOME_UNCERTAIN", circuit_state=breaker.state)
             await breaker.record_failure()
             duration = (time.monotonic() - t0) * 1000
             MAS_TOOL_CALLS_TOTAL.labels(tool_name=resolved_tool_name, status="error").inc()
@@ -590,6 +659,18 @@ class ToolRegistry:
                 rate_limit_reset_at=reset_at,
             )
 
+        if mandatory_audit:
+            try:
+                persisted = await self._usage_storage.record_required_tool_audit(
+                    project_id=UUID(request.project_id), run_id=request.worker_run_id,
+                    actor=request.caller_id, tool_name=resolved_tool_name,
+                    idempotency_key=request.idempotency_key, status="success",
+                )
+                if not persisted:
+                    raise ValueError("audit outcome already exists")
+            except Exception:
+                logger.exception("required_tool_audit_outcome_unavailable")
+                return self._error_response(request, error="Tool outcome requires reconciliation.", error_code="TOOL_AUDIT_OUTCOME_UNCERTAIN", circuit_state=breaker.state)
         await breaker.record_success()
         duration = (time.monotonic() - t0) * 1000
 
@@ -597,7 +678,7 @@ class ToolRegistry:
         TOOL_INVOCATIONS_TOTAL.labels(tool_name=resolved_tool_name, status="success").inc()
         set_tool_circuit_state(resolved_tool_name, breaker.state.value)
 
-        if tool.idempotent and tool.cache_ttl_seconds > 0 and self._cache:
+        if tool.idempotent and (not tool.side_effect or request.worker_run_id is None) and tool.cache_ttl_seconds > 0 and self._cache:
             await self._cache.set(
                 resolved_tool_name, kwargs, result_val, ttl=tool.cache_ttl_seconds
             )

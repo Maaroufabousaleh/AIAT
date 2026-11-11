@@ -53,7 +53,8 @@ class _EffectLedger:
         self.attempt_count = 1
 
     async def validate_worker_run_claim(
-        self, *, run_id: UUID, claim_owner: str | None, attempt_count: int
+        self, *, run_id: UUID, claim_owner: str | None, attempt_count: int,
+        worker_id: str, project_id: str | None,
     ) -> bool:
         return claim_owner == self.claim_owner and attempt_count == self.attempt_count
 
@@ -360,6 +361,16 @@ async def test_opencode_adapter_tool_service_effects_and_artifacts_integrate(
     settings = Settings(tool_secret=tool_secret)
     registry = ToolRegistry(settings)
     registry.register_all([OpenCodeWorkspaceReadTool(), OpenCodeWorkspaceWriteTool()])
+    registry.grant_tool(worker_id, "opencode.workspace_read")
+    registry.grant_tool(worker_id, "opencode.workspace_write")
+    class _AuditWriter:
+        async def record_required_tool_audit(self, **values: Any) -> bool:
+            return True
+
+        async def record_project_usage(self, **values: Any) -> dict[str, Any]:
+            return {}
+
+    registry.set_usage_storage(_AuditWriter())
     effects = _EffectLedger()
     parent = SimpleNamespace(
         state=SimpleNamespace(settings=settings, registry=registry, worker_tool_effects=effects)

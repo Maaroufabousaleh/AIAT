@@ -175,6 +175,7 @@ class TestToolRegistration:
     async def test_protocol_project_context_is_forwarded_to_tool_kwargs(self, make_registry):
         registry = make_registry()
         registry.register(ProjectContextEchoTool())
+        registry.grant_tool(WORKER_ID, "test.project_context")
 
         response = await registry.execute(
             _req(
@@ -233,16 +234,21 @@ class TestToolRegistration:
 class TestWorkerGrantUnit:
     """Unit tests for ToolRegistry.grant_tool / revoke_tool / get_worker_grants."""
 
-    def test_no_grants_gate_is_open(self, make_registry):
+    def test_no_grants_gate_is_closed(self, make_registry):
         registry = make_registry()
-        # Worker with no explicit grants passes the gate for any tool
-        assert registry._check_worker_grant(WORKER_ID, SEARCH_TOOL) is True
-        assert registry._check_worker_grant(WORKER_ID, BROWSER_TOOL) is True
+        assert registry._check_worker_grant(WORKER_ID, SEARCH_TOOL) is False
+        assert registry._check_worker_grant(WORKER_ID, BROWSER_TOOL) is False
 
     def test_grant_allows_tool(self, make_registry):
         registry = make_registry()
         registry.grant_tool(WORKER_ID, SEARCH_TOOL)
         assert registry._check_worker_grant(WORKER_ID, SEARCH_TOOL) is True
+
+    def test_non_worker_compatibility_must_be_explicit(self, make_registry):
+        registry = make_registry()
+        assert registry._check_worker_grant("operator", SEARCH_TOOL) is False
+        assert registry._check_worker_grant("operator", SEARCH_TOOL, require_explicit=False) is True
+        assert registry._check_worker_grant("operator", "mail.list", require_explicit=False) is False
 
     def test_grant_denies_ungrated_tool(self, make_registry):
         registry = make_registry()
@@ -321,12 +327,14 @@ class TestWorkerGrantIntegration:
         assert resp.success is True
 
     @pytest.mark.anyio
-    async def test_worker_without_any_grants_uses_role_policy_only(self, make_registry):
-        """A worker with NO explicit grants is governed by role policy alone."""
+    async def test_worker_without_any_grants_is_denied(self, make_registry):
+        """Role policy alone does not grant tools to a worker."""
         registry = make_registry()
-        # web_search is WORKER-allowed by role — no grants set → should pass
         resp = await registry.execute(_req(SEARCH_TOOL, caller_id="clean-worker"))
-        assert resp.success is True
+        assert resp.success is False
+        assert resp.error_code == "FORBIDDEN"
+        records = registry.get_audit_log(worker_id="clean-worker")
+        assert records[-1]["status"] == "forbidden"
 
     @pytest.mark.anyio
     async def test_grant_list_empty_after_revoke_blocks_all(self, make_registry):
@@ -482,6 +490,7 @@ class TestAuditLog:
     @pytest.mark.anyio
     async def test_success_call_recorded_in_audit(self, make_registry):
         registry = make_registry()
+        registry.grant_tool("audit-w1", SEARCH_TOOL)
         await registry.execute(_req(SEARCH_TOOL, caller_id="audit-w1"))
         logs = registry.get_audit_log(worker_id="audit-w1")
         assert len(logs) == 1
@@ -508,6 +517,7 @@ class TestAuditLog:
     @pytest.mark.anyio
     async def test_error_call_recorded_in_audit(self, make_registry_with_browser):
         registry = make_registry_with_browser()
+        registry.grant_tool("audit-w3", BROWSER_TOOL)
         # Force browser tool execute to raise
         browser_tool = registry._tools[BROWSER_TOOL]
         orig = browser_tool.execute
@@ -557,6 +567,7 @@ class TestAuditLog:
     @pytest.mark.anyio
     async def test_project_usage_is_persisted_and_project_filter_is_scoped(self, make_registry):
         registry = make_registry()
+        registry.grant_tool("usage-worker", SEARCH_TOOL)
         usage_storage = MagicMock()
         usage_storage.record_project_usage = AsyncMock(return_value={})
         registry._usage_storage = usage_storage
@@ -615,6 +626,7 @@ class TestAuditLog:
     @pytest.mark.anyio
     async def test_audit_record_has_duration_ms_on_success(self, make_registry):
         registry = make_registry()
+        registry.grant_tool("dur-worker", SEARCH_TOOL)
         await registry.execute(_req(SEARCH_TOOL, caller_id="dur-worker"))
         logs = registry.get_audit_log(worker_id="dur-worker")
         assert logs[0]["duration_ms"] is not None
@@ -636,6 +648,7 @@ class TestRateLimiting:
         rate_limiter = RateLimiterPool(overrides={ToolGroup.KPI_UTILITY: 1})
         registry = ToolRegistry(settings, cache=None, rate_limiter=rate_limiter)
         registry.register_all(get_all_tools())
+        registry.grant_tool("rl-worker", SEARCH_TOOL)
 
         req = _req(SEARCH_TOOL, caller_id="rl-worker")
         # First call succeeds (consumes the 1 token)
@@ -659,6 +672,7 @@ class TestRateLimiting:
 
         # Patch the registry rate limiter on the app state after client is set up
         registry = client._transport.app.state.registry  # type: ignore[attr-defined]
+        registry.grant_tool("rl-http-worker", SEARCH_TOOL)
         monkeypatch.setattr(registry._rate_limiter, "acquire", deny_acquire)
 
         payload = {
@@ -678,6 +692,7 @@ class TestRateLimiting:
         rate_limiter = RateLimiterPool(overrides={ToolGroup.KPI_UTILITY: 1})
         registry = ToolRegistry(settings, cache=None, rate_limiter=rate_limiter)
         registry.register_all(get_all_tools())
+        registry.grant_tool("rl-audit", SEARCH_TOOL)
 
         await registry.execute(_req(SEARCH_TOOL, caller_id="rl-audit"))
         await registry.execute(_req(SEARCH_TOOL, caller_id="rl-audit"))
@@ -698,6 +713,7 @@ class TestCircuitBreakerLifecycle:
     @pytest.mark.anyio
     async def test_three_failures_open_circuit(self, make_registry_with_browser):
         registry = make_registry_with_browser()
+        registry.grant_tool("cb-worker", BROWSER_TOOL)
         call_count = 0
 
         async def failing_execute(self, **kwargs):
@@ -766,6 +782,7 @@ class TestCircuitBreakerLifecycle:
         from tool_service.circuit_breaker import CircuitBreaker
 
         registry = make_registry_with_browser()
+        registry.grant_tool("cb-full", BROWSER_TOOL)
         # Override breaker to have very short cooldown
         registry._breakers[BROWSER_TOOL] = CircuitBreaker(
             BROWSER_TOOL, failure_threshold=3, failure_window=60.0, open_duration=1.0
@@ -817,6 +834,7 @@ class TestCircuitBreakerLifecycle:
         from tool_service.circuit_breaker import CircuitBreaker
 
         registry = make_registry_with_browser()
+        registry.grant_tool("cb-audit-w", BROWSER_TOOL)
         registry._breakers[BROWSER_TOOL] = CircuitBreaker(
             BROWSER_TOOL, failure_threshold=2, failure_window=60.0, open_duration=60.0
         )
@@ -937,7 +955,9 @@ class TestNegativeCases:
             tool_kwargs={"query": "idempotency"},
             idempotency_key=key,
         )
-        resp = await make_registry().execute(req)
+        registry = make_registry()
+        registry.grant_tool("w1", SEARCH_TOOL)
+        resp = await registry.execute(req)
         assert resp.success is True
         assert resp.idempotency_key == key
 

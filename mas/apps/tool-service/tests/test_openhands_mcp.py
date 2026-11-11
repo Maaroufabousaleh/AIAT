@@ -47,7 +47,7 @@ class _EffectLedger:
         self.rows: dict[tuple[object, str], dict[str, object]] = {}
         self.completion_fences: list[dict[str, object]] = []
 
-    async def validate_worker_run_claim(self, *, run_id, claim_owner, attempt_count):  # noqa: ANN001
+    async def validate_worker_run_claim(self, *, run_id, claim_owner, attempt_count, worker_id, project_id):  # noqa: ANN001
         return (
             claim_owner == self.current_claim_owner
             and attempt_count == self.current_attempt_count
@@ -155,6 +155,8 @@ async def test_bridge_reconstructs_worker_identity_and_rejects_forged_context() 
     assert request.idempotency_key == request_id
     effect = next(iter(ledger.rows.values()))
     assert effect["state"] == "COMPLETED"
+    assert effect["worker_id"] == grant.worker_id
+    assert effect["project_id"] == str(grant.project_id)
     assert effect["response_json"] == result
     assert ledger.completion_fences == [
         {

@@ -140,6 +140,11 @@ async def _validate_worker_claim_for_dispatch(
     """Fail closed when a WorkerRun's current claim does not match the caller."""
     if effective_body.worker_run_id is None:
         return None
+    settings = request.app.state.settings
+    if settings.environment_is_production:
+        signed_caller = getattr(request.state, "signed_caller_id", None)
+        if signed_caller not in settings.tool_delegate_client_ids:
+            raise HTTPException(403, "WorkerRun direct dispatch requires an authorized signed delegate.")
     repository = getattr(request.app.state, "worker_tool_effects", None)
     if repository is None:
         usage_storage = getattr(request.app.state, "usage_storage", None)
@@ -151,8 +156,23 @@ async def _validate_worker_claim_for_dispatch(
         run_id=effective_body.worker_run_id,
         claim_owner=body.claim_owner,
         attempt_count=body.claim_attempt_count,
+        worker_id=effective_body.caller_id,
+        project_id=effective_body.project_id,
     )
     if current:
+        if not settings.environment_is_production:
+            return None
+        try:
+            request_id = UUID(str(effective_body.audit_context.get("tool_request_id")))
+        except (ValueError, TypeError, AttributeError):
+            raise HTTPException(409, "WorkerRun dispatch requires a durable effect request identity.") from None
+        validate_effect = getattr(repository, "validate_dispatch_effect", None)
+        if not callable(validate_effect):
+            raise HTTPException(503, "Durable WorkerRun effect validation is unavailable.")
+        if not await validate_effect(run_id=effective_body.worker_run_id,
+                                     request_id=request_id,
+                                     tool_name=effective_body.tool_name):
+            raise HTTPException(409, "WorkerRun effect is not reserved for this dispatch.")
         return None
     return ToolResponse(
         tool_name=effective_body.tool_name,
@@ -291,8 +311,8 @@ async def grant_worker_tool(
 ) -> dict[str, Any]:
     """Grant *worker_id* explicit access to a specific tool.
 
-    Once at least one grant exists for a worker, they may ONLY call
-    tools in their explicit grant set (in addition to passing role policy).
+    Workers may call only tools in their explicit grant set, in addition to
+    passing role policy and any WorkerRun claim and signature checks.
     """
     from .registry import ToolRegistry
 

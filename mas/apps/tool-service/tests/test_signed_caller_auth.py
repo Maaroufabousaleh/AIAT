@@ -118,7 +118,7 @@ def test_identity_tools_require_an_explicit_durable_grant() -> None:
     registry._worker_grants = {}
     assert registry._check_worker_grant("worker-1", "mail.list") is False
     assert registry._check_worker_grant("worker-1", "identity.external.login") is False
-    assert registry._check_worker_grant("worker-1", "web_search") is True
+    assert registry._check_worker_grant("worker-1", "web_search") is False
     registry.grant_tool("worker-1", "mail.list")
     assert registry._check_worker_grant("worker-1", "mail.list") is True
 

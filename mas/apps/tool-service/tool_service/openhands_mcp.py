@@ -118,6 +118,8 @@ async def _execute_granted_tool(
             request_sha256=request_sha256,
             claim_owner=grant.claim_owner,
             attempt_count=grant.attempt_count,
+            worker_id=grant.worker_id,
+            project_id=str(grant.project_id) if grant.project_id else None,
         )
     except Exception:
         return _error_response(
@@ -205,6 +207,8 @@ async def _execute_granted_tool(
             run_id=grant.run_id,
             claim_owner=grant.claim_owner,
             attempt_count=grant.attempt_count,
+            worker_id=grant.worker_id,
+            project_id=str(grant.project_id) if grant.project_id else None,
         )
     except Exception:
         claim_current = False
@@ -281,7 +285,7 @@ async def _execute_granted_tool(
         request_id,
         claim_owner=grant.claim_owner,
         attempt_count=grant.attempt_count,
-        state="COMPLETED",
+        state=("AMBIGUOUS" if response.error_code == "TOOL_AUDIT_OUTCOME_UNCERTAIN" else "COMPLETED"),
         response=response,
     )
 

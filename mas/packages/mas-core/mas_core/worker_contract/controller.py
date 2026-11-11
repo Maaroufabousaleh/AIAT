@@ -1195,6 +1195,8 @@ class WorkerRunController:
                             or response.tool_name != tool_request.tool_name
                         ):
                             raise ValueError("tool mediator returned a mismatched response identity")
+                        if not response.success and response.error and response.error.code == "TOOL_AUDIT_OUTCOME_UNCERTAIN":
+                            effect_state = "AMBIGUOUS"
                     except Exception as exc:
                         # The tool may have completed an external effect before
                         # its response reached AIAT.  Record the ambiguity and
