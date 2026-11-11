@@ -41,6 +41,13 @@ class ToolGrantStore:
             grants.setdefault(str(row["worker_id"]), set()).add(str(row["tool_name"]))
         return grants
 
+    async def is_granted(self, worker_id: str, tool_name: str) -> bool:
+        """Read the authority on every production worker dispatch."""
+        return bool(await self._pool.fetchval(
+            "SELECT EXISTS (SELECT 1 FROM worker_tool_grants WHERE worker_id=$1 AND tool_name=$2)",
+            worker_id, tool_name,
+        ))
+
     async def grant(self, worker_id: str, tool_name: str) -> None:
         await self._pool.execute(
             """

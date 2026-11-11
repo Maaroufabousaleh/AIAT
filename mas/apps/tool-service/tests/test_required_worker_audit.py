@@ -108,6 +108,10 @@ async def test_production_worker_cannot_bypass_run_audit(make_registry, monkeypa
     tool = _MutatingTool()
     registry.register(tool)
     registry.grant_tool("worker", tool.name)
+    class Store:
+        async def is_granted(self, worker_id, tool_name):
+            return True
+    registry.set_grant_store(Store())
     monkeypatch.setenv("MAS_ENVIRONMENT", "production")
     request = ToolRequest(caller_id="worker", caller_role=AgentRole.WORKER, tool_name=tool.name)
     result = await registry.execute(request)
@@ -135,3 +139,50 @@ async def test_worker_run_project_cannot_be_overridden_in_tool_arguments(make_re
     response = await registry.execute(request)
     assert response.success
     assert response.result["project_id"] == project_id
+
+
+@pytest.mark.asyncio
+async def test_production_replicas_observe_grant_revocation(make_registry, monkeypatch):
+    class ReadTool(_MutatingTool):
+        name = "test.replica_read"
+        side_effect = False
+
+    class Store:
+        enabled = True
+        async def is_granted(self, worker_id, tool_name):
+            if self.enabled is None:
+                raise RuntimeError("grant database unavailable")
+            return self.enabled
+
+    first, second, store = make_registry(), make_registry(), Store()
+    for registry in (first, second):
+        registry.register(ReadTool())
+        registry.grant_tool("worker", "test.replica_read")
+        registry.set_grant_store(store)
+    monkeypatch.setenv("MAS_ENVIRONMENT", "production")
+    request = ToolRequest(caller_id="worker", caller_role=AgentRole.WORKER, tool_name="test.replica_read")
+    assert (await first.execute(request)).success
+    assert (await second.execute(request)).success
+    store.enabled = False
+    assert (await first.execute(request)).error_code == "FORBIDDEN"
+    assert (await second.execute(request)).error_code == "FORBIDDEN"
+    store.enabled = None
+    assert (await first.execute(request)).error_code == "GRANT_AUTHORITY_UNAVAILABLE"
+
+
+@pytest.mark.asyncio
+async def test_unscoped_run_cannot_inject_project(make_registry):
+    class ReadTool(_MutatingTool):
+        name = "test.project_none"
+        side_effect = False
+        async def execute(self, **kwargs):
+            return {"project_id": kwargs.get("project_id")}
+
+    registry = make_registry()
+    registry.register(ReadTool())
+    registry.grant_tool("worker", "test.project_none")
+    result = await registry.execute(ToolRequest(
+        caller_id="worker", caller_role=AgentRole.WORKER, tool_name="test.project_none",
+        worker_run_id=uuid4(), tool_kwargs={"project_id": str(uuid4())},
+    ))
+    assert result.success and result.result["project_id"] is None

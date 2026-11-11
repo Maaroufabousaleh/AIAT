@@ -194,6 +194,7 @@ async def lifespan(app: FastAPI):
         try:
             tool_grant_store = await ToolGrantStore.connect(settings.pgbouncer_dsn)
             registry.load_worker_grants(await tool_grant_store.load_all())
+            registry.set_grant_store(tool_grant_store)
             logger.info("Loaded durable worker tool grants")
         except Exception:
             logger.warning("Worker tool-grant storage unavailable", exc_info=True)

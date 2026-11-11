@@ -9,11 +9,12 @@ from uuid import uuid4
 
 import asyncpg
 import pytest
-
-from tool_service.usage import ProjectUsageWriter
 from tool_service.config import Settings
 from tool_service.registry import ToolRegistry
+from tool_service.tool_grants import ToolGrantStore
 from tool_service.tools.opencode_workspace import OpenCodeWorkspaceWriteTool
+from tool_service.usage import ProjectUsageWriter
+
 from mas_core.protocols.enums import AgentRole
 from mas_core.protocols.tool import ToolRequest
 
@@ -46,7 +47,7 @@ async def test_audit_intent_and_recovery_in_postgres(tmp_path, monkeypatch):
         mas_root = Path(__file__).resolve().parents[3]
         migration_env = dict(os.environ, PGBOUNCER_DSN=f"postgresql://postgres:{password}@127.0.0.1:{port}/postgres")
         subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], cwd=mas_root,
-                       env=migration_env, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                       env=migration_env, check=True, capture_output=True)
         project, run, key, company, worker = uuid4(), uuid4(), uuid4(), uuid4(), uuid4()
         await pool.execute("INSERT INTO companies(id,slug,name,created_by) VALUES($1,$2,$3,$4)", company, str(company), "test", "test")
         await pool.execute("INSERT INTO projects(id,name,state,created_by,company_id) VALUES($1,'test','INIT','test',$2)", project, company)
@@ -105,6 +106,21 @@ async def test_audit_intent_and_recovery_in_postgres(tmp_path, monkeypatch):
         assert await writer.record_required_tool_audit(**other, status="intent")
         assert await writer.record_required_tool_audit(**other, status="success")
         assert len(await writer.list_required_tool_audit_recovery()) == 1
+        # Two independently cached registries must observe the same database revocation.
+        store = ToolGrantStore(pool)
+        first, second = ToolRegistry(Settings(), usage_storage=writer), ToolRegistry(Settings(), usage_storage=writer)
+        for replica in (first, second):
+            replica.register(OpenCodeWorkspaceWriteTool())
+            replica.grant_tool(str(worker), "opencode.workspace_write")
+            replica.set_grant_store(store)
+        await store.grant(str(worker), "opencode.workspace_write")
+        monkeypatch.setenv("MAS_ENVIRONMENT", "production")
+        no_run = tool_request.model_copy(update={"worker_run_id": None})
+        assert (await first.execute(no_run)).error_code == "WORKER_RUN_REQUIRED"
+        assert (await second.execute(no_run)).error_code == "WORKER_RUN_REQUIRED"
+        assert await store.revoke(str(worker), "opencode.workspace_write")
+        assert (await first.execute(no_run)).error_code == "FORBIDDEN"
+        assert (await second.execute(no_run)).error_code == "FORBIDDEN"
     finally:
         if pool is not None:
             await pool.close()

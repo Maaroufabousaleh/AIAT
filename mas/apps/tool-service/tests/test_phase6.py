@@ -136,6 +136,7 @@ class TestToolRegistry:
     @pytest.mark.anyio
     async def test_execute_web_search_as_worker(self, make_registry):
         registry = make_registry()
+        registry.grant_tool("agent-worker-1", "web_search")
         req = ToolRequest(
             caller_id="agent-worker-1",
             caller_role=AgentRole.WORKER,
@@ -261,6 +262,7 @@ class TestToolRegistry:
     async def test_sub_agent_can_download_blob(self, make_registry):
         """Sub-agents have blob.download access."""
         registry = make_registry()
+        registry.grant_tool("sub-1", "blob.download")
         req = ToolRequest(
             caller_id="sub-1",
             caller_role=AgentRole.SUB_AGENT,

@@ -62,6 +62,7 @@ class ToolRegistry:
         self._rate_limiter = rate_limiter or RateLimiterPool()
         self._policy = CommunicationPolicy()
         self._usage_storage = usage_storage
+        self._grant_store = None
 
         self._tools: dict[str, BaseTool] = {}
         self._breakers: dict[str, CircuitBreaker] = {}
@@ -101,6 +102,9 @@ class ToolRegistry:
     def set_usage_storage(self, usage_storage: ProjectUsageWriter | None) -> None:
         """Replace the durable usage writer after Postgres recovery."""
         self._usage_storage = usage_storage
+
+    def set_grant_store(self, store: Any) -> None:
+        self._grant_store = store
 
     def load_worker_grants(self, grants: dict[str, set[str]]) -> None:
         """Replace the hot-path grant cache from durable startup state."""
@@ -380,12 +384,23 @@ class ToolRegistry:
                 circuit_state=self._breakers[resolved_tool_name].state,
             )
 
-        # Per-worker grant gate (additional check on top of role policy)
-        if not self._check_worker_grant(
-            request.caller_id,
-            resolved_tool_name,
-            require_explicit=request.caller_role in {AgentRole.WORKER, AgentRole.SUB_AGENT},
-        ):
+        # The durable authority prevents stale grants on other replicas.
+        is_worker = request.caller_role in {AgentRole.WORKER, AgentRole.SUB_AGENT}
+        if is_worker and self._settings.environment_is_production:
+            try:
+                if self._grant_store is None:
+                    raise RuntimeError("durable grant authority unavailable")
+                granted = await self._grant_store.is_granted(request.caller_id, resolved_tool_name)
+            except Exception:
+                logger.exception("worker_grant_authority_unavailable")
+                return self._error_response(request, error="Worker grant authority unavailable.", error_code="GRANT_AUTHORITY_UNAVAILABLE")
+        else:
+            granted = self._check_worker_grant(
+                request.caller_id,
+                resolved_tool_name,
+                require_explicit=is_worker,
+            )
+        if not granted:
             deny_msg = (
                 f"Worker '{request.caller_id}' does not have an explicit grant for '{tool_name}'."
             )
@@ -512,7 +527,9 @@ class ToolRegistry:
                 str(request.idempotency_key) if request.idempotency_key else None
             ),
         }
-        if request.project_id and (request.worker_run_id is not None or "project_id" not in kwargs):
+        if request.worker_run_id is not None and request.project_id is None:
+            kwargs.pop("project_id", None)
+        elif request.project_id and (request.worker_run_id is not None or "project_id" not in kwargs):
             kwargs["project_id"] = request.project_id
         try:
             kwargs = tool.validate_input(kwargs)
