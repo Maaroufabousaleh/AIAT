@@ -87,6 +87,30 @@ async def test_audit_intent_and_recovery_in_postgres(tmp_path, monkeypatch):
         assert {r["status"] for r in rows} == {"intent", "success"}
         retry = await registry.execute(tool_request)
         assert retry.error_code == "AUDIT_INTENT_UNAVAILABLE"
+        class OutcomeFailure:
+            async def record_required_tool_audit(self, **values):
+                if values["status"] == "success":
+                    raise OSError("injected outcome storage failure")
+                return await writer.record_required_tool_audit(**values)
+
+            async def record_project_usage(self, **values):
+                return await writer.record_project_usage(**values)
+
+        registry.set_usage_storage(OutcomeFailure())
+        partial = tool_request.model_copy(update={"idempotency_key": uuid4(), "tool_kwargs": {
+            "workspace_run_id": str(run), "path": "uncertain.txt", "content": "effect happened"}})
+        uncertain = await registry.execute(partial)
+        assert uncertain.error_code == "TOOL_AUDIT_OUTCOME_UNCERTAIN"
+        assert (tmp_path / str(run) / "uncertain.txt").read_text() == "effect happened"
+        # A fresh registry instance simulates a tool-service process restart;
+        # the durable database, rather than the prior in-memory ring, blocks replay.
+        registry = ToolRegistry(Settings(), usage_storage=writer)
+        registry.register(OpenCodeWorkspaceWriteTool())
+        registry.grant_tool(str(worker), "opencode.workspace_write")
+        assert (await registry.execute(partial)).error_code == "AUDIT_INTENT_UNAVAILABLE"
+        unresolved = await writer.list_required_tool_audit_recovery()
+        assert len(unresolved) == 2
+        assert any(str(partial.idempotency_key) in row["idempotency_key"] for row in unresolved)
         denied_request = tool_request.model_copy(update={"caller_id": str(uuid4()), "idempotency_key": uuid4()})
         denied = await registry.execute(denied_request)
         assert denied.error_code == "FORBIDDEN"
@@ -100,12 +124,12 @@ async def test_audit_intent_and_recovery_in_postgres(tmp_path, monkeypatch):
         finally:
             await pool.execute("ALTER TABLE temporarily_unavailable_usage_events RENAME TO project_usage_events")
         assert await writer.record_required_tool_audit(**args, status="uncertain")
-        assert len(await writer.list_required_tool_audit_recovery()) == 1
+        assert len(await writer.list_required_tool_audit_recovery()) == 2
         assert not await writer.record_required_tool_audit(**args, status="success")
         other = dict(args, idempotency_key=uuid4())
         assert await writer.record_required_tool_audit(**other, status="intent")
         assert await writer.record_required_tool_audit(**other, status="success")
-        assert len(await writer.list_required_tool_audit_recovery()) == 1
+        assert len(await writer.list_required_tool_audit_recovery()) == 2
         # Two independently cached registries must observe the same database revocation.
         store = ToolGrantStore(pool)
         first, second = ToolRegistry(Settings(), usage_storage=writer), ToolRegistry(Settings(), usage_storage=writer)
