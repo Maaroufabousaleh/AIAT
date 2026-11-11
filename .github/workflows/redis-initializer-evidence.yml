@@ -55,6 +55,12 @@ jobs:
             -t aiat-redis-init-evidence:local -f mas/infra/compose/Dockerfile.redis-acl-init mas/infra/compose
           docker image inspect aiat-redis-init-evidence:local --format '{{.Id}} {{.Os}}/{{.Architecture}}' \
             > "$RUNNER_TEMP/aiat-redis-evidence/image-identity.txt"
+      - name: Exercise disposable Redis restart and verifier
+        working-directory: mas
+        env:
+          AIAT_REDIS_INTEGRATION: '1'
+          AIAT_REDIS_TEST_IMAGE: aiat-redis-init-evidence:local
+        run: uv run pytest apps/message-router/tests/test_redis_acl_init_disposable.py
       - name: Scan candidate dependencies and image
         uses: aquasecurity/trivy-action@0.28.0
         with:
