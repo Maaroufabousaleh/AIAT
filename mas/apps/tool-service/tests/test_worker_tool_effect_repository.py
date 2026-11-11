@@ -317,6 +317,22 @@ async def test_begin_rejects_reclaimed_attempt_before_effect_insert() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["SUSPENDED", "RETIRED", "INACTIVE"])
+async def test_dispatch_claim_denies_nonactive_worker(status: str) -> None:
+    run_id, worker_id, project_id = uuid4(), uuid4(), uuid4()
+    connection = _Connection(worker_run={
+        "id": run_id, "worker_id": worker_id, "project_id": project_id,
+        "worker_status": status, "state": "RUNNING", "claim_owner": "host",
+        "attempt_count": 1, "lease_expires_at": datetime.now(tz=UTC) + timedelta(minutes=1),
+    })
+    repository = WorkerToolEffectRepository(_Pool(connection))  # type: ignore[arg-type]
+    assert not await repository.validate_worker_run_claim(
+        run_id=run_id, worker_id=str(worker_id), project_id=str(project_id),
+        claim_owner="host", attempt_count=1,
+    )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("mismatch", ["worker", "project"])
 async def test_effect_admission_rejects_cross_identity_or_project(mismatch: str) -> None:
     inputs = _inputs()
@@ -325,7 +341,7 @@ async def test_effect_admission_rejects_cross_identity_or_project(mismatch: str)
                    "worker_id": str(uuid4() if mismatch == "worker" else worker_id),
                    "project_id": str(uuid4() if mismatch == "project" else project_id)})
     connection = _Connection(worker_run={
-        "id": inputs["run_id"], "worker_id": worker_id, "project_id": project_id,
+        "id": inputs["run_id"], "worker_id": worker_id, "project_id": project_id, "worker_status": "ACTIVE",
         "state": "RUNNING", "claim_owner": "executor-a", "attempt_count": 1,
         "lease_expires_at": datetime.now(tz=UTC) + timedelta(minutes=2),
     })
@@ -339,7 +355,7 @@ async def test_effect_admission_rejects_cross_identity_or_project(mismatch: str)
 async def test_dispatch_claim_binds_worker_and_project(mismatch: str) -> None:
     run_id, worker_id, project_id = uuid4(), uuid4(), uuid4()
     connection = _Connection(worker_run={
-        "id": run_id, "worker_id": worker_id, "project_id": project_id,
+        "id": run_id, "worker_id": worker_id, "project_id": project_id, "worker_status": "ACTIVE",
         "state": "RUNNING", "claim_owner": "executor-a", "attempt_count": 1,
         "lease_expires_at": datetime.now(tz=UTC) + timedelta(minutes=2),
     })

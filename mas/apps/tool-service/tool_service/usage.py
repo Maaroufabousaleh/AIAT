@@ -75,6 +75,7 @@ class WorkerToolEffectRepository:
         row = await connection.fetchrow(
             """
                 SELECT id, worker_id, project_id, state, claim_owner, attempt_count, lease_expires_at,
+                       (SELECT status FROM worker_registry WHERE id = worker_runs.worker_id) AS worker_status,
                        cancel_requested_at
                 FROM worker_runs
                 WHERE id = $1
@@ -83,7 +84,7 @@ class WorkerToolEffectRepository:
             run_id,
         )
         if worker_id is not None:
-            if row is None or str(row["worker_id"]) != worker_id:
+            if row is None or str(row["worker_id"]) != worker_id or row["worker_status"] != "ACTIVE":
                 return False
             run_project = str(row["project_id"]) if row["project_id"] is not None else None
             if run_project != project_id:

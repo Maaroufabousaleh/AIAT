@@ -489,7 +489,7 @@ class ToolRegistry:
         # tracing, but older callers did not duplicate it inside tool kwargs.
         # Make that context available to tools that operate on project-scoped
         # storage (for example ``blob.download``) without changing the caller
-        # contract.  An explicit tool argument remains authoritative.
+        # contract. For WorkerRuns the fenced envelope is authoritative.
         kwargs = dict(request.tool_kwargs)
         # Scanner aliases resolve to the shared bounded security adapter. Keep
         # the requested alias visible to that adapter so each scanner uses its
@@ -512,7 +512,7 @@ class ToolRegistry:
                 str(request.idempotency_key) if request.idempotency_key else None
             ),
         }
-        if request.project_id and "project_id" not in kwargs:
+        if request.project_id and (request.worker_run_id is not None or "project_id" not in kwargs):
             kwargs["project_id"] = request.project_id
         try:
             kwargs = tool.validate_input(kwargs)

@@ -113,3 +113,25 @@ async def test_production_worker_cannot_bypass_run_audit(make_registry, monkeypa
     result = await registry.execute(request)
     assert result.error_code == "WORKER_RUN_REQUIRED"
     assert tool.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_worker_run_project_cannot_be_overridden_in_tool_arguments(make_registry):
+    class ReadProject(_MutatingTool):
+        name = "test.project_isolation"
+        side_effect = False
+
+        async def execute(self, **kwargs):
+            return {"project_id": kwargs["project_id"]}
+
+    registry = make_registry()
+    tool = ReadProject()
+    registry.register(tool)
+    registry.grant_tool("worker", tool.name)
+    project_id = str(uuid4())
+    request = ToolRequest(caller_id="worker", caller_role=AgentRole.WORKER,
+        tool_name=tool.name, project_id=project_id, worker_run_id=uuid4(),
+        tool_kwargs={"project_id": str(uuid4())})
+    response = await registry.execute(request)
+    assert response.success
+    assert response.result["project_id"] == project_id

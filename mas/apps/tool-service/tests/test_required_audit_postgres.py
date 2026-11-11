@@ -57,6 +57,9 @@ async def test_audit_intent_and_recovery_in_postgres(tmp_path, monkeypatch):
         assert not await writer.worker_tool_effects.validate_worker_run_claim(run_id=run, claim_owner="host", attempt_count=1, worker_id=str(uuid4()), project_id=str(project))
         assert not await writer.worker_tool_effects.validate_worker_run_claim(run_id=run, claim_owner="host", attempt_count=1, worker_id=str(worker), project_id=str(uuid4()))
         assert not await writer.worker_tool_effects.validate_worker_run_claim(run_id=run, claim_owner="host", attempt_count=2, worker_id=str(worker), project_id=str(project))
+        await pool.execute("UPDATE worker_registry SET status='SUSPENDED' WHERE id=$1", worker)
+        assert not await writer.worker_tool_effects.validate_worker_run_claim(run_id=run, claim_owner="host", attempt_count=1, worker_id=str(worker), project_id=str(project))
+        await pool.execute("UPDATE worker_registry SET status='ACTIVE' WHERE id=$1", worker)
         effect_request_id = uuid4()
         effect = await writer.worker_tool_effects.begin_worker_tool_effect(
             run_id=run, request_id=effect_request_id, idempotency_key="schema-test",
