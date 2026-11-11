@@ -31,6 +31,11 @@ SERVICES=(
 
 COMMAND="$1"
 
+if [ "$COMMAND" = start ] || [ "$COMMAND" = restart ]; then
+    echo "Redis ACL initializer release hold: bulk activation is blocked." >&2
+    exit 78
+fi
+
 if [ -z "$COMMAND" ]; then
     echo "Usage: $0 <command>"
     echo "Commands: start, stop, restart, status"

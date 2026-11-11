@@ -11,6 +11,12 @@ if [ -z "$SERVICE_NAME" ] || [ -z "$COMMAND" ]; then
     exit 2
 fi
 
+# Compose up can start dependencies, including an existing unsafe initializer.
+if [ "$COMMAND" = start ] || { [ "$COMMAND" = restart ] && [ "$SERVICE_NAME" = redis-acl-init ]; }; then
+    echo "Redis ACL initializer release hold: service activation is blocked." >&2
+    exit 78
+fi
+
 MAS_ROOT="${MAS_ROOT:-/opt/mas}"
 COMPOSE_DIR="${MAS_COMPOSE_DIR:-$MAS_ROOT/infra/compose}"
 ENV_FILE="${MAS_ENV_FILE:-$MAS_ROOT/.env}"

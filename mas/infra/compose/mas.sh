@@ -105,6 +105,18 @@ export COMPOSE_DISABLE_ENV_FILE=1
 COMPOSE_FILES="-f docker-compose.yml -f docker-compose.dev.yml"
 CMD="${1:-up}"
 
+# Existing Created containers retain their original entrypoint even if Compose
+# configuration changes. Block lifecycle commands that can start that instance.
+case "$CMD" in
+    up|migrate|migrate-status|migrate-history|migrate-rollback|init-db)
+        echo "Redis ACL initializer release hold: Compose activation is blocked." >&2; exit 78 ;;
+    start|restart)
+        if [ -z "${2:-}" ] || [ "${2:-}" = "redis-acl-init" ]; then
+            echo "Redis ACL initializer release hold: refusing to start the existing initializer." >&2
+            exit 78
+        fi ;;
+esac
+
 # ── Color helpers ──────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 BLUE='\033[0;34m'; CYAN='\033[0;36m'; NC='\033[0m'

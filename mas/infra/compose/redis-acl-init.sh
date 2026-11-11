@@ -16,7 +16,28 @@ echo "Waiting for Redis at ${REDIS_HOST}:${REDIS_PORT}..."
 INIT_PASS="redis_init_temp_pass"
 ROUTER_PASS="${ROUTER_PASSWORD:-router_default_pass}"
 TOOLCACHE_PASS="${TOOLCACHE_PASSWORD:-toolcache_default_pass}"
+ACL_FILE="${REDIS_ACL_FILE:-/acl-state/users.acl}"
 ADMIN_AVAILABLE=0
+
+saved_default_is_disabled() {
+    [ -r "$ACL_FILE" ] || return 1
+    [ "$(grep -c '^user default ' "$ACL_FILE" || true)" = "1" ] || return 1
+    grep -Eq '^user default off( |$)' "$ACL_FILE"
+}
+
+verify_existing_default_disabled() {
+    # App users cannot inspect ACLs. An explicitly provisioned read-only ACL
+    # verifier is required on repeat runs; never infer security from PING.
+    [ -n "${REDIS_ACL_VERIFY_USER:-}" ] || return 1
+    [ -n "${REDIS_ACL_VERIFY_PASSWORD_FILE:-}" ] || return 1
+    [ -r "$REDIS_ACL_VERIFY_PASSWORD_FILE" ] || return 1
+    verify_password="$(cat "$REDIS_ACL_VERIFY_PASSWORD_FILE")"
+    [ -n "$verify_password" ] || return 1
+    flags="$(REDISCLI_AUTH="$verify_password" redis-cli --no-auth-warning --raw --user "$REDIS_ACL_VERIFY_USER" -h "$REDIS_HOST" -p "$REDIS_PORT" ACL GETUSER default 2>/dev/null | awk '/^flags$/{inflags=1; next} /^passwords$/{inflags=0} inflags {print}' || true)"
+    printf '%s\n' "$flags" | grep -qx off || return 1
+    if printf '%s\n' "$flags" | grep -qx on; then return 1; fi
+    saved_default_is_disabled
+}
 i=0
 while [ $i -lt $MAX_RETRIES ]; do
     if [ "$(redis-cli --no-auth-warning --user default -a "$INIT_PASS" -h "$REDIS_HOST" -p "$REDIS_PORT" ping 2>/dev/null || true)" = "PONG" ]; then
@@ -31,8 +52,12 @@ while [ $i -lt $MAX_RETRIES ]; do
         # receive NOPERM for EVAL.  The Redis service performs the narrow ACL
         # file migration before startup; this check verifies the loaded ACL.
         if [ "$(redis-cli --no-auth-warning --user router_user -a "$ROUTER_PASS" -h "$REDIS_HOST" -p "$REDIS_PORT" eval 'return 1' 0 2>/dev/null || true)" = "1" ]; then
-            echo "Redis ACL users are already configured, including router scripting access."
-            exit 0
+            if verify_existing_default_disabled; then
+                echo "Redis ACL users and disabled bootstrap state verified."
+                exit 0
+            fi
+            echo "ERROR: cannot verify the effective and saved bootstrap ACL; refusing startup." >&2
+            exit 1
         fi
         echo "ERROR: persisted router_user ACL does not permit EVAL; refusing to start the router." >&2
         exit 1
@@ -82,18 +107,23 @@ expect_ok redis_admin \
     "~tool_cache:*" "~shared:*" +ping +select +get +set +setex +del
 echo "  - toolcache_user configured"
 
-# Persist ACL to disk while the temporary admin identity is still available;
-# the restricted router user must never receive ACL administration commands.
-if redis_admin ACL SAVE > /dev/null 2>&1; then
-    echo "  - ACL persisted to disk (ACL SAVE)"
-else
-    echo "  - ACL SAVE failed" >&2
+# Disable the bootstrap user and persist the disabled state using the same
+# authenticated connection. Saving before disabling would re-enable the
+# bootstrap administrator when Redis next loads users.acl.
+output="$(printf 'ACL SETUSER default off\nCLIENT KILL USER default SKIPME YES\nACL SAVE\n' | redis-cli --no-auth-warning --user default -a "$INIT_PASS" -h "$REDIS_HOST" -p "$REDIS_PORT")"
+first="$(printf '%s\n' "$output" | sed -n '1p')"
+killed="$(printf '%s\n' "$output" | sed -n '2p')"
+last="$(printf '%s\n' "$output" | sed -n '3p')"
+case "$killed" in ''|*[!0-9]*) killed=invalid ;; esac
+if [ "$first" != "OK" ] || [ "$killed" = invalid ] || [ "$last" != "OK" ] || [ "$(printf '%s\n' "$output" | wc -l | tr -d ' ')" != "3" ]; then
+    echo "ERROR: could not disable and persist the bootstrap user." >&2
     exit 1
 fi
-
-# Disable default user only after users.acl has been written.
-expect_ok redis_admin ACL SETUSER default off
-echo "  - default user disabled"
+if ! saved_default_is_disabled; then
+    echo "ERROR: saved ACL does not show the disabled bootstrap user." >&2
+    exit 1
+fi
+echo "  - default user disabled and ACL persisted"
 
 echo ""
 echo "ACL configuration complete. Restricted-user PING checks passed during startup."

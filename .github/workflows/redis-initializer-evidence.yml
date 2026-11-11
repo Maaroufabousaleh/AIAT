@@ -1,0 +1,95 @@
+name: Redis initializer evidence (not release)
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact reviewed source commit to inspect
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  evidence:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 0
+      - name: Verify checkout and host
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain)"
+          test "$(uname -s)" = Linux
+          ! uname -r | grep -Eiq 'microsoft|wsl'
+          mkdir -p "$RUNNER_TEMP/aiat-redis-evidence"
+          git rev-parse HEAD > "$RUNNER_TEMP/aiat-redis-evidence/source-commit.txt"
+          uname -a > "$RUNNER_TEMP/aiat-redis-evidence/host.txt"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: '0.4.x'
+      - name: Run initializer regression tests
+        working-directory: mas
+        run: |
+          set -euo pipefail
+          uv sync --locked --dev
+          uv run pytest apps/message-router/tests/test_redis_acl_init_persistence.py scripts/tests/test_redis_initializer_release_hold.py
+      - name: Scan repository secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build local candidate image
+        run: |
+          set -euo pipefail
+          docker build --pull --iidfile "$RUNNER_TEMP/aiat-redis-evidence/image-id.txt" \
+            -t aiat-redis-init-evidence:local -f mas/infra/compose/Dockerfile.redis-acl-init mas/infra/compose
+          docker image inspect aiat-redis-init-evidence:local --format '{{.Id}} {{.Os}}/{{.Architecture}}' \
+            > "$RUNNER_TEMP/aiat-redis-evidence/image-identity.txt"
+      - name: Scan candidate dependencies and image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: aiat-redis-init-evidence:local
+          format: json
+          output: ${{ runner.temp }}/aiat-redis-evidence/trivy-image.json
+          exit-code: '1'
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+      - name: Scan locked source dependencies
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: json
+          output: ${{ runner.temp }}/aiat-redis-evidence/trivy-dependencies.json
+          exit-code: '1'
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+      - name: Generate candidate SBOM
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: aiat-redis-init-evidence:local
+          format: cyclonedx
+          output: ${{ runner.temp }}/aiat-redis-evidence/image-sbom.cdx.json
+          exit-code: '0'
+      - name: Mark evidence scope
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/aiat-redis-evidence"
+          printf '%s\n' 'PREPARATORY EVIDENCE ONLY: no immutable registry digest, authenticated build provenance, full live Redis restart suite, release-ledger approval, or deployment is asserted.' > "$RUNNER_TEMP/aiat-redis-evidence/SCOPE.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: redis-initializer-evidence-${{ github.run_id }}
+          path: ${{ runner.temp }}/aiat-redis-evidence/
+          if-no-files-found: error
+          retention-days: 14
