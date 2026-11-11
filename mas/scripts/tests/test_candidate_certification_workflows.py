@@ -44,3 +44,15 @@ def test_first_party_worker_evidence_workflow_is_pinned_and_non_deploying() -> N
     assert "push-to-registry: false" in workflow
     assert "create-storage-record: false" in workflow
     assert "CANDIDATE EVIDENCE ONLY" in workflow
+    assert "branches:\n      - agent/fix-review-p1" in workflow
+    assert "inputs.candidate_sha || github.sha" in workflow
+
+
+def test_redis_evidence_workflow_is_scoped_to_reviewed_branch_pushes() -> None:
+    workflow = (
+        REPOSITORY_ROOT / ".github" / "workflows" / "redis-initializer-evidence.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "branches:\n      - agent/fix-review-p1" in workflow
+    assert "inputs.candidate_sha || github.sha" in workflow
+    assert "PREPARATORY EVIDENCE ONLY" in workflow

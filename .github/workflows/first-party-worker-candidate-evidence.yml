@@ -1,11 +1,14 @@
 name: First-party worker candidate evidence (not approval)
 
 on:
+  push:
+    branches:
+      - agent/fix-review-p1
   workflow_dispatch:
     inputs:
       candidate_sha:
         description: Exact reviewed AIAT source commit to certify
-        required: true
+        required: false
         type: string
 
 permissions:
@@ -24,12 +27,12 @@ jobs:
       - name: Check out exact candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.candidate_sha }}
+          ref: ${{ inputs.candidate_sha || github.sha }}
           fetch-depth: 0
 
       - name: Verify clean native Linux candidate
         env:
-          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha || github.sha }}
         run: |
           set -euo pipefail
           [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]

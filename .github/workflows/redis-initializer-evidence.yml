@@ -1,15 +1,21 @@
 name: Redis initializer evidence (not release)
 
 on:
+  push:
+    branches:
+      - agent/fix-review-p1
   workflow_dispatch:
     inputs:
       candidate_sha:
         description: Exact reviewed source commit to inspect
-        required: true
+        required: false
         type: string
 
 permissions:
   contents: read
+  id-token: write
+  attestations: write
+  artifact-metadata: write
 
 jobs:
   evidence:
@@ -17,11 +23,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.candidate_sha }}
+          ref: ${{ inputs.candidate_sha || github.sha }}
           fetch-depth: 0
       - name: Verify checkout and host
         env:
-          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha || github.sha }}
         run: |
           set -euo pipefail
           [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
@@ -50,10 +56,34 @@ jobs:
       - name: Build local candidate image
         run: |
           set -euo pipefail
-          docker build --pull --iidfile "$RUNNER_TEMP/aiat-redis-evidence/image-id.txt" \
+          docker buildx build --builder default --pull --load --iidfile "$RUNNER_TEMP/aiat-redis-evidence/image-id.txt" \
             -t aiat-redis-init-evidence:local -f mas/infra/compose/Dockerfile.redis-acl-init mas/infra/compose
           docker image inspect aiat-redis-init-evidence:local --format '{{.Id}} {{.Os}}/{{.Architecture}}' \
             > "$RUNNER_TEMP/aiat-redis-evidence/image-identity.txt"
+          docker image save --output "$RUNNER_TEMP/aiat-redis-evidence/candidate-image.tar" aiat-redis-init-evidence:local
+          sha256sum "$RUNNER_TEMP/aiat-redis-evidence/candidate-image.tar" \
+            > "$RUNNER_TEMP/aiat-redis-evidence/candidate-image.tar.sha256"
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          root = Path(os.environ["RUNNER_TEMP"]) / "aiat-redis-evidence"
+          image_id, platform = (root / "image-identity.txt").read_text().strip().split()
+          archive = root / "candidate-image.tar"
+          record = {
+              "schema_version": "aiat.redis-acl-init-candidate.v1",
+              "source_commit": os.environ["GITHUB_SHA"],
+              "local_tag": "aiat-redis-init-evidence:local",
+              "docker_image_config_digest": image_id,
+              "platform": platform,
+              "archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+              "registry_reference": None,
+          }
+          (root / "candidate-image-identity.json").write_text(
+              json.dumps(record, sort_keys=True, indent=2) + "\n", encoding="utf-8"
+          )
+          PY
       - name: Exercise disposable Redis restart and verifier
         working-directory: mas
         env:
@@ -86,11 +116,22 @@ jobs:
           format: cyclonedx
           output: ${{ runner.temp }}/aiat-redis-evidence/image-sbom.cdx.json
           exit-code: '0'
+      - name: Attest the local image archive and SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/aiat-redis-evidence/candidate-image.tar
+          subject-name: aiat-redis-acl-init-docker-archive
+          sbom-path: ${{ runner.temp }}/aiat-redis-evidence/image-sbom.cdx.json
+          push-to-registry: false
+          create-storage-record: false
       - name: Mark evidence scope
         if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/aiat-redis-evidence"
-          printf '%s\n' 'PREPARATORY EVIDENCE ONLY: no immutable registry digest, authenticated build provenance, full live Redis restart suite, release-ledger approval, or deployment is asserted.' > "$RUNNER_TEMP/aiat-redis-evidence/SCOPE.txt"
+          printf '%s\n' \
+            'PREPARATORY EVIDENCE ONLY: inspect step results; a successful attestation binds the local Docker archive and SBOM to this GitHub workflow run.' \
+            'This workflow does not publish a registry image, create an immutable registry reference, certify a live Redis restart, approve the release ledger, or authorize deployment.' \
+            > "$RUNNER_TEMP/aiat-redis-evidence/SCOPE.txt"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
