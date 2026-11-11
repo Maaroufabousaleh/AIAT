@@ -136,6 +136,40 @@ jobs:
               output.write(evidence["image"]["oci_index_digest"] + "\n")
           PY
 
+      - name: Capture deterministic worker BuildKit failure detail
+        if: ${{ failure() && steps.build.outcome == 'failure' }}
+        continue-on-error: true
+        env:
+          WORKER_SOURCE_REVISION: 1855a75fb17243d8298b84468372e7a6e496da46
+        run: |
+          set +e
+          set +u
+          set +o pipefail
+          diag="$RUNNER_TEMP/aiat-worker-evidence/buildx-diagnostic"
+          context="$diag/context"
+          mkdir -p "$context"
+          git show "$WORKER_SOURCE_REVISION:mas/workers/Dockerfile.aiat_deterministic_file_worker" > "$diag/Dockerfile"
+          if [ "$?" -ne 0 ]; then echo "Could not retrieve the pinned worker Dockerfile."; exit 0; fi
+          git show "$WORKER_SOURCE_REVISION:mas/workers/aiat_deterministic_file_worker_process.py" > "$context/aiat_deterministic_file_worker_process.py"
+          if [ "$?" -ne 0 ]; then echo "Could not retrieve the pinned worker source."; exit 0; fi
+          source_sha="$(sha256sum "$context/aiat_deterministic_file_worker_process.py" | cut -d ' ' -f 1)"
+          revision_epoch="$(git show -s --format=%ct "$WORKER_SOURCE_REVISION")"
+          touch -d "@$revision_epoch" "$context/aiat_deterministic_file_worker_process.py"
+          docker buildx build --progress=plain --builder default \
+            --platform linux/amd64 --provenance=mode=max --sbom=false \
+            --metadata-file "$diag/buildx-metadata.json" \
+            --output "type=oci,dest=$diag/diagnostic-image.oci.tar" \
+            --file "$diag/Dockerfile" \
+            --build-arg "AIAT_WORKER_SOURCE_SHA256=$source_sha" \
+            --build-arg "AIAT_WORKER_SOURCE_REVISION=$WORKER_SOURCE_REVISION" \
+            "$context" > "$diag/buildx.log" 2>&1
+          status=$?
+          cat "$diag/buildx.log"
+          printf 'diagnostic_build_exit=%s\n' "$status"
+          rm -f "$diag/diagnostic-image.oci.tar"
+          printf '%s\n' 'Diagnostic retry only; it does not certify or replace the candidate image.' \
+            > "$diag/SCOPE.txt"
+
       - name: Certify native gVisor runtime on an immutable smoke image
         run: |
           set -euo pipefail
@@ -186,7 +220,17 @@ jobs:
             "${{ steps.build.outputs.image }}" \
             -o cyclonedx-json="$RUNNER_TEMP/aiat-worker-evidence/image-sbom.cdx.json"
 
-      - name: Attest the OCI archive produced by this workflow
+      - name: Attest worker OCI archive build provenance
+        id: provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/aiat-worker-evidence/candidate.oci.tar
+          subject-name: aiat-deterministic-file-worker-oci-archive
+          push-to-registry: false
+          create-storage-record: false
+
+      - name: Attest worker OCI archive SBOM
+        id: sbom
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: ${{ runner.temp }}/aiat-worker-evidence/candidate.oci.tar
@@ -194,6 +238,40 @@ jobs:
           sbom-path: ${{ runner.temp }}/aiat-worker-evidence/image-sbom.cdx.json
           push-to-registry: false
           create-storage-record: false
+
+      - name: Save worker attestation bundles and references
+        env:
+          PROVENANCE_ID: ${{ steps.provenance.outputs.attestation-id }}
+          PROVENANCE_URL: ${{ steps.provenance.outputs.attestation-url }}
+          PROVENANCE_BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+          SBOM_ID: ${{ steps.sbom.outputs.attestation-id }}
+          SBOM_URL: ${{ steps.sbom.outputs.attestation-url }}
+          SBOM_BUNDLE: ${{ steps.sbom.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          cp "$PROVENANCE_BUNDLE" "$RUNNER_TEMP/aiat-worker-evidence/provenance.sigstore.json"
+          cp "$SBOM_BUNDLE" "$RUNNER_TEMP/aiat-worker-evidence/sbom.sigstore.json"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          record = {
+              "provenance": {
+                  "attestation_id": os.environ["PROVENANCE_ID"],
+                  "attestation_url": os.environ["PROVENANCE_URL"],
+                  "bundle": "provenance.sigstore.json",
+              },
+              "sbom": {
+                  "attestation_id": os.environ["SBOM_ID"],
+                  "attestation_url": os.environ["SBOM_URL"],
+                  "bundle": "sbom.sigstore.json",
+              },
+          }
+          root = Path(os.environ["RUNNER_TEMP"]) / "aiat-worker-evidence"
+          (root / "attestation-references.json").write_text(
+              json.dumps(record, sort_keys=True, indent=2) + "\n", encoding="utf-8"
+          )
+          PY
 
       - name: Require the rebuilt OCI digest to match the governed pin
         env:
@@ -211,6 +289,7 @@ jobs:
           printf '%s\n' \
             'CANDIDATE EVIDENCE ONLY: no worker registration, security approval, stewardship, grant approval, rollout, activation, or WorkerRun is asserted.' \
             'The signed GitHub attestation subject is the OCI archive file; the image index digest is recorded inside that archive and must be verified from the archived build record.' \
+            'Separate GitHub build-provenance and SBOM attestations are saved with their Sigstore bundles.' \
             'Dependency scanning covers the pinned worker source and Dockerfile; image scanning covers the pinned Python base and OS packages.' \
             'A digest mismatch blocks applicability to the checked-in worker pin; review as a new candidate and update all governed pins only through the normal process.' \
             > "$RUNNER_TEMP/aiat-worker-evidence/SCOPE.txt"

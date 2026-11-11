@@ -127,7 +127,17 @@ jobs:
           format: cyclonedx
           output: ${{ runner.temp }}/aiat-redis-evidence/image-sbom.cdx.json
           exit-code: '0'
-      - name: Attest the local image archive and SBOM
+      - name: Attest Redis initializer archive build provenance
+        id: provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/aiat-redis-evidence/candidate-image.tar
+          subject-name: aiat-redis-acl-init-docker-archive
+          push-to-registry: false
+          create-storage-record: false
+
+      - name: Attest Redis initializer archive SBOM
+        id: sbom
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: ${{ runner.temp }}/aiat-redis-evidence/candidate-image.tar
@@ -135,12 +145,46 @@ jobs:
           sbom-path: ${{ runner.temp }}/aiat-redis-evidence/image-sbom.cdx.json
           push-to-registry: false
           create-storage-record: false
+
+      - name: Save Redis attestation bundles and references
+        env:
+          PROVENANCE_ID: ${{ steps.provenance.outputs.attestation-id }}
+          PROVENANCE_URL: ${{ steps.provenance.outputs.attestation-url }}
+          PROVENANCE_BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+          SBOM_ID: ${{ steps.sbom.outputs.attestation-id }}
+          SBOM_URL: ${{ steps.sbom.outputs.attestation-url }}
+          SBOM_BUNDLE: ${{ steps.sbom.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          cp "$PROVENANCE_BUNDLE" "$RUNNER_TEMP/aiat-redis-evidence/provenance.sigstore.json"
+          cp "$SBOM_BUNDLE" "$RUNNER_TEMP/aiat-redis-evidence/sbom.sigstore.json"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          record = {
+              "provenance": {
+                  "attestation_id": os.environ["PROVENANCE_ID"],
+                  "attestation_url": os.environ["PROVENANCE_URL"],
+                  "bundle": "provenance.sigstore.json",
+              },
+              "sbom": {
+                  "attestation_id": os.environ["SBOM_ID"],
+                  "attestation_url": os.environ["SBOM_URL"],
+                  "bundle": "sbom.sigstore.json",
+              },
+          }
+          root = Path(os.environ["RUNNER_TEMP"]) / "aiat-redis-evidence"
+          (root / "attestation-references.json").write_text(
+              json.dumps(record, sort_keys=True, indent=2) + "\n", encoding="utf-8"
+          )
+          PY
       - name: Mark evidence scope
         if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/aiat-redis-evidence"
           printf '%s\n' \
-            'PREPARATORY EVIDENCE ONLY: inspect step results; a successful attestation binds the local Docker archive and SBOM to this GitHub workflow run.' \
+            'PREPARATORY EVIDENCE ONLY: inspect step results; separate GitHub provenance and SBOM attestations bind the Docker archive to this workflow run.' \
             'This workflow does not publish a registry image, create an immutable registry reference, certify a live Redis restart, approve the release ledger, or authorize deployment.' \
             'Dependency scanning is scoped to the initializer Dockerfile and shell source; the image scan covers the pinned Redis base and runtime packages. Repository-wide application dependency findings are tracked separately.' \
             > "$RUNNER_TEMP/aiat-redis-evidence/SCOPE.txt"
