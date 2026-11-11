@@ -113,13 +113,28 @@ jobs:
           uv run python scripts/scan_first_party_worker_source.py \
             --output "$RUNNER_TEMP/aiat-worker-evidence/worker-source-scan.json"
 
+      - name: Create pinned OCI-capable BuildKit builder
+        env:
+          BUILDKIT_IMAGE: moby/buildkit:v0.34.2@sha256:c5f8862f52499773af85bc07695b2379ef08e8002352b0df2c4864c91d78dabe
+        run: |
+          set -euo pipefail
+          docker buildx create \
+            --name aiat-worker-candidate \
+            --driver docker-container \
+            --driver-opt "image=$BUILDKIT_IMAGE" \
+            --use
+          docker buildx inspect --bootstrap aiat-worker-candidate \
+            | tee "$RUNNER_TEMP/aiat-worker-evidence/buildkit-builder.txt"
+          printf '%s\n' "$BUILDKIT_IMAGE" \
+            > "$RUNNER_TEMP/aiat-worker-evidence/buildkit-image-ref.txt"
+
       - name: Build pinned worker OCI candidate
         id: build
         run: |
           set -euo pipefail
           uv run python scripts/build_deterministic_file_worker_image.py \
             --source-revision 1855a75fb17243d8298b84468372e7a6e496da46 \
-            --builder default \
+            --builder aiat-worker-candidate \
             --archive "$RUNNER_TEMP/aiat-worker-evidence/candidate.oci.tar" \
             --evidence "$RUNNER_TEMP/aiat-worker-evidence/build-provenance.json"
           python3 - <<'PY'
@@ -155,7 +170,7 @@ jobs:
           source_sha="$(sha256sum "$context/aiat_deterministic_file_worker_process.py" | cut -d ' ' -f 1)"
           revision_epoch="$(git show -s --format=%ct "$WORKER_SOURCE_REVISION")"
           touch -d "@$revision_epoch" "$context/aiat_deterministic_file_worker_process.py"
-          docker buildx build --progress=plain --builder default \
+          docker buildx build --progress=plain --builder aiat-worker-candidate \
             --platform linux/amd64 --provenance=mode=max --sbom=false \
             --metadata-file "$diag/buildx-metadata.json" \
             --output "type=oci,dest=$diag/diagnostic-image.oci.tar" \
@@ -302,3 +317,11 @@ jobs:
           path: ${{ runner.temp }}/aiat-worker-evidence/
           if-no-files-found: error
           retention-days: 14
+
+      - name: Remove disposable candidate builder
+        if: always()
+        run: |
+          set -euo pipefail
+          if docker buildx inspect aiat-worker-candidate >/dev/null 2>&1; then
+            docker buildx rm aiat-worker-candidate
+          fi

@@ -44,6 +44,10 @@ def test_first_party_worker_evidence_workflow_is_pinned_and_non_deploying() -> N
     assert "name: Set up scanner Python runtime" in workflow
     assert 'python-version: "3.12"' in workflow
     assert "Prepare deterministic worker dependency context" in workflow
+    assert "Create pinned OCI-capable BuildKit builder" in workflow
+    assert "--driver docker-container" in workflow
+    assert "moby/buildkit:v0.34.2@sha256:c5f8862f52499773af85bc07695b2379ef08e8002352b0df2c4864c91d78dabe" in workflow
+    assert "--builder aiat-worker-candidate" in workflow
     assert "Capture deterministic worker BuildKit failure detail" in workflow
     assert "id: provenance" in workflow
     assert "id: sbom" in workflow
@@ -51,6 +55,7 @@ def test_first_party_worker_evidence_workflow_is_pinned_and_non_deploying() -> N
     assert "scan-ref: ${{ runner.temp }}/aiat-worker-evidence/dependency-context" in workflow
     assert "push-to-registry: false" in workflow
     assert "create-storage-record: false" in workflow
+    assert "Remove disposable candidate builder" in workflow
     assert "CANDIDATE EVIDENCE ONLY" in workflow
     assert "branches:\n      - agent/fix-review-p1" in workflow
     assert "inputs.candidate_sha || github.sha" in workflow
