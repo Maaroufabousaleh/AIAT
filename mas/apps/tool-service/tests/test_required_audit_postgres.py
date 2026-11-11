@@ -22,8 +22,14 @@ from mas_core.protocols.tool import ToolRequest
 @pytest.mark.asyncio
 @pytest.mark.skipif(os.environ.get("AIAT_AUDIT_PG_TEST") != "1", reason="opt-in disposable PostgreSQL test")
 async def test_audit_intent_and_recovery_in_postgres(tmp_path, monkeypatch):
-    docker = ["docker", "-H", "unix:///run/aiat-docker/docker.sock"]
-    image = subprocess.check_output(docker + ["inspect", "--format", "{{.Image}}", "mas-postgres-1"], text=True).strip()
+    docker_host = os.environ.get("AIAT_TEST_DOCKER_HOST", "unix:///run/aiat-docker/docker.sock")
+    docker = ["docker", "-H", docker_host]
+    image = os.environ.get("AIAT_AUDIT_PG_IMAGE")
+    if not image:
+        image = subprocess.check_output(
+            docker + ["inspect", "--format", "{{.Image}}", "mas-postgres-1"],
+            text=True,
+        ).strip()
     name = "aiat-audit-test-" + secrets.token_hex(8)
     password = secrets.token_urlsafe(32)
     env = dict(os.environ, POSTGRES_PASSWORD=password)

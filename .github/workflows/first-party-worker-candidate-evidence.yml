@@ -1,0 +1,203 @@
+name: First-party worker candidate evidence (not approval)
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact reviewed AIAT source commit to certify
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
+jobs:
+  evidence:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: mas
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 0
+
+      - name: Verify clean native Linux candidate
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain)"
+          test "$(uname -s)" = Linux
+          ! uname -r | grep -Eiq 'microsoft|wsl'
+          mkdir -p "$RUNNER_TEMP/aiat-worker-evidence"
+          git rev-parse HEAD > "$RUNNER_TEMP/aiat-worker-evidence/source-commit.txt"
+          uname -a > "$RUNNER_TEMP/aiat-worker-evidence/host.txt"
+          docker version
+          docker buildx inspect default
+
+      - name: Install gVisor on the disposable native Linux runner
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y apt-transport-https ca-certificates curl gnupg
+          curl -fsSL https://gvisor.dev/archive.key \
+            | sudo gpg --dearmor --yes -o /usr/share/keyrings/gvisor-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] https://storage.googleapis.com/gvisor/releases release main" \
+            | sudo tee /etc/apt/sources.list.d/gvisor.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y runsc
+          runsc --version
+          sudo runsc install
+          sudo systemctl restart docker
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Install locked AIAT test environment
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check uv==0.4.30
+          uv sync --locked --dev
+
+      - name: Run deterministic worker and real-schema audit regressions
+        env:
+          AIAT_AUDIT_PG_TEST: "1"
+          AIAT_TEST_DOCKER_HOST: unix:///var/run/docker.sock
+          AIAT_AUDIT_PG_IMAGE: pgvector/pgvector:pg16@sha256:a36250871de0833b8757561c72f2477ef1ddd1101afa4e617fb552e0de514c6b
+        run: |
+          set -euo pipefail
+          uv run pytest \
+            packages/mas-core/tests/test_deterministic_file_worker_process.py \
+            packages/mas-core/tests/test_deterministic_file_worker.py \
+            apps/orchestrator-api/tests/test_security_scan_provenance_ingress.py \
+            apps/tool-service/tests/test_required_audit_postgres.py -q
+
+      - name: Provision pinned source scanners and SBOM tool
+        run: |
+          set -euo pipefail
+          python scripts/provision_opencode_certification_tools.py \
+            --output "$RUNNER_TEMP/aiat-worker-evidence/tooling" \
+            --install-dir "$RUNNER_TEMP/aiat-worker-tools" \
+            --python python3
+          sudo install -m 0755 "$RUNNER_TEMP/aiat-worker-tools/venv/bin/semgrep" /usr/local/bin/semgrep
+          sudo install -m 0755 "$RUNNER_TEMP/aiat-worker-tools/bin/trufflehog" /usr/local/bin/trufflehog
+          "$RUNNER_TEMP/aiat-worker-tools/venv/bin/semgrep" --version
+          "$RUNNER_TEMP/aiat-worker-tools/bin/trufflehog" --version
+          "$RUNNER_TEMP/aiat-worker-tools/bin/syft" version
+
+      - name: Scan repository secrets
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run AIAT source-bound worker scan
+        run: |
+          set -euo pipefail
+          uv run python scripts/scan_first_party_worker_source.py \
+            --output "$RUNNER_TEMP/aiat-worker-evidence/worker-source-scan.json"
+
+      - name: Build pinned worker OCI candidate
+        id: build
+        run: |
+          set -euo pipefail
+          uv run python scripts/build_deterministic_file_worker_image.py \
+            --source-revision 1855a75fb17243d8298b84468372e7a6e496da46 \
+            --builder default \
+            --archive "$RUNNER_TEMP/aiat-worker-evidence/candidate.oci.tar" \
+            --evidence "$RUNNER_TEMP/aiat-worker-evidence/build-provenance.json"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          evidence = json.loads(Path(os.environ["RUNNER_TEMP"] + "/aiat-worker-evidence/build-provenance.json").read_text())
+          print("candidate_image=" + evidence["image"]["local_tag"])
+          print("candidate_digest=" + evidence["image"]["oci_index_digest"])
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write("image=" + evidence["image"]["local_tag"] + "\n")
+              output.write("digest=" + evidence["image"]["oci_index_digest"] + "\n")
+          with open(os.environ["RUNNER_TEMP"] + "/aiat-worker-evidence/built-image.txt", "w", encoding="utf-8") as output:
+              output.write(evidence["image"]["oci_index_digest"] + "\n")
+          PY
+
+      - name: Certify native gVisor runtime on an immutable smoke image
+        run: |
+          set -euo pipefail
+          uv run python scripts/check_native_gvisor_certification.py \
+            --smoke-image ubuntu@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517 \
+            --hello-image ubuntu@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517 \
+            --output "$RUNNER_TEMP/aiat-worker-evidence/native-gvisor.json"
+
+      - name: Scan candidate image for vulnerabilities
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: ${{ steps.build.outputs.image }}
+          format: json
+          output: ${{ runner.temp }}/aiat-worker-evidence/trivy-image.json
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+
+      - name: Scan locked source dependencies
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: json
+          output: ${{ runner.temp }}/aiat-worker-evidence/trivy-dependencies.json
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+
+      - name: Generate CycloneDX image SBOM
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/aiat-worker-tools/bin/syft" \
+            "${{ steps.build.outputs.image }}" \
+            -o cyclonedx-json="$RUNNER_TEMP/aiat-worker-evidence/image-sbom.cdx.json"
+
+      - name: Attest the OCI archive produced by this workflow
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/aiat-worker-evidence/candidate.oci.tar
+          subject-name: aiat-deterministic-file-worker-oci-archive
+          sbom-path: ${{ runner.temp }}/aiat-worker-evidence/image-sbom.cdx.json
+          push-to-registry: false
+          create-storage-record: false
+
+      - name: Require the rebuilt OCI digest to match the governed pin
+        env:
+          ACTUAL_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          expected="$(python3 -c 'import yaml; print(yaml.safe_load(open("workers/aiat_deterministic_file_worker.yaml", encoding="utf-8"))["runtime"]["adapter_config"]["image"].rsplit("@", 1)[1])')"
+          printf 'expected=%s\nactual=%s\n' "$expected" "$ACTUAL_DIGEST" > "$RUNNER_TEMP/aiat-worker-evidence/digest-comparison.txt"
+          test "$ACTUAL_DIGEST" = "$expected"
+
+      - name: Record evidence limits
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/aiat-worker-evidence"
+          printf '%s\n' \
+            'CANDIDATE EVIDENCE ONLY: no worker registration, security approval, stewardship, grant approval, rollout, activation, or WorkerRun is asserted.' \
+            'The signed GitHub attestation subject is the OCI archive file; the image index digest is recorded inside that archive and must be verified from the archived build record.' \
+            'A digest mismatch blocks applicability to the checked-in worker pin; review as a new candidate and update all governed pins only through the normal process.' \
+            > "$RUNNER_TEMP/aiat-worker-evidence/SCOPE.txt"
+
+      - name: Upload candidate evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: first-party-worker-candidate-${{ github.run_id }}
+          path: ${{ runner.temp }}/aiat-worker-evidence/
+          if-no-files-found: error
+          retention-days: 14
