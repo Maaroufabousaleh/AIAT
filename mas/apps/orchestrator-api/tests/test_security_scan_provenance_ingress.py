@@ -196,7 +196,17 @@ async def test_candidate_certification_rejects_legacy_scalar_scan_pass(client, m
             "adapter_config": dict(FIRST_PARTY_RUNTIME_ADAPTER_CONFIG),
         }
     )
-    storage.get_skill_bundle_candidate = AsyncMock(return_value=None)
+    candidate_record = candidate.model_dump(mode="json")
+    storage.get_skill_bundle_candidate = AsyncMock(
+        return_value={
+            "id": candidate.candidate_id,
+            "worker_id": worker_id,
+            "skill_bundle_id": candidate.bundle.bundle_id,
+            "adapter_id": candidate.adapter.adapter_id,
+            "intake_status": candidate.intake_status.value,
+            "evidence_json": {"candidate_record": candidate_record},
+        }
+    )
     storage.get_external_provenance_by_worker = AsyncMock(
         return_value={
             "security_scan_status": "passed",
