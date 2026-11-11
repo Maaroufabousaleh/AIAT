@@ -46,6 +46,8 @@ def test_first_party_worker_evidence_workflow_is_pinned_and_non_deploying() -> N
     assert "Prepare deterministic worker dependency context" in workflow
     assert "Create pinned OCI-capable BuildKit builder" in workflow
     assert "--driver docker-container" in workflow
+    assert 'features["containerd-snapshotter"] = True' in workflow
+    assert "io.containerd.snapshotter.v1" in workflow
     assert "moby/buildkit:v0.34.2@sha256:c5f8862f52499773af85bc07695b2379ef08e8002352b0df2c4864c91d78dabe" in workflow
     assert "--builder aiat-worker-candidate" in workflow
     assert "Capture deterministic worker BuildKit failure detail" in workflow

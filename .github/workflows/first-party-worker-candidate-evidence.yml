@@ -59,7 +59,34 @@ jobs:
           sudo apt-get install -y runsc
           runsc --version
           sudo runsc install
+          sudo python3 - <<'PY'
+          import json
+          import os
+          import stat
+          import tempfile
+          from pathlib import Path
+
+          path = Path("/etc/docker/daemon.json")
+          config = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+          if not isinstance(config, dict):
+              raise SystemExit("Docker daemon configuration must be a JSON object")
+          features = config.setdefault("features", {})
+          if not isinstance(features, dict):
+              raise SystemExit("Docker daemon features must be a JSON object")
+          features["containerd-snapshotter"] = True
+          mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o644
+          with tempfile.NamedTemporaryFile(
+              mode="w", encoding="utf-8", dir=path.parent, delete=False
+          ) as handle:
+              json.dump(config, handle, sort_keys=True, indent=2)
+              handle.write("\n")
+              temporary = Path(handle.name)
+          os.chmod(temporary, mode)
+          os.replace(temporary, path)
+          PY
           sudo systemctl restart docker
+          docker info --format '{{json .DriverStatus}}' | tee "$RUNNER_TEMP/aiat-worker-evidence/image-store.txt"
+          grep -q 'io.containerd.snapshotter.v1' "$RUNNER_TEMP/aiat-worker-evidence/image-store.txt"
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
