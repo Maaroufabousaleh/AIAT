@@ -41,6 +41,10 @@ def test_first_party_worker_evidence_workflow_is_pinned_and_non_deploying() -> N
     assert "scripts/scan_first_party_worker_source.py" in workflow
     assert "test \"$ACTUAL_DIGEST\" = \"$expected\"" in workflow
     assert "scripts/check_native_gvisor_certification.py" in workflow
+    assert "name: Set up scanner Python runtime" in workflow
+    assert 'python-version: "3.12"' in workflow
+    assert "Prepare deterministic worker dependency context" in workflow
+    assert "scan-ref: ${{ runner.temp }}/aiat-worker-evidence/dependency-context" in workflow
     assert "push-to-registry: false" in workflow
     assert "create-storage-record: false" in workflow
     assert "CANDIDATE EVIDENCE ONLY" in workflow
@@ -56,3 +60,5 @@ def test_redis_evidence_workflow_is_scoped_to_reviewed_branch_pushes() -> None:
     assert "branches:\n      - agent/fix-review-p1" in workflow
     assert "inputs.candidate_sha || github.sha" in workflow
     assert "PREPARATORY EVIDENCE ONLY" in workflow
+    assert "Prepare Redis initializer source dependency context" in workflow
+    assert "scan-ref: ${{ runner.temp }}/aiat-redis-evidence/source-dependency-context" in workflow

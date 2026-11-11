@@ -85,6 +85,10 @@ jobs:
             apps/orchestrator-api/tests/test_security_scan_provenance_ingress.py \
             apps/tool-service/tests/test_required_audit_postgres.py -q
 
+      - name: Set up scanner Python runtime
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
       - name: Provision pinned source scanners and SBOM tool
         run: |
           set -euo pipefail
@@ -150,11 +154,25 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: false
 
-      - name: Scan locked source dependencies
+      - name: Prepare deterministic worker dependency context
+        env:
+          WORKER_SOURCE_REVISION: 1855a75fb17243d8298b84468372e7a6e496da46
+        run: |
+          set -euo pipefail
+          context="$RUNNER_TEMP/aiat-worker-evidence/dependency-context"
+          mkdir -p "$context"
+          git show "$WORKER_SOURCE_REVISION:mas/workers/Dockerfile.aiat_deterministic_file_worker" > "$context/Dockerfile"
+          git show "$WORKER_SOURCE_REVISION:mas/workers/aiat_deterministic_file_worker_process.py" > "$context/aiat_deterministic_file_worker_process.py"
+          printf '%s\n' \
+            'The candidate uses Python standard-library modules only.' \
+            'The pinned Python base and operating-system packages are scanned in trivy-image.json.' \
+            > "$RUNNER_TEMP/aiat-worker-evidence/dependency-scope.txt"
+
+      - name: Scan deterministic worker source dependencies
         uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           scan-type: fs
-          scan-ref: .
+          scan-ref: ${{ runner.temp }}/aiat-worker-evidence/dependency-context
           format: json
           output: ${{ runner.temp }}/aiat-worker-evidence/trivy-dependencies.json
           exit-code: "1"
@@ -193,6 +211,7 @@ jobs:
           printf '%s\n' \
             'CANDIDATE EVIDENCE ONLY: no worker registration, security approval, stewardship, grant approval, rollout, activation, or WorkerRun is asserted.' \
             'The signed GitHub attestation subject is the OCI archive file; the image index digest is recorded inside that archive and must be verified from the archived build record.' \
+            'Dependency scanning covers the pinned worker source and Dockerfile; image scanning covers the pinned Python base and OS packages.' \
             'A digest mismatch blocks applicability to the checked-in worker pin; review as a new candidate and update all governed pins only through the normal process.' \
             > "$RUNNER_TEMP/aiat-worker-evidence/SCOPE.txt"
 
