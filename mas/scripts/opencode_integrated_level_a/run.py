@@ -722,6 +722,26 @@ def _safe_compose_start_reason(output: str) -> str:
     return "compose_start_rejected_unclassified"
 
 
+def _safe_image_build_failure_reason(output: str) -> str:
+    """Return a fixed diagnostic code; never surface raw BuildKit output."""
+
+    normalized = output.lower()
+    categories = (
+        (("checksum does not match", "checksum mismatch", "sha256sum: warning"), "build_asset_checksum_mismatch"),
+        (("401 unauthorized", "403 forbidden", "unauthorized: authentication required"), "build_source_authorization_failed"),
+        (("429 too many requests", "rate limit exceeded"), "build_source_rate_limited"),
+        (("certificate signed by unknown authority", "x509:", "tls handshake"), "build_tls_validation_failed"),
+        (("failed to calculate checksum", "copy failed", "no such file or directory"), "build_context_input_missing"),
+        (("wget:", "connection refused", "could not resolve host", "temporary failure in name resolution"), "build_upstream_download_failed"),
+        (("failed to solve", "process \"/bin/sh -c", "did not complete successfully"), "buildkit_solve_failed"),
+        (("error response from daemon", "cannot connect to the docker daemon"), "build_daemon_error"),
+    )
+    for needles, reason in categories:
+        if any(needle in normalized for needle in needles):
+            return reason
+    return "build_failed_unclassified"
+
+
 def _profile_image_tags(namespace: str) -> tuple[str, ...]:
     if not PROJECT_RE.fullmatch(namespace):
         raise HarnessError("profile_image_namespace_invalid")
@@ -1511,9 +1531,10 @@ def run_profile(
             base = _compose_base(project, env_path, build_override=override)
             config = _render_config(base, env)
             stack_started = True
-            built = _run(base + ["build"], env=env, timeout=1800, check=False)
+            built = _run(base + ["build", "--progress", "plain"], env=env, timeout=1800, check=False)
             if built.returncode:
-                raise HarnessError("profile_image_build_failed")
+                reason = _safe_image_build_failure_reason(built.stdout + "\n" + built.stderr)
+                raise HarnessError(f"profile_image_build_failed:{reason}")
             up = _run(base + ["up", "--detach", "--remove-orphans"], env=env, timeout=240, check=False)
             if up.returncode:
                 diagnostic = _safe_compose_start_reason(up.stdout + "\n" + up.stderr)

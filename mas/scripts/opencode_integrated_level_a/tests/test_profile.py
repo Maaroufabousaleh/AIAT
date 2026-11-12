@@ -153,6 +153,17 @@ class IntegratedLevelAProfileTests(unittest.TestCase):
         self.assertNotIn("must-not-be-retained", diagnostic)
         self.assertEqual(MODULE._safe_compose_start_reason("unrecognized failure"), "compose_start_rejected_unclassified")
 
+    def test_image_build_diagnostic_is_bounded_and_does_not_return_raw_output(self) -> None:
+        diagnostic = MODULE._safe_image_build_failure_reason(
+            "wget: server returned 401 unauthorized; password=must-not-be-retained"
+        )
+        self.assertEqual(diagnostic, "build_source_authorization_failed")
+        self.assertNotIn("must-not-be-retained", diagnostic)
+        self.assertEqual(
+            MODULE._safe_image_build_failure_reason("unrecognized build failure"),
+            "build_failed_unclassified",
+        )
+
     def test_local_gateway_clients_use_the_profile_master_key(self) -> None:
         config = rendered_config()
         services = config["services"]
