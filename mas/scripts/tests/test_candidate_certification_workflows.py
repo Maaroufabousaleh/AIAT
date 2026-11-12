@@ -53,6 +53,7 @@ def test_first_party_worker_evidence_workflow_is_pinned_and_non_deploying() -> N
     assert "reproducibility.json" in workflow
     assert "same_platform_image_identity" in workflow
     assert "same_oci_index_digest" in workflow
+    assert "Summarize worker vulnerability scans and SBOM" in workflow
     assert "--driver docker-container" in workflow
     assert 'features["containerd-snapshotter"] = True' in workflow
     assert "io.containerd.snapshotter.v1" in workflow
@@ -95,6 +96,7 @@ def test_redis_evidence_workflow_is_scoped_to_reviewed_branch_pushes() -> None:
     assert "id: sbom" in workflow
     assert "provenance.sigstore.json" in workflow
     assert "Verify Redis archive provenance and SBOM attestations" in workflow
+    assert "Summarize Redis initializer scans and SBOM" in workflow
     assert "gh attestation verify \"$archive\"" in workflow
     assert "--predicate-type https://cyclonedx.org/bom" in workflow
     assert "Enforce Redis security scan results" in workflow

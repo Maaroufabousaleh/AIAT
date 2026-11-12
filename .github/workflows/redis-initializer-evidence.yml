@@ -83,6 +83,7 @@ jobs:
           (root / "candidate-image-identity.json").write_text(
               json.dumps(record, sort_keys=True, indent=2) + "\n", encoding="utf-8"
           )
+          print(json.dumps(record, sort_keys=True))
           PY
       - name: Exercise disposable Redis restart and verifier
         working-directory: mas
@@ -131,6 +132,15 @@ jobs:
           format: cyclonedx
           output: ${{ runner.temp }}/aiat-redis-evidence/image-sbom.cdx.json
           exit-code: '0'
+      - name: Summarize Redis initializer scans and SBOM
+        if: always()
+        run: |
+          set -euo pipefail
+          python3 mas/scripts/summarize_trivy_reports.py \
+            --report redis_initializer_image="$RUNNER_TEMP/aiat-redis-evidence/trivy-image.json" \
+            --report redis_initializer_dependencies="$RUNNER_TEMP/aiat-redis-evidence/trivy-dependencies.json" \
+            --sbom "$RUNNER_TEMP/aiat-redis-evidence/image-sbom.cdx.json" \
+            --output "$RUNNER_TEMP/aiat-redis-evidence/trivy-summary.json"
       - name: Attest Redis initializer archive build provenance
         id: provenance
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
