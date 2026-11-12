@@ -146,6 +146,7 @@ services:
       - path: ../../../.env
         format: raw
     environment:
+      REDIS_INIT_PASSWORD: "${REDIS_INIT_PASSWORD:?REDIS_INIT_PASSWORD must be configured}"
       REDIS_HOST: redis
       REDIS_PORT: 6379
     depends_on:
@@ -161,7 +162,14 @@ services:
       - -ec
       - |
         if [ ! -f /data/users.acl ]; then
-          printf "%s\n" "user default on >redis_init_temp_pass ~* +@all" > /data/users.acl
+          case "$$REDIS_INIT_PASSWORD" in
+            *[!a-zA-Z0-9_-]*) echo "ERROR: REDIS_INIT_PASSWORD must use URL-safe characters." >&2; exit 78 ;;
+          esac
+          if [ "$${#REDIS_INIT_PASSWORD}" -lt 32 ]; then
+            echo "ERROR: REDIS_INIT_PASSWORD must be at least 32 characters for first boot." >&2
+            exit 78
+          fi
+          printf "%s\n" "user default on >$$REDIS_INIT_PASSWORD ~* +@all" > /data/users.acl
         elif grep -q '^user router_user ' /data/users.acl; then
           # ACL files survive container recreation.  Add the scripting
           # permissions required by the router's atomic stream operations to
@@ -179,6 +187,9 @@ services:
     env_file:
       - path: ../../../.env
         format: raw
+    environment:
+      REDIS_INIT_PASSWORD: "${REDIS_INIT_PASSWORD:?REDIS_INIT_PASSWORD must be configured}"
+      ROUTER_PASSWORD: "${ROUTER_PASSWORD:?ROUTER_PASSWORD must be configured}"
     volumes:
       - redis_data:/data
       - ./redis.conf:/etc/redis/redis.conf:ro

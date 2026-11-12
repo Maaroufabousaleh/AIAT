@@ -195,7 +195,7 @@ validate_env() {
     local missing=0
     local required_vars=(
         POSTGRES_PASSWORD MINIO_ROOT_PASSWORD
-        ROUTER_PASSWORD TOOLCACHE_PASSWORD
+        REDIS_INIT_PASSWORD ROUTER_PASSWORD TOOLCACHE_PASSWORD
         ROUTER_SECRET TOOL_SECRET
         LLM_GATEWAY_URL MAS_API_KEY AIAT_OPERATOR_API_KEY
         AIAT_CEO_API_KEY AIAT_WORKER_API_KEY
@@ -210,6 +210,10 @@ validate_env() {
     if [ "$missing" -gt 0 ]; then
         error "$missing required environment variables are not set."
         error "Please configure $ENV_FILE before running."
+        return 1
+    fi
+    if [[ ! "$REDIS_INIT_PASSWORD" =~ ^[A-Za-z0-9_-]{32,}$ ]]; then
+        error "REDIS_INIT_PASSWORD must contain at least 32 URL-safe characters."
         return 1
     fi
     success "All required environment variables are set."

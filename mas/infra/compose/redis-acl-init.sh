@@ -12,12 +12,24 @@ RETRY_INTERVAL=1
 
 echo "Waiting for Redis at ${REDIS_HOST}:${REDIS_PORT}..."
 
-# Password configured in redis.conf via `user default on >redis_init_temp_pass`
-INIT_PASS="redis_init_temp_pass"
-ROUTER_PASS="${ROUTER_PASSWORD:-router_default_pass}"
-TOOLCACHE_PASS="${TOOLCACHE_PASSWORD:-toolcache_default_pass}"
+# Per-deployment bootstrap password configured by the Redis service. It is
+# disabled and removed from active sessions before application services start.
+INIT_PASS="${REDIS_INIT_PASSWORD:?REDIS_INIT_PASSWORD must be configured}"
+ROUTER_PASS="${ROUTER_PASSWORD:?ROUTER_PASSWORD must be configured}"
+TOOLCACHE_PASS="${TOOLCACHE_PASSWORD:?TOOLCACHE_PASSWORD must be configured}"
 ACL_FILE="${REDIS_ACL_FILE:-/acl-state/users.acl}"
 ADMIN_AVAILABLE=0
+
+case "$INIT_PASS" in
+    *[!a-zA-Z0-9_-]*)
+        echo "ERROR: REDIS_INIT_PASSWORD must use URL-safe characters." >&2
+        exit 64
+        ;;
+esac
+if [ "${#INIT_PASS}" -lt 32 ]; then
+    echo "ERROR: REDIS_INIT_PASSWORD must be at least 32 characters." >&2
+    exit 64
+fi
 
 saved_default_is_disabled() {
     [ -r "$ACL_FILE" ] || return 1
