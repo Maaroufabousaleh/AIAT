@@ -190,6 +190,13 @@ class IntegratedLevelAProfileTests(unittest.TestCase):
             "build_failed_unclassified",
         )
 
+    def test_image_build_diagnostic_identifies_only_a_known_build_target(self) -> None:
+        diagnostic = MODULE._safe_image_build_failure_reason(
+            "#7 [orchestrator-api 4/8] COPY docs/secret-path\n#7 ERROR: process failed secret-value"
+        )
+        self.assertEqual(diagnostic, "buildkit_service_solve_failed:orchestrator_api")
+        self.assertNotIn("secret-value", diagnostic)
+
     def test_compose_start_timeout_reports_only_a_fixed_service_reason(self) -> None:
         reason = MODULE._safe_startup_status_reason(
             [

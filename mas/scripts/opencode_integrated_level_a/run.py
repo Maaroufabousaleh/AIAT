@@ -847,12 +847,39 @@ def _safe_image_build_failure_reason(output: str) -> str:
         (("certificate signed by unknown authority", "x509:", "tls handshake"), "build_tls_validation_failed"),
         (("failed to calculate checksum", "copy failed", "no such file or directory"), "build_context_input_missing"),
         (("wget:", "connection refused", "could not resolve host", "temporary failure in name resolution"), "build_upstream_download_failed"),
-        (("failed to solve", "process \"/bin/sh -c", "did not complete successfully"), "buildkit_solve_failed"),
         (("error response from daemon", "cannot connect to the docker daemon"), "build_daemon_error"),
     )
     for needles, reason in categories:
         if any(needle in normalized for needle in needles):
             return reason
+    allowed_services = {
+        "minio",
+        "message-router",
+        "tool-service",
+        "redis-acl-init",
+        "provider-fixture",
+        "opencode-runtime",
+        "migrate",
+        "orchestrator-api",
+    }
+    stage_services: dict[str, str] = {}
+    for line in normalized.splitlines():
+        stage = re.match(r"^#(\d+)\s+\[([a-z0-9-]+)(?:\s|])", line)
+        if stage and stage.group(2) in allowed_services:
+            stage_services[stage.group(1)] = stage.group(2)
+        failure = re.match(r"^#(\d+)\s+(?:error|failed)", line)
+        if failure:
+            service = stage_services.get(failure.group(1))
+            if service:
+                return f"buildkit_service_solve_failed:{service.replace('-', '_')}"
+    for service in sorted(allowed_services):
+        if re.search(rf"(?:target|service)\s+{re.escape(service)}\b.{0,100}(?:failed|error)", normalized):
+            return f"buildkit_service_solve_failed:{service.replace('-', '_')}"
+    if any(
+        needle in normalized
+        for needle in ("failed to solve", 'process "/bin/sh -c', "did not complete successfully")
+    ):
+        return "buildkit_solve_failed"
     return "build_failed_unclassified"
 
 
