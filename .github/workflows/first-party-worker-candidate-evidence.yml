@@ -188,7 +188,7 @@ jobs:
               output.write(evidence["image"]["oci_index_digest"] + "\n")
           PY
 
-      - name: Rebuild worker candidate and compare immutable image identity
+      - name: Rebuild worker candidate and compare platform image identity
         id: repeat_build
         continue-on-error: true
         run: |
@@ -224,27 +224,34 @@ jobs:
           root = Path(os.environ["RUNNER_TEMP"]) / "aiat-worker-evidence"
           first = json.loads((root / "build-provenance.json").read_text(encoding="utf-8"))
           second = json.loads((root / "build-provenance-repeat.json").read_text(encoding="utf-8"))
-          fields = ("oci_index_digest", "platform_manifest_digest", "config_digest")
+          fields = ("platform_manifest_digest", "config_digest")
           first_build = first["build"]
           second_build = second["build"]
-          same_identity = all(first_build.get(key) == second_build.get(key) for key in fields)
+          same_image = all(first_build.get(key) == second_build.get(key) for key in fields)
           record = {
               "schema_version": "aiat.worker.repeat-build-identity.v1",
-              "status": "pass" if same_identity else "identity_mismatch",
+              "status": "image_payload_reproduced" if same_image else "image_payload_mismatch",
               "first_source_revision": first["source"]["revision"],
               "second_source_revision": second["source"]["revision"],
-              "first": {key: first_build.get(key) for key in fields},
-              "second": {key: second_build.get(key) for key in fields},
+              "first": {
+                  "oci_index_digest": first_build.get("oci_index_digest"),
+                  **{key: first_build.get(key) for key in fields},
+              },
+              "second": {
+                  "oci_index_digest": second_build.get("oci_index_digest"),
+                  **{key: second_build.get(key) for key in fields},
+              },
+              "same_platform_image_identity": same_image,
+              "same_oci_index_digest": first_build.get("oci_index_digest") == second_build.get("oci_index_digest"),
               "first_archive_sha256": first_build.get("archive_sha256"),
               "second_archive_sha256": second_build.get("archive_sha256"),
-              "same_immutable_image_identity": same_identity,
           }
           (root / "reproducibility.json").write_text(
               json.dumps(record, sort_keys=True, indent=2) + "\n", encoding="utf-8"
           )
           print(json.dumps(record, sort_keys=True))
-          if not same_identity:
-              raise SystemExit("repeated build did not reproduce the immutable OCI image identity")
+          if not same_image:
+              raise SystemExit("repeated build did not reproduce the linux/amd64 image manifest and config")
           PY
 
       - name: Capture deterministic worker BuildKit failure detail
@@ -430,14 +437,14 @@ jobs:
             exit 1
           fi
 
-      - name: Enforce repeat-build image identity
+      - name: Enforce repeat-build platform image identity
         if: always()
         env:
           REPEAT_BUILD_OUTCOME: ${{ steps.repeat_build.outcome }}
         run: |
           set -euo pipefail
           if [[ "$REPEAT_BUILD_OUTCOME" != success ]]; then
-            echo "The repeated BuildKit run did not reproduce the exact image identity; review reproducibility.json." >&2
+            echo "The repeated BuildKit run did not reproduce the platform image payload; review reproducibility.json." >&2
             exit 1
           fi
 
@@ -447,7 +454,8 @@ jobs:
           mkdir -p "$RUNNER_TEMP/aiat-worker-evidence"
           printf '%s\n' \
             'CANDIDATE EVIDENCE ONLY: no worker registration, security approval, stewardship, grant approval, rollout, activation, or WorkerRun is asserted.' \
-            'reproducibility.json records a second independent build; image identity mismatch blocks the candidate.' \
+            'reproducibility.json compares platform image manifest and config; the OCI index and archive may differ because their embedded BuildKit provenance is run-specific.' \
+            'Each candidate OCI archive has its own separately verified GitHub provenance and SBOM attestations.' \
             'The signed GitHub attestation subject is the OCI archive file; the image index digest is recorded inside that archive and must be verified from the archived build record.' \
             'Separate GitHub build-provenance and SBOM attestations are saved with their Sigstore bundles.' \
             'Dependency scanning covers the pinned worker source and Dockerfile; image scanning covers the pinned Python base and OS packages.' \

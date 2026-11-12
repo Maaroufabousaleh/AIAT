@@ -32,8 +32,10 @@ full OCI index digest resolves in the configured local Docker daemon. The
 source commit timestamp is passed as `SOURCE_DATE_EPOCH`, and the OCI exporter
 rewrites file timestamps to that value so repeated builds do not inherit the
 build host's clock. The report records this fixed epoch in its exact invocation.
-The full OCI index digest still must be checked across repeat builds because
-embedded provenance can include invocation metadata. The
+Repeat-build evidence compares the platform image manifest and config. BuildKit
+embeds run-specific provenance in the OCI index, so the index and archive digests
+can differ while the runtime image payload is identical. Each archive receives
+separate verified GitHub provenance and SBOM attestations. The
 report includes the OCI index and `linux/amd64` platform-manifest digests,
 image labels, embedded-source hash, exact sanitized Buildx argv, and raw
 index/platform/attestation/statement linkage. It refuses to overwrite an
