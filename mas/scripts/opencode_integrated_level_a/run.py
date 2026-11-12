@@ -737,15 +737,19 @@ def _safe_compose_start_reason(output: str) -> str:
 def _safe_startup_status_reason(
     rows: list[tuple[str, str, str]],
     *,
-    expected_services: set[str],
-    completed_services: set[str],
+    config: dict[str, Any],
 ) -> str:
     """Classify disposable Compose state without returning raw status text."""
 
+    services = config.get("services") or {}
+    expected_services = set(services)
+    completed_services = set(_COMPLETED_SERVICES)
     observed = {service: (state.lower(), status.lower()) for service, state, status in rows if service in expected_services}
     if not observed:
         return "startup_containers_not_observable"
 
+    # Surface upstream failures before downstream containers left Created by
+    # Compose dependency gating.
     for service in sorted(observed):
         state, status = observed[service]
         safe_service = service.replace("-", "_")
@@ -755,6 +759,33 @@ def _safe_startup_status_reason(
             return f"profile_service_restarting:{safe_service}"
         if state == "exited" and (service not in completed_services or not re.search(r"exited \(0\)", status)):
             return f"profile_service_exited:{safe_service}"
+
+    for service in sorted(observed):
+        state, status = observed[service]
+        safe_service = service.replace("-", "_")
+        service_config = services.get(service) or {}
+        dependencies = service_config.get("depends_on") or {}
+        if isinstance(dependencies, list):
+            dependencies = {name: {"condition": "service_started"} for name in dependencies}
+        if not isinstance(dependencies, dict):
+            return f"profile_service_dependency_config_invalid:{safe_service}"
+        for dependency, specification in sorted(dependencies.items()):
+            condition = (
+                str((specification or {}).get("condition") or "service_started")
+                if isinstance(specification, dict)
+                else "service_started"
+            )
+            dependency_state, dependency_status = observed.get(dependency, ("missing", ""))
+            if condition == "service_completed_successfully":
+                ready = dependency_state == "exited" and "exited (0)" in dependency_status
+            elif condition == "service_healthy":
+                ready = dependency_state == "running" and "healthy" in dependency_status
+            else:
+                ready = dependency_state in {"running", "exited"}
+            if not ready:
+                safe_dependency = dependency.replace("-", "_")
+                return f"profile_dependency_not_ready:{safe_service}:{safe_dependency}"
+
         if state == "created" and service not in completed_services:
             return f"profile_service_created:{safe_service}"
         if state == "running" and "health: starting" in status:
@@ -801,8 +832,7 @@ def _profile_startup_timeout_reason(
             rows.append((parts[0], parts[1], parts[2]))
     return _safe_startup_status_reason(
         rows,
-        expected_services=set((config.get("services") or {}).keys()),
-        completed_services=set(_COMPLETED_SERVICES),
+        config=config,
     )
 
 

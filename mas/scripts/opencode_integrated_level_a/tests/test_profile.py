@@ -196,11 +196,32 @@ class IntegratedLevelAProfileTests(unittest.TestCase):
                 ("redis", "running", "Up 2 minutes (healthy)"),
                 ("message-router", "restarting", "Restarting (1) 5 seconds ago secret-value"),
             ],
-            expected_services={"redis", "message-router"},
-            completed_services=set(),
+            config={"services": {"redis": {}, "message-router": {}}},
         )
         self.assertEqual(reason, "profile_service_restarting:message_router")
         self.assertNotIn("secret-value", reason)
+
+    def test_compose_start_timeout_identifies_unready_dependency(self) -> None:
+        reason = MODULE._safe_startup_status_reason(
+            [
+                ("redis", "running", "Up 2 minutes (healthy)"),
+                ("redis-acl-init", "created", "Created"),
+                ("message-router", "created", "Created"),
+            ],
+            config={
+                "services": {
+                    "redis": {},
+                    "redis-acl-init": {"depends_on": {"redis": {"condition": "service_started"}}},
+                    "message-router": {
+                        "depends_on": {
+                            "redis": {"condition": "service_healthy"},
+                            "redis-acl-init": {"condition": "service_completed_successfully"},
+                        }
+                    },
+                }
+            },
+        )
+        self.assertEqual(reason, "profile_dependency_not_ready:message_router:redis_acl_init")
 
     def test_local_gateway_clients_use_the_profile_master_key(self) -> None:
         config = rendered_config()
