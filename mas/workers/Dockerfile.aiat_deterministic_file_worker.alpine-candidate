@@ -6,6 +6,12 @@ ARG SOURCE_DATE_EPOCH
 ARG AIAT_WORKER_SOURCE_SHA256
 ARG AIAT_WORKER_SOURCE_REVISION
 
+# The pinned Python base currently carries a vulnerable krb5-libs package as
+# part of its Python runtime dependencies. Upgrade only that inherited package
+# to the fixed Alpine release; keep the dependency and its security features.
+RUN apk add --no-cache 'krb5-libs=1.22.3-r0' \
+    && test "$(apk info -v krb5-libs)" = "krb5-libs-1.22.3-r0"
+
 RUN python3 -m pip uninstall --yes setuptools wheel jaraco.context \
     && rm -rf \
         /usr/local/lib/python3.11/site-packages/pip \
