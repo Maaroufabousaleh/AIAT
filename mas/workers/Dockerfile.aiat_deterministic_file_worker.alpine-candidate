@@ -10,7 +10,7 @@ ARG AIAT_WORKER_SOURCE_REVISION
 # part of its Python runtime dependencies. Upgrade only that inherited package
 # to the fixed Alpine release; keep the dependency and its security features.
 RUN apk add --no-cache 'krb5-libs=1.22.3-r0' \
-    && test "$(apk info -v krb5-libs)" = "krb5-libs-1.22.3-r0"
+    && apk info -v | grep -Fxq 'krb5-libs-1.22.3-r0'
 
 RUN python3 -m pip uninstall --yes setuptools wheel jaraco.context \
     && rm -rf \
