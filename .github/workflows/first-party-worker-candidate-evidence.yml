@@ -154,6 +154,16 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: false
 
+      - name: Evaluate Python Alpine base candidate (exploratory)
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: python:3.11-alpine@sha256:bb1d70c1df30d8ee1e05214dbe82d6cdfd29833c1f47ce917f20991aca93acaa
+          format: json
+          output: ${{ runner.temp }}/aiat-worker-evidence/python-alpine-base-scan.json
+          exit-code: "0"
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+
       - name: Scan repository secrets
         uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
@@ -367,6 +377,7 @@ jobs:
             --report pinned_worker_image="$RUNNER_TEMP/aiat-worker-evidence/trivy-image.json" \
             --report worker_dependencies="$RUNNER_TEMP/aiat-worker-evidence/trivy-dependencies.json" \
             --report refreshed_python_base="$RUNNER_TEMP/aiat-worker-evidence/refreshed-python-base-scan.json" \
+            --report python_alpine_base_candidate="$RUNNER_TEMP/aiat-worker-evidence/python-alpine-base-scan.json" \
             --sbom "$RUNNER_TEMP/aiat-worker-evidence/image-sbom.cdx.json" \
             --output "$RUNNER_TEMP/aiat-worker-evidence/trivy-summary.json"
 
@@ -486,6 +497,7 @@ jobs:
             'Separate GitHub build-provenance and SBOM attestations are saved with their Sigstore bundles.' \
             'Dependency scanning covers the pinned worker source and Dockerfile; image scanning covers the pinned Python base and OS packages.' \
             'The refreshed Python base image scan is exploratory evidence only; it does not change or approve the governed worker image pin.' \
+            'The Python Alpine base scan is exploratory evidence only; it is not a built or approved worker image and does not change any governed pin.' \
             'A digest mismatch blocks applicability to the checked-in worker pin; review as a new candidate and update all governed pins only through the normal process.' \
             > "$RUNNER_TEMP/aiat-worker-evidence/SCOPE.txt"
 
