@@ -51,6 +51,27 @@ def test_summarize_trivy_rejects_missing_or_invalid_results(tmp_path: Path) -> N
         summarize_report(report_path)
 
 
+def test_summarize_trivy_accepts_valid_empty_results(tmp_path: Path) -> None:
+    report_path = tmp_path / "empty.json"
+    report_path.write_text(
+        json.dumps(
+            {
+                "SchemaVersion": 2,
+                "ArtifactName": "source-only-context",
+                "ArtifactType": "filesystem",
+                "Results": None,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    summary = summarize_report(report_path)
+
+    assert summary["status"] == "read"
+    assert summary["result_count"] == 0
+    assert summary["finding_count"] == 0
+
+
 def test_summarize_cyclonedx_component_count(tmp_path: Path) -> None:
     sbom_path = tmp_path / "sbom.json"
     sbom_path.write_text(json.dumps({"components": [{"name": "python"}, {"name": "openssl"}]}))

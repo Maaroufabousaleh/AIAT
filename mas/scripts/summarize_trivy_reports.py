@@ -15,6 +15,10 @@ def summarize_report(path: Path) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError(f"Trivy report is unavailable or invalid: {path.name}") from exc
     results = report.get("Results")
+    if results is None and all(
+        key in report for key in ("SchemaVersion", "ArtifactName", "ArtifactType")
+    ):
+        results = []
     if not isinstance(results, list):
         raise ValueError(f"Trivy report has no Results array: {path.name}")
 
@@ -42,6 +46,7 @@ def summarize_report(path: Path) -> dict[str, Any]:
     return {
         "status": "read",
         "report": path.name,
+        "result_count": len(results),
         "finding_count": len(findings),
         "severity_counts": dict(sorted(counts.items())),
         "high_critical_count": counts["HIGH"] + counts["CRITICAL"],
