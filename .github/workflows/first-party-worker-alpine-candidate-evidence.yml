@@ -187,8 +187,8 @@ jobs:
           image_manifest = json.loads(manifest_bytes)
           config_bytes = blob(image_manifest["config"])
           config_digest = "sha256:" + hashlib.sha256(config_bytes).hexdigest()
-          if inspected.get("Id") != config_digest:
-              raise SystemExit("loaded Docker image config digest differs from the OCI archive")
+          if inspected.get("Id") != output_digest:
+              raise SystemExit("loaded Docker image ID differs from the OCI index digest")
           config = json.loads(config_bytes)
           labels = (config.get("config") or {}).get("Labels") or {}
           expected_revision = os.environ["CANDIDATE_SHA"]
