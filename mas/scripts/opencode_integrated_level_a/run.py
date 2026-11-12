@@ -106,6 +106,9 @@ _HEALTHY_SERVICES = (
     "worker-host",
 )
 _COMPLETED_SERVICES = ("migrate", "minio-init", "workspace-init", "redis-acl-init")
+# First-run CI must allow image extraction and Compose health-gated dependencies
+# to settle; the disposable stack remains bounded to ten minutes.
+_PROFILE_COMPOSE_UP_TIMEOUT_SECONDS = 600
 
 
 class HarnessError(RuntimeError):
@@ -1545,7 +1548,15 @@ def run_profile(
             if built.returncode:
                 reason = _safe_image_build_failure_reason(built.stdout + "\n" + built.stderr)
                 raise HarnessError(f"profile_image_build_failed:{reason}")
-            up = _run(base + ["up", "--detach", "--remove-orphans"], env=env, timeout=240, check=False)
+            try:
+                up = _run(
+                    base + ["up", "--detach", "--remove-orphans"],
+                    env=env,
+                    timeout=_PROFILE_COMPOSE_UP_TIMEOUT_SECONDS,
+                    check=False,
+                )
+            except HarnessError as exc:
+                raise HarnessError("isolated_compose_start_unavailable_or_timed_out") from exc
             if up.returncode:
                 diagnostic = _safe_compose_start_reason(up.stdout + "\n" + up.stderr)
                 raise HarnessError(f"isolated_compose_start_failed:{diagnostic}")
