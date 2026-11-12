@@ -44,6 +44,7 @@ BUILD_CONTEXT_PATHS = (
     "companies",
     "docs/provenance/openhands-candidate",
     "infra/compose/Dockerfile.redis-acl-init",
+    "infra/compose/Dockerfile.level-a-minio",
     "infra/compose/redis-acl-init.sh",
     "infra/docker/Dockerfile.message-router",
     "infra/docker/Dockerfile.opencode",
@@ -332,6 +333,7 @@ def _prepare_build_context(destination: Path) -> Path:
 
 def _write_build_override(path: Path, context: Path) -> Path:
     services = (
+        "minio",
         "message-router",
         "tool-service",
         "redis-acl-init",
@@ -420,6 +422,7 @@ def _assert_profile_config(config: dict[str, Any]) -> None:
 
     namespace = str(config.get("name") or "")
     expected_image_suffixes = {
+        "minio": "minio-tools:local",
         "message-router": "message-router:local",
         "tool-service": "tool-service:local",
         "redis-acl-init": "redis-acl-init:local",
@@ -434,6 +437,17 @@ def _assert_profile_config(config: dict[str, Any]) -> None:
     for service_name, suffix in expected_image_suffixes.items():
         if services[service_name].get("image") != f"{namespace}/{suffix}":
             raise HarnessError(f"profile_image_not_uniquely_namespaced:{service_name}")
+    if services["minio-init"].get("image") != services["minio"].get("image"):
+        raise HarnessError("minio_initializer_image_must_match_server_release")
+    minio_build = services["minio"].get("build") or {}
+    if minio_build.get("dockerfile") != "infra/compose/Dockerfile.level-a-minio":
+        raise HarnessError("minio_test_image_must_use_checksum_pinned_upstream_binaries")
+    minio_dockerfile = (MAS_ROOT / "infra/compose/Dockerfile.level-a-minio").read_text(encoding="utf-8")
+    if (
+        "7c5bd8512c6e966455b1d198209358b2d191c77a83ab377c4073281065fb855f" not in minio_dockerfile
+        or "01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891" not in minio_dockerfile
+    ):
+        raise HarnessError("minio_test_binary_checksum_missing")
 
     sandbox_services = {"provider-fixture", "litellm", "tool-service", "opencode-runtime", "orchestrator-api", "worker-host"}
     control_services = {"postgres", "redis", "redis-acl-init", "minio", "minio-init", "message-router", "tool-service", "migrate", "orchestrator-api", "worker-host"}
@@ -712,6 +726,7 @@ def _profile_image_tags(namespace: str) -> tuple[str, ...]:
     if not PROJECT_RE.fullmatch(namespace):
         raise HarnessError("profile_image_namespace_invalid")
     return (
+        f"{namespace}/minio-tools:local",
         f"{namespace}/message-router:local",
         f"{namespace}/tool-service:local",
         f"{namespace}/redis-acl-init:local",
@@ -805,6 +820,56 @@ test "$reply" != PONG
     )
     if repeated.returncode:
         raise HarnessError("redis_acl_repeat_initialization_failed")
+
+
+def _verify_minio_test_image(
+    base: list[str], config: dict[str, Any], env: dict[str, str]
+) -> dict[str, str]:
+    image = str(config["services"]["minio"].get("image") or "")
+    inspected = _run(
+        ["docker", "image", "inspect", "--format", "{{.Id}}", image],
+        env=env,
+        timeout=15,
+        check=False,
+    )
+    image_id = inspected.stdout.strip()
+    if inspected.returncode or not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
+        raise HarnessError("minio_test_image_identity_unavailable")
+
+    server = _run(
+        base + ["exec", "-T", "minio", "/usr/local/bin/minio", "--version"],
+        env=env,
+        timeout=15,
+        check=False,
+    )
+    client = _run(
+        base
+        + [
+            "run",
+            "--rm",
+            "--no-deps",
+            "--entrypoint",
+            "/usr/local/bin/mc",
+            "minio-init",
+            "--version",
+        ],
+        env=env,
+        timeout=30,
+        check=False,
+    )
+    if (
+        server.returncode
+        or "RELEASE.2025-09-07T16-13-09Z" not in server.stdout
+        or client.returncode
+        or "RELEASE.2025-08-13T08-35-41Z" not in client.stdout
+    ):
+        raise HarnessError("minio_test_binary_release_identity_mismatch")
+    return {
+        "image_id": image_id,
+        "server_release": "RELEASE.2025-09-07T16-13-09Z",
+        "client_release": "RELEASE.2025-08-13T08-35-41Z",
+        "image_source": "upstream GitHub release binaries verified by SHA-256",
+    }
 
 
 def _select_worker_id(workers: Any, worker_name: str) -> str | None:
@@ -1457,11 +1522,13 @@ def run_profile(
                 _wait_for_container_state(base, service, env, expected="completed")
             for service in _HEALTHY_SERVICES:
                 _wait_for_container_state(base, service, env, expected="healthy")
+            minio_evidence = _verify_minio_test_image(base, config, env)
             _verify_redis_acl_profile(base, env)
             stack = {
                 "project": project,
                 "services_healthy": list(_HEALTHY_SERVICES),
                 "migrations_completed": True,
+                "minio": minio_evidence,
                 "redis_acl": {
                     "bootstrap_disabled_effective_and_persisted": True,
                     "separate_router_and_toolcache_identities_verified": True,

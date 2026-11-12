@@ -88,7 +88,10 @@ services:
       com.aiat.profile: opencode-integrated-level-a
 
   minio:
-    image: quay.io/minio/minio:latest@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    image: ${AIAT_LEVEL_A_IMAGE_NAMESPACE:?runner must generate a unique disposable image namespace}/minio-tools:local
+    build:
+      context: ../..
+      dockerfile: infra/compose/Dockerfile.level-a-minio
     pull_policy: never
     restart: "no"
     command: [server, /data, --console-address, ":9001"]
@@ -99,7 +102,7 @@ services:
       - level_a_minio_data:/data
     networks: [control]
     healthcheck:
-      test: [CMD, mc, ready, local]
+      test: [CMD-SHELL, wget -q -O /dev/null http://127.0.0.1:9000/minio/health/ready]
       interval: 2s
       timeout: 2s
       retries: 30
@@ -108,7 +111,7 @@ services:
       com.aiat.profile: opencode-integrated-level-a
 
   minio-init:
-    image: quay.io/minio/mc:latest@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
+    image: ${AIAT_LEVEL_A_IMAGE_NAMESPACE:?runner must generate a unique disposable image namespace}/minio-tools:local
     pull_policy: never
     restart: "no"
     entrypoint: [/bin/sh, -ec]

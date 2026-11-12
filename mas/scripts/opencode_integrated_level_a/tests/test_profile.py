@@ -6,6 +6,7 @@ import contextlib
 import copy
 import importlib.util
 import io
+import json
 import shutil
 import socket as socket_module
 import unittest
@@ -98,6 +99,27 @@ class IntegratedLevelAProfileTests(unittest.TestCase):
         services["message-router"]["environment"]["REDIS_URL"] = "redis://redis:6379/0"
         with self.assertRaisesRegex(MODULE.HarnessError, "redis_service_identity_invalid:message-router"):
             MODULE._assert_profile_config(config)
+
+    def test_minio_profile_uses_checksum_pinned_upstream_binaries(self) -> None:
+        config = rendered_config()
+        services = config["services"]
+        self.assertEqual(services["minio"]["image"], services["minio-init"]["image"])
+        self.assertTrue(services["minio"]["image"].endswith("/minio-tools:local"))
+        self.assertEqual(
+            services["minio"]["build"]["dockerfile"],
+            "infra/compose/Dockerfile.level-a-minio",
+        )
+        healthcheck = json.dumps(services["minio"]["healthcheck"])
+        self.assertIn("/minio/health/ready", healthcheck)
+        dockerfile = (MODULE.MAS_ROOT / "infra/compose/Dockerfile.level-a-minio").read_text(encoding="utf-8")
+        self.assertIn(
+            "7c5bd8512c6e966455b1d198209358b2d191c77a83ab377c4073281065fb855f",
+            dockerfile,
+        )
+        self.assertIn(
+            "01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891",
+            dockerfile,
+        )
 
     def test_base_image_check_accepts_a_profile_built_image_shared_by_host(self) -> None:
         commands: list[list[str]] = []

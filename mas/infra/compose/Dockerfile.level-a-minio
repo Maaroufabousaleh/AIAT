@@ -1,0 +1,18 @@
+FROM alpine:3.21.3@sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c
+
+# The official MinIO Quay repositories deny anonymous pulls in CI. Build this
+# disposable Level A image from the upstream release binaries instead. These
+# are upstream GitHub release asset SHA-256 values; production image pins stay
+# unchanged.
+RUN set -eu; \
+    wget -q -O /usr/local/bin/minio \
+      https://github.com/minio/minio/releases/download/RELEASE.2025-09-07T16-13-09Z/minio.linux-amd64.RELEASE.2025-09-07T16-13-09Z; \
+    echo '7c5bd8512c6e966455b1d198209358b2d191c77a83ab377c4073281065fb855f  /usr/local/bin/minio' | sha256sum -c -; \
+    wget -q -O /usr/local/bin/mc \
+      https://github.com/minio/mc/releases/download/RELEASE.2025-08-13T08-35-41Z/mc.linux-amd64.RELEASE.2025-08-13T08-35-41Z; \
+    echo '01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891  /usr/local/bin/mc' | sha256sum -c -; \
+    chmod 0555 /usr/local/bin/minio /usr/local/bin/mc; \
+    /usr/local/bin/minio --version | grep -F 'RELEASE.2025-09-07T16-13-09Z'; \
+    /usr/local/bin/mc --version | grep -F 'RELEASE.2025-08-13T08-35-41Z'
+
+ENTRYPOINT ["minio"]
