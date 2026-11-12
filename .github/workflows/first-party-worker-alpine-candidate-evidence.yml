@@ -1,0 +1,526 @@
+name: First-party worker Alpine candidate evidence (not approval)
+
+on:
+  push:
+    branches:
+      - agent/fix-review-p1
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
+jobs:
+  alpine-candidate:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: mas
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Verify clean native Linux candidate
+        env:
+          CANDIDATE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain)"
+          test "$(uname -s)" = Linux
+          ! uname -r | grep -Eiq 'microsoft|wsl'
+          mkdir -p "$RUNNER_TEMP/aiat-worker-alpine-evidence"
+          printf '%s\n' "$CANDIDATE_SHA" > "$RUNNER_TEMP/aiat-worker-alpine-evidence/source-commit.txt"
+          uname -a > "$RUNNER_TEMP/aiat-worker-alpine-evidence/host.txt"
+          docker version
+          docker buildx version
+
+      - name: Install gVisor on the disposable native Linux runner
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y apt-transport-https ca-certificates curl gnupg
+          curl -fsSL https://gvisor.dev/archive.key \
+            | sudo gpg --dearmor --yes -o /usr/share/keyrings/gvisor-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] https://storage.googleapis.com/gvisor/releases release main" \
+            | sudo tee /etc/apt/sources.list.d/gvisor.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y runsc
+          runsc --version | tee "$RUNNER_TEMP/aiat-worker-alpine-evidence/runsc-version.txt"
+          sudo runsc install
+          sudo python3 - <<'PY'
+          import json
+          import os
+          import stat
+          import tempfile
+          from pathlib import Path
+
+          path = Path("/etc/docker/daemon.json")
+          config = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+          if not isinstance(config, dict):
+              raise SystemExit("Docker daemon configuration must be a JSON object")
+          features = config.setdefault("features", {})
+          if not isinstance(features, dict):
+              raise SystemExit("Docker daemon features must be a JSON object")
+          features["containerd-snapshotter"] = True
+          mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o644
+          with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as handle:
+              json.dump(config, handle, sort_keys=True, indent=2)
+              handle.write("\n")
+              temporary = Path(handle.name)
+          os.chmod(temporary, mode)
+          os.replace(temporary, path)
+          PY
+          sudo systemctl restart docker
+          docker info --format '{{json .DriverStatus}}' \
+            | tee "$RUNNER_TEMP/aiat-worker-alpine-evidence/image-store.txt"
+          grep -q 'io.containerd.snapshotter.v1' "$RUNNER_TEMP/aiat-worker-alpine-evidence/image-store.txt"
+
+      - name: Create pinned BuildKit builder
+        env:
+          BUILDKIT_IMAGE: moby/buildkit:v0.34.2@sha256:c5f8862f52499773af85bc07695b2379ef08e8002352b0df2c4864c91d78dabe
+        run: |
+          set -euo pipefail
+          docker buildx create --name aiat-worker-alpine-candidate \
+            --driver docker-container --driver-opt "image=$BUILDKIT_IMAGE" --use
+          docker buildx inspect --bootstrap aiat-worker-alpine-candidate \
+            | tee "$RUNNER_TEMP/aiat-worker-alpine-evidence/buildkit-builder.txt"
+          printf '%s\n' "$BUILDKIT_IMAGE" \
+            > "$RUNNER_TEMP/aiat-worker-alpine-evidence/buildkit-image-ref.txt"
+
+      - name: Stage bounded worker build context
+        id: context
+        env:
+          CANDIDATE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/aiat-worker-alpine-evidence"
+          context="$root/context"
+          mkdir -p "$context"
+          git show "$CANDIDATE_SHA:mas/workers/Dockerfile.aiat_deterministic_file_worker.alpine-candidate" > "$context/Dockerfile"
+          git show "$CANDIDATE_SHA:mas/workers/aiat_deterministic_file_worker_process.py" > "$context/aiat_deterministic_file_worker_process.py"
+          source_sha="$(sha256sum "$context/aiat_deterministic_file_worker_process.py" | awk '{print $1}')"
+          revision_epoch="$(git show -s --format=%ct "$CANDIDATE_SHA")"
+          touch -d "@$revision_epoch" "$context/Dockerfile" "$context/aiat_deterministic_file_worker_process.py" "$context"
+          printf '%s\n' "$source_sha" > "$root/source-sha256.txt"
+          printf '%s\n' "$revision_epoch" > "$root/source-date-epoch.txt"
+          printf 'source_sha=%s\n' "$source_sha" >> "$GITHUB_OUTPUT"
+          printf 'source_epoch=%s\n' "$revision_epoch" >> "$GITHUB_OUTPUT"
+
+      - name: Build Alpine worker candidate and retain OCI provenance
+        id: build
+        env:
+          CANDIDATE_SHA: ${{ github.sha }}
+          SOURCE_SHA: ${{ steps.context.outputs.source_sha }}
+          SOURCE_EPOCH: ${{ steps.context.outputs.source_epoch }}
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/aiat-worker-alpine-evidence"
+          image_ref="aiat-deterministic-file-worker:alpine-candidate-${CANDIDATE_SHA:0:12}"
+          docker buildx build --builder aiat-worker-alpine-candidate \
+            --platform linux/amd64 --provenance=mode=max --sbom=false \
+            --metadata-file "$root/buildx-metadata.json" \
+            --build-arg "SOURCE_DATE_EPOCH=$SOURCE_EPOCH" \
+            --build-arg "AIAT_WORKER_SOURCE_SHA256=$SOURCE_SHA" \
+            --build-arg "AIAT_WORKER_SOURCE_REVISION=$CANDIDATE_SHA" \
+            --output "type=oci,dest=$root/candidate.oci.tar,rewrite-timestamp=true" \
+            --file "$root/context/Dockerfile" "$root/context"
+          oci_digest="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["containerimage.digest"])' "$root/buildx-metadata.json")"
+          test "$oci_digest" != ""
+          docker load --input "$root/candidate.oci.tar" | tee "$root/docker-load.txt"
+          docker image tag "$oci_digest" "$image_ref"
+          printf '%s\n' "$image_ref" > "$root/image-ref.txt"
+          printf 'image_ref=%s\n' "$image_ref" >> "$GITHUB_OUTPUT"
+          docker image inspect "$image_ref" > "$root/docker-image-inspect.json"
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import tarfile
+          from pathlib import Path
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "aiat-worker-alpine-evidence"
+          archive = root / "candidate.oci.tar"
+          metadata = json.loads((root / "buildx-metadata.json").read_text(encoding="utf-8"))
+          inspected = json.loads((root / "docker-image-inspect.json").read_text(encoding="utf-8"))[0]
+          files = {}
+          with tarfile.open(archive, mode="r:") as bundle:
+              for member in bundle.getmembers():
+                  if member.isfile():
+                      stream = bundle.extractfile(member)
+                      if stream is not None:
+                          files[member.name] = stream.read()
+
+          def blob(descriptor):
+              digest = descriptor["digest"]
+              algorithm, value = digest.split(":", 1)
+              if algorithm != "sha256":
+                  raise SystemExit("candidate OCI archive uses a non-SHA256 descriptor")
+              data = files.get(f"blobs/sha256/{value}")
+              if data is None or hashlib.sha256(data).hexdigest() != value:
+                  raise SystemExit("candidate OCI descriptor does not match archive bytes")
+              if descriptor.get("size") != len(data):
+                  raise SystemExit("candidate OCI descriptor size is inconsistent")
+              return data
+
+          root_index = json.loads(files["index.json"])
+          if root_index.get("schemaVersion") != 2 or len(root_index.get("manifests", [])) != 1:
+              raise SystemExit("candidate archive has an unexpected OCI root index")
+          output_descriptor = root_index["manifests"][0]
+          output_bytes = blob(output_descriptor)
+          output_index = json.loads(output_bytes)
+          output_digest = "sha256:" + hashlib.sha256(output_bytes).hexdigest()
+          if metadata.get("containerimage.digest") != output_digest:
+              raise SystemExit("Buildx metadata does not match the candidate OCI index")
+          images = [row for row in output_index.get("manifests", [])
+                    if (row.get("platform") or {}).get("os") == "linux"
+                    and (row.get("platform") or {}).get("architecture") == "amd64"]
+          if len(images) != 1:
+              raise SystemExit("candidate archive must contain exactly one linux/amd64 image")
+          image_descriptor = images[0]
+          manifest_bytes = blob(image_descriptor)
+          image_manifest = json.loads(manifest_bytes)
+          config_bytes = blob(image_manifest["config"])
+          config_digest = "sha256:" + hashlib.sha256(config_bytes).hexdigest()
+          if inspected.get("Id") != config_digest:
+              raise SystemExit("loaded Docker image config digest differs from the OCI archive")
+          config = json.loads(config_bytes)
+          labels = (config.get("config") or {}).get("Labels") or {}
+          expected_revision = os.environ["CANDIDATE_SHA"]
+          expected_source = os.environ["SOURCE_SHA"]
+          if labels.get("org.opencontainers.image.revision") != expected_revision:
+              raise SystemExit("image revision label differs from the exact source commit")
+          if labels.get("com.aiat.worker.source-sha256") != expected_source:
+              raise SystemExit("image worker-source hash label differs from the staged source")
+          if labels.get("org.opencontainers.image.version") != "0.1.2-alpine-candidate":
+              raise SystemExit("candidate version label is unexpected")
+          attestations = [row for row in output_index.get("manifests", [])
+                          if ((row.get("annotations") or {}).get("vnd.docker.reference.type") == "attestation-manifest")]
+          if len(attestations) != 1:
+              raise SystemExit("candidate OCI index must contain one BuildKit provenance attestation")
+          attestation_manifest = json.loads(blob(attestations[0]))
+          if attestation_manifest.get("subject", {}).get("digest") != image_descriptor["digest"]:
+              raise SystemExit("BuildKit attestation subject differs from the platform image manifest")
+          statement_layers = [layer for layer in attestation_manifest.get("layers", [])
+                              if (layer.get("annotations") or {}).get("in-toto.io/predicate-type") == "https://slsa.dev/provenance/v1"]
+          if len(statement_layers) != 1:
+              raise SystemExit("BuildKit attestation has no unique SLSA provenance statement")
+          statement = json.loads(blob(statement_layers[0]))
+          predicate = statement.get("predicate") or {}
+          build_definition = predicate.get("buildDefinition") or {}
+          materials = build_definition.get("resolvedDependencies") or []
+          allowed_base_digests = {
+              "7fbad8e4652eae0186429a6f26cf5b23e27e8c6fd7ac4d0cfd7a6988cdeea1e1",
+              "769f2b47fc4722cc68ce31b9629672b2253919ce8286197c9d4fec7bf44c9ae5",
+          }
+          if not any(allowed_base_digests.intersection((item.get("digest") or {}).values()) for item in materials):
+              raise SystemExit("BuildKit provenance does not identify the pinned Python base digest")
+          request = ((build_definition.get("externalParameters") or {}).get("request") or {})
+          build_args = request.get("args") or {}
+          if build_args.get("build-arg:AIAT_WORKER_SOURCE_REVISION") != expected_revision:
+              raise SystemExit("BuildKit provenance does not bind the exact candidate source revision")
+          if build_args.get("build-arg:AIAT_WORKER_SOURCE_SHA256") != expected_source:
+              raise SystemExit("BuildKit provenance does not bind the worker source hash")
+          source_infos = (((predicate.get("runDetails") or {}).get("metadata") or {})
+                          .get("buildkit_metadata", {}).get("source", {}).get("infos", []))
+          recipe = next((item for item in source_infos if item.get("filename") == "Dockerfile"), None)
+          if not recipe or not isinstance(recipe.get("data"), str):
+              raise SystemExit("BuildKit provenance does not retain the candidate Dockerfile")
+          import base64
+          try:
+              recipe_bytes = base64.b64decode(recipe["data"], validate=True)
+          except ValueError as exc:
+              raise SystemExit("BuildKit provenance Dockerfile source is malformed") from exc
+          dockerfile_hash = hashlib.sha256((root / "context/Dockerfile").read_bytes()).hexdigest()
+          if hashlib.sha256(recipe_bytes).hexdigest() != dockerfile_hash:
+              raise SystemExit("BuildKit provenance Dockerfile differs from the reviewed candidate recipe")
+          candidate = {
+              "schema_version": "aiat.worker.alpine-image-candidate.v1",
+              "status": "build_identity_verified",
+              "source_revision": expected_revision,
+              "worker_source_sha256": expected_source,
+              "dockerfile_sha256": hashlib.sha256((root / "context/Dockerfile").read_bytes()).hexdigest(),
+              "base_image_ref": "python:3.11.18-alpine3.24@sha256:7fbad8e4652eae0186429a6f26cf5b23e27e8c6fd7ac4d0cfd7a6988cdeea1e1",
+              "oci_archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+              "oci_index_digest": output_digest,
+              "platform_manifest_digest": image_descriptor["digest"],
+              "config_digest": config_digest,
+              "docker_image_id": inspected.get("Id"),
+              "docker_image_size_bytes": inspected.get("Size"),
+              "runtime_reference": (root / "image-ref.txt").read_text(encoding="utf-8").strip(),
+              "registry_published": False,
+              "governed_worker_pin_changed": False,
+              "buildkit_slsa_base_and_source_binding_verified": True,
+              "buildkit_builder_authenticated": False,
+              "github_workflow_attestation_subject": "candidate.oci.tar",
+          }
+          (root / "candidate-image.json").write_text(json.dumps(candidate, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+          print(json.dumps({key: candidate[key] for key in ("source_revision", "oci_index_digest", "platform_manifest_digest", "config_digest", "docker_image_size_bytes")}))
+          PY
+
+      - name: Rebuild candidate and compare immutable platform identity
+        id: repeat
+        continue-on-error: true
+        env:
+          CANDIDATE_SHA: ${{ github.sha }}
+          SOURCE_SHA: ${{ steps.context.outputs.source_sha }}
+          SOURCE_EPOCH: ${{ steps.context.outputs.source_epoch }}
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/aiat-worker-alpine-evidence"
+          docker buildx build --builder aiat-worker-alpine-candidate \
+            --platform linux/amd64 --provenance=mode=max --sbom=false \
+            --metadata-file "$root/buildx-metadata-repeat.json" \
+            --build-arg "SOURCE_DATE_EPOCH=$SOURCE_EPOCH" \
+            --build-arg "AIAT_WORKER_SOURCE_SHA256=$SOURCE_SHA" \
+            --build-arg "AIAT_WORKER_SOURCE_REVISION=$CANDIDATE_SHA" \
+            --output "type=oci,dest=$root/candidate.repeat.oci.tar,rewrite-timestamp=true" \
+            --file "$root/context/Dockerfile" "$root/context"
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import tarfile
+          from pathlib import Path
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "aiat-worker-alpine-evidence"
+
+          def identity(path):
+              with tarfile.open(path, mode="r:") as bundle:
+                  files = {member.name: bundle.extractfile(member).read()
+                           for member in bundle.getmembers()
+                           if member.isfile() and bundle.extractfile(member) is not None}
+              def blob(descriptor):
+                  digest = descriptor["digest"].split(":", 1)[1]
+                  raw = files[f"blobs/sha256/{digest}"]
+                  if hashlib.sha256(raw).hexdigest() != digest or descriptor.get("size") != len(raw):
+                      raise SystemExit("repeat OCI archive descriptor validation failed")
+                  return raw
+              root_index = json.loads(files["index.json"])
+              out_index = json.loads(blob(root_index["manifests"][0]))
+              images = [row for row in out_index["manifests"]
+                        if (row.get("platform") or {}).get("os") == "linux"
+                        and (row.get("platform") or {}).get("architecture") == "amd64"]
+              if len(images) != 1:
+                  raise SystemExit("repeat OCI archive has no unique linux/amd64 image")
+              image_manifest = json.loads(blob(images[0]))
+              config = image_manifest["config"]["digest"]
+              return {"platform_manifest_digest": images[0]["digest"], "config_digest": config}
+
+          first = json.loads((root / "candidate-image.json").read_text(encoding="utf-8"))
+          second = identity(root / "candidate.repeat.oci.tar")
+          same = (first["platform_manifest_digest"] == second["platform_manifest_digest"]
+                  and first["config_digest"] == second["config_digest"])
+          report = {
+              "schema_version": "aiat.worker.repeat-build-identity.v1",
+              "status": "image_payload_reproduced" if same else "image_payload_mismatch",
+              "first": {key: first[key] for key in ("platform_manifest_digest", "config_digest")},
+              "second": second,
+              "same_platform_image_identity": same,
+              "same_oci_index_digest": first["oci_index_digest"] == json.loads(
+                  (root / "buildx-metadata-repeat.json").read_text(encoding="utf-8")
+              ).get("containerimage.digest"),
+          }
+          (root / "reproducibility.json").write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+          print(json.dumps(report, sort_keys=True))
+          if not same:
+              raise SystemExit("repeat candidate build did not reproduce the runtime image")
+          PY
+
+      - name: Run actual worker process under gVisor
+        id: runtime
+        env:
+          IMAGE_REF: ${{ steps.build.outputs.image_ref }}
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/aiat-worker-alpine-evidence"
+          python3 scripts/worker_image_runtime_smoke.py \
+            --image-ref "$IMAGE_REF" --runtime runsc \
+            --output "$root/native-gvisor-worker-smoke.json"
+
+      - name: Scan candidate image for critical and high vulnerabilities
+        id: image_scan
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: ${{ steps.build.outputs.image_ref }}
+          format: json
+          output: ${{ runner.temp }}/aiat-worker-alpine-evidence/trivy-image.json
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+
+      - name: Scan source and candidate Dockerfile dependencies
+        id: dependency_scan
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: ${{ runner.temp }}/aiat-worker-alpine-evidence/context
+          format: json
+          output: ${{ runner.temp }}/aiat-worker-alpine-evidence/trivy-dependencies.json
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+
+      - name: Generate candidate CycloneDX SBOM
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/aiat-worker-alpine-evidence"
+          archive="$RUNNER_TEMP/syft_1.51.0_linux_amd64.tar.gz"
+          mkdir -p "$RUNNER_TEMP/aiat-syft"
+          curl -fsSL https://github.com/anchore/syft/releases/download/v1.51.0/syft_1.51.0_linux_amd64.tar.gz -o "$archive"
+          echo '2a2e837a2c8d59ec9af5472ee22d3b04ee463c4e44476ecf993fd1e5ab6ebc7f  '"$archive" | sha256sum -c -
+          tar -xzf "$archive" -C "$RUNNER_TEMP/aiat-syft" syft
+          "$RUNNER_TEMP/aiat-syft/syft" version > "$root/syft-version.txt"
+          "$RUNNER_TEMP/aiat-syft/syft" "${{ steps.build.outputs.image_ref }}" \
+            -o cyclonedx-json="$root/image-sbom.cdx.json"
+
+      - name: Attest candidate OCI archive provenance
+        id: provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/aiat-worker-alpine-evidence/candidate.oci.tar
+          subject-name: aiat-deterministic-file-worker-alpine-candidate-oci-archive
+          push-to-registry: false
+          create-storage-record: false
+
+      - name: Attest candidate OCI archive SBOM
+        id: sbom
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/aiat-worker-alpine-evidence/candidate.oci.tar
+          subject-name: aiat-deterministic-file-worker-alpine-candidate-oci-archive
+          sbom-path: ${{ runner.temp }}/aiat-worker-alpine-evidence/image-sbom.cdx.json
+          push-to-registry: false
+          create-storage-record: false
+
+      - name: Save and verify candidate attestations
+        id: attest_verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROVENANCE_ID: ${{ steps.provenance.outputs.attestation-id }}
+          PROVENANCE_URL: ${{ steps.provenance.outputs.attestation-url }}
+          PROVENANCE_BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+          SBOM_ID: ${{ steps.sbom.outputs.attestation-id }}
+          SBOM_URL: ${{ steps.sbom.outputs.attestation-url }}
+          SBOM_BUNDLE: ${{ steps.sbom.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/aiat-worker-alpine-evidence"
+          cp "$PROVENANCE_BUNDLE" "$root/provenance.sigstore.json"
+          cp "$SBOM_BUNDLE" "$root/sbom.sigstore.json"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          root = Path(os.environ["RUNNER_TEMP"]) / "aiat-worker-alpine-evidence"
+          refs = {
+              "provenance": {"attestation_id": os.environ["PROVENANCE_ID"], "attestation_url": os.environ["PROVENANCE_URL"], "bundle": "provenance.sigstore.json"},
+              "sbom": {"attestation_id": os.environ["SBOM_ID"], "attestation_url": os.environ["SBOM_URL"], "bundle": "sbom.sigstore.json"},
+          }
+          (root / "attestation-references.json").write_text(json.dumps(refs, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+          PY
+          signer="$GITHUB_REPOSITORY/.github/workflows/first-party-worker-alpine-candidate-evidence.yml"
+          gh attestation verify "$root/candidate.oci.tar" --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$signer" --format json > "$root/provenance-verification.json"
+          gh attestation verify "$root/candidate.oci.tar" --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$signer" --predicate-type https://cyclonedx.org/bom \
+            --format json > "$root/sbom-verification.json"
+
+      - name: Enforce candidate release evidence gates
+        if: always()
+        env:
+          IMAGE_SCAN_OUTCOME: ${{ steps.image_scan.outcome }}
+          DEPENDENCY_SCAN_OUTCOME: ${{ steps.dependency_scan.outcome }}
+          REPEAT_OUTCOME: ${{ steps.repeat.outcome }}
+          RUNTIME_OUTCOME: ${{ steps.runtime.outcome }}
+          ATTESTATION_OUTCOME: ${{ steps.attest_verify.outcome }}
+        run: |
+          set -euo pipefail
+          failures=()
+          [[ "$IMAGE_SCAN_OUTCOME" == success ]] || failures+=("critical/high image scan")
+          [[ "$DEPENDENCY_SCAN_OUTCOME" == success ]] || failures+=("critical/high dependency scan")
+          [[ "$REPEAT_OUTCOME" == success ]] || failures+=("repeat-build image identity")
+          [[ "$RUNTIME_OUTCOME" == success ]] || failures+=("gVisor worker process protocol")
+          [[ "$ATTESTATION_OUTCOME" == success ]] || failures+=("GitHub provenance and SBOM attestation verification")
+          if ((${#failures[@]})); then
+            printf 'Candidate gates failed: %s\n' "${failures[*]}" >&2
+            exit 1
+          fi
+
+      - name: Write candidate evidence summary
+        if: always()
+        env:
+          IMAGE_SCAN_OUTCOME: ${{ steps.image_scan.outcome }}
+          DEPENDENCY_SCAN_OUTCOME: ${{ steps.dependency_scan.outcome }}
+          REPEAT_OUTCOME: ${{ steps.repeat.outcome }}
+          RUNTIME_OUTCOME: ${{ steps.runtime.outcome }}
+          ATTESTATION_OUTCOME: ${{ steps.attest_verify.outcome }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "aiat-worker-alpine-evidence"
+
+          def counts(filename):
+              path = root / filename
+              if not path.exists():
+                  return {"status": "missing", "critical": 0, "high": 0, "total_findings": None}
+              report = json.loads(path.read_text(encoding="utf-8"))
+              vulnerabilities = [v for result in report.get("Results", [])
+                                 for v in (result.get("Vulnerabilities") or [])]
+              return {
+                  "status": "present",
+                  "critical": sum(v.get("Severity") == "CRITICAL" for v in vulnerabilities),
+                  "high": sum(v.get("Severity") == "HIGH" for v in vulnerabilities),
+                  "total_findings": len(vulnerabilities),
+              }
+
+          outcomes = {
+              "image_scan": os.environ.get("IMAGE_SCAN_OUTCOME"),
+              "dependency_scan": os.environ.get("DEPENDENCY_SCAN_OUTCOME"),
+              "repeat_build": os.environ.get("REPEAT_OUTCOME"),
+              "runsc_worker_protocol": os.environ.get("RUNTIME_OUTCOME"),
+              "github_provenance_and_sbom_verification": os.environ.get("ATTESTATION_OUTCOME"),
+          }
+          gate_pass = all(value == "success" for value in outcomes.values())
+          summary = {
+              "schema_version": "aiat.worker.alpine-candidate-summary.v1",
+              "status": "pass" if gate_pass else "blocked",
+              "candidate": json.loads((root / "candidate-image.json").read_text(encoding="utf-8"))
+                  if (root / "candidate-image.json").exists() else None,
+              "gates": outcomes,
+              "vulnerabilities": {
+                  "image": counts("trivy-image.json"),
+                  "source_and_recipe": counts("trivy-dependencies.json"),
+              },
+              "sbom_present": (root / "image-sbom.cdx.json").exists(),
+              "github_attestation_bundles_present": all(
+                  (root / name).exists() for name in ("provenance.sigstore.json", "sbom.sigstore.json")
+              ),
+              "native_worker_run": "not executed; governance approval remains separate",
+              "registry_published": False,
+              "governed_pin_changed": False,
+          }
+          (root / "candidate-summary.json").write_text(
+              json.dumps(summary, sort_keys=True, indent=2) + "\n", encoding="utf-8"
+          )
+          print(json.dumps({"status": summary["status"], "gates": outcomes, "vulnerabilities": summary["vulnerabilities"]}, sort_keys=True))
+          PY
+
+      - name: Upload candidate evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: first-party-worker-alpine-candidate-${{ github.run_id }}
+          path: ${{ runner.temp }}/aiat-worker-alpine-evidence/
+          if-no-files-found: error
+          retention-days: 14
