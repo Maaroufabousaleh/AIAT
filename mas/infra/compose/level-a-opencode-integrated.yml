@@ -31,12 +31,13 @@ services:
     command:
       - sh
       - -ec
-      - >-
+      - |-
         if [ ! -f /data/users.acl ]; then
-          printf '%s\n' "user default on >$$REDIS_INIT_PASSWORD ~* +@all"
-          "user aiat_acl_verifier on >$$REDIS_ACL_VERIFY_PASSWORD -@all +acl|getuser"
-          > /data/users.acl;
-        fi;
+          printf '%s\n' \
+            "user default on >$$REDIS_INIT_PASSWORD ~* +@all" \
+            "user aiat_acl_verifier on >$$REDIS_ACL_VERIFY_PASSWORD -@all +acl|getuser" \
+            > /data/users.acl
+        fi
         exec redis-server --aclfile /data/users.acl --save '' --appendonly no
     environment:
       REDIS_INIT_PASSWORD: ${AIAT_LEVEL_A_REDIS_INIT_PASSWORD:?runner must generate an ephemeral Redis bootstrap password}

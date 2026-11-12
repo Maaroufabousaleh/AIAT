@@ -15,6 +15,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import yaml
+
 SCRIPT = Path(__file__).resolve().parents[1] / "run.py"
 SPEC = importlib.util.spec_from_file_location("opencode_integrated_level_a", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
@@ -81,6 +83,17 @@ class IntegratedLevelAProfileTests(unittest.TestCase):
     def test_redis_uses_authenticated_service_identities(self) -> None:
         config = rendered_config()
         services = config["services"]
+        redis_command = yaml.safe_load(
+            (MODULE.MAS_ROOT / "infra/compose/level-a-opencode-integrated.yml").read_text(
+                encoding="utf-8"
+            )
+        )["services"]["redis"]["command"][2]
+        self.assertIn("printf '%s\\n' \\\n", redis_command)
+        self.assertIn('"user aiat_acl_verifier on >$$REDIS_ACL_VERIFY_PASSWORD', redis_command)
+        self.assertRegex(
+            redis_command,
+            r'(?s)printf .*?"user default .*?" \\\n.*?"user aiat_acl_verifier .*?" \\\n.*?> /data/users\.acl',
+        )
         self.assertTrue(services["message-router"]["environment"]["REDIS_URL"].startswith("redis://router_user:"))
         self.assertTrue(services["tool-service"]["environment"]["REDIS_URL"].startswith("redis://toolcache_user:"))
         self.assertEqual(services["tool-service"]["environment"]["REDIS_USERNAME"], "toolcache_user")
@@ -242,6 +255,14 @@ class IntegratedLevelAProfileTests(unittest.TestCase):
         reason = MODULE._safe_startup_container_log_reason(
             "redis",
             "Fatal error: unknown option --private-option; password=secret-value",
+        )
+        self.assertEqual(reason, "profile_service_startup_failed:redis")
+        self.assertNotIn("secret-value", reason)
+
+    def test_startup_log_diagnostic_classifies_missing_shell_command(self) -> None:
+        reason = MODULE._safe_startup_container_log_reason(
+            "redis",
+            "sh: user aiat_acl_verifier: command not found; password=secret-value",
         )
         self.assertEqual(reason, "profile_service_startup_failed:redis")
         self.assertNotIn("secret-value", reason)

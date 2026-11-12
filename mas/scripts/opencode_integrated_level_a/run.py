@@ -829,6 +829,7 @@ def _safe_startup_container_log_reason(service: str, output: str) -> str | None:
             "syntax error",
             "invalid argument",
             "failed to start",
+            "command not found",
         )
     ):
         return f"profile_service_startup_failed:{service.replace('-', '_')}"
