@@ -99,6 +99,23 @@ jobs:
           python3 -m pip install --disable-pip-version-check uv==0.4.30
           uv sync --locked --dev
 
+      - name: Pull immutable Level A integration base images
+        run: |
+          set -euo pipefail
+          docker pull ghcr.io/berriai/litellm:main-stable@sha256:26aecfb02fb17ac6590f0549478561f9fbb3f69314317320b2e32a21beed4006
+          docker pull quay.io/minio/minio:latest@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+          docker pull quay.io/minio/mc:latest@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
+          docker pull pgvector/pgvector:pg16@sha256:a36250871de0833b8757561c72f2477ef1ddd1101afa4e617fb552e0de514c6b
+          docker pull redis:7.2-alpine@sha256:05a97a479bc73de66f087dc05b569010772880f778cc8671fa6b8aadee32e5c6
+          docker pull alpine:3.21.3@sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c
+
+      - name: Run isolated native Level A stack with authenticated Redis ACLs
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/aiat-worker-evidence"
+          uv run python scripts/opencode_integrated_level_a/run.py --stack-only \
+            | tee "$RUNNER_TEMP/aiat-worker-evidence/level-a-stack.json"
+
       - name: Run deterministic worker and real-schema audit regressions
         env:
           AIAT_AUDIT_PG_TEST: "1"

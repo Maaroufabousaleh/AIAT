@@ -28,16 +28,62 @@ services:
     image: redis:7.2-alpine@sha256:05a97a479bc73de66f087dc05b569010772880f778cc8671fa6b8aadee32e5c6
     pull_policy: never
     restart: "no"
-    command: [redis-server, --save, "", --appendonly, "no"]
+    command:
+      - sh
+      - -ec
+      - >-
+        if [ ! -f /data/users.acl ]; then
+          printf '%s\n' "user default on >$$REDIS_INIT_PASSWORD ~* +@all"
+          "user aiat_acl_verifier on >$$REDIS_ACL_VERIFY_PASSWORD -@all +acl|getuser"
+          > /data/users.acl;
+        fi;
+        exec redis-server --aclfile /data/users.acl --save '' --appendonly no
+    environment:
+      REDIS_INIT_PASSWORD: ${AIAT_LEVEL_A_REDIS_INIT_PASSWORD:?runner must generate an ephemeral Redis bootstrap password}
+      REDIS_ACL_VERIFY_PASSWORD: ${AIAT_LEVEL_A_REDIS_VERIFY_PASSWORD:?runner must generate an ephemeral ACL verifier password}
+      ROUTER_PASSWORD: ${AIAT_LEVEL_A_ROUTER_PASSWORD:?runner must generate an ephemeral router ACL password}
     volumes:
       - level_a_redis_data:/data
     networks: [control]
     healthcheck:
-      test: [CMD, redis-cli, ping]
+      test: [CMD-SHELL, 'test "$(REDISCLI_AUTH="$$ROUTER_PASSWORD" redis-cli --no-auth-warning --user router_user -h 127.0.0.1 ping 2>/dev/null)" = PONG']
       interval: 2s
       timeout: 2s
       retries: 30
       start_period: 2s
+    labels:
+      com.aiat.profile: opencode-integrated-level-a
+
+  redis-acl-init:
+    image: ${AIAT_LEVEL_A_IMAGE_NAMESPACE:?runner must generate a unique disposable image namespace}/redis-acl-init:local
+    build:
+      context: ../..
+      dockerfile: infra/compose/Dockerfile.redis-acl-init
+    restart: "no"
+    entrypoint: [/bin/sh, -ec]
+    command:
+      - >-
+        umask 077;
+        printf '%s' "$$REDIS_ACL_VERIFY_PASSWORD" > /run/redis-acl-verifier;
+        export REDIS_ACL_VERIFY_USER=aiat_acl_verifier;
+        export REDIS_ACL_VERIFY_PASSWORD_FILE=/run/redis-acl-verifier;
+        exec /bin/sh /usr/local/bin/redis-acl-init.sh
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_INIT_PASSWORD: ${AIAT_LEVEL_A_REDIS_INIT_PASSWORD:?runner must generate an ephemeral Redis bootstrap password}
+      ROUTER_PASSWORD: ${AIAT_LEVEL_A_ROUTER_PASSWORD:?runner must generate an ephemeral router ACL password}
+      TOOLCACHE_PASSWORD: ${AIAT_LEVEL_A_TOOLCACHE_PASSWORD:?runner must generate an ephemeral tool-cache ACL password}
+      REDIS_ACL_VERIFY_PASSWORD: ${AIAT_LEVEL_A_REDIS_VERIFY_PASSWORD:?runner must generate an ephemeral ACL verifier password}
+      REDIS_ACL_FILE: /acl-state/users.acl
+    volumes:
+      - level_a_redis_data:/acl-state
+    tmpfs:
+      - /run:rw,noexec,nosuid,size=1m
+    depends_on:
+      redis:
+        condition: service_started
+    networks: [control]
     labels:
       com.aiat.profile: opencode-integrated-level-a
 
@@ -89,7 +135,7 @@ services:
       dockerfile: infra/docker/Dockerfile.message-router
     restart: "no"
     environment:
-      REDIS_URL: redis://redis:6379/0
+      REDIS_URL: redis://router_user:${AIAT_LEVEL_A_ROUTER_PASSWORD:?runner must generate an ephemeral router ACL password}@redis:6379/0
       POSTGRES_DSN: postgresql://aiat_level_a:${AIAT_LEVEL_A_DB_PASSWORD:?runner must generate a disposable database password}@postgres:5432/aiat_level_a
       ROUTER_SECRET: ${AIAT_LEVEL_A_ROUTER_SECRET:?runner must generate an ephemeral router secret}
       AGENT_TOKEN_SECRET: ${AIAT_LEVEL_A_ROUTER_SECRET:?runner must generate an ephemeral router secret}
@@ -97,6 +143,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      redis-acl-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       migrate:
@@ -122,7 +170,9 @@ services:
     user: "10001:10001"
     environment:
       MAS_ENVIRONMENT: development
-      REDIS_URL: redis://redis:6379/1
+      REDIS_URL: redis://toolcache_user:${AIAT_LEVEL_A_TOOLCACHE_PASSWORD:?runner must generate an ephemeral tool-cache ACL password}@redis:6379/1
+      REDIS_USERNAME: toolcache_user
+      REDIS_PASSWORD: ${AIAT_LEVEL_A_TOOLCACHE_PASSWORD:?runner must generate an ephemeral tool-cache ACL password}
       PGBOUNCER_DSN: postgresql+asyncpg://aiat_level_a:${AIAT_LEVEL_A_DB_PASSWORD:?runner must generate a disposable database password}@postgres:5432/aiat_level_a
       TOOL_SECRET: ${AIAT_LEVEL_A_TOOL_SECRET:?runner must generate an ephemeral tool secret}
       ORCHESTRATOR_URL: http://orchestrator-api:8000
@@ -141,6 +191,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      redis-acl-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       migrate:
@@ -317,7 +369,7 @@ services:
     environment:
       MAS_ENVIRONMENT: development
       PGBOUNCER_DSN: postgresql+asyncpg://aiat_level_a:${AIAT_LEVEL_A_DB_PASSWORD:?runner must generate a disposable database password}@postgres:5432/aiat_level_a
-      REDIS_URL: redis://redis:6379/0
+      REDIS_URL: redis://router_user:${AIAT_LEVEL_A_ROUTER_PASSWORD:?runner must generate an ephemeral router ACL password}@redis:6379/0
       ROUTER_URL: http://message-router:8001
       ROUTER_SECRET: ${AIAT_LEVEL_A_ROUTER_SECRET:?runner must generate an ephemeral router secret}
       MAS_API_KEY: ${AIAT_LEVEL_A_API_KEY:?runner must generate an ephemeral API key}
@@ -349,6 +401,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      redis-acl-init:
+        condition: service_completed_successfully
       migrate:
         condition: service_completed_successfully
       message-router:

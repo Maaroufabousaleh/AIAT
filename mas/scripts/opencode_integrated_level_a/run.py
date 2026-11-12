@@ -21,7 +21,7 @@ import sys
 import tempfile
 import time
 import urllib.parse
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import yaml
@@ -35,7 +35,7 @@ PROJECT_RE = re.compile(r"aiat-level-a-[0-9a-f]{12}\Z")
 SUPPORTED_WORKER_NAMES = ("coding_worker", "aiat_deterministic_file_worker")
 DETERMINISTIC_WORKER_MANIFEST = MAS_ROOT / "workers" / "aiat_deterministic_file_worker.yaml"
 DETERMINISTIC_WORKER_SOURCE = MAS_ROOT / "workers" / "aiat_deterministic_file_worker_process.py"
-LITELLM_IMAGE = "ghcr.io/berriai/litellm:main-stable"
+LITELLM_IMAGE = "ghcr.io/berriai/litellm:main-stable@sha256:26aecfb02fb17ac6590f0549478561f9fbb3f69314317320b2e32a21beed4006"
 BUILD_CONTEXT_PATHS = (
     "alembic.ini",
     "apps/message-router",
@@ -43,6 +43,8 @@ BUILD_CONTEXT_PATHS = (
     "apps/tool-service",
     "companies",
     "docs/provenance/openhands-candidate",
+    "infra/compose/Dockerfile.redis-acl-init",
+    "infra/compose/redis-acl-init.sh",
     "infra/docker/Dockerfile.message-router",
     "infra/docker/Dockerfile.opencode",
     "infra/docker/Dockerfile.orchestrator-api",
@@ -98,7 +100,7 @@ _HEALTHY_SERVICES = (
     "orchestrator-api",
     "worker-host",
 )
-_COMPLETED_SERVICES = ("migrate", "minio-init", "workspace-init")
+_COMPLETED_SERVICES = ("migrate", "minio-init", "workspace-init", "redis-acl-init")
 
 
 class HarnessError(RuntimeError):
@@ -255,6 +257,16 @@ def _available_subnet(env: dict[str, str]) -> str:
     return _select_subnet(occupied)
 
 
+def _compose_command() -> list[str]:
+    """Choose the installed Compose entry point without contacting a daemon."""
+
+    if os.name == "nt":
+        standalone = shutil.which("docker-compose")
+        if standalone:
+            return [standalone]
+    return ["docker", "compose"]
+
+
 def _compose_base(
     project: str,
     env_file: Path,
@@ -264,8 +276,7 @@ def _compose_base(
     if not PROJECT_RE.fullmatch(project):
         raise HarnessError("compose_project_name_not_profile_scoped")
     argv = [
-        "docker",
-        "compose",
+        *_compose_command(),
         "--project-name",
         project,
         "--file",
@@ -277,8 +288,8 @@ def _compose_base(
         [
             "--project-directory",
             str(COMPOSE_FILE.parent),
-        "--env-file",
-        str(env_file),
+            "--env-file",
+            str(env_file),
         ]
     )
     return argv
@@ -323,6 +334,7 @@ def _write_build_override(path: Path, context: Path) -> Path:
     services = (
         "message-router",
         "tool-service",
+        "redis-acl-init",
         "provider-fixture",
         "opencode-runtime",
         "migrate",
@@ -372,6 +384,7 @@ def _assert_profile_config(config: dict[str, Any]) -> None:
     expected_services = {
         "postgres",
         "redis",
+        "redis-acl-init",
         "minio",
         "minio-init",
         "message-router",
@@ -409,6 +422,7 @@ def _assert_profile_config(config: dict[str, Any]) -> None:
     expected_image_suffixes = {
         "message-router": "message-router:local",
         "tool-service": "tool-service:local",
+        "redis-acl-init": "redis-acl-init:local",
         "provider-fixture": "provider-fixture:local",
         "opencode-runtime": "opencode-runtime:1.17.13",
         "migrate": "orchestrator-api:local",
@@ -422,7 +436,7 @@ def _assert_profile_config(config: dict[str, Any]) -> None:
             raise HarnessError(f"profile_image_not_uniquely_namespaced:{service_name}")
 
     sandbox_services = {"provider-fixture", "litellm", "tool-service", "opencode-runtime", "orchestrator-api", "worker-host"}
-    control_services = {"postgres", "redis", "minio", "minio-init", "message-router", "tool-service", "migrate", "orchestrator-api", "worker-host"}
+    control_services = {"postgres", "redis", "redis-acl-init", "minio", "minio-init", "message-router", "tool-service", "migrate", "orchestrator-api", "worker-host"}
     for name, service in services.items():
         if service.get("env_file") or service.get("secrets") or service.get("ports"):
             raise HarnessError(f"ambient_or_host_exposure_forbidden:{name}")
@@ -443,7 +457,10 @@ def _assert_profile_config(config: dict[str, Any]) -> None:
             if (
                 len(socket_mounts) != 1
                 or socket_mounts[0].get("type") != "bind"
-                or not Path(str(socket_mounts[0].get("source") or "")).is_absolute()
+                or not (
+                    PurePosixPath(str(socket_mounts[0].get("source") or "")).is_absolute()
+                    or Path(str(socket_mounts[0].get("source") or "")).is_absolute()
+                )
                 or socket_mounts[0].get("target") != "/var/run/docker.sock"
                 or service.get("user") != "10001:10001"
                 or service.get("read_only") is not True
@@ -474,8 +491,59 @@ def _assert_profile_config(config: dict[str, Any]) -> None:
             raise HarnessError(f"sandbox_gateway_membership_missing:{name}")
         if name in control_services and "control" not in attached:
             raise HarnessError(f"control_network_membership_missing:{name}")
-        if name in {"postgres", "redis", "minio", "minio-init", "message-router", "migrate"} and "sandbox_gateway" in attached:
+        if name in {"postgres", "redis", "redis-acl-init", "minio", "minio-init", "message-router", "migrate"} and "sandbox_gateway" in attached:
             raise HarnessError(f"protected_service_on_sandbox_network:{name}")
+
+    redis_env = services["redis"].get("environment") or {}
+    initializer_env = services["redis-acl-init"].get("environment") or {}
+    if any(
+        len(str(redis_env.get(key) or "")) < 32
+        for key in ("REDIS_INIT_PASSWORD", "REDIS_ACL_VERIFY_PASSWORD", "ROUTER_PASSWORD")
+    ):
+        raise HarnessError("redis_bootstrap_or_verifier_credential_missing")
+    if not initializer_env.get("TOOLCACHE_PASSWORD") or len(str(initializer_env["TOOLCACHE_PASSWORD"])) < 32:
+        raise HarnessError("redis_toolcache_credential_missing")
+    tool_environment = services["tool-service"].get("environment") or {}
+    if (
+        tool_environment.get("REDIS_USERNAME") != "toolcache_user"
+        or tool_environment.get("REDIS_PASSWORD") != initializer_env.get("TOOLCACHE_PASSWORD")
+    ):
+        raise HarnessError("tool_service_redis_credentials_invalid")
+    for key in ("REDIS_INIT_PASSWORD", "REDIS_ACL_VERIFY_PASSWORD", "ROUTER_PASSWORD"):
+        if redis_env.get(key) != initializer_env.get(key):
+            raise HarnessError(f"redis_initializer_credential_mismatch:{key}")
+    init_dependencies = (services["redis-acl-init"].get("depends_on") or {}).get("redis") or {}
+    if init_dependencies.get("condition") != "service_started":
+        raise HarnessError("redis_initializer_must_wait_for_redis_start")
+    for service_name, user_name, password_key in (
+        ("message-router", "router_user", "ROUTER_PASSWORD"),
+        ("tool-service", "toolcache_user", "TOOLCACHE_PASSWORD"),
+        ("orchestrator-api", "router_user", "ROUTER_PASSWORD"),
+    ):
+        service = services[service_name]
+        environment = service.get("environment") or {}
+        url = urllib.parse.urlsplit(str(environment.get("REDIS_URL") or ""))
+        expected_password = (
+            redis_env.get("ROUTER_PASSWORD")
+            if password_key == "ROUTER_PASSWORD"
+            else initializer_env.get("TOOLCACHE_PASSWORD")
+        )
+        if (
+            url.scheme != "redis"
+            or url.hostname != "redis"
+            or urllib.parse.unquote(url.username or "") != user_name
+            or urllib.parse.unquote(url.password or "") != expected_password
+        ):
+            raise HarnessError(f"redis_service_identity_invalid:{service_name}")
+        dependencies = service.get("depends_on") or {}
+        if (dependencies.get("redis-acl-init") or {}).get("condition") != "service_completed_successfully":
+            raise HarnessError(f"redis_acl_initializer_dependency_missing:{service_name}")
+    redis_command = " ".join(str(part) for part in services["redis"].get("command") or [])
+    if "$REDIS_INIT_PASSWORD" not in redis_command or "$REDIS_ACL_VERIFY_PASSWORD" not in redis_command:
+        raise HarnessError("redis_acl_seed_must_use_ephemeral_credentials")
+    redis_health = json.dumps(services["redis"].get("healthcheck") or {})
+    if "router_user" not in redis_health or "ROUTER_PASSWORD" not in redis_health:
+        raise HarnessError("redis_healthcheck_must_authenticate")
     runtime = services["opencode-runtime"]
     if runtime.get("runtime") != "runsc":
         raise HarnessError("opencode_runtime_must_use_runsc")
@@ -511,7 +579,7 @@ def _assert_profile_config(config: dict[str, Any]) -> None:
             "http://litellm:4000",
         }:
             raise HarnessError(f"local_gateway_route_invalid:{name}")
-    lite_config = Path("mas/scripts/opencode_integrated_level_a/litellm_config.yaml")
+    lite_config = MAS_ROOT / "scripts/opencode_integrated_level_a/litellm_config.yaml"
     content = lite_config.read_text(encoding="utf-8")
     if "http://provider-fixture:8000/v1" not in content or "model: openai/fixture-model" not in content:
         raise HarnessError("gateway_must_have_only_the_deterministic_fixture_route")
@@ -646,6 +714,7 @@ def _profile_image_tags(namespace: str) -> tuple[str, ...]:
     return (
         f"{namespace}/message-router:local",
         f"{namespace}/tool-service:local",
+        f"{namespace}/redis-acl-init:local",
         f"{namespace}/provider-fixture:local",
         f"{namespace}/opencode-runtime:1.17.13",
         f"{namespace}/orchestrator-api:local",
@@ -684,6 +753,58 @@ def _verify_profile_cleanup(project: str, env: dict[str, str]) -> None:
         result = _run(["docker", "image", "inspect", image], env=env, timeout=10, check=False)
         if result.returncode == 0:
             raise HarnessError("profile_cleanup_left_local_image")
+
+
+def _verify_redis_acl_profile(base: list[str], env: dict[str, str]) -> None:
+    script = r"""
+set -eu
+reply="$(REDISCLI_AUTH="$REDIS_INIT_PASSWORD" redis-cli --no-auth-warning --raw --user default ping 2>/dev/null || true)"
+test "$reply" != PONG
+test "$(REDISCLI_AUTH="$ROUTER_PASSWORD" redis-cli --no-auth-warning --user router_user ping 2>/dev/null)" = PONG
+test "$(REDISCLI_AUTH="$TOOLCACHE_PASSWORD" redis-cli --no-auth-warning --user toolcache_user ping 2>/dev/null)" = PONG
+id="$(REDISCLI_AUTH="$ROUTER_PASSWORD" redis-cli --no-auth-warning --raw --user router_user xadd stream:level-a-acl '*' field value)"
+REDISCLI_AUTH="$ROUTER_PASSWORD" redis-cli --no-auth-warning --user router_user xdel stream:level-a-acl "$id" >/dev/null
+REDISCLI_AUTH="$TOOLCACHE_PASSWORD" redis-cli --no-auth-warning --user toolcache_user set tool_cache:level-a-acl ok >/dev/null
+test "$(REDISCLI_AUTH="$TOOLCACHE_PASSWORD" redis-cli --no-auth-warning --user toolcache_user get tool_cache:level-a-acl)" = ok
+REDISCLI_AUTH="$TOOLCACHE_PASSWORD" redis-cli --no-auth-warning --user toolcache_user set tool_cache:forbidden denycheck >/dev/null
+reply="$(REDISCLI_AUTH="$ROUTER_PASSWORD" redis-cli --no-auth-warning --raw --user router_user get tool_cache:forbidden 2>/dev/null || true)"
+test "$reply" != denycheck
+REDISCLI_AUTH="$TOOLCACHE_PASSWORD" redis-cli --no-auth-warning --user toolcache_user del tool_cache:level-a-acl tool_cache:forbidden >/dev/null
+reply="$(REDISCLI_AUTH="$TOOLCACHE_PASSWORD" redis-cli --no-auth-warning --raw --user toolcache_user xadd stream:forbidden '*' field value 2>/dev/null || true)"
+case "$reply" in [0-9]*-[0-9]*) exit 33 ;; esac
+flags="$(REDISCLI_AUTH="$REDIS_ACL_VERIFY_PASSWORD" redis-cli --no-auth-warning --raw --user aiat_acl_verifier acl getuser default | awk '/^flags$/{inflags=1; next} /^passwords$/{inflags=0} inflags {print}')"
+printf '%s\n' "$flags" | grep -qx off
+grep -Eq '^user default off( |$)' /acl-state/users.acl
+reply="$(REDISCLI_AUTH="$REDIS_ACL_VERIFY_PASSWORD" redis-cli --no-auth-warning --raw --user aiat_acl_verifier acl list 2>/dev/null || true)"
+case "$reply" in user\ *) exit 34 ;; esac
+reply="$(REDISCLI_AUTH="$REDIS_ACL_VERIFY_PASSWORD" redis-cli --no-auth-warning --raw --user aiat_acl_verifier ping 2>/dev/null || true)"
+test "$reply" != PONG
+"""
+    checked = _run(
+        base + [
+            "run",
+            "--rm",
+            "--no-deps",
+            "--entrypoint",
+            "/bin/sh",
+            "redis-acl-init",
+            "-ec",
+            script,
+        ],
+        env=env,
+        timeout=30,
+        check=False,
+    )
+    if checked.returncode:
+        raise HarnessError("redis_acl_profile_verification_failed")
+    repeated = _run(
+        base + ["run", "--rm", "--no-deps", "redis-acl-init"],
+        env=env,
+        timeout=90,
+        check=False,
+    )
+    if repeated.returncode:
+        raise HarnessError("redis_acl_repeat_initialization_failed")
 
 
 def _select_worker_id(workers: Any, worker_name: str) -> str | None:
@@ -1290,6 +1411,10 @@ def run_profile(
             "AIAT_LEVEL_A_DB_PASSWORD": secrets.token_urlsafe(32),
             "AIAT_LEVEL_A_MINIO_PASSWORD": secrets.token_urlsafe(32),
             "AIAT_LEVEL_A_MINIO_ARTIFACT_PASSWORD": secrets.token_urlsafe(32),
+            "AIAT_LEVEL_A_REDIS_INIT_PASSWORD": secrets.token_urlsafe(32),
+            "AIAT_LEVEL_A_REDIS_VERIFY_PASSWORD": secrets.token_urlsafe(32),
+            "AIAT_LEVEL_A_ROUTER_PASSWORD": secrets.token_urlsafe(32),
+            "AIAT_LEVEL_A_TOOLCACHE_PASSWORD": secrets.token_urlsafe(32),
             "AIAT_LEVEL_A_ROUTER_SECRET": secrets.token_urlsafe(32),
             "AIAT_LEVEL_A_TOOL_SECRET": secrets.token_urlsafe(32),
             "AIAT_LEVEL_A_API_KEY": secrets.token_urlsafe(32),
@@ -1332,10 +1457,18 @@ def run_profile(
                 _wait_for_container_state(base, service, env, expected="completed")
             for service in _HEALTHY_SERVICES:
                 _wait_for_container_state(base, service, env, expected="healthy")
+            _verify_redis_acl_profile(base, env)
             stack = {
                 "project": project,
                 "services_healthy": list(_HEALTHY_SERVICES),
                 "migrations_completed": True,
+                "redis_acl": {
+                    "bootstrap_disabled_effective_and_persisted": True,
+                    "separate_router_and_toolcache_identities_verified": True,
+                    "cross_identity_commands_denied": True,
+                    "verifier_scope": "ACL GETUSER only",
+                    "repeat_initialization_verified": True,
+                },
                 "api_url": "internal://orchestrator-api:8000",
                 "sandbox_runtime": "runsc",
                 "control_and_sandbox_egress": "blocked_by_internal_networks",

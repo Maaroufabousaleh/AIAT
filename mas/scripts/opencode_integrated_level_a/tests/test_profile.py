@@ -35,6 +35,10 @@ def rendered_config() -> dict[str, Any]:
             "AIAT_LEVEL_A_DB_PASSWORD": "test-db-password",
             "AIAT_LEVEL_A_MINIO_PASSWORD": "test-minio-password",
             "AIAT_LEVEL_A_MINIO_ARTIFACT_PASSWORD": "test-artifact-password",
+            "AIAT_LEVEL_A_REDIS_INIT_PASSWORD": "I" * 43,
+            "AIAT_LEVEL_A_REDIS_VERIFY_PASSWORD": "V" * 43,
+            "AIAT_LEVEL_A_ROUTER_PASSWORD": "R" * 43,
+            "AIAT_LEVEL_A_TOOLCACHE_PASSWORD": "T" * 43,
             "AIAT_LEVEL_A_ROUTER_SECRET": "test-router-secret",
             "AIAT_LEVEL_A_TOOL_SECRET": "test-tool-secret",
             "AIAT_LEVEL_A_API_KEY": "test-api-key",
@@ -71,6 +75,29 @@ class IntegratedLevelAProfileTests(unittest.TestCase):
         self.assertIn("http://provider-fixture:8000/v1", content)
         self.assertIn("model: openai/fixture-model", content)
         self.assertNotIn("api_key: os.environ", content)
+
+    def test_redis_uses_authenticated_service_identities(self) -> None:
+        config = rendered_config()
+        services = config["services"]
+        self.assertTrue(services["message-router"]["environment"]["REDIS_URL"].startswith("redis://router_user:"))
+        self.assertTrue(services["tool-service"]["environment"]["REDIS_URL"].startswith("redis://toolcache_user:"))
+        self.assertEqual(services["tool-service"]["environment"]["REDIS_USERNAME"], "toolcache_user")
+        self.assertEqual(
+            services["tool-service"]["environment"]["REDIS_PASSWORD"],
+            services["redis-acl-init"]["environment"]["TOOLCACHE_PASSWORD"],
+        )
+        for name in ("message-router", "tool-service", "orchestrator-api"):
+            self.assertEqual(
+                services[name]["depends_on"]["redis-acl-init"]["condition"],
+                "service_completed_successfully",
+            )
+        init_command = " ".join(services["redis-acl-init"]["command"])
+        self.assertIn("REDIS_ACL_VERIFY_USER=aiat_acl_verifier", init_command)
+        self.assertIn("REDIS_ACL_VERIFY_PASSWORD_FILE=/run/redis-acl-verifier", init_command)
+
+        services["message-router"]["environment"]["REDIS_URL"] = "redis://redis:6379/0"
+        with self.assertRaisesRegex(MODULE.HarnessError, "redis_service_identity_invalid:message-router"):
+            MODULE._assert_profile_config(config)
 
     def test_base_image_check_accepts_a_profile_built_image_shared_by_host(self) -> None:
         commands: list[list[str]] = []
@@ -137,7 +164,10 @@ class IntegratedLevelAProfileTests(unittest.TestCase):
             if service_name == "worker-host":
                 self.assertEqual(len(socket_mounts), 1)
                 self.assertEqual(socket_mounts[0]["type"], "bind")
-                self.assertTrue(Path(socket_mounts[0]["source"]).is_absolute())
+                self.assertTrue(
+                    MODULE.PurePosixPath(socket_mounts[0]["source"]).is_absolute()
+                    or Path(socket_mounts[0]["source"]).is_absolute()
+                )
                 self.assertEqual(socket_mounts[0]["target"], "/var/run/docker.sock")
             else:
                 self.assertEqual(socket_mounts, [], service_name)
@@ -146,6 +176,9 @@ class IntegratedLevelAProfileTests(unittest.TestCase):
 
     def test_docker_socket_identity_accepts_only_the_selected_local_unix_socket(self) -> None:
         import tempfile
+
+        if not hasattr(socket_module, "AF_UNIX"):
+            self.skipTest("Unix sockets are unavailable on this test host")
 
         def inspected_context(host: str) -> SimpleNamespace:
             return SimpleNamespace(
@@ -323,7 +356,7 @@ class IntegratedLevelAProfileTests(unittest.TestCase):
         )
         try:
             selected = MODULE._resolve_worker_id(
-                ["docker", "compose"], {}, "aiat_deterministic_file_worker"
+                MODULE._compose_command(), {}, "aiat_deterministic_file_worker"
             )
         finally:
             MODULE._run = original_run
@@ -508,7 +541,7 @@ class IntegratedLevelAProfileTests(unittest.TestCase):
         MODULE._run = run
         try:
             MODULE._run_driver(
-                ["docker", "compose"],
+                MODULE._compose_command(),
                 {},
                 MODULE.DEFAULT_DRIVER,
                 {},
