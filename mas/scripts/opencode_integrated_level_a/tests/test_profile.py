@@ -230,6 +230,22 @@ class IntegratedLevelAProfileTests(unittest.TestCase):
         )
         self.assertEqual(reason, "profile_dependency_not_ready:message_router:redis_acl_init")
 
+    def test_startup_log_diagnostic_never_returns_raw_service_output(self) -> None:
+        reason = MODULE._safe_startup_container_log_reason(
+            "redis",
+            "Fatal error loading ACL file: password=secret-value",
+        )
+        self.assertEqual(reason, "profile_service_acl_file_invalid")
+        self.assertNotIn("secret-value", reason)
+
+    def test_startup_log_diagnostic_classifies_redis_config_without_leaking(self) -> None:
+        reason = MODULE._safe_startup_container_log_reason(
+            "redis",
+            "Fatal error: unknown option --private-option; password=secret-value",
+        )
+        self.assertEqual(reason, "profile_service_startup_failed:redis")
+        self.assertNotIn("secret-value", reason)
+
     def test_local_gateway_clients_use_the_profile_master_key(self) -> None:
         config = rendered_config()
         services = config["services"]

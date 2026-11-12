@@ -797,6 +797,44 @@ def _safe_startup_status_reason(
     return "startup_wait_unclassified"
 
 
+def _safe_startup_container_log_reason(service: str, output: str) -> str | None:
+    """Map a failed disposable service log to a fixed, non-sensitive code."""
+
+    normalized = output.lower()
+    if any(
+        marker in normalized
+        for marker in (
+            "error loading the acl file",
+            "error loading acl file",
+            "invalid acl rule",
+            "acl file format",
+            "error in acl",
+            "acl syntax error",
+            "unknown acl",
+        )
+    ):
+        return "profile_service_acl_file_invalid"
+    if any(marker in normalized for marker in ("permission denied", "read-only file system", "operation not permitted")):
+        return "profile_service_data_access_denied"
+    if any(marker in normalized for marker in ("address already in use", "failed to bind", "cannot assign requested address")):
+        return "profile_service_port_bind_failed"
+    if any(marker in normalized for marker in ("exec format error", "no such file or directory")):
+        return f"profile_service_entrypoint_failed:{service.replace('-', '_')}"
+    if any(
+        marker in normalized
+        for marker in (
+            "fatal error",
+            "unknown option",
+            "wrong number of arguments",
+            "syntax error",
+            "invalid argument",
+            "failed to start",
+        )
+    ):
+        return f"profile_service_startup_failed:{service.replace('-', '_')}"
+    return None
+
+
 def _profile_startup_timeout_reason(
     base: list[str], config: dict[str, Any], env: dict[str, str]
 ) -> str:
@@ -815,7 +853,7 @@ def _profile_startup_timeout_reason(
                 "--filter",
                 f"label=com.docker.compose.project={project}",
                 "--format",
-                '{{.Label "com.docker.compose.service"}}|{{.State}}|{{.Status}}',
+                '{{.Label "com.docker.compose.service"}}|{{.State}}|{{.Status}}|{{.ID}}',
             ],
             env=env,
             timeout=15,
@@ -826,10 +864,32 @@ def _profile_startup_timeout_reason(
     if result.returncode:
         return "startup_container_inspection_failed"
     rows: list[tuple[str, str, str]] = []
+    failed_containers: list[tuple[str, str]] = []
     for line in result.stdout.splitlines():
-        parts = line.split("|", maxsplit=2)
-        if len(parts) == 3:
+        parts = line.split("|", maxsplit=3)
+        if len(parts) == 4:
             rows.append((parts[0], parts[1], parts[2]))
+            if parts[1].lower() in {"exited", "restarting", "dead"}:
+                failed_containers.append((parts[0], parts[3]))
+    for service, container_id in sorted(failed_containers):
+        if service not in (config.get("services") or {}):
+            continue
+        try:
+            logs = _run(
+                ["docker", "logs", "--tail", "80", container_id],
+                env=env,
+                timeout=10,
+                check=False,
+            )
+        except HarnessError:
+            continue
+        if logs.returncode == 0:
+            log_reason = _safe_startup_container_log_reason(
+                service,
+                logs.stdout + "\n" + logs.stderr,
+            )
+            if log_reason:
+                return log_reason
     return _safe_startup_status_reason(
         rows,
         config=config,
