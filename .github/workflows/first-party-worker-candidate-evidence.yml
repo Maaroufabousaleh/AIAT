@@ -129,6 +129,16 @@ jobs:
           "$RUNNER_TEMP/aiat-worker-tools/bin/trufflehog" --version
           "$RUNNER_TEMP/aiat-worker-tools/bin/syft" version
 
+      - name: Evaluate refreshed Python 3.11 base candidate
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: python:3.11-slim@sha256:07d4824036af339fa1b6ef769cc99d9c10a141769538b52b3b597c84f7a7b535
+          format: json
+          output: ${{ runner.temp }}/aiat-worker-evidence/refreshed-python-base-scan.json
+          exit-code: "0"
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+
       - name: Scan repository secrets
         uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
@@ -368,6 +378,7 @@ jobs:
             'The signed GitHub attestation subject is the OCI archive file; the image index digest is recorded inside that archive and must be verified from the archived build record.' \
             'Separate GitHub build-provenance and SBOM attestations are saved with their Sigstore bundles.' \
             'Dependency scanning covers the pinned worker source and Dockerfile; image scanning covers the pinned Python base and OS packages.' \
+            'The refreshed Python base image scan is exploratory evidence only; it does not change or approve the governed worker image pin.' \
             'A digest mismatch blocks applicability to the checked-in worker pin; review as a new candidate and update all governed pins only through the normal process.' \
             > "$RUNNER_TEMP/aiat-worker-evidence/SCOPE.txt"
 

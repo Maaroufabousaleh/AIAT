@@ -63,6 +63,9 @@ def test_first_party_worker_evidence_workflow_is_pinned_and_non_deploying() -> N
     assert "Enforce worker vulnerability scan results" in workflow
     assert "steps.image_scan.outcome" in workflow
     assert "steps.dependency_scan.outcome" in workflow
+    assert "Evaluate refreshed Python 3.11 base candidate" in workflow
+    assert "python:3.11-slim@sha256:07d4824036af339fa1b6ef769cc99d9c10a141769538b52b3b597c84f7a7b535" in workflow
+    assert "refreshed-python-base-scan.json" in workflow
     assert "push-to-registry: false" in workflow
     assert "create-storage-record: false" in workflow
     assert "Remove disposable candidate builder" in workflow
