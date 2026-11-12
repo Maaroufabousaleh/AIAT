@@ -29,6 +29,11 @@ The helper creates a clean detached checkout, stages a context containing only
 the pinned worker source file, pins the base image by digest, retains BuildKit
 SLSA v1 provenance in the OCI output, imports the image, and verifies that the
 full OCI index digest resolves in the configured local Docker daemon. The
+source commit timestamp is passed as `SOURCE_DATE_EPOCH`, and the OCI exporter
+rewrites file timestamps to that value so repeated builds do not inherit the
+build host's clock. The report records this fixed epoch in its exact invocation.
+The full OCI index digest still must be checked across repeat builds because
+embedded provenance can include invocation metadata. The
 report includes the OCI index and `linux/amd64` platform-manifest digests,
 image labels, embedded-source hash, exact sanitized Buildx argv, and raw
 index/platform/attestation/statement linkage. It refuses to overwrite an

@@ -48,6 +48,9 @@ def test_first_party_worker_evidence_workflow_is_pinned_and_non_deploying() -> N
     assert "yaml.safe_load(open(\"workers/aiat_deterministic_file_worker.yaml\"" not in workflow
     assert "Prepare deterministic worker dependency context" in workflow
     assert "Create pinned OCI-capable BuildKit builder" in workflow
+    assert "Rebuild worker candidate and compare immutable image identity" in workflow
+    assert "Enforce repeat-build image identity" in workflow
+    assert "reproducibility.json" in workflow
     assert "--driver docker-container" in workflow
     assert 'features["containerd-snapshotter"] = True' in workflow
     assert "io.containerd.snapshotter.v1" in workflow

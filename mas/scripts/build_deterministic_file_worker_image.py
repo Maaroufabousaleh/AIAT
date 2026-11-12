@@ -38,6 +38,7 @@ PREDICATE_TYPE = "https://slsa.dev/provenance/v1"
 SAFE_SOURCE_RE = re.compile(r"^[0-9a-f]{40}$")
 SAFE_SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 SAFE_BUILDER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+SUPPORTED_BUILDX_DRIVERS = {"docker", "docker-container", "kubernetes", "remote"}
 
 
 class ProvenanceError(ValueError):
@@ -214,10 +215,13 @@ def inspect_archive(archive_path: Path, *, metadata_path: Path | None = None) ->
     args = request.get("args") or {}
     source_revision = args.get("build-arg:AIAT_WORKER_SOURCE_REVISION")
     source_sha = args.get("build-arg:AIAT_WORKER_SOURCE_SHA256")
+    source_date_epoch = args.get("build-arg:SOURCE_DATE_EPOCH")
     if not isinstance(source_revision, str) or not SAFE_SOURCE_RE.fullmatch(source_revision):
         raise ProvenanceError("SLSA build args do not contain an exact source revision")
     if not isinstance(source_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", source_sha):
         raise ProvenanceError("SLSA build args do not contain a source hash")
+    if not isinstance(source_date_epoch, str) or not re.fullmatch(r"[0-9]+", source_date_epoch):
+        raise ProvenanceError("SLSA build args do not contain a fixed source date epoch")
     config_bytes = _blob(files, image_manifest["config"])
     config = json.loads(config_bytes)
     labels = (config.get("config") or {}).get("Labels") or {}
@@ -263,6 +267,7 @@ def inspect_archive(archive_path: Path, *, metadata_path: Path | None = None) ->
     return {
         "source_revision": source_revision,
         "source_sha256": source_sha,
+        "source_date_epoch": int(source_date_epoch),
         "context_sha256": context_digest,
         "recipe_sha256": dockerfile_hash,
         "base_image": BASE_IMAGE,
@@ -295,7 +300,7 @@ def verify_evidence(evidence: dict[str, Any], archive_path: Path) -> dict[str, A
     if not isinstance(expected, dict):
         raise ProvenanceError("evidence has no build object")
     for key in (
-        "source_revision", "source_sha256", "context_sha256", "recipe_sha256",
+        "source_revision", "source_sha256", "source_date_epoch", "context_sha256", "recipe_sha256",
         "base_image", "base_digest", "oci_index_digest", "platform_manifest_digest",
         "config_digest", "attestation_manifest_digest", "attestation_subject_digest",
         "predicate_type", "statement_sha256", "builder_id", "embedded_source_sha256",
@@ -362,14 +367,18 @@ def verify_evidence(evidence: dict[str, Any], archive_path: Path) -> dict[str, A
     builder_name = builder.get("builder_name")
     if not isinstance(builder_name, str) or not SAFE_BUILDER_RE.fullmatch(builder_name):
         raise ProvenanceError("evidence builder name is malformed")
+    driver = builder.get("driver")
     if (
         builder.get("authenticated") != "false"
         or builder.get("trust") != "unauthenticated-local-builder"
-        or builder.get("driver") != "docker"
+        or driver not in SUPPORTED_BUILDX_DRIVERS
     ):
         raise ProvenanceError("evidence builder trust scope is inconsistent")
     if (evidence.get("invocation") or {}).get("argv") != _sanitized_argv(
-        builder_name, observed["source_sha256"], observed["source_revision"]
+        builder_name,
+        observed["source_sha256"],
+        observed["source_revision"],
+        observed["source_date_epoch"],
     ):
         raise ProvenanceError("evidence mismatch: invocation.argv")
     invocation = evidence.get("invocation") or {}
@@ -398,10 +407,13 @@ def _docker_identity(builder: str) -> dict[str, str]:
     version = _checked(["docker", "version", "--format", "{{.Client.Version}}/{{.Server.Version}}"])
     buildx = _checked(["docker", "buildx", "version"])
     inspect = _checked(["docker", "buildx", "inspect", builder])
+    driver_match = re.search(r"(?m)^Driver:\s*(\S+)\s*$", inspect)
+    if not driver_match or driver_match.group(1) not in SUPPORTED_BUILDX_DRIVERS:
+        raise ProvenanceError("Buildx did not report a supported builder driver")
     match = re.search(r"BuildKit version:\s*(\S+)", inspect)
     return {
         "builder_name": builder,
-        "driver": "docker",
+        "driver": driver_match.group(1),
         "docker_engine_client_server": version,
         "buildx_version": buildx,
         "buildkit_version": match.group(1) if match else "unreported",
@@ -410,14 +422,20 @@ def _docker_identity(builder: str) -> dict[str, str]:
     }
 
 
-def _sanitized_argv(builder: str, source_sha: str, source_revision: str) -> list[str]:
+def _sanitized_argv(
+    builder: str,
+    source_sha: str,
+    source_revision: str,
+    source_date_epoch: int,
+) -> list[str]:
     """Exact Buildx arguments with only ephemeral filesystem paths normalized."""
     return [
         "docker", "buildx", "build", "--builder", builder,
         "--platform", "linux/amd64", "--provenance=mode=max", "--sbom=false",
         "--metadata-file", "<temporary-build-output>/buildx-metadata.json",
-        "--output", "type=oci,dest=<requested-archive-output>",
+        "--output", "type=oci,dest=<requested-archive-output>,rewrite-timestamp=true",
         "--file", "<detached-checkout>/" + DOCKERFILE_PATH,
+        "--build-arg", f"SOURCE_DATE_EPOCH={source_date_epoch}",
         "--build-arg", f"AIAT_WORKER_SOURCE_SHA256={source_sha}",
         "--build-arg", f"AIAT_WORKER_SOURCE_REVISION={source_revision}",
         "<temporary-context>",
@@ -475,6 +493,7 @@ def build_candidate(
             # from the operator worktree, environment, or ignored directories.
             revision_epoch = int(_checked(["git", "show", "-s", "--format=%ct", source_revision], cwd=REPO_ROOT))
             os.utime(source_file, (revision_epoch, revision_epoch))
+            os.utime(context_dir, (revision_epoch, revision_epoch))
             context_hash = _sha256(
                 b"aiat-deterministic-worker-context-v1\0"
                 + WORKER_FILENAME.encode()
@@ -484,8 +503,10 @@ def build_candidate(
             build_command = [
                 "docker", "buildx", "build", "--builder", builder,
                 "--platform", "linux/amd64", "--provenance=mode=max", "--sbom=false",
-                "--metadata-file", str(metadata_path), "--output", f"type=oci,dest={archive_path}",
+                "--metadata-file", str(metadata_path), "--output",
+                f"type=oci,dest={archive_path},rewrite-timestamp=true",
                 "--file", str(checkout / DOCKERFILE_PATH),
+                "--build-arg", f"SOURCE_DATE_EPOCH={revision_epoch}",
                 "--build-arg", f"AIAT_WORKER_SOURCE_SHA256={source_sha}",
                 "--build-arg", f"AIAT_WORKER_SOURCE_REVISION={source_revision}",
                 str(context_dir),
@@ -496,6 +517,8 @@ def build_candidate(
             build = inspect_archive(archive_path, metadata_path=metadata_path)
             if build["source_revision"] != source_revision:
                 raise ProvenanceError("BuildKit provenance does not retain the requested source revision")
+            if build["source_date_epoch"] != revision_epoch:
+                raise ProvenanceError("BuildKit provenance does not retain the fixed source date epoch")
             if build["source_sha256"] != source_sha or build["recipe_sha256"] != _sha256(recipe):
                 raise ProvenanceError("BuildKit image/provenance differs from the clean source snapshot")
             local_tag = f"aiat-deterministic-file-worker:provenance-{build['oci_index_digest'].split(':')[1][:12]}"
@@ -543,7 +566,7 @@ def build_candidate(
                 "recipe": {"path": DOCKERFILE_PATH, "sha256": _sha256(recipe)},
                 "builder": builder_identity,
                 "invocation": {
-                    "argv": _sanitized_argv(builder, source_sha, source_revision),
+                    "argv": _sanitized_argv(builder, source_sha, source_revision, revision_epoch),
                     "path_substitutions": {
                         "<detached-checkout>": "clean worktree at the exact source commit",
                         "<temporary-context>": "single-file context containing only worker source",

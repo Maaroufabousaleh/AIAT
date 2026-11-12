@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 import tarfile
 from pathlib import Path
 
@@ -54,6 +55,12 @@ def _make_oci_archive(
     source = module._git_file(module.SOURCE_REVISION, module.SOURCE_PATH)
     recipe = module._git_file(module.SOURCE_REVISION, module.DOCKERFILE_PATH)
     source_sha = hashlib.sha256(source).hexdigest()
+    source_date_epoch = int(
+        module._checked(
+            ["git", "show", "-s", "--format=%ct", module.SOURCE_REVISION],
+            cwd=module.REPO_ROOT,
+        )
+    )
     blobs: dict[str, bytes] = {}
 
     config = {
@@ -104,6 +111,7 @@ def _make_oci_archive(
                         "args": {
                             "build-arg:AIAT_WORKER_SOURCE_REVISION": module.SOURCE_REVISION,
                             "build-arg:AIAT_WORKER_SOURCE_SHA256": source_sha,
+                            "build-arg:SOURCE_DATE_EPOCH": str(source_date_epoch),
                         }
                     }
                 },
@@ -201,13 +209,16 @@ def _make_oci_archive(
         "recipe": {"path": module.DOCKERFILE_PATH, "sha256": inspected["recipe_sha256"]},
         "builder": {
             "builder_name": "aiat-wsl",
-            "driver": "docker",
+            "driver": "docker-container",
             "authenticated": "false",
             "trust": "unauthenticated-local-builder",
         },
         "invocation": {
             "argv": module._sanitized_argv(
-                "aiat-wsl", inspected["source_sha256"], inspected["source_revision"]
+                "aiat-wsl",
+                inspected["source_sha256"],
+                inspected["source_revision"],
+                source_date_epoch,
             ),
             "path_substitutions": {
                 "<detached-checkout>": "clean worktree at the exact source commit",
@@ -240,6 +251,11 @@ def _make_oci_archive(
         },
         "build": inspected,
     }
+    assert f"SOURCE_DATE_EPOCH={source_date_epoch}" in evidence["invocation"]["argv"]
+    assert any(
+        arg.startswith("type=oci,dest=") and "rewrite-timestamp=true" in arg
+        for arg in evidence["invocation"]["argv"]
+    )
     return archive_path, evidence
 
 
@@ -251,8 +267,26 @@ def test_oci_buildkit_provenance_verifies_source_recipe_image_and_subject(tmp_pa
 
     assert report["status"] == "pass"
     assert report["build"]["source_revision"] == module.SOURCE_REVISION
+    assert report["build"]["source_date_epoch"] > 0
     assert report["build"]["attestation_subject_digest"] == report["build"]["platform_manifest_digest"]
     assert report["build"]["embedded_source_sha256"] == report["build"]["source_sha256"]
+
+
+def test_builder_identity_records_the_reported_buildx_driver(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_module()
+    responses = iter(
+        (
+            "27.5.1/27.5.1",
+            "github.com/docker/buildx v0.21.0",
+            "Name: aiat-worker-candidate\nDriver: docker-container\nBuildKit version: v0.34.2\n",
+        )
+    )
+    monkeypatch.setattr(module, "_checked", lambda *_args, **_kwargs: next(responses))
+
+    identity = module._docker_identity("aiat-worker-candidate")
+
+    assert identity["driver"] == "docker-container"
+    assert identity["buildkit_version"] == "v0.34.2"
 
 
 @pytest.mark.parametrize(
@@ -260,6 +294,7 @@ def test_oci_buildkit_provenance_verifies_source_recipe_image_and_subject(tmp_pa
     [
         (("build", "source_revision"), "0" * 40),
         (("build", "recipe_sha256"), "0" * 64),
+        (("build", "source_date_epoch"), 0),
         (("build", "oci_index_digest"), "sha256:" + "0" * 64),
         (("build", "statement_sha256"), "0" * 64),
         (("image", "oci_index_digest"), "sha256:" + "0" * 64),
@@ -315,7 +350,12 @@ def test_builder_refuses_to_overwrite_existing_or_symlink_outputs(tmp_path: Path
 
     target = tmp_path / "target-does-not-exist"
     symlink = tmp_path / "evidence-link.json"
-    symlink.symlink_to(target)
+    try:
+        symlink.symlink_to(target)
+    except OSError as exc:
+        if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+            pytest.skip("Windows requires symlink privileges for this specific safety assertion")
+        raise
     with pytest.raises(module.ProvenanceError, match="refusing to overwrite"):
         module.build_candidate(
             source_revision=module.SOURCE_REVISION,

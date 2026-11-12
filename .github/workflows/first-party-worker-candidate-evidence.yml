@@ -188,6 +188,65 @@ jobs:
               output.write(evidence["image"]["oci_index_digest"] + "\n")
           PY
 
+      - name: Rebuild worker candidate and compare immutable image identity
+        id: repeat_build
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          repeat_archive="$RUNNER_TEMP/aiat-worker-evidence/candidate.repeat.oci.tar"
+          trap 'rm -f "$repeat_archive"' EXIT
+          if ! uv run python scripts/build_deterministic_file_worker_image.py \
+            --source-revision 1855a75fb17243d8298b84468372e7a6e496da46 \
+            --builder aiat-worker-candidate \
+            --archive "$repeat_archive" \
+            --evidence "$RUNNER_TEMP/aiat-worker-evidence/build-provenance-repeat.json"; then
+            python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          root = Path(os.environ["RUNNER_TEMP"]) / "aiat-worker-evidence"
+          (root / "reproducibility.json").write_text(
+              json.dumps({
+                  "schema_version": "aiat.worker.repeat-build-identity.v1",
+                  "status": "repeat_build_failed",
+                  "same_immutable_image_identity": False,
+              }, sort_keys=True, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          PY
+            exit 1
+          fi
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "aiat-worker-evidence"
+          first = json.loads((root / "build-provenance.json").read_text(encoding="utf-8"))
+          second = json.loads((root / "build-provenance-repeat.json").read_text(encoding="utf-8"))
+          fields = ("oci_index_digest", "platform_manifest_digest", "config_digest")
+          first_build = first["build"]
+          second_build = second["build"]
+          same_identity = all(first_build.get(key) == second_build.get(key) for key in fields)
+          record = {
+              "schema_version": "aiat.worker.repeat-build-identity.v1",
+              "status": "pass" if same_identity else "identity_mismatch",
+              "first_source_revision": first["source"]["revision"],
+              "second_source_revision": second["source"]["revision"],
+              "first": {key: first_build.get(key) for key in fields},
+              "second": {key: second_build.get(key) for key in fields},
+              "first_archive_sha256": first_build.get("archive_sha256"),
+              "second_archive_sha256": second_build.get("archive_sha256"),
+              "same_immutable_image_identity": same_identity,
+          }
+          (root / "reproducibility.json").write_text(
+              json.dumps(record, sort_keys=True, indent=2) + "\n", encoding="utf-8"
+          )
+          print(json.dumps(record, sort_keys=True))
+          if not same_identity:
+              raise SystemExit("repeated build did not reproduce the immutable OCI image identity")
+          PY
+
       - name: Capture deterministic worker BuildKit failure detail
         if: ${{ failure() && steps.build.outcome == 'failure' }}
         continue-on-error: true
@@ -207,11 +266,13 @@ jobs:
           source_sha="$(sha256sum "$context/aiat_deterministic_file_worker_process.py" | cut -d ' ' -f 1)"
           revision_epoch="$(git show -s --format=%ct "$WORKER_SOURCE_REVISION")"
           touch -d "@$revision_epoch" "$context/aiat_deterministic_file_worker_process.py"
+          touch -d "@$revision_epoch" "$context"
           docker buildx build --progress=plain --builder aiat-worker-candidate \
             --platform linux/amd64 --provenance=mode=max --sbom=false \
             --metadata-file "$diag/buildx-metadata.json" \
-            --output "type=oci,dest=$diag/diagnostic-image.oci.tar" \
+            --output "type=oci,dest=$diag/diagnostic-image.oci.tar,rewrite-timestamp=true" \
             --file "$diag/Dockerfile" \
+            --build-arg "SOURCE_DATE_EPOCH=$revision_epoch" \
             --build-arg "AIAT_WORKER_SOURCE_SHA256=$source_sha" \
             --build-arg "AIAT_WORKER_SOURCE_REVISION=$WORKER_SOURCE_REVISION" \
             "$context" > "$diag/buildx.log" 2>&1
@@ -369,12 +430,24 @@ jobs:
             exit 1
           fi
 
+      - name: Enforce repeat-build image identity
+        if: always()
+        env:
+          REPEAT_BUILD_OUTCOME: ${{ steps.repeat_build.outcome }}
+        run: |
+          set -euo pipefail
+          if [[ "$REPEAT_BUILD_OUTCOME" != success ]]; then
+            echo "The repeated BuildKit run did not reproduce the exact image identity; review reproducibility.json." >&2
+            exit 1
+          fi
+
       - name: Record evidence limits
         if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/aiat-worker-evidence"
           printf '%s\n' \
             'CANDIDATE EVIDENCE ONLY: no worker registration, security approval, stewardship, grant approval, rollout, activation, or WorkerRun is asserted.' \
+            'reproducibility.json records a second independent build; image identity mismatch blocks the candidate.' \
             'The signed GitHub attestation subject is the OCI archive file; the image index digest is recorded inside that archive and must be verified from the archived build record.' \
             'Separate GitHub build-provenance and SBOM attestations are saved with their Sigstore bundles.' \
             'Dependency scanning covers the pinned worker source and Dockerfile; image scanning covers the pinned Python base and OS packages.' \
