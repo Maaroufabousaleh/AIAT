@@ -91,6 +91,8 @@ jobs:
           AIAT_REDIS_TEST_IMAGE: aiat-redis-init-evidence:local
         run: uv run pytest apps/message-router/tests/test_redis_acl_init_disposable.py
       - name: Scan candidate image OS and runtime packages
+        id: image_scan
+        continue-on-error: true
         uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           image-ref: aiat-redis-init-evidence:local
@@ -111,6 +113,8 @@ jobs:
             'The pinned Redis base and its runtime packages are scanned in trivy-image.json.' \
             > "$RUNNER_TEMP/aiat-redis-evidence/dependency-scope.txt"
       - name: Scan Redis initializer source dependencies
+        id: dependency_scan
+        continue-on-error: true
         uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           scan-type: fs
@@ -179,6 +183,37 @@ jobs:
               json.dumps(record, sort_keys=True, indent=2) + "\n", encoding="utf-8"
           )
           PY
+
+      - name: Verify Redis archive provenance and SBOM attestations
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/aiat-redis-evidence/candidate-image.tar"
+          signer="$GITHUB_REPOSITORY/.github/workflows/redis-initializer-evidence.yml"
+          gh attestation verify "$archive" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$signer" \
+            --format json \
+            > "$RUNNER_TEMP/aiat-redis-evidence/provenance-verification.json"
+          gh attestation verify "$archive" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$signer" \
+            --predicate-type https://cyclonedx.org/bom \
+            --format json \
+            > "$RUNNER_TEMP/aiat-redis-evidence/sbom-verification.json"
+
+      - name: Enforce Redis security scan results
+        if: always()
+        env:
+          IMAGE_SCAN_OUTCOME: ${{ steps.image_scan.outcome }}
+          DEPENDENCY_SCAN_OUTCOME: ${{ steps.dependency_scan.outcome }}
+        run: |
+          set -euo pipefail
+          if [[ "$IMAGE_SCAN_OUTCOME" != success || "$DEPENDENCY_SCAN_OUTCOME" != success ]]; then
+            echo "The Redis initializer image or source dependency scan did not pass; review the retained reports." >&2
+            exit 1
+          fi
       - name: Mark evidence scope
         if: always()
         run: |

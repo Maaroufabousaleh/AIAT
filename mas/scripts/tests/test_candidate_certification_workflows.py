@@ -55,6 +55,14 @@ def test_first_party_worker_evidence_workflow_is_pinned_and_non_deploying() -> N
     assert "id: sbom" in workflow
     assert "provenance.sigstore.json" in workflow
     assert "scan-ref: ${{ runner.temp }}/aiat-worker-evidence/dependency-context" in workflow
+    assert "Verify worker archive provenance and SBOM attestations" in workflow
+    assert "gh attestation verify \"$archive\"" in workflow
+    assert "--predicate-type https://cyclonedx.org/bom" in workflow
+    assert "id: image_scan" in workflow
+    assert "id: dependency_scan" in workflow
+    assert "Enforce worker vulnerability scan results" in workflow
+    assert "steps.image_scan.outcome" in workflow
+    assert "steps.dependency_scan.outcome" in workflow
     assert "push-to-registry: false" in workflow
     assert "create-storage-record: false" in workflow
     assert "Remove disposable candidate builder" in workflow
@@ -75,4 +83,8 @@ def test_redis_evidence_workflow_is_scoped_to_reviewed_branch_pushes() -> None:
     assert "id: provenance" in workflow
     assert "id: sbom" in workflow
     assert "provenance.sigstore.json" in workflow
+    assert "Verify Redis archive provenance and SBOM attestations" in workflow
+    assert "gh attestation verify \"$archive\"" in workflow
+    assert "--predicate-type https://cyclonedx.org/bom" in workflow
+    assert "Enforce Redis security scan results" in workflow
     assert "scan-ref: ${{ runner.temp }}/aiat-redis-evidence/source-dependency-context" in workflow

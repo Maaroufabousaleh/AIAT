@@ -221,6 +221,8 @@ jobs:
             --output "$RUNNER_TEMP/aiat-worker-evidence/native-gvisor.json"
 
       - name: Scan candidate image for vulnerabilities
+        id: image_scan
+        continue-on-error: true
         uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           image-ref: ${{ steps.build.outputs.image }}
@@ -245,6 +247,8 @@ jobs:
             > "$RUNNER_TEMP/aiat-worker-evidence/dependency-scope.txt"
 
       - name: Scan deterministic worker source dependencies
+        id: dependency_scan
+        continue-on-error: true
         uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           scan-type: fs
@@ -315,6 +319,25 @@ jobs:
           )
           PY
 
+      - name: Verify worker archive provenance and SBOM attestations
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/aiat-worker-evidence/candidate.oci.tar"
+          signer="$GITHUB_REPOSITORY/.github/workflows/first-party-worker-candidate-evidence.yml"
+          gh attestation verify "$archive" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$signer" \
+            --format json \
+            > "$RUNNER_TEMP/aiat-worker-evidence/provenance-verification.json"
+          gh attestation verify "$archive" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$signer" \
+            --predicate-type https://cyclonedx.org/bom \
+            --format json \
+            > "$RUNNER_TEMP/aiat-worker-evidence/sbom-verification.json"
+
       - name: Require the rebuilt OCI digest to match the governed pin
         env:
           ACTUAL_DIGEST: ${{ steps.build.outputs.digest }}
@@ -323,6 +346,18 @@ jobs:
           expected="$(python3 -c 'import yaml; print(yaml.safe_load(open("workers/aiat_deterministic_file_worker.yaml", encoding="utf-8"))["runtime"]["adapter_config"]["image"].rsplit("@", 1)[1])')"
           printf 'expected=%s\nactual=%s\n' "$expected" "$ACTUAL_DIGEST" > "$RUNNER_TEMP/aiat-worker-evidence/digest-comparison.txt"
           test "$ACTUAL_DIGEST" = "$expected"
+
+      - name: Enforce worker vulnerability scan results
+        if: always()
+        env:
+          IMAGE_SCAN_OUTCOME: ${{ steps.image_scan.outcome }}
+          DEPENDENCY_SCAN_OUTCOME: ${{ steps.dependency_scan.outcome }}
+        run: |
+          set -euo pipefail
+          if [[ "$IMAGE_SCAN_OUTCOME" != success || "$DEPENDENCY_SCAN_OUTCOME" != success ]]; then
+            echo "The worker image or source dependency scan did not pass; review the retained reports." >&2
+            exit 1
+          fi
 
       - name: Record evidence limits
         if: always()
