@@ -106,9 +106,8 @@ _HEALTHY_SERVICES = (
     "worker-host",
 )
 _COMPLETED_SERVICES = ("migrate", "minio-init", "workspace-init", "redis-acl-init")
-# First-run CI must allow image extraction and Compose health-gated dependencies
-# to settle; the disposable stack remains bounded to ten minutes.
-_PROFILE_COMPOSE_UP_TIMEOUT_SECONDS = 600
+# The disposable stack remains bounded while allowing health-gated startup.
+_PROFILE_COMPOSE_UP_TIMEOUT_SECONDS = 300
 
 
 class HarnessError(RuntimeError):
@@ -733,6 +732,78 @@ def _safe_compose_start_reason(output: str) -> str:
     if "network" in normalized and "not found" in normalized:
         return "network_setup_failed"
     return "compose_start_rejected_unclassified"
+
+
+def _safe_startup_status_reason(
+    rows: list[tuple[str, str, str]],
+    *,
+    expected_services: set[str],
+    completed_services: set[str],
+) -> str:
+    """Classify disposable Compose state without returning raw status text."""
+
+    observed = {service: (state.lower(), status.lower()) for service, state, status in rows if service in expected_services}
+    if not observed:
+        return "startup_containers_not_observable"
+
+    for service in sorted(observed):
+        state, status = observed[service]
+        safe_service = service.replace("-", "_")
+        if "unhealthy" in status:
+            return f"profile_service_unhealthy:{safe_service}"
+        if state == "restarting":
+            return f"profile_service_restarting:{safe_service}"
+        if state == "exited" and (service not in completed_services or not re.search(r"exited \(0\)", status)):
+            return f"profile_service_exited:{safe_service}"
+        if state == "created" and service not in completed_services:
+            return f"profile_service_created:{safe_service}"
+        if state == "running" and "health: starting" in status:
+            return f"profile_service_health_pending:{safe_service}"
+
+    missing = sorted(expected_services - set(observed))
+    if missing:
+        return f"profile_service_container_missing:{missing[0].replace('-', '_')}"
+    return "startup_wait_unclassified"
+
+
+def _profile_startup_timeout_reason(
+    base: list[str], config: dict[str, Any], env: dict[str, str]
+) -> str:
+    try:
+        project = base[base.index("--project-name") + 1]
+    except (ValueError, IndexError):
+        return "startup_project_unavailable"
+    if not PROJECT_RE.fullmatch(project):
+        return "startup_project_unavailable"
+    try:
+        result = _run(
+            [
+                "docker",
+                "ps",
+                "--all",
+                "--filter",
+                f"label=com.docker.compose.project={project}",
+                "--format",
+                '{{.Label "com.docker.compose.service"}}|{{.State}}|{{.Status}}',
+            ],
+            env=env,
+            timeout=15,
+            check=False,
+        )
+    except HarnessError:
+        return "startup_container_inspection_failed"
+    if result.returncode:
+        return "startup_container_inspection_failed"
+    rows: list[tuple[str, str, str]] = []
+    for line in result.stdout.splitlines():
+        parts = line.split("|", maxsplit=2)
+        if len(parts) == 3:
+            rows.append((parts[0], parts[1], parts[2]))
+    return _safe_startup_status_reason(
+        rows,
+        expected_services=set((config.get("services") or {}).keys()),
+        completed_services=set(_COMPLETED_SERVICES),
+    )
 
 
 def _safe_image_build_failure_reason(output: str) -> str:
@@ -1556,7 +1627,8 @@ def run_profile(
                     check=False,
                 )
             except HarnessError as exc:
-                raise HarnessError("isolated_compose_start_unavailable_or_timed_out") from exc
+                reason = _profile_startup_timeout_reason(base, config, env)
+                raise HarnessError(f"isolated_compose_start_unavailable_or_timed_out:{reason}") from exc
             if up.returncode:
                 diagnostic = _safe_compose_start_reason(up.stdout + "\n" + up.stderr)
                 raise HarnessError(f"isolated_compose_start_failed:{diagnostic}")

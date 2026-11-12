@@ -190,6 +190,18 @@ class IntegratedLevelAProfileTests(unittest.TestCase):
             "build_failed_unclassified",
         )
 
+    def test_compose_start_timeout_reports_only_a_fixed_service_reason(self) -> None:
+        reason = MODULE._safe_startup_status_reason(
+            [
+                ("redis", "running", "Up 2 minutes (healthy)"),
+                ("message-router", "restarting", "Restarting (1) 5 seconds ago secret-value"),
+            ],
+            expected_services={"redis", "message-router"},
+            completed_services=set(),
+        )
+        self.assertEqual(reason, "profile_service_restarting:message_router")
+        self.assertNotIn("secret-value", reason)
+
     def test_local_gateway_clients_use_the_profile_master_key(self) -> None:
         config = rendered_config()
         services = config["services"]
