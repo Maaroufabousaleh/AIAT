@@ -114,6 +114,20 @@ class IntegratedLevelAProfileTests(unittest.TestCase):
         with self.assertRaisesRegex(MODULE.HarnessError, "redis_service_identity_invalid:message-router"):
             MODULE._assert_profile_config(config)
 
+    def test_redis_acl_profile_verification_targets_compose_redis(self) -> None:
+        calls: list[list[str]] = []
+        original_run = MODULE._run
+        MODULE._run = lambda argv, **_kwargs: calls.append(argv) or SimpleNamespace(returncode=0)
+        try:
+            MODULE._verify_redis_acl_profile(["docker", "compose"], {})
+        finally:
+            MODULE._run = original_run
+
+        script = calls[0][-1]
+        self.assertIn('-h "$REDIS_HOST" -p "$REDIS_PORT"', script)
+        self.assertIn('REDIS_HOST="${REDIS_HOST:?REDIS_HOST must be configured}"', script)
+        self.assertEqual(script.count("redis-cli"), 1)
+
     def test_minio_profile_uses_checksum_pinned_upstream_binaries(self) -> None:
         config = rendered_config()
         services = config["services"]

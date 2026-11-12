@@ -995,26 +995,31 @@ def _verify_profile_cleanup(project: str, env: dict[str, str]) -> None:
 def _verify_redis_acl_profile(base: list[str], env: dict[str, str]) -> None:
     script = r"""
 set -eu
-reply="$(REDISCLI_AUTH="$REDIS_INIT_PASSWORD" redis-cli --no-auth-warning --raw --user default ping 2>/dev/null || true)"
+REDIS_HOST="${REDIS_HOST:?REDIS_HOST must be configured}"
+REDIS_PORT="${REDIS_PORT:?REDIS_PORT must be configured}"
+redis_profile_cli() {
+  REDISCLI_AUTH="$REDIS_AUTH" redis-cli --no-auth-warning --raw --user "$REDIS_USER" -h "$REDIS_HOST" -p "$REDIS_PORT" "$@"
+}
+reply="$(REDIS_USER=default REDIS_AUTH="$REDIS_INIT_PASSWORD" redis_profile_cli ping 2>/dev/null || true)"
 test "$reply" != PONG
-test "$(REDISCLI_AUTH="$ROUTER_PASSWORD" redis-cli --no-auth-warning --user router_user ping 2>/dev/null)" = PONG
-test "$(REDISCLI_AUTH="$TOOLCACHE_PASSWORD" redis-cli --no-auth-warning --user toolcache_user ping 2>/dev/null)" = PONG
-id="$(REDISCLI_AUTH="$ROUTER_PASSWORD" redis-cli --no-auth-warning --raw --user router_user xadd stream:level-a-acl '*' field value)"
-REDISCLI_AUTH="$ROUTER_PASSWORD" redis-cli --no-auth-warning --user router_user xdel stream:level-a-acl "$id" >/dev/null
-REDISCLI_AUTH="$TOOLCACHE_PASSWORD" redis-cli --no-auth-warning --user toolcache_user set tool_cache:level-a-acl ok >/dev/null
-test "$(REDISCLI_AUTH="$TOOLCACHE_PASSWORD" redis-cli --no-auth-warning --user toolcache_user get tool_cache:level-a-acl)" = ok
-REDISCLI_AUTH="$TOOLCACHE_PASSWORD" redis-cli --no-auth-warning --user toolcache_user set tool_cache:forbidden denycheck >/dev/null
-reply="$(REDISCLI_AUTH="$ROUTER_PASSWORD" redis-cli --no-auth-warning --raw --user router_user get tool_cache:forbidden 2>/dev/null || true)"
+test "$(REDIS_USER=router_user REDIS_AUTH="$ROUTER_PASSWORD" redis_profile_cli ping 2>/dev/null)" = PONG
+test "$(REDIS_USER=toolcache_user REDIS_AUTH="$TOOLCACHE_PASSWORD" redis_profile_cli ping 2>/dev/null)" = PONG
+id="$(REDIS_USER=router_user REDIS_AUTH="$ROUTER_PASSWORD" redis_profile_cli xadd stream:level-a-acl '*' field value)"
+REDIS_USER=router_user REDIS_AUTH="$ROUTER_PASSWORD" redis_profile_cli xdel stream:level-a-acl "$id" >/dev/null
+REDIS_USER=toolcache_user REDIS_AUTH="$TOOLCACHE_PASSWORD" redis_profile_cli set tool_cache:level-a-acl ok >/dev/null
+test "$(REDIS_USER=toolcache_user REDIS_AUTH="$TOOLCACHE_PASSWORD" redis_profile_cli get tool_cache:level-a-acl)" = ok
+REDIS_USER=toolcache_user REDIS_AUTH="$TOOLCACHE_PASSWORD" redis_profile_cli set tool_cache:forbidden denycheck >/dev/null
+reply="$(REDIS_USER=router_user REDIS_AUTH="$ROUTER_PASSWORD" redis_profile_cli get tool_cache:forbidden 2>/dev/null || true)"
 test "$reply" != denycheck
-REDISCLI_AUTH="$TOOLCACHE_PASSWORD" redis-cli --no-auth-warning --user toolcache_user del tool_cache:level-a-acl tool_cache:forbidden >/dev/null
-reply="$(REDISCLI_AUTH="$TOOLCACHE_PASSWORD" redis-cli --no-auth-warning --raw --user toolcache_user xadd stream:forbidden '*' field value 2>/dev/null || true)"
+REDIS_USER=toolcache_user REDIS_AUTH="$TOOLCACHE_PASSWORD" redis_profile_cli del tool_cache:level-a-acl tool_cache:forbidden >/dev/null
+reply="$(REDIS_USER=toolcache_user REDIS_AUTH="$TOOLCACHE_PASSWORD" redis_profile_cli xadd stream:forbidden '*' field value 2>/dev/null || true)"
 case "$reply" in [0-9]*-[0-9]*) exit 33 ;; esac
-flags="$(REDISCLI_AUTH="$REDIS_ACL_VERIFY_PASSWORD" redis-cli --no-auth-warning --raw --user aiat_acl_verifier acl getuser default | awk '/^flags$/{inflags=1; next} /^passwords$/{inflags=0} inflags {print}')"
+flags="$(REDIS_USER=aiat_acl_verifier REDIS_AUTH="$REDIS_ACL_VERIFY_PASSWORD" redis_profile_cli acl getuser default | awk '/^flags$/{inflags=1; next} /^passwords$/{inflags=0} inflags {print}')"
 printf '%s\n' "$flags" | grep -qx off
 grep -Eq '^user default off( |$)' /acl-state/users.acl
-reply="$(REDISCLI_AUTH="$REDIS_ACL_VERIFY_PASSWORD" redis-cli --no-auth-warning --raw --user aiat_acl_verifier acl list 2>/dev/null || true)"
+reply="$(REDIS_USER=aiat_acl_verifier REDIS_AUTH="$REDIS_ACL_VERIFY_PASSWORD" redis_profile_cli acl list 2>/dev/null || true)"
 case "$reply" in user\ *) exit 34 ;; esac
-reply="$(REDISCLI_AUTH="$REDIS_ACL_VERIFY_PASSWORD" redis-cli --no-auth-warning --raw --user aiat_acl_verifier ping 2>/dev/null || true)"
+reply="$(REDIS_USER=aiat_acl_verifier REDIS_AUTH="$REDIS_ACL_VERIFY_PASSWORD" redis_profile_cli ping 2>/dev/null || true)"
 test "$reply" != PONG
 """
     checked = _run(
