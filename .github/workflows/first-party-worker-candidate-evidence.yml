@@ -353,7 +353,7 @@ jobs:
           ACTUAL_DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           set -euo pipefail
-          expected="$(python3 -c 'import yaml; print(yaml.safe_load(open("workers/aiat_deterministic_file_worker.yaml", encoding="utf-8"))["runtime"]["adapter_config"]["image"].rsplit("@", 1)[1])')"
+          expected="$(python3 -c 'import re; from pathlib import Path; matches = re.findall(r"(?m)^\s*image:\s*\S+@(sha256:[0-9a-f]{64})\s*$", Path("workers/aiat_deterministic_file_worker.yaml").read_text(encoding="utf-8")); assert len(matches) == 1, "expected exactly one immutable worker image pin"; print(matches[0])')"
           printf 'expected=%s\nactual=%s\n' "$expected" "$ACTUAL_DIGEST" > "$RUNNER_TEMP/aiat-worker-evidence/digest-comparison.txt"
           test "$ACTUAL_DIGEST" = "$expected"
 

@@ -43,6 +43,9 @@ def test_first_party_worker_evidence_workflow_is_pinned_and_non_deploying() -> N
     assert "scripts/check_native_gvisor_certification.py" in workflow
     assert "name: Set up scanner Python runtime" in workflow
     assert 'python-version: "3.12"' in workflow
+    assert "re.findall" in workflow
+    assert "expected exactly one immutable worker image pin" in workflow
+    assert "yaml.safe_load(open(\"workers/aiat_deterministic_file_worker.yaml\"" not in workflow
     assert "Prepare deterministic worker dependency context" in workflow
     assert "Create pinned OCI-capable BuildKit builder" in workflow
     assert "--driver docker-container" in workflow
