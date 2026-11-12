@@ -53,6 +53,29 @@ jobs:
         uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Scan complete candidate range for secrets
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha || github.sha }}
+          CANDIDATE_BASE_SHA: b7e05419a6344ddcd6d8d5a5bdb99cb2d578ea88
+        run: |
+          set -euo pipefail
+          git cat-file -e "${CANDIDATE_BASE_SHA}^{commit}"
+          git merge-base --is-ancestor "$CANDIDATE_BASE_SHA" "$CANDIDATE_SHA"
+          gitleaks_bin="$(command -v gitleaks || true)"
+          if [[ -z "$gitleaks_bin" ]]; then
+            for candidate in /tmp/gitleaks-*/gitleaks; do
+              if [[ -x "$candidate" ]]; then
+                gitleaks_bin="$candidate"
+                break
+              fi
+            done
+          fi
+          test -n "$gitleaks_bin"
+          "$gitleaks_bin" --version > "$RUNNER_TEMP/aiat-redis-evidence/gitleaks-version.txt"
+          "$gitleaks_bin" detect --source . --redact --exit-code=2 \
+            --report-format=sarif \
+            --report-path="$RUNNER_TEMP/aiat-redis-evidence/candidate-range-gitleaks.sarif" \
+            --log-opts="$CANDIDATE_BASE_SHA..$CANDIDATE_SHA" .
       - name: Build local candidate image
         run: |
           set -euo pipefail
@@ -232,6 +255,7 @@ jobs:
             'PREPARATORY EVIDENCE ONLY: inspect step results; separate GitHub provenance and SBOM attestations bind the Docker archive to this workflow run.' \
             'This workflow does not publish a registry image, create an immutable registry reference, certify a live Redis restart, approve the release ledger, or authorize deployment.' \
             'Dependency scanning is scoped to the initializer Dockerfile and shell source; the image scan covers the pinned Redis base and runtime packages. Repository-wide application dependency findings are tracked separately.' \
+            'candidate-range-gitleaks.sarif scans every commit since the pre-publication feature-branch tip b7e05419a6344ddcd6d8d5a5bdb99cb2d578ea88.' \
             > "$RUNNER_TEMP/aiat-redis-evidence/SCOPE.txt"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
