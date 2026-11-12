@@ -61,6 +61,9 @@ BUILD_CONTEXT_PATHS = (
     "scripts/opencode_level_a/fixture.mjs",
     "workers",
 )
+BUILD_CONTEXT_ROOT_ALIASES = (
+    ("infra/compose/redis-acl-init.sh", "redis-acl-init.sh"),
+)
 _BUILD_IGNORED_DIRS = frozenset(
     {
         ".git",
@@ -329,6 +332,12 @@ def _prepare_build_context(destination: Path) -> Path:
             shutil.copytree(source, target, symlinks=True, ignore=_copy_ignore)
         else:
             shutil.copy2(source, target, follow_symlinks=False)
+    for source_relative, target_relative in BUILD_CONTEXT_ROOT_ALIASES:
+        source = destination / source_relative
+        target = destination / target_relative
+        if not source.is_file():
+            raise HarnessError(f"profile_build_context_source_missing:{source_relative}")
+        shutil.copy2(source, target, follow_symlinks=False)
     return destination
 
 

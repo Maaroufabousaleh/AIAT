@@ -9,6 +9,7 @@ import io
 import json
 import shutil
 import socket as socket_module
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -125,6 +126,26 @@ class IntegratedLevelAProfileTests(unittest.TestCase):
         relative = "docs/provenance/deterministic_file_worker_build_provenance.json"
         self.assertIn(relative, MODULE.BUILD_CONTEXT_PATHS)
         self.assertTrue((MODULE.MAS_ROOT / relative).is_file())
+
+    def test_build_context_stages_redis_initializer_at_context_root(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source_root = Path(temporary) / "source"
+            initializer = source_root / "infra/compose/redis-acl-init.sh"
+            initializer.parent.mkdir(parents=True)
+            initializer.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            original_root = MODULE.MAS_ROOT
+            original_paths = MODULE.BUILD_CONTEXT_PATHS
+            MODULE.MAS_ROOT = source_root
+            MODULE.BUILD_CONTEXT_PATHS = ("infra/compose/redis-acl-init.sh",)
+            try:
+                context = MODULE._prepare_build_context(Path(temporary) / "context")
+            finally:
+                MODULE.MAS_ROOT = original_root
+                MODULE.BUILD_CONTEXT_PATHS = original_paths
+            self.assertEqual(
+                (context / "redis-acl-init.sh").read_text(encoding="utf-8"),
+                "#!/bin/sh\nexit 0\n",
+            )
 
     def test_base_image_check_accepts_a_profile_built_image_shared_by_host(self) -> None:
         commands: list[list[str]] = []
