@@ -42,6 +42,7 @@ BUILD_CONTEXT_PATHS = (
     "apps/orchestrator-api",
     "apps/tool-service",
     "companies",
+    "docs/provenance/deterministic_file_worker_build_provenance.json",
     "docs/provenance/openhands-candidate",
     "infra/compose/Dockerfile.redis-acl-init",
     "infra/compose/Dockerfile.level-a-minio",

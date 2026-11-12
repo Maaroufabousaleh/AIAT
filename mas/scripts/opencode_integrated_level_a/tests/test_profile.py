@@ -121,6 +121,11 @@ class IntegratedLevelAProfileTests(unittest.TestCase):
             dockerfile,
         )
 
+    def test_build_context_includes_orchestrator_provenance_input(self) -> None:
+        relative = "docs/provenance/deterministic_file_worker_build_provenance.json"
+        self.assertIn(relative, MODULE.BUILD_CONTEXT_PATHS)
+        self.assertTrue((MODULE.MAS_ROOT / relative).is_file())
+
     def test_base_image_check_accepts_a_profile_built_image_shared_by_host(self) -> None:
         commands: list[list[str]] = []
         original_run = MODULE._run
