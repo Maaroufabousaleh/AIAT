@@ -1,0 +1,608 @@
+name: Image candidate registry publication (operator gated)
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Full SHA of the reviewed agent/fix-review-p1 commit selected as the run ref
+        required: true
+        type: string
+      image_set:
+        description: Candidate image(s) to promote from passing evidence archives
+        required: true
+        type: choice
+        options:
+          - worker
+          - redis
+          - both
+      worker_evidence_run_id:
+        description: Successful first-party worker Alpine evidence run for candidate_sha
+        required: false
+        type: string
+      redis_evidence_run_id:
+        description: Successful Redis initializer evidence run for candidate_sha
+        required: false
+        type: string
+      publish_candidate:
+        description: Explicitly request private GHCR candidate publication
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      source_sha: ${{ steps.candidate.outputs.source_sha }}
+      image_set: ${{ steps.candidate.outputs.image_set }}
+    steps:
+      - name: Check out the exact candidate revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Enforce candidate branch and publication authorization
+        id: candidate
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          IMAGE_SET: ${{ inputs.image_set }}
+          PUBLISH: ${{ inputs.publish_candidate }}
+          PUBLICATION_ENABLED: ${{ vars.AIAT_GHCR_CANDIDATE_PUBLICATION_ENABLED }}
+          APPROVED_SHA: ${{ vars.AIAT_GHCR_CANDIDATE_APPROVED_SHA }}
+          EXPECTED_VISIBILITY: ${{ vars.AIAT_GHCR_CANDIDATE_VISIBILITY }}
+          PROTECTED_ENVIRONMENT_READY: ${{ vars.AIAT_GHCR_CANDIDATE_ENVIRONMENT_PROTECTED }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REPOSITORY" == "Maaroufabousaleh/AIAT" ]]
+          [[ "$GITHUB_REF" == "refs/heads/agent/fix-review-p1" ]]
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          git fetch --no-tags origin agent/fix-review-p1
+          test "$(git rev-parse FETCH_HEAD)" = "$CANDIDATE_SHA"
+          [[ "$IMAGE_SET" == worker || "$IMAGE_SET" == redis || "$IMAGE_SET" == both ]]
+          if [[ "$PUBLISH" == true ]]; then
+            [[ "$PUBLICATION_ENABLED" == true ]] || { echo "GHCR publication is disabled by repository policy" >&2; exit 1; }
+            [[ "$APPROVED_SHA" == "$CANDIDATE_SHA" ]] || { echo "The exact candidate SHA has not been approved for publication" >&2; exit 1; }
+            [[ "$EXPECTED_VISIBILITY" == private ]] || { echo "The expected GHCR visibility must be explicitly set to private" >&2; exit 1; }
+            [[ "$PROTECTED_ENVIRONMENT_READY" == true ]] || { echo "Configure required reviewers on the aiat-image-candidate-release environment first" >&2; exit 1; }
+          fi
+          printf 'source_sha=%s\n' "$CANDIDATE_SHA" >> "$GITHUB_OUTPUT"
+          printf 'image_set=%s\n' "$IMAGE_SET" >> "$GITHUB_OUTPUT"
+          {
+            echo "Candidate source: \`$CANDIDATE_SHA\`"
+            echo "Selected image set: \`$IMAGE_SET\`"
+            if [[ "$PUBLISH" == true ]]; then
+              echo "Publication requested. The write job is protected by the \`aiat-image-candidate-release\` environment."
+            else
+              echo "Evidence preflight only. No registry login or package write will occur."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify worker evidence run identity
+        if: inputs.image_set == 'worker' || inputs.image_set == 'both'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.worker_evidence_run_id }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]]
+          gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --json headSha,headBranch,workflowName,conclusion > "$RUNNER_TEMP/worker-run.json"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          run = json.loads((Path(os.environ["RUNNER_TEMP"]) / "worker-run.json").read_text())
+          expected = {
+              "headSha": os.environ["CANDIDATE_SHA"],
+              "headBranch": "agent/fix-review-p1",
+              "workflowName": "First-party worker Alpine candidate evidence (not approval)",
+              "conclusion": "success",
+          }
+          if any(run.get(key) != value for key, value in expected.items()):
+              raise SystemExit("worker evidence run does not match the selected successful candidate")
+          PY
+
+      - name: Download worker evidence archive
+        if: inputs.image_set == 'worker' || inputs.image_set == 'both'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.worker_evidence_run_id }}
+        run: |
+          set -euo pipefail
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "first-party-worker-alpine-candidate-$RUN_ID" \
+            --dir "$RUNNER_TEMP/worker-evidence"
+
+      - name: Verify worker image identity, scans, SBOM and archive attestations
+        if: inputs.image_set == 'worker' || inputs.image_set == 'both'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          python3 mas/scripts/verify_image_candidate_evidence.py \
+            --kind worker --root "$RUNNER_TEMP/worker-evidence" --source-sha "$CANDIDATE_SHA"
+          gh attestation verify "$RUNNER_TEMP/worker-evidence/candidate.oci.tar" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/first-party-worker-alpine-candidate-evidence.yml" \
+            --format json > "$RUNNER_TEMP/worker-provenance-verified.json"
+          gh attestation verify "$RUNNER_TEMP/worker-evidence/candidate.oci.tar" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/first-party-worker-alpine-candidate-evidence.yml" \
+            --predicate-type https://cyclonedx.org/bom --format json \
+            > "$RUNNER_TEMP/worker-sbom-verified.json"
+
+      - name: Verify Redis evidence run identity
+        if: inputs.image_set == 'redis' || inputs.image_set == 'both'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.redis_evidence_run_id }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]]
+          gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --json headSha,headBranch,workflowName,conclusion > "$RUNNER_TEMP/redis-run.json"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          run = json.loads((Path(os.environ["RUNNER_TEMP"]) / "redis-run.json").read_text())
+          expected = {
+              "headSha": os.environ["CANDIDATE_SHA"],
+              "headBranch": "agent/fix-review-p1",
+              "workflowName": "Redis initializer evidence (not release)",
+              "conclusion": "success",
+          }
+          if any(run.get(key) != value for key, value in expected.items()):
+              raise SystemExit("Redis evidence run does not match the selected successful candidate")
+          PY
+
+      - name: Download Redis evidence archive
+        if: inputs.image_set == 'redis' || inputs.image_set == 'both'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.redis_evidence_run_id }}
+        run: |
+          set -euo pipefail
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "redis-initializer-evidence-$RUN_ID" \
+            --dir "$RUNNER_TEMP/redis-evidence"
+
+      - name: Verify Redis image identity, scans, SBOM and archive attestations
+        if: inputs.image_set == 'redis' || inputs.image_set == 'both'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          python3 mas/scripts/verify_image_candidate_evidence.py \
+            --kind redis --root "$RUNNER_TEMP/redis-evidence" --source-sha "$CANDIDATE_SHA"
+          gh attestation verify "$RUNNER_TEMP/redis-evidence/candidate-image.tar" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/redis-initializer-evidence.yml" \
+            --format json > "$RUNNER_TEMP/redis-provenance-verified.json"
+          gh attestation verify "$RUNNER_TEMP/redis-evidence/candidate-image.tar" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/redis-initializer-evidence.yml" \
+            --predicate-type https://cyclonedx.org/bom --format json \
+            > "$RUNNER_TEMP/redis-sbom-verified.json"
+
+  publish:
+    needs: preflight
+    if: inputs.publish_candidate == true
+    runs-on: ubuntu-24.04
+    environment: aiat-image-candidate-release
+    permissions:
+      actions: read
+      attestations: write
+      artifact-metadata: write
+      contents: read
+      id-token: write
+      packages: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CANDIDATE_SHA: ${{ needs.preflight.outputs.source_sha }}
+      IMAGE_SET: ${{ needs.preflight.outputs.image_set }}
+    steps:
+      - name: Check out the exact candidate revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.preflight.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Enable the OCI-aware Docker image store used by candidate evidence
+        run: |
+          set -euo pipefail
+          sudo python3 - <<'PY'
+          import json
+          import os
+          import stat
+          import tempfile
+          from pathlib import Path
+
+          path = Path("/etc/docker/daemon.json")
+          config = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+          if not isinstance(config, dict):
+              raise SystemExit("Docker daemon configuration must be a JSON object")
+          features = config.setdefault("features", {})
+          if not isinstance(features, dict):
+              raise SystemExit("Docker daemon features must be a JSON object")
+          features["containerd-snapshotter"] = True
+          mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o644
+          with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as handle:
+              json.dump(config, handle, sort_keys=True, indent=2)
+              handle.write("\n")
+              temporary = Path(handle.name)
+          os.chmod(temporary, mode)
+          os.replace(temporary, path)
+          PY
+          sudo systemctl restart docker
+          docker info --format '{{json .DriverStatus}}' | tee "$RUNNER_TEMP/docker-image-store.json"
+          grep -q 'io.containerd.snapshotter.v1' "$RUNNER_TEMP/docker-image-store.json"
+
+      - name: Download worker evidence archive
+        if: needs.preflight.outputs.image_set == 'worker' || needs.preflight.outputs.image_set == 'both'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.worker_evidence_run_id }}
+        run: |
+          set -euo pipefail
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "first-party-worker-alpine-candidate-$RUN_ID" \
+            --dir "$RUNNER_TEMP/worker-evidence"
+
+      - name: Download Redis evidence archive
+        if: needs.preflight.outputs.image_set == 'redis' || needs.preflight.outputs.image_set == 'both'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.redis_evidence_run_id }}
+        run: |
+          set -euo pipefail
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "redis-initializer-evidence-$RUN_ID" \
+            --dir "$RUNNER_TEMP/redis-evidence"
+
+      - name: Recheck release authorization and candidate evidence
+        env:
+          APPROVED_SHA: ${{ vars.AIAT_GHCR_CANDIDATE_APPROVED_SHA }}
+          PUBLICATION_ENABLED: ${{ vars.AIAT_GHCR_CANDIDATE_PUBLICATION_ENABLED }}
+          EXPECTED_VISIBILITY: ${{ vars.AIAT_GHCR_CANDIDATE_VISIBILITY }}
+          PROTECTED_ENVIRONMENT_READY: ${{ vars.AIAT_GHCR_CANDIDATE_ENVIRONMENT_PROTECTED }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REPOSITORY" == "Maaroufabousaleh/AIAT" ]]
+          [[ "$GITHUB_REF" == "refs/heads/agent/fix-review-p1" ]]
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          [[ "$PUBLICATION_ENABLED" == true && "$APPROVED_SHA" == "$CANDIDATE_SHA" ]]
+          [[ "$EXPECTED_VISIBILITY" == private && "$PROTECTED_ENVIRONMENT_READY" == true ]]
+          if [[ "$IMAGE_SET" == worker || "$IMAGE_SET" == both ]]; then
+            python3 mas/scripts/verify_image_candidate_evidence.py \
+              --kind worker --root "$RUNNER_TEMP/worker-evidence" --source-sha "$CANDIDATE_SHA"
+          fi
+          if [[ "$IMAGE_SET" == redis || "$IMAGE_SET" == both ]]; then
+            python3 mas/scripts/verify_image_candidate_evidence.py \
+              --kind redis --root "$RUNNER_TEMP/redis-evidence" --source-sha "$CANDIDATE_SHA"
+          fi
+
+      - name: Load and inspect worker image before registry access
+        if: needs.preflight.outputs.image_set == 'worker' || needs.preflight.outputs.image_set == 'both'
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/worker-evidence"
+          docker load --input "$root/candidate.oci.tar"
+          image_id="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["candidate"]["docker_image_id"])' "$root/candidate-summary.json")"
+          docker image tag "$image_id" aiat-worker-release-preflight:local
+          docker image inspect aiat-worker-release-preflight:local > "$root/docker-image-inspect.json"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          root = Path(os.environ["RUNNER_TEMP"]) / "worker-evidence"
+          record = json.loads((root / "candidate-image.json").read_text())
+          image = json.loads((root / "docker-image-inspect.json").read_text())[0]
+          labels = image.get("Config", {}).get("Labels", {}) or {}
+          if image.get("Id") != record.get("docker_image_id"):
+              raise SystemExit("loaded worker image identity differs from the scanned OCI candidate")
+          if image.get("Os") != "linux" or image.get("Architecture") != "amd64":
+              raise SystemExit("loaded worker image platform differs from the certified candidate")
+          if labels.get("org.opencontainers.image.revision") != record.get("source_revision"):
+              raise SystemExit("worker image source revision label does not match the attested candidate")
+          PY
+
+      - name: Re-scan worker before publication
+        if: needs.preflight.outputs.image_set == 'worker' || needs.preflight.outputs.image_set == 'both'
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: aiat-worker-release-preflight:local
+          format: json
+          output: ${{ runner.temp }}/worker-evidence/registry-release-trivy.json
+          exit-code: '1'
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+
+      - name: Load and inspect Redis image before registry access
+        if: needs.preflight.outputs.image_set == 'redis' || needs.preflight.outputs.image_set == 'both'
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/redis-evidence"
+          docker load --input "$root/candidate-image.tar"
+          local_tag="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["local_tag"])' "$root/candidate-image-identity.json")"
+          docker image tag "$local_tag" aiat-redis-release-preflight:local
+          docker image inspect aiat-redis-release-preflight:local > "$root/docker-image-inspect.json"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          root = Path(os.environ["RUNNER_TEMP"]) / "redis-evidence"
+          record = json.loads((root / "candidate-image-identity.json").read_text())
+          image = json.loads((root / "docker-image-inspect.json").read_text())[0]
+          if image.get("Id") != record.get("docker_image_config_digest"):
+              raise SystemExit("loaded Redis image configuration differs from the scanned archive")
+          if image.get("Os") != "linux" or image.get("Architecture") != "amd64":
+              raise SystemExit("loaded Redis image platform differs from the certified candidate")
+          PY
+
+      - name: Re-scan Redis before publication
+        if: needs.preflight.outputs.image_set == 'redis' || needs.preflight.outputs.image_set == 'both'
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: aiat-redis-release-preflight:local
+          format: json
+          output: ${{ runner.temp }}/redis-evidence/registry-release-trivy.json
+          exit-code: '1'
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+
+      - name: Verify existing GHCR package visibility and repository link before push
+        env:
+          EXPECTED_VISIBILITY: ${{ vars.AIAT_GHCR_CANDIDATE_VISIBILITY }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_VISIBILITY" == private ]]
+          check_package() {
+            local package="$1" mode="$2" response status
+            response="$RUNNER_TEMP/package-${package//[^a-zA-Z0-9-]/_}.json"
+            status="$(curl --silent --show-error --output "$response" --write-out '%{http_code}' \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              --header 'Accept: application/vnd.github+json' \
+              "$GITHUB_API_URL/user/packages/container/$package")"
+            if [[ "$mode" == before && "$status" == 404 ]]; then
+              echo "No accessible package metadata exists for $package; the first GHCR push is expected to create it private."
+              return 0
+            fi
+            [[ "$status" == 200 ]] || { echo "Package metadata for $package is unavailable (HTTP $status); refusing registry push/verification" >&2; return 1; }
+            PACKAGE_JSON="$response" PACKAGE_NAME="$package" python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          package = json.loads(Path(os.environ["PACKAGE_JSON"]).read_text(encoding="utf-8"))
+          if package.get("visibility") != "private":
+              raise SystemExit(f"GHCR package {os.environ['PACKAGE_NAME']} is not private")
+          if (package.get("repository") or {}).get("full_name") != os.environ["GITHUB_REPOSITORY"]:
+              raise SystemExit(f"GHCR package {os.environ['PACKAGE_NAME']} is not linked to this repository")
+          PY
+          }
+          if [[ "$IMAGE_SET" == worker || "$IMAGE_SET" == both ]]; then
+            check_package aiat-deterministic-file-worker before
+          fi
+          if [[ "$IMAGE_SET" == redis || "$IMAGE_SET" == both ]]; then
+            check_package aiat-redis-acl-init before
+          fi
+
+      - name: Log in to GHCR after evidence and rescan gates pass
+        run: printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - name: Publish worker candidate by exact source revision
+        id: worker_push
+        if: needs.preflight.outputs.image_set == 'worker' || needs.preflight.outputs.image_set == 'both'
+        run: |
+          set -euo pipefail
+          image="ghcr.io/maaroufabousaleh/aiat-deterministic-file-worker:candidate-$CANDIDATE_SHA"
+          docker image tag aiat-worker-release-preflight:local "$image"
+          docker push "$image" 2>&1 | tee "$RUNNER_TEMP/worker-evidence/registry-push.log"
+          digest="$(awk '/digest: sha256:[0-9a-f]{64}/ {for(i=1;i<=NF;i++) if($i ~ /^sha256:[0-9a-f]{64}$/) d=$i} END {print d}' "$RUNNER_TEMP/worker-evidence/registry-push.log")"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "reference=ghcr.io/maaroufabousaleh/aiat-deterministic-file-worker@$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Publish Redis initializer candidate by exact source revision
+        id: redis_push
+        if: needs.preflight.outputs.image_set == 'redis' || needs.preflight.outputs.image_set == 'both'
+        run: |
+          set -euo pipefail
+          image="ghcr.io/maaroufabousaleh/aiat-redis-acl-init:candidate-$CANDIDATE_SHA"
+          docker image tag aiat-redis-release-preflight:local "$image"
+          docker push "$image" 2>&1 | tee "$RUNNER_TEMP/redis-evidence/registry-push.log"
+          digest="$(awk '/digest: sha256:[0-9a-f]{64}/ {for(i=1;i<=NF;i++) if($i ~ /^sha256:[0-9a-f]{64}$/) d=$i} END {print d}' "$RUNNER_TEMP/redis-evidence/registry-push.log")"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "reference=ghcr.io/maaroufabousaleh/aiat-redis-acl-init@$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Verify private package visibility and repository linkage
+        env:
+          EXPECTED_VISIBILITY: ${{ vars.AIAT_GHCR_CANDIDATE_VISIBILITY }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_VISIBILITY" == private ]]
+          verify_package() {
+            local package="$1" response status
+            response="$RUNNER_TEMP/package-final-${package//[^a-zA-Z0-9-]/_}.json"
+            status="$(curl --silent --show-error --output "$response" --write-out '%{http_code}' \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              --header 'Accept: application/vnd.github+json' \
+              "$GITHUB_API_URL/user/packages/container/$package")"
+            [[ "$status" == 200 ]] || { echo "Could not verify final metadata for GHCR package $package (HTTP $status)" >&2; return 1; }
+            PACKAGE_JSON="$response" PACKAGE_NAME="$package" python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          package = json.loads(Path(os.environ["PACKAGE_JSON"]).read_text(encoding="utf-8"))
+          if package.get("visibility") != "private":
+              raise SystemExit(f"GHCR package {os.environ['PACKAGE_NAME']} is not private")
+          if (package.get("repository") or {}).get("full_name") != os.environ["GITHUB_REPOSITORY"]:
+              raise SystemExit(f"GHCR package {os.environ['PACKAGE_NAME']} is not linked to this repository")
+          PY
+          }
+          if [[ "$IMAGE_SET" == worker || "$IMAGE_SET" == both ]]; then
+            verify_package aiat-deterministic-file-worker
+          fi
+          if [[ "$IMAGE_SET" == redis || "$IMAGE_SET" == both ]]; then
+            verify_package aiat-redis-acl-init
+          fi
+
+      - name: Pull and compare the published worker image payload
+        if: needs.preflight.outputs.image_set == 'worker' || needs.preflight.outputs.image_set == 'both'
+        env:
+          REGISTRY_DIGEST: ${{ steps.worker_push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/maaroufabousaleh/aiat-deterministic-file-worker"
+          docker pull "$image@$REGISTRY_DIGEST"
+          docker image inspect aiat-worker-release-preflight:local > "$RUNNER_TEMP/worker-local-image.json"
+          docker image inspect "$image@$REGISTRY_DIGEST" > "$RUNNER_TEMP/worker-registry-image.json"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          root = Path(os.environ["RUNNER_TEMP"])
+          local = json.loads((root / "worker-local-image.json").read_text())[0]
+          remote = json.loads((root / "worker-registry-image.json").read_text())[0]
+          for field in ("Os", "Architecture", "Config", "RootFS"):
+              if local.get(field) != remote.get(field):
+                  raise SystemExit(f"registry worker image differs from the scanned candidate: {field}")
+          if not any(row.endswith("@" + os.environ["REGISTRY_DIGEST"]) for row in remote.get("RepoDigests", [])):
+              raise SystemExit("pulled worker image does not report the expected immutable registry digest")
+          PY
+
+      - name: Pull and compare the published Redis image payload
+        if: needs.preflight.outputs.image_set == 'redis' || needs.preflight.outputs.image_set == 'both'
+        env:
+          REGISTRY_DIGEST: ${{ steps.redis_push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/maaroufabousaleh/aiat-redis-acl-init"
+          docker pull "$image@$REGISTRY_DIGEST"
+          docker image inspect aiat-redis-release-preflight:local > "$RUNNER_TEMP/redis-local-image.json"
+          docker image inspect "$image@$REGISTRY_DIGEST" > "$RUNNER_TEMP/redis-registry-image.json"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          root = Path(os.environ["RUNNER_TEMP"])
+          local = json.loads((root / "redis-local-image.json").read_text())[0]
+          remote = json.loads((root / "redis-registry-image.json").read_text())[0]
+          for field in ("Os", "Architecture", "Config", "RootFS"):
+              if local.get(field) != remote.get(field):
+                  raise SystemExit(f"registry Redis image differs from the scanned candidate: {field}")
+          if not any(row.endswith("@" + os.environ["REGISTRY_DIGEST"]) for row in remote.get("RepoDigests", [])):
+              raise SystemExit("pulled Redis image does not report the expected immutable registry digest")
+          PY
+
+      - name: Attest the worker registry image provenance
+        if: needs.preflight.outputs.image_set == 'worker' || needs.preflight.outputs.image_set == 'both'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ghcr.io/maaroufabousaleh/aiat-deterministic-file-worker
+          subject-digest: ${{ steps.worker_push.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest the worker registry image SBOM
+        if: needs.preflight.outputs.image_set == 'worker' || needs.preflight.outputs.image_set == 'both'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ghcr.io/maaroufabousaleh/aiat-deterministic-file-worker
+          subject-digest: ${{ steps.worker_push.outputs.digest }}
+          sbom-path: ${{ runner.temp }}/worker-evidence/image-sbom.cdx.json
+          push-to-registry: true
+
+      - name: Attest the Redis registry image provenance
+        if: needs.preflight.outputs.image_set == 'redis' || needs.preflight.outputs.image_set == 'both'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ghcr.io/maaroufabousaleh/aiat-redis-acl-init
+          subject-digest: ${{ steps.redis_push.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest the Redis registry image SBOM
+        if: needs.preflight.outputs.image_set == 'redis' || needs.preflight.outputs.image_set == 'both'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ghcr.io/maaroufabousaleh/aiat-redis-acl-init
+          subject-digest: ${{ steps.redis_push.outputs.digest }}
+          sbom-path: ${{ runner.temp }}/redis-evidence/image-sbom.cdx.json
+          push-to-registry: true
+
+      - name: Verify registry-bound attestations
+        env:
+          WORKER_DIGEST: ${{ steps.worker_push.outputs.digest }}
+          REDIS_DIGEST: ${{ steps.redis_push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          if [[ "$IMAGE_SET" == worker || "$IMAGE_SET" == both ]]; then
+            gh attestation verify "oci://ghcr.io/maaroufabousaleh/aiat-deterministic-file-worker@$WORKER_DIGEST" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/image-candidate-registry-release.yml" \
+              --bundle-from-oci --format json > "$RUNNER_TEMP/worker-registry-provenance.json"
+            gh attestation verify "oci://ghcr.io/maaroufabousaleh/aiat-deterministic-file-worker@$WORKER_DIGEST" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/image-candidate-registry-release.yml" \
+              --predicate-type https://cyclonedx.org/bom --bundle-from-oci --format json \
+              > "$RUNNER_TEMP/worker-registry-sbom-verification.json"
+          fi
+          if [[ "$IMAGE_SET" == redis || "$IMAGE_SET" == both ]]; then
+            gh attestation verify "oci://ghcr.io/maaroufabousaleh/aiat-redis-acl-init@$REDIS_DIGEST" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/image-candidate-registry-release.yml" \
+              --bundle-from-oci --format json > "$RUNNER_TEMP/redis-registry-provenance.json"
+            gh attestation verify "oci://ghcr.io/maaroufabousaleh/aiat-redis-acl-init@$REDIS_DIGEST" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/image-candidate-registry-release.yml" \
+              --predicate-type https://cyclonedx.org/bom --bundle-from-oci --format json \
+              > "$RUNNER_TEMP/redis-registry-sbom-verification.json"
+          fi
+
+      - name: Record immutable candidate deployment references
+        env:
+          WORKER_DIGEST: ${{ steps.worker_push.outputs.digest }}
+          REDIS_DIGEST: ${{ steps.redis_push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          root = Path(os.environ["RUNNER_TEMP"])
+          result = {
+              "schema_version": "aiat.private-ghcr-image-candidates.v1",
+              "source_revision": os.environ["CANDIDATE_SHA"],
+              "worker": None,
+              "redis_acl_init": None,
+              "visibility_expected": "private",
+              "production_approval": "not granted by candidate publication",
+          }
+          if os.environ["WORKER_DIGEST"]:
+              result["worker"] = "ghcr.io/maaroufabousaleh/aiat-deterministic-file-worker@" + os.environ["WORKER_DIGEST"]
+          if os.environ["REDIS_DIGEST"]:
+              result["redis_acl_init"] = "ghcr.io/maaroufabousaleh/aiat-redis-acl-init@" + os.environ["REDIS_DIGEST"]
+          path = root / "registry-candidate-references.json"
+          path.write_text(json.dumps(result, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+          print(json.dumps(result, sort_keys=True))
+          PY
+
+      - name: Retain registry candidate evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: aiat-ghcr-candidate-publication-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/registry-candidate-references.json
+            ${{ runner.temp }}/worker-evidence/registry-release-trivy.json
+            ${{ runner.temp }}/redis-evidence/registry-release-trivy.json
+            ${{ runner.temp }}/worker-registry-provenance.json
+            ${{ runner.temp }}/worker-registry-sbom-verification.json
+            ${{ runner.temp }}/redis-registry-provenance.json
+            ${{ runner.temp }}/redis-registry-sbom-verification.json
+          if-no-files-found: ignore
+          retention-days: 90
