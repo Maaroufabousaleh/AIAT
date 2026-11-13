@@ -91,8 +91,8 @@ def validate_dispatch(
     expected_workflow_ref = f"{REPOSITORY}/{TRUSTED_WORKFLOW}@refs/heads/main"
     if workflow_ref != expected_workflow_ref:
         raise PromotionError("workflow code is not the trusted main-branch promotion workflow")
-    if workflow_sha != os.environ.get("GITHUB_SHA", workflow_sha):
-        raise PromotionError("workflow checkout does not match the trusted dispatch revision")
+    if not SOURCE_SHA_RE.fullmatch(workflow_sha):
+        raise PromotionError("trusted workflow SHA is malformed")
     supplied = {"repository_ci": ci_run_id, "worker": worker_run_id, "redis": redis_run_id}
     for name, run_id in supplied.items():
         expected = str(_run(manifest, name).get("id", ""))

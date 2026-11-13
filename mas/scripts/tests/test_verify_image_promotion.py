@@ -33,7 +33,7 @@ class PromotionPreflightTests(unittest.TestCase):
                 "Maaroufabousaleh/AIAT/.github/workflows/"
                 "aiat-image-candidate-promotion.yml@refs/heads/main"
             ),
-            "workflow_sha": "main-dispatch-sha",
+            "workflow_sha": "f" * 40,
         }
 
     def dispatch(self, **overrides: str) -> None:
@@ -59,6 +59,10 @@ class PromotionPreflightTests(unittest.TestCase):
     def test_rejects_untrusted_workflow_revision(self) -> None:
         with self.assertRaisesRegex(promotion.PromotionError, "trusted main-branch"):
             self.dispatch(workflow_ref="Maaroufabousaleh/AIAT/old-workflow.yml@refs/heads/main")
+
+    def test_rejects_malformed_trusted_workflow_sha(self) -> None:
+        with self.assertRaisesRegex(promotion.PromotionError, "workflow SHA is malformed"):
+            self.dispatch(workflow_sha="not-a-commit-sha")
 
     def test_rejects_two_image_publish_to_enforce_redis_first(self) -> None:
         with self.assertRaisesRegex(promotion.PromotionError, "one image at a time"):
