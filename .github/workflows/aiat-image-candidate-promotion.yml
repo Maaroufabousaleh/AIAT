@@ -101,7 +101,18 @@ jobs:
           "$RUNNER_TEMP/gitleaks-bin/gitleaks" dir "$scan_root" \
             --no-banner --redact --report-format json \
             --report-path "$RUNNER_TEMP/promotion-secret-scan.json"
+          if [[ ! -f "$RUNNER_TEMP/promotion-secret-scan.json" ]]; then
+            printf '[]\n' > "$RUNNER_TEMP/promotion-secret-scan.json"
+          fi
           cat "$RUNNER_TEMP/promotion-secret-scan.json"
+
+      - name: Retain the read-only PR secret-scan report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: aiat-promotion-pr-gitleaks-${{ github.run_id }}
+          path: ${{ runner.temp }}/promotion-secret-scan.json
+          if-no-files-found: error
+          retention-days: 90
 
   evidence-preflight:
     if: github.ref == 'refs/heads/main'
