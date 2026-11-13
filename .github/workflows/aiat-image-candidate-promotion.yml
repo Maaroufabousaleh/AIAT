@@ -439,9 +439,11 @@ jobs:
           docker push "$candidate_tag" 2>&1 | tee "$RUNNER_TEMP/registry-push.log"
           digest="$(awk '/digest: sha256:[0-9a-f]{64}/ {for(i=1;i<=NF;i++) if($i ~ /^sha256:[0-9a-f]{64}$/) d=$i} END {print d}' "$RUNNER_TEMP/registry-push.log")"
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-          echo "digest=$digest" >> "$GITHUB_OUTPUT"
-          echo "package=$package" >> "$GITHUB_OUTPUT"
-          echo "reference=$package@$digest" >> "$GITHUB_OUTPUT"
+          {
+            echo "digest=$digest"
+            echo "package=$package"
+            echo "reference=$package@$digest"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Create a registry promotion provenance predicate
         env:
