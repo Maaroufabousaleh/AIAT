@@ -155,6 +155,44 @@ readiness checks:
 mas/scripts/bootstrap-dev-host.sh --skip-tests
 ```
 
+The native daemon and the AIAT application stack have separate lifecycles.
+When Ubuntu has just started and the Docker service is stopped, these commands
+check or start only `aiat-docker.service`; they do not start Compose, run
+migrations, keep WSL alive, or configure Windows startup:
+
+```bash
+python3 mas/scripts/native_docker_engine.py status
+python3 mas/scripts/native_docker_engine.py start
+```
+
+`start` verifies the explicit `/run/aiat-docker/docker.sock` endpoint, the
+`/var/lib/docker-aiat` data root, the expected daemon process and the `runsc`
+runtime. It refuses to start if a standard Docker service or another
+`dockerd` process is active. Start application writers separately, only after
+confirming that this environment is the intended data target and that no
+Desktop deployment is an active writer. The bootstrap above is an application
+activation step because it starts Compose and applies migrations.
+
+To stop the development stack, use its Compose wrapper first and confirm all
+containers and builds are stopped. Then the guarded daemon command can stop
+only the native Docker service; it requires an explicit idle confirmation and
+refuses while any container remains running:
+
+```bash
+cd mas/infra/compose
+./mas.sh down
+cd ../../..
+python3 mas/scripts/native_docker_engine.py stop --confirm-idle
+```
+
+The confirmation means the operator has checked for active BuildKit jobs and
+other Docker work that the helper cannot reliably enumerate. This stops the
+daemon but does not terminate Ubuntu. WSL lifetime is controlled by the Windows
+host; systemd being enabled does not guarantee that the distro stays running
+after its sessions close. These commands provide a development session
+lifecycle, not 24/7 service availability. No cold-start test is claimed by the
+local fixture tests; validate it in an approved test window.
+
 For subsequent Compose operations, use the development wrapper from
 `mas/infra/compose`; it loads the local `.env` values literally and supplies
 development image defaults:
