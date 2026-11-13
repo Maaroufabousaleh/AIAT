@@ -330,6 +330,7 @@ async def test_registry_dispatches_mcp_through_server_registry(monkeypatch):
     monkeypatch.setattr("tool_service.mcp_client.invoke_mcp_tool", fake_invoke)
     registry = ToolRegistry(settings, rate_limiter=RateLimiterPool())
     registry.register_all(get_all_tools())
+    registry.grant_tool("worker-alpha", "mcp.invoke")
     response = await registry.execute(
         ToolRequest(
             caller_id="worker-alpha",
