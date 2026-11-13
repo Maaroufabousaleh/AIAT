@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from types import SimpleNamespace
-from uuid import uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import pytest
 from tool_service.tools.file import (
@@ -28,6 +28,33 @@ _BLOB_DOWNLOAD = BlobDownloadTool.execute
 _BLOB_LIST = BlobListTool.execute
 _BLOB_DELETE = BlobDeleteTool.execute
 _PROJECT_REPOSITORY = ProjectRepositoryTool.execute
+
+
+def _project_id(value: str | None) -> str | None:
+    if value is None:
+        return None
+    try:
+        return str(UUID(value))
+    except ValueError:
+        return str(uuid5(NAMESPACE_URL, f"aiat-tool-test:{value}"))
+
+
+class _MemoryAuditSink:
+    """Test-only sink for the registry's mandatory-audit interface."""
+
+    def __init__(self) -> None:
+        self.rows: set[tuple[str, str, str]] = set()
+
+    async def record_required_tool_audit(self, *, run_id, idempotency_key, status, **_values):
+        phase = status if status in {"intent", "forbidden"} else "outcome"
+        key = (str(run_id), str(idempotency_key), phase)
+        if key in self.rows:
+            return False
+        self.rows.add(key)
+        return True
+
+    async def record_project_usage(self, **_values):
+        return {}
 
 
 class _MemoryBlob:
@@ -74,8 +101,9 @@ def _worker_request(
         caller_id="coding-worker",
         caller_role=caller_role,
         caller_team="dept_system",
-        project_id=project_id,
-        worker_run_id=run_id or uuid4(),
+        project_id=_project_id(project_id),
+        worker_run_id=run_id,
+        idempotency_key=uuid4() if run_id is not None else None,
         tool_name=tool_name,
         kwargs=kwargs,
     )
@@ -101,7 +129,10 @@ async def test_worker_file_tools_are_bound_to_authenticated_project(
     target = tmp_path / "other-project"
     target.mkdir()
     (target / "private.txt").write_text("private", encoding="utf-8")
-    registry = make_registry()
+    registry = make_registry(usage_storage=_MemoryAuditSink())
+    registry.load_worker_grants({
+        "coding-worker": {"file_read", "file_write", "file.patch", "repo.read"}
+    })
 
     read = await registry.execute(
         _worker_request(
@@ -183,6 +214,9 @@ async def test_blob_artifact_upload_readback_and_mutations_are_project_scoped(
 
     monkeypatch.setattr(infra_module, "get_blob_client", get_blob_client)
     registry = make_registry()
+    registry.load_worker_grants({
+        "coding-worker": {"blob.upload", "blob.download", "blob.list", "blob.delete"}
+    })
 
     uploaded = await registry.execute(
         _worker_request(
@@ -204,7 +238,9 @@ async def test_blob_artifact_upload_readback_and_mutations_are_project_scoped(
     assert uploaded.result["sha256"] == hashlib.sha256(b"VALUE = 42\n").hexdigest()
     assert downloaded.success is True
     assert downloaded.result["content"] == "VALUE = 42\n"
-    assert blob.objects == {("assigned-project", "artifacts/solution.py"): b"VALUE = 42\n"}
+    assert blob.objects == {
+        (_project_id("assigned-project"), "artifacts/solution.py"): b"VALUE = 42\n"
+    }
 
     for tool_name, kwargs in (
         ("blob.upload", {"project_id": "other-project", "key": "leak.txt", "content": "x"}),
@@ -222,10 +258,12 @@ async def test_blob_artifact_upload_readback_and_mutations_are_project_scoped(
         assert response.success is False
         assert "authenticated project scope" in (response.error or "")
 
-    assert blob.objects == {("assigned-project", "artifacts/solution.py"): b"VALUE = 42\n"}
+    assert blob.objects == {
+        (_project_id("assigned-project"), "artifacts/solution.py"): b"VALUE = 42\n"
+    }
     assert blob.calls == [
-        ("upload", "assigned-project", "artifacts/solution.py"),
-        ("download", "assigned-project", "artifacts/solution.py"),
+        ("upload", _project_id("assigned-project"), "artifacts/solution.py"),
+        ("download", _project_id("assigned-project"), "artifacts/solution.py"),
     ]
 
 
@@ -244,6 +282,7 @@ async def test_worker_cannot_self_assign_project_scope_for_files_or_artifacts(
 
     monkeypatch.setattr(infra_module, "get_blob_client", get_blob_client)
     registry = make_registry()
+    registry.load_worker_grants({"coding-worker": {"file_write", "blob.upload"}})
     requests = (
         _worker_request(
             tool_name="file_write",
@@ -273,11 +312,15 @@ async def test_worker_file_write_uses_authenticated_run_workspace_and_returns_in
     worker_root = tmp_path / "worker-runs"
     monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(project_root))
     monkeypatch.setenv("OPENCODE_WORKSPACE_ROOT", str(worker_root))
-    registry = make_registry()
+    registry = make_registry(usage_storage=_MemoryAuditSink())
+    registry.grant_tool("coding-worker", "file_write")
+    registry.grant_tool("coding-worker", "file_read")
+    project_id = _project_id("assigned-project")
     request = _worker_request(
         tool_name="file_write",
-        project_id="assigned-project",
+        project_id=project_id,
         kwargs={"path": "src/solution.py", "content": "VALUE = 42\n"},
+        run_id=uuid4(),
     )
 
     written = await registry.execute(request)
@@ -286,7 +329,7 @@ async def test_worker_file_write_uses_authenticated_run_workspace_and_returns_in
     content = b"VALUE = 42\n"
 
     assert written.success is True
-    assert written.result["project_id"] == "assigned-project"
+    assert written.result["project_id"] == project_id
     assert written.result["bytes_written"] == len(content)
     assert written.result["sha256"] == hashlib.sha256(content).hexdigest()
     assert artifact_path.read_bytes() == content
@@ -295,7 +338,7 @@ async def test_worker_file_write_uses_authenticated_run_workspace_and_returns_in
     readback = await registry.execute(
         _worker_request(
             tool_name="file_read",
-            project_id="assigned-project",
+            project_id=project_id,
             kwargs={"path": "src/solution.py"},
             run_id=request.worker_run_id,
         )
@@ -314,6 +357,8 @@ async def test_worker_file_access_fails_closed_without_authenticated_run_id(
     monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(project_root))
     monkeypatch.setenv("OPENCODE_WORKSPACE_ROOT", str(worker_root))
     registry = make_registry()
+    registry.grant_tool("coding-worker", "file_write")
+    registry.grant_tool("coding-worker", "file_read")
     requests = (
         ToolRequest(
             caller_id="coding-worker",
@@ -353,6 +398,7 @@ async def test_file_write_rejects_content_above_byte_limit_before_workspace_crea
     monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(project_root))
     monkeypatch.setenv("OPENCODE_WORKSPACE_ROOT", str(worker_root))
     registry = make_registry()
+    registry.grant_tool("coding-worker", "file_write")
     request = _worker_request(
         tool_name="file_write",
         project_id="assigned-project",
@@ -413,6 +459,8 @@ async def test_worker_test_and_search_cannot_target_another_project(
 
     monkeypatch.setattr("tool_service.tools.adapters._run_sandboxed_process", fake_sandbox)
     registry = make_registry()
+    registry.grant_tool("coding-worker", "test.run")
+    registry.grant_tool("coding-worker", "repo.search")
     test_response = await registry.execute(
         _worker_request(
             tool_name="test.run",
@@ -440,7 +488,7 @@ async def test_project_workspace_symlink_cannot_cross_into_another_project(
 ) -> None:
     _restore_real_tools(monkeypatch)
     monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(tmp_path))
-    source = tmp_path / "assigned-project"
+    source = tmp_path / _project_id("assigned-project")
     target = tmp_path / "other-project"
     source.mkdir()
     target.mkdir()

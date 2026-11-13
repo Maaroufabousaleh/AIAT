@@ -85,6 +85,13 @@ MUTABLE_READ_TOOLS = {
 }
 
 
+def _worker_registry(make_registry, worker_id: str, tool_name: str):
+    """Build a fixture registry with only the grant required by this test."""
+    registry = make_registry()
+    registry.grant_tool(worker_id, resolve_tool_name(tool_name))
+    return registry
+
+
 def test_documented_default_tools_are_in_static_manifest():
     missing = DOCUMENTED_DEFAULT_TOOLS - set(TOOL_MANIFEST)
     assert missing == set()
@@ -144,7 +151,7 @@ async def test_command_run_safe_rejects_unallowlisted_commands(
     make_registry, tmp_path, monkeypatch
 ):
     monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(tmp_path))
-    registry = make_registry()
+    registry = _worker_registry(make_registry, "worker-alpha", "command.run_safe")
     request = ToolRequest(
         caller_id="worker-alpha",
         caller_role=AgentRole.WORKER,
@@ -165,7 +172,7 @@ async def test_command_run_safe_fails_closed_without_sandbox(make_registry, tmp_
     monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.delenv("TOOL_SANDBOX_COMMAND", raising=False)
     (tmp_path / "project-1").mkdir()
-    response = await make_registry().execute(
+    response = await _worker_registry(make_registry, "worker-alpha", "command.run_safe").execute(
         ToolRequest(
             caller_id="worker-alpha",
             caller_role=AgentRole.WORKER,
@@ -207,7 +214,7 @@ async def test_command_run_safe_delegates_worker_command_to_gvisor_adapter(
     (tmp_path / "project-1").mkdir()
     monkeypatch.setenv("TOOL_SANDBOX_COMMAND", "sandbox-runner --json-stdin")
     monkeypatch.setattr("tool_service.tools.adapters._run_process", fake_run_process)
-    response = await make_registry().execute(
+    response = await _worker_registry(make_registry, "worker-alpha", "command.run_safe").execute(
         ToolRequest(
             caller_id="worker-alpha",
             caller_role=AgentRole.WORKER,
@@ -250,7 +257,7 @@ async def test_command_run_safe_reports_degraded_sandbox_output(
     (tmp_path / "project-1").mkdir()
     monkeypatch.setenv("TOOL_SANDBOX_COMMAND", "sandbox-runner --json-stdin")
     monkeypatch.setattr("tool_service.tools.adapters._run_process", fake_run_process)
-    response = await make_registry().execute(
+    response = await _worker_registry(make_registry, "worker-alpha", "command.run_safe").execute(
         ToolRequest(
             caller_id="worker-alpha",
             caller_role=AgentRole.WORKER,
@@ -305,7 +312,7 @@ async def test_python_repo_search_skips_symlink_outside_workspace(
     monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setattr("tool_service.tools.adapters.shutil.which", lambda _name: None)
 
-    response = await make_registry().execute(
+    response = await _worker_registry(make_registry, "worker-alpha", "repo.search").execute(
         ToolRequest(
             caller_id="worker-alpha",
             caller_role=AgentRole.WORKER,
@@ -323,7 +330,7 @@ async def test_python_repo_search_skips_symlink_outside_workspace(
 @pytest.mark.anyio
 async def test_repo_read_rejects_path_traversal(make_registry, tmp_path, monkeypatch):
     monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(tmp_path))
-    registry = make_registry()
+    registry = _worker_registry(make_registry, "worker-alpha", "repo.read")
     request = ToolRequest(
         caller_id="worker-alpha",
         caller_role=AgentRole.WORKER,
@@ -346,7 +353,7 @@ async def test_file_patch_replaces_exact_text(make_registry, tmp_path, monkeypat
     target = tmp_path / "project-1" / "app.txt"
     target.parent.mkdir(parents=True)
     target.write_text("alpha\nbeta\n", encoding="utf-8")
-    registry = make_registry()
+    registry = _worker_registry(make_registry, "worker-alpha", "file.patch")
 
     response = await registry.execute(
         ToolRequest(
@@ -369,7 +376,7 @@ async def test_security_scan_fails_closed_without_sandbox_adapter(
 ):
     monkeypatch.setenv("TOOL_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.delenv("TOOL_SANDBOX_COMMAND", raising=False)
-    registry = make_registry()
+    registry = _worker_registry(make_registry, "worker-alpha", "security.scan")
 
     response = await registry.execute(
         ToolRequest(
@@ -403,7 +410,7 @@ async def test_security_scan_delegates_semgrep_to_gvisor_adapter(
     monkeypatch.setattr(
         "tool_service.tools.adapters._run_sandboxed_process", fake_run_sandboxed_process
     )
-    response = await make_registry().execute(
+    response = await _worker_registry(make_registry, "worker-alpha", "security.scan").execute(
         ToolRequest(
             caller_id="worker-alpha",
             caller_role=AgentRole.WORKER,
@@ -443,7 +450,7 @@ async def test_security_scan_reports_invalid_semgrep_shape_without_raising(
     monkeypatch.setattr(
         "tool_service.tools.adapters._run_sandboxed_process", fake_run_sandboxed_process
     )
-    response = await make_registry().execute(
+    response = await _worker_registry(make_registry, "worker-alpha", "security.scan").execute(
         ToolRequest(
             caller_id="worker-alpha",
             caller_role=AgentRole.WORKER,
@@ -478,7 +485,7 @@ async def test_security_scan_reports_degraded_skillspector_output(
     monkeypatch.setattr(
         "tool_service.tools.adapters._run_sandboxed_process", fake_run_sandboxed_process
     )
-    response = await make_registry().execute(
+    response = await _worker_registry(make_registry, "worker-alpha", "security.scan").execute(
         ToolRequest(
             caller_id="worker-alpha",
             caller_role=AgentRole.WORKER,
@@ -512,7 +519,7 @@ async def test_trufflehog_alias_delegates_to_the_shared_bounded_adapter(
     monkeypatch.setattr(
         "tool_service.tools.adapters._run_sandboxed_process", fake_run_sandboxed_process
     )
-    response = await make_registry().execute(
+    response = await _worker_registry(make_registry, "worker-alpha", "trufflehog").execute(
         ToolRequest(
             caller_id="worker-alpha",
             caller_role=AgentRole.WORKER,
@@ -546,7 +553,7 @@ async def test_skillspector_alias_delegates_to_the_shared_bounded_adapter(
     monkeypatch.setattr(
         "tool_service.tools.adapters._run_sandboxed_process", fake_run_sandboxed_process
     )
-    response = await make_registry().execute(
+    response = await _worker_registry(make_registry, "worker-alpha", "skillspector").execute(
         ToolRequest(
             caller_id="worker-alpha",
             caller_role=AgentRole.WORKER,
@@ -591,7 +598,7 @@ async def test_document_ingest_falls_back_to_text_when_docling_missing(
     project_workspace.mkdir()
     source = project_workspace / "notes.md"
     source.write_text("# Notes\n\nBody", encoding="utf-8")
-    registry = make_registry()
+    registry = _worker_registry(make_registry, "worker-alpha", "document.ingest")
 
     response = await registry.execute(
         ToolRequest(
@@ -637,7 +644,7 @@ async def test_document_ingest_uses_docling_runner_when_installed(
         }
 
     monkeypatch.setattr("tool_service.tools.adapters._run_process", fake_run_process)
-    response = await make_registry().execute(
+    response = await _worker_registry(make_registry, "writer", "document.ingest").execute(
         ToolRequest(
             caller_id="writer",
             caller_role=AgentRole.WORKER,
@@ -684,7 +691,7 @@ async def test_document_ingest_reports_invalid_docling_output_without_raising(
         }
 
     monkeypatch.setattr("tool_service.tools.adapters._run_process", fake_run_process)
-    response = await make_registry().execute(
+    response = await _worker_registry(make_registry, "writer", "document.ingest").execute(
         ToolRequest(
             caller_id="writer",
             caller_role=AgentRole.WORKER,
@@ -721,7 +728,7 @@ async def test_diagram_render_reports_successful_artifact_metadata(
         return {"available": True, "returncode": 0, "stdout": "", "stderr": ""}
 
     monkeypatch.setattr("tool_service.tools.adapters._run_process", fake_run_process)
-    response = await make_registry().execute(
+    response = await _worker_registry(make_registry, "diagram-worker", "diagram.render").execute(
         ToolRequest(
             caller_id="diagram-worker",
             caller_role=AgentRole.WORKER,
@@ -755,7 +762,7 @@ async def test_diagram_render_does_not_report_success_without_artifact(
         return {"available": True, "returncode": 0, "stdout": "", "stderr": ""}
 
     monkeypatch.setattr("tool_service.tools.adapters._run_process", fake_run_process)
-    response = await make_registry().execute(
+    response = await _worker_registry(make_registry, "diagram-worker", "diagram.render").execute(
         ToolRequest(
             caller_id="diagram-worker",
             caller_role=AgentRole.WORKER,
@@ -792,7 +799,7 @@ async def test_external_code_review_reports_invalid_output_without_raising(
         }
 
     monkeypatch.setattr("tool_service.tools.adapters._run_process", fake_run_process)
-    response = await make_registry().execute(
+    response = await _worker_registry(make_registry, "review-worker", "code.review").execute(
         ToolRequest(
             caller_id="review-worker",
             caller_role=AgentRole.WORKER,
@@ -994,7 +1001,7 @@ async def test_project_repository_initializes_and_reports_git_workspace(
 async def test_mcp_invoke_reports_unconfigured_transport_without_fabricating_success(
     make_registry,
 ):
-    response = await make_registry().execute(
+    response = await _worker_registry(make_registry, "worker-alpha", "mcp.invoke").execute(
         ToolRequest(
             caller_id="worker-alpha",
             caller_role=AgentRole.WORKER,

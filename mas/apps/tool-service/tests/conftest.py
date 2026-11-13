@@ -209,9 +209,14 @@ def make_registry():
     from tool_service.registry import ToolRegistry
     from tool_service.tools.all_tools import get_all_tools
 
-    def _factory(*, cache=None):
+    def _factory(*, cache=None, usage_storage=None):
         settings = Settings()
-        registry = ToolRegistry(settings, cache=cache, rate_limiter=RateLimiterPool())
+        registry = ToolRegistry(
+            settings,
+            cache=cache,
+            rate_limiter=RateLimiterPool(),
+            usage_storage=usage_storage,
+        )
         registry.register_all(get_all_tools())
         return registry
 
