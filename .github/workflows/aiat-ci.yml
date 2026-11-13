@@ -3,7 +3,7 @@ name: AIAT CI
 on:
   pull_request:
   push:
-    branches: [main, develop]
+    branches: [main, develop, agent/fix-review-p1]
 
 permissions:
   contents: read
@@ -42,6 +42,7 @@ jobs:
       - run: uv run python scripts/check_image_provenance.py
       - run: uv run python scripts/check_image_budgets.py
       - run: uv run python scripts/check_release_ledger.py --json
+      - run: uv run pytest scripts/tests/test_verify_image_candidate_evidence.py scripts/tests/test_image_candidate_registry_release_workflow.py scripts/tests/test_native_docker_engine.py
       - run: uv run pytest packages/mas-core/tests packages/mas-api-sdk/tests apps/orchestrator-api/tests apps/tool-service/tests apps/team-runner/tests
       - run: PYTHONPATH=apps/identity-service uv run pytest apps/identity-service/tests/test_identity_service.py
   dashboard-contract:

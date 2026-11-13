@@ -263,4 +263,4 @@ jobs:
           name: redis-initializer-evidence-${{ github.run_id }}
           path: ${{ runner.temp }}/aiat-redis-evidence/
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 90

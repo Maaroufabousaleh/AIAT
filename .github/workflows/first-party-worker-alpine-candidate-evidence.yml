@@ -523,4 +523,4 @@ jobs:
           name: first-party-worker-alpine-candidate-${{ github.run_id }}
           path: ${{ runner.temp }}/aiat-worker-alpine-evidence/
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 90
