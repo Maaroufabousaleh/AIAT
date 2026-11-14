@@ -182,6 +182,7 @@ async def test_steward_certification_blocks_before_unreviewed_candidate_executio
     storage = MagicMock()
     storage.get_worker = AsyncMock(
         return_value={
+            "id": worker_id,
             "adapter_config": {},
             "sandbox_profile": "trusted",
             "version_pin": "1.0.0",
@@ -189,7 +190,16 @@ async def test_steward_certification_blocks_before_unreviewed_candidate_executio
     )
     storage.create_compatibility_matrix = AsyncMock()
     storage.create_certification_run = AsyncMock()
-    storage.get_skill_bundle_candidate = AsyncMock(return_value=None)
+    storage.get_skill_bundle_candidate = AsyncMock(
+        return_value={
+            "id": candidate.candidate_id,
+            "worker_id": worker_id,
+            "intake_status": candidate.intake_status.value,
+            "evidence_json": {
+                "candidate_record": candidate.model_dump(mode="json"),
+            },
+        }
+    )
     monkeypatch.setattr(main, "_storage", lambda: storage)
     monkeypatch.setattr(main, "_steward_runtime", AsyncMock(return_value=steward))
 
