@@ -26,6 +26,8 @@ The manifest distinguishes the outer Actions artifact ZIP checksum, inner OCI/Do
 
 The Redis initializer must be promoted and freshly verified before the worker candidate. Each fresh-runner verification pulls the image by immutable digest, compares platform and payload identity with the scanned archive, and verifies registry provenance, SBOM, and the promotion record. A candidate image digest is not production approval.
 
+For Redis, the read-only registry-verification job also reruns the candidate's disposable Redis restart/verifier integration test with `AIAT_REDIS_TEST_IMAGE` set to the published `package@sha256:...` reference. It checks bootstrap disablement, saved/effective ACL agreement, verifier-only repeat execution, fail-closed mismatch behavior, and restart persistence. That test process receives no GitHub token; the job has `packages: read`, not `packages: write`. Its JUnit result is retained as a separate artifact. The initial evidence archive test remains useful but is not substituted for exercising the freshly pulled registry digest.
+
 ## Current authorization boundary
 
 This PR prepares code and tests only. It does not publish to GHCR, provision credentials, change package settings, modify live Redis, release the live startup hold, activate a worker, or change any deployment pin. Publication still requires separate explicit operator authorization for the exact destination and candidate. Redis live replacement requires a separate maintenance approval.

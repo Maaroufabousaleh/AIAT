@@ -249,5 +249,28 @@ class PromotionPreflightTests(unittest.TestCase):
             )
 
 
+class PromotionWorkflowContractTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.workflow = (REPO / ".github" / "workflows" / "aiat-image-candidate-promotion.yml").read_text(
+            encoding="utf-8"
+        )
+
+    def test_package_write_job_uses_only_the_trusted_workflow_revision(self) -> None:
+        publish = self.workflow.split("  publish:\n", 1)[1].split("  verify-registry:\n", 1)[0]
+        self.assertIn("ref: ${{ github.sha }}", publish)
+        self.assertNotIn("ref: ${{ inputs.candidate_sha }}", publish)
+
+    def test_redis_registry_digest_is_retested_without_a_github_token(self) -> None:
+        verify = self.workflow.split("  verify-registry:\n", 1)[1]
+        self.assertIn("packages: read", verify)
+        self.assertNotIn("packages: write", verify)
+        self.assertIn("AIAT_REDIS_TEST_IMAGE=\"$published_image\"", verify)
+        self.assertIn("env -i", verify)
+        self.assertIn("test_redis_acl_init_disposable.py", verify)
+        runtime_step = verify.split("name: Re-run ACL disablement", 1)[1].split("      - name:", 1)[0]
+        self.assertNotIn("GH_TOKEN", runtime_step)
+        self.assertIn("$PUBLISHED_PACKAGE@$PUBLISHED_DIGEST", runtime_step)
+
+
 if __name__ == "__main__":
     unittest.main()

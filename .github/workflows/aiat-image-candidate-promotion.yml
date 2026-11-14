@@ -605,6 +605,48 @@ jobs:
               raise SystemExit("registry pull platform differs from the certified linux/amd64 candidate")
           PY
 
+      - name: Check out the exact candidate source for Redis runtime verification
+        if: inputs.image == 'redis'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          path: candidate-source
+          persist-credentials: false
+
+      - name: Install pinned pytest for Redis published-runtime verification
+        if: inputs.image == 'redis'
+        run: python3 -m pip install --disable-pip-version-check --no-input 'pytest==9.0.3'
+
+      - name: Re-run ACL disablement, verifier, idempotence, and restart checks on the published Redis digest
+        if: inputs.image == 'redis'
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          PUBLISHED_PACKAGE: ${{ needs.publish.outputs.package }}
+          PUBLISHED_DIGEST: ${{ needs.publish.outputs.registry_digest }}
+        run: |
+          set -euo pipefail
+          test "$(git -C candidate-source rev-parse HEAD)" = "$CANDIDATE_SHA"
+          [[ "$PUBLISHED_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          mkdir -p "$RUNNER_TEMP/redis-runtime-home"
+          published_image="$PUBLISHED_PACKAGE@$PUBLISHED_DIGEST"
+          env -i \
+            PATH="$PATH" \
+            HOME="$RUNNER_TEMP/redis-runtime-home" \
+            AIAT_REDIS_INTEGRATION=1 \
+            AIAT_REDIS_TEST_IMAGE="$published_image" \
+            python3 -m pytest \
+              "$GITHUB_WORKSPACE/candidate-source/mas/apps/message-router/tests/test_redis_acl_init_disposable.py" \
+              -q --junitxml="$RUNNER_TEMP/redis-runtime-test-results.xml"
+
+      - name: Retain disposable Redis runtime verification result
+        if: always() && inputs.image == 'redis'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: aiat-published-redis-runtime-test-${{ github.run_id }}
+          path: ${{ runner.temp }}/redis-runtime-test-results.xml
+          if-no-files-found: warn
+          retention-days: 90
+
       - name: Verify registry provenance, SBOM, and source linkage attestations
         env:
           GH_TOKEN: ${{ github.token }}
