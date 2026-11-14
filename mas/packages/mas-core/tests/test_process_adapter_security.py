@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import sys
 from uuid import uuid4
 
@@ -275,6 +276,8 @@ async def test_controller_settles_process_termination_as_cancelled() -> None:
 @pytest.mark.asyncio
 async def test_opt_in_process_tool_protocol_round_trips_through_worker_run_controller() -> None:
     dispatched = []
+    project_id = uuid4()
+    content = "VALUE = 3\n"
 
     async def tool_service(tool_request):
         dispatched.append(tool_request)
@@ -283,7 +286,13 @@ async def test_opt_in_process_tool_protocol_round_trips_through_worker_run_contr
             run_id=tool_request.run_id,
             tool_name=tool_request.tool_name,
             success=True,
-            result={"success": True, "path": "src/example.py", "bytes_written": 10},
+            result={
+                "success": True,
+                "path": "src/example.py",
+                "project_id": str(project_id),
+                "bytes_written": len(content.encode("utf-8")),
+                "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+            },
         )
 
     adapter = ProcessAdapter(
@@ -297,7 +306,7 @@ async def test_opt_in_process_tool_protocol_round_trips_through_worker_run_contr
         worker_id="process-mediated-worker",
         task_type="project_file_generation",
         idempotency_key="process-mediated-tool-roundtrip",
-        project_id=uuid4(),
+        project_id=project_id,
         tool_grants=["file_write"],
     )
 
@@ -306,7 +315,11 @@ async def test_opt_in_process_tool_protocol_round_trips_through_worker_run_contr
     finally:
         await adapter.close()
 
-    assert outcome.state == "SUCCEEDED"
+    assert outcome.state == "SUCCEEDED", (
+        outcome.result.success,
+        outcome.result.error,
+        outcome.result.output,
+    )
     assert len(dispatched) == 1
     assert dispatched[0].tool_name == "file_write"
     assert dispatched[0].arguments == {"path": "src/example.py", "content": "VALUE = 3\n"}
