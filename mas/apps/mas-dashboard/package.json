@@ -29,7 +29,7 @@
     "jose": "^5.9.6",
     "js-yaml": "^4.1.1",
     "lucide-react": "^0.454.0",
-    "next": "16.2.10",
+    "next": "16.4.5",
     "react": "19.2.0",
     "react-dom": "19.2.0",
     "react-markdown": "^10.1.0",
