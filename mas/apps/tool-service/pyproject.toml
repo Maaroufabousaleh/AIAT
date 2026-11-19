@@ -15,7 +15,7 @@ dependencies = [
     "pydantic-settings>=2.3",
     "structlog>=24.2",
     "prometheus-fastapi-instrumentator>=7.0",
-    "mcp==1.23.3",
+    "mcp==1.30.0",
     "cryptography>=42",
     "asyncpg>=0.29",
 ]
