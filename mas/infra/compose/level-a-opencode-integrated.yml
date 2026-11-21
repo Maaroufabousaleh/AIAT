@@ -130,7 +130,7 @@ services:
       AIAT_OPERATOR_API_KEY: ${AIAT_LEVEL_A_OPERATOR_KEY:?runner must generate an ephemeral operator key}
       LLM_GATEWAY_URL: http://litellm:4000
       LLM_API_KEY: ${AIAT_LEVEL_A_LITELLM_MASTER_KEY:?runner must generate an ephemeral local gateway key}
-      TOOL_WORKSPACE_ROOT: /workspace
+      TOOL_WORKSPACE_ROOT: /opencode-workspace/projects
       OPENCODE_WORKSPACE_ROOT: /opencode-workspace
       AIAT_MCP_SERVERS_JSON: '{"workspace":{"transport":"stdio","command":"python","args":["-m","tool_service.mcp_workspace_server"]}}'
       AIAT_BROWSER_RUNTIME_LOCATION: operator_laptop
