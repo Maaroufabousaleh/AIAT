@@ -1,0 +1,64 @@
+{
+  "schema_version": "aiat.image-promotion-candidate.v1",
+  "repository": "Maaroufabousaleh/AIAT",
+  "source": {
+    "sha": "d13b712ed2b8c22bd4bc2013a468b1598a2fca64",
+    "branch": "agent/fix-review-p1"
+  },
+  "runs": {
+    "repository_ci": {
+      "id": "43357795559",
+      "name": "AIAT CI",
+      "path": ".github/workflows/aiat-ci.yml",
+      "branch": "agent/fix-review-p1",
+      "event": "push"
+    },
+    "worker": {
+      "id": "43357795613",
+      "name": "First-party worker Alpine candidate evidence (not approval)",
+      "path": ".github/workflows/first-party-worker-alpine-candidate-evidence.yml",
+      "branch": "agent/fix-review-p1",
+      "event": "push"
+    },
+    "redis": {
+      "id": "43357795668",
+      "name": "Redis initializer evidence (not release)",
+      "path": ".github/workflows/redis-initializer-evidence.yml",
+      "branch": "agent/fix-review-p1",
+      "event": "push"
+    }
+  },
+  "images": {
+    "redis": {
+      "id": "43357795668",
+      "branch": "agent/fix-review-p1",
+      "artifact_id": "14006553394",
+      "artifact_name": "redis-initializer-evidence-43357795668",
+      "artifact_digest": "sha256:0bc36cab9eec9df4240e892c321442e6719d61e0996e97dadcfca11fbb71a8c5",
+      "archive_name": "candidate-image.tar",
+      "archive_sha256": "6fe6366272abbf31e0266a628e6df53770dc93a0c9a96a5dd5039e741e826653",
+      "config_digest": "sha256:fe2dd77b30b5c36b667970d026d28bb38ea3e5e9ce78db9f6ad0c7019cefaf5f",
+      "platform": "linux/amd64",
+      "package_name": "aiat-redis-acl-init",
+      "attestation_workflow": ".github/workflows/redis-initializer-evidence.yml"
+    },
+    "worker": {
+      "id": "43357795613",
+      "branch": "agent/fix-review-p1",
+      "artifact_id": "14006234252",
+      "artifact_name": "first-party-worker-alpine-candidate-43357795613",
+      "artifact_digest": "sha256:120b5497367837941ca90538fba62f42aa10ad191a6bd0548e9d17bee77dd214",
+      "archive_name": "candidate.oci.tar",
+      "archive_sha256": "eab737b85972d5480aead235a4268933fb4214b46326a3eefdf9ec01283b46e9",
+      "oci_index_digest": "sha256:8f8051ab4772437cad91e6852b3361ccb86da750e9813f3348c423122ffa12aa",
+      "platform_manifest_digest": "sha256:7072c6693415c790f53cf6bad1de54076d1ed6711ddd14a046edab244167ca65",
+      "config_digest": "sha256:03fbb992c37b3dec8cda3673453a98a308071a33e385be5418648eff37ec7cb4",
+      "package_name": "aiat-deterministic-file-worker",
+      "attestation_workflow": ".github/workflows/first-party-worker-alpine-candidate-evidence.yml",
+      "buildkit_builder_authenticated": false,
+      "buildkit_source_base_binding_verified": true
+    }
+  },
+  "release_order": ["redis", "worker"],
+  "production_release_approved": false
+}
