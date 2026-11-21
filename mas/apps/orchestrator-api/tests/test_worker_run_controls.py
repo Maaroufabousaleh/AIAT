@@ -206,6 +206,7 @@ async def test_run_controls_resolve_the_adapter_pinned_on_the_run(client, monkey
     assert resolver.await_args.kwargs == {
         "adapter_id": ADAPTER_ID,
         "allow_retired": True,
+        "shell_version_id": None,
     }
 
 
@@ -329,6 +330,10 @@ async def test_certification_materializes_an_immutable_worker_shell() -> None:
     shell_id = uuid4()
     candidate_id = uuid4()
     bundle_id = uuid4()
+    adapter_version = "test-adapter-1"
+    adapter_transport = "process"
+    adapter_implementation = "test.process-worker"
+    adapter_content_hash = "a" * 64
 
     class ShellStorage:
         async def get_runtime_adapter(self, adapter_id):
@@ -336,6 +341,10 @@ async def test_certification_materializes_an_immutable_worker_shell() -> None:
             return {
                 "id": adapter_id,
                 "worker_id": WORKER_ID,
+                "version": adapter_version,
+                "transport_type": adapter_transport,
+                "implementation_ref": adapter_implementation,
+                "content_hash": adapter_content_hash,
                 "capabilities_json": {"capability_names": ["test.run"]},
             }
 
@@ -371,6 +380,12 @@ async def test_certification_materializes_an_immutable_worker_shell() -> None:
             "id": candidate_id,
             "adapter_id": ADAPTER_ID,
             "skill_bundle_id": bundle_id,
+            "adapter": {
+                "version": adapter_version,
+                "transport_type": adapter_transport,
+                "implementation_ref": adapter_implementation,
+                "content_hash": adapter_content_hash,
+            },
         },
     )
 

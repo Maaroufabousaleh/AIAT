@@ -15,9 +15,9 @@ Tests the AIAT MAS security and governance boundaries:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 
@@ -25,7 +25,7 @@ import pytest
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-NOW_ISO = datetime.now(timezone.utc).isoformat()
+NOW_ISO = datetime.now(UTC).isoformat()
 PROJECT_ID = uuid4()
 INSTANCE_ID = uuid4()
 FLOW_ID = uuid4()
@@ -168,7 +168,8 @@ async def test_override_flow_instance_allowed_ceo(client):
     storage.get_flow_instance = AsyncMock(return_value=_fake_instance())
     storage.get_flow = AsyncMock(return_value=_fake_flow())
     storage.override_flow_instance = AsyncMock(return_value=_fake_instance("RUNNING"))
-    storage.get_project = AsyncMock(return_value=None)  # no project audit if project not found
+    storage.get_project = AsyncMock(return_value=_fake_project("IN_PROGRESS"))
+    storage.transition_project = AsyncMock()
     _patch(storage)
 
     r = await client.post(
@@ -971,6 +972,7 @@ async def test_escalate_missing_escalate_to(client):
     """POST /flows/instances/{id}/escalate without escalate_to → 400."""
     storage = MagicMock()
     storage.get_flow_instance = AsyncMock(return_value=_fake_instance())
+    storage.get_project = AsyncMock(return_value=_fake_project("IN_PROGRESS"))
     _patch(storage)
 
     r = await client.post(
@@ -1000,7 +1002,10 @@ async def test_escalate_flow_instance_success(client):
     """POST /flows/instances/{id}/escalate with valid target → 200."""
     storage = MagicMock()
     storage.get_flow_instance = AsyncMock(return_value=_fake_instance())
-    storage.escalate_flow_instance = AsyncMock(return_value=_fake_instance("RUNNING"))
+    storage.get_project = AsyncMock(return_value=_fake_project("IN_PROGRESS"))
+    storage.activate_flow_nodes = AsyncMock(
+        return_value={"outcome": "applied", "instance": _fake_instance("RUNNING")}
+    )
     _patch(storage)
 
     r = await client.post(
@@ -1067,6 +1072,7 @@ async def test_switch_flow_instance_invalid_flow_id(client):
     """POST /flows/instances/{id}/switch with invalid UUID flow_id → 400."""
     storage = MagicMock()
     storage.get_flow_instance = AsyncMock(return_value=_fake_instance())
+    storage.get_project = AsyncMock(return_value=_fake_project("IN_PROGRESS"))
     _patch(storage)
 
     r = await client.post(
@@ -1081,6 +1087,7 @@ async def test_switch_flow_instance_missing_flow_id(client):
     """POST /flows/instances/{id}/switch without flow_id → 400."""
     storage = MagicMock()
     storage.get_flow_instance = AsyncMock(return_value=_fake_instance())
+    storage.get_project = AsyncMock(return_value=_fake_project("IN_PROGRESS"))
     _patch(storage)
 
     r = await client.post(
