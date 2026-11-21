@@ -605,22 +605,13 @@ jobs:
               raise SystemExit("registry pull platform differs from the certified linux/amd64 candidate")
           PY
 
-      - name: Resolve candidate SHA from the pinned manifest
-        id: pin
+      - name: Assert the dispatch input still matches the pinned manifest
         if: inputs.image == 'redis'
         run: |
           set -euo pipefail
           pinned="$(python3 -c 'import json; print(json.load(open("mas/release/image-promotion-candidate.json"))["source"]["sha"])')"
           [[ "$pinned" =~ ^[0-9a-f]{40}$ ]]
-          echo "sha=$pinned" >> "$GITHUB_OUTPUT"
-
-      - name: Check out the exact candidate source for Redis runtime verification
-        if: inputs.image == 'redis'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ steps.pin.outputs.sha }}
-          path: candidate-source
-          persist-credentials: false
+          test "$pinned" = "${{ inputs.candidate_sha }}"
 
       - name: Install pinned pytest for Redis published-runtime verification
         if: inputs.image == 'redis'
@@ -629,12 +620,11 @@ jobs:
       - name: Re-run ACL disablement, verifier, idempotence, and restart checks on the published Redis digest
         if: inputs.image == 'redis'
         env:
-          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           PUBLISHED_PACKAGE: ${{ needs.publish.outputs.package }}
           PUBLISHED_DIGEST: ${{ needs.publish.outputs.registry_digest }}
         run: |
           set -euo pipefail
-          test "$(git -C candidate-source rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           [[ "$PUBLISHED_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
           mkdir -p "$RUNNER_TEMP/redis-runtime-home"
           published_image="$PUBLISHED_PACKAGE@$PUBLISHED_DIGEST"
@@ -644,7 +634,7 @@ jobs:
             AIAT_REDIS_INTEGRATION=1 \
             AIAT_REDIS_TEST_IMAGE="$published_image" \
             python3 -m pytest \
-              "$GITHUB_WORKSPACE/candidate-source/mas/apps/message-router/tests/test_redis_acl_init_disposable.py" \
+              "$GITHUB_WORKSPACE/mas/apps/message-router/tests/test_redis_acl_init_disposable.py" \
               -q --junitxml="$RUNNER_TEMP/redis-runtime-test-results.xml"
 
       - name: Retain disposable Redis runtime verification result
