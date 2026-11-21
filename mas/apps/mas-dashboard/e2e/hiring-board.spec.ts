@@ -28,7 +28,7 @@ test("hiring board blocks an external candidate until mandatory evaluation gates
     .last()
     .click();
 
-  const search = page.getByRole("textbox", { name: "Search workers" });
+  const search = page.getByRole("searchbox", { name: "Search workers" });
   await search.fill(candidateId);
   let row = page.getByRole("row", { name: new RegExp(candidateId) });
   await expect(row).toBeVisible();
@@ -45,16 +45,15 @@ test("hiring board blocks an external candidate until mandatory evaluation gates
   await expect(page.getByText("provenance", { exact: true })).toBeVisible();
   await expect(page.getByText("licensing", { exact: true })).toBeVisible();
 
-  await row.getByRole("button", { name: `Activate ${candidateId}` }).click();
-  await expect(
-    page.getByText("Worker activation requires current governed records"),
-  ).toBeVisible();
-  await expect(page.getByText("missing active immutable WorkerShell")).toBeVisible();
+  const activateButton = row.getByRole("button", { name: `Activate ${candidateId}` });
+  await expect(activateButton).toBeDisabled();
+  await expect(activateButton).toHaveAttribute("title", "Activation requires an approved evaluation");
+  await expect(page.getByText("Blocked until approval")).toBeVisible();
 
   await page.goto("/ceo/chat");
   const ceoInput = page.getByRole("textbox");
   await ceoInput.fill(`approve worker ${candidateId}`);
-  await ceoInput.press("Enter");
+  await page.getByRole("button", { name: "Send message" }).click();
   await expect(page.getByText(new RegExp(`cannot approve.*${candidateId}`, "i"))).toBeVisible({
     timeout: 30_000,
   });
@@ -62,10 +61,14 @@ test("hiring board blocks an external candidate until mandatory evaluation gates
   await page.goto("/workers");
   await search.fill(candidateId);
   row = page.getByRole("row", { name: new RegExp(candidateId) });
+  await expect(row).toBeVisible();
+  await row.click();
   await expect(row.getByText("Inactive", { exact: true })).toBeVisible();
-  await row.getByRole("button", { name: `Activate ${candidateId}` }).click();
+  await expect(row.getByRole("button", { name: `Activate ${candidateId}` })).toBeDisabled();
   await page.reload();
   await search.fill(candidateId);
   row = page.getByRole("row", { name: new RegExp(candidateId) });
+  await expect(row).toBeVisible();
+  await row.click();
   await expect(row.getByText("Inactive", { exact: true })).toBeVisible();
 });
