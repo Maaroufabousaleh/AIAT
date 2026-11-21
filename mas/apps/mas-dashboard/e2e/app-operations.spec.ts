@@ -488,16 +488,17 @@ test.describe("Operational UI smoke flows", () => {
     await expect(
       page.getByRole("heading", { name: "Governed lifecycle plans" }),
     ).toBeVisible();
-    for (const fieldName of ["Connection UUID", "Binding UUID"]) {
-      await expect(page.getByRole("textbox", { name: fieldName })).toHaveCSS(
-        "min-height",
-        "44px",
-      );
+    for (const fieldName of ["Lifecycle connection", "Lifecycle project binding"]) {
+      await expect(
+        integrations.getByRole("combobox", { name: fieldName }),
+      ).toBeVisible();
     }
     await expect(
-      page.getByRole("button", { name: "Generate READ_ONLY plan" }),
+      page.getByRole("button", { name: "Generate SHADOW plan" }),
     ).toHaveCSS("min-height", "44px");
-    await expect(page.getByText("E2E YouTrack")).toBeVisible();
+    await expect(
+      integrations.getByText("E2E YouTrack").and(integrations.locator("div")),
+    ).toBeVisible();
     await expect(page.getByText("conflict-e2e-001")).toBeVisible();
 
     await page.getByRole("button", { name: "Refresh" }).click();
@@ -506,8 +507,8 @@ test.describe("Operational UI smoke flows", () => {
     ).toBeVisible();
     await expect(page.getByText(/latest integration refresh failed/i)).toBeVisible();
     await expect(page.getByText("conflict-e2e-001")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Retry" })).toHaveCSS(
+    await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Retry", exact: true })).toHaveCSS(
       "min-height",
       "44px",
     );
@@ -567,7 +568,7 @@ test.describe("Operational UI smoke flows", () => {
 
     await page.goto("/integrations");
     const integrations = page.getByRole("main", { name: "PM integrations" });
-    await expect(integrations.getByText("Denial fixture")).toBeVisible();
+    await expect(integrations.getByText("Denial fixture").and(integrations.locator("div"))).toBeVisible();
     await expect(integrations.getByText("conflict-denial-001")).toBeVisible();
     await expect(integrations.getByText("plan-denial-001")).toBeVisible();
     await integrations.getByRole("button", { name: "Refresh", exact: true }).click();
@@ -575,16 +576,13 @@ test.describe("Operational UI smoke flows", () => {
     const access = integrations.getByRole("region", { name: "PM integrations access status" });
     await expect(access).toBeVisible();
     await expect(access.getByText(/last-known reconciliation context remains visible/i)).toBeVisible();
-    await expect(integrations.getByText("Denial fixture")).toBeVisible();
+    await expect(integrations.getByText("Denial fixture").and(integrations.locator("div"))).toBeVisible();
     await expect(integrations.getByText("plan-denial-001")).toBeVisible();
-    await expect(integrations.getByRole("button", { name: "Refresh", exact: true })).toHaveCount(0);
-    await expect(integrations.getByRole("button", { name: "Retry" })).toHaveCount(0);
-    await expect(integrations.getByRole("textbox", { name: "Connection UUID" })).toHaveCount(0);
-    await expect(integrations.getByRole("textbox", { name: "Binding UUID" })).toHaveCount(0);
+    await expect(integrations.getByRole("button")).toHaveCount(0);
+    await expect(integrations.getByRole("textbox")).toHaveCount(0);
     await expect(integrations.getByRole("checkbox")).toHaveCount(0);
-    for (const action of ["Generate READ_ONLY plan", "Approve", "Apply exact plan"]) {
-      await expect(integrations.getByRole("button", { name: action })).toHaveCount(0);
-    }
+    await expect(integrations.getByRole("combobox")).toHaveCount(1);
+    await expect(integrations.getByRole("combobox", { name: "Filter by connection" })).toBeVisible();
   });
 
   test("project workspace exposes next actions, audit timeline, artifacts, and usage", async ({
