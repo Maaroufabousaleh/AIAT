@@ -60,7 +60,9 @@ def test_egress_and_scoped_workspace_are_preserved() -> None:
     assert "public" in compose["services"]["tool-service"]["networks"]
     assert "public" in compose["services"]["orchestrator-api"]["networks"]
     tool = compose["services"]["tool-service"]
-    assert tool["environment"]["TOOL_WORKSPACE_ROOT"] == "/workspace"
+    # Scoped writes stay confined to one root, now on the aiat-owned persistent
+    # volume instead of the host-owned repo bind (unwritable by uid 10001).
+    assert tool["environment"]["TOOL_WORKSPACE_ROOT"] == "/opencode-workspace/projects"
     assert tool["volumes"] == [
         "${AIAT_WORKSPACE_ROOT:-../../..}:/workspace",
         "opencode_workspace:/opencode-workspace",
