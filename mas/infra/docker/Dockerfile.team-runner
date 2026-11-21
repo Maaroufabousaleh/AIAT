@@ -1,11 +1,11 @@
 # ── Dockerfile.team-runner ────────────────────────────────────────────────────
 FROM python:3.11-slim@sha256:90744cff8f32887f075c47d747a173ff333e9e98801667af93c357fa9f5e28ff
 
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 
 ENV PIP_TRUSTED_HOST="pypi.org files.pythonhosted.org"
 
-RUN pip install --no-cache-dir uv==0.4.30
+RUN pip install --no-cache-dir uv==0.13.4
 
 COPY packages/mas-core/ /tmp/mas-core/
 COPY packages/mas-tools-sdk/ /tmp/mas-tools-sdk/
@@ -23,6 +23,9 @@ RUN pip install --no-deps /tmp/mas-core && \
         structlog \
         asyncpg \
         psutil
+# Build-only tools (setuptools vendored stale CVE'd metadata; uv/wheel unused
+# at runtime — verified: team_runner.main imports cleanly without them).
+RUN pip uninstall -y setuptools wheel uv && rm -rf /tmp/mas-core /tmp/mas-tools-sdk /tmp/team-runner /tmp/teams
 
 COPY apps/team-runner/team_runner/ /app/team_runner/
 COPY teams/ /app/teams/
