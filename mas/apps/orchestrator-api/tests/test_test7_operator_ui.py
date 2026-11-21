@@ -462,8 +462,10 @@ async def test_flow_instance_action_start(client):
     running = _instance_row(status="RUNNING", active_node_ids=["start"])
     storage.get_flow_instance = AsyncMock(side_effect=[instance, running])
     storage.get_flow = AsyncMock(return_value=_flow_row())
-    storage.update_flow_instance = AsyncMock(return_value=running)
-    storage.create_flow_node_execution = AsyncMock()
+    storage.get_project = AsyncMock(return_value=_fake_project("IN_PROGRESS"))
+    storage.activate_flow_nodes = AsyncMock(
+        return_value={"outcome": "applied", "instance": running}
+    )
     _patch(storage)
     r = await client.post(f"/flows/instances/{INSTANCE_ID}/action", json={"action": "start"})
     assert r.status_code == 200
@@ -538,6 +540,7 @@ async def test_flow_instance_retry_not_failed(client):
     """Retrying a non-FAILED/CANCELLED instance → 409."""
     storage = MagicMock()
     storage.get_flow_instance = AsyncMock(return_value=_instance_row(status="RUNNING"))
+    storage.get_project = AsyncMock(return_value=_fake_project("IN_PROGRESS"))
     _patch(storage)
     r = await client.post(f"/flows/instances/{INSTANCE_ID}/retry")
     assert r.status_code == 409
