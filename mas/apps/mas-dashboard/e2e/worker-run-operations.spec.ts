@@ -306,7 +306,7 @@ test("operator opens a Worker Run, inspects durable evidence, and sees governed 
   page.once("dialog", (dialog) => dialog.accept());
   await runPage.getByRole("button", { name: "Cancel Worker Run" }).click();
   await expect(runPage.getByTestId("run-identity")).toContainText("CANCELLED");
-  await expect(runPage.getByRole("status")).toContainText("Cancellation confirmed");
+  await expect(runPage.getByRole("status").filter({ hasText: "Cancellation confirmed" })).toContainText("Cancellation confirmed");
   expect(observed.cancelPayload).toMatchObject({
     reason: "Operator requested cancellation",
     force: false,
@@ -365,7 +365,7 @@ test("accepted cancellation stays explicitly unconfirmed while the runtime is st
   await runPage.getByRole("button", { name: "Cancel Worker Run" }).click();
 
   await expect(runPage.getByTestId("run-identity")).toContainText("RUNNING");
-  await expect(runPage.getByRole("status")).toContainText("Cancellation was accepted, but runtime termination is not confirmed");
+  await expect(runPage.getByRole("status").filter({ hasText: "Cancellation was accepted, but runtime termination is not confirmed" })).toContainText("Cancellation was accepted, but runtime termination is not confirmed");
 });
 
 test("opening a second missing Worker Run never shows the previous run's records", async ({ page }) => {
@@ -441,7 +441,7 @@ test("operator retries a failed run through a new linked Worker Run", async ({ p
   page.once("dialog", (dialog) => dialog.accept());
   await runPage.getByRole("button", { name: "Retry Worker Run" }).click();
 
-  await expect(runPage.getByRole("status")).toContainText("Retry created as QUEUED");
+  await expect(runPage.getByRole("status").filter({ hasText: "Retry created as QUEUED" })).toContainText("Retry created as QUEUED");
   const retryLink = runPage.getByRole("link", { name: RETRY_RUN_ID });
   await expect(retryLink).toBeVisible();
   await expect(retryLink).toHaveAttribute("href", "/workers/runs/" + RETRY_RUN_ID);
