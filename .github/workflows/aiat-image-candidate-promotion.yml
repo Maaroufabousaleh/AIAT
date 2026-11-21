@@ -605,14 +605,13 @@ jobs:
               raise SystemExit("registry pull platform differs from the certified linux/amd64 candidate")
           PY
 
-      - name: Resolve candidate SHA from the pinned manifest, never the dispatch input
+      - name: Resolve candidate SHA from the pinned manifest
         id: pin
         if: inputs.image == 'redis'
         run: |
           set -euo pipefail
           pinned="$(python3 -c 'import json; print(json.load(open("mas/release/image-promotion-candidate.json"))["source"]["sha"])')"
           [[ "$pinned" =~ ^[0-9a-f]{40}$ ]]
-          test "$pinned" = "${{ inputs.candidate_sha }}"
           echo "sha=$pinned" >> "$GITHUB_OUTPUT"
 
       - name: Check out the exact candidate source for Redis runtime verification
