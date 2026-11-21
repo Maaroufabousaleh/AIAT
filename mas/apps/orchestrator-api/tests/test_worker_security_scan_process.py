@@ -36,7 +36,9 @@ def _process_running(pid: int) -> bool:
     stat_path = Path(f"/proc/{pid}/stat")
     try:
         status = stat_path.read_text(encoding="ascii")
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
+        # The task can vanish between open() and read(): ESRCH from /proc
+        # means the process is already gone, which satisfies "stopped".
         return False
     state = status.rsplit(")", maxsplit=1)[-1].strip().split(maxsplit=1)[0]
     return state != "Z"
