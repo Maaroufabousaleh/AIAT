@@ -33,11 +33,16 @@ test("PM project setup can retry a failed project-list read without refreshing i
   });
 
   let integrationReads = 0;
+  let bindingReads = 0;
   await page.route("**/api/integrations/pm**", async (route) => {
     if (route.request().method() !== "GET") {
       mutations.push(`${route.request().method()} ${new URL(route.request().url()).pathname}`);
     }
-    integrationReads += 1;
+    if (new URL(route.request().url()).pathname === "/api/integrations/pm") {
+      integrationReads += 1;
+    } else {
+      bindingReads += 1;
+    }
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -62,5 +67,8 @@ test("PM project setup can retry a failed project-list read without refreshing i
   await expect(projectSetup.getByLabel("Project to provision")).toContainText("Retryable PM project");
   expect(projectReads).toBe(2);
   expect(integrationReads).toBe(1);
+  // Selecting the retried project loads its bindings (one sub-resource read);
+  // the base integration list itself must not refetch.
+  expect(bindingReads).toBe(1);
   expect(mutations).toEqual([]);
 });

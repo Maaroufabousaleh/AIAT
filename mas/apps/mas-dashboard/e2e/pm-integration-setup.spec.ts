@@ -226,7 +226,7 @@ test("operator creates a PM connection, binds a project, and applies an approved
   await main.getByLabel("Provider base URL").fill("https://youtrack.example.invalid");
   await main.getByLabel("Credential reference").fill("youtrack-e2e-credential-ref");
   await main.getByRole("button", { name: "Create connection" }).click();
-  await expect(main.getByRole("status")).toContainText("created in DISABLED state");
+  await expect(main.getByRole("status").filter({ hasText: "created in DISABLED state" })).toContainText("created in DISABLED state");
 
   await main.getByLabel("Project provider connection").selectOption(CONNECTION_ID);
   await main.getByRole("button", { name: "Generate project provisioning plan" }).click();
@@ -234,7 +234,7 @@ test("operator creates a PM connection, binds a project, and applies an approved
   await expect(provisioningPlan).toContainText(PROVISIONING_DIGEST);
   await provisioningPlan.getByLabel("I reviewed this exact project provisioning digest").check();
   await provisioningPlan.getByRole("button", { name: "Apply reviewed plan and create binding" }).click();
-  await expect(main.getByRole("status")).toContainText("Project provisioned and bound in DISABLED state");
+  await expect(main.getByRole("status").filter({ hasText: "Project provisioned and bound in DISABLED state" })).toContainText("Project provisioned and bound in DISABLED state");
   await expect(main.getByLabel("Project provider bindings")).toContainText("AIAT-LOCAL");
 
   await main.getByLabel("Lifecycle target").selectOption("pm_connection");
@@ -248,7 +248,7 @@ test("operator creates a PM connection, binds a project, and applies an approved
   await lifecyclePlan.getByRole("button", { name: "Approve" }).click();
   await expect(lifecyclePlan.getByText("APPROVED")).toBeVisible();
   await lifecyclePlan.getByRole("button", { name: "Apply exact plan" }).click();
-  await expect(main.getByRole("status")).toContainText("Lifecycle plan applied: SHADOW");
+  await expect(main.getByRole("status").filter({ hasText: "Lifecycle plan applied: SHADOW" })).toContainText("Lifecycle plan applied: SHADOW");
   await expect(main.getByRole("region", { name: "Connections" })).toContainText("SHADOW");
 
   expect(connectionRequest).toMatchObject({
