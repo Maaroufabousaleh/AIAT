@@ -28,6 +28,9 @@ name: mas
 x-team-common-env: &team-common-env
   ROUTER_URL: "http://message-router:8001"
   ROUTER_SECRET: "${ROUTER_SECRET}"
+  # Router WS auth and the runner both prefer AGENT_TOKEN_SECRET over the
+  # legacy ROUTER_SECRET. Omitting it makes every team subscription 403.
+  AGENT_TOKEN_SECRET: "${AGENT_TOKEN_SECRET:-${ROUTER_SECRET}}"
   TOOL_SERVICE_URL: "http://tool-service:8002"
   TOOL_SECRET: "${TOOL_SECRET}"
   ORCHESTRATOR_URL: "http://orchestrator-api:8000"
