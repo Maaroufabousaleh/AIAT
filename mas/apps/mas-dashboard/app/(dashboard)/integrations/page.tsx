@@ -131,6 +131,10 @@ export default function IntegrationsPage() {
   const [hasReadContext, setHasReadContext] = useState(false);
   const hasData = useRef(false);
   const bindingRequestSequence = useRef(0);
+  // Bindings are only fetched for a project the operator explicitly picked.
+  // Auto-selecting the first project after a project-list (re)load must not
+  // trigger an integration-state read on its own.
+  const projectChosenByOperator = useRef(false);
 
   const refresh = useCallback(async (filterConnectionId = "") => {
     setLoading(true);
@@ -440,6 +444,7 @@ export default function IntegrationsPage() {
   useEffect(() => {
     setProjectBindings([]);
     setBindingId("");
+    if (!projectChosenByOperator.current) return;
     void loadProjectBindings(projectId);
     return () => { bindingRequestSequence.current += 1; };
   }, [projectId, loadProjectBindings]);
@@ -608,6 +613,7 @@ export default function IntegrationsPage() {
                     value={projectId}
                     disabled={mutationBlocked || projectsLoading || projects.length === 0}
                     onChange={(event) => {
+                      projectChosenByOperator.current = true;
                       setProjectId(event.target.value);
                       setProvisioningPlan(null);
                       setReviewedProvisioningDigest("");
@@ -627,6 +633,7 @@ export default function IntegrationsPage() {
                     value={connectionId}
                     disabled={mutationBlocked || data.connections.length === 0}
                     onChange={(event) => {
+                      projectChosenByOperator.current = true;
                       setConnectionId(event.target.value);
                       setBindingId("");
                       setProvisioningPlan(null);
@@ -991,7 +998,7 @@ export default function IntegrationsPage() {
               </div>
             )}
             {!accessDenied && data && canaryPlans.length === 0 && (
-              <p role="status" className="text-sm text-slate-400">No inbound canary plans are recorded for the current connection filter.</p>
+              <p className="text-sm text-slate-400">No inbound canary plans are recorded for the current connection filter.</p>
             )}
             {!accessDenied && canaryPlansHasMore && (
               <p role="note" className="text-xs text-slate-400">More than 100 plans are recorded. The selector shows the newest 100; enter a plan UUID to inspect an older plan.</p>

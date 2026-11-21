@@ -885,6 +885,7 @@ export default function ProjectsPage() {
                   <select
                     value={selectedFlowId}
                     onChange={(e) => setSelectedFlowId(e.target.value)}
+                    aria-label="Attach flow (optional)"
                     className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   >
                     <option value="">None — use default workflow</option>

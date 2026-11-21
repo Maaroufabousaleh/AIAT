@@ -25,6 +25,7 @@ coverage.xml
 htmlcov/
 .ruff_cache/
 *test-results*
+sweep-results/
 
 # mypy
 .mypy_cache/

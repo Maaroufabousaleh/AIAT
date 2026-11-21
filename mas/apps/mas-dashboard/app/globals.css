@@ -373,6 +373,23 @@
 /* These semantic remaps keep the existing information architecture intact   */
 /* while making the explicit light palette usable during the migration.      */
 /* ------------------------------------------------------------------------ */
+/* @apply-composed primitives carry no literal slate class, so they need
+ * explicit light overrides (the substring remaps below cannot match them). */
+[data-theme="light"] .dashboard-surface {
+  background-color: var(--aiat-surface) !important;
+  border-color: var(--aiat-border) !important;
+}
+
+[data-theme="light"] .dashboard-surface-strong {
+  background-color: var(--aiat-surface-raised) !important;
+  border-color: var(--aiat-border) !important;
+}
+
+[data-theme="light"] .dashboard-toolbar {
+  background-color: var(--aiat-bg-soft) !important;
+  border-color: var(--aiat-border) !important;
+}
+
 [data-theme="light"] [class*="bg-slate-950"] {
   background-color: var(--aiat-bg-deep) !important;
 }
@@ -405,6 +422,20 @@
   color: var(--aiat-text-subtle) !important;
 }
 
+[data-theme="light"] [class*="text-gray-100"],
+[data-theme="light"] [class*="text-gray-200"] {
+  color: var(--aiat-text) !important;
+}
+
+[data-theme="light"] [class*="text-gray-300"],
+[data-theme="light"] [class*="text-gray-400"] {
+  color: var(--aiat-text-muted) !important;
+}
+
+[data-theme="light"] [class*="text-gray-500"] {
+  color: var(--aiat-text-subtle) !important;
+}
+
 [data-theme="light"] [class*="border-slate-"] {
   border-color: var(--aiat-border) !important;
 }
@@ -413,18 +444,58 @@
   color: var(--aiat-text-subtle) !important;
 }
 
-[data-theme="light"] .text-emerald-200 {
+[data-theme="light"] .text-emerald-100,
+[data-theme="light"] .text-emerald-200,
+[data-theme="light"] .text-emerald-300 {
   color: #047857 !important;
 }
 
 [data-theme="light"] .text-blue-100,
-[data-theme="light"] .text-blue-200 {
+[data-theme="light"] .text-blue-200,
+[data-theme="light"] .text-blue-300 {
   color: #1d4ed8 !important;
 }
 
 [data-theme="light"] .text-cyan-100,
-[data-theme="light"] .text-cyan-200 {
+[data-theme="light"] .text-cyan-200,
+[data-theme="light"] .text-cyan-300 {
   color: #0e7490 !important;
+}
+
+[data-theme="light"] .text-indigo-100,
+[data-theme="light"] .text-indigo-200,
+[data-theme="light"] .text-indigo-300 {
+  color: #4338ca !important;
+}
+
+[data-theme="light"] .text-amber-100,
+[data-theme="light"] .text-amber-200,
+[data-theme="light"] .text-amber-300 {
+  color: #92400e !important;
+}
+
+[data-theme="light"] .text-violet-100,
+[data-theme="light"] .text-violet-200,
+[data-theme="light"] .text-violet-300 {
+  color: #5b21b6 !important;
+}
+
+[data-theme="light"] .text-rose-100,
+[data-theme="light"] .text-rose-200,
+[data-theme="light"] .text-rose-300 {
+  color: #be123c !important;
+}
+
+/*
+ * White text inside theme-adaptive slate surfaces. Solid dark controls
+ * (buttons, badges) carry their own bg-* class and are excluded so they
+ * keep white text.
+ */
+[data-theme="light"] [class*="bg-slate-950"] .text-white:not([class*="bg-"]),
+[data-theme="light"] [class*="bg-slate-900"] .text-white:not([class*="bg-"]),
+[data-theme="light"] .dashboard-surface .text-white:not([class*="bg-"]),
+[data-theme="light"] .dashboard-surface-strong .text-white:not([class*="bg-"]) {
+  color: var(--aiat-text) !important;
 }
 
 @media (prefers-reduced-motion: reduce) {

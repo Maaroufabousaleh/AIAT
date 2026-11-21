@@ -25,6 +25,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import ThemeToggle from "@/components/ThemeToggle";
+import ControlPlaneStatus from "@/components/ControlPlaneStatus";
 
 type NavItem = {
   href: string;
@@ -132,10 +133,7 @@ export default function Sidebar({
           </div>
         </Link>
         <div className="mt-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2">
-          <div className="flex items-center gap-2 text-xs font-medium text-emerald-200" role="status" aria-live="polite">
-            <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.8)]" aria-hidden="true" />
-            <span>Control plane online</span>
-          </div>
+          <ControlPlaneStatus />
           <div className="mt-1 text-xxs text-[var(--aiat-text-muted)]">
             Projects, workers, streams and tools stay governed here.
           </div>

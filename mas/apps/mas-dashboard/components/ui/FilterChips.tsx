@@ -18,7 +18,7 @@ export interface FilterChipProps<T extends string> {
 }
 const ACTIVE_TONES: Record<"blue" | "gray" | "indigo" | "emerald" | "amber" | "violet", string> = {
   blue: "bg-blue-500/20 text-blue-100 border-blue-400/45 shadow-sm shadow-blue-950/20",
-  gray: "bg-slate-600/25 text-white border-slate-500/60",
+  gray: "bg-slate-600/25 text-[var(--aiat-text)] border-slate-500/60",
   indigo: "bg-indigo-500/20 text-indigo-100 border-indigo-400/45 shadow-sm shadow-indigo-950/20",
   emerald: "bg-emerald-500/20 text-emerald-100 border-emerald-400/45 shadow-sm shadow-emerald-950/20",
   amber: "bg-amber-500/20 text-amber-100 border-amber-400/45 shadow-sm shadow-amber-950/20",

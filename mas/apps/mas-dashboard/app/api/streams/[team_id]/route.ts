@@ -1,6 +1,8 @@
 const MESSAGE_ROUTER_URL =
   process.env.MESSAGE_ROUTER_URL ?? "http://localhost:8001";
-const ROUTER_SECRET = process.env.ROUTER_SECRET ?? "";
+// Mirror the message-router's own precedence (AGENT_TOKEN_SECRET, then
+// ROUTER_SECRET): the router accepts `dashboard:<agent_token_secret>`.
+const ROUTER_SECRET = process.env.AGENT_TOKEN_SECRET ?? process.env.ROUTER_SECRET ?? "";
 
 type Params = { params: Promise<{ team_id: string }> };
 type RecentEntry = { entry_id: string; envelope: string };

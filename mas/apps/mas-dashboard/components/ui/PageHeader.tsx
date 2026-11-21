@@ -97,7 +97,7 @@ export function PageHeader({
           <div className="text-xxs font-semibold uppercase tracking-wider text-slate-500">
             AIAT Control Plane
           </div>
-          <h1 className="mt-0.5 text-2xl font-semibold text-white tracking-tight truncate">
+          <h1 className="mt-0.5 text-2xl font-semibold text-[var(--aiat-text)] tracking-tight truncate">
             {title}
           </h1>
           {description && (

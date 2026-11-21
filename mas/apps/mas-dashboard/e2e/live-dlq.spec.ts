@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { authenticate } from "./auth";
-
+import { runtimeEnv } from "./runtime-env";
 const liveLetterId = process.env.AIAT_LIVE_DLQ_ID;
 
 test.describe("Live DLQ evidence", () => {
@@ -35,7 +35,7 @@ test.describe("Live DLQ evidence", () => {
     expect(result.audit_task_id).toBe(result.new_message_id);
     await expect(entry.getByRole("status")).toHaveText("Replayed");
 
-    const audit = await request.get(`http://127.0.0.1:8000/tasks/${result.audit_task_id}`);
+    const audit = await request.get(`${runtimeEnv("E2E_ORCHESTRATOR_URL", "http://127.0.0.1:8000")}/tasks/${result.audit_task_id}`);
     expect(audit.ok()).toBeTruthy();
     const auditRow = await audit.json();
     expect(auditRow.status).toBe("DLQ_REPLAYED");

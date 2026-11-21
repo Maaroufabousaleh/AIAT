@@ -19,6 +19,8 @@ const nextConfig = {
               "img-src 'self' data:",
               "connect-src 'self'",
               "font-src 'self'",
+              // Analytics embeds: env-configured dashboard origins plus local defaults.
+              "frame-src 'self' http://localhost:4001 http://127.0.0.1:4001 http://127.0.0.1:14001 http://localhost:20128 http://127.0.0.1:20128",
             ].join("; "),
           },
         ],

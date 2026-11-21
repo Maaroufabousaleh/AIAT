@@ -171,7 +171,7 @@ async function createProjectWithFlow(
   await page
     .getByPlaceholder("What should the agents build?")
     .fill("Test-2 branching project");
-  const flowSelect = page.locator("select").last();
+  const flowSelect = page.getByLabel("Attach flow (optional)");
   const flowOption = flowSelect.locator("option").filter({
     hasText: `${flowName} (v1)`,
   });

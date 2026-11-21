@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Menu, X } from "lucide-react";
 import Sidebar from "@/components/Sidebar";
 import ThemeToggle from "@/components/ThemeToggle";
+import ControlPlaneStatus from "@/components/ControlPlaneStatus";
 
 export default function DashboardShell({ children }: { children: React.ReactNode }) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -74,10 +75,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
           <div className="text-sm font-semibold tracking-tight text-[var(--aiat-text)]">AIAT Control Plane</div>
           <div className="flex items-center gap-2">
             <ThemeToggle compact />
-            <div className="flex items-center gap-2 text-xs text-[var(--aiat-status-online)]" role="status" aria-live="polite">
-            <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.75)]" aria-hidden="true" />
-            <span className="sr-only">Control plane online</span>
-            </div>
+            <ControlPlaneStatus compact />
           </div>
         </header>
 

@@ -970,8 +970,9 @@ export default function CompaniesPage() {
                 </div>
 
                 {reconciliationError && (
-                  <div className="mt-4" role="alert">
+                  <div className="mt-4">
                     <ErrorBanner
+                      tone="warning"
                       title="Company usage and budgets unavailable"
                       action={(
                         <button
@@ -1043,8 +1044,9 @@ export default function CompaniesPage() {
                     <p className="mt-1 text-xs text-slate-500">Each pool is shown separately so one pool’s remaining balance cannot hide another pool’s overage.</p>
                   </div>
                   {budgetBalancesError && (
-                    <div className="mt-3" role="alert">
+                    <div className="mt-3">
                       <ErrorBanner
+                        tone="warning"
                         title="Company budget pools unavailable"
                         action={(
                           <button

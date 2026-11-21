@@ -85,6 +85,8 @@ export default function LogsPage() {
   const linesRef = useRef<LogLine[]>([]);
   const hasReadContextRef = useRef(false);
   const streamGenerationRef = useRef(0);
+  /** Tracks whether the current stream generation delivered any SSE message. */
+  const receivedRef = useRef(false);
   const incidentRef = useRef<TraceIncident | null>(null);
 
   // UI-only filter state
@@ -161,6 +163,7 @@ export default function LogsPage() {
     if (accessDenied) return;
     const hadRetainedData = lines.length > 0;
     const generation = ++streamGenerationRef.current;
+    receivedRef.current = false;
     stopStream();
     setError(null);
     setStale(false);
@@ -175,6 +178,7 @@ export default function LogsPage() {
 
     es.onmessage = (ev) => {
       if (streamGenerationRef.current !== generation) return;
+      receivedRef.current = true;
       const text: string = ev.data;
       // Check for error payload
       try {
@@ -217,8 +221,20 @@ export default function LogsPage() {
     es.onerror = () => {
       if (streamGenerationRef.current !== generation) return;
       if (!follow) {
-        // Non-follow streams will close naturally
+        // Non-follow streams close naturally once the tail is delivered — but
+        // a close with zero messages means the transport failed (non-SSE
+        // response, refused connection) or an empty tail. Surface it instead
+        // of silently returning to the idle empty state.
         stopStream();
+        if (!receivedRef.current) {
+          const retained = streamHadDataRef.current;
+          setError(
+            retained
+              ? "The latest log refresh failed before sending any lines."
+              : "The log stream closed without sending any lines.",
+          );
+          setStale(retained);
+        }
       } else {
         setError("Stream disconnected.");
         setStale(streamHadDataRef.current);

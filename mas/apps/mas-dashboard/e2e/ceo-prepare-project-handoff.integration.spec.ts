@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
 import { authenticate } from "./auth";
+import { runtimeEnv } from "./runtime-env";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -24,7 +25,7 @@ test("CEO prepare-only handoff opens an INIT project without starting work", asy
 
   await authenticate(page, "/ceo/chat");
   const api = page.request;
-  const contractResponse = await api.get("http://127.0.0.1:8000/openapi.json");
+  const contractResponse = await api.get(`${runtimeEnv("E2E_ORCHESTRATOR_URL", "http://127.0.0.1:8000")}/openapi.json`);
   let supportsPrepareOnly = false;
   if (contractResponse.ok()) {
     const contract = asRecord(await readJson(contractResponse));

@@ -71,8 +71,7 @@ async function createProjectWithFlow(
     .getByPlaceholder("What should the agents build\?")
     .fill("Operator validation project");
   await page
-    .locator("select")
-    .last()
+    .getByLabel("Attach flow (optional)")
     .selectOption({ label: `${flowName} (v2)` });
   await page.getByRole("button", { name: /^create$/i }).click();
   await expect(page.getByText(projectName)).toBeVisible();

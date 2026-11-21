@@ -418,8 +418,9 @@ export default async function HomePage() {
     lastRefreshedAt: new Date(),
   }));
 
-  const systemStatusStr = (status as { status?: string; state?: string })?.status ?? (status as { state?: string })?.state ?? "unknown";
-  const firstRun = (status as { first_run?: string })?.first_run ?? "needs_migration_config";
+  const rawStatus = status && typeof status === "object" ? ("status" in status ? status.status : "state" in status ? status.state : undefined) : undefined;
+  const systemStatusStr = typeof rawStatus === "string" ? rawStatus.toLowerCase() : "unknown";
+  const firstRun = status && typeof status === "object" && "first_run" in status && typeof status.first_run === "string" ? status.first_run : "needs_migration_config";
   const hasBackend = !!status;
 
   const activeCount = company?.totals.active_projects ?? projectList.filter(
@@ -445,7 +446,7 @@ export default async function HomePage() {
             <Activity size={20} aria-hidden="true" />
           </div>
           <div>
-            <h1 id="system-overview-heading" className="text-xl font-semibold text-white tracking-tight">System Overview</h1>
+            <h1 id="system-overview-heading" className="text-xl font-semibold text-[var(--aiat-text)] tracking-tight">System Overview</h1>
             <p className="text-sm text-slate-400 mt-0.5">Operator-ready summary of projects, workers, approvals, queues, and runtime health.</p>
           </div>
         </div>
@@ -527,7 +528,7 @@ export default async function HomePage() {
         <KpiCard
           label="Pending approvals"
           value={company?.totals.pending_approvals ?? 0}
-          hint={`${company?.totals.workers ?? 0} workers total`}
+          hint="awaiting operator decision"
           icon="check-circle"
           tone="warning"
         />

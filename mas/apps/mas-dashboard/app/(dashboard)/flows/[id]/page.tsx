@@ -1051,7 +1051,7 @@ export default function FlowEditorPage() {
             <div className="mt-3 grid gap-2 md:grid-cols-2">
               {legacyUnboundTaskNodes.map((node) => (
                 <label key={node.id} className="grid gap-1 text-xs text-slate-200">
-                  <span>Worker binding for {node.label || node.id} <span className="font-mono text-slate-500">({node.id})</span></span>
+                  <span title={node.label || node.id}>Worker binding for task <span className="font-mono text-slate-500">({node.id})</span></span>
                   <select
                     value={legacyWorkerBindings[node.id] || ""}
                     onChange={(event) => {

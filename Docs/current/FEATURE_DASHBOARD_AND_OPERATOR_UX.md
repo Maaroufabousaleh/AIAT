@@ -456,6 +456,77 @@ The dashboard is the human control and evidence surface for AIAT. It must make c
   BFF suite passes 3/3 and the Project Detail evidence/error Playwright cases
   pass 2/2. These checks do not claim a completed worker run.
 
+### Dashboard stabilization pass (2026-11-21)
+
+- Audited all 32 dashboard routes live (fresh production build), fixed every
+  fault found, and re-verified end to end: route sweep 32/32 clean (no
+  console errors, no failed requests), user journeys 3/3, full Playwright
+  suite 231 passed with 2 environment-gated skips (`AIAT_LIVE_DLQ_ID`,
+  `EXPECTED_OVERVIEW_STATE`), and `tsc --noEmit` clean.
+- The running container served a stale October prebuild while the source had
+  moved on (missing company selector, migration-panel duplication, analytics
+  redirects). Rebuilt `mas/dashboard:dev` from a staged context and
+  redeployed it; the sweep probe (`scripts/dashboard-sweep.mjs`) now guards
+  against build/source drift on every route.
+- Streams proxy now mirrors the message-router token precedence
+  (`AGENT_TOKEN_SECRET`, then `ROUTER_SECRET`): CEO chat, CEO feed, and
+  Agent Streams returned 401 after the values diverged.
+  [`app/api/streams/[team_id]/route.ts`](../../mas/apps/mas-dashboard/app/api/streams/[team_id]/route.ts)
+- Overview normalizes the `/system/status` state before comparison: the
+  orchestrator reports `RUNNING` and the page showed "Status unknown" with a
+  red dot while the pill read RUNNING. Pending-approvals KPI hint fixed.
+- Analytics routes no longer blind-redirect off-dashboard to dead localhost
+  URLs. They are in-dashboard launchers (target URL, Open, Copy URL) because
+  both upstream dashboards send `frame-ancestors 'none'`, so embedding can
+  never render. `LITELLM_DASHBOARD_URL`/`OMNIROUTE_DASHBOARD_URL` are set for
+  the dev port map, and CSP carries a matching `frame-src` allowance.
+- Light-theme readability repaired at the shared layer: `PageHeader` title,
+  `FilterChip` active tone, `dashboard-surface`/`-strong`/`toolbar`
+  primitives (which `@apply` slate and so escape the substring remaps),
+  gray-palette and accent `-100/-200/-300` remaps, and white-text scoping
+  that spares solid dark controls. Verified with light and dark screenshots
+  of Overview, Projects, and CEO chat.
+- Sidebar "Control plane online" was hardcoded; it is now a live indicator
+  (`ControlPlaneStatus`, 30s `/api/health` poll, online/degraded/offline)
+  shared with the mobile header.
+- Identity resources: visible loading state, per-action success feedback,
+  hidden Actions column when no row has actions, state-gated row actions
+  (no Suspend/Archive on terminal rows), per-resource empty copy, stale
+  reset on resource switch, and full (untruncated) columns.
+- Integrations: "Retry project list" no longer triggers a bindings
+  side-effect fetch; static canary empty-text no longer steals
+  `role="status"` uniqueness.
+- Companies: supplementary section errors no longer double `role="alert"`;
+  demoted to warning/status so the page-level error alert stays unique.
+- Model Profiles: version hint renders the edited version, not a hardcoded
+  `1.0.0`. Flow detail: legacy migration row no longer duplicates the node
+  label as visible text. Logs: silent transport close now surfaces feedback
+  with Retry. Evidence: new `/evidence/[kind]` index (previously 404).
+  Projects: flow attach select has an accessible label.
+- New coverage: [`user-journeys.spec.ts`](../../mas/apps/mas-dashboard/e2e/user-journeys.spec.ts)
+  (UI project create/open/delete; CEO-talk project create/inspect/follow-up;
+  CEO company status), [`observability-pages.spec.ts`](../../mas/apps/mas-dashboard/e2e/observability-pages.spec.ts)
+  (logs transport failure, analytics launchers, evidence kind index), and
+  the [`dashboard-sweep.mjs`](../../mas/apps/mas-dashboard/scripts/dashboard-sweep.mjs)
+  route probe (console errors, failed requests, timings, screenshots).
+- Test repairs: `E2E_ORCHESTRATOR_URL` honored in the CEO handoff and live
+  DLQ specs (both hardcoded `:8000`, so the handoff silently skipped on the
+  dev host); `flow-builder` and `flow-runtime-test2` select the flow by
+  label instead of positional `select.last()` (broke when the company
+  selector was added). Removed 10 orphaned root helper scripts
+  (`record-videos`, `take-screenshots`, `*-test-runner`, etc.).
+- Recommendations carried to the operator backlog: archive or delete the 16
+  stale FAILED probe projects and extend fixture-name cleanup patterns;
+  add per-request CEO cost visibility and persistent chat history; add a
+  `/system-viz` states spec; give `ErrorBanner` an error-tone/polite-role
+  variant for supplementary sections; record overview source-outage history
+  instead of current status only; run e2e against a freshly built image in
+  CI plus the sweep nightly; persist the host-bootstrap env
+  (`AIAT_DEV_*` ports, sandbox subnet) so `compose up` is reproducible
+  without the release-hold bypass; schedule a full stack restart to
+  complete secret-rotation alignment; repair `mas/.venv` (root-owned
+  `lib64` symlink breaks `uv run`).
+
 ## Code anchors
 
 - Dashboard application: [`mas/apps/mas-dashboard/app/`](../../mas/apps/mas-dashboard/app/)
@@ -553,7 +624,7 @@ baseline; native/live Redis/router and full WCAG evidence remain open
   release evidence.
 - Generate typed forms/clients from backend schemas for the remaining governance actions. CEO has a guided subset of approval-required actions, while its full payload catalogue, optional CFO scope, and worker-specific CTO task input remain advanced because the current API publishes no field schemas.
 - Consolidate legacy flow compatibility aliases into an explicit extension editor after migration coverage is complete.
-- Complete page-by-page light/dark/system visual parity and responsive/mobile parity; the persisted preference, no-flash bootstrap, palette migration layer, and reduced-motion baseline are implemented in `5e3cc13`.
+- Complete page-by-page light/dark/system visual parity and responsive/mobile parity; the persisted preference, no-flash bootstrap, palette migration layer, and reduced-motion baseline are implemented in `5e3cc13`, and the 2026-11-21 pass completed shared-primitive parity (surfaces, chips, headers, gray/accent text remaps) with light/dark screenshot evidence for Overview, Projects, and CEO chat. Remaining: per-page sweep of long-tail tint combinations and responsive/mobile certification.
 - Complete the WCAG 2.2 AA audit and broader automated checks; the shell landmark/skip-link/focus baseline is covered, while page-level semantics, contrast, reduced motion, and native-Linux evidence remain.
 - Extend the focused System Overview source-status baseline into retained
   stale/offline/partial history and page-level visual/mobile certification; its

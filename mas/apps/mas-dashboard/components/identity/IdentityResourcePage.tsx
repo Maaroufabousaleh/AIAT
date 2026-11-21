@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { RefreshCw, ShieldCheck } from "lucide-react";
+import { Loader2, RefreshCw, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -10,6 +10,47 @@ import { ErrorBanner } from "@/components/ui/ErrorBanner";
 type Props = { resource: string; title: string; description: string };
 
 const SENSITIVE = /(password|secret|token|api[_-]?key|credential|cookie|refresh|totp|recovery|body|content_ref)/i;
+
+const TERMINAL_STATE: Record<string, true> = { ARCHIVED: true, CLOSED: true, REVOKED: true, REJECTED: true, DELETED: true };
+
+const EMPTY_COPY: Record<string, { title: string; description: string }> = {
+  identities: {
+    title: "No identities",
+    description: "No worker email identities exist yet. Identities appear here once workers are provisioned with mailboxes.",
+  },
+  "mail-domains": {
+    title: "No mail domains",
+    description: "No mail domains are configured. Add a domain to begin verification.",
+  },
+  mailboxes: {
+    title: "No mailboxes",
+    description: "No mailboxes exist yet. Mailboxes appear here once identities are provisioned.",
+  },
+  "outbound-mail": {
+    title: "No outbound mail",
+    description: "No approval-governed outbound messages have been submitted yet.",
+  },
+  "mail-relay": {
+    title: "No relay records",
+    description: "No inbound edge health or delivery correlation records are available.",
+  },
+  "external-accounts": {
+    title: "No external accounts",
+    description: "No governed worker-owned external service accounts exist yet.",
+  },
+  "auth-sessions": {
+    title: "No auth sessions",
+    description: "No local browser sessions are recorded. Sessions appear here after operators sign in.",
+  },
+  "identity-approvals": {
+    title: "No approvals",
+    description: "No outbound or external-account approvals are pending. New requests will appear here for review.",
+  },
+  "identity-audit": {
+    title: "No audit events",
+    description: "No sanitized identity or mailbox audit events have been recorded yet.",
+  },
+};
 
 function displayValue(value: unknown): string {
   if (value === null || value === undefined) return "—";
@@ -68,28 +109,44 @@ export function IdentityResourcePage({ resource, title, description }: Props) {
   }, [resource]);
 
   useEffect(() => {
+    setActionNotice(null);
+    setItems([]);
+    itemsRef.current = [];
+    setError("");
+    setStale(false);
+    setAccessDenied(false);
     void load();
-    return () => {
-      requestIdRef.current += 1;
-      abortRef.current?.abort();
-    };
+    return () => abortRef.current?.abort();
   }, [load]);
-  const columns = Array.from(new Set(items.flatMap((item) => Object.keys(item).filter((key) => !SENSITIVE.test(key))))).slice(0, 10);
+
+  const columns = Array.from(new Set(items.flatMap((item) => Object.keys(item).filter((key) => !SENSITIVE.test(key)))));
 
   function itemActions(item: Record<string, unknown>): { action: string; label: string }[] {
+    const state = String(item.state ?? item.status ?? "").toUpperCase();
     if (resource === "identity-approvals" && String(item.state) === "PENDING") return [
       { action: "approval.approve", label: "Approve" }, { action: "approval.reject", label: "Reject" },
     ];
-    if ((resource === "identities" || resource === "mailboxes") && item.worker_id) return [
-      { action: "identity.suspend", label: "Suspend" }, { action: "identity.archive", label: "Archive" },
-    ];
-    if (resource === "external-accounts") return [
-      { action: "external.rotate_credentials", label: "Rotate" },
-      { action: "external.suspend", label: "Suspend" }, { action: "external.close", label: "Close" },
-    ];
+    if ((resource === "identities" || resource === "mailboxes") && item.worker_id && !TERMINAL_STATE[state]) {
+      const actions = [];
+      if (state !== "SUSPENDED") actions.push({ action: "identity.suspend", label: "Suspend" });
+      actions.push({ action: "identity.archive", label: "Archive" });
+      return actions;
+    }
+    if (resource === "external-accounts") {
+      if (TERMINAL_STATE[state]) return [];
+      return [
+        { action: "external.rotate_credentials", label: "Rotate" },
+        ...(state === "SUSPENDED" ? [] : [{ action: "external.suspend", label: "Suspend" }]),
+        { action: "external.close", label: "Close" },
+      ];
+    }
     if (resource === "auth-sessions" && String(item.state) === "ACTIVE") return [{ action: "session.revoke", label: "Revoke" }];
     return [];
   }
+
+  const hasActions = items.some((item) => itemActions(item).length > 0);
+  const statusLabel = resource === "external-accounts" ? "External account action status" : "Identity action status";
+  const emptyCopy = EMPTY_COPY[resource] ?? { title: "No records", description: "No identity records are available for this view." };
 
   async function performAction(item: Record<string, unknown>, action: string, label: string) {
     const confirmation = action === "external.rotate_credentials"
@@ -130,7 +187,11 @@ export function IdentityResourcePage({ resource, title, description }: Props) {
             message: "External account suspended.",
             approvalPending: false,
           });
+        } else {
+          setActionNotice({ message: `${label} request completed for ${String(item.id ?? "record")}.`, approvalPending: false });
         }
+      } else {
+        setActionNotice({ message: `${label} request completed for ${String(item.id ?? "record")}.`, approvalPending: false });
       }
       await load();
     } catch (cause) {
@@ -164,7 +225,7 @@ export function IdentityResourcePage({ resource, title, description }: Props) {
         <section
           role="status"
           aria-live="polite"
-          aria-label="External account action status"
+          aria-label={statusLabel}
           className="rounded-xl border border-blue-500/30 bg-blue-500/5 px-4 py-3 text-sm text-blue-100"
         >
           <p>{actionNotice.message}</p>
@@ -220,12 +281,28 @@ export function IdentityResourcePage({ resource, title, description }: Props) {
             : error}
         </ErrorBanner>
       )}
-      {!loading && !error && items.length === 0 && <EmptyState title="No records" description="No identity records are available for this view." />}
+      {loading && items.length === 0 && !accessDenied && (
+        <section role="status" aria-label={`Loading ${title} records`} className="rounded-xl border border-slate-800 bg-slate-950/50 px-5 py-6">
+          <p className="flex items-center gap-2 text-sm text-slate-300">
+            <Loader2 size={16} aria-hidden="true" className="animate-spin" />
+            Loading {title.toLowerCase()} records…
+          </p>
+          <div aria-hidden="true" className="mt-4 space-y-2">
+            {[0, 1, 2].map((row) => (
+              <div key={row} className="h-8 animate-pulse rounded-md bg-slate-800/60" />
+            ))}
+          </div>
+        </section>
+      )}
+      {!loading && !error && items.length === 0 && !accessDenied && <EmptyState title={emptyCopy.title} description={emptyCopy.description} />}
       {items.length > 0 && <section className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/50" aria-label={`${title} records`} aria-busy={loading}>
-        <table className="min-w-full text-left text-sm">
+        <table className="min-w-full text-left text-sm" aria-label={`${title} records`}>
           <caption className="sr-only">{title} records</caption>
-          <thead className="border-b border-slate-800 text-xs uppercase tracking-wide text-slate-500"><tr>{columns.map((column) => <th key={column} scope="col" className="px-4 py-3">{column.replaceAll("_", " ")}</th>)}<th scope="col" className="px-4 py-3">Actions</th></tr></thead>
-          <tbody>{items.map((item, index) => <tr key={String(item.id ?? index)} className="border-b border-slate-900 text-slate-300 last:border-0">{columns.map((column) => <td key={column} className="max-w-xs truncate px-4 py-3 font-mono text-xs">{displayValue(item[column])}</td>)}<td className="px-4 py-3"><div className="flex flex-wrap gap-2">{itemActions(item).map(({ action, label }) => <button key={action} type="button" onClick={() => void performAction(item, action, label)} disabled={acting === `${String(item.id)}:${action}`} aria-label={`${label} ${String(item.id ?? "record")}`} className="inline-flex min-h-11 items-center rounded border border-slate-700 px-3 py-2 text-xs hover:bg-slate-800 disabled:opacity-50">{label}</button>)}</div></td></tr>)}</tbody>
+          <thead className="border-b border-slate-800 text-xs uppercase tracking-wide text-slate-500"><tr>{columns.map((column) => <th key={column} scope="col" className="px-4 py-3">{column.replaceAll("_", " ")}</th>)}{hasActions && <th scope="col" className="px-4 py-3">Actions</th>}</tr></thead>
+          <tbody>{items.map((item, index) => <tr key={String(item.id ?? index)} className="border-b border-slate-900 text-slate-300 last:border-0">{columns.map((column) => <td key={column} className="max-w-xs truncate px-4 py-3 font-mono text-xs">{displayValue(item[column])}</td>)}{hasActions && <td className="px-4 py-3"><div className="flex flex-wrap gap-2">{itemActions(item).map(({ action, label }) => {
+            const pending = acting === `${String(item.id)}:${action}`;
+            return <button key={action} type="button" onClick={() => void performAction(item, action, label)} disabled={acting !== ""} aria-busy={pending} aria-label={`${label} ${String(item.id ?? "record")}`} className="inline-flex min-h-11 items-center gap-1.5 rounded border border-slate-700 px-3 py-2 text-xs hover:bg-slate-800 disabled:opacity-50">{pending && <Loader2 size={13} aria-hidden="true" className="animate-spin" />}{pending ? `${label}…` : label}</button>;
+          })}</div></td>}</tr>)}</tbody>
         </table>
       </section>}
     </main>
