@@ -1,6 +1,6 @@
 const MESSAGE_ROUTER_URL =
   process.env.MESSAGE_ROUTER_URL ?? "http://localhost:8001";
-const ROUTER_SECRET = process.env.ROUTER_SECRET ?? "";
+const ROUTER_SECRET = process.env.AGENT_TOKEN_SECRET ?? process.env.ROUTER_SECRET ?? "";
 
 type Params = { params: Promise<{ team_id: string }> };
 type RecentEntry = { entry_id: string; envelope: string };

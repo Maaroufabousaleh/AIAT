@@ -269,12 +269,14 @@ def _router_auth_headers() -> dict[str, str]:
     """Return the service identity used for router HTTP publication.
 
     Router publication is a control-plane operation.  Do not silently send an
-    unauthenticated request when ROUTER_SECRET is absent: that would turn a
-    deployment configuration error into an identity bypass.
+    unauthenticated request when no router secret is configured: that would
+    turn a deployment configuration error into an identity bypass.
+    AGENT_TOKEN_SECRET is canonical (the router verifies it); ROUTER_SECRET
+    is the legacy fallback for deployments that have not migrated.
     """
-    secret = os.getenv("ROUTER_SECRET") or os.getenv("AGENT_TOKEN_SECRET")
+    secret = os.getenv("AGENT_TOKEN_SECRET") or os.getenv("ROUTER_SECRET")
     if not secret:
-        raise RuntimeError("ROUTER_SECRET must be configured for router publication")
+        raise RuntimeError("AGENT_TOKEN_SECRET must be configured for router publication")
     headers = {"Authorization": f"Bearer orchestrator-api:{secret}"}
     trace_id = current_trace_id()
     if trace_id:

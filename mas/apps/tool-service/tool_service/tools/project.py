@@ -39,9 +39,9 @@ MESSAGE_ROUTER_URL = os.getenv("MESSAGE_ROUTER_URL") or os.getenv(
 
 
 def _router_auth_headers() -> dict[str, str]:
-    secret = os.getenv("ROUTER_SECRET") or os.getenv("AGENT_TOKEN_SECRET")
+    secret = os.getenv("AGENT_TOKEN_SECRET") or os.getenv("ROUTER_SECRET")
     if not secret:
-        raise RuntimeError("ROUTER_SECRET must be configured for router publication")
+        raise RuntimeError("AGENT_TOKEN_SECRET must be configured for router publication")
     return {"Authorization": f"Bearer tool-service:{secret}"}
 
 
