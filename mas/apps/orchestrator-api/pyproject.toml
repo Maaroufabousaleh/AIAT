@@ -25,7 +25,7 @@ dependencies = [
 # runtimes stay separate opt-in adapters so the control plane does not silently
 # install or activate them.
 runtime-default = [
-    "langgraph>=0.2,<1.0",
+    "langgraph>=1.0.10rc1,<2.0",
     "crewai==1.6.1",
 ]
 runtime-autogen = [
