@@ -52,6 +52,25 @@ test("system viz partial failure keeps content with warning", async ({ page }) =
   expect(errors).toEqual([]);
 });
 
+test("system viz orchestration outage degrades gracefully", async ({ page }) => {
+  await page.route("**/api/system/orchestration", async (route) => {
+    await route.fulfill({
+      status: 502,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "Orchestration data unavailable" }),
+    });
+  });
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(String(e)));
+  await authenticate(page, "/system-viz");
+  await expect(page.getByText("Some visualization data is stale or unavailable")).toBeVisible();
+  await expect(page.getByRole("tablist", { name: "Visualization views" })).toBeVisible();
+  await page.getByRole("tab", { name: "Orchestration" }).click();
+  await expect(page.getByRole("tab", { name: "Orchestration" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByText("No orchestration flows defined")).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
 test("system viz hierarchy denial shows access status without graph", async ({ page }) => {
   await page.route("**/api/system/hierarchy", async (route) => {
     await route.fulfill({ status: 403, contentType: "application/json", body: "{}" });
@@ -61,5 +80,43 @@ test("system viz hierarchy denial shows access status without graph", async ({ p
   await authenticate(page, "/system-viz");
   await expect(page.getByText("Visualization access denied")).toBeVisible();
   await expect(page.getByRole("tablist", { name: "Visualization views" })).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+// LivePermissions slice: proves the permissions view renders live team/policy
+// data (not hardcoded constants) by serving distinctive mocked values and
+// asserting they reach the sender-role dropdown and message-type groups.
+test("system viz permissions view renders live team policy data", async ({ page }) => {
+  await page.route("**/api/system/permissions", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        policy: {
+          livecheck_role: {
+            allowed_targets: ["*"],
+            allowed_msg_types: ["LIVECHECK_PING"],
+            allowed_tools: ["livecheck.tool"],
+          },
+        },
+        teamTiers: { livecheck_team: "livecheck_role" },
+        messageTypes: { livecheck_group: ["LIVECHECK_PING"] },
+        communicationMatrix: {
+          livecheck_role: {
+            livecheck_team: { allowed: true, msgTypes: ["LIVECHECK_PING"] },
+          },
+        },
+      }),
+    });
+  });
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(String(e)));
+  await authenticate(page, "/system-viz");
+  await page.getByRole("tab", { name: "Permissions" }).click();
+  await expect(page.getByRole("tab", { name: "Permissions" })).toHaveAttribute("aria-selected", "true");
+  // Distinctive live role populates the sender-role dropdown.
+  await expect(page.getByRole("option", { name: "livecheck_role" })).toBeAttached();
+  // Distinctive live message-type group renders and expands.
+  await page.getByRole("button", { name: /livecheck_group/i }).click();
+  await expect(page.getByText("LIVECHECK_PING")).toBeVisible();
   expect(errors).toEqual([]);
 });

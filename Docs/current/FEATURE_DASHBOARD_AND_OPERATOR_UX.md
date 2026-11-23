@@ -574,6 +574,54 @@ The dashboard is the human control and evidence surface for AIAT. It must make c
 - Remaining backlog notes: tests 2/3 of `flow-runtime-test2` still assert
   static branch labels rather than routed state.
 
+### Dashboard de-mocking pass (2026-11-23)
+
+- Inventoried user-visible mocks with three read-only scouts (proxy routes
+  + lib helpers, backend endpoints, dashboard dead controls). Genuine
+  findings: 2 hardcoded system-viz datasets, 1 dead `/audit` link, 1
+  failure-swallowing documents aggregation, 1 silent-empty workers/runs
+  endpoint, and the `ENABLE_CEO_FAKE_RESPONSE` legacy CEO fallback.
+  Deferred by design: `GET /evaluations` returns `[]` until the agent
+  runtime ships its persistence writer (no live source exists yet).
+- System-viz orchestration is now live: new backend `GET /workflow/graph`
+  (pure computation over `ProjectState` + `TRANSITIONS` /
+  `WILDCARD_TRANSITIONS`, the same tables `resolve_transition` consults)
+  plus stored `/flows` mapped from `definition_json`; proxy fails 502 with
+  a stale-data warning instead of hardcoded flows. Backend has no stored
+  flows, so the tab honestly shows states + "no flows defined".
+- System-viz permissions are now live: new backend `GET /system/policy`
+  exports `POLICY_RULES`, `TEAM_TIERS`, team-registry constants, and
+  `MessageType`-derived display groups; the proxy overlays live
+  `teams/*.yaml` tool grants and computes the communication matrix from
+  those inputs. This also fixed a latent UI lie: the old matrix showed
+  `worker → C-suite` messaging as allowed, which the engine denies.
+- Deleted the CEO legacy fallback (`_publish_ceo_response`,
+  `_ceo_fallback_evidence`, model-binding helpers, 4 tests). The flag was
+  unset in every live env, so production behavior is byte-identical; the
+  removal only deletes a dead code path that could fabricate citations.
+- Small fixes: credentials audit link now points at the real
+  `/identity-audit` route; documents aggregation returns a per-source
+  `errors` map (no consumer fetches that GET yet); workers/runs without
+  persistence raises the sibling-precedent 503 instead of `[]`.
+- Live-stack note: the orchestrator container bind-mounts
+  `/home/maaro/aiat-deploy/mas/...` (a newer checkout, detached HEAD),
+  not this worktree. The 6 backend hunks were verified to apply cleanly
+  there (`git apply --check`) and ported, then the container was
+  restarted; both new endpoints return live engine data with service
+  auth. The deploy copy carries that patch uncommitted for the operator
+  to reconcile. Dashboard was rebuilt from this worktree
+  (`mas/dashboard:dev`) and swapped in (previous container kept stopped
+  as `mas-dashboard-old` for rollback).
+- Suite hardening from shared-stream backlog drift (not product bugs):
+  the CEO hiring spec now scopes evidence assertions to the article
+  containing its unique worker name, and the company-status journey
+  matches the latest status paragraph. Full-suite runs must export
+  `E2E_ORCHESTRATOR_URL=http://127.0.0.1:18000` or artifact cleanup
+  silently no-ops against the default `:8000`.
+- Verification on the shipped build: route sweep 32/32 clean, `tsc`
+  clean, backend `test_ceo_chat.py` + `test_workflow_graph_api.py` green,
+  full Playwright suite 261 passed / 0 failed / 2 env-gated skips.
+
 ## Code anchors
 
 - Dashboard application: [`mas/apps/mas-dashboard/app/`](../../mas/apps/mas-dashboard/app/)

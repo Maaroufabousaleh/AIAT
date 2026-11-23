@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   Plus,
@@ -548,15 +549,16 @@ export default function CredentialsPage() {
           </code>
           ). The credentials manager resolves values only inside approved execution contexts.
           {!accessDenied && (
-            <a
-              href="/audit"
+            <Link
+              href="/identity-audit"
+              prefetch={false}
               className="mt-2 inline-flex min-h-11 items-center gap-1.5 text-blue-300 hover:text-blue-100 underline-offset-2 hover:underline transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70 rounded px-1"
               aria-label="View credential resolve audit log"
             >
               <ScrollText className="w-3.5 h-3.5" />
               View resolve audit log
               <ExternalLink className="w-3 h-3 opacity-70" />
-            </a>
+            </Link>
           )}
         </div>
       </section>

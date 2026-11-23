@@ -8732,6 +8732,80 @@ async def get_org_graph() -> dict[str, Any]:
     storage = _storage()
     return _serialize(await _org_graph_read_model(storage))
 
+@app.get("/system/policy")
+async def get_system_policy() -> dict[str, Any]:
+    """Live communication/tool policy enforced by the message-router.
+
+    Read-only export of mas_core.policy.rules (POLICY_RULES, TEAM_TIERS,
+    TEAM_DISPLAY_NAMES and the team-registry constants) plus message-type
+    display groups derived from the MessageType protocol enum, so the
+    dashboard permissions view reflects the enforced policy instead of a
+    hardcoded copy. New MessageType values appear in a group automatically.
+    """
+    from mas_core.policy.rules import (
+        C_SUITE_TEAMS,
+        CTO_TEAM,
+        DEPT_TEAMS,
+        DEVOPS_TEAM,
+        EXECUTIVE_TEAM,
+        ORCHESTRATOR_TEAM,
+        POLICY_RULES,
+        TEAM_DISPLAY_NAMES,
+        TEAM_TIERS,
+    )
+    from mas_core.protocols.enums import MessageType
+
+    groups: dict[str, list[str]] = {
+        "core": [],
+        "document": [],
+        "review": [],
+        "human": [],
+        "sprint": [],
+        "hierarchy": [],
+        "system": [],
+    }
+    for msg_type in MessageType:
+        name = msg_type.value
+        if name.startswith("DOCUMENT_"):
+            groups["document"].append(name)
+        elif name.startswith("REVIEW_"):
+            groups["review"].append(name)
+        elif name.startswith("APPROVAL_"):
+            groups["human"].append(name)
+        elif name.startswith("SPRINT_") or name.startswith("ISSUE_"):
+            groups["sprint"].append(name)
+        elif name in ("ESCALATION", "DIRECTIVE"):
+            groups["hierarchy"].append(name)
+        elif name in (
+            "HEARTBEAT",
+            "ACK",
+            "SHUTDOWN_ACK",
+            "SHUTDOWN_NACK",
+            "SYSTEM_EVENT",
+            "INFRA_READY",
+        ):
+            groups["system"].append(name)
+        else:
+            groups["core"].append(name)
+
+    return _serialize(
+        {
+            "policy": POLICY_RULES,
+            "teamTiers": {team: role.value for team, role in TEAM_TIERS.items()},
+            "teamDisplayNames": dict(TEAM_DISPLAY_NAMES),
+            "teamRegistry": {
+                "orchestratorTeam": ORCHESTRATOR_TEAM,
+                "executiveTeam": EXECUTIVE_TEAM,
+                "ctoTeam": CTO_TEAM,
+                "devopsTeam": DEVOPS_TEAM,
+                "cSuiteTeams": sorted(C_SUITE_TEAMS),
+                "deptTeams": sorted(DEPT_TEAMS),
+            },
+            "messageTypes": groups,
+            "messageTypeValues": [msg_type.value for msg_type in MessageType],
+        }
+    )
+
 
 @app.get("/integrations/delta-readiness")
 async def get_delta_integration_readiness() -> dict[str, Any]:
@@ -15320,7 +15394,7 @@ async def _dispatch_worker_run(
 async def list_worker_runs_api(project_id: UUID | None = None, worker_id: UUID | None = None, flow_instance_id: UUID | None = None, state: str | None = None, limit: int = Query(default=100, ge=1, le=1000), offset: int = Query(default=0, ge=0)) -> list[dict[str, Any]]:
     storage = _storage()
     if not inspect.iscoroutinefunction(getattr(storage, "list_worker_runs", None)):
-        return []
+        raise HTTPException(503, "worker-run persistence is unavailable")
     rows = await storage.list_worker_runs(project_id=project_id, worker_id=worker_id, flow_instance_id=flow_instance_id, state=state, limit=limit, offset=offset)
     return [_serialize(row) for row in rows]
 
@@ -16479,6 +16553,43 @@ async def list_flow_node_schemas() -> dict[str, Any]:
 
     return node_schema_catalog()
 
+
+@app.get("/workflow/graph")
+async def workflow_graph() -> dict[str, Any]:
+    """Return the real project-lifecycle state graph.
+
+    Storage-free pure computation over ``mas_core.workflow.states`` and
+    ``mas_core.workflow.transitions``: the same tables ``resolve_transition``
+    consults, so the dashboard diagram can never drift from the engine.
+    """
+    from mas_core.workflow.states import ProjectState
+    from mas_core.workflow.transitions import TRANSITIONS, WILDCARD_TRANSITIONS
+
+    states: list[dict[str, str]] = []
+    transitions: list[dict[str, str]] = []
+    for state in ProjectState:
+        outgoing = [
+            (event.value, str(target))
+            for event, target in TRANSITIONS.get(state, {}).items()
+        ]
+        outgoing.extend(
+            (event.value, str(target)) for event, target in WILDCARD_TRANSITIONS.items()
+        )
+        events = sorted({event for event, _ in outgoing})
+        states.append(
+            {
+                "id": state.value,
+                "label": state.value.replace("_", " ").title(),
+                "description": (
+                    f"Exits on {', '.join(events)}" if events else "Terminal state"
+                ),
+            }
+        )
+        for event_value, target in outgoing:
+            transitions.append(
+                {"from": state.value, "to": target, "event": event_value}
+            )
+    return {"states": states, "transitions": transitions}
 
 @app.get("/flows")
 async def list_flows(
@@ -19095,109 +19206,6 @@ def _ceo_response_evidence(result: dict[str, Any]) -> dict[str, Any]:
     return evidence
 
 
-_CEO_FALLBACK_EVIDENCE_RE = re.compile(
-    r"(?im)^\s*(?:AIAT_EVIDENCE|AIAT-EVIDENCE)\s*:\s*"
-    r"(?P<kind>[a-z_]+)\s*=\s*(?P<id>[^\s,;]+)\s*$"
-)
-_CEO_FALLBACK_EVIDENCE_KINDS = {
-    "company",
-    "project",
-    "worker",
-    "flow",
-    "flow_instance",
-    "evaluation",
-    "credential",
-    "dead_letter",
-    "artifact",
-    "integration",
-    "model",
-    "runtime",
-    "tool",
-    "usage",
-    "worker_run",
-    "trace",
-}
-
-
-def _ceo_fallback_evidence(response_text: str) -> tuple[str, dict[str, Any]]:
-    """Extract opt-in, canonical citations from the legacy model fallback.
-
-    The fallback model has no authority to invent database facts.  It may emit
-    an explicit ``AIAT_EVIDENCE: kind=id`` line only when it was given a
-    canonical record identifier; the line is removed from operator-visible
-    prose and represented as an unverified citation envelope.  Malformed or
-    unsupported lines are ignored, and the result is bounded like all other
-    CEO evidence.
-    """
-    refs: list[dict[str, str]] = []
-    seen: set[tuple[str, str]] = set()
-
-    def collect(match: re.Match[str]) -> str:
-        kind = match.group("kind").lower()
-        record_id = match.group("id").strip()
-        if (
-            kind in _CEO_FALLBACK_EVIDENCE_KINDS
-            and record_id
-            and len(record_id) <= 200
-            and (kind, record_id) not in seen
-            and len(refs) < _CEO_EVIDENCE_MAX_REFS
-        ):
-            seen.add((kind, record_id))
-            refs.append({"kind": kind, "id": record_id})
-        return ""
-
-    cleaned = _CEO_FALLBACK_EVIDENCE_RE.sub(collect, response_text).strip()
-    return cleaned, {
-        "schema_version": CEO_EVIDENCE_SCHEMA,
-        "authority": "aiat.ceo-fallback",
-        "status": "unverified",
-        "refs": refs,
-        "trace": ["legacy_model_fallback", "explicit_citations_only"],
-    }
-
-
-async def _load_ceo_fallback_model_binding(
-    snapshot_id: UUID | str,
-) -> Any:
-    """Load the operator-scoped model decision for the legacy fallback.
-
-    The fallback is not a ``WorkerAdapter`` run, but it is still a governance
-    model call when the originating CEO message carried a snapshot.  Keep the
-    lookup read-only and scoped to the operator-direct (project-less) record;
-    this helper never resolves a model or accepts a caller-supplied model ID.
-    """
-    from mas_core.agent_runtime import GovernanceModelBinding
-
-    try:
-        resolved_snapshot_id = UUID(str(snapshot_id))
-    except (TypeError, ValueError) as exc:
-        raise RuntimeError("CEO fallback model snapshot ID is invalid") from exc
-
-    storage = getattr(app.state, "storage", None)
-    getter = getattr(storage, "get_model_resolution_snapshot", None)
-    if not callable(getter):
-        raise RuntimeError("CEO fallback model snapshot storage is unavailable")
-    snapshot = await getter(resolved_snapshot_id, project_id=None)
-    if snapshot is None or snapshot.get("project_id") is not None:
-        raise RuntimeError("CEO fallback model snapshot is missing or out of scope")
-    try:
-        return GovernanceModelBinding.from_snapshot(resolved_snapshot_id, snapshot)
-    except (TypeError, ValueError) as exc:
-        raise RuntimeError("CEO fallback model snapshot is not an exact approved decision") from exc
-
-
-def _ceo_fallback_model_aliases(binding: Any) -> set[str]:
-    """Return provider-qualified and unqualified spellings for one binding."""
-    exact = str(binding.exact_model_id)
-    aliases = {exact}
-    provider_prefix = f"{binding.provider_id}/"
-    if exact.startswith(provider_prefix):
-        aliases.add(exact.removeprefix(provider_prefix))
-    else:
-        aliases.add(f"{provider_prefix}{exact}")
-    return aliases
-
-
 async def _publish_ceo_chat_response(
     *,
     response_text: str,
@@ -19297,107 +19305,6 @@ async def _publish_ceo_chat_progress(
                 )
     except Exception:
         logger.exception("CEO chat progress publish failed")
-
-
-async def _publish_ceo_response(
-    *,
-    instruction: str,
-    correlation_id: str,
-    parent_id: str,
-    model_resolution_snapshot_id: UUID | str | None = None,
-) -> None:
-    """Generate and publish a CEO chat response without waiting on stream backlog.
-
-    This is a legacy fallback that bypasses the CEO agent runtime and calls the
-    LLM directly with a generic "Executive Copilot" persona.  It is gated behind
-    ENABLE_CEO_FAKE_RESPONSE so operators can opt out once the agent runtime
-    reliably handles HUMAN_DIRECTIVE / CHAT envelopes.
-    """
-    if os.getenv("ENABLE_CEO_FAKE_RESPONSE", "0") not in {"1", "true", "yes"}:
-        return
-    response_text = ""
-    model_binding: Any | None = None
-    binding_error: str | None = None
-    try:
-        if model_resolution_snapshot_id is not None:
-            model_binding = await _load_ceo_fallback_model_binding(
-                model_resolution_snapshot_id,
-            )
-        async with LLMGatewayClient() as llm:
-            system_prompt = (
-                "You are the AIAT CEO Executive Copilot speaking directly to the human "
-                "operator in the dashboard chat. Reply conversationally and helpfully. "
-                "Be concise, direct, and practical. If the operator asks for an action, "
-                "state what you can do next and any required clarification. If the supplied "
-                "context contains a canonical AIAT record ID that you cite, add one separate "
-                "line in the exact form `AIAT_EVIDENCE: kind=id`; never invent IDs or include "
-                "secret values in that line."
-            )
-            if model_binding is None:
-                # Compatibility mode for the explicitly opt-in legacy path.
-                # It remains visible as unresolved evidence below.
-                response_text = await llm.ask(
-                    instruction,
-                    system=system_prompt,
-                    task="general",
-                    max_tokens=450,
-                    temperature=0.4,
-                )
-            else:
-                response = await llm.chat_completion(
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": instruction},
-                    ],
-                    model=model_binding.exact_model_id,
-                    max_tokens=450,
-                    temperature=0.4,
-                )
-                observed_model = str(getattr(response, "model", "") or "").strip()
-                if observed_model not in _ceo_fallback_model_aliases(model_binding):
-                    raise RuntimeError(
-                        "CEO fallback response model does not match its AIAT resolution binding"
-                    )
-                response_text = str(getattr(response, "text", "") or "")
-    except Exception as exc:
-        logger.warning("CEO chat direct response failed: %s", exc)
-        binding_error = type(exc).__name__
-        response_text = (
-            "I received your message, but my live language-model response path is currently "
-            "limited. Your request is queued with the CEO runtime."
-        )
-    response_text = _clean_ceo_chat_text(response_text)
-    response_text, evidence = _ceo_fallback_evidence(response_text)
-    if model_binding is not None:
-        evidence["model_provenance"] = {
-            "status": "bound" if binding_error is None else "failed",
-            "resolution_snapshot_id": str(model_binding.resolution_snapshot_id),
-            "profile_id": model_binding.profile_id,
-            "profile_version": model_binding.profile_version,
-            "provider_id": model_binding.provider_id,
-            "exact_model_id": model_binding.exact_model_id,
-        }
-    elif model_resolution_snapshot_id is not None:
-        # A supplied snapshot that could not be loaded must never silently
-        # downgrade into the unbound legacy call path.
-        evidence["status"] = "blocked"
-        evidence["model_provenance"] = {
-            "status": "unavailable",
-            "resolution_snapshot_id": str(model_resolution_snapshot_id),
-            "error_type": binding_error or "RuntimeError",
-        }
-    else:
-        evidence["model_provenance"] = {
-            "status": "unresolved",
-            "reason": "legacy direct fallback was invoked without a model snapshot",
-        }
-    await _publish_ceo_chat_response(
-        response_text=response_text.strip() or "I received your message.",
-        correlation_id=correlation_id,
-        parent_id=parent_id,
-        evidence=evidence,
-        model_resolution_snapshot_id=model_resolution_snapshot_id,
-    )
 
 
 async def _handle_ceo_hiring_intent(instruction: str) -> dict[str, Any] | None:
@@ -21820,13 +21727,6 @@ async def operator_send_to_ceo(
             "action": action,
             "evidence": _ceo_response_evidence(action),
         }
-    background_tasks.add_task(
-        _publish_ceo_response,
-        instruction=instruction,
-        correlation_id=message_id,
-        parent_id=message_id,
-        model_resolution_snapshot_id=envelope.get("model_resolution_snapshot_id"),
-    )
     return {"ok": True, "entry_id": result.get("entry_id")}
 
 

@@ -109,11 +109,22 @@ export async function GET(_: Request, props: Params) {
       orchestratorFetch(`/projects/${params.id}/feasibility`),
       orchestratorFetch(`/projects/${params.id}/sprints`),
     ]);
+    const errors: { documents?: string; feasibility?: string; sprints?: string } = {};
+    if (documents.status === "rejected")
+      errors.documents =
+        documents.reason instanceof Error ? documents.reason.message : "Documents could not be loaded.";
+    if (feasibility.status === "rejected")
+      errors.feasibility =
+        feasibility.reason instanceof Error ? feasibility.reason.message : "Feasibility could not be loaded.";
+    if (sprints.status === "rejected")
+      errors.sprints =
+        sprints.reason instanceof Error ? sprints.reason.message : "Sprints could not be loaded.";
     return NextResponse.json({
       documents: documents.status === "fulfilled" ? documents.value : null,
       feasibility:
         feasibility.status === "fulfilled" ? feasibility.value : null,
       sprints: sprints.status === "fulfilled" ? sprints.value : null,
+      ...(Object.keys(errors).length > 0 ? { errors } : {}),
     });
   } catch (e) {
     if (e instanceof OrchestratorError)

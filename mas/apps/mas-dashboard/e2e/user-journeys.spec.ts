@@ -135,7 +135,7 @@ test("operator gets company status from the CEO quick command", async ({ page })
   await expect(input).toBeEnabled();
   await input.fill("Show me the live company status and tell me what needs attention.");
   await input.press("Enter");
-  await expect(page.getByText(/AIAT company is (seeded|not seeded)/i)).toBeVisible({
+  await expect(page.getByText(/AIAT company is (seeded|not seeded)/i).last()).toBeVisible({
     timeout: 90_000,
   });
   await expect(page.getByTestId("ceo-thinking")).toHaveCount(0, { timeout: 90_000 });
