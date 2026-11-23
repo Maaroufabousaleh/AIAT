@@ -51,6 +51,11 @@ test("worker management keeps evaluation and status actions governed and reports
     const request = route.request();
     const path = new URL(request.url()).pathname;
     const method = request.method();
+    // Shell health probe (sidebar + mobile header) — not part of the fixture.
+    if (path === "/api/health" && method === "GET") {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ status: "ok" }) });
+      return;
+    }
 
     if (path === "/api/workers" && method === "GET") {
       await route.fulfill({
@@ -210,6 +215,11 @@ test("worker configuration is prefilled, saved through PUT, and refreshed", asyn
     const request = route.request();
     const path = new URL(request.url()).pathname;
     const method = request.method();
+    // Shell health probe (sidebar + mobile header) — not part of the fixture.
+    if (path === "/api/health" && method === "GET") {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ status: "ok" }) });
+      return;
+    }
 
     if (path === "/api/workers" && method === "GET") {
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([worker]) });
@@ -280,6 +290,11 @@ test("worker configuration validation failures stay visible and leave the row un
     const request = route.request();
     const path = new URL(request.url()).pathname;
     const method = request.method();
+    // Shell health probe (sidebar + mobile header) — not part of the fixture.
+    if (path === "/api/health" && method === "GET") {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ status: "ok" }) });
+      return;
+    }
 
     if (path === "/api/workers" && method === "GET") {
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([worker]) });
@@ -369,6 +384,11 @@ test("external worker evaluation history exposes a retry and an empty state", as
     const request = route.request();
     const path = new URL(request.url()).pathname;
     const method = request.method();
+    // Shell health probe (sidebar + mobile header) — not part of the fixture.
+    if (path === "/api/health" && method === "GET") {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ status: "ok" }) });
+      return;
+    }
 
     if (path === "/api/workers" && method === "GET") {
       await route.fulfill({
@@ -460,6 +480,11 @@ test("retained worker rows do not fetch evaluation history after access is denie
     const request = route.request();
     const path = new URL(request.url()).pathname;
     const method = request.method();
+    // Shell health probe (sidebar + mobile header) — not part of the fixture.
+    if (path === "/api/health" && method === "GET") {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ status: "ok" }) });
+      return;
+    }
 
     if (path === "/api/workers" && method === "GET") {
       workerReads += 1;

@@ -7,6 +7,7 @@ import { SeedDefaultCompanyButton } from "@/components/SeedDefaultCompanyButton"
 import { KpiCard } from "@/components/ui/KpiCard";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { QuickLinkCard } from "@/components/ui/QuickLinkCard";
+import SourceOutageHistory from "@/components/overview/SourceOutageHistory";
 import { Activity, AlertCircle, ArrowUpRight, Layers } from "lucide-react";
 import Link from "next/link";
 
@@ -493,6 +494,7 @@ export default async function HomePage() {
         </section>
       )}
 
+      <SourceOutageHistory failed={failedSources} at={lastRefreshedAt.toISOString()} />
       {/* System health card: prometheus query time + last refresh timestamp */}
       <SystemHealthCard
         promQueryMs={promQueryMs}

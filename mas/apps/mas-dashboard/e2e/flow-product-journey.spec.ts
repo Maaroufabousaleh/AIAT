@@ -123,6 +123,9 @@ test("operator builds, edits, starts, and retries a project flow", async ({
         contentType: "application/json",
         body: JSON.stringify(body),
       });
+    // Shell health probe (sidebar + mobile header) — not part of the fixture.
+    if (pathname === "/api/health" && method === "GET") return fulfill({ status: "ok", service: "mas-dashboard" });
+    if (pathname === "/api/companies" && method === "GET") return fulfill([]);
 
     if (pathname === "/api/workers") return fulfill([]);
     if (pathname === "/api/governance/model-profiles") return fulfill([]);

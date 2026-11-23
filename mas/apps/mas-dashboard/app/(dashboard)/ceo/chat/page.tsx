@@ -608,6 +608,7 @@ export default function CeoChatPage() {
             {streamError && !accessDenied && (
               <ErrorBanner
                 tone={streamStale ? "warning" : "error"}
+                assertive={false}
                 title={streamStale ? "Showing last known CEO conversation" : "CEO conversation unavailable"}
                 className="mx-3 mt-3 sm:mx-4"
                 action={(

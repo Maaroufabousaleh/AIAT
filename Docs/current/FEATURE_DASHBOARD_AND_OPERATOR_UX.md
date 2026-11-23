@@ -527,6 +527,53 @@ The dashboard is the human control and evidence surface for AIAT. It must make c
   complete secret-rotation alignment; repair `mas/.venv` (root-owned
   `lib64` symlink breaks `uv run`).
 
+### Dashboard continued-fixes pass (2026-11-23)
+
+- Re-verified the live stack before changing anything: route sweep 32/32
+  clean, user journeys 3/3, all containers healthy.
+- Corrected the 2026-11-21 backend-failure note: the
+  `fails_closed_without_configured_credentials` 401-vs-503 mismatch was
+  contaminated shell environment (keys exported by a debug command), not a
+  code bug. The test passes in a clean environment; no backend change needed.
+- `ErrorBanner` gained an `assertive` prop (default true for
+  tone="error"). CEO feed, CEO chat stream, and flows-list
+  supplementary failures now announce politely (`role="status"`).
+  Approvals and companies were reverted to assertive after dedicated
+  specs (`privileged-approvals`, `company-admin`) were found asserting
+  `role="alert"` on those banners — the polite variant stays available
+  for genuinely supplementary sections only.
+- Added `e2e/system-viz-states.spec.ts` (tabs, total-failure Retry
+  recovery, partial-warning retention, hierarchy-denial status) and an
+  operator-local overview source-outage history
+  (`components/overview/SourceOutageHistory.tsx`, localStorage ring of the
+  last 10 outage loads, covered in `system-overview-recovery.spec.ts`).
+- Rebuilt `mas/dashboard:dev` and redeployed. The fresh image exposed
+  suite rot that the previous build had masked: strict `**/api/**`
+  fixtures now allow the shell health probe (`GET /api/health` from the
+  sidebar + mobile header) in 6 specs; the CEO receipt spec was rewritten
+  from the removed "Advanced action" details element to the guided
+  privileged-action form; PM integration specs were updated from UUID
+  textboxes to the current lifecycle selects; the workspace artifact
+  fixture now satisfies download integrity verification (digest headers,
+  byte size, checksum); flow-runtime tests 4/5 now complete the Decision
+  Switch after rejection and assert the real `Flow FAILED`/`Flow RUNNING`
+  tab state instead of matching the static "Failed" end-node label.
+- Full-suite result on the fresh image: 259 passed, 0 failed, 2
+  environment-gated skips (`AIAT_LIVE_DLQ_ID`, `EXPECTED_OVERVIEW_STATE`).
+- Real product bug found via the suite: deciding a deep-linked approval
+  (`/approvals?request_id=`) never refetched the audit list because the
+  post-decision query-strip navigation is swallowed on direct deep-link
+  landings (works after client-side navigation). `decide()` now refetches
+  explicitly and the refetch preserves the decision notice instead of
+  overwriting it with "not currently pending".
+- Suite robustness: hiring-board now uses the `searchbox` role;
+  system-status failure injection is flag-controlled instead of
+  request-counted (the 15s poll shifted positional failures);
+  Playwright workers capped at 4 (the 0.5-CPU dashboard container
+  starves under 20-way parallel browsers).
+- Remaining backlog notes: tests 2/3 of `flow-runtime-test2` still assert
+  static branch labels rather than routed state.
+
 ## Code anchors
 
 - Dashboard application: [`mas/apps/mas-dashboard/app/`](../../mas/apps/mas-dashboard/app/)

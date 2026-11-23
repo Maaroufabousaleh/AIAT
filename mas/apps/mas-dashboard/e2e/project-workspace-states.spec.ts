@@ -31,15 +31,15 @@ const INITIAL_WORKSPACE = {
     id: 1,
     path: "initial-report.md",
     agent_id: "fixture-agent",
-    sha256: "a".repeat(64),
-    size_bytes: 1024,
+    sha256: "f8f68195ea4e431de2a9c94f89052ac2f72bc59f62eb05017eee355fe814511e",
+    size_bytes: 18,
     metadata: {
       project_id: PROJECT_ID,
       worker_run_id: "30000000-0000-4000-8000-000000000399",
       blob_bucket: "worker-artifacts",
       blob_key: `${PROJECT_ID}/worker-runs/30000000-0000-4000-8000-000000000399/initial-report.md`,
-      blob_sha256: "a".repeat(64),
-      blob_size_bytes: 1024,
+      blob_sha256: "f8f68195ea4e431de2a9c94f89052ac2f72bc59f62eb05017eee355fe814511e",
+      blob_size_bytes: 18,
     },
   }],
   logs: [],
@@ -151,6 +151,8 @@ test("project workspace retains data through a failed refresh and recovers", asy
         contentType: "application/octet-stream",
         headers: {
           "Content-Disposition": 'attachment; filename="initial-report.md"',
+          "x-aiat-artifact-sha256": "f8f68195ea4e431de2a9c94f89052ac2f72bc59f62eb05017eee355fe814511e",
+          "x-aiat-artifact-size": "18",
         },
         body: "# Generated report",
       });

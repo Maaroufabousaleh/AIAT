@@ -487,6 +487,7 @@ export default function CeoPage() {
         <div className="mx-4 mt-3">
           <ErrorBanner
             tone={stale ? "warning" : "error"}
+            assertive={false}
             title={stale ? "Showing last known CEO feed" : "CEO feed unavailable"}
             action={(
               <button type="button" onClick={() => connect(true)} className="min-h-11 px-3 rounded border border-current text-xs font-medium hover:bg-white/10">

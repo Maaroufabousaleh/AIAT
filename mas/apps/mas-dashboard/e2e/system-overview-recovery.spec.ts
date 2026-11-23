@@ -47,3 +47,19 @@ test.describe("System Overview source recovery baseline", () => {
     }
   });
 });
+
+test("overview renders recorded source outage history", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem(
+      "aiat-overview-outages",
+      JSON.stringify([{ at: "2026-11-20T10:00:00Z", sources: ["llm metrics", "queue metrics"] }]),
+    );
+  });
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(String(e)));
+  await authenticate(page);
+  const history = page.getByRole("region", { name: "Recent overview source outages" });
+  await expect(history).toBeVisible();
+  await expect(history).toContainText("llm metrics, queue metrics");
+  expect(errors).toEqual([]);
+});

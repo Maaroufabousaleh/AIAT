@@ -135,6 +135,8 @@ test("Research Brief template runs through Project Detail review and evidence", 
     const url = new URL(request.url());
     const { pathname } = url;
     const method = request.method();
+    // Shell health probe (sidebar + mobile header) — not part of the fixture.
+    if (pathname === "/api/health" && method === "GET") return fulfill(route, { status: "ok", service: "mas-dashboard" });
 
     if (pathname === "/api/workers" && method === "GET") {
       return fulfill(route, [{

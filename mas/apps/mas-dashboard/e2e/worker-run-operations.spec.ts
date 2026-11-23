@@ -53,6 +53,11 @@ async function mockWorkerRunApi(page: Page, cancelMode: CancelMode = "terminal",
   await page.route("**/api/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
+    // Shell health probe (sidebar + mobile header) — not part of the fixture.
+    if (path === "/api/health" && request.method() === "GET") {
+      await route.fulfill({ json: { status: "ok", service: "mas-dashboard" } });
+      return;
+    }
 
     if (path === "/api/governance/model-profiles" && request.method() === "GET") {
       await route.fulfill({ json: [] });

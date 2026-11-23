@@ -19,6 +19,12 @@ export interface ErrorBannerProps {
   icon?: LucideIcon;
   /** Right-side action area (e.g. a retry button). */
   action?: ReactNode;
+  /**
+   * Assertive (role=alert) vs polite (role=status) announcement.
+   * Defaults to true for tone="error", false otherwise. Set false for
+   * supplementary-section failures on an otherwise usable page.
+   */
+  assertive?: boolean;
 }
 
 const TONE_STYLES: Record<ErrorTone, { container: string; icon: string; iconWrap: string; title: string; defaultTitle: string; Icon: LucideIcon }> = {
@@ -60,12 +66,14 @@ export function ErrorBanner({
   className,
   icon,
   action,
+  assertive,
 }: ErrorBannerProps) {
   const cfg = TONE_STYLES[tone];
   const Icon = icon ?? cfg.Icon;
+  const isAssertive = assertive ?? tone === "error";
   return (
     <div
-      role={tone === "error" ? "alert" : "status"}
+      role={isAssertive ? "alert" : "status"}
       className={clsx(
         "flex items-start gap-3 p-4 rounded-xl border shadow-sm shadow-black/10",
         cfg.container,

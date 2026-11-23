@@ -5,10 +5,11 @@ import { authenticate } from "./auth";
 test("system status retains the last known state when a refresh fails", async ({
   page,
 }) => {
-  let requestCount = 0;
+  // Flag-controlled (not request-counted): the page polls every 15s, so a
+  // background poll would shift any positional failure to the wrong request.
+  let fail = false;
   await page.route("**/api/system/status", async (route) => {
-    requestCount += 1;
-    if (requestCount === 3) {
+    if (fail) {
       await route.fulfill({
         status: 503,
         contentType: "application/json",
@@ -56,12 +57,14 @@ test("system status retains the last known state when a refresh fails", async ({
   }
   await expect(page.getByText("running", { exact: true })).toBeVisible();
 
+  fail = true;
   await page.getByRole("button", { name: "Refresh system status" }).click();
   await expect(page.getByText("Showing last known system status")).toBeVisible();
   await expect(page.getByText(/latest system status refresh failed/i)).toBeVisible();
   await expect(page.getByText("running", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
 
+  fail = false;
   await page.getByRole("button", { name: "Retry" }).click();
   await expect(page.getByText("Showing last known system status")).toHaveCount(0);
   await expect(page.getByText("running", { exact: true })).toBeVisible();

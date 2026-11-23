@@ -39,9 +39,33 @@ test("CEO privileged-action receipt opens the matching approval without deciding
   await page.route("**/api/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
+    // Shell health probe (sidebar + mobile header) — not part of the fixture.
+    if (path === "/api/health" && request.method() === "GET") {
+      await route.fulfill({ json: { status: "ok", service: "mas-dashboard" } });
+      return;
+    }
 
     if (path === "/api/projects" && request.method() === "GET") {
       await route.fulfill({ json: [] });
+      return;
+    }
+    if (path === "/api/executive/actions/catalogue" && request.method() === "GET") {
+      await route.fulfill({
+        json: {
+          schema_version: "aiat.executive-actions.catalogue.v1",
+          cfo_model_override_fields: [],
+          cto_worker_run_fields: [],
+          ceo_privileged_actions: [
+            {
+              action: ACTION,
+              label: "Shut down the AIAT system",
+              risk: "critical",
+              requires_approval: true,
+              fields: [{ name: "reason", label: "Reason", control: "textarea", required: true, max_length: 4000 }],
+            },
+          ],
+        },
+      });
       return;
     }
     if (path === "/api/workers" && request.method() === "GET") {
@@ -116,9 +140,11 @@ test("CEO privileged-action receipt opens the matching approval without deciding
 
   await authenticate(page, "/governance");
   const actions = page.getByRole("region", { name: "Executive actions" });
-  await actions.getByText("Advanced action and payload").click();
-  await actions.getByLabel("Action", { exact: true }).fill(ACTION);
-  await actions.getByLabel("Payload (JSON object)").fill('{"reason":"planned maintenance"}');
+  const ceoForm = actions.locator('form[aria-labelledby="ceo-privileged-action-heading"]');
+  const guidedAction = actions.getByLabel("Approval-gated action");
+  await expect(guidedAction).toBeEnabled();
+  await guidedAction.selectOption(ACTION);
+  await ceoForm.getByLabel("Reason").fill("planned maintenance");
   await actions.getByRole("checkbox").check();
   await actions.getByRole("button", { name: "Request privileged action" }).click();
 

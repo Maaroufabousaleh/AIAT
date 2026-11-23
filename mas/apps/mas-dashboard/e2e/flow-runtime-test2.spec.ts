@@ -301,12 +301,14 @@ test.describe("Test 2 — Flow runtime: branching, approval, retry, escalation",
     await advanceToApprovalGate(page);
 
     await page.getByTestId("approval-reject-button").click();
-
-    await expect(page.getByText("FAILED").first()).toBeVisible();
+    // Rejection routes through the Decision Switch; completing it sends the
+    // flow to the Failed end node and fails the instance.
+    await page.getByTestId("complete-node-button").click();
+    await expect(page.getByRole("tab", { name: "Flow FAILED" })).toBeVisible();
 
     await page.reload();
     await page.getByTestId("project-tab-flow").click();
-    await expect(page.getByText("FAILED").first()).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Flow FAILED" })).toBeVisible();
   });
 
   test("5. Retry from Failed → restores last safe state (visible after refresh)", async ({
@@ -322,16 +324,17 @@ test.describe("Test 2 — Flow runtime: branching, approval, retry, escalation",
 
     // Reject to reach FAILED state
     await page.getByTestId("approval-reject-button").click();
-    await expect(page.getByText("FAILED").first()).toBeVisible();
+    await page.getByTestId("complete-node-button").click();
+    await expect(page.getByRole("tab", { name: "Flow FAILED" })).toBeVisible();
 
     // Retry
     await page.getByTestId("flow-retry-button").click();
-    await expect(page.getByText("RUNNING").first()).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Flow RUNNING" })).toBeVisible();
 
     // Verify last safe node is active
     await page.reload();
     await page.getByTestId("project-tab-flow").click();
-    await expect(page.getByText("RUNNING").first()).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Flow RUNNING" })).toBeVisible();
     // The retry count should be incremented
     await expect(page.getByText(/retry.*1/i)).toBeVisible();
   });

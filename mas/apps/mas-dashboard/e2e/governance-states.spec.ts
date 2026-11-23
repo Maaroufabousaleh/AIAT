@@ -44,6 +44,11 @@ async function setupGuidedPrivilegedActionPage(
   await page.route("**/api/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
+    // Shell health probe (sidebar + mobile header) — not part of the fixture.
+    if (path === "/api/health" && request.method() === "GET") {
+      await route.fulfill({ json: { status: "ok", service: "mas-dashboard" } });
+      return;
+    }
     if (path === "/api/projects" && request.method() === "GET") {
       await route.fulfill({ json: [] });
       return;

@@ -488,17 +488,17 @@ test.describe("Operational UI smoke flows", () => {
     await expect(
       page.getByRole("heading", { name: "Governed lifecycle plans" }),
     ).toBeVisible();
-    for (const fieldName of ["Connection UUID", "Binding UUID"]) {
-      await expect(page.getByRole("textbox", { name: fieldName })).toHaveCSS(
+    for (const fieldName of ["Lifecycle connection", "Lifecycle target", "Lifecycle project binding", "Desired lifecycle state"]) {
+      await expect(page.getByRole("combobox", { name: fieldName })).toHaveCSS(
         "min-height",
         "44px",
       );
     }
     await expect(
-      page.getByRole("button", { name: "Generate READ_ONLY plan" }),
+      page.getByRole("button", { name: "Generate SHADOW plan" }),
     ).toHaveCSS("min-height", "44px");
-    await expect(page.getByText("E2E YouTrack")).toBeVisible();
-    await expect(page.getByText("conflict-e2e-001")).toBeVisible();
+    await expect(integrations.getByRole("region", { name: "Connections" }).getByText("connection-e2e-001")).toBeVisible();
+    await expect(page.getByText("conflict-e2e-001").first()).toBeVisible();
 
     await page.getByRole("button", { name: "Refresh" }).click();
     await expect(
@@ -533,7 +533,7 @@ test.describe("Operational UI smoke flows", () => {
     await expect(access.getByRole("link", { name: "Return to dashboard" })).toHaveCSS("min-height", "44px");
     await expect(integrations.getByRole("button", { name: "Refresh", exact: true })).toHaveCount(0);
     await expect(integrations.getByRole("button", { name: "Retry" })).toHaveCount(0);
-    for (const action of ["Generate READ_ONLY plan", "Approve", "Apply exact plan"]) {
+    for (const action of ["Generate SHADOW plan", "Generate project provisioning plan", "Approve", "Apply exact plan"]) {
       await expect(integrations.getByRole("button", { name: action })).toHaveCount(0);
     }
   });
@@ -567,22 +567,22 @@ test.describe("Operational UI smoke flows", () => {
 
     await page.goto("/integrations");
     const integrations = page.getByRole("main", { name: "PM integrations" });
-    await expect(integrations.getByText("Denial fixture")).toBeVisible();
-    await expect(integrations.getByText("conflict-denial-001")).toBeVisible();
-    await expect(integrations.getByText("plan-denial-001")).toBeVisible();
+    await expect(integrations.getByRole("region", { name: "Connections" }).getByText("connection-denial-001")).toBeVisible();
+    await expect(integrations.getByText("conflict-denial-001").first()).toBeVisible();
+    await expect(integrations.getByText("plan-denial-001").first()).toBeVisible();
     await integrations.getByRole("button", { name: "Refresh", exact: true }).click();
 
     const access = integrations.getByRole("region", { name: "PM integrations access status" });
     await expect(access).toBeVisible();
     await expect(access.getByText(/last-known reconciliation context remains visible/i)).toBeVisible();
-    await expect(integrations.getByText("Denial fixture")).toBeVisible();
-    await expect(integrations.getByText("plan-denial-001")).toBeVisible();
+    await expect(integrations.getByRole("region", { name: "Connections" }).getByText("connection-denial-001")).toBeVisible();
+    await expect(integrations.getByText("plan-denial-001").first()).toBeVisible();
     await expect(integrations.getByRole("button", { name: "Refresh", exact: true })).toHaveCount(0);
     await expect(integrations.getByRole("button", { name: "Retry" })).toHaveCount(0);
-    await expect(integrations.getByRole("textbox", { name: "Connection UUID" })).toHaveCount(0);
-    await expect(integrations.getByRole("textbox", { name: "Binding UUID" })).toHaveCount(0);
+    await expect(integrations.getByRole("combobox", { name: "Lifecycle connection" })).toHaveCount(0);
+    await expect(integrations.getByRole("combobox", { name: "Desired lifecycle state" })).toHaveCount(0);
     await expect(integrations.getByRole("checkbox")).toHaveCount(0);
-    for (const action of ["Generate READ_ONLY plan", "Approve", "Apply exact plan"]) {
+    for (const action of ["Generate SHADOW plan", "Generate project provisioning plan", "Approve", "Apply exact plan"]) {
       await expect(integrations.getByRole("button", { name: action })).toHaveCount(0);
     }
   });

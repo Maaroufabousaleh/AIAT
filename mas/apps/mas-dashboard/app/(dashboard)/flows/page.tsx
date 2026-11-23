@@ -305,6 +305,7 @@ export default function FlowsPage() {
       {loadError && !accessDenied && (
         <ErrorBanner
           tone={loadStale ? "warning" : "error"}
+          assertive={false}
           title={loadStale ? "Showing last known flows" : "Flows load failed"}
           action={(
             <button type="button" onClick={requestRefresh} disabled={loading} className="min-h-11 rounded border border-current px-3 py-2 text-xs font-medium hover:bg-white/10 disabled:opacity-50">

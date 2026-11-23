@@ -136,6 +136,11 @@ function ApprovalsContent() {
   const projectPageGenerationRef = useRef(0);
   const refreshFailedRef = useRef(false);
   const preserveNoticeOnRefreshRef = useRef(false);
+  // A recorded decision survives the refetches it triggers (the explicit
+  // post-decision refetch plus the navigation-triggered one race; a plain
+  // boolean flag is consumed by whichever finishes first). Cleared only by
+  // an explicit operator Refresh/Retry.
+  const decisionNoticeRef = useRef<string | null>(null);
 
   const updateRequestQuery = useCallback((requestId: string | null) => {
     const nextParams = new URLSearchParams(queryString);
@@ -153,7 +158,7 @@ function ApprovalsContent() {
     setLoadingMore(false);
     setLoading(true);
     setError("");
-    if (!preserveNoticeOnRefreshRef.current) setNotice("");
+    if (!preserveNoticeOnRefreshRef.current && !decisionNoticeRef.current) setNotice("");
     try {
       const projectQuery = new URLSearchParams({ limit: String(PAGE_SIZE) });
       const [pendingResult, auditResult, projectResult] = await Promise.allSettled([
@@ -248,7 +253,9 @@ function ApprovalsContent() {
           } else {
             requestDeepLinkedIdRef.current = linkedRequestId;
             setSelected(null);
-            setNotice("The linked CEO request is not currently pending. Refresh the inbox to inspect the current queue.");
+            if (!preserveNoticeOnRefreshRef.current) {
+              setNotice("The linked CEO request is not currently pending. Refresh the inbox to inspect the current queue.");
+            }
           }
         } else {
           requestDeepLinkedIdRef.current = null;
@@ -361,7 +368,11 @@ function ApprovalsContent() {
       const decisionNotice = `Decision recorded: ${approved ? "approved" : "rejected"}. The governed action was not dispatched from this inbox.`;
       preserveNoticeOnRefreshRef.current = true;
       setNotice(decisionNotice);
+      decisionNoticeRef.current = decisionNotice;
       updateRequestQuery(null);
+      // Refetch explicitly: the query-strip navigation above is the refresh
+      // trigger, and deep-linked landings have been observed to swallow it.
+      void refresh();
     } catch (cause) {
       const status = cause instanceof Error ? (cause as HttpError).status : undefined;
       if (status === 401 || status === 403) {
@@ -396,7 +407,7 @@ function ApprovalsContent() {
         title="Approval inbox"
         description="Review CEO requests here and open project decisions in their canonical project workspace."
         actions={(
-          <button type="button" onClick={() => void refresh()} disabled={loading} aria-label="Refresh approvals" className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-200 hover:bg-slate-800 disabled:opacity-50">
+          <button type="button" onClick={() => { decisionNoticeRef.current = null; void refresh(); }} disabled={loading} aria-label="Refresh approvals" className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-200 hover:bg-slate-800 disabled:opacity-50">
             <RefreshCw size={14} className={loading ? "animate-spin" : ""} /> Refresh
           </button>
         )}
@@ -409,7 +420,7 @@ function ApprovalsContent() {
         </section>
       ) : (
         <>
-          {error && <div className="mt-6"><ErrorBanner tone="error" title="Approval data unavailable" action={<button type="button" onClick={() => void refresh()} disabled={loading} className="min-h-11 rounded border border-current px-3 text-xs font-medium hover:bg-white/10 disabled:opacity-50">Retry</button>}>{error}</ErrorBanner></div>}
+          {error && <div className="mt-6"><ErrorBanner tone="error" title="Approval data unavailable" action={<button type="button" onClick={() => { decisionNoticeRef.current = null; void refresh(); }} disabled={loading} className="min-h-11 rounded border border-current px-3 text-xs font-medium hover:bg-white/10 disabled:opacity-50">Retry</button>}>{error}</ErrorBanner></div>}
           {notice && <p role="status" className="mt-6 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">{notice}</p>}
 
           <div className="mt-6 grid gap-6 xl:grid-cols-2">
