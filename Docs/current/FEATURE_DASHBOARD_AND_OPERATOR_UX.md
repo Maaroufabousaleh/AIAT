@@ -622,6 +622,43 @@ The dashboard is the human control and evidence surface for AIAT. It must make c
   clean, backend `test_ceo_chat.py` + `test_workflow_graph_api.py` green,
   full Playwright suite 261 passed / 0 failed / 2 env-gated skips.
 
+### Real-flow testing and debugging pass (2026-11-23)
+
+- Drove the full lifecycle live through CEO chat only: create (prepare +
+  immediate) → status → start → feasibility (agent-driven) → approval
+  gate → approve → `PDR_CREATION` → auto `PDR_REVIEW`; hire → evaluate →
+  approve/activate guards; token-bound delete confirmation. All probe
+  artifacts removed afterwards.
+- Found and fixed 4 backend bugs (each with regression tests, each
+  ported to the live deploy copy and verified live):
+  - Project-status phrasing (`state of project "X"?`) captured
+    `project "X"?` and raised HTTP 404, leaving chat unanswered; the
+    extractor now tolerates the `project` prefix and `?!` terminators,
+    and a miss returns `needs_project` chat guidance.
+  - `start project X` created a new project instead of starting the
+    existing one; new `project_start` intent transitions `INIT` →
+    `FEASIBILITY_CHECK` via the workflow controller (already-started /
+    non-startable answered in chat, no 409s to the UI).
+  - Flow intent matched `flow` as a substring (`flowprobe_engineer`
+    stole worker evaluate/approve); trigger now uses word boundaries.
+  - `evaluate worker` crashed with 500 (`evaluate_worker()` endpoint
+    called without its `request` arg); core extracted to
+    `_evaluate_worker_core`, intent enforces the operator credential.
+- Unblocked the agent runtime: OmniRoute had zero provider connections
+  (bootstrap never ran; free/scraped upstreams all banned/403), so every
+  `think()` failed and projects stalled in `FEASIBILITY_CHECK`. Ran
+  `configure_omniroute.py` with the deploy `.env` keys (management auth
+  accepts the API key); `omniroute-coding` now completes live.
+- Operator key hygiene: Gemini key revoked by Google as leaked; Groq key
+  401s. Both connections exist in OmniRoute but fail upstream — rotate
+  `GEMINI_API_KEY` / `GROQ_API_KEY` and re-run the bootstrap.
+  Cerebras/Mistral/OpenRouter/Cloudflare/NVIDIA keys verified alive.
+- Journey spec hardened again: the project-state question now scopes
+  `INIT` to the article containing the project name (previously passed
+  on backlog pollution while the endpoint 404'd).
+- Verification: backend `test_ceo_chat.py` 123 passed; full Playwright
+  suite 261 passed / 0 failed / 2 env-gated skips on the live stack.
+
 ## Code anchors
 
 - Dashboard application: [`mas/apps/mas-dashboard/app/`](../../mas/apps/mas-dashboard/app/)

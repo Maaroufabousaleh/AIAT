@@ -119,7 +119,7 @@ test("operator creates and inspects a project purely by talking to the CEO", asy
     const followUp = page.getByLabel("Message to CEO");
     await followUp.fill(`What is the current state of project "${name}"?`);
     await followUp.press("Enter");
-    await expect(page.getByText(/INIT/i).last()).toBeVisible({ timeout: 90_000 });
+    await expect(page.locator("article", { hasText: name }).filter({ hasText: /INIT/i }).last()).toBeVisible({ timeout: 90_000 });
     await expect(page.getByTestId("ceo-thinking")).toHaveCount(0, { timeout: 90_000 });
   } finally {
     await deleteProjectInPage(page, projectId);

@@ -13,6 +13,7 @@ from orchestrator_api.main import (
     _ceo_response_evidence,
     _ceo_stream_instruction,
     _department_for_hiring_text,
+    _extract_project_status_query,
     _handle_ceo_confirmation_intent,
     _handle_ceo_credential_intent,
     _handle_ceo_flow_intent,
@@ -2251,3 +2252,206 @@ async def test_operator_send_to_ceo_rejects_empty_message(client):
 
     assert response.status_code == 422
     assert "message must not be blank" in response.text
+
+
+@pytest.mark.parametrize(
+    ("instruction", "expected"),
+    [
+        ("What is the current state of project liveflow_probe?", "liveflow_probe"),
+        ('What is the current state of project "liveflow_probe"?', "liveflow_probe"),
+        ("show project status for my build", "my build"),
+        ("status of frontier!", "frontier"),
+    ],
+)
+def test_project_status_query_strips_natural_phrasing(instruction: str, expected: str):
+    assert _extract_project_status_query(instruction) == expected
+
+
+@pytest.mark.anyio
+async def test_project_status_without_match_returns_chat_guidance():
+    from orchestrator_api.main import app
+
+    storage = MagicMock()
+    storage.list_projects = AsyncMock(return_value=[])
+    app.state.storage = storage
+
+    result = await _handle_ceo_project_intent(
+        "what is the current state of project no_such_project?",
+        principal="operator",
+    )
+
+    assert result is not None
+    assert result["type"] == "project_status"
+    assert result["status"] == "needs_project"
+    assert "no_such_project" in result["response"]
+
+
+@pytest.mark.anyio
+async def test_project_status_matches_natural_phrasing_by_name():
+    from orchestrator_api.main import app
+
+    storage = MagicMock()
+    storage.list_projects = AsyncMock(
+        return_value=[{"id": "project-1", "name": "liveflow_probe", "state": "INIT"}]
+    )
+    app.state.storage = storage
+
+    result = await _handle_ceo_project_intent(
+        "what is the current state of project liveflow_probe?",
+        principal="operator",
+    )
+
+    assert result is not None
+    assert result["type"] == "project_status"
+    assert result["status"] == "read"
+    assert "INIT" in result["response"]
+
+
+def test_project_start_intent_is_owned_by_the_orchestrator_api():
+    project_id = UUID("00000000-0000-4000-a000-0000000000d1")
+
+    assert _ceo_operator_intent_is_api_owned(f"start project {project_id}") is True
+    assert _ceo_operator_intent_is_api_owned("start project liveflow_probe") is True
+
+
+@pytest.mark.anyio
+async def test_project_start_transitions_prepared_project_to_feasibility(monkeypatch):
+    from types import SimpleNamespace
+    from orchestrator_api.main import WorkflowEvent, app
+
+    project_id = UUID("00000000-0000-4000-a000-0000000000d1")
+    storage = MagicMock()
+    storage.get_project = AsyncMock(
+        return_value={"id": project_id, "name": "liveflow_probe", "state": "INIT"}
+    )
+    transition = AsyncMock(
+        return_value=SimpleNamespace(
+            prior_state="INIT", next_state="FEASIBILITY_CHECK", transition_id="t1"
+        )
+    )
+    controller = MagicMock()
+    controller.transition = transition
+    app.state.storage = storage
+    app.state.controller = controller
+
+    result = await _handle_ceo_project_intent(
+        f"start project {project_id}", principal="operator"
+    )
+
+    assert result is not None
+    assert result["type"] == "project_start"
+    assert result["status"] == "started"
+    assert result["project"]["state"] == "FEASIBILITY_CHECK"
+    transition.assert_awaited_once()
+    assert transition.await_args.kwargs["event"] == WorkflowEvent.PROJECT_CREATED
+
+
+@pytest.mark.anyio
+async def test_project_start_reports_already_started_without_transition():
+    from orchestrator_api.main import app
+
+    project_id = UUID("00000000-0000-4000-a000-0000000000d2")
+    storage = MagicMock()
+    storage.get_project = AsyncMock(
+        return_value={"id": project_id, "name": "busy", "state": "FEASIBILITY_CHECK"}
+    )
+    transition = AsyncMock()
+    controller = MagicMock()
+    controller.transition = transition
+    app.state.storage = storage
+    app.state.controller = controller
+
+    result = await _handle_ceo_project_intent(
+        f"start project {project_id}", principal="operator"
+    )
+
+    assert result is not None
+    assert result["type"] == "project_start"
+    assert result["status"] == "already_started"
+    transition.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_project_start_without_match_returns_chat_guidance():
+    from orchestrator_api.main import app
+
+    storage = MagicMock()
+    storage.list_projects = AsyncMock(return_value=[])
+    app.state.storage = storage
+
+    result = await _handle_ceo_project_intent(
+        "start project no_such_project", principal="operator"
+    )
+
+    assert result is not None
+    assert result["type"] == "project_start"
+    assert result["status"] == "needs_project"
+
+
+@pytest.mark.anyio
+async def test_start_new_project_still_routes_to_creation(monkeypatch):
+    from orchestrator_api.main import app
+
+    created = AsyncMock(
+        return_value={
+            "id": "project-new",
+            "name": "website refresh",
+            "state": "FEASIBILITY_CHECK",
+        }
+    )
+    monkeypatch.setattr("orchestrator_api.main._create_project_for_principal", created)
+
+    result = await _handle_ceo_project_intent(
+        "start a new project called website refresh", principal="operator"
+    )
+
+    assert result is not None
+    assert result["type"] == "project_create"
+    created.assert_awaited_once()
+
+
+@pytest.mark.anyio
+async def test_flow_intent_ignores_flow_inside_other_words():
+    assert await _handle_ceo_flow_intent("evaluate worker flowprobe_engineer") is None
+    assert await _handle_ceo_flow_intent("approve worker overflow_candidate") is None
+
+
+@pytest.mark.anyio
+async def test_flow_intent_still_matches_word_forms(monkeypatch):
+    from orchestrator_api.main import app
+
+    storage = MagicMock()
+    storage.list_flows = AsyncMock(return_value=[])
+    app.state.storage = storage
+    monkeypatch.setattr(
+        "orchestrator_api.main.list_active_flow_instances_early",
+        AsyncMock(return_value=[]),
+    )
+
+    for instruction in ("list flows", "show all workflows", "flow status"):
+        result = await _handle_ceo_flow_intent(instruction)
+        assert result is not None
+        assert result["type"] in {"flow_list", "flow_detail", "flow_instance_action"}
+
+
+@pytest.mark.anyio
+async def test_worker_evaluate_intent_runs_guarded_evaluator(monkeypatch):
+    from orchestrator_api.main import app
+
+    worker_id = UUID("00000000-0000-4000-a000-0000000000e1")
+    worker = {"id": worker_id, "name": "flowprobe_engineer", "status": "INACTIVE"}
+    storage = MagicMock()
+    storage.get_worker = AsyncMock(return_value=worker)
+    app.state.storage = storage
+    evaluated = AsyncMock(return_value={"verdict": "pass", "recommended_status": "ACTIVE"})
+    monkeypatch.setattr("orchestrator_api.main._evaluate_worker_core", evaluated)
+
+    result = await _handle_ceo_worker_intent(
+        f"evaluate worker {worker_id}", principal="operator"
+    )
+
+    assert result is not None
+    assert result["type"] == "worker_evaluate"
+    assert result["status"] == "evaluated"
+    evaluated.assert_awaited_once()
+    assert evaluated.await_args.args[0] == worker_id

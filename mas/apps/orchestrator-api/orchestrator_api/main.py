@@ -916,16 +916,17 @@ def _extract_description_text(text: str) -> str:
 
 
 def _extract_project_status_query(text: str) -> str | None:
-    quoted = re.search(r"(?:project\s+)?(?:status|state|progress|workspace)\s+(?:for|of)\s+['\"]([^'\"]+)['\"]", text, re.I)
+    quoted = re.search(r"(?:project\s+)?(?:status|state|progress|workspace)\s+(?:for|of)\s+(?:project\s+)?['\"]([^'\"]+)['\"]", text, re.I)
     if quoted:
         return quoted.group(1).strip()
     bare = re.search(
-        r"(?:project\s+)?(?:status|state|progress|workspace)\s+(?:for|of)\s+(.+?)(?:[.;]|$)",
+        r"(?:project\s+)?(?:status|state|progress|workspace)\s+(?:for|of)\s+(.+?)(?:[.;?!]|$)",
         text,
         re.I,
     )
     if bare:
         query = bare.group(1).strip(" '\"")
+        query = re.sub(r"^project\s+", "", query, flags=re.I).strip(" '\"")
         return query or None
     return None
 
@@ -10470,18 +10471,11 @@ async def get_worker_health(worker_id: UUID) -> dict[str, Any]:
     }
 
 
-@app.post("/capabilities/workers/{worker_id}/evaluate")
-async def evaluate_worker(
+async def _evaluate_worker_core(
     worker_id: UUID,
     req: WorkerEvaluateRequest,
-    request: Request,
 ) -> dict[str, Any]:
-    """Trigger a repository evaluation for a worker.
-
-    Evaluates the worker's source repo for architectural fit,
-    maintenance quality, licensing, security, and compatibility.
-    """
-    _require_operator_identity(request)
+    """Run a repository evaluation for a worker (auth enforced by callers)."""
     storage = _storage()
     worker = await storage.get_worker(worker_id)
     if worker is None:
@@ -10510,6 +10504,21 @@ async def evaluate_worker(
     )
 
     return _serialize(report)  # type: ignore[arg-type]
+
+
+@app.post("/capabilities/workers/{worker_id}/evaluate")
+async def evaluate_worker(
+    worker_id: UUID,
+    req: WorkerEvaluateRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Trigger a repository evaluation for a worker.
+
+    Evaluates the worker's source repo for architectural fit,
+    maintenance quality, licensing, security, and compatibility.
+    """
+    _require_operator_identity(request)
+    return await _evaluate_worker_core(worker_id, req)
 
 
 @app.get("/capabilities/workers/{worker_id}/upstream")
@@ -20119,6 +20128,94 @@ async def _handle_ceo_project_intent(
             ),
         )
 
+    if re.search(r"\bstart\b", lowered) and not re.search(
+        r"\b(?:create|new|initialize|init|prepare|build|develop|implement|write|make|produce|prototype)\b",
+        lowered,
+    ):
+        storage = _storage()
+        project, ambiguous = await _find_project_for_ceo_text(storage, instruction)
+        if project is None:
+            return {
+                "type": "project_start",
+                "status": "needs_project",
+                "response": (
+                    "More than one project matches that name; give me the project UUID."
+                    if ambiguous
+                    else "I need an existing project name or UUID to start. "
+                    "To create one, say `create project <name>`."
+                ),
+                "trace": ["parsed_project_start_intent", "project_not_uniquely_identified"],
+            }
+        state = str(project.get("state") or "")
+        project_name = str(project.get("name") or project.get("id"))
+        if state == ProjectState.FEASIBILITY_CHECK.value:
+            return {
+                "type": "project_start",
+                "status": "already_started",
+                "project": _serialize(project),
+                "response": (
+                    f"Project `{project_name}` is already in `{state}`; feasibility work is underway."
+                ),
+                "trace": ["parsed_project_start_intent", "checked_authoritative_state"],
+            }
+        if state != ProjectState.INIT.value:
+            return {
+                "type": "project_start",
+                "status": "not_startable",
+                "project": _serialize(project),
+                "response": (
+                    f"Project `{project_name}` is in `{state}`; only a prepared (`INIT`) "
+                    "project can be started."
+                ),
+                "trace": ["parsed_project_start_intent", "checked_authoritative_state"],
+            }
+        try:
+            result = await _controller().transition(
+                project_id=str(project.get("id")),
+                current_state=ProjectState.INIT,
+                event=WorkflowEvent.PROJECT_CREATED,
+                actor_id=principal or "human_operator",
+                context={
+                    "name": project.get("name"),
+                    "description": project.get("description"),
+                },
+            )
+        except (InvalidTransitionError, ValueError):
+            return {
+                "type": "project_start",
+                "status": "not_startable",
+                "project": _serialize(project),
+                "response": (
+                    f"Project `{project_name}` is no longer in a startable state; "
+                    "refresh its state and try again."
+                ),
+                "trace": ["parsed_project_start_intent", "rejected_workflow_transition"],
+            }
+        if result is None or str(result.next_state) != ProjectState.FEASIBILITY_CHECK.value:
+            return {
+                "type": "project_start",
+                "status": "not_started",
+                "project": _serialize(project),
+                "response": (
+                    f"The workflow controller did not confirm the start of `{project_name}`; "
+                    "nothing was changed."
+                ),
+                "trace": ["parsed_project_start_intent", "unconfirmed_workflow_transition"],
+            }
+        record_project_state_transition(result.prior_state, result.next_state)
+        started = dict(project)
+        started["state"] = ProjectState.FEASIBILITY_CHECK.value
+        return {
+            "type": "project_start",
+            "status": "started",
+            "project": _serialize(started),
+            "response": (
+                f"Project `{project_name}` started: `INIT` → `FEASIBILITY_CHECK`. "
+                "The CEO feasibility directive is queued."
+            ),
+            "trace": ["parsed_project_start_intent", "transitioned_to_feasibility"],
+        }
+
     prepare_project_requested = (
         project_start_mode == "prepare_only"
         and _is_ceo_project_create_intent(instruction)
@@ -20220,7 +20317,15 @@ async def _handle_ceo_project_intent(
             if project_query.lower() in str(project.get("name") or "").lower()
         ]
         if not matching_projects:
-            raise HTTPException(404, f"Project matching {project_query!r} not found")
+            return {
+                "type": "project_status",
+                "status": "needs_project",
+                "response": (
+                    f"I could not find a project matching {project_query!r}. "
+                    "Give me the exact project name or UUID, or say `list projects`."
+                ),
+                "trace": ["parsed_project_status_intent", "no_matching_project"],
+            }
         project = matching_projects[0]
         workspace = None
         if "workspace" in lowered:
@@ -20507,7 +20612,7 @@ async def _find_flow_for_ceo_text(storage: AgentStorage, instruction: str) -> tu
 
 async def _handle_ceo_flow_intent(instruction: str) -> dict[str, Any] | None:
     lowered = instruction.lower()
-    if not any(token in lowered for token in ("flow", "workflow")):
+    if re.search(r"\b(?:flows?|workflows?)\b", lowered) is None:
         return None
     storage = _storage()
     if "instance" in lowered and re.search(r"\b(?:start|pause|resume|cancel)\b", lowered):
@@ -20790,7 +20895,9 @@ async def _handle_ceo_worker_intent(
         }
 
     if re.search(r"\b(?:evaluate|audit|scan)\b", lowered):
-        report = await evaluate_worker(worker_id, WorkerEvaluateRequest())
+        if principal != "operator":
+            raise HTTPException(403, "CEO worker evaluation requires an operator credential")
+        report = await _evaluate_worker_core(worker_id, WorkerEvaluateRequest())
         return {
             "type": "worker_evaluate",
             "status": "evaluated",
