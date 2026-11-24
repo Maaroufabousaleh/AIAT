@@ -1035,3 +1035,51 @@ test("project detail links its evidence summary to the inspectable evidence item
   await expect(page).toHaveURL(new RegExp(`/projects/${PROJECT_ID}/evidence$`));
   await expect(page.getByRole("table", { name: "Evidence items" })).toContainText("worker-run-1");
 });
+
+test("project detail deep-links tabs and next actions", async ({ page }) => {
+  const workspace = {
+    ...WORKSPACE_FIXTURE,
+    next_actions: [
+      { kind: "approval", label: "2 pending approval(s)", severity: "high" },
+      { kind: "retry", label: "1 retryable flow error(s)", severity: "medium" },
+      { kind: "worker_activation", label: "1 blocked worker activation(s)", severity: "medium" },
+      { kind: "none", label: "No operator action required", severity: "low" },
+    ],
+  };
+  await page.route(`**/api/projects/${PROJECT_ID}`, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(PROJECT_FIXTURE) });
+  });
+  await page.route(`**/api/projects/${PROJECT_ID}/state-history`, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) });
+  });
+  await page.route(`**/api/projects/${PROJECT_ID}/decisions`, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) });
+  });
+  await page.route(`**/api/projects/${PROJECT_ID}/transition`, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) });
+  });
+  await page.route(`**/api/projects/${PROJECT_ID}/workspace`, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(workspace) });
+  });
+  await page.route(`**/api/projects/${PROJECT_ID}/repository`, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ workspace: null }) });
+  });
+
+  await authenticate(page, `/projects/${PROJECT_ID}?tab=flow`);
+  await expect(page.locator("#project-panel-flow")).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Flow", exact: true })).toHaveAttribute("aria-selected", "true");
+
+  await authenticate(page, `/projects/${PROJECT_ID}`);
+  await expect(page.getByRole("heading", { name: "Next Operator Action" })).toBeVisible();
+  const section = page.getByRole("heading", { name: "Next Operator Action" }).locator("..");
+  await expect(section.getByRole("link", { name: /pending approval/ })).toHaveAttribute(
+    "href", `/approvals?project_id=${PROJECT_ID}`,
+  );
+  await expect(section.getByRole("link", { name: /retryable flow error/ })).toHaveAttribute(
+    "href", `/projects/${PROJECT_ID}?tab=flow`,
+  );
+  await expect(section.getByRole("link", { name: /blocked worker activation/ })).toHaveAttribute(
+    "href", "/workers",
+  );
+  await expect(section.getByText("No operator action required")).toBeVisible();
+});

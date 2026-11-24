@@ -271,3 +271,98 @@ test("operator creates a PM connection, binds a project, and applies an approved
   expect(lifecycleApplyRequest).toEqual({ plan_digest: LIFECYCLE_DIGEST, confirm: true });
   expect(externalRequests).toEqual([]);
 });
+
+test("operator reviews and applies a connection bootstrap plan with digest confirmation", async ({ page }) => {
+  const BOOTSTRAP_DIGEST = "c".repeat(64);
+  let planRequest: Record<string, unknown> | null = null;
+  let applyRequest: Record<string, unknown> | null = null;
+
+  await page.route("**/api/projects?limit=1000", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) });
+  });
+
+  await page.route("**/api/integrations/pm**", async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const path = url.pathname;
+
+    if (path === "/api/integrations/pm") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          connections: [{
+            id: CONNECTION_ID,
+            display_name: "Local YouTrack fixture",
+            provider_kind: "youtrack",
+            base_url: "https://youtrack.example.invalid",
+            status: "DISABLED",
+            revision: 1,
+          }],
+          conflicts: [],
+          outbox: [],
+          runs: [],
+          lifecyclePlans: [],
+          canaryPlans: [],
+        }),
+      });
+      return;
+    }
+
+    if (path === `/api/integrations/pm/connections/${CONNECTION_ID}/plan` && request.method() === "POST") {
+      planRequest = request.postDataJSON() as Record<string, unknown>;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          plan: {
+            plan_id: PROVISIONING_PLAN_ID,
+            connection_id: CONNECTION_ID,
+            provider_kind: "youtrack",
+            actions: [{ action: "create", resource: "project:AIAT-LOCAL" }],
+          },
+          plan_digest: BOOTSTRAP_DIGEST,
+          ready_to_apply: true,
+        }),
+      });
+      return;
+    }
+
+    if (path === `/api/integrations/pm/connections/${CONNECTION_ID}/apply` && request.method() === "POST") {
+      applyRequest = request.postDataJSON() as Record<string, unknown>;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ connection_id: CONNECTION_ID, plan_digest: BOOTSTRAP_DIGEST, status: "DISABLED" }),
+      });
+      return;
+    }
+
+    await route.fulfill({
+      status: 501,
+      contentType: "application/json",
+      body: JSON.stringify({ detail: "Unmocked PM API request in this test" }),
+    });
+  });
+
+  page.on("dialog", async (dialog) => { await dialog.accept(); });
+  await authenticate(page, "/integrations");
+
+  const main = page.getByRole("main", { name: "PM integrations" });
+  await expect(main.getByRole("heading", { name: "Connection bootstrap plan" })).toBeVisible();
+  await expect(main.getByRole("option", { name: "GitHub (API-only)" })).toBeAttached();
+
+  await main.getByLabel("Lifecycle connection").selectOption(CONNECTION_ID);
+  await main.getByRole("button", { name: "Generate connection bootstrap plan" }).click();
+  const bootstrapPlan = main.getByRole("article", { name: "Connection bootstrap plan" });
+  await expect(bootstrapPlan).toContainText(BOOTSTRAP_DIGEST);
+  await expect(bootstrapPlan).toContainText("ready to apply");
+  const bootstrapReview = bootstrapPlan.getByLabel("I reviewed this exact connection bootstrap digest");
+  await expect(bootstrapReview).not.toBeChecked();
+  await bootstrapReview.check();
+  await bootstrapPlan.getByRole("button", { name: "Apply reviewed bootstrap plan" }).click();
+  await expect(main.getByRole("status")).toContainText("Connection bootstrap applied");
+
+  expect(planRequest).toEqual({ desired: {} });
+  expect(applyRequest).toMatchObject({ plan_digest: BOOTSTRAP_DIGEST, confirm: true });
+});

@@ -3,15 +3,14 @@
 Open **Integrations** in the AIAT dashboard. The page is an operator view over
 the generic orchestrator APIs, not a second provider authority.
 
-- Connections show provider kind, capability profile, health, and lifecycle
-  status; secrets are never rendered.
+- Connections show provider kind, lifecycle status, and revision; secrets are never rendered.
+- Connection health, capabilities, and doctor checks run on demand from the diagnostics panel for the selected connection. Results are shown as returned, or as an honest error when a check fails.
+- Connection bootstrap uses a digest-review plan/apply card mirroring the provisioning review. Applying never moves connection status; status changes require a governed lifecycle plan.
 - Plan/apply shows the digest and requires an explicit confirmation.
-- Bindings show project scope, direction, shadow/read-only/active/draining
-  state, and provider switching controls.
+- Bindings show project scope, direction, and shadow/read-only/active/draining state. There are no provider-switching controls in this view.
 - Conflicts show reason, canonical/external snapshots, and resolution state.
-- Reconciliation and outbox views show cursor, drift, retry/dead-letter, and
-  projection status. SCM evidence is read-only and links delivery facts back
-  to AIAT runs/work items where supplied.
+- The outbox section lists due PENDING rows only; it has no cursor and no retry control. Reconciliation runs show attempt counts including drift and conflict totals. Shared dead-letter review is linked without claiming its entries are connection-attributed. SCM evidence is read-only and links delivery facts back to AIAT runs/work items where supplied.
+- Provider spend is out of scope here; the reconciliation panel links to company budgets in Companies for cost review.
 
 Use the runbook for migration, webhook, outage, cutover, and rollback actions.
 Dashboard visibility is not proof that a live provider call succeeded; inspect
@@ -20,7 +19,7 @@ the delivery attempt and certification evidence.
 ## Lifecycle plan review
 
 The **Governed lifecycle plans** panel reads persisted plans from
-`/api/v1/integrations/lifecycle-plans`. It displays the target, exact digest,
+`integrations/lifecycle-plans` (via the dashboard `/api/integrations/pm/...` proxies). It displays the target, exact digest,
 immutable operations, gates, expiry, and rollback operations. An operator must
 check the exact-digest confirmation before approving; applying requires a
 second explicit browser confirmation and the control plane rechecks all gates

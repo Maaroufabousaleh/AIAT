@@ -221,3 +221,33 @@ test("inbox has a useful empty state when both queues are clear", async ({ page 
   await expect(main.getByText("No project decisions are waiting for review.")).toBeVisible();
   await expect(main.getByRole("button", { name: "Load more project decisions" })).toHaveCount(0);
 });
+
+test("inbox filters project decisions by project_id query", async ({ page }) => {
+  const otherDecision = {
+    ...projectDecision,
+    id: "20000000-0000-4000-8000-000000000022",
+    project_id: "30000000-0000-4000-8000-000000000032",
+    project_name: "Beta research project",
+  };
+  await mockCeoReads(page, () => [ceoRequest]);
+  await page.route((url) => url.pathname === "/api/approvals/project-decisions", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ items: [projectDecision, otherDecision], next_cursor: null }),
+    });
+  });
+
+  await authenticate(page, `/approvals?project_id=${projectDecision.project_id}`);
+  const main = page.getByRole("main", { name: "Privileged action approvals" });
+  const inbox = main.getByRole("list", { name: "Unified approval inbox" });
+  await expect(main.getByText(/Showing decisions for project/)).toBeVisible();
+  await expect(inbox.getByText("Alpha research project")).toBeVisible();
+  await expect(inbox.getByText("Beta research project")).toHaveCount(0);
+  await expect(inbox.getByText("CEO privileged")).toHaveCount(0);
+
+  await main.getByRole("link", { name: "Clear project filter" }).click();
+  await expect(main.getByText(/Showing decisions for project/)).toHaveCount(0);
+  await expect(inbox.getByText("Beta research project")).toBeVisible();
+  await expect(inbox.getByText("CEO privileged")).toBeVisible();
+});

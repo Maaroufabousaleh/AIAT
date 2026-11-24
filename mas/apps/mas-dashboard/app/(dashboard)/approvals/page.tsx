@@ -112,6 +112,7 @@ function ApprovalsContent() {
   const requestedId = new URLSearchParams(queryString).get("request_id");
   const invalidRequestedId = requestedId !== null && !CEO_REQUEST_ID_PATTERN.test(requestedId);
   const requestedRequestId = requestedId && !invalidRequestedId ? requestedId : null;
+  const projectFilter = new URLSearchParams(queryString).get("project_id");
   const [pending, setPending] = useState<ApprovalRequest[]>([]);
   const [projectDecisions, setProjectDecisions] = useState<ProjectDecision[]>([]);
   const [projectCursor, setProjectCursor] = useState<string | null>(null);
@@ -340,10 +341,16 @@ function ApprovalsContent() {
     [audit, selected],
   );
 
-  const inboxRows = useMemo<InboxRow[]>(() => [
-    ...pending.map((item) => ({ kind: "ceo" as const, id: item.id, created_at: item.requested_at, item })),
-    ...projectDecisions.map((item) => ({ kind: "project" as const, id: item.id, created_at: item.created_at, item })),
-  ].sort((a, b) => rowTimestamp(b) - rowTimestamp(a) || a.kind.localeCompare(b.kind) || a.id.localeCompare(b.id)), [pending, projectDecisions]);
+  const inboxRows = useMemo<InboxRow[]>(() => {
+    const projectItems = projectFilter
+      ? projectDecisions.filter((item) => item.project_id === projectFilter)
+      : projectDecisions;
+    const ceoItems = projectFilter ? [] : pending;
+    return [
+      ...ceoItems.map((item) => ({ kind: "ceo" as const, id: item.id, created_at: item.requested_at, item })),
+      ...projectItems.map((item) => ({ kind: "project" as const, id: item.id, created_at: item.created_at, item })),
+    ].sort((a, b) => rowTimestamp(b) - rowTimestamp(a) || a.kind.localeCompare(b.kind) || a.id.localeCompare(b.id));
+  }, [pending, projectDecisions, projectFilter]);
 
   const decide = async (approved: boolean) => {
     if (!selected || !confirmed || !reason.trim() || submittingRef.current) return;
@@ -413,6 +420,23 @@ function ApprovalsContent() {
         )}
       />
 
+      {projectFilter && !accessDenied && (
+        <div role="status" className="mt-6 flex flex-wrap items-center gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-2.5 text-sm text-blue-200">
+          <span>Showing decisions for project <code className="rounded bg-slate-950/60 px-1.5 py-0.5 text-xs">{projectFilter}</code></span>
+          <a
+            href={(() => {
+              const nextParams = new URLSearchParams(queryString);
+              nextParams.delete("project_id");
+              const query = nextParams.toString();
+              return query ? `${pathname}?${query}` : pathname;
+            })()}
+            aria-label="Clear project filter"
+            className="inline-flex min-h-11 items-center rounded border border-current px-2.5 text-xs font-medium hover:bg-white/10"
+          >
+            Show all
+          </a>
+        </div>
+      )}
       {accessDenied ? (
         <section role="region" aria-label="Approval access status" className="mt-6 rounded-xl border border-amber-500/30 bg-amber-500/5 px-5 py-6">
           <h2 className="font-semibold text-amber-100">Approval access denied</h2>

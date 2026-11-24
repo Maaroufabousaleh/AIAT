@@ -46,13 +46,26 @@ type LifecycleTargetType = "pm_connection" | "pm_binding";
 type LifecycleStatus = "DISABLED" | "SHADOW" | "READ_ONLY" | "ACTIVE" | "DRAINING";
 
 class IntegrationApiError extends Error {
-  constructor(readonly status: number) {
-    super(`Integration request failed (HTTP ${status}).`);
+  constructor(readonly status: number, readonly detail?: string) {
+    super(detail
+      ? `Integration request failed (HTTP ${status}): ${detail}`
+      : `Integration request failed (HTTP ${status}).`);
     this.name = "IntegrationApiError";
   }
 }
 
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+function errorDetailFromBody(bodyText: string): string | undefined {
+  if (!bodyText) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(bodyText);
+    if (parsed && typeof parsed === "object" && "detail" in parsed && typeof parsed.detail === "string") {
+      return parsed.detail.slice(0, 300);
+    }
+  } catch {
+    return bodyText.slice(0, 300);
+  }
+  return undefined;
+}
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
@@ -63,9 +76,13 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
       ...(init?.body ? { "Content-Type": "application/json" } : {}),
     },
   });
-  if (!response.ok) throw new IntegrationApiError(response.status);
-  return (await response.json()) as T;
+  const bodyText = await response.text();
+  if (!response.ok) throw new IntegrationApiError(response.status, errorDetailFromBody(bodyText));
+  return (bodyText ? JSON.parse(bodyText) : {}) as T;
+
 }
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -124,6 +141,17 @@ export default function IntegrationsPage() {
   const [canaryPlan, setCanaryPlan] = useState<CanaryPlanDetails | null>(null);
   const [canaryError, setCanaryError] = useState<string | null>(null);
   const [canaryLoading, setCanaryLoading] = useState(false);
+  const [diagHealth, setDiagHealth] = useState<Record<string, unknown> | null>(null);
+  const [diagCapabilities, setDiagCapabilities] = useState<Record<string, unknown> | null>(null);
+  const [diagDoctor, setDiagDoctor] = useState<Record<string, unknown> | null>(null);
+  const [diagError, setDiagError] = useState<string | null>(null);
+  const [diagLoading, setDiagLoading] = useState(false);
+  const [bootstrapPlan, setBootstrapPlan] = useState<{ plan: Record<string, unknown>; plan_digest: string; ready_to_apply?: boolean } | null>(null);
+  const [reviewedBootstrapDigest, setReviewedBootstrapDigest] = useState("");
+  const [reconcileResult, setReconcileResult] = useState<Record<string, unknown> | null>(null);
+  const [reviewedCanaryDigest, setReviewedCanaryDigest] = useState("");
+  const [canaryReplayInboxId, setCanaryReplayInboxId] = useState("");
+  const [canaryReplayReason, setCanaryReplayReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [stale, setStale] = useState(false);
@@ -184,7 +212,7 @@ export default function IntegrationsPage() {
       return;
     }
     setError(reason instanceof IntegrationApiError
-      ? `${action} failed (HTTP ${reason.status}).`
+      ? `${action} failed (${reason.detail ?? `HTTP ${reason.status}`}).`
       : `${action} failed.`);
   }, []);
 
@@ -417,6 +445,9 @@ export default function IntegrationsPage() {
     setCanaryLoading(true);
     setCanaryError(null);
     setCanaryPlan(null);
+    setReviewedCanaryDigest("");
+    setCanaryReplayInboxId("");
+    setCanaryReplayReason("");
     try {
       const result = await requestJson<CanaryPlanDetails>(
         `/api/integrations/pm/inbound-canaries/${encodeURIComponent(planId)}`,
@@ -439,6 +470,123 @@ export default function IntegrationsPage() {
     }
   };
 
+  const loadDiagnostics = async (kind: "health" | "capabilities" | "doctor") => {
+    if (!UUID_PATTERN.test(connectionId) || accessDenied || diagLoading) return;
+    setDiagLoading(true);
+    setDiagError(null);
+    try {
+      const result = await requestJson<Record<string, unknown>>(
+        `/api/integrations/pm/connections/${encodeURIComponent(connectionId)}/${kind}`,
+      );
+      if (kind === "health") setDiagHealth(result);
+      else if (kind === "capabilities") setDiagCapabilities(result);
+      else setDiagDoctor(result);
+    } catch (reason) {
+      if (reason instanceof IntegrationApiError && [401, 403].includes(reason.status)) {
+        setAccessDenied(true);
+        setStale(hasData.current);
+        setDiagError("The current operator identity is no longer authorized to read connection diagnostics.");
+      } else {
+        setDiagError(reason instanceof IntegrationApiError
+          ? `Connection ${kind} could not be loaded (HTTP ${reason.status}).`
+          : `Connection ${kind} could not be loaded.`);
+      }
+    } finally {
+      setDiagLoading(false);
+    }
+  };
+
+  const generateBootstrapPlan = () => {
+    if (!UUID_PATTERN.test(connectionId) || mutationBlocked) return;
+    setBootstrapPlan(null);
+    setReviewedBootstrapDigest("");
+    void submitMutation(
+      `/api/integrations/pm/connections/${encodeURIComponent(connectionId)}/plan`,
+      { desired: {} },
+      "Connection bootstrap planning",
+      (result) => {
+        setBootstrapPlan({
+          plan: record(result.plan),
+          plan_digest: text(result.plan_digest, ""),
+          ready_to_apply: result.ready_to_apply === true,
+        });
+        setReviewedBootstrapDigest("");
+      },
+      "Connection bootstrap plan created. Review its digest before applying.",
+    );
+  };
+
+  const applyBootstrapPlan = () => {
+    if (!bootstrapPlan || reviewedBootstrapDigest !== bootstrapPlan.plan_digest) return;
+    if (mutationBlocked) return;
+    const confirmed = window.confirm(
+      `Apply this exact connection bootstrap plan? Digest: ${bootstrapPlan.plan_digest}`,
+    );
+    if (!confirmed) return;
+    void submitMutation(
+      `/api/integrations/pm/connections/${encodeURIComponent(connectionId)}/apply`,
+      { plan: bootstrapPlan.plan, plan_digest: bootstrapPlan.plan_digest, confirm: true },
+      "Connection bootstrap apply",
+      () => {
+        setBootstrapPlan(null);
+        setReviewedBootstrapDigest("");
+      },
+      "Connection bootstrap applied. The connection remains DISABLED until a governed lifecycle plan moves it.",
+    );
+  };
+
+  const triggerReconcile = () => {
+    if (!UUID_PATTERN.test(connectionId) || mutationBlocked) return;
+    setReconcileResult(null);
+    void submitMutation(
+      `/api/integrations/pm/connections/${encodeURIComponent(connectionId)}/reconcile`,
+      { ...(UUID_PATTERN.test(bindingId) ? { binding_id: bindingId } : {}), mode: "audit" },
+      "Connection reconciliation",
+      (result) => {
+        setReconcileResult(result);
+      },
+      (result) => {
+        const runId = text(result.id ?? result.run_id, "");
+        return runId ? `Reconciliation recorded as run ${runId}.` : "Connection reconciliation recorded.";
+      },
+    );
+  };
+
+  const runCanaryAction = (action: string, label: string, extra?: Record<string, unknown>) => {
+    const planId = canaryPlanId.trim();
+    const digest = text(canaryPlan?.digest, "");
+    if (!UUID_PATTERN.test(planId) || !digest || reviewedCanaryDigest !== digest) return;
+    if (mutationBlocked || canaryLoading) return;
+    const confirmed = window.confirm(
+      `${label} inbound canary ${planId}? Digest: ${digest}`,
+    );
+    if (!confirmed) return;
+    void submitMutation(
+      `/api/integrations/pm/inbound-canaries/${encodeURIComponent(planId)}/${action}`,
+      { digest, confirm: true, ...(extra ?? {}) },
+      `Canary ${label.toLowerCase()}`,
+      async () => {
+        try {
+          const reloaded = await requestJson<CanaryPlanDetails>(
+            `/api/integrations/pm/inbound-canaries/${encodeURIComponent(planId)}`,
+          );
+          setCanaryPlan(reloaded);
+          setReviewedCanaryDigest("");
+        } catch {
+          setStale(true);
+        }
+      },
+      `Canary ${label.toLowerCase()} recorded.`,
+    );
+  };
+
+  const replayVerifiedCanaryEvent = () => {
+    const inboxId = canaryReplayInboxId.trim();
+    const reason = canaryReplayReason.trim();
+    if (!UUID_PATTERN.test(inboxId) || !reason) return;
+    runCanaryAction("replay-verified-event", "Replay", { inbox_id: inboxId, reason });
+  };
+
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => { void loadProjects(); }, [loadProjects]);
   useEffect(() => {
@@ -449,7 +597,26 @@ export default function IntegrationsPage() {
     return () => { bindingRequestSequence.current += 1; };
   }, [projectId, loadProjectBindings]);
 
+  useEffect(() => {
+    setDiagHealth(null);
+    setDiagCapabilities(null);
+    setDiagDoctor(null);
+    setDiagError(null);
+    setBootstrapPlan(null);
+    setReviewedBootstrapDigest("");
+    setReconcileResult(null);
+  }, [connectionId]);
+
   const mutationBlocked = accessDenied || stale || loading || busy;
+  // The fake provider is a local development double. It is only offered on
+  // development builds; production (including localhost deployments) defaults to YouTrack.
+  const allowFakeProvider = process.env.NODE_ENV !== "production";
+
+  useEffect(() => {
+    if (!allowFakeProvider) {
+      setProviderKind((current) => (current === "fake" ? "youtrack" : current));
+    }
+  }, [allowFakeProvider]);
   const canaryPlans = Array.isArray(data?.canaryPlans) ? data.canaryPlans : [];
   const canaryPlansHasMore = data?.canaryPlansHasMore === true;
   const selectedProject = projects.find((project) => project.id === projectId);
@@ -542,9 +709,12 @@ export default function IntegrationsPage() {
                     onChange={(event) => setProviderKind(event.target.value)}
                   >
                     <option value="youtrack">YouTrack</option>
-                    <option value="github">GitHub</option>
-                    <option value="fake">Fake provider (local testing)</option>
+                    <option value="github">GitHub (API-only)</option>
+                    {allowFakeProvider && <option value="fake">Fake provider (local testing)</option>}
                   </select>
+                  {providerKind === "github" && (
+                    <span className="text-[11px] text-slate-500">GitHub connection management here is API-only; the full GitHub connection UI is out of scope for this workspace.</span>
+                  )}
                 </label>
                 <label className="grid gap-1 text-xs text-slate-300">
                   Display name
@@ -592,6 +762,61 @@ export default function IntegrationsPage() {
                   >Create connection</button>
                 </div>
               </div>
+            </section>
+          )}
+
+          {!accessDenied && (
+            <section
+              className="space-y-4 rounded-xl border border-slate-800 bg-slate-900/70 p-4"
+              aria-labelledby="pm-bootstrap-heading"
+            >
+              <div>
+                <h2 id="pm-bootstrap-heading" className="text-sm font-semibold text-white">Connection bootstrap plan</h2>
+                <p className="mt-1 text-xs text-slate-400">Plan provider-side setup for the selected connection while it is DISABLED, then apply the exact reviewed plan. Applying never moves the connection status; status changes require a governed lifecycle plan.</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  className="min-h-11 rounded border border-cyan-700 px-3 py-2 text-sm font-semibold text-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={mutationBlocked || !UUID_PATTERN.test(connectionId)}
+                  onClick={generateBootstrapPlan}
+                >Generate connection bootstrap plan</button>
+                {!UUID_PATTERN.test(connectionId) && <span className="text-xs text-slate-500">Select a provider connection below to plan its bootstrap.</span>}
+              </div>
+              {bootstrapPlan && (() => {
+                const plan = bootstrapPlan.plan;
+                const actions = Array.isArray(plan.actions) ? plan.actions : [];
+                return (
+                  <article aria-label="Connection bootstrap plan" className="rounded border border-slate-800 bg-slate-950/70 p-3 text-sm text-slate-200">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h3 className="font-semibold">Plan {text(plan.plan_id)}</h3>
+                      <span className="font-mono text-xs text-cyan-200">Digest: {bootstrapPlan.plan_digest}</span>
+                    </div>
+                    <p className="mt-1 text-xs text-slate-400">{text(plan.provider_kind)} · connection {text(plan.connection_id)} · {bootstrapPlan.ready_to_apply ? "ready to apply" : "not ready to apply"}</p>
+                    <ul className="mt-3 list-disc space-y-1 pl-5 text-xs">
+                      {actions.map((action, index) => (
+                        <li key={`${text(action.action)}-${text(action.resource)}-${index}`}>{text(action.action)}: {text(action.resource)}</li>
+                      ))}
+                      {!actions.length && <li>No provider actions are included in this plan.</li>}
+                    </ul>
+                    <label className="mt-3 flex min-h-11 items-center gap-2 text-xs text-slate-300">
+                      <input
+                        type="checkbox"
+                        checked={reviewedBootstrapDigest === bootstrapPlan.plan_digest}
+                        disabled={mutationBlocked}
+                        onChange={(event) => setReviewedBootstrapDigest(event.target.checked ? bootstrapPlan.plan_digest : "")}
+                      />
+                      I reviewed this exact connection bootstrap digest
+                    </label>
+                    <button
+                      type="button"
+                      className="mt-3 min-h-11 rounded bg-cyan-700 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                      disabled={mutationBlocked || reviewedBootstrapDigest !== bootstrapPlan.plan_digest}
+                      onClick={applyBootstrapPlan}
+                    >Apply reviewed bootstrap plan</button>
+                  </article>
+                );
+              })()}
             </section>
           )}
 
@@ -662,6 +887,9 @@ export default function IntegrationsPage() {
                     <option value="dedicated_project">Dedicated provider project</option>
                     <option value="umbrella_issues">Explicit shared project / issues</option>
                   </select>
+                  {mappingProfile === "umbrella_issues" && (
+                    <span className="text-[11px] text-amber-200">Shared-provider opt-in: issues land in one explicit shared provider project instead of a dedicated project. Confirm this is intended before generating a plan.</span>
+                  )}
                 </label>
                 <label className="grid gap-1 text-xs text-slate-300">
                   Existing provider project ID (optional)
@@ -831,6 +1059,49 @@ export default function IntegrationsPage() {
               ))}
               {!data.connections.length && <p className="py-3 text-sm text-slate-500">No provider connections configured.</p>}
             </div>
+            {!accessDenied && (
+              <details className="rounded-xl border border-slate-800 bg-slate-900/70 p-4" aria-label="Connection diagnostics">
+                <summary className="cursor-pointer text-sm font-semibold text-white">Connection diagnostics: health, capabilities, doctor</summary>
+                <p className="mt-1 text-xs text-slate-400">Live provider checks for the connection selected in the lifecycle panel. Health and doctor contact the provider; results are shown as returned, or as an honest error when the check fails.</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {(["health", "capabilities", "doctor"] as const).map((kind) => (
+                    <button
+                      key={kind}
+                      type="button"
+                      className="min-h-11 rounded border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 capitalize disabled:cursor-not-allowed disabled:opacity-50"
+                      disabled={mutationBlocked || diagLoading || !UUID_PATTERN.test(connectionId)}
+                      aria-busy={diagLoading}
+                      onClick={() => void loadDiagnostics(kind)}
+                    >Check {kind}</button>
+                  ))}
+                  {!UUID_PATTERN.test(connectionId) && <span className="text-xs text-slate-500">Select a provider connection in the lifecycle panel to run diagnostics.</span>}
+                </div>
+                {diagLoading && <p role="status" className="mt-2 text-xs text-slate-500">Running connection check…</p>}
+                {diagError && <p role="alert" className="mt-2 text-xs text-amber-200">{diagError}</p>}
+                {(diagHealth || diagCapabilities || diagDoctor) && (
+                  <div className="mt-3 space-y-2">
+                    {diagHealth && (
+                      <article aria-label="Connection health result" className="rounded border border-slate-800 bg-slate-950/60 p-3 text-xs text-slate-300">
+                        <h3 className="font-semibold text-slate-100">Health: {diagHealth.ok === true ? "ok" : diagHealth.ok === false ? "failed" : text(diagHealth.status, "unknown")}</h3>
+                        <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap text-slate-400">{JSON.stringify(diagHealth, null, 2)}</pre>
+                      </article>
+                    )}
+                    {diagCapabilities && (
+                      <article aria-label="Connection capabilities result" className="rounded border border-slate-800 bg-slate-950/60 p-3 text-xs text-slate-300">
+                        <h3 className="font-semibold text-slate-100">Capabilities</h3>
+                        <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap text-slate-400">{JSON.stringify(diagCapabilities, null, 2)}</pre>
+                      </article>
+                    )}
+                    {diagDoctor && (
+                      <article aria-label="Connection doctor result" className="rounded border border-slate-800 bg-slate-950/60 p-3 text-xs text-slate-300">
+                        <h3 className="font-semibold text-slate-100">Doctor: {diagDoctor.ready === true ? "ready" : diagDoctor.ready === false ? "not ready" : "unknown"}</h3>
+                        <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap text-slate-400">{JSON.stringify(diagDoctor, null, 2)}</pre>
+                      </article>
+                    )}
+                  </div>
+                )}
+              </details>
+            )}
           </section>
 
           <section className="grid gap-4 xl:grid-cols-2" aria-label="Reconciliation state">
@@ -898,6 +1169,23 @@ export default function IntegrationsPage() {
                 <p className="mt-2 text-xs text-slate-400">The shared queue is not attributed to the selected provider connection. Replay controls are not exposed in this integration view.</p>
                 <Link href="/dlq" className="mt-2 inline-flex min-h-10 items-center rounded border border-blue-700 px-3 py-2 text-xs font-semibold text-blue-200 hover:bg-blue-900/30">Open shared dead-letter review</Link>
               </div>
+              {!accessDenied && (
+                <div className="rounded border border-slate-800 bg-slate-950/40 p-3">
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Trigger reconciliation</h3>
+                  <p className="mt-1 text-xs text-slate-500">Audit the selected connection against the provider{UUID_PATTERN.test(bindingId) ? " and the selected project binding" : ""}. Blocked while the view is stale or a mutation is running.</p>
+                  <button
+                    type="button"
+                    className="mt-2 min-h-11 rounded border border-blue-700 px-3 py-2 text-xs font-semibold text-blue-200 disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={mutationBlocked || !UUID_PATTERN.test(connectionId)}
+                    aria-busy={busy}
+                    onClick={triggerReconcile}
+                  >Trigger reconciliation</button>
+                  {reconcileResult && (
+                    <p role="status" className="mt-2 text-xs text-slate-300">Recorded {text(reconcileResult.id ?? reconcileResult.run_id, "reconciliation run")} · status {text(reconcileResult.status, "unknown")}.</p>
+                  )}
+                  <p className="mt-2 text-xs text-slate-500">Provider spend is out of scope for this view; review company budgets in <Link href="/companies" className="text-blue-300 underline underline-offset-2 hover:text-blue-100">Companies</Link>.</p>
+                </div>
+              )}
               <div className="space-y-2" aria-label="Pending integration outbox">
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Due pending outbox</h3>
                 {data.outbox.map((entry) => {
@@ -960,6 +1248,7 @@ export default function IntegrationsPage() {
                       setCanaryPlanId(event.target.value);
                       setCanaryPlan(null);
                       setCanaryError(null);
+                      setReviewedCanaryDigest("");
                     }}
                   >
                     <option value="">Select a recent plan</option>
@@ -1013,6 +1302,7 @@ export default function IntegrationsPage() {
                     <span className="rounded border border-violet-500/30 px-2 py-1">{text(canaryPlan.status)}</span>
                   </div>
                   <p className="mt-2">Digest valid: {canaryPlan.digest_valid === true ? "yes" : canaryPlan.digest_valid === false ? "no" : "unknown"} · accepted commands {text(canaryPlan.accepted_command_count, "0")}</p>
+                  <p className="mt-1 break-all font-mono text-violet-200">Digest: {text(canaryPlan.digest, "—")}</p>
                   <dl className="mt-2 grid gap-1 sm:grid-cols-2">
                     <div><dt className="text-slate-500">Connection</dt><dd className="font-mono">{text(plan.connection_id)}</dd></div>
                     <div><dt className="text-slate-500">Binding</dt><dd className="font-mono">{text(plan.binding_id)}</dd></div>
@@ -1023,6 +1313,64 @@ export default function IntegrationsPage() {
                     <summary className="cursor-pointer text-slate-300">Inspect persisted gates and operations</summary>
                     <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap text-slate-400">{JSON.stringify({ gate_results: plan.gate_results, operations: plan.operations, rollback_operations: plan.rollback_operations }, null, 2)}</pre>
                   </details>
+                  {!accessDenied && (
+                    <div className="mt-3 rounded border border-slate-800 p-2">
+                      <h3 className="font-semibold text-slate-200">Governed canary actions</h3>
+                      <p className="mt-1 text-slate-500">Each action requires the exact persisted digest and a second browser confirmation. The control plane rechecks gates, revisions, and state before applying.</p>
+                      <label className="mt-2 flex min-h-11 items-center gap-2 text-slate-300">
+                        <input
+                          type="checkbox"
+                          checked={reviewedCanaryDigest !== "" && reviewedCanaryDigest === text(canaryPlan.digest, "")}
+                          disabled={mutationBlocked || canaryLoading || !text(canaryPlan.digest, "")}
+                          onChange={(event) => setReviewedCanaryDigest(event.target.checked ? text(canaryPlan.digest, "") : "")}
+                        />
+                        I reviewed this exact canary digest
+                      </label>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {(["approve", "arm", "expire", "disarm", "audit-evidence"] as const).map((canaryAction) => (
+                          <button
+                            key={canaryAction}
+                            type="button"
+                            className="min-h-11 rounded border border-violet-700 px-3 py-2 font-semibold text-violet-200 disabled:cursor-not-allowed disabled:opacity-50"
+                            disabled={mutationBlocked || canaryLoading || reviewedCanaryDigest !== text(canaryPlan.digest, "") || !text(canaryPlan.digest, "")}
+                            onClick={() => runCanaryAction(canaryAction, canaryAction === "audit-evidence" ? "Audit evidence" : canaryAction[0].toUpperCase() + canaryAction.slice(1))}
+                            aria-label={`Canary ${canaryAction}`}
+                          >{canaryAction === "audit-evidence" ? "Record audit evidence" : canaryAction[0].toUpperCase() + canaryAction.slice(1)}</button>
+                        ))}
+                      </div>
+                      <div className="mt-3 grid gap-2 md:grid-cols-2">
+                        <label className="grid gap-1 text-slate-300">
+                          Verified inbox event ID
+                          <input
+                            aria-label="Canary replay inbox ID"
+                            className="min-h-11 rounded border border-slate-700 bg-slate-950 px-3 text-slate-100 disabled:opacity-50"
+                            value={canaryReplayInboxId}
+                            disabled={mutationBlocked || canaryLoading}
+                            onChange={(event) => setCanaryReplayInboxId(event.target.value)}
+                            placeholder="Persisted inbox UUID"
+                          />
+                        </label>
+                        <label className="grid gap-1 text-slate-300">
+                          Replay reason
+                          <input
+                            aria-label="Canary replay reason"
+                            className="min-h-11 rounded border border-slate-700 bg-slate-950 px-3 text-slate-100 disabled:opacity-50"
+                            value={canaryReplayReason}
+                            disabled={mutationBlocked || canaryLoading}
+                            maxLength={500}
+                            onChange={(event) => setCanaryReplayReason(event.target.value)}
+                            placeholder="Why this verified event is replayed"
+                          />
+                        </label>
+                      </div>
+                      <button
+                        type="button"
+                        className="mt-2 min-h-11 rounded border border-violet-700 px-3 py-2 font-semibold text-violet-200 disabled:cursor-not-allowed disabled:opacity-50"
+                        disabled={mutationBlocked || canaryLoading || reviewedCanaryDigest !== text(canaryPlan.digest, "") || !UUID_PATTERN.test(canaryReplayInboxId.trim()) || !canaryReplayReason.trim()}
+                        onClick={replayVerifiedCanaryEvent}
+                      >Replay verified event</button>
+                    </div>
+                  )}
                 </article>
               );
             })()}

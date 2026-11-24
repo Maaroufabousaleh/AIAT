@@ -10,7 +10,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type FormEvent as ReactFormEvent,
 } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
 import {
@@ -772,12 +772,27 @@ export default function ProjectDetailPage() {
 
   const [activeTab, setActiveTab] = useState<
     "workspace" | "workflow" | "flow" | "context" | "evidence"
-  >("workspace");
+  >(() => {
+    if (typeof window === "undefined") return "workspace";
+    const tab = new URLSearchParams(window.location.search).get("tab");
+    return tab === "workflow" || tab === "flow" || tab === "context" || tab === "evidence"
+      ? tab
+      : "workspace";
+  });
   // Sub-tabs within the workspace view let operators jump between the most
   // important slices (next action, project activity, live resources, spend)
   // without scrolling through every card on a tall screen.
   const [workspaceSubTab, setWorkspaceSubTab] =
     useState<WorkspaceSubTab>("activity");
+  const router = useRouter();
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("tab") === activeTab) return;
+    if (activeTab === "workspace") params.delete("tab");
+    else params.set("tab", activeTab);
+    const query = params.toString();
+    router.replace(query ? `${window.location.pathname}?${query}` : window.location.pathname, { scroll: false });
+  }, [activeTab, router]);
 
   const handleWorkspaceSubTabKeyDown = useCallback(
     (
@@ -3317,21 +3332,41 @@ export default function ProjectDetailPage() {
                         severity: "medium",
                       },
                     ]
-                  ).map((action, index) => (
-                    <div
-                      key={`${action.kind}-${index}`}
-                      className={clsx(
-                        "rounded-lg border px-3 py-2 text-sm",
-                        action.severity === "high"
-                          ? "border-amber-700/70 bg-amber-950/40 text-amber-100"
-                          : action.severity === "medium"
-                            ? "border-blue-700/70 bg-blue-950/30 text-blue-100"
-                            : "border-slate-800 bg-slate-950/50 text-slate-300",
-                      )}
-                    >
-                      {action.label}
-                    </div>
-                  ))}
+                  ).map((action, index) => {
+                    const href =
+                      action.kind === "approval"
+                        ? `/approvals?project_id=${encodeURIComponent(id)}`
+                        : action.kind === "retry"
+                          ? `/projects/${encodeURIComponent(id)}?tab=flow`
+                          : action.kind === "worker_activation"
+                            ? "/workers"
+                            : null;
+                    return (
+                      <div
+                        key={`${action.kind}-${index}`}
+                        className={clsx(
+                          "rounded-lg border px-3 py-2 text-sm",
+                          action.severity === "high"
+                            ? "border-amber-700/70 bg-amber-950/40 text-amber-100"
+                            : action.severity === "medium"
+                              ? "border-blue-700/70 bg-blue-950/30 text-blue-100"
+                              : "border-slate-800 bg-slate-950/50 text-slate-300",
+                        )}
+                      >
+                        {href ? (
+                          <Link
+                            href={href}
+                            prefetch={false}
+                            className="font-medium underline decoration-current/40 underline-offset-2 hover:decoration-current"
+                          >
+                            {action.label} →
+                          </Link>
+                        ) : (
+                          action.label
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 

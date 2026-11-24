@@ -19717,6 +19717,40 @@ async def _find_project_for_ceo_text(
     return (matches[0], False) if len(matches) == 1 else (None, len(matches) > 1)
 
 
+_PROJECT_STATE_NAME_ALIASES: dict[str, tuple[str, ...]] = {
+    "FEASIBILITY_CHECK": ("feasibility",),
+    "FEASIBILITY_REPORT": ("feasibility report",),
+    "PDR_CREATION": ("pdr creation",),
+    "PDR_REVIEW": ("pdr review", "pdr"),
+    "SECURITY_BLOCKED": ("security blocked", "security blocker"),
+    "CDR_CREATION": ("cdr creation",),
+    "CDR_REVIEW": ("cdr review", "cdr"),
+    "HUMAN_APPROVAL": ("human approval", "approval"),
+    "RR_CREATION": ("rr creation", "rr"),
+    "SPRINT_PLANNING": ("sprint planning", "sprints"),
+    "INFRA_PROVISIONING": ("infra provisioning", "infra"),
+    "IN_PROGRESS": ("in progress", "progress"),
+    "RETROSPECTIVE": ("retrospective", "retro"),
+    "KPI_PERSISTENCE": ("kpi persistence", "kpi"),
+    "COMPLETED": ("completed", "complete", "done"),
+    "ARCHIVED": ("archived", "archive"),
+    "FAILED": ("failed", "failure"),
+    "INIT": ("init", "initial"),
+}
+
+
+def _match_project_states(instruction: str) -> list[ProjectState]:
+    """Return lifecycle states named in free text, in lifecycle order."""
+    normalized = re.sub(r"[_-]+", " ", instruction.lower())
+    matched: list[ProjectState] = []
+    for state in ProjectState:
+        display = state.value.lower().replace("_", " ")
+        names = (display, state.value.lower(), *_PROJECT_STATE_NAME_ALIASES.get(state.value, ()))
+        if any(name in normalized for name in names):
+            matched.append(state)
+    return matched
+
+
 async def _handle_ceo_project_intent(
     instruction: str,
     *,
@@ -20215,6 +20249,105 @@ async def _handle_ceo_project_intent(
             ),
             "trace": ["parsed_project_start_intent", "transitioned_to_feasibility"],
         }
+
+    if "project" in lowered and re.search(r"\b(?:move|transition|advance|shift)\b", lowered):
+        candidates = _match_project_states(instruction)
+        if candidates:
+            storage = _storage()
+            project, ambiguous = await _find_project_for_ceo_text(storage, instruction)
+            if project is None:
+                return {
+                    "type": "project_transition",
+                    "status": "needs_project",
+                    "response": (
+                        "More than one project matches that name; give me the project UUID."
+                        if ambiguous
+                        else "I need an existing project name or UUID to transition."
+                    ),
+                    "trace": ["parsed_project_transition_intent", "project_not_uniquely_identified"],
+                }
+            if principal != "operator":
+                raise HTTPException(403, "CEO project transition requires an operator credential")
+            project_name = str(project.get("name") or project.get("id"))
+            try:
+                current_state = ProjectState(str(project.get("state") or ""))
+            except ValueError:
+                return {
+                    "type": "project_transition",
+                    "status": "not_transitioned",
+                    "project": _serialize(project),
+                    "response": (
+                        f"Project `{project_name}` has an invalid workflow state; nothing was changed."
+                    ),
+                    "trace": ["parsed_project_transition_intent", "invalid_current_state"],
+                }
+            wanted = set(candidates)
+            options = [
+                (event, target)
+                for event in WorkflowEvent
+                for target in [resolve_transition(current_state, event)]
+                if target is not None and target in wanted
+            ]
+            if len(options) == 1:
+                event, target = options[0]
+                try:
+                    result = await _controller().transition(
+                        project_id=str(project.get("id")),
+                        current_state=current_state,
+                        event=event,
+                        actor_id=principal or "human_operator",
+                        context={"name": project.get("name")},
+                    )
+                except (InvalidTransitionError, ValueError, HTTPException) as exc:
+                    return {
+                        "type": "project_transition",
+                        "status": "not_transitioned",
+                        "project": _serialize(project),
+                        "response": (
+                            f"I could not move `{project_name}` to `{target.value}`: {exc}. "
+                            "Nothing was changed."
+                        ),
+                        "trace": ["parsed_project_transition_intent", "rejected_workflow_transition"],
+                    }
+                record_project_state_transition(result.prior_state, result.next_state)
+                moved = dict(project)
+                moved["state"] = str(result.next_state)
+                return {
+                    "type": "project_transition",
+                    "status": "transitioned",
+                    "project": _serialize(moved),
+                    "response": (
+                        f"Project `{project_name}` moved: `{current_state.value}` → "
+                        f"`{result.next_state}` (event `{event.value}`)."
+                    ),
+                    "trace": ["parsed_project_transition_intent", "executed_workflow_transition"],
+                }
+            valid_next = sorted(
+                {target.value for event in WorkflowEvent for target in [resolve_transition(current_state, event)] if target is not None}
+            )
+            if not options:
+                return {
+                    "type": "project_transition",
+                    "status": "not_transitioned",
+                    "project": _serialize(project),
+                    "response": (
+                        f"Project `{project_name}` is in `{current_state.value}`; it cannot move "
+                        f"to {', '.join(f'`{s.value}`' for s in candidates)}. "
+                        f"Valid next states: {', '.join(f'`{s}`' for s in valid_next) or 'none'}."
+                    ),
+                    "trace": ["parsed_project_transition_intent", "no_valid_transition"],
+                }
+            return {
+                "type": "project_transition",
+                "status": "needs_target",
+                "project": _serialize(project),
+                "response": (
+                    f"From `{current_state.value}`, `{project_name}` can move to "
+                    f"{', '.join(f'`{t.value}` (event `{e.value}`)' for e, t in options)}. "
+                    "Name one target state."
+                ),
+                "trace": ["parsed_project_transition_intent", "ambiguous_target_state"],
+            }
 
     prepare_project_requested = (
         project_start_mode == "prepare_only"
@@ -21109,6 +21242,10 @@ def _ceo_operator_intent_is_api_owned(
             lowered,
         ):
             return True
+        if re.search(r"\b(?:move|transition|advance|shift)\b", lowered) and _match_project_states(
+            instruction
+        ):
+            return True
         if re.search(
             r"\b(?:approve|approved|reject|rejected|deny|denied|decline|declined|edit|edits|revise|cancel)\b",
             lowered,
@@ -21126,6 +21263,10 @@ def _ceo_operator_intent_is_api_owned(
     if "hire" not in lowered and any(
         token in lowered for token in ("worker", "workers", "hiring board", "candidate", "agent")
     ):
+        return True
+    if re.search(
+        r"\b(?:reclassify|reroute|route|move|assign|transfer)\b", lowered
+    ) and re.search(r"\b(?:team|department|dept|office|to|into|under|as)\b", lowered):
         return True
     if any(
         token in lowered

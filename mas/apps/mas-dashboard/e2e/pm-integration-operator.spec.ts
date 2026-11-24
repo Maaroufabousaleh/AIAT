@@ -231,3 +231,184 @@ test("PM inbound canaries show an empty state and retain UUID inspection", async
   await integrations.getByRole("button", { name: "Inspect canary" }).click();
   await expect(integrations.getByRole("article", { name: "Canary plan details" })).toContainText("Digest valid: yes");
 });
+
+test("PM integrations expose connection diagnostics, reconcile trigger, and governed canary actions", async ({ page }) => {
+  const CANARY_DIGEST = "d".repeat(64);
+  const INBOX_ID = "99999999-9999-4999-8999-999999999999";
+  let canaryStatus = "PLANNED";
+  let reconcileRequest: Record<string, unknown> | null = null;
+  let approveRequest: Record<string, unknown> | null = null;
+  let replayRequest: Record<string, unknown> | null = null;
+  let healthHits = 0;
+
+  await page.route("**/api/projects?limit=1000", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) });
+  });
+
+  await page.route("**/api/integrations/pm**", async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const pathname = url.pathname;
+
+    if (pathname === "/api/integrations/pm") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          connections: [{
+            id: CONNECTION_ID,
+            display_name: "Local YouTrack fixture",
+            provider_kind: "youtrack",
+            base_url: "https://example.invalid",
+            status: "SHADOW",
+            revision: 4,
+          }],
+          conflicts: [],
+          outbox: [],
+          runs: [],
+          lifecyclePlans: [],
+          canaryPlans: [{
+            plan_id: CANARY_PLAN_ID,
+            connection_id: CONNECTION_ID,
+            binding_id: BINDING_ID,
+            project_id: "project-001",
+            external_issue_id: "YT-17",
+            status: canaryStatus,
+            current_priority: "medium",
+            target_priority: "high",
+            created_at: "2026-10-07T10:00:00Z",
+            expires_at: "2026-10-08T10:00:00Z",
+          }],
+        }),
+      });
+      return;
+    }
+
+    if (pathname === `/api/integrations/pm/connections/${CONNECTION_ID}/health`) {
+      healthHits += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true, connection_id: CONNECTION_ID, provider: "youtrack" }),
+      });
+      return;
+    }
+
+    if (pathname === `/api/integrations/pm/connections/${CONNECTION_ID}/capabilities`) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ connection_id: CONNECTION_ID, work_items: true }),
+      });
+      return;
+    }
+
+    if (pathname === `/api/integrations/pm/connections/${CONNECTION_ID}/doctor`) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ready: true, connection_id: CONNECTION_ID, checks: [{ name: "health_and_credentials", ok: true }] }),
+      });
+      return;
+    }
+
+    if (pathname === `/api/integrations/pm/connections/${CONNECTION_ID}/reconcile` && request.method() === "POST") {
+      reconcileRequest = request.postDataJSON() as Record<string, unknown>;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ id: RUN_ID, connection_id: CONNECTION_ID, status: "AUDITED" }),
+      });
+      return;
+    }
+
+    if (pathname === `/api/integrations/pm/inbound-canaries/${CANARY_PLAN_ID}` && request.method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          status: canaryStatus,
+          digest: CANARY_DIGEST,
+          digest_valid: true,
+          accepted_command_count: 0,
+          plan: {
+            plan_id: CANARY_PLAN_ID,
+            connection_id: CONNECTION_ID,
+            binding_id: BINDING_ID,
+            current_priority: "medium",
+            target_priority: "high",
+            expires_at: "2026-10-08T10:00:00Z",
+            gate_results: { doctor_ready: true },
+            operations: [],
+            rollback_operations: [],
+          },
+        }),
+      });
+      return;
+    }
+
+    if (pathname === `/api/integrations/pm/inbound-canaries/${CANARY_PLAN_ID}/approve` && request.method() === "POST") {
+      approveRequest = request.postDataJSON() as Record<string, unknown>;
+      canaryStatus = "APPROVED";
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ status: canaryStatus }),
+      });
+      return;
+    }
+
+    if (pathname === `/api/integrations/pm/inbound-canaries/${CANARY_PLAN_ID}/replay-verified-event` && request.method() === "POST") {
+      replayRequest = request.postDataJSON() as Record<string, unknown>;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ status: "accepted", plan_id: CANARY_PLAN_ID, inbox_id: INBOX_ID }),
+      });
+      return;
+    }
+
+    await route.fulfill({
+      status: 501,
+      contentType: "application/json",
+      body: JSON.stringify({ detail: "Unmocked PM API request in this test" }),
+    });
+  });
+
+  page.on("dialog", async (dialog) => { await dialog.accept(); });
+  await authenticate(page, "/integrations");
+
+  const integrations = page.getByRole("main", { name: "PM integrations" });
+  await integrations.getByLabel("Lifecycle connection").selectOption(CONNECTION_ID);
+
+  await integrations.getByText("Connection diagnostics: health, capabilities, doctor").click();
+  await integrations.getByRole("button", { name: "Check health" }).click();
+  await expect(integrations.getByRole("article", { name: "Connection health result" })).toContainText("Health: ok");
+  await integrations.getByRole("button", { name: "Check capabilities" }).click();
+  await expect(integrations.getByRole("article", { name: "Connection capabilities result" })).toContainText("work_items");
+  await integrations.getByRole("button", { name: "Check doctor" }).click();
+  await expect(integrations.getByRole("article", { name: "Connection doctor result" })).toContainText("Doctor: ready");
+  expect(healthHits).toBe(1);
+
+  await integrations.getByRole("button", { name: "Trigger reconciliation" }).click();
+  await expect(integrations.getByText(`Recorded ${RUN_ID}`)).toBeVisible();
+  expect(reconcileRequest).toEqual({ mode: "audit" });
+
+  await integrations.getByRole("combobox", { name: "Recent canary plans" }).selectOption(CANARY_PLAN_ID);
+  await integrations.getByRole("button", { name: "Inspect canary" }).click();
+  const canary = integrations.getByRole("article", { name: "Canary plan details" });
+  await expect(canary).toContainText(`Digest: ${CANARY_DIGEST}`);
+  const review = canary.getByLabel("I reviewed this exact canary digest");
+  await expect(review).not.toBeChecked();
+  await review.check();
+  await canary.getByRole("button", { name: "Canary approve" }).click();
+  await expect(integrations.getByText("Canary approve recorded.")).toBeVisible();
+  expect(approveRequest).toEqual({ digest: CANARY_DIGEST, confirm: true });
+
+  await canary.getByLabel("I reviewed this exact canary digest").check();
+  await canary.getByLabel("Canary replay inbox ID").fill(INBOX_ID);
+  await canary.getByLabel("Canary replay reason").fill("Operator replay of a verified delivery");
+  await canary.getByRole("button", { name: "Replay verified event" }).click();
+  await expect(integrations.getByText("Canary replay recorded.")).toBeVisible();
+  expect(replayRequest).toEqual({ digest: CANARY_DIGEST, confirm: true, inbox_id: INBOX_ID, reason: "Operator replay of a verified delivery" });
+});

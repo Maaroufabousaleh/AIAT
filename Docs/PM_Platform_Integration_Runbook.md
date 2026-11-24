@@ -69,7 +69,7 @@ The old cutover/rollback aliases intentionally fail closed; they cannot write
 status directly. Use the versioned operator API instead:
 
 ```powershell
-$plan = Invoke-RestMethod http://localhost:8000/api/v1/integrations/lifecycle-plans `
+$plan = Invoke-RestMethod http://localhost:8000/integrations/lifecycle-plans `
   -Method Post -Headers $headers -ContentType application/json -Body (@{
     target_type = "pm_binding"
     connection_id = $connection.id
@@ -79,20 +79,20 @@ $plan = Invoke-RestMethod http://localhost:8000/api/v1/integrations/lifecycle-pl
   } | ConvertTo-Json)
 
 # Inspect $plan.plan, $plan.plan_digest, $plan.blockers and $plan.plan.rollback_operations.
-Invoke-RestMethod "http://localhost:8000/api/v1/integrations/lifecycle-plans/$($plan.plan.plan_id)/approve" `
+Invoke-RestMethod "http://localhost:8000/integrations/lifecycle-plans/$($plan.plan.plan_id)/approve" `
   -Method Post -Headers $headers -ContentType application/json -Body (@{
     plan_digest = $plan.plan_digest
     reason = "operator reviewed exact lifecycle digest"
   } | ConvertTo-Json)
 
-Invoke-RestMethod "http://localhost:8000/api/v1/integrations/lifecycle-plans/$($plan.plan.plan_id)/apply" `
+Invoke-RestMethod "http://localhost:8000/integrations/lifecycle-plans/$($plan.plan.plan_id)/apply" `
   -Method Post -Headers $headers -ContentType application/json -Body (@{
     plan_digest = $plan.plan_digest
     confirm = $true
   } | ConvertTo-Json)
 ```
 
-`GET /api/v1/integrations/lifecycle-plans/{plan_id}` must report
+`GET /integrations/lifecycle-plans/{plan_id}` must report
 `digest_valid=true` before approval or application. Plans are durable rows,
 not dashboard previews; statuses include `PLANNED`, `APPROVED`, `APPLIED`,
 `REJECTED`, `EXPIRED`, `STALE`, `SUPERSEDED`, and `FAILED`. Application audit

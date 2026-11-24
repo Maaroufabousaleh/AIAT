@@ -20,6 +20,7 @@ from orchestrator_api.main import (
     _handle_ceo_project_intent,
     _handle_ceo_system_intent,
     _handle_ceo_worker_intent,
+    _match_project_states,
     _queue_ceo_confirmation,
     _sandbox_for_hiring_text,
     _target_department_for_reclassification_text,
@@ -2455,3 +2456,77 @@ async def test_worker_evaluate_intent_runs_guarded_evaluator(monkeypatch):
     assert result["status"] == "evaluated"
     evaluated.assert_awaited_once()
     assert evaluated.await_args.args[0] == worker_id
+
+
+@pytest.mark.parametrize(
+    ("instruction", "expected"),
+    [
+        ("move project X to feasibility", ["FEASIBILITY_CHECK"]),
+        ("advance the project to PDR review", ["PDR_REVIEW"]),
+        ("transition to in-progress", ["IN_PROGRESS"]),
+        ("shift it to archive", ["ARCHIVED"]),
+        ("move project X to QA", []),
+    ],
+)
+def test_project_state_matcher_resolves_names_and_aliases(instruction: str, expected: list):
+    assert [s.value for s in _match_project_states(instruction)] == expected
+
+
+def test_project_transition_verbs_are_owned_only_with_a_state():
+    assert (
+        _ceo_operator_intent_is_api_owned("move project alpha to feasibility") is True
+    )
+    assert _ceo_operator_intent_is_api_owned("transition project alpha") is False
+    assert _ceo_operator_intent_is_api_owned("move worker beta to QA") is True
+
+
+@pytest.mark.anyio
+async def test_project_transition_moves_to_reachable_state():
+    from types import SimpleNamespace
+    from orchestrator_api.main import WorkflowEvent, app
+
+    project_id = UUID("00000000-0000-4000-a000-0000000000f1")
+    storage = MagicMock()
+    storage.get_project = AsyncMock(
+        return_value={"id": project_id, "name": "alpha", "state": "INIT"}
+    )
+    transition = AsyncMock(
+        return_value=SimpleNamespace(
+            prior_state="INIT", next_state="FEASIBILITY_CHECK", transition_id="t1"
+        )
+    )
+    controller = MagicMock()
+    controller.transition = transition
+    app.state.storage = storage
+    app.state.controller = controller
+
+    result = await _handle_ceo_project_intent(
+        f"move project {project_id} to feasibility", principal="operator"
+    )
+
+    assert result is not None
+    assert result["type"] == "project_transition"
+    assert result["status"] == "transitioned"
+    assert result["project"]["state"] == "FEASIBILITY_CHECK"
+    assert transition.await_args.kwargs["event"] == WorkflowEvent.PROJECT_CREATED
+
+
+@pytest.mark.anyio
+async def test_project_transition_lists_valid_next_states_when_unreachable():
+    from orchestrator_api.main import app
+
+    project_id = UUID("00000000-0000-4000-a000-0000000000f2")
+    storage = MagicMock()
+    storage.get_project = AsyncMock(
+        return_value={"id": project_id, "name": "alpha", "state": "INIT"}
+    )
+    app.state.storage = storage
+
+    result = await _handle_ceo_project_intent(
+        f"move project {project_id} to completed", principal="operator"
+    )
+
+    assert result is not None
+    assert result["type"] == "project_transition"
+    assert result["status"] == "not_transitioned"
+    assert "FEASIBILITY_CHECK" in result["response"]
